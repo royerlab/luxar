@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { InputContextManager, InputContext } from '../../../../input/input-handler/context-manager';
+import { registerTestBinding } from './context-manager-test-utils';
 
 describe('InputContextManager - keyupHandler Feature', () => {
   let manager: InputContextManager;
@@ -23,7 +24,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
       const keydownHandler = vi.fn();
       const keyupHandler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Shift',
         handler: keydownHandler,
         keyupHandler,
@@ -41,7 +42,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
       const keydownHandler = vi.fn();
       const keyupHandler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Shift',
         handler: keydownHandler,
         keyupHandler,
@@ -58,7 +59,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
     it('should NOT call handler on keyup if keyupHandler not provided', () => {
       const handler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'h',
         handler,
         // No keyupHandler
@@ -78,7 +79,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
       const keydownHandler = vi.fn();
       const keyupHandler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'Shift',
         handler: keydownHandler,
         keyupHandler,
@@ -108,7 +109,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
       const keyupHandler = vi.fn();
 
       manager.setContext(InputContext.FLY_CONTROLS);
-      manager.registerBinding(InputContext.FLY_CONTROLS, {
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'w',
         handler: keydownHandler,
         keyupHandler,
@@ -132,7 +133,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
       const keyupHandler = vi.fn();
 
       manager.setContext(InputContext.FLY_CONTROLS);
-      manager.registerBinding(InputContext.FLY_CONTROLS, {
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
         key: 'w',
         modifiers: { shift: true },
         handler: keydownHandler,
@@ -153,7 +154,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
     it('matches a modified keyup only while the modifier remains held', () => {
       const keyupHandler = vi.fn();
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'ArrowUp',
         modifiers: { shift: true },
         handler: vi.fn(),
@@ -177,7 +178,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
         cinematicMode = !cinematicMode;
       });
 
-      manager.registerBinding(InputContext.NAVIGATION, {
+      registerTestBinding(manager, InputContext.NAVIGATION, {
         key: 'c',
         handler: toggleHandler,
         // No keyupHandler - toggle actions don't need it

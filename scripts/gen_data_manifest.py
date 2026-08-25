@@ -418,30 +418,40 @@ DATASETS: dict[str, dict] = {
         license="cc-by-4.0",
         source="h2afva zebrafish histone light-sheet timelapse (Royer lab)",
         attribution="Royer lab, CZ Biohub SF (CC BY 4.0).",
-        # Still pending: the 253tp variant is uploaded and pinned, but the 51tp
-        # file in the record is a SUPERSEDED build and must not be pinned. It
-        # predates the isotropic correction (z extent 405 raw voxels instead of
-        # 1620), carries no substitutive LOD levels at all, is format 3.2, and
-        # keeps the acquisition time numbering 0..250 rather than 0..50. Pinning
-        # it would make the demo fetch a dataset that renders squashed 4x in z.
-        # Replacement build is verified; upload is held pending the zarr-v3
-        # landing and the wider gsplat dataset audit.
-        pending_upload=True,
-        # The 51tp variant covers every FIFTH timepoint of the same acquisition
-        # (frames 0, 5, ... 250 — measured, 51 clusters spaced 5.0000), renumbered
-        # 0..50. It is a temporal subsample, but an INDEPENDENT fit rather than a
-        # decimation of the full one: per-timepoint splat counts differ (2.50M vs
-        # 2.38M at the finest level). Shipped as the default because pulling
-        # ~2.1 GB is far easier than ~11.4 GB over Zenodo's best-effort bandwidth.
+        acquisition=dict(
+            description=(
+                "the full 253-timepoint h2afva light-sheet timelapse; the 51tp "
+                "variant is every fifth frame from the same fit"
+            ),
+            comparable=True,
+            stored_bytes=None,
+        ),
+        # Both variants are uploaded and pinned, so there is no `pending_upload`
+        # here. The 51tp file that used to be a SUPERSEDED build — pre-isotropic
+        # (z extent 405 raw voxels instead of 1620), no substitutive LOD levels,
+        # format 3.2 — has been replaced.
+        #
+        # The 51tp variant is now a strided SLICE of the 253tp fit rather than an
+        # independent fit: every 5th frame (source frames 0, 5, ... 250, recorded
+        # in the archive's own `source_timepoints`), renumbered to a dense 0..50.
+        # The renumbering is load-bearing, not cosmetic — it puts the stacked axis
+        # back on a regular grid so the encoder's gridded-axis snap stores it
+        # EXACTLY. The old build's frame values were quantization-smeared off
+        # their integers, which left four of every five slider positions
+        # rendering an empty scene. Because it is a slice, the two variants now
+        # agree splat-for-splat on the frames they share, where the previous
+        # independent fits differed (2.50M vs 2.38M per timepoint at the finest
+        # level). Shipped as the default because pulling ~1.9 GB is far easier
+        # than ~9.3 GB over Zenodo's best-effort bandwidth.
         variants={
             "51tp": dict(
                 default=True,
-                approx_bytes=2_134_212_223,
+                approx_bytes=1_873_559_527,
                 note="51-timepoint fit (every 5th frame) — lighter default for the demo.",
             ),
             "253tp": dict(
                 default=False,
-                approx_bytes=11_428_060_091,
+                approx_bytes=9_253_211_541,
                 note="Full 253-timepoint timelapse — opt-in (large download).",
             ),
         },

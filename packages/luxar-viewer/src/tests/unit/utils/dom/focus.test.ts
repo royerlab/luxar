@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Unit tests for the pure DOM-focus helpers in input/handlers/focus-utils.
+ * Unit tests for the pure DOM-focus helpers in utils/dom/focus.
  *
  * These tests run in jsdom against real DOM elements — no mocks. The
  * helpers take an `Element | null` so the test can construct elements
@@ -9,10 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  isFocusOnSceneCanvas,
-  isTypingInInput,
-} from '../../../../../input/input-handler/commands/focus-utils';
+import { isFocusOnSceneCanvas, isTypingInInput } from '../../../../utils/dom/focus';
 
 describe('isTypingInInput', () => {
   beforeEach(() => {

@@ -1,7 +1,7 @@
 import numpy as np
 import zarr
 
-from luxar.utils.demos import create_lorenz_attractor
+from luxar.utils.scenes import create_lorenz_attractor
 
 
 def test_random_demo_roundtrip(tmp_path) -> None:

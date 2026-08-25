@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildRailItems, type RailItemsDeps } from '../../../../../core/app/init/build-rail-items';
 import type { ControlRailItem } from '../../../../../ui/control-rail';
+import { KeyAction } from '../../../../../input/input-handler/key-bindings/actions';
 
 function makeDeps(
   overrides: {
@@ -44,6 +45,7 @@ function makeDeps(
         toggleFullscreen: vi.fn(),
         togglePerformanceStats: vi.fn(),
         recenterCamera: vi.fn(),
+        toggleDatasetBrowser: vi.fn(),
       },
       panels: {
         getLayersPanel: vi.fn().mockReturnValue({ toggle: layersToggle }),
@@ -53,6 +55,7 @@ function makeDeps(
         getOverlayManager: vi.fn(),
       },
     },
+    shortcutForAction: vi.fn(() => undefined),
     sceneManager: {
       getControlType: vi.fn().mockReturnValue(controlType),
       centerOnOrigin: vi.fn(),
@@ -102,6 +105,18 @@ function makeButtonEl(): HTMLButtonElement {
 }
 
 describe('buildRailItems', () => {
+  it('reads shortcut labels from the action registry', () => {
+    const deps = makeDeps();
+    deps.shortcutForAction = vi.fn((actionId) =>
+      actionId === KeyAction.toggleHelp ? '?' : undefined
+    );
+
+    const help = buildRailItems(deps).find((item) => item.id === 'help');
+
+    expect(help?.shortcut).toBe('?');
+    expect(deps.shortcutForAction).toHaveBeenCalledWith(KeyAction.toggleHelp);
+  });
+
   it('produces the expected item ids in order (no screenshot button)', () => {
     const items = buildRailItems(makeDeps());
     expect(items.map((i: ControlRailItem) => i.id)).toEqual([
@@ -207,6 +222,35 @@ describe('buildRailItems', () => {
   });
 
   describe('Navigation render hook', () => {
+    it('keeps the registry-derived shortcut in the rendered tooltip and aria-label', () => {
+      const deps = makeDeps({ controlType: 'orbit' });
+      deps.shortcutForAction = vi.fn((actionId) =>
+        actionId === KeyAction.toggleControlMode ? 'Z' : undefined
+      );
+      const nav = buildRailItems(deps).find((item: ControlRailItem) => item.id === 'nav')!;
+      const btn = makeButtonEl();
+
+      nav.render!(btn);
+
+      expect(btn.querySelector('.luxar-control-rail__tip kbd')?.textContent).toBe('Z');
+      expect(btn.getAttribute('aria-label')).toContain('(Z)');
+    });
+
+    it('omits shortcut markup when the registry has no control-mode label', () => {
+      const nav = buildRailItems(makeDeps({ controlType: 'orbit' })).find(
+        (item: ControlRailItem) => item.id === 'nav'
+      )!;
+      const btn = makeButtonEl();
+
+      nav.render!(btn);
+
+      expect(btn.querySelector('.luxar-control-rail__tip kbd')).toBeNull();
+      expect(btn.querySelector('.luxar-control-rail__tip')?.textContent).toBe('Navigation · Orbit');
+      expect(btn.getAttribute('aria-label')).toBe(
+        'Navigation: Orbit — click for fly, right-click for options'
+      );
+    });
+
     it('shows the ortho 2×2 grid icon + "Ortho" tooltip when the mode is ortho', () => {
       const nav = buildRailItems(makeDeps({ controlType: 'ortho' })).find(
         (i: ControlRailItem) => i.id === 'nav'

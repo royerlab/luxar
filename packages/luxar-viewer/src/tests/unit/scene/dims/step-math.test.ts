@@ -10,13 +10,13 @@ import {
   getNextDimensionIndex,
   getNonDisplayedDimensions,
   mapKeyToDimension,
-} from '../../../../../input/input-handler/dimension-navigation/selection';
+} from '../../../../scene/dims/selection';
 import {
   calculateStepSize,
   calculateNextPosition,
   NavigationConfig,
-} from '../../../../../input/input-handler/dimension-navigation/step-math';
-import { DimensionsBuilder } from '../../../../builders/test-data-builders';
+} from '../../../../scene/dims/step-math';
+import { DimensionsBuilder } from '../../../builders/test-data-builders';
 
 describe('nD Navigation Utilities', () => {
   describe('getNextDimensionIndex', () => {
@@ -192,6 +192,16 @@ describe('nD Navigation Utilities', () => {
       expect(next).toBe(7); // 5.2 + 1.3 = 6.5, rounded to 7
     });
 
+    it('anchors discrete stepping and wrapping at the range minimum', () => {
+      expect(calculateNextPosition(1, 1, 5, [1, 11], true, false, 5)).toBe(6);
+      expect(calculateNextPosition(11, 1, 5, [1, 11], true, true, 5)).toBe(1);
+      expect(calculateNextPosition(1, -1, 5, [1, 11], true, true, 5)).toBe(11);
+    });
+
+    it('clamps to the last anchored stop instead of an off-grid range maximum', () => {
+      expect(calculateNextPosition(6, 1, 5, [1, 10.5], true, false, 5)).toBe(6);
+    });
+
     it('should wrap around when enabled', () => {
       expect(calculateNextPosition(9, 1, 2, [0, 10], false, true)).toBe(1); // Wrap to start
       expect(calculateNextPosition(1, -1, 2, [0, 10], false, true)).toBe(9); // Wrap to end
@@ -201,6 +211,11 @@ describe('nD Navigation Utilities', () => {
       // Degenerate range where min === max: only one valid position
       expect(calculateNextPosition(5, 1, 1, [5, 5], false, true)).toBe(5); // Wrap-around
       expect(calculateNextPosition(5, -1, 1, [5, 5], false, false)).toBe(5); // Clamp
+    });
+
+    it('returns the range minimum for an inverted discrete range', () => {
+      expect(calculateNextPosition(5, 1, 1, [5, 4.5], true, true)).toBe(5);
+      expect(calculateNextPosition(5, 1, 1, [5, 4.5], true, false)).toBe(5);
     });
   });
 

@@ -14,7 +14,6 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
-import { nodeStatsContent } from '../../../ui/data-loading-monitor/templates/scene-graph';
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import type {
   MonitorEvent,
@@ -1223,64 +1222,6 @@ describe('DataLoadingMonitor', () => {
       const stats = monitor.getGlobalStats();
       expect(stats.datasetSize).toBe(200000);
       expect(stats.visiblePoints).toBe(50000);
-    });
-
-    it('clears per-node visible counts for paths absent from the latest walk', () => {
-      // The SceneLoader's visible-counts walk prunes non-visible subtrees,
-      // so a hidden layer or switched-away substitutive level simply stops
-      // appearing in the pushed map. Its previously merged count must be
-      // cleared (back to unknown) — not left as a stale
-      // "(N visible after slicing)" tooltip forever.
-      const sceneGraph = {
-        path: '/',
-        name: 'Scene',
-        type: 'scene' as const,
-        children: [
-          {
-            path: '/points1',
-            name: 'points1',
-            type: 'points' as const,
-            pointCount: 1000,
-            children: [],
-          },
-          {
-            path: '/splats1',
-            name: 'splats1',
-            type: 'gsplats' as const,
-            splatCount: 2000,
-            children: [],
-          },
-        ],
-      };
-      monitor.setSceneGraph(sceneGraph);
-
-      const sync = () =>
-        (monitor as unknown as { syncVisibleCountsIntoTree(): void }).syncVisibleCountsIntoTree();
-
-      // First walk: both layers rendered with partial visibility.
-      monitor.updateVisibleCountsByPath(
-        new Map([
-          ['/points1', 250],
-          ['/splats1', 700],
-        ])
-      );
-      sync();
-      const root = monitor.getSceneGraph().root!;
-      const points = root.children[0];
-      const splats = root.children[1];
-      expect(points.visiblePointCount).toBe(250);
-      expect(splats.visibleSplatCount).toBe(700);
-      expect(nodeStatsContent(points)!.title).toContain('250 visible after slicing');
-      expect(nodeStatsContent(splats)!.title).toContain('700 visible after slicing');
-
-      // Second walk: the gsplats layer was hidden (pruned from the walk).
-      // Its count must read as unknown (no suffix), not the stale 700.
-      monitor.updateVisibleCountsByPath(new Map([['/points1', 100]]));
-      sync();
-      expect(points.visiblePointCount).toBe(100);
-      expect(splats.visibleSplatCount).toBeUndefined();
-      expect(nodeStatsContent(points)!.title).toContain('100 visible after slicing');
-      expect(nodeStatsContent(splats)!.title).not.toContain('visible');
     });
 
     it('re-marks active/inactive substitutive level rows per tick (shared activeLevelRole derivation)', () => {

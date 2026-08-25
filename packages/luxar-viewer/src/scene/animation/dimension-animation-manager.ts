@@ -320,10 +320,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     });
     if (result.shouldStop) return null;
     // Predict the EXACT landing: setDimensionValue snaps a discrete dim to
-    // its 0-anchored grid inside the range. Mid-range ticks are already
-    // on-grid (the step is quantized), but a loop wrap targets the raw
-    // range end — when that end is off-grid (min 0.5 on a step-1 grid) the
-    // unsnapped value would warm a t+1 slice the playhead never visits.
+    // its range-min-anchored grid. Mid-range ticks and loop endpoints are
+    // already on-grid, but sharing the helper keeps prefetch and playhead
+    // byte-identical for fractional steps.
     return metadata?.discrete
       ? snapDiscreteValue(result.value, metadata.step || 1.0, min, max)
       : result.value;

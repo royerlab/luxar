@@ -1,7 +1,7 @@
 import { SimpleDims } from '../types/dims';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { calculateStepSize } from '../input/input-handler/dimension-navigation/step-math';
-import { getNonDisplayedDimensions } from '../input/input-handler/dimension-navigation/selection';
+import { calculateStepSize } from '../scene/dims/step-math';
+import { getNonDisplayedDimensions } from '../scene/dims/selection';
 import { getViewerContainer } from '../utils/viewer-container';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { config } from '../config';

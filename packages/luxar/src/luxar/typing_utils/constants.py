@@ -31,6 +31,16 @@ DEFAULT_OFFSET: Final[float] = 0.0
 
 # Blending modes
 DEFAULT_BLENDING_MODE: Final[str] = "additive"
+# Viewer-side defaults are applied only after root→leaf attribute composition:
+# create-points-node.ts/create-lines-node.ts/create-gsplats-node.ts use additive,
+# while create-mesh-node.ts uses opaque. Keep the source-lock test in
+# io/tests/_compiler/test_blending_warnings.py in sync with those consumers.
+DEFAULT_BLENDING_MODE_BY_GEOMETRY: Final[dict[str, str]] = {
+    "points": "additive",
+    "lines": "additive",
+    "gsplats": "additive",
+    "mesh": "opaque",
+}
 
 # Line join style (issue #790) — the strategy the LINE vertex stage uses at a
 # degree-2 polyline joint. Lines-only: it has no meaning for points, gsplats or

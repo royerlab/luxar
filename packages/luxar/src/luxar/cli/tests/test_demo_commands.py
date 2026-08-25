@@ -1506,8 +1506,8 @@ def test_demo_runs_dir_matches_demo_cache_root() -> None:
     If the demo cache root ever moves, the running-demo registry must move
     with it — this is the guard for that silent divergence.
     """
+    from luxar.cli.demo_runs import DEMO_RUNS_DIR
     from luxar.demos.registry import DEMO_CACHE_ROOT, NON_CACHE_DIRS
-    from luxar.utils.demo_runs import DEMO_RUNS_DIR
 
     assert DEMO_RUNS_DIR.parent == DEMO_CACHE_ROOT
     # …and it is not a cache: `cache clear --orphans` must never delete the
@@ -1853,7 +1853,7 @@ class TestDemoStop:
 
     @staticmethod
     def _fake_runs():
-        from luxar.utils.demo_runs import DemoRun
+        from luxar.cli.demo_runs import DemoRun
 
         return [
             DemoRun(key="lorenz", pgid=111, pid=0, started=0.0, source="registry"),

@@ -20,12 +20,19 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
+from ...core.dimension_inference import infer_discrete_step
 from ...mesh.interop import (
     MESH_FORMATS,
     TriangleMesh,
+    compile_index_regex,
     import_mesh,
     import_mesh_directory,
 )
+
+
+def _validate_directory_index_regex(input_path: Path, index_regex: str | None) -> None:
+    if input_path.is_dir() and index_regex is not None:
+        compile_index_regex(index_regex)
 
 
 def run_import(
@@ -41,6 +48,7 @@ def run_import(
     keep_normals: bool,
     overwrite: bool,
     pattern: str = "*.vtp",
+    index_regex: str | None = None,
 ) -> TriangleMesh:
     """Read a mesh file or indexed directory into a single-node Luxar scene."""
     from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -62,6 +70,7 @@ def run_import(
             "normals and triangle winding untouched, so it would light and cull from "
             "the wrong side."
         )
+    _validate_directory_index_regex(input_path, index_regex)
 
     source = input_path.resolve()
     destination = output_path.resolve()
@@ -84,6 +93,7 @@ def run_import(
             import_mesh_directory(
                 input_path,
                 pattern=pattern,
+                index_regex=index_regex,
                 format=format,
                 weld=weld,
                 progress=lambda index, total, path: aprint(
@@ -127,7 +137,7 @@ def run_import(
                     dimension_name,
                     unit="frame" if dimension_name == "t" else "index",
                     range=(float(coordinate.min()), float(coordinate.max())),
-                    step=_discrete_coordinate_step(coordinate),
+                    step=infer_discrete_step(coordinate),
                     display=False,
                     discrete=True,
                 )
@@ -154,21 +164,6 @@ def run_import(
         _verify(output_path, name, mesh, wrote_normals=normals is not None)
         aprint(f"✓ Wrote {output_path}")
     return mesh
-
-
-def _discrete_coordinate_step(coordinate: np.ndarray) -> float:
-    """Return the largest zero-anchored integer grid containing every coordinate.
-
-    Viewer snapping in ``scene-dims-manager.ts`` and ``step-math.ts`` is anchored at
-    zero, so use the GCD of values, not differences: differences for ``[1, 3]`` would
-    yield step 2 and put both imported coordinates off-grid.
-    A singleton carries no stride evidence, and gcd({0}) would produce a step rejected
-    by ``Dimension``, so singleton dimensions retain the safe unit-step fallback.
-    """
-    unique_coordinates = np.unique(coordinate).astype(np.int64)
-    if unique_coordinates.size < 2:
-        return 1.0
-    return float(np.gcd.reduce(unique_coordinates))
 
 
 def _verify(
@@ -257,6 +252,12 @@ def import_command(
         "--pattern",
         help="File glob used when INPUT_PATH is a directory.",
     ),
+    index_regex: str | None = typer.Option(
+        None,
+        "--index-regex",
+        help="Filename regex with named 't' and optional 'c' captures, used for "
+        "directory imports instead of T<number>/Ch<number> tokens.",
+    ),
 ) -> None:
     """Convert a mesh file or indexed directory into a Luxar scene.
 
@@ -273,6 +274,7 @@ def import_command(
       luxar mesh import surface.obj surface.luxar.zarr --scale 0.001 --unit m
       luxar mesh import isosurface.vtp cell.luxar.zarr --unit um
       luxar mesh import frames frames.luxar.zarr --pattern '*.ply'
+      luxar mesh import frames frames.luxar.zarr --index-regex 'frame_(?P<t>\\d+)'
     """
     try:
         run_import(
@@ -287,6 +289,7 @@ def import_command(
             keep_normals=keep_normals,
             overwrite=overwrite,
             pattern=pattern,
+            index_regex=index_regex,
         )
     except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
         aprint(f"Error: {exc}")

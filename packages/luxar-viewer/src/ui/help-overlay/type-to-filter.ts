@@ -70,7 +70,7 @@
  * `elp` first, or by pressing any other key first.
  */
 
-import { isTypingInInput } from '../../input/input-handler/commands/focus-utils';
+import { isTypingInInput } from '../../utils/dom/focus';
 
 /**
  * Keys that must always reach the document-level handler, even while the

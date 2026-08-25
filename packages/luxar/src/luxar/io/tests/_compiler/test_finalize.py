@@ -810,16 +810,15 @@ def test_validate_discrete_ranges_tolerance_matches_viewer_quarter_step() -> Non
 
 
 def test_validate_discrete_ranges_warns_on_off_grid_data() -> None:
-    """Discrete data more than a quarter-step off the absolute k*step grid can
+    """Discrete data more than a quarter-step off the min+k*step grid can
     pass the viewer's half-step visibility gate while its (epsilon-padded)
     chunks are never fetched by the quarter-step query — it would silently not
     display. The declared range matches the data exactly here, so the
     range-edge checks stay silent; only the on-grid check must fire."""
     import warnings as _warnings
 
-    # Data at 1.3, ..., 5.3 (uniform 0.3 grid offset), range matching exactly.
-    bounds = {"min": [1.3, 0.0, 0.0, 0.0], "max": [5.3, 10.0, 10.0, 10.0]}
-    store = _store_with_discrete_time(range_=(1.3, 5.3))
+    bounds = {"min": [1.3, 0.0, 0.0, 0.0], "max": [5.6, 10.0, 10.0, 10.0]}
+    store = _store_with_discrete_time(range_=(1.3, 5.6))
     with _warnings.catch_warnings(record=True) as caught:
         _warnings.simplefilter("always")
         validate_discrete_dimension_ranges(store, bounds)
@@ -830,12 +829,27 @@ def test_validate_discrete_ranges_warns_on_off_grid_data() -> None:
     )
 
 
+def test_validate_discrete_ranges_accepts_grid_anchored_at_declared_min() -> None:
+    """Offset coordinates are on-grid when measured from the range minimum."""
+    import warnings as _warnings
+
+    bounds = {"min": [3.0, 0.0, 0.0, 0.0], "max": [13.0, 10.0, 10.0, 10.0]}
+    store = _store_with_discrete_time(range_=(3.0, 13.0))
+    scene_dims = store.attrs["scene_dimensions"]
+    scene_dims["dimensions"][0]["step"] = 5.0
+    store.attrs["scene_dimensions"] = scene_dims
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        validate_discrete_dimension_ranges(store, bounds)
+
+    assert not caught, [str(w.message) for w in caught]
+
+
 def test_validate_discrete_ranges_warns_on_off_grid_data_without_step() -> None:
     """Regression (deep-double-check): a discrete dimension WITHOUT a declared
     step is not exempt from the on-grid check — the viewer defaults a missing
-    step to 1.0 (scene-dims-manager.ts `step: dim.step || 1.0`) and snaps
-    navigation/queries to the integer grid, so step-less data at non-integer
-    values silently never displays. Pre-fix the check was gated on
+    step to 1.0 and anchors it at the declared minimum. Pre-fix the check was gated on
     `if dim.step:` and this compiled warning-free."""
     import warnings as _warnings
 
@@ -843,8 +857,7 @@ def test_validate_discrete_ranges_warns_on_off_grid_data_without_step() -> None:
 
     dims = Dimensions(
         [
-            # No step declared — viewer treats the grid as integers.
-            Dimension(name="time", range=(0.5, 4.5), display=False, discrete=True),
+            Dimension(name="time", range=(0.5, 4.8), display=False, discrete=True),
             Dimension(name="z", range=(0, 10)),
             Dimension(name="y", range=(0, 10)),
             Dimension(name="x", range=(0, 10)),
@@ -853,13 +866,13 @@ def test_validate_discrete_ranges_warns_on_off_grid_data_without_step() -> None:
     root = zarr.group()
     root.attrs["scene_dimensions"] = dims.to_dict()
 
-    bounds = {"min": [0.5, 0.0, 0.0, 0.0], "max": [4.5, 10.0, 10.0, 10.0]}
+    bounds = {"min": [0.5, 0.0, 0.0, 0.0], "max": [4.8, 10.0, 10.0, 10.0]}
     with _warnings.catch_warnings(record=True) as caught:
         _warnings.simplefilter("always")
         validate_discrete_dimension_ranges(root, bounds)
     messages = [str(w.message) for w in caught]
     assert any("off the step grid" in m for m in messages), (
-        f"Expected off-grid warning for step-less discrete data at x.5, got: {messages}"
+        f"Expected off-grid warning for step-less discrete data, got: {messages}"
     )
     assert any("no step is declared" in m for m in messages), messages
 

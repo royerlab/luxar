@@ -16,10 +16,10 @@ Pure helpers used only by `../context-manager.ts`.
   - `sortContextsByPriority(configs, excludeContext?)` — returns the
     context map's entries sorted by descending `priority` (missing
     priority treated as 0), optionally skipping the currently-active
-    context. Stable for equal priorities. Drives the passthrough
-    fallback loop: when the active context doesn't claim a key, the
-    remaining contexts are tried in priority order until one accepts
-    it.
+    context. Stable for equal priorities. Orders the active context's
+    declared fallback set: when the active context doesn't claim a key,
+    only those fallback contexts are tried in priority order until one
+    accepts it.
 
 Extracted so they can be unit-tested without setting up a full
 `InputContextManager` instance with bindings, listeners, and an event

@@ -17,7 +17,7 @@
 /**
  * `true` when keyboard focus is on a "typing surface" in the page.
  *
- * Mirrors `input/input-handler/commands/focus-utils.ts::isTypingInInput`, the
+ * Mirrors `utils/dom/focus.ts::isTypingInInput`, the
  * exact predicate `InputHandler.onKeyDown` guards on — it drops every key but
  * Escape while this is true. A modal panel that leaves focus on a text field
  * therefore makes its own toggle key one-way (issue #1922), so panel toggle

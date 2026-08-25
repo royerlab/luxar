@@ -12,12 +12,12 @@ import { log, Modules } from '../../../utils/log';
 import { captureViewerState } from '../../../config/zarr-bridge/viewer-state-capture';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
-import type { RenderingControls } from '../../../ui/rendering-controls';
+import type { RenderingControlsHandle } from '../panel-capabilities';
 import type { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
 
 export interface ViewerStateExportCtx {
   sceneManager: SceneManager;
-  renderingControls: RenderingControls | undefined;
+  renderingControls: RenderingControlsHandle | undefined;
   animationManager: DimensionAnimationManager | undefined;
 }
 

@@ -400,8 +400,9 @@ class TestSizeVariantsAreDescribed:
         )
         cached.parent.mkdir(parents=True)
         cached.write_bytes(b"")
-        found = gen._locate(
-            "movie_ds", self.ENTRY, "full", "movie_full.gsplats.zarr.zip"
+        found = next(
+            gen._locate("movie_ds", self.ENTRY, "full", "movie_full.gsplats.zarr.zip"),
+            None,
         )
         assert found == cached
 
@@ -495,7 +496,7 @@ def test_a_committed_measurement_beats_a_local_archive(
         },
     )
     # Any local read would have to go through _locate; make it impossible.
-    monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter(()))
 
     (row,) = gen._dataset_rows(
         "ds", _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])["datasets"]["ds"]
@@ -508,14 +509,9 @@ def test_a_committed_measurement_beats_a_local_archive(
 def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
     gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The hazard that would have silently undone the whole change.
-
-    The uploaded generation can only be measured where it is staged. Import those
-    figures, run ``--refresh`` on a laptop holding pre-refit copies, and a naive
-    merge replaces every refitted dataset's numbers with the stale ones — the
-    exact staleness this file exists to end, reintroduced by its own tool.
-    """
+    """Equal pinned bytes retain staged provenance across local refreshes."""
     key = "ds/a.gsplats.zarr.zip"
+    pinned_sha = "p" * 64
     staged = {
         key: {
             "n_splats": 999,
@@ -523,15 +519,13 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
             "foreground_psnr_db": 30.6,
             "topology": "single level",
             "measured_from": "staged",
-            "measured_sha256": "s" * 64,
+            "measured_sha256": pinned_sha,
         }
     }
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "load_characteristics", lambda: staged)
-    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
-    monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
-    # A local read that would look complete but carries NO foreground PSNR,
-    # which is what the pre-refit archives actually look like.
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((tmp_path / "local.zip",)))
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: pinned_sha)
     monkeypatch.setattr(
         gen,
         "_read_archive",
@@ -544,14 +538,117 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
     )
 
     counts = gen.refresh_characteristics(
-        _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+        _fake_manifest([_entry("a.gsplats.zarr.zip", pinned_sha)])
     )
 
-    assert counts == (1, 1, 0)
+    assert counts == (1, 1, 0, 0)
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert written["measured_from"] == "staged", "a local read outranked the staged one"
     assert written["foreground_psnr_db"] == 30.6
     assert written["n_splats"] == 999
+
+
+def test_refresh_uses_a_pinned_cache_copy_over_an_unpinned_repo_copy(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file_name = "a.gsplats.zarr.zip"
+    repo_archive = tmp_path / "repo" / "ds" / file_name
+    cache_archive = tmp_path / "cache" / "ds" / file_name
+    repo_archive.parent.mkdir(parents=True)
+    cache_archive.parent.mkdir(parents=True)
+    _write_frame(repo_archive, n_splats=111)
+    _write_frame(cache_archive, n_splats=999)
+    pinned_sha = gen._sha256_of(cache_archive)
+    monkeypatch.setattr(gen, "DATA_DIR", tmp_path / "repo")
+    monkeypatch.setattr(gen, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+
+    counts = gen.refresh_characteristics(
+        _fake_manifest(
+            [
+                _entry(
+                    file_name,
+                    gen._sha256_of(repo_archive),
+                    hosted_sha256=pinned_sha,
+                )
+            ]
+        )
+    )
+
+    assert counts == (1, 0, 0, 0)
+    written = gen.load_characteristics()[f"ds/{file_name}"]
+    assert written["measured_from"] == "cache"
+    assert written["measured_sha256"] == pinned_sha
+    assert written["n_splats"] == 999
+
+
+def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deliberate absence must survive refreshes from superseded bytes."""
+    key = "ds/a.gsplats.zarr.zip"
+    absent = {
+        key: {
+            "n_splats": None,
+            "psnr_db": None,
+            "foreground_psnr_db": None,
+            "topology": None,
+            "measured_from": None,
+            "measured_sha256": None,
+        }
+    }
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: absent)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((tmp_path / "local.zip",)))
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
+    monkeypatch.setattr(
+        gen,
+        "_read_archive",
+        lambda p: {"n_splats": 111, "psnr_db": 30.0, "topology": "single level"},
+    )
+    manifest = _fake_manifest(
+        [
+            _entry(
+                "a.gsplats.zarr.zip",
+                "l" * 64,
+                hosted_sha256="h" * 64,
+            )
+        ]
+    )
+
+    counts = gen.refresh_characteristics(manifest)
+
+    assert counts == (1, 0, 1, 0)
+    written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert written == absent[key]
+
+
+def test_a_current_local_measurement_replaces_a_stale_staged_one(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Digest validity wins before staged/local provenance precedence."""
+    key = "ds/a.gsplats.zarr.zip"
+    stale = {
+        key: {
+            "n_splats": 999,
+            "measured_from": "staged",
+            "measured_sha256": "s" * 64,
+        }
+    }
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: stale)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((tmp_path / "local.zip",)))
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: "p" * 64)
+    monkeypatch.setattr(gen, "_read_archive", lambda p: {"n_splats": 111})
+
+    counts = gen.refresh_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])
+    )
+
+    assert counts == (1, 0, 0, 0)
+    written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert written["measured_sha256"] == "p" * 64
+    assert written["n_splats"] == 111
 
 
 def test_refresh_preserves_entries_whose_archive_is_absent(
@@ -567,13 +664,13 @@ def test_refresh_preserves_entries_whose_archive_is_absent(
     monkeypatch.setattr(
         gen, "load_characteristics", lambda: {key: {"n_splats": 7, "psnr_db": 1.0}}
     )
-    monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter(()))
 
-    measured, retained, preserved = gen.refresh_characteristics(
+    read, retained, rejected, preserved = gen.refresh_characteristics(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
     )
 
-    assert (measured, retained, preserved) == (0, 0, 1)
+    assert (read, retained, rejected, preserved) == (0, 0, 0, 1)
     assert (
         json.loads((tmp_path / "chars.json").read_text())["archives"][key]["n_splats"]
         == 7
@@ -588,9 +685,9 @@ def test_a_prefix_matching_cache_path_is_not_labelled_staged(
     cache_archive.parent.mkdir(parents=True)
     cache_archive.write_bytes(b"archive")
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
-    monkeypatch.setattr(gen, "_locate", lambda *args: cache_archive)
+    monkeypatch.setattr(gen, "_locate", lambda *args: iter((cache_archive,)))
     monkeypatch.setattr(gen, "_read_archive", lambda path: {"n_splats": 7})
-    monkeypatch.setattr(gen, "_sha256_of", lambda path: "digest")
+    monkeypatch.setattr(gen, "_sha256_of", lambda path: "a" * 64)
 
     gen.refresh_characteristics(
         _fake_manifest([_entry(cache_archive.name, "a" * 64)]), staged_root
@@ -598,6 +695,71 @@ def test_a_prefix_matching_cache_path_is_not_labelled_staged(
 
     entry = gen.load_characteristics()[f"ds/{cache_archive.name}"]
     assert entry["measured_from"] == "cache"
+
+
+def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = "ds/a.gsplats.zarr.zip"
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: {})
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((tmp_path / "local.zip",)))
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
+    monkeypatch.setattr(gen, "_read_archive", lambda p: {"n_splats": 111})
+
+    counts = gen.refresh_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])
+    )
+
+    assert counts == (1, 0, 1, 0)
+    archives = json.loads((tmp_path / "chars.json").read_text())["archives"]
+    assert archives[key] == {
+        "n_splats": None,
+        "ndim": None,
+        "format_version": None,
+        "topology": None,
+        "psnr_db": None,
+        "foreground_psnr_db": None,
+        "foreground_fraction": None,
+        "source_shape": None,
+        "source_dtype": None,
+        "source_bytes": None,
+        "frames": None,
+        "measured_from": None,
+        "measured_sha256": None,
+    }
+    (row,) = gen._dataset_rows(
+        "ds",
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])["datasets"]["ds"],
+        archives,
+    )
+    assert row["splats"] == gen._ABSENT
+    assert row["topology"] == gen._ABSENT
+
+
+def test_refresh_summary_distinguishes_rejected_and_retained_reads(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"datasets": {}}))
+    monkeypatch.setattr(gen, "MANIFEST", manifest_path)
+    monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen, "refresh_characteristics", lambda manifest, extra_root: (4, 2, 1, 3)
+    )
+    monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
+
+    assert gen.main() == 0
+
+    summary = capsys.readouterr().out
+    assert "read 4 archive(s)" in summary
+    assert "skipped 1 read(s) taken from bytes the manifest does not pin" in summary
+    assert "kept 2 committed measurement(s) that outrank the local copy" in summary
+    assert "preserved 3 not on this machine" in summary
 
 
 def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:
@@ -716,6 +878,22 @@ def test_no_measurement_is_stale_against_its_own_digest(
         )
         == []
     )
+
+
+def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text())
+    assert gen._stale_characteristics(manifest) == []
+
+
+def test_every_committed_measurement_names_a_manifest_archive(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text())
+    manifest_keys = {
+        gen._char_key(dataset, variant, spec["name"])
+        for dataset, entry in manifest["datasets"].items()
+        if entry.get("bucket") == "zenodo"
+        for variant, spec in gen._files_of(entry)
+    }
+    assert set(gen.load_characteristics()) <= manifest_keys
 
 
 def test_a_record_quotes_the_size_a_reader_will_download(gen: Any) -> None:

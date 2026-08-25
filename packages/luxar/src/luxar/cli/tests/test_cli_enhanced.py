@@ -23,7 +23,7 @@ def runner():
 def sample_scene(tmp_path):
     """Create a sample scene for testing."""
     store_path = tmp_path / "test_scene.luxar.zarr"
-    from luxar.utils.demos import create_lorenz_attractor
+    from luxar.utils.scenes import create_lorenz_attractor
 
     create_lorenz_attractor(store_path, n_points=100, seed=42)
     return store_path

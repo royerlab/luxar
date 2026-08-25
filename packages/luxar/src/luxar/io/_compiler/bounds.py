@@ -2,13 +2,155 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import numpy as np
 import zarr
 from numpy.typing import NDArray
 
+from ...core.dimensions import Dimensions
+from ...core.transforms import read_transform_from_zarr, transform_bounding_box
 from ...typing_utils._format_contract import GEOMETRY_TYPES
+from ...validation.nd_transforms import (
+    apply_nd_transform_to_bounds,
+    compose_nd_transforms,
+)
+
+
+@dataclass(frozen=True)
+class WorldBoundsLeaf:
+    """One geometry leaf, its author-facing owner, and world-space bounds."""
+
+    path: str
+    geometry_type: str
+    bounds: dict[str, list[float]]
+    blending_mode: str | None = None
+    opacity: float = 1.0
+    owner_path: str | None = None
+
+
+@dataclass
+class _WorldBoundsCollector:
+    dimensions: Dimensions
+    displayed: list[int]
+    leaves: list[WorldBoundsLeaf]
+
+    def _apply_matrix(
+        self, bounds: dict[str, list[float]], matrix: NDArray[np.float64]
+    ) -> dict[str, list[float]]:
+        min_vals = list(bounds["min"])
+        max_vals = list(bounds["max"])
+        lo3 = [0.0, 0.0, 0.0]
+        hi3 = [0.0, 0.0, 0.0]
+        for axis, dimension in enumerate(self.displayed):
+            if dimension < len(min_vals):
+                lo3[axis] = min_vals[dimension]
+                hi3[axis] = max_vals[dimension]
+        new_lo, new_hi = transform_bounding_box(matrix, lo3, hi3)
+        for axis, dimension in enumerate(self.displayed):
+            if dimension < len(min_vals):
+                min_vals[dimension] = float(new_lo[axis])
+                max_vals[dimension] = float(new_hi[axis])
+        return {"min": min_vals, "max": max_vals}
+
+    def _append_geometry(
+        self,
+        group: zarr.Group,
+        attrs: dict,
+        nd_chain: list[dict],
+        world_matrix: NDArray[np.float64],
+        has_matrix: bool,
+        blending_mode: str | None,
+        opacity: float,
+        owner_path: str | None,
+    ) -> None:
+        node_type = attrs.get("type")
+        # Keep this keyed to the format contract: a newly authorable geometry
+        # must reach scene bounds rather than being silently skipped here.
+        if node_type not in GEOMETRY_TYPES:
+            return
+        local_bounds = attrs.get("position_bounds")
+        if not local_bounds:
+            return
+        transformed = local_bounds
+        if nd_chain:
+            transformed = apply_nd_transform_to_bounds(
+                transformed,
+                compose_nd_transforms(*nd_chain),
+                self.dimensions,
+            )
+        if has_matrix:
+            transformed = self._apply_matrix(transformed, world_matrix)
+        self.leaves.append(
+            WorldBoundsLeaf(
+                group.path,
+                node_type,
+                transformed,
+                blending_mode,
+                min(1.0, max(0.0, opacity)),
+                owner_path or group.path,
+            )
+        )
+
+    def walk(
+        self,
+        group: zarr.Group,
+        nd_chain: list[dict],
+        world_matrix: NDArray[np.float64],
+        has_matrix: bool,
+        blending_mode: str | None,
+        opacity: float,
+        owner_path: str | None,
+        is_root: bool = False,
+    ) -> None:
+        attrs = dict(group.attrs)
+        node_owner_path = owner_path
+        if node_owner_path is None and (
+            attrs.get("type") in GEOMETRY_TYPES
+            or attrs.get("kind") in {"lod", "partition"}
+        ):
+            node_owner_path = group.path
+        node_blending_mode = blending_mode
+        node_opacity = opacity
+        if not (is_root and attrs.get("type") == "scene"):
+            if "blending_mode" in attrs:
+                node_blending_mode = str(attrs["blending_mode"])
+            node_opacity *= float(attrs.get("opacity", 1.0))
+
+        chain = list(nd_chain)
+        nd_transform = attrs.get("nd_transform")
+        if nd_transform:
+            chain.append(nd_transform)
+
+        node_matrix = world_matrix
+        node_has_matrix = has_matrix
+        raw_transform = attrs.get("transform")
+        if raw_transform is not None:
+            # world = ancestors @ this (child transform applied first)
+            node_matrix = world_matrix @ read_transform_from_zarr(list(raw_transform))
+            node_has_matrix = True
+
+        self._append_geometry(
+            group,
+            attrs,
+            chain,
+            node_matrix,
+            node_has_matrix,
+            node_blending_mode,
+            node_opacity,
+            node_owner_path,
+        )
+        for child_name in sorted(group.group_keys()):
+            self.walk(
+                group[child_name],
+                chain,
+                node_matrix,
+                node_has_matrix,
+                node_blending_mode,
+                node_opacity,
+                node_owner_path,
+            )
 
 
 def compute_position_bounds(
@@ -74,16 +216,13 @@ def update_scene_bounds(
     return scene_bounds
 
 
-def expand_bounds_with_transforms(
-    store: zarr.Group,
-    scene_bounds: Optional[Dict[str, List[float]]],
-) -> Optional[Dict[str, List[float]]]:
-    """Expand scene-level position bounds into world space.
+def collect_world_bounds(store: zarr.Group) -> list[WorldBoundsLeaf]:
+    """Collect transform-expanded world-space bounds for every geometry leaf.
 
-    Walks the zarr tree, composes the world-space transform chain for
-    each leaf node, applies it to the per-node (local) position bounds,
-    and stores the union of all world-space bounds as the scene-level
-    ``position_bounds``.
+    Walks the zarr tree, composes the world-space transform chain for each leaf
+    node, and applies it to the per-node (local) position bounds. The same pass
+    carries effective compositing attrs and the author-facing owner for finalize
+    consumers that need them.
 
     Two independent transform families are composed down the hierarchy
     and applied together:
@@ -104,112 +243,64 @@ def expand_bounds_with_transforms(
     that geometry gets clipped as the camera rotates.
 
     Args:
-        store: The opened zarr store (in r+ mode)
-        scene_bounds: Current scene-level bounds, or None.
+        store: The opened zarr store.
 
     Returns:
-        The updated scene bounds (world-space union), or the input
-        ``scene_bounds`` unchanged when there is nothing to expand.
+        Geometry leaves with world-space bounds, in deterministic path order.
     """
-    # Guard: need both scene_dimensions and scene_bounds
-    if scene_bounds is None:
-        return scene_bounds
     if "scene_dimensions" not in store.attrs:
-        return scene_bounds
-
-    from ...core.dimensions import Dimensions
-    from ...core.transforms import (
-        read_transform_from_zarr,
-        transform_bounding_box,
-    )
-    from ...validation.nd_transforms import (
-        apply_nd_transform_to_bounds,
-        compose_nd_transforms,
-    )
+        return []
 
     dimensions = Dimensions.from_dict(store.attrs["scene_dimensions"])
     # The 4x4 transform's x/y/z axes map, in order, to the displayed
     # dimensions — matching how the viewer projects nD positions to the
     # mesh's x/y/z before applying the node transform.
-    displayed = dimensions.displayed[:3]
+    collector = _WorldBoundsCollector(dimensions, dimensions.displayed[:3], [])
+    collector.walk(
+        store,
+        [],
+        np.eye(4, dtype=np.float64),
+        False,
+        None,
+        1.0,
+        None,
+        is_root=True,
+    )
+    return collector.leaves
 
-    def apply_matrix_to_displayed_dims(
-        bounds: dict[str, list[float]], matrix: "np.ndarray"
-    ) -> dict[str, list[float]]:
-        """Apply a 4x4 world matrix to the displayed dims of ``bounds``."""
-        min_vals = list(bounds["min"])
-        max_vals = list(bounds["max"])
-        # Gather the displayed-dim sub-box into 3D (missing axes -> 0,
-        # mirroring the viewer's zero-padding of < 3 displayed dims).
-        lo3 = [0.0, 0.0, 0.0]
-        hi3 = [0.0, 0.0, 0.0]
-        for axis, dim in enumerate(displayed):
-            if dim < len(min_vals):
-                lo3[axis] = min_vals[dim]
-                hi3[axis] = max_vals[dim]
-        new_lo, new_hi = transform_bounding_box(matrix, lo3, hi3)
-        for axis, dim in enumerate(displayed):
-            if dim < len(min_vals):
-                min_vals[dim] = float(new_lo[axis])
-                max_vals[dim] = float(new_hi[axis])
-        return {"min": min_vals, "max": max_vals}
 
-    # Collect all world-space bounds from leaf nodes
-    all_world_bounds: list[dict[str, list[float]]] = []
+def expand_bounds_with_transforms(
+    store: zarr.Group,
+    scene_bounds: Optional[Dict[str, List[float]]],
+    leaves: list[WorldBoundsLeaf] | None = None,
+) -> Optional[Dict[str, List[float]]]:
+    """Expand scene-level position bounds into world space.
 
-    def walk(
-        group: zarr.Group,
-        nd_chain: list[dict],
-        world_matrix: "np.ndarray",
-        has_matrix: bool,
-    ) -> None:
-        """Recursively walk zarr tree, composing both transform families."""
-        attrs = dict(group.attrs)
+    Uses :func:`collect_world_bounds` as the single transform-aware leaf walk,
+    then stores the union as the scene-level ``position_bounds``. A caller that
+    has already collected the leaves may pass them to share the snapshot with
+    other finalize consumers.
 
-        chain = list(nd_chain)
-        nd_t = attrs.get("nd_transform", None)
-        if nd_t:
-            chain.append(nd_t)
+    Args:
+        store: The opened zarr store (in r+ mode)
+        scene_bounds: Current scene-level bounds, or None.
+        leaves: Optional pre-collected world-space leaves.
 
-        node_matrix = world_matrix
-        node_has_matrix = has_matrix
-        raw_transform = attrs.get("transform", None)
-        if raw_transform is not None:
-            local_matrix = read_transform_from_zarr(list(raw_transform))
-            # world = ancestors @ this  (child transform applied first).
-            node_matrix = world_matrix @ local_matrix
-            node_has_matrix = True
+    Returns:
+        The updated scene bounds (world-space union), or the input
+        ``scene_bounds`` unchanged when there is nothing to expand.
+    """
+    if scene_bounds is None:
+        return scene_bounds
 
-        node_type = attrs.get("type", None)
-        # Every element-bearing leaf contributes its bounds, so this reads the
-        # contract vocabulary rather than a literal tuple: a geometry type added
-        # to ``geometry_types`` but missed here would be skipped silently and
-        # never reach the scene's world bounds (wrong camera framing, no error).
-        if node_type in GEOMETRY_TYPES:
-            # Leaf node with geometry
-            local_bounds = attrs.get("position_bounds", None)
-            if local_bounds:
-                transformed = local_bounds
-                if chain:
-                    world_nd_t = compose_nd_transforms(*chain)
-                    transformed = apply_nd_transform_to_bounds(
-                        transformed, world_nd_t, dimensions
-                    )
-                if node_has_matrix:
-                    transformed = apply_matrix_to_displayed_dims(
-                        transformed, node_matrix
-                    )
-                all_world_bounds.append(transformed)
-
-        # Recurse into child groups
-        for child_name in sorted(group.group_keys()):
-            walk(group[child_name], chain, node_matrix, node_has_matrix)
-
-    walk(store, [], np.eye(4, dtype=np.float64), False)
+    if leaves is None:
+        leaves = collect_world_bounds(store)
 
     # If no leaf nodes found, nothing to do
-    if not all_world_bounds:
+    if not leaves:
         return scene_bounds
+
+    all_world_bounds = [leaf.bounds for leaf in leaves]
 
     # Union all world-space bounds (same logic as update_scene_bounds)
     world_scene_bounds: dict[str, list[float]] = {

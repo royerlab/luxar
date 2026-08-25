@@ -18,60 +18,29 @@
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
 import { isDocumentFullscreen } from '../../../utils/fullscreen';
-import type { RenderingControls } from '../../../ui/rendering-controls';
-import type { RecordingPanel } from '../../../ui/recording-panel';
-import type { DimensionSliders } from '../../../ui/dimension-sliders';
-import type { DebugConsole } from '../../../ui/debug-console';
-
-// Avoid a hard dependency on Stats.js — only the visible/hide surface we
-// touch is captured here.
-interface PerformanceStatsHandle {
-  readonly visible: boolean;
-  hide(): void;
-}
-
-/**
- * Minimal close-only handle for the dataset browser. Avoids importing
- * the full `DatasetBrowser` type — the coordinator only needs to call
- * `close()`, which fires the panel's `onClose` callback and clears
- * `LuxarApp.datasetBrowser` so the `O` shortcut can reopen it.
- */
-export interface CloseableHandle {
-  close(): void;
-}
-
-/** Minimal handle for transient overlays owned by a larger UI component. */
-export interface OverlayCloseHandle {
-  closeOverlay(): void;
-}
-
-/** Control-rail hooks used by routed keyboard handling. */
-export interface ControlRailHandle extends OverlayCloseHandle {
-  handleRoutedKeyDown(): void;
-}
-
-/**
- * Minimal show/hide handle for the layers panel. The coordinator only
- * needs visibility-check + hide; full LayersPanel imports stay out of
- * input/.
- */
-export interface VisiblyHideableHandle {
-  isVisible(): boolean;
-  hide(): void;
-}
+import type {
+  CloseableHandle,
+  DebugConsoleHandle,
+  DimensionSlidersHandle,
+  OverlayCloseHandle,
+  PerformanceStatsHandle,
+  RecordingPanelHandle,
+  RenderingControlsHandle,
+  VisiblyHideableHandle,
+} from '../panel-capabilities';
 
 /** Optional / always-present panel handles the coordinator manages. */
 export interface PanelRefs {
   /** Always present: the debug console — owned by InputHandler from construction. */
-  debugConsole: DebugConsole;
+  debugConsole: DebugConsoleHandle;
   /** Always present: the animation controller's performance-stats handle. */
   performanceStats: PerformanceStatsHandle;
   /** Optional: rendering controls panel. */
-  renderingControls?: RenderingControls;
+  renderingControls?: RenderingControlsHandle;
   /** Optional: dimension sliders. */
-  dimensionSliders?: DimensionSliders;
+  dimensionSliders?: DimensionSlidersHandle;
   /** Optional: recording panel. */
-  recordingPanel?: RecordingPanel;
+  recordingPanel?: RecordingPanelHandle;
   /**
    * Optional: dataset browser, exposed only as a close handle so the
    * Escape path runs the panel's `close()` method (which fires
@@ -106,15 +75,15 @@ export class PanelCoordinator {
     this.refs = refs;
   }
 
-  setRenderingControls(rc: RenderingControls | undefined): void {
+  setRenderingControls(rc: RenderingControlsHandle | undefined): void {
     this.refs.renderingControls = rc;
   }
 
-  setDimensionSliders(sliders: DimensionSliders | undefined): void {
+  setDimensionSliders(sliders: DimensionSlidersHandle | undefined): void {
     this.refs.dimensionSliders = sliders;
   }
 
-  setRecordingPanel(panel: RecordingPanel | undefined): void {
+  setRecordingPanel(panel: RecordingPanelHandle | undefined): void {
     this.refs.recordingPanel = panel;
   }
 

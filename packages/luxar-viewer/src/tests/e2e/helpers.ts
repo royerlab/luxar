@@ -1578,7 +1578,7 @@ export async function focusCanvas(page: Page): Promise<void> {
  * Thin wrapper around {@link isTypingSurfaceInPage} — the predicate lives in
  * `page-predicates.ts` (self-contained, so Playwright can serialize it into
  * the page) and is kept honest by a parity unit test against the production
- * `focus-utils.ts::isTypingInInput`.
+ * `utils/dom/focus.ts::isTypingInInput`.
  *
  * @param page - Playwright page
  */

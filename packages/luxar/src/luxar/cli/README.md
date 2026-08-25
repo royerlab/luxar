@@ -56,13 +56,36 @@ print(result.stdout)
 - `lod.py` - the unified `lod --recipe {flat,stream,levels,tiles,overview,adaptive}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `demo_commands.py` - The `luxar demo` sub-app: list/info/run/run-all/stop/deps/cache, driven entirely by the `luxar.demos` DEMO_META registry
+- `demo_runs.py` - Stdlib-only discovery and process-group teardown engine behind `luxar demo stop`; tracks live runs under `~/.cache/luxar/running/` and sweeps the process table for unregistered demos
 - `demo_render.py` - Presentation for all four `luxar demo` listings: the catalogue, one demo's detail record, the dependency report, and the cache inventory. The one place in the Python CLI that renders through `rich` and writes to plain stdout instead of `aprint` — a five-column catalogue with one row per bundled demo needs real column layout, and arbol's `├` tree prefix belongs on nested progress output, not on rows meant to be scanned and copy-pasted. The split is by what the output *is*: a standalone inventory you read renders here; anything interleaved with an action (progress, confirmations, install advice, the running-demo list `demo stop` prints before killing them) stays on arbol. Every column width is measured in terminal **cells**, not code points.
+- `../_process.py` - Shared package-root child-process lifecycle primitive; see `../README.md`
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
 - `native_app.py` - Native bundle producers (macOS `.app`, Linux portable folder) for `luxar export --native`
 - `network_simulation.py` - Network simulation middleware and profile definitions
 - `_launchers/` - Go-compiled launcher binaries (populated by `make build-launchers`; ride along in wheel builds)
 - `_launcher_assets/` - Bundle icons (`luxar-logo.png`, `AppIcon.icns`) used by `native_app.py`
+
+### `demo_runs.py`
+
+Discovery and teardown engine behind `luxar demo stop`: find every running demo,
+including one forgotten in another terminal, and free its ports.
+
+**Key Functions:**
+- `register_run()` / `unregister_run()`: Maintain one JSON pidfile per launch
+  under `~/.cache/luxar/running/`; the registry only names processes that may
+  have survived their owner
+- `discover_runs()`: Combine live registry entries with a process-table sweep
+  for stray `python -m luxar.demos.demo_*` group leaders; prune dead or hijacked
+  entries and never return the caller's own process group. Linux falls back to
+  `_process.proc_table()` when `ps` is unavailable, preserving the identity
+  check that protects a recycled process-group ID. Off POSIX, `tasklist` still
+  prunes records left by rebooted or hard-killed owners
+- `stop_run()`: Revalidate and terminate one run's process group; returns False
+  without signalling off POSIX, where a recorded PID cannot be safely checked
+  before a hard kill
+- `describe_port_holder()`: Best-effort `lsof` hint for `pick_port()`'s
+  busy-port warning when a requested demo port looks Luxar-owned
 
 ## Available Commands
 

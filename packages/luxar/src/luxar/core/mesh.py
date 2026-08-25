@@ -152,9 +152,11 @@ class Mesh(DataNode):
         Re-declared (identically to :class:`Node`) only so the setter below can be
         overridden — a property's getter and setter travel together.
         """
-        from ..typing_utils.constants import DEFAULT_BLENDING_MODE
+        from ..typing_utils.constants import DEFAULT_BLENDING_MODE_BY_GEOMETRY
 
-        return str(self.attrs.get("blending_mode", DEFAULT_BLENDING_MODE))
+        return str(
+            self.attrs.get("blending_mode", DEFAULT_BLENDING_MODE_BY_GEOMETRY["mesh"])
+        )
 
     @blending_mode.setter
     def blending_mode(self, value: Any) -> None:
