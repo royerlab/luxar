@@ -217,7 +217,6 @@ def warn_if_dim_order_reverses_winding(
     normal_dims: Optional[Sequence[int]],
     scene: "Scene",
     dim_order: Optional[List[str]],
-    double_sided: bool,
 ) -> None:
     """Warn once when ``dim_order`` reverses handedness on the winding frame.
 
@@ -226,17 +225,18 @@ def warn_if_dim_order_reverses_winding(
     perfectly deliberate. See :func:`dim_order_reverses_winding` for why this
     cannot be fixed automatically.
 
-    Silent when ``double_sided`` (the default) leaves both orientations drawn, so
-    the consequence the warning describes cannot arise — a single-sided mesh is
-    the one that vanishes.
+    Double-sided drawing does not make the mismatch harmless: stored-normal
+    shading uses ``gl_FrontFacing`` to choose the normal sign, so reversed winding
+    flips the shading gradient even when rasterization coverage is unchanged.
     """
-    if double_sided or not dim_order_reverses_winding(normal_dims, scene, dim_order):
+    if not dim_order_reverses_winding(normal_dims, scene, dim_order):
         return
     aprint(
         f"  ⚠️ Mesh '{name}': dim_order={list(dim_order or [])} reverses handedness "
         "on the winding frame. `normal_dims` names SCENE dimensions, so faces are "
         "expected counter-clockwise in the SCENE column order too. If you wound "
-        "them in your own authored column order they are now clockwise, and with "
-        "double_sided=False this surface renders inside-out (an open surface "
-        "vanishes). Pass faces[:, [0, 2, 1]], or double_sided=True."
+        "them in your own authored column order they are now clockwise. A "
+        "single-sided open surface can vanish, and stored-normal shading flips "
+        "even when double_sided=True. Pass faces[:, [0, 2, 1]], or verify that "
+        "the faces were already wound in the scene frame."
     )

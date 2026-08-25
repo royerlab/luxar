@@ -5,7 +5,8 @@ permutation reflects space: since `cross(Ra, Rb) = det(R)·R·cross(a, b)`, a
 triangle's geometric normal is negated while its stored corner order is
 untouched. Faces wound counter-clockwise in the caller's own column order come
 out clockwise in the scene's, and with `double_sided=False` the surface renders
-inside-out — an open surface vanishes.
+inside-out — an open surface vanishes. With stored normals the mismatch also
+flips the shading gradient through `gl_FrontFacing`, even when both sides draw.
 
 Whether that is a *defect* depends on which frame the caller wound in, and the
 store cannot tell. `normal_dims` names SCENE dimension indices — the layout after
@@ -13,10 +14,9 @@ store cannot tell. `normal_dims` names SCENE dimension indices — the layout af
 a caller who read the contract literally wound against the scene frame and is
 already correct. Flipping their faces to help the other caller would corrupt
 them. So the writer warns, names the consequence, and gives the remedy
-(`faces[:, [0, 2, 1]]`, or `double_sided=True`), in the same warn-only posture as
-the unwelded-vertices lint. It stays quiet when `double_sided` is true (both
-orientations draw, so nothing goes wrong) and when there are no `normals` (no
-declared frame, and the viewer already renders such a mesh double-sided).
+(`faces[:, [0, 2, 1]]`), in the same warn-only posture as the unwelded-vertices
+lint. It stays quiet when there are no `normals` (no declared frame, and the
+viewer already renders such a mesh double-sided).
 
 The gap this closes is documentation as much as behaviour: the spec mentioned
 `dim_order` only in a done-list line, and §3.4 warns at length about normals

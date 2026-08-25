@@ -929,9 +929,7 @@ def add_mesh_impl(
         # contract literally wound against the scene frame and is already correct,
         # and flipping their faces would BREAK them. Only the caller knows which
         # frame they used. See `dim_order_reverses_winding` (#2141).
-        warn_if_dim_order_reverses_winding(
-            name, normal_dims, scene, dim_order, double_sided
-        )
+        warn_if_dim_order_reverses_winding(name, normal_dims, scene, dim_order)
 
         aprint(
             f"Adding mesh node '{name}' with {n_vertices:,} vertices and "

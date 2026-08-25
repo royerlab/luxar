@@ -832,11 +832,10 @@ def test_dim_order_warns_exactly_when_handedness_reverses(
 ) -> None:
     """The lint fires on the reversing permutations and only those.
 
-    `double_sided=False` because that is the configuration with a consequence —
-    the surface renders inside-out and an open one vanishes. The even cases are
-    not padding: a lint that fired on any non-identity `dim_order` would pass
-    every reversing case and fail these, and it would cry wolf on the shipped
-    `demo_lsystem_forest`, whose `dim_order` is orientation-PRESERVING.
+    The even cases are not padding: a lint that fired on any non-identity
+    `dim_order` would pass every reversing case and fail these, and it would cry
+    wolf on the shipped `demo_lsystem_forest`, whose `dim_order` is
+    orientation-PRESERVING.
     """
     _write_tri(
         tmp_path,
@@ -850,13 +849,14 @@ def test_dim_order_warns_exactly_when_handedness_reverses(
     assert warned is expect_warning, test_id
 
 
-def test_dim_order_winding_warning_is_silent_for_a_double_sided_mesh(
+def test_dim_order_winding_warning_includes_a_double_sided_mesh(
     tmp_path, capsys
 ) -> None:
-    """No warning when both orientations draw, because nothing goes wrong.
+    """Stored-normal shading keeps winding observable when both sides draw.
 
-    `double_sided` defaults TRUE, so without this the lint would fire on the
-    common case and describe a consequence that cannot happen there.
+    ``gl_FrontFacing`` still chooses the stored normal's sign on a double-sided
+    material, so reversed winding flips the shading gradient even though coverage
+    is unchanged. ``double_sided`` defaults true, making this the common case.
     """
     _write_tri(
         tmp_path,
@@ -866,7 +866,7 @@ def test_dim_order_winding_warning_is_silent_for_a_double_sided_mesh(
         dim_order=["z", "y", "x"],
         double_sided=True,
     )
-    assert "reverses handedness" not in capsys.readouterr().out
+    assert "reverses handedness" in capsys.readouterr().out
 
 
 def test_dim_order_winding_warning_is_silent_without_a_winding_frame(

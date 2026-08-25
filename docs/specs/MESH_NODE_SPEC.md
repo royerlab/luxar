@@ -452,11 +452,11 @@ while leaving its stored corner order untouched. Whether that makes the store
 
 Nothing in the store distinguishes the two, so an automatic flip would fix the
 second caller by breaking the first. The writer therefore **warns** — the same
-warn-only posture as §3.6's unwelded-vertices lint — naming the consequence (with
-`double_sided: false` the surface renders inside-out, and an open surface
-vanishes) and the one-line remedy (`faces[:, [0, 2, 1]]`, or `double_sided=True`).
-It is silent when `double_sided` is true, because then both orientations draw and
-the consequence cannot arise; and silent with no `normals`, because
+warn-only posture as §3.6's unwelded-vertices lint — naming both consequences:
+with `double_sided: false` the surface renders inside-out and an open surface can
+vanish; with stored normals, `gl_FrontFacing` chooses the wrong sign and flips the
+shading gradient even when `double_sided` is true. The one-line winding remedy is
+`faces[:, [0, 2, 1]]`. It is silent only with no `normals`, because
 `sorted(normal_dims)` is the only declared winding frame there is (§3.2) and the
 viewer already renders such a mesh `DoubleSide` regardless.
 
