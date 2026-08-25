@@ -257,13 +257,13 @@ def test_normals_are_grouped_alongside_positions():
     groups = np.concatenate([np.zeros(len(ball), int), np.ones(len(ball), int)])
 
     kwargs = dict(radius=0.3, extinction=0.5, grid_cells=48, n_directions=6)
-    single = bake_ambient_occlusion(ball, normals=normals[: len(ball)], **kwargs)
     grouped = bake_ambient_occlusion(
         positions, normals=normals, group_by=groups, **kwargs
     )
+    full_sphere = bake_ambient_occlusion(positions, group_by=groups, **kwargs)
 
-    np.testing.assert_allclose(grouped[: len(ball)], single, atol=1e-6)
-    np.testing.assert_allclose(grouped[len(ball) :], single, atol=1e-6)
+    np.testing.assert_allclose(grouped[: len(ball)], grouped[len(ball) :], atol=1e-6)
+    assert np.max(np.abs(grouped - full_sphere)) > 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -503,18 +503,38 @@ def test_group_by_isolates_timepoints():
     groups = np.concatenate([np.zeros(len(ball), int), np.ones(len(ball), int)])
 
     kwargs = dict(radius=0.3, extinction=1.5, grid_cells=48, n_directions=6)
-    single = bake_ambient_occlusion(ball, **kwargs)
     grouped = bake_ambient_occlusion(positions, group_by=groups, **kwargs)
     merged = bake_ambient_occlusion(positions, **kwargs)
 
-    # Each group reproduces the lone ball exactly — the other timepoint is invisible.
-    np.testing.assert_allclose(grouped[: len(ball)], single, atol=1e-6)
-    np.testing.assert_allclose(grouped[len(ball) :], single, atol=1e-6)
+    # The translated copies share calibration but remain geometrically isolated.
+    np.testing.assert_allclose(grouped[: len(ball)], grouped[len(ball) :], atol=1e-6)
 
     # And the guard is load-bearing: without it the overlap region cross-occludes,
     # so the merged bake is measurably darker than the isolated one.
     overlap = ball[:, 0] > 0.35
-    assert merged[: len(ball)][overlap].mean() < single[overlap].mean() - 0.02
+    assert (
+        merged[: len(ball)][overlap].mean()
+        < grouped[: len(ball)][overlap].mean() - 0.02
+    )
+
+
+def test_group_by_shares_calibration_across_timepoints():
+    """Grouping isolates geometry without flattening real density changes."""
+    diffuse = _ball(12_000, seed=29)
+    compact = diffuse * 0.25
+    positions = np.vstack([diffuse, compact])
+    groups = np.repeat([0, 1], len(diffuse))
+
+    shade = bake_ambient_occlusion(
+        positions,
+        group_by=groups,
+        grid_cells=48,
+        n_directions=6,
+    )
+
+    diffuse_mean = float(shade[: len(diffuse)].mean())
+    compact_mean = float(shade[len(diffuse) :].mean())
+    assert compact_mean < 0.9 * diffuse_mean
 
 
 def test_spatial_dims_selects_the_occluding_axes():
@@ -728,6 +748,26 @@ def test_directional_optical_depth_rejects_a_zero_direction():
         directional_optical_depth(positions, np.ones(len(positions)), (0.0, 0.0, 0.0))
 
 
+@pytest.mark.parametrize(
+    "positions, kwargs, message",
+    [
+        (np.zeros(10), {}, r"\(N, D\)"),
+        (np.zeros((10, 3)), {"grid_cells": 0}, "grid_cells"),
+        (np.zeros((10, 3)), {"radius": -1.0}, "radius"),
+    ],
+)
+def test_directional_optical_depth_rejects_invalid_arguments(
+    positions, kwargs, message
+):
+    with pytest.raises(ValueError, match=message):
+        directional_optical_depth(
+            positions,
+            np.ones(len(positions)),
+            (0.0, 0.0, 1.0),
+            **kwargs,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Degenerate input and validation
 # ---------------------------------------------------------------------------
@@ -795,6 +835,23 @@ def test_rejects_negative_mass():
     mass[0] = -1.0
     with pytest.raises(ValueError, match="non-negative"):
         bake_ambient_occlusion(positions, mass=mass)
+
+
+@pytest.mark.parametrize("bad_value", [np.nan, np.inf, -np.inf])
+def test_rejects_non_finite_mass(bad_value):
+    positions = _ball(100, seed=30)
+    mass = np.ones(len(positions))
+    mass[0] = bad_value
+    with pytest.raises(ValueError, match="finite"):
+        bake_ambient_occlusion(positions, mass=mass)
+
+
+@pytest.mark.parametrize("bad_value", [np.nan, np.inf, -np.inf])
+def test_rejects_non_finite_spatial_positions(bad_value):
+    positions = _ball(100, seed=31)
+    positions[0, 1] = bad_value
+    with pytest.raises(ValueError, match="finite"):
+        bake_ambient_occlusion(positions)
 
 
 def test_rejects_mismatched_group_by():

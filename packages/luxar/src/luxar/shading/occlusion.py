@@ -113,11 +113,16 @@ DEFAULT_RADIUS_FRACTION = 0.05
 #: resolved.
 DEFAULT_GRID_CELLS = 64
 
-#: Opposed direction pairs. 12 is enough that the mean transmittance is smooth;
-#: the cost is linear in this, and so is the memory — ``4 * n_elements *
-#: n_directions`` bytes for the column integrals, doubled when ``normals`` are
-#: supplied and a weight matrix of the same shape is built alongside.
-DEFAULT_N_DIRECTIONS = 12
+#: Opposed direction pairs used for a full-sphere bake. The cost is linear in
+#: this count. The per-element working set is about ``8 * N * D`` bytes for the
+#: float32 columns plus their mapped copy, or ``12 * N * D`` with hemisphere
+#: weights. Add the rotated grid, whose worst-case volume is approximately
+#: ``(sqrt(3) * grid_cells) ** 3`` cells.
+DEFAULT_N_DIRECTIONS = 24
+
+#: Hemisphere weighting converges more slowly than a plain sphere average, so
+#: surface bakes use the measured 48-direction floor unless explicitly overridden.
+DEFAULT_NORMAL_N_DIRECTIONS = 48
 
 #: ``extinction="auto"`` solves for the scale that puts the *median* element at
 #: this transmittance, so the population lands in a useful range whatever the
@@ -316,7 +321,10 @@ def _spatial_positions(
             )
     if len({axis % n_dims for axis in dims}) != 3:
         raise ValueError(f"spatial_dims must name three distinct axes, got {dims}")
-    return np.ascontiguousarray(positions[:, dims], dtype=np.float64)
+    local = np.ascontiguousarray(positions[:, dims], dtype=np.float64)
+    if not np.all(np.isfinite(local)):
+        raise ValueError("spatial positions must be finite")
+    return local
 
 
 def directional_optical_depth(
@@ -352,7 +360,9 @@ def directional_optical_depth(
     Returns:
         ``(N,)`` float32 optical depth.
     """
-    local_all = _spatial_positions(positions, spatial_dims)
+    pos = np.asarray(positions)
+    _validate_common_args(pos, radius=radius, grid_cells=grid_cells)
+    local_all = _spatial_positions(pos, spatial_dims)
     mass_arr = _validated_mass(mass, len(local_all))
     if len(local_all) == 0:
         return np.empty(0, dtype=np.float32)
@@ -382,7 +392,7 @@ def bake_ambient_occlusion(
     normals: Optional[np.ndarray] = None,
     occluder: str = "density",
     radius: Optional[float] = None,
-    n_directions: int = DEFAULT_N_DIRECTIONS,
+    n_directions: Optional[int] = None,
     grid_cells: int = DEFAULT_GRID_CELLS,
     spatial_dims: Sequence[int] = (0, 1, 2),
     group_by: Optional[np.ndarray] = None,
@@ -426,7 +436,7 @@ def bake_ambient_occlusion(
             One real approximation to know about: mass is deposited at each
             element's centre, so an element's extent is a weight and not a
             footprint. That holds while the render radius is small next to the
-            occlusion grid cell (``extent / grid_cells``) — measured at 0.18,
+            occlusion grid cell (``extent / grid_cells``) — measured at 0.28,
             0.36 and 0.44 of a cell in the three bundled point demos. Raise
             ``grid_cells``, or splat pre-spread mass yourself, if your elements
             are large enough to span cells.
@@ -469,18 +479,21 @@ def bake_ambient_occlusion(
             regions readable a WALL passes about half the light, and raising ``k``
             until walls block properly over-darkens everywhere thick. Saturation
             has no such trade. Measured on the gyroid shell at a matched median,
-            ``"opaque"`` carries about a quarter more contrast than ``"density"``.
+            ``"opaque"`` carries about a fifth more contrast than ``"density"``
+            at a matched median, at the cost of clipping the darkest directions.
         radius: World-space occlusion radius — the scale of structure AO
             responds to. Defaults to :data:`DEFAULT_RADIUS_FRACTION` of the
             bounding-box diagonal, and is the first thing to tune.
-        n_directions: Sphere directions to average; rounded up to even.
+        n_directions: Sphere directions to average; rounded up to even. Defaults
+            to 24 for a full-sphere bake and 48 when ``normals`` are supplied.
         grid_cells: Cells across the longest data axis.
         spatial_dims: Which three ``positions`` columns are the occluding axes.
             Everything else — time, channel — must be excluded, and is normally
             excluded via ``group_by`` as well.
-        group_by: ``(N,)`` integer labels; each group is baked independently so
-            occlusion never crosses a non-spatial axis. Pass the timepoint index
-            for a timelapse.
+        group_by: ``(N,)`` integer labels; geometry is integrated independently
+            per group so occlusion never crosses a non-spatial axis, while cell
+            size, radius and auto extinction stay shared across the population.
+            Pass the timepoint index for a timelapse.
         extinction: Occlusion per cell of typical material traversed — an O(1)
             quantity, unlike the directional function's extinction, because the
             column here is normalized by the reference density. Useful explicit
@@ -515,109 +528,106 @@ def bake_ambient_occlusion(
     if n_elements == 0:
         return np.empty(0, dtype=np.float32)
 
-    # Keywords are spelled out at both call sites rather than forwarded through a
-    # shared dict: `**dict(...)` erases the argument types and mypy stops checking
-    # them entirely.
-    if group_by is None:
-        return _bake_group(
-            _spatial_positions(pos, spatial_dims),
-            mass_arr,
-            normals_arr,
-            occluder=occluder,
-            radius=radius,
-            n_directions=n_directions,
-            grid_cells=grid_cells,
-            extinction=extinction,
-            strength=strength,
-            floor=floor,
-        )
-
-    groups = np.asarray(group_by)
-    if groups.shape != (n_elements,):
-        raise ValueError(
-            f"group_by must have shape ({n_elements},), got {groups.shape}"
-        )
+    resolved_n_directions = (
+        DEFAULT_NORMAL_N_DIRECTIONS
+        if n_directions is None and normals_arr is not None
+        else DEFAULT_N_DIRECTIONS
+        if n_directions is None
+        else n_directions
+    )
+    directions = sphere_directions(resolved_n_directions)
     local_all = _spatial_positions(pos, spatial_dims)
-    result = np.ones(n_elements, dtype=np.float32)
-    for label in np.unique(groups):
-        where = np.flatnonzero(groups == label)
-        result[where] = _bake_group(
-            local_all[where],
-            mass_arr[where],
-            None if normals_arr is None else normals_arr[where],
-            occluder=occluder,
-            radius=radius,
-            n_directions=n_directions,
-            grid_cells=grid_cells,
-            extinction=extinction,
-            strength=strength,
-            floor=floor,
-        )
-    return result
-
-
-def _bake_group(
-    local_all: np.ndarray,
-    mass: np.ndarray,
-    normals: Optional[np.ndarray],
-    *,
-    occluder: str,
-    radius: Optional[float],
-    n_directions: int,
-    grid_cells: int,
-    extinction: Union[float, str],
-    strength: float,
-    floor: float,
-) -> np.ndarray:
-    """Bake one independent group. ``local_all`` is already ``(N, 3)`` float64."""
-    n_elements = len(local_all)
-    if n_elements == 0:
-        return np.empty(0, dtype=np.float32)
-
     cell = _cell_size(local_all, grid_cells)
     window = _window_cells(local_all, radius, cell)
-    directions = sphere_directions(n_directions)
-    n_axes = len(directions) // 2
+    columns = np.empty((n_elements, len(directions)), dtype=np.float32)
 
-    # Column integrals for every direction, kept so the extinction calibration
-    # can run before the exponential. Memory is 4 * N * n_directions bytes; that
-    # is the price of a single pass and `n_directions` is the knob.
-    columns = np.empty((n_elements, 2 * n_axes), dtype=np.float32)
+    if group_by is None:
+        columns[:] = _group_columns(
+            local_all,
+            mass_arr,
+            directions=directions,
+            cell=cell,
+            window=window,
+        )
+    else:
+        groups = np.asarray(group_by)
+        if groups.shape != (n_elements,):
+            raise ValueError(
+                f"group_by must have shape ({n_elements},), got {groups.shape}"
+            )
+        for label in np.unique(groups):
+            where = np.flatnonzero(groups == label)
+            columns[where] = _group_columns(
+                local_all[where],
+                mass_arr[where],
+                directions=directions,
+                cell=cell,
+                window=window,
+            )
+
+    weights = _direction_weights(normals_arr, directions)
+    resolved_extinction = _resolve_extinction(extinction, columns, weights, occluder)
+    return _shade_columns(
+        columns,
+        weights,
+        occluder=occluder,
+        extinction=resolved_extinction,
+        strength=strength,
+        floor=floor,
+    )
+
+
+def _group_columns(
+    local_all: np.ndarray,
+    mass: np.ndarray,
+    *,
+    directions: np.ndarray,
+    cell: float,
+    window: int,
+) -> np.ndarray:
+    """Build columns for one isolated group on a shared spatial calibration."""
+    n_elements = len(local_all)
+    n_axes = len(directions) // 2
+    columns = np.empty((n_elements, len(directions)), dtype=np.float32)
     for axis_index in range(n_axes):
         local = local_all @ _direction_frame(directions[axis_index])
         grid, idx, reference = _mass_grid(local, mass, cell)
         forward, backward = _windowed_columns(grid, idx, window)
-        # Express the column in units of "cells of typical material traversed"
-        # rather than in the caller's mass units. That keeps `extinction` an O(1)
-        # look knob instead of a per-dataset magic constant whose right value is
-        # in the thousands and moves with the element count, and it makes the
-        # result independent of both mass units and sampling density (the
-        # reference tracks both).
-        #
-        # Deliberately a SUM over the window, NOT a mean. Dividing by the window
-        # would make a THIN occluder — a single-cell-thick sheet, which is what a
-        # surface-sampled point cloud is made of — block only 1/window of the
-        # light, and block less the wider the radius. A one-cell wall must block
-        # like a wall regardless of how far the window looks past it.
         scale = 1.0 / max(reference, 1e-12)
         columns[:, axis_index] = forward * scale
         columns[:, n_axes + axis_index] = backward * scale
+    return columns
 
-    weights = _direction_weights(normals, directions)
 
+def _resolve_extinction(
+    extinction: Union[float, str],
+    columns: np.ndarray,
+    weights: Optional[np.ndarray],
+    occluder: str,
+) -> float:
     if isinstance(extinction, str):
         if extinction != "auto":
             raise ValueError(
                 f"extinction must be a float or 'auto', got {extinction!r}"
             )
-        resolved = _auto_extinction(columns, weights, occluder)
-    else:
-        if extinction < 0.0:
-            raise ValueError(f"extinction must be >= 0, got {extinction}")
-        resolved = float(extinction)
+        return _auto_extinction(columns, weights, occluder)
+    if extinction < 0.0:
+        raise ValueError(f"extinction must be >= 0, got {extinction}")
+    return float(extinction)
 
-    depth = resolved * columns.astype(np.float64)
-    transmittance = _combine(_transmittance(depth, occluder), weights)
+
+def _shade_columns(
+    columns: np.ndarray,
+    weights: Optional[np.ndarray],
+    *,
+    occluder: str,
+    extinction: float,
+    strength: float,
+    floor: float,
+) -> np.ndarray:
+    mapped = columns.copy()
+    mapped *= extinction
+    transmittance = _combine(_transmittance(mapped, occluder), weights)
     return np.clip(1.0 - strength * (1.0 - transmittance), floor, 1.0).astype(
         np.float32
     )
@@ -639,14 +649,20 @@ def _validate_look_args(
     ``occluder`` caught only where it is consumed would surface after paying for
     every direction's grid build.
     """
-    if positions.ndim != 2:
-        raise ValueError(f"positions must have shape (N, D), got {positions.shape}")
+    _validate_common_args(positions, radius=radius, grid_cells=grid_cells)
     if occluder not in ("density", "opaque"):
         raise ValueError(f"occluder must be 'density' or 'opaque', got {occluder!r}")
     if not 0.0 <= floor <= 1.0:
         raise ValueError(f"floor must be in [0, 1], got {floor}")
     if strength < 0.0:
         raise ValueError(f"strength must be >= 0, got {strength}")
+
+
+def _validate_common_args(
+    positions: np.ndarray, *, radius: Optional[float], grid_cells: int
+) -> None:
+    if positions.ndim != 2:
+        raise ValueError(f"positions must have shape (N, D), got {positions.shape}")
     if grid_cells < 4:
         raise ValueError(f"grid_cells must be >= 4, got {grid_cells}")
     if radius is not None and radius <= 0.0:
@@ -676,9 +692,14 @@ def _transmittance(depth: np.ndarray, occluder: str) -> np.ndarray:
     such trade: it reaches full occlusion at one wall and stops.
     """
     if occluder == "density":
-        return np.exp(-depth)
+        np.negative(depth, out=depth)
+        np.exp(depth, out=depth)
+        return np.asarray(depth)
     if occluder == "opaque":
-        return np.maximum(1.0 - depth, 0.0)
+        np.negative(depth, out=depth)
+        depth += 1.0
+        np.maximum(depth, 0.0, out=depth)
+        return np.asarray(depth)
     raise ValueError(f"occluder must be 'density' or 'opaque', got {occluder!r}")
 
 
@@ -696,7 +717,9 @@ def _direction_weights(
     if normals is None:
         return None
 
-    weights = np.asarray(np.clip(normals @ directions.T, 0.0, None))
+    normals32 = normals.astype(np.float32, copy=False)
+    directions32 = directions.astype(np.float32, copy=False)
+    weights = np.asarray(np.clip(normals32 @ directions32.T, 0.0, None))
     total = weights.sum(axis=1)
     degenerate = total <= 1e-12
     if np.any(degenerate):
@@ -719,15 +742,15 @@ def _auto_extinction(
     Calibrated on each element's mean column over directions — under the SAME
     weighting the final combination uses, so a hemisphere-weighted bake is not
     calibrated against a full-sphere population it never evaluates. The realized
-    median lands a little above the target, by Jensen's inequality on whichever
-    mapping is in play; less so for ``"opaque"``, which is linear until it
-    saturates. Close enough for a look parameter, and it is what makes the same
-    call work unchanged on a 50k-point sketch and a 3M-splat fit.
+    median lands above the target because the mapping is applied per direction
+    before averaging. The gap is shape-dependent and can be large on thin shells,
+    especially when ``"opaque"`` saturates. This remains a look calibration, not
+    a promise that the realized median equals the target exactly.
 
     Inverted per mode, so both land on the same declared target rather than one
     of them silently aiming somewhere else.
     """
-    median_column = float(np.median(_combine(columns.astype(np.float64), weights)))
+    median_column = float(np.median(_combine(columns, weights)))
     if median_column <= 0.0:
         # Every element sees an empty window: the data is sparser than `radius`,
         # so there is genuinely nothing to occlude with.
@@ -765,6 +788,8 @@ def _validated_mass(mass: Optional[np.ndarray], n_elements: int) -> np.ndarray:
     arr = np.asarray(mass, dtype=np.float64)
     if arr.shape != (n_elements,):
         raise ValueError(f"mass must have shape ({n_elements},), got {arr.shape}")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("mass must be finite")
     if np.any(arr < 0.0):
         raise ValueError("mass must be non-negative")
     return arr
