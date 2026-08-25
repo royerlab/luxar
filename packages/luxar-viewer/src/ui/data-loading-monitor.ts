@@ -348,7 +348,7 @@ export class DataLoadingMonitor {
 
   /**
    * Set an accumulator provider for Memory tab stats.
-   * @param type - Which accumulator, one of {@link POOLED_GEOMETRY_TYPES}
+   * @param type - Which accumulator, one of `POOLED_GEOMETRY_TYPES`
    * @param provider - The accumulator with a getStats() method
    */
   public setAccumulatorProvider(
