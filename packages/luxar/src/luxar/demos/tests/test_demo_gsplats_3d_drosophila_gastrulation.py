@@ -9,8 +9,9 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
+from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
 
 _DEMO_PATH = (
@@ -34,7 +35,8 @@ def _sublod(amplitudes: np.ndarray, *, marker: str) -> AdditiveSubLOD:
     amplitudes = np.asarray(amplitudes, dtype=np.float32)
     n_splats = amplitudes.size
     centers = np.zeros((n_splats, 3), dtype=np.float32)
-    centers[:, 1] = np.arange(n_splats, dtype=np.float32)
+    coordinate = np.arange(n_splats, dtype=np.float32)
+    centers[:] = coordinate[:, None]
     cholesky = np.zeros((n_splats, 6), dtype=np.float32)
     cholesky[:, [0, 2, 5]] = 1.0
     return AdditiveSubLOD(
@@ -113,29 +115,20 @@ def test_add_gsplat_node_preserves_partition_structure(tmp_path: Path) -> None:
             GSplatLeaf([_sublod(np.array([3.0, 4.0]), marker="right")]),
         ]
     )
+    source = tmp_path / "input.gsplats.zarr"
     output = tmp_path / "scene.luxar.zarr"
-    dimensions = Dimensions(
-        [
-            Dimension("Z", unit="µm", display=True),
-            Dimension("Y", unit="µm", display=True),
-            Dimension("X", unit="µm", display=True),
-        ]
+    write_gsplats_tree(
+        source,
+        partition,
+        ordering="none",
+        encoding_mode=EncodingMode.PRECISION,
     )
 
-    with LuxarZarrCompiler(output) as compiler:
-        scene = compiler.create_scene(dimensions=dimensions)
-        _demo.add_gsplat_node(
-            scene,
-            name="drosophila_nuclei",
-            node=partition,
-            blending_mode="volumetric",
-            opacity=0.41,
-            layer=True,
-        )
+    _demo.create_luxar_scene(source, output)
 
     stored = zarr.open_group(str(output), mode="r")["drosophila_nuclei"]
     assert stored.attrs["kind"] == "partition"
     assert stored.attrs["blending_mode"] == "volumetric"
-    assert stored.attrs["opacity"] == 0.41
+    assert stored.attrs["opacity"] == _demo.GSPLAT_OPACITY
     assert stored.attrs["layer"] is True
     assert set(stored.group_keys()) == {"part_0", "part_1"}

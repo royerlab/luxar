@@ -245,18 +245,6 @@ def normalize_amplitudes(node) -> tuple[float, float]:
     return lo, hi
 
 
-def add_gsplat_node(group, *, name: str, node, **attrs):
-    """Add a loaded gsplat tree without narrowing the file loader's shapes."""
-    if is_matrix_shaped(node):
-        return group.add_gsplats_from_data(
-            name=name, result=GSplatData.from_tree(node), **attrs
-        )
-
-    from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
-
-    return graft_gsplat_node(group, name=name, node=node, **attrs)
-
-
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
     """Build the 3D scene from the pre-fitted, physically-scaled gsplats."""
     with asection("Creating Drosophila gastrulation scene"):
@@ -333,10 +321,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
             )
 
             with asection("Adding gsplats"):
-                add_gsplat_node(
-                    scene,
-                    name="drosophila_nuclei",
-                    node=node,
+                appearance = dict(
                     # `volumetric` emission-absorption, which is what a single
                     # fluorescence channel wants. Opacity and absorption do
                     # different jobs and are not interchangeable: amplitudes set
@@ -356,6 +341,23 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     gamma=1.0,
                     layer=True,
                 )
+                if is_matrix_shaped(node):
+                    scene.add_gsplats_from_data(
+                        name="drosophila_nuclei",
+                        result=GSplatData.from_tree(node),
+                        **appearance,
+                    )
+                else:
+                    from luxar.core.group.gsplats_pipeline.from_io import (
+                        graft_gsplat_node,
+                    )
+
+                    graft_gsplat_node(
+                        scene,
+                        name="drosophila_nuclei",
+                        node=node,
+                        **appearance,
+                    )
 
             scene.add_text(
                 "Drosophila • gastrulation",
