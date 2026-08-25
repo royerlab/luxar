@@ -15,8 +15,9 @@
  * uses) has no `Range` support at all.
  *
  * So every ranged read here REQUIRES `206 Partial Content` and cross-checks the
- * `Content-Range` total against the length learned up front. Anything else
- * raises {@link RangeUnsupportedError}, which names the remedy.
+ * `Content-Range` total against the length learned up front. Range-protocol
+ * failures raise {@link RangeUnsupportedError}; missing and access-controlled
+ * archives retain status-specific errors instead of suggesting the wrong fix.
  *
  * @module data/zarr/zip-range-reader
  */
@@ -35,6 +36,21 @@ export class RangeUnsupportedError extends Error {
     );
     this.name = 'RangeUnsupportedError';
   }
+}
+
+function archiveHttpError(url: string, response: Response, context = ''): Error {
+  const status = `HTTP ${response.status} ${response.statusText}`.trimEnd();
+  if (response.status === 404 || response.status === 410) {
+    return new Error(
+      `Cannot read the zipped store at ${url}: the archive was not found (${status})`
+    );
+  }
+  if (response.status === 401 || response.status === 403) {
+    return new Error(
+      `Cannot read the zipped store at ${url}: access to the archive was denied (${status})`
+    );
+  }
+  return new RangeUnsupportedError(url, `${status}${context}`);
 }
 
 /**
@@ -56,10 +72,7 @@ export function parseContentRangeTotal(header: string | null): number | null {
 export class LuxarHttpRangeReader {
   #length: number | undefined;
 
-  constructor(
-    private readonly url: string,
-    private readonly init?: RequestInit
-  ) {}
+  constructor(private readonly url: string) {}
 
   /**
    * Total archive size.
@@ -75,7 +88,7 @@ export class LuxarHttpRangeReader {
 
     let head: Response | undefined;
     try {
-      head = await fetch(this.url, { ...this.init, method: 'HEAD' });
+      head = await fetch(this.url, { method: 'HEAD' });
     } catch {
       // Network/CORS refusal of HEAD specifically — fall through to the probe.
     }
@@ -88,11 +101,10 @@ export class LuxarHttpRangeReader {
     }
 
     const probe = await fetch(this.url, {
-      ...this.init,
-      headers: { ...(this.init?.headers ?? {}), Range: 'bytes=0-0' },
+      headers: { Range: 'bytes=0-0' },
     });
     if (!probe.ok) {
-      throw new RangeUnsupportedError(this.url, `HTTP ${probe.status} ${probe.statusText}`);
+      throw archiveHttpError(this.url, probe);
     }
     if (probe.status !== 206) {
       throw new RangeUnsupportedError(
@@ -102,7 +114,11 @@ export class LuxarHttpRangeReader {
     }
     const total = parseContentRangeTotal(probe.headers.get('content-range'));
     if (total === null) {
-      throw new RangeUnsupportedError(this.url, 'the 206 response carried no usable Content-Range');
+      throw new RangeUnsupportedError(
+        this.url,
+        'the 206 response carried no usable Content-Range; cross-origin servers must include ' +
+          '`Content-Range` in `Access-Control-Expose-Headers`'
+      );
     }
     this.#length = total;
     return total;
@@ -114,15 +130,11 @@ export class LuxarHttpRangeReader {
 
     const end = offset + size - 1;
     const response = await fetch(this.url, {
-      ...this.init,
-      headers: { ...(this.init?.headers ?? {}), Range: `bytes=${offset}-${end}` },
+      headers: { Range: `bytes=${offset}-${end}` },
     });
 
     if (!response.ok) {
-      throw new RangeUnsupportedError(
-        this.url,
-        `HTTP ${response.status} ${response.statusText} for bytes ${offset}-${end}`
-      );
+      throw archiveHttpError(this.url, response, ` for bytes ${offset}-${end}`);
     }
     if (response.status !== 206) {
       // The decisive check. 200 here means the body is the whole archive, not

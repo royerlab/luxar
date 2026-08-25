@@ -104,6 +104,15 @@ export function createFetchStore(url: string): FetchStore {
   return boundedConcurrencyStore(new zarrita.FetchStore(url));
 }
 
+/** Options shared by HTTP- and Blob-backed zip stores. */
+export function createZipStoreOptions(
+  url: string
+): NonNullable<ConstructorParameters<typeof ZipFileStore>[1]> {
+  return {
+    transformEntries: (entries) => normalizeZipEntries(entries, url),
+  };
+}
+
 /**
  * Create a store that reads a zipped Zarr archive (`.zarr.zip`) in place, over
  * HTTP range requests — one ranged GET per chunk, no unpacking.
@@ -122,9 +131,7 @@ export function createFetchStore(url: string): FetchStore {
  * proportional to chunk count before the first chunk arrives.
  */
 export function createZipStore(url: string): AsyncReadable {
-  const store = new ZipFileStore(new LuxarHttpRangeReader(url), {
-    transformEntries: (entries) => normalizeZipEntries(entries, url),
-  });
+  const store = new ZipFileStore(new LuxarHttpRangeReader(url), createZipStoreOptions(url));
   return boundedConcurrencyStore(store);
 }
 

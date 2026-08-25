@@ -85,6 +85,36 @@ describe('LuxarHttpRangeReader.getLength', () => {
       RangeUnsupportedError
     );
   });
+
+  it.each([
+    [404, /archive was not found/i],
+    [410, /archive was not found/i],
+    [401, /access to the archive was denied/i],
+    [403, /access to the archive was denied/i],
+  ])('reports HTTP %i without blaming Range support', async (status, message) => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      if (init.method === 'HEAD') return response(new Uint8Array(0), { status: 405 });
+      return response(new Uint8Array(0), { status });
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const error = await new LuxarHttpRangeReader(URL_).getLength().catch((caught) => caught);
+    expect(error).not.toBeInstanceOf(RangeUnsupportedError);
+    expect(String(error)).toMatch(message);
+    expect(String(error)).not.toMatch(/luxar serve/);
+  });
+
+  it('names Content-Range exposure when a probe cannot read the header', async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      if (init.method === 'HEAD') return response(new Uint8Array(0), { status: 405 });
+      return response(new Uint8Array([1]), { status: 206 });
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    await expect(new LuxarHttpRangeReader(URL_).getLength()).rejects.toThrow(
+      /Content-Range.*Access-Control-Expose-Headers/i
+    );
+  });
 });
 
 describe('LuxarHttpRangeReader.read', () => {
@@ -124,13 +154,16 @@ describe('LuxarHttpRangeReader.read', () => {
     await expect(reader.read(10, 3)).rejects.toThrow(/luxar serve/);
   });
 
-  it('surfaces an HTTP error with the byte window that failed', async () => {
+  it('reports a missing archive without Range advice', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => response(new Uint8Array(0), { status: 404 }))
     );
 
-    await expect(new LuxarHttpRangeReader(URL_).read(10, 3)).rejects.toThrow(/404/);
+    const error = await new LuxarHttpRangeReader(URL_).read(10, 3).catch((caught) => caught);
+    expect(error).not.toBeInstanceOf(RangeUnsupportedError);
+    expect(String(error)).toMatch(/archive was not found.*404/i);
+    expect(String(error)).not.toMatch(/luxar serve/);
   });
 
   it('detects an archive that changed size mid-read', async () => {
