@@ -396,6 +396,34 @@ def _sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _retain_preferred_measurements(
+    measured: dict[str, Any],
+    existing: dict[str, Any],
+    pinned_digests: dict[str, Optional[str]],
+) -> int:
+    """Drop unpinned reads and retain stronger measurements of pinned bytes."""
+    rank = {"staged": 2, "repo": 1, "cache": 1}
+    retained = 0
+    for key, new_entry in list(measured.items()):
+        old_entry = existing.get(key)
+        pinned_digest = pinned_digests.get(key)
+        if new_entry.get("measured_sha256") != pinned_digest:
+            if old_entry is None:
+                del measured[key]
+            else:
+                measured[key] = old_entry
+                retained += 1
+        elif (
+            old_entry is not None
+            and old_entry.get("measured_sha256") == pinned_digest
+            and rank.get(new_entry.get("measured_from"), 0)
+            < rank.get(old_entry.get("measured_from"), 0)
+        ):
+            measured[key] = old_entry
+            retained += 1
+    return retained
+
+
 def refresh_characteristics(
     manifest: dict[str, Any], extra_root: Optional[Path] = None
 ) -> tuple[int, int, int]:
@@ -436,35 +464,8 @@ def refresh_characteristics(
                 "measured_sha256": _sha256_of(path) if path else None,
             }
 
-    # An entry measured from the STAGED (uploaded) generation outranks one read
-    # from the repo or the cache, and a later local refresh must not clobber it.
-    # Without this, importing the staged measurements and then running --refresh
-    # here silently replaces every refitted dataset's figures with the pre-refit
-    # ones — the exact staleness this file exists to end, reintroduced by the
-    # tool meant to prevent it.
-    def _outranks(new_entry: dict[str, Any], old_entry: dict[str, Any]) -> bool:
-        rank = {"staged": 2, "repo": 1, "cache": 1}
-        return rank.get(new_entry.get("measured_from"), 0) >= rank.get(
-            old_entry.get("measured_from"), 0
-        )
-
     read = len(measured)
-    retained = 0
-    for key, new_entry in list(measured.items()):
-        old_entry = existing.get(key)
-        if new_entry.get("measured_sha256") != pinned_digests.get(key):
-            if old_entry is None:
-                del measured[key]
-            else:
-                measured[key] = old_entry
-                retained += 1
-        elif (
-            old_entry is not None
-            and old_entry.get("measured_sha256") == pinned_digests.get(key)
-            and not _outranks(new_entry, old_entry)
-        ):
-            measured[key] = old_entry
-            retained += 1
+    retained = _retain_preferred_measurements(measured, existing, pinned_digests)
     preserved = {k: v for k, v in existing.items() if k in seen and k not in measured}
     archives = dict(sorted({**preserved, **measured}.items()))
     CHARACTERISTICS.write_text(
