@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import runpy
+import shutil
 import sys
 from pathlib import Path
 
@@ -216,7 +217,7 @@ def test_pending_upload_flag_matches_the_file_lists():
 
 
 def test_h2afva_has_light_default_and_full_variant():
-    """The 11.4 GB timelapse ships as an opt-in; the demo default is the light cut."""
+    """The 9.3 GB timelapse ships as an opt-in; the demo default is the light cut."""
     variants = load_manifest()["datasets"]["h2afva"]["variants"]
     assert set(variants) == {"51tp", "253tp"}
     assert variants["51tp"]["default"] is True
@@ -685,7 +686,7 @@ def test_a_bad_in_repo_copy_is_a_fault_not_an_absence(fake_repo):
     Every demo that falls back to a multi-minute refit when its manifest fetch
     comes up empty catches this narrowly — eleven of them ``except
     DatasetUnavailable``, and ``nexrad_supercell`` that plus
-    :class:`~luxar.utils.demos.BundleMemberNotFound`, the bundle-side routable
+    :class:`~luxar.utils.bundles.BundleMemberNotFound`, the bundle-side routable
     absence (its per-frame member names carry ``--dbz-floor`` and friends, so a
     non-default run legitimately asks the shipped bundle for frames it cannot
     hold). This must not be one of the things any of them swallow: it would
@@ -795,6 +796,60 @@ def test_corrupt_cache_without_a_source_raises_and_still_quarantines(
 
     assert not good.exists(), "corrupt bytes left under the canonical name"
     assert find_quarantined_files(good)
+
+
+def test_unpulled_lfs_pointer_names_the_available_remedies(fake_repo):
+    """An unhydrated source checkout must name Git LFS and fallback remedies."""
+    manifest, cache = fake_repo
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.write_text(
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "unpublished draft" in message
+    assert "publish the record" in message.lower()
+    assert "--recompute" in message
+    assert "git lfs pull" in message
+
+
+def test_hosted_only_archive_does_not_recommend_git_lfs(fake_repo):
+    """An archive absent from the repository cannot be hydrated with Git LFS."""
+    manifest, cache = fake_repo
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.unlink()
+
+    with pytest.raises(DatasetUnavailable) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "hosted-only" in message
+    assert "unpublished draft" in message
+    assert "git lfs pull" not in message
+
+
+def test_installed_package_recommends_source_checkout_git_lfs(fake_repo):
+    """A wheel has no data tree, even when the source checkout has the archive."""
+    manifest, cache = fake_repo
+    shutil.rmtree(data_fetch._DEMOS_DATA_DIR)
+
+    with pytest.raises(DatasetUnavailable) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "installed package ships no demo payloads" in message
+    assert "source checkout" in message
+    assert "git lfs pull" in message
+    assert "hosted-only" not in message
 
 
 def test_inrepo_source_failing_its_own_checksum_is_never_used(fake_repo):
@@ -1272,7 +1327,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     unit that is actually downloaded -- gets verified. Members are covered by
     verifying the container, so they are not pinned individually.
     """
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles
 
     inner = {
         "frame0.gsplats.zarr.zip": b"PK-not-really",
@@ -1313,9 +1368,9 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
         loaded.append((bp, kwargs))
         return list(fn)
 
-    monkeypatch.setattr(demos_utils, "_extract_bundle_and_load", _spy)
+    monkeypatch.setattr(bundles, "_extract_bundle_and_load", _spy)
 
-    out = demos_utils.load_dataset_bundle(
+    out = bundles.load_dataset_bundle(
         "bundle_ds",
         "b.gsplats.zarr.zip",
         list(inner),
@@ -1340,7 +1395,7 @@ def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
     tmp_path, monkeypatch
 ):
     """Naming a bundle the manifest does not list must raise, not fetch something else."""
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles
 
     lfs_dir = tmp_path / "repo" / "bundle_ds"
     lfs_dir.mkdir(parents=True)
@@ -1367,7 +1422,7 @@ def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
     }
     monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "repo")
     with pytest.raises(FileNotFoundError, match="not a manifest file"):
-        demos_utils.load_dataset_bundle(
+        bundles.load_dataset_bundle(
             "bundle_ds",
             "wrong.zip",
             ["f.gsplats.zarr.zip"],
@@ -1379,7 +1434,7 @@ def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
 
 def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
     """A non-hosted dataset hands control back so the demo builds it itself."""
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles
 
     manifest = {
         "schema_version": 1,
@@ -1394,7 +1449,7 @@ def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
         },
     }
     assert (
-        demos_utils.load_dataset_bundle(
+        bundles.load_dataset_bundle(
             "lc", "b.zip", ["f.zip"], manifest=manifest, verbose=False
         )
         is None
@@ -1402,10 +1457,10 @@ def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
 
 
 def test_load_dataset_bundle_honours_recompute():
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles
 
     assert (
-        demos_utils.load_dataset_bundle(
+        bundles.load_dataset_bundle(
             "anything", "b.zip", ["f.zip"], recompute=True, verbose=False
         )
         is None

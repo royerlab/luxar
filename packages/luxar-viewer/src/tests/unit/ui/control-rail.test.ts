@@ -218,10 +218,10 @@ describe('ControlRail', () => {
     expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
   });
 
-  it('any keypress dismisses the first-run hint', () => {
+  it('a routed keypress dismisses the first-run hint', () => {
     rail = new ControlRail(items());
     expect(document.querySelector('.luxar-control-rail-hint')).not.toBeNull();
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true }));
+    rail.handleRoutedKeyDown();
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
     expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
   });
@@ -454,7 +454,7 @@ describe('ControlRail', () => {
     expect(opener.getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('returns focus to the opener when the flyout closes with a chip focused', () => {
+  it('does not own document Escape while a flyout is open', () => {
     const its: ControlRailItem[] = [
       {
         id: 'view',
@@ -478,8 +478,13 @@ describe('ControlRail', () => {
     const chip = document.querySelector<HTMLButtonElement>('[data-toggle-id="scalebar"]')!;
     chip.focus();
     expect(document.activeElement).toBe(chip);
-    // Escape closes the flyout — focus must return to the opener, not <body>.
+    // Escape is routed by InputHandler/PanelCoordinator. The rail must not
+    // close independently, or it bypasses recording/fullscreen precedence.
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.querySelector('.luxar-control-rail__flyout')).not.toBeNull();
+    expect(document.activeElement).toBe(chip);
+
+    rail.closeOverlay();
     expect(document.querySelector('.luxar-control-rail__flyout')).toBeNull();
     expect(document.activeElement).toBe(opener);
   });

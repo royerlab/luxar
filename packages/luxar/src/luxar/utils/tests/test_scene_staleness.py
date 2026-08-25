@@ -14,10 +14,10 @@ from pathlib import Path
 import pytest
 
 from luxar._zarr_compat import consolidate, open_group
-from luxar.utils.demos import (
+from luxar.utils.flags import parse_demo_flags
+from luxar.utils.provenance import (
     BUILDER_FINGERPRINT_ATTR,
     demo_source_fingerprint,
-    parse_demo_flags,
     scene_is_current,
 )
 from luxar.utils.source_fingerprints import production_source_fingerprint

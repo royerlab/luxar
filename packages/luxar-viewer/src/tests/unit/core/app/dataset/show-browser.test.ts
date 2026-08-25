@@ -74,7 +74,7 @@ beforeEach(() => {
   }));
 });
 
-import type { InputHandler } from '../../../../../input/input-handler';
+import type { InputHandler } from '../../../../../input';
 
 interface MockInputHandler {
   setDatasetBrowser: ReturnType<typeof vi.fn>;

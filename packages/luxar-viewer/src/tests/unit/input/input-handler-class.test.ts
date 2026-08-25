@@ -13,21 +13,21 @@
  *   - Constructor wiring (no-throw, manager-style storage)
  *   - Optional setters (setRenderingControls / setScaleBar / etc.)
  *   - Setter forwarding to PanelCoordinator (R/C/Esc shortcuts)
+ *   - Routed keyboard dispatch to the control rail
  *   - clearDimensionUI is a no-op when no dimension UI exists
  *   - clearDimensionUI removes the sceneDimsManager listener
  *   - init() idempotency
+ *   - control-type changes keep keyboard routing in sync
  *   - dispose() without init (no listeners to clean up)
  *   - dispose() idempotency
  *
  * What we deliberately skip (needs WebGL or extensive DOM choreography):
- *   - init() side effects (window/canvas listener registration); covered
- *     by E2E spec keyboard-input-system.spec.ts
  *   - initDimensionSliders / showDimensionSliders / setDimensionPosition
- *   - keyboard binding dispatch
+ *   - broader keyboard binding dispatch (the WebGL-dependent actions)
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { InputHandler } from '../../../input/input-handler';
+import { InputHandler } from '../../../input';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
@@ -62,6 +62,7 @@ function makeSceneManagerStub(): SceneManager {
     controls: {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
+      getFlyControls: vi.fn(() => undefined),
     },
     camera: {},
     postProcessing: {},
@@ -383,6 +384,69 @@ describe('InputHandler.init — idempotency', () => {
   });
 });
 
+describe('InputHandler — control-type routing', () => {
+  it('keeps fly routing after mode-switch and forwarded change events', () => {
+    type ControlsEvent = { type: 'change' | 'start'; controlType?: 'orbit' | 'fly' | 'ortho' };
+    type ControlsListener = (event: ControlsEvent) => void;
+
+    const sceneManager = makeSceneManagerStub();
+    const listeners = new Map<string, Set<ControlsListener>>();
+    const flyHandleKeyDown = vi.fn();
+    const flyHandleKeyUp = vi.fn();
+    let controlType: 'orbit' | 'fly' | 'ortho' = 'orbit';
+    const controls = sceneManager.controls as unknown as {
+      addEventListener(type: string, listener: ControlsListener): void;
+      removeEventListener(type: string, listener: ControlsListener): void;
+      setControlType(type: 'orbit' | 'fly' | 'ortho'): void;
+      getControlType(): 'orbit' | 'fly' | 'ortho';
+      getFlyControls(): {
+        handleKeyDown: typeof flyHandleKeyDown;
+        handleKeyUp: typeof flyHandleKeyUp;
+      } | null;
+    };
+    controls.addEventListener = (type, listener) => {
+      const eventListeners = listeners.get(type) ?? new Set<ControlsListener>();
+      eventListeners.add(listener);
+      listeners.set(type, eventListeners);
+    };
+    controls.removeEventListener = (type, listener) => {
+      listeners.get(type)?.delete(listener);
+    };
+    controls.setControlType = (type) => {
+      controlType = type;
+      for (const listener of listeners.get('change') ?? []) {
+        listener({ type: 'change', controlType: type });
+      }
+    };
+    controls.getControlType = () => controlType;
+    controls.getFlyControls = () =>
+      controlType === 'fly'
+        ? { handleKeyDown: flyHandleKeyDown, handleKeyUp: flyHandleKeyUp }
+        : null;
+
+    const handler = new InputHandler(
+      sceneManager,
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+
+    try {
+      handler.init();
+      controls.setControlType('fly');
+      for (const listener of listeners.get('change') ?? []) {
+        listener({ type: 'change' });
+      }
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' }));
+
+      expect(flyHandleKeyDown).toHaveBeenCalledTimes(1);
+    } finally {
+      handler.dispose();
+    }
+  });
+});
+
 describe('InputHandler — help overlay', () => {
   it('passes the registered shortcut snapshot to the notifier', () => {
     const showHelpOverlay = vi.fn();
@@ -409,10 +473,44 @@ describe('InputHandler — help overlay', () => {
       expect(showHelpOverlay).toHaveBeenCalledOnce();
       const bindings = showHelpOverlay.mock.calls[0]?.[0];
       expect(bindings).toBeInstanceOf(Map);
-      expect(bindings?.get('navigation')).toEqual(expect.arrayContaining(['h', 'k']));
+      expect(bindings?.get('navigation')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ key: 'h', actionId: 'help.toggle' }),
+          expect.objectContaining({ key: 'k', actionId: 'animation.toggle' }),
+        ])
+      );
     } finally {
       handler.dispose();
       clearNotifierBackend();
+    }
+  });
+
+  it('dispatches browser and element-menu window events through the command surface', () => {
+    const handler = new InputHandler(
+      makeSceneManagerStub(),
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+    const browserListener = vi.fn();
+    const elementMenuListener = vi.fn();
+    window.addEventListener('open-dataset-browser', browserListener);
+    window.addEventListener('luxar-open-element-menu', elementMenuListener);
+
+    try {
+      handler.init();
+      const commands = handler.getUiActions().commands;
+      const event = new KeyboardEvent('keydown', { cancelable: true });
+      commands.toggleDatasetBrowser();
+      commands.openElementMenu(event);
+
+      expect(browserListener).toHaveBeenCalledOnce();
+      expect(elementMenuListener).toHaveBeenCalledOnce();
+      expect(event.defaultPrevented).toBe(true);
+    } finally {
+      handler.dispose();
+      window.removeEventListener('open-dataset-browser', browserListener);
+      window.removeEventListener('luxar-open-element-menu', elementMenuListener);
     }
   });
 });
@@ -563,6 +661,53 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
     handler.setDatasetBrowser(undefined);
     expect(spy).toHaveBeenLastCalledWith(undefined);
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('setControlRail forwards to panelCoordinator and accepts undefined', () => {
+    const handler = makeHandler();
+    const coordinator = (
+      handler as unknown as {
+        panelCoordinator: { setControlRail: (rail: unknown) => void };
+      }
+    ).panelCoordinator;
+    const spy = vi.spyOn(coordinator, 'setControlRail');
+    const rail = { closeOverlay: vi.fn(), handleRoutedKeyDown: vi.fn() };
+    handler.setControlRail(rail);
+    expect(spy).toHaveBeenLastCalledWith(rail);
+    handler.setControlRail(undefined);
+    expect(spy).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it('notifies the control rail only after routed keydown handling', () => {
+    const handler = makeHandler();
+    const rail = { closeOverlay: vi.fn(), handleRoutedKeyDown: vi.fn() };
+    setNotifierBackend({
+      showError: vi.fn(),
+      showToast: vi.fn(),
+      showHelpOverlay: vi.fn(),
+      hideHelpOverlay: vi.fn(),
+      showLoadingIndicator: vi.fn(),
+      hideLoadingIndicator: vi.fn(),
+      clearError: vi.fn(),
+    });
+    handler.setControlRail(rail);
+    handler.init();
+
+    try {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' }));
+      expect(rail.handleRoutedKeyDown).toHaveBeenCalledTimes(1);
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q' }));
+      expect(rail.handleRoutedKeyDown).toHaveBeenCalledTimes(1);
+
+      rail.handleRoutedKeyDown.mockClear();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(rail.closeOverlay).toHaveBeenCalledTimes(1);
+      expect(rail.handleRoutedKeyDown).toHaveBeenCalledTimes(1);
+    } finally {
+      clearNotifierBackend();
+      handler.dispose();
+    }
   });
 
   it('setScaleBar / setColormapLegend / setOverlayManager do NOT forward', () => {

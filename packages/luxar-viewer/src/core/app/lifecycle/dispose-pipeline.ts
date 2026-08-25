@@ -15,7 +15,7 @@ import type { AnimationController } from '../../../scene/animation/animation-con
 import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
 import type { ResolutionIndicator } from '../../../ui/resolution-indicator';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { LayersPanel } from '../../../ui/layers';
@@ -135,6 +135,11 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   safeDispose('controlRail', () => {
     ports.controlRail?.dispose();
     ports.clearControlRail();
+    // Same reason as the dataset browser below: the input handler holds the
+    // rail for routed-keydown notification and Escape, and the rail's item
+    // closures capture the scene manager and every panel. Dropping the
+    // reference here keeps a disposed-but-retained app from pinning that graph.
+    ports.inputHandler?.setControlRail(undefined);
   });
   safeDispose('layersPanel', () => {
     ports.layersPanel?.dispose();

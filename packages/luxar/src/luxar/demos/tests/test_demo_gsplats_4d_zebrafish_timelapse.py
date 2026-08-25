@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import json
 import sys
 from pathlib import Path
 
@@ -26,12 +27,16 @@ import pytest
 _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_4d_zebrafish_timelapse.py"
 )
+_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
 _SHIPPED_ARCHIVE = (
     Path(__file__).resolve().parents[1]
     / "data"
     / "gsplats_zebrafish"
     / "zebrafish_4d.gsplats.zarr.zip"
 )
+# The component-filtered build, as pinned in the manifest.
+_ARCHIVE_SHA256 = "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93"
+_ARCHIVE_BYTES = 19_229_817
 
 
 def _load_demo_module(name: str = "_luxar_demo_zebrafish_for_tests"):
@@ -47,6 +52,25 @@ def _load_demo_module(name: str = "_luxar_demo_zebrafish_for_tests"):
 _demo = _load_demo_module()
 
 
+def test_the_manifest_pins_the_component_filtered_build() -> None:
+    """The pin is what a user downloads, and it can rot without anyone noticing.
+
+    The read-back below only runs where the Git LFS payload is hydrated or a
+    fetched copy is cached. This half runs everywhere: reverting the pin to the
+    deposition's pre-component-filter upload would hand the NLM build to every
+    hosted-path user and fail nothing else.
+    """
+    entry = json.loads(_MANIFEST_PATH.read_text())["datasets"][_demo.DEMO_NAME]
+    pins = {f["name"]: (f["sha256"], f["bytes"]) for f in entry["files"]}
+    assert pins.get(_demo.GSPLATS_FILE) == (_ARCHIVE_SHA256, _ARCHIVE_BYTES), (
+        f"{_demo.GSPLATS_FILE} is pinned as {pins.get(_demo.GSPLATS_FILE)}, not the "
+        f"component-filtered build ({_ARCHIVE_SHA256[:8]}…/{_ARCHIVE_BYTES:,} "
+        "bytes); the fetch verifies downloads against this pin, so a stale one "
+        "serves the old archive. A deliberate refit updates the manifest and both "
+        "constants here together, plus the demo's `download_mb`."
+    )
+
+
 def test_the_shipped_archive_is_the_component_filtered_build() -> None:
     """Catch a stale precomputed archive whose preprocessing disagrees with code."""
     assert (
@@ -58,12 +82,29 @@ def test_the_shipped_archive_is_the_component_filtered_build() -> None:
         "the shipped archive was fitted at these values, and the README, changelog "
         "and docstring tables quote them; changing one means refitting and reshipping"
     )
-    if _SHIPPED_ARCHIVE.stat().st_size < 1024:
-        pytest.skip("zebrafish Git LFS artifact is not hydrated")
+    # In-repo first, then the fetch cache: source checkouts normally use the Git
+    # LFS payload, while installed users will eventually use the hosted copy.
+    # Both arms are matched on the pinned SIZE — a wrong copy staged by hand into
+    # the hosted slot would otherwise be read back and fail as a splat-count
+    # mismatch, which reads like a bad fit rather than the wrong file. (The demo's
+    # own refits live in the sibling `local/` namespace and are never seen here.)
+    archive_path = next(
+        (
+            p
+            for p in (_SHIPPED_ARCHIVE, _demo.CACHE_DIR / _demo.GSPLATS_FILE)
+            if p.exists() and p.stat().st_size == _ARCHIVE_BYTES
+        ),
+        None,
+    )
+    if archive_path is None:
+        pytest.skip(
+            "no copy of the pinned zebrafish archive on disk — it is "
+            "neither hydrated from Git LFS nor present in the fetch cache"
+        )
 
     from luxar.gsplats.gsplat_data import GSplatData
 
-    archive = GSplatData.load(_SHIPPED_ARCHIVE, include_stats=False)
+    archive = GSplatData.load(archive_path, include_stats=False)
     finest = archive.substitutive_levels[0]
     frame_zero_splats = sum(
         int(np.count_nonzero(np.isclose(sublod.centers[:, 3], 0.0)))
@@ -492,6 +533,33 @@ class TestTheStackedArchiveSurvivesItsRoundTrip:
         one = _demo.combine_to_4d(fits[:1], [0.0])
         with pytest.raises(ValueError, match="at least 2 timepoints"):
             _demo.create_luxar_scene(one, tmp / "one.luxar.zarr")
+
+    def test_a_uniform_time_grid_may_start_off_the_zero_anchor(self, tmp_path) -> None:
+        """The declared minimum, not zero, anchors discrete time navigation."""
+        import zarr
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        centers = np.zeros((64, 4), dtype=np.float32)
+        centers[:, 0] = np.arange(64) % 4
+        centers[:, 1] = (np.arange(64) // 4) % 4
+        centers[:, 2] = (np.arange(64) // 16) % 4
+        centers[:, 3] = np.repeat([5.0, 15.0, 25.0, 35.0], 16)
+        cholesky = np.zeros((64, 10), dtype=np.float32)
+        cholesky[:, [0, 2, 5, 9]] = 1.0
+        stacked = _demo.build_lod(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(64, dtype=np.float32),
+                cholesky_factors=cholesky,
+            )
+        )
+
+        out = _demo.create_luxar_scene(stacked, tmp_path / "offset-time.luxar.zarr")
+        root = zarr.open_group(str(out), mode="r")
+        time = dict(root.attrs)["scene_dimensions"]["dimensions"][3]
+        assert time["range"] == pytest.approx([5.0, 35.0])
+        assert time["step"] == pytest.approx(10.0)
 
     def test_the_scene_declares_the_cage_box_and_a_gridded_time_axis(
         self, toy, monkeypatch

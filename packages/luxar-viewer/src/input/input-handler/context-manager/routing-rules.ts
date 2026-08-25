@@ -85,9 +85,9 @@ export interface PriorityConfig {
 
 /**
  * Sort a map's entries by descending priority, optionally excluding the
- * currently-active context. Used by passthrough handling: when the active
- * context doesn't claim a key, the remaining contexts are tried in priority
- * order until one accepts it.
+ * currently-active context. Passthrough handling applies this ordering to the
+ * active context's declared fallback set; contexts outside that route are not
+ * consulted.
  *
  * Stable for equal priorities (preserves Map insertion order). A missing
  * `priority` is treated as 0.

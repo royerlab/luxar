@@ -62,9 +62,10 @@ from arbol import aprint, asection
 # NOTE: _cache_is_stale is deliberately NOT imported. Its (size, mtime) test is
 # blind to an in-place corruption of unchanged length — precisely how a
 # checksum-failing cache entry used to survive step 1 and be handed back.
-from .demos import _DEFAULT_CACHE_ROOT, _DEMOS_DATA_DIR, is_lfs_pointer
+from .cache import _DEFAULT_CACHE_ROOT
+from .lfs import _DEMOS_DATA_DIR, is_lfs_pointer
 
-#: Packaged manifest, resolved the same way ``demos._DEMOS_DATA_DIR`` is: this
+#: Packaged manifest, resolved the same way ``lfs._DEMOS_DATA_DIR`` is: this
 #: module lives in ``luxar/utils/`` and the manifest ships in ``luxar/demos/``.
 #: Anchored to ``__file__`` rather than derived from ``_DEMOS_DATA_DIR`` so it
 #: stays reachable once R17 step 4 removes the data tree.
@@ -595,11 +596,23 @@ def _ensure_one(
             "good copy to fall back to. Re-pull the LFS object, or regenerate the "
             "manifest if the data was intentionally updated."
         )
+    if lfs_file.exists():
+        source_remedy = "In a source checkout, run `git lfs pull`."
+    elif not _DEMOS_DATA_DIR.exists():
+        source_remedy = (
+            "This installed package ships no demo payloads. If this archive has "
+            "an in-repo copy, use a source checkout and run `git lfs pull`."
+        )
+    else:
+        source_remedy = "This archive is hosted-only and has no in-repo Git LFS copy."
     raise DatasetUnavailable(
         f"{fname} is not cached (any cached copy failed its checksum and was "
-        "quarantined), not present in-repo (git lfs pull), and the demo-data "
-        "manifest builds no Zenodo URL for it yet — its record has no id, or is "
-        "still an unpublished draft."
+        "quarantined), not available from the in-repo Git LFS copy, and the "
+        "demo-data manifest builds no Zenodo URL for it yet — its record has no "
+        f"id, or is still an unpublished draft. {source_remedy} Publish the "
+        "record and populate its manifest "
+        "URL, or rerun the demo with --recompute when that demo provides a build "
+        "path."
     )
 
 
@@ -830,7 +843,7 @@ def load_dataset_gsplats(
     manifest: Optional[Manifest] = None,
     verbose: bool = True,
 ) -> Optional[list[Any]]:
-    """Manifest-driven stand-in for :func:`luxar.utils.demos.load_precomputed_gsplats`.
+    """Manifest-driven stand-in for :func:`luxar.utils.bundles.load_precomputed_gsplats`.
 
     Same contract as the helper it is meant to replace — a list of ``GSplatData``
     in the requested order, or ``None`` when the caller must build the data
@@ -869,7 +882,7 @@ def load_dataset_gsplats(
         * **Bundle datasets.** ``gsplats_celegans`` ships one outer zip holding
           many per-frame files; the manifest addresses the bundle, not its
           members. That demo stays on
-          :func:`~luxar.utils.demos.load_precomputed_bundle`. (``gsplats_zebrafish``
+          :func:`~luxar.utils.bundles.load_precomputed_bundle`. (``gsplats_zebrafish``
           was one until it moved to a single stacked 4D archive, which this
           function serves.)
         * **Runtime-computed file lists** that are not manifest entries. A

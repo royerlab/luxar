@@ -1,9 +1,9 @@
 /**
  * Camera control-mode command bodies for the V (cycle) and I (inertial)
- * shortcuts, plus the pure `nextControlType` cycle helper. Extracted
- * from input-handler.ts so the orchestrator delegates rather than
- * inlining the SceneManager + InputContextManager + RenderingControls
- * coordination.
+ * shortcuts, plus the pure `nextControlType` cycle helper re-exported
+ * from `controls/types.ts`. Extracted from input-handler.ts so the
+ * orchestrator delegates rather than inlining the SceneManager +
+ * InputContextManager + RenderingControls coordination.
  *
  * @module input/input-handler/commands/control-mode
  */
@@ -11,35 +11,16 @@
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { InputContext, type InputContextManager } from '../context-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
-import type { RenderingControls } from '../../../ui/rendering-controls';
+import type { RenderingControlsHandle } from '../panel-capabilities';
 
-// Camera control modes the V key cycles through. Re-exported from the canonical
-// domain definition (controls/types.ts) so there is a single source of truth.
-export type { ControlType } from '../../../controls/types';
-import type { ControlType } from '../../../controls/types';
-
-/**
- * Return the next control type in the cycle: orbit → fly → ortho → orbit.
- * Defensive: any unknown current mode (shouldn't happen in production)
- * resets to `orbit`.
- */
-export function nextControlType(current: ControlType | string): ControlType {
-  switch (current) {
-    case 'orbit':
-      return 'fly';
-    case 'fly':
-      return 'ortho';
-    case 'ortho':
-      return 'orbit';
-    default:
-      return 'orbit';
-  }
-}
+// Re-export the canonical control-mode domain surface for existing consumers.
+export { nextControlType, type ControlType } from '../../../controls/types';
+import { nextControlType, type ControlType } from '../../../controls/types';
 
 export interface ControlModeCtx {
   sceneManager: SceneManager;
   contextManager: InputContextManager;
-  renderingControls: RenderingControls | undefined;
+  renderingControls: RenderingControlsHandle | undefined;
 }
 
 /**
@@ -52,11 +33,11 @@ function applyControlType(ctx: ControlModeCtx, newType: ControlType): void {
   // Use sceneManager.setControlType for ortho (handles camera swap)
   ctx.sceneManager.setControlType(newType);
 
-  // Update input context based on control mode
-  if (newType === 'fly') {
-    ctx.contextManager.setContext(InputContext.FLY_CONTROLS);
-  } else {
-    ctx.contextManager.setContext(InputContext.NAVIGATION);
+  // ControlsManager change events normally synchronize this first. Keep the
+  // command correct on its own as a defensive backstop around that listener.
+  const context = newType === 'fly' ? InputContext.FLY_CONTROLS : InputContext.NAVIGATION;
+  if (ctx.contextManager.getContext() !== context) {
+    ctx.contextManager.setContext(context);
   }
 
   // Sync rendering controls if they exist, then PERSIST the new mode.

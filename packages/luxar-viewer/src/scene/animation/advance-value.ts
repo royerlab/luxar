@@ -50,7 +50,8 @@ export interface AdvanceResult {
 /**
  * Compute the next playback value for a dimension — pure, no state mutation.
  *
- * Discrete dimensions step by `±step`; continuous dimensions advance by
+ * Discrete dimensions step by `±step` on the range-min-anchored grid;
+ * continuous dimensions advance by
  * `range / traverseTime × frameTime`. Boundaries follow the loop mode:
  * `once` clamps and stops, `loop` wraps to the opposite end, `bounce`
  * clamps and flips the returned direction.

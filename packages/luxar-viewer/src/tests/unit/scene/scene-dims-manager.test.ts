@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SceneDimsManager, snapDiscreteValue } from '../../../scene/scene-dims-manager';
+import { invertNdTransformForQuery } from '../../../data/transforms/nd-transform';
 import * as THREE from 'three';
 
 describe('SceneDimsManager', () => {
@@ -112,24 +113,51 @@ describe('SceneDimsManager', () => {
       expect(dims!.currentStep[4]).toBe(0); // channel: minimum of [0, 3] (discrete)
     });
 
-    // Regression (deep-double-check): the INITIAL discrete position must be
-    // snapped onto the k·step grid like every subsequent navigation
-    // (setDimensionValue snaps; the discrete chunk query reaches only a
-    // quarter-step). A raw off-grid range.min (e.g. 1.3, step 1) left the
-    // initial view silently empty until the first manual navigation.
-    it('snaps the initial discrete position onto the step grid (first on-grid ≥ min)', () => {
+    it('anchors the initial discrete position at the range minimum', () => {
       const scene = new THREE.Scene();
       scene.userData.sceneDimensions = {
         dimensions: [
           { name: 'x', unit: '', range: [0, 100], step: 1, display: true },
           { name: 'y', unit: '', range: [0, 100], step: 1, display: true },
           { name: 'z', unit: '', range: [0, 50], step: 1, display: true },
-          // Off-grid declared min: first on-grid position at/above 1.3 is 2.
           { name: 'time', unit: '', range: [1.3, 5.3], step: 1, display: false, discrete: true },
         ],
       };
       manager.initFromScene(scene);
-      expect(manager.getDims()!.currentStep[3]).toBe(2);
+      expect(manager.getDims()!.currentStep[3]).toBe(1.3);
+    });
+
+    it('shares a position-bounds fallback range with discrete transform queries', () => {
+      const scene = new THREE.Scene();
+      scene.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'x', unit: '', display: true },
+          { name: 'y', unit: '', display: true },
+          { name: 'z', unit: '', display: true },
+          { name: 'time', unit: '', step: 5, display: false, discrete: true },
+        ],
+      };
+      scene.userData.positionBounds = {
+        min: [0, 0, 0, 1],
+        max: [10, 10, 10, 11],
+      };
+
+      expect(manager.initFromScene(scene)).toBe(true);
+      const dims = manager.getDims()!;
+      expect(dims.metadata![3].range).toEqual([1, 11]);
+      expect(dims.currentStep[3]).toBe(1);
+
+      for (const world of [1, 6, 11]) {
+        const result = invertNdTransformForQuery(
+          [0, 0, 0, world],
+          [0, 0, 0, 0],
+          { time: { scale: 1 } },
+          dims.metadata!,
+          dims.displayed
+        );
+        expect(result.noPreimage).toBe(false);
+        expect(result.slicePosition[3]).toBe(world);
+      }
     });
 
     it('keeps an already on-grid discrete minimum unchanged', () => {
@@ -236,7 +264,7 @@ describe('SceneDimsManager', () => {
       expect(dims!.currentStep[4]).toBe(2); // Rounded to nearest step
     });
 
-    // M5: the discrete quantizer is Math.round(value/step)*step. With an
+    // M5: the discrete quantizer rounds relative to range[0]. With an
     // integer step (1) and value 1.7, both round and ceil give 2, so the
     // earlier test cannot distinguish them. Use a fractional step where
     // round ≠ ceil ≠ floor to pin the rounding rule precisely.
@@ -268,24 +296,27 @@ describe('SceneDimsManager', () => {
           { name: 'x', unit: '', range: [0, 10], step: 1, display: true },
           { name: 'y', unit: '', range: [0, 10], step: 1, display: true },
           { name: 'z', unit: '', range: [0, 10], step: 1, display: true },
-          // Off-grid ends on a step-1 grid.
+          // The range minimum anchors the step-1 grid.
           { name: 't', unit: '', range: [1.4, 10.5], step: 1, display: false, discrete: true },
         ],
       };
       const m = new SceneDimsManager();
       m.initFromScene(scene);
-      // Clamped to max 10.5, then round(10.5) = 11 would overshoot the
-      // range — the snap pulls back to the last on-grid point, 10.
+      // The last anchored stop below max is 10.4.
       m.setDimensionValue(3, 99);
-      expect(m.getDims()!.currentStep[3]).toBe(10);
-      // Clamped to min 1.4, then round(1.4) = 1 would undershoot the
-      // range — the snap pulls up to the first on-grid point, 2.
+      expect(m.getDims()!.currentStep[3]).toBeCloseTo(10.4, 10);
       m.setDimensionValue(3, 1.4);
-      expect(m.getDims()!.currentStep[3]).toBe(2);
+      expect(m.getDims()!.currentStep[3]).toBe(1.4);
     });
 
-    it('snapDiscreteValue: a degenerate range with no grid point falls back to clamp', () => {
-      expect(snapDiscreteValue(10.3, 1, 10.2, 10.4)).toBeCloseTo(10.4, 10);
+    it('snapDiscreteValue: a range narrower than one step keeps its minimum', () => {
+      expect(snapDiscreteValue(10.3, 1, 10.2, 10.4)).toBeCloseTo(10.2, 10);
+    });
+
+    it('snapDiscreteValue anchors an offset discrete grid at the range minimum', () => {
+      expect(snapDiscreteValue(6.2, 5, 1, 11)).toBe(6);
+      expect(snapDiscreteValue(10.8, 5, 1, 11)).toBe(11);
+      expect(snapDiscreteValue(-4.2, 5, -9, 1)).toBe(-4);
     });
 
     it('snapDiscreteValue: an ON-GRID end of a fractional-step range stays reachable', () => {
@@ -299,8 +330,8 @@ describe('SceneDimsManager', () => {
     });
 
     it('snapDiscreteValue reproduces the initial position for a fractional step', () => {
-      // resetPositions()/initFromScene park a discrete dim on the first
-      // on-grid point at or above min; navigating back to that exact value
+      // resetPositions()/initFromScene park a discrete dim on min itself;
+      // navigating back to that exact value
       // must land on it byte-identically (S-cache keys compare exact floats),
       // not a whole cell away.
       const scene = new THREE.Scene();

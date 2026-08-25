@@ -51,6 +51,8 @@ from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_VERSION
 from ..utils.arbol_warnings import arbol_warnings
 from ._compiler.bounds import (
+    WorldBoundsLeaf,
+    collect_world_bounds,
     compute_position_bounds,
     expand_bounds_with_transforms,
     update_scene_bounds,
@@ -63,6 +65,7 @@ from ._compiler.context import (
     OrderingCtx,
 )
 from ._compiler.finalize.amplitude_window import harmonize_gsplat_amplitude_windows
+from ._compiler.finalize.blending_warnings import warn_overlapping_blending
 from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,
@@ -1612,8 +1615,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """
         warn_one_part_partition_anchors(store)
 
-    def _expand_bounds_with_transforms(self, store: zarr.Group) -> None:
-        self._scene_bounds = expand_bounds_with_transforms(store, self._scene_bounds)
+    def _warn_overlapping_blending(
+        self, store: zarr.Group, world_leaves: list[WorldBoundsLeaf]
+    ) -> None:
+        warn_overlapping_blending(store, world_leaves)
+
+    def _expand_bounds_with_transforms(
+        self, store: zarr.Group, world_leaves: list[WorldBoundsLeaf]
+    ) -> None:
+        self._scene_bounds = expand_bounds_with_transforms(
+            store, self._scene_bounds, world_leaves
+        )
 
     # ------------------------------------------------------------------
     # Per-attribute dataset serializers — bodies live in _compiler/datasets/
@@ -1726,7 +1738,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
             # Expand bounds into world space: 4x4 spatial transforms on the
             # displayed dims + nd_transforms on the non-displayed dims.
-            self._expand_bounds_with_transforms(store)
+            world_leaves = collect_world_bounds(store)
+            self._expand_bounds_with_transforms(store, world_leaves)
             if self._scene_bounds is not None:
                 aprint(
                     f"🌍 Scene bounds (world): min={self._scene_bounds['min']}, "
@@ -1766,6 +1779,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # part 0's anchor before part 1 exists, so this is the first point
             # where the final sibling count is visible.
             self._warn_one_part_partition_anchors(store)
+
+            # Report blend-state combinations whose overlapping world boxes
+            # cannot be rendered unambiguously. Read-only: author intent and
+            # viewer defaults remain unchanged.
+            self._warn_overlapping_blending(store, world_leaves)
 
             # Now consolidate metadata with all data present
             consolidate(store)

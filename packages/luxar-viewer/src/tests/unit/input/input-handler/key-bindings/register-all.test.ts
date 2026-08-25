@@ -25,23 +25,23 @@ import {
 import {
   InputContext,
   InputContextManager,
-  type ContextConfig,
 } from '../../../../../input/input-handler/context-manager';
-import {
-  canonicalizeBindingKey,
-  isKeyAllowedInContext,
-} from '../../../../../input/input-handler/context-manager/routing-rules';
 import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { DebugConsole } from '../../../../../ui/debug-console';
+import type { ShortcutHelpMetadata } from '../../../../../types/shortcut-help';
+import { KeyAction } from '../../../../../input/input-handler/key-bindings/actions';
 
 interface CapturedBinding {
   context: InputContext;
+  actionId: string;
+  actionParameter?: string | number;
   key: string;
   modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean };
   handler: (event: KeyboardEvent) => void;
   keyupHandler?: (event: KeyboardEvent) => void;
   preventDefault?: boolean;
-  description?: string;
+  description: string;
+  help: ShortcutHelpMetadata | false;
 }
 
 function makeContextManager(): {
@@ -64,6 +64,8 @@ function makeCommands(): KeyBindingsCommands {
     selectDimension: vi.fn(),
     toggleHelp: vi.fn(),
     toggleDimensionSliders: vi.fn(),
+    toggleDatasetBrowser: vi.fn(),
+    openElementMenu: vi.fn((event: KeyboardEvent) => event.preventDefault()),
     togglePerformanceStats: vi.fn(),
     toggleRenderingControls: vi.fn(),
     toggleControlMode: vi.fn(),
@@ -199,16 +201,6 @@ function setupRealContextManager() {
   return { contextManager, commands, flyHandleKeyDown, flyHandleKeyUp };
 }
 
-function bindingKey(binding: CapturedBinding): string {
-  const modifiers = binding.modifiers ?? {};
-  const parts = [binding.key];
-  if (modifiers.ctrl) parts.push('ctrl');
-  if (modifiers.shift) parts.push('shift');
-  if (modifiers.alt) parts.push('alt');
-  if (modifiers.meta) parts.push('meta');
-  return canonicalizeBindingKey(parts.join('+'));
-}
-
 function findBinding(
   bindings: CapturedBinding[],
   context: InputContext,
@@ -249,21 +241,57 @@ function findBinding(
 // (covered in controls-manager.test.ts and the orbit pointer tests).
 
 describe('registerAllKeyBindings — structure', () => {
-  it('registers only bindings admitted by their stock context filters', () => {
+  it('registers unique action identities and explicit help visibility', () => {
     const { bindings } = setup();
-    const contextManager = new InputContextManager();
-    const configs = (
-      contextManager as unknown as {
-        contextConfigs: Map<InputContext, ContextConfig>;
-      }
-    ).contextConfigs;
+    const actionKeys = bindings.map(
+      (binding) =>
+        `${binding.context}:${binding.actionId}:${binding.actionParameter ?? '<default>'}`
+    );
 
+    expect(new Set(actionKeys).size).toBe(actionKeys.length);
+    expect(bindings.every((binding) => binding.description.length > 0)).toBe(true);
+    expect(
+      bindings.every((binding) => binding.help === false || binding.help.group.length > 0)
+    ).toBe(true);
+  });
+
+  it('keeps grouped help metadata and descriptions consistent', () => {
+    const { bindings } = setup();
+    const groups = new Map<string, { description: string; help: ShortcutHelpMetadata }>();
     for (const binding of bindings) {
-      const config = configs.get(binding.context)!;
-      expect(
-        isKeyAllowedInContext(binding.key, config, bindingKey(binding)),
-        `${binding.context}:${bindingKey(binding)}`
-      ).toBe(true);
+      if (!binding.help) continue;
+      const prior = groups.get(binding.help.group);
+      if (prior) {
+        expect({ description: binding.description, help: binding.help }).toEqual(prior);
+      } else {
+        groups.set(binding.help.group, { description: binding.description, help: binding.help });
+      }
+    }
+  });
+
+  it('registers every action used for a control-rail shortcut', () => {
+    const { contextManager } = setupRealContextManager();
+    const railActions = [
+      KeyAction.toggleHelp,
+      KeyAction.recenterCamera,
+      KeyAction.toggleControlMode,
+      KeyAction.toggleDimensions,
+      KeyAction.toggleRendering,
+      KeyAction.toggleLayers,
+      KeyAction.cycleDataMonitor,
+      KeyAction.toggleDatasetBrowser,
+      KeyAction.toggleRecording,
+      KeyAction.toggleDebugConsole,
+      KeyAction.toggleScaleBar,
+      KeyAction.toggleColormapLegend,
+      KeyAction.toggleOverlays,
+      KeyAction.toggleCinematicMode,
+      KeyAction.toggleFullscreen,
+      KeyAction.togglePerformance,
+    ];
+
+    for (const actionId of railActions) {
+      expect(contextManager.getShortcutLabel(actionId), actionId).toBeDefined();
     }
   });
 
@@ -334,27 +362,19 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
     expect(commands.toggleDimensionSliders).toHaveBeenCalled();
   });
 
-  it('o dispatches a CustomEvent("open-dataset-browser") on window', () => {
-    const { bindings } = setup();
-    const listener = vi.fn();
-    window.addEventListener('open-dataset-browser', listener);
-    try {
-      findBinding(bindings, InputContext.NAVIGATION, 'o').handler(new KeyboardEvent('keydown'));
-      expect(listener).toHaveBeenCalledTimes(1);
-    } finally {
-      window.removeEventListener('open-dataset-browser', listener);
-    }
+  it('o dispatches the dataset-browser command', () => {
+    const { bindings, commands } = setup();
+    findBinding(bindings, InputContext.NAVIGATION, 'o').handler(new KeyboardEvent('keydown'));
+    expect(commands.toggleDatasetBrowser).toHaveBeenCalledOnce();
   });
 
   it('element-menu shortcuts dispatch only while focus is on the scene or body', () => {
-    const { bindings, canvas } = setup();
-    const listener = vi.fn();
+    const { bindings, canvas, commands } = setup();
     const button = document.createElement('button');
     const contextMenu = findBinding(bindings, InputContext.NAVIGATION, 'ContextMenu');
     const shiftF10 = findBinding(bindings, InputContext.NAVIGATION, 'F10', { shift: true });
     document.body.appendChild(canvas);
     document.body.appendChild(button);
-    window.addEventListener('luxar-open-element-menu', listener);
     try {
       expect(contextMenu.preventDefault).not.toBe(true);
       expect(shiftF10.preventDefault).not.toBe(true);
@@ -362,23 +382,22 @@ describe('registerAllKeyBindings — NAVIGATION command dispatch', () => {
       document.body.focus();
       const bodyEvent = new KeyboardEvent('keydown', { cancelable: true });
       contextMenu.handler(bodyEvent);
-      expect(listener).toHaveBeenCalledTimes(1);
+      expect(commands.openElementMenu).toHaveBeenCalledWith(bodyEvent);
       expect(bodyEvent.defaultPrevented).toBe(true);
 
       canvas.tabIndex = 0;
       canvas.focus();
       const canvasEvent = new KeyboardEvent('keydown', { shiftKey: true, cancelable: true });
       shiftF10.handler(canvasEvent);
-      expect(listener).toHaveBeenCalledTimes(2);
+      expect(commands.openElementMenu).toHaveBeenCalledWith(canvasEvent);
       expect(canvasEvent.defaultPrevented).toBe(true);
 
       button.focus();
       const buttonEvent = new KeyboardEvent('keydown', { cancelable: true });
       contextMenu.handler(buttonEvent);
-      expect(listener).toHaveBeenCalledTimes(2);
+      expect(commands.openElementMenu).toHaveBeenCalledTimes(2);
       expect(buttonEvent.defaultPrevented).toBe(false);
     } finally {
-      window.removeEventListener('luxar-open-element-menu', listener);
       canvas.remove();
       button.remove();
     }
@@ -472,9 +491,12 @@ describe('registerAllKeyBindings — FLY_CONTROLS dispatch', () => {
     const { contextManager, flyHandleKeyDown } = setupRealContextManager();
     const navigationHandler = vi.fn();
     contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: 'test.navigation.arrow-up',
       key: 'ArrowUp',
       modifiers: { shift: true },
       handler: navigationHandler,
+      description: 'Test navigation arrow',
+      help: false,
     });
     contextManager.setContext(InputContext.FLY_CONTROLS);
 

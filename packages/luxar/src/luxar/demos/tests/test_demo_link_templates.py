@@ -2,9 +2,9 @@
 
 HTTP success is not enough for these links: search endpoints often return 200
 for nonsense, while GeneCards returns the same Cloudflare 403 for valid and
-invalid symbols. This offline guard records the canonical templates established
-by hand review of each destination's current URL scheme and rejects any
-unreviewed path or host.
+invalid symbols. This offline guard consumes the canonical templates recorded in
+``link_registry.py`` — established by hand review of each destination's current
+URL scheme — and rejects any unreviewed path or host.
 
 The guard runs two passes: registry resolution for supported link forms, then a
 backstop over unclaimed link-like literals that subsumes the GeneCards lint.
@@ -22,62 +22,8 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from ..link_registry import CANONICAL_LINKS, LINK_PLACEHOLDERS
 from ._scanned_modules import scanned_demo_modules
-
-CANONICAL_LINKS_BY_HOST = {
-    "bgp.he.net": frozenset({"https://bgp.he.net/AS{hover_key}"}),
-    "codex.flywire.ai": frozenset(
-        {"https://codex.flywire.ai/app/cell_details?root_id={hover_key}"}
-    ),
-    "doi.org": frozenset({"https://doi.org/{hover_key}"}),
-    "earthquake.usgs.gov": frozenset(
-        {"https://earthquake.usgs.gov/earthquakes/eventpage/{hover_key}"}
-    ),
-    # Both placeholders intentionally drive the same Wikipedia search endpoint.
-    "en.wikipedia.org": frozenset(
-        {
-            "https://en.wikipedia.org/wiki/Special:Search?search={hover_label}",
-            "https://en.wikipedia.org/wiki/Special:Search?search={hover_key}",
-        }
-    ),
-    # Keep this literal aligned with demo_dipc_3d_genome.GENOME_ASSEMBLY.
-    "genome.ucsc.edu": frozenset(
-        {"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg19&position={hover_key}"}
-    ),
-    # These named-star links are deliberately placeholder-free.
-    "simbad.cds.unistra.fr": frozenset(
-        {
-            "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Betelgeuse",
-            "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Rigel",
-            "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident=Sun",
-        }
-    ),
-    "ssd.jpl.nasa.gov": frozenset(
-        {"https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html#/?sstr={hover_key}"}
-    ),
-    # OLS supports either the key or the display label as its search query.
-    "www.ebi.ac.uk": frozenset(
-        {
-            "https://www.ebi.ac.uk/ols4/search?q={hover_key}",
-            "https://www.ebi.ac.uk/ols4/search?q={hover_label}",
-        }
-    ),
-    "www.genecards.org": frozenset({"https://www.genecards.org/card/{hover_key}"}),
-    "www.proteinatlas.org": frozenset(
-        {"https://www.proteinatlas.org/search/{hover_key}"}
-    ),
-    "www.uniprot.org": frozenset(
-        {"https://www.uniprot.org/uniprotkb/{hover_key}/entry"}
-    ),
-    "www.youtube.com": frozenset(
-        {"https://www.youtube.com/results?search_query={hover_key}"}
-    ),
-}
-CANONICAL_LINKS = frozenset(
-    template for templates in CANONICAL_LINKS_BY_HOST.values() for template in templates
-)
-# Keep in sync with hover-template.ts's PLACEHOLDER_PATTERN; hover_image_label is HTML-only.
-LINK_PLACEHOLDERS = ("hover_key", "hover_label", "hover_node", "hover_index")
 
 
 def _static_strings(tree: ast.Module) -> dict[str, str]:

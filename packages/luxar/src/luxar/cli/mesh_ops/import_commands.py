@@ -20,6 +20,7 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
+from ...core.dimension_inference import infer_discrete_step
 from ...mesh.interop import (
     MESH_FORMATS,
     TriangleMesh,
@@ -136,7 +137,7 @@ def run_import(
                     dimension_name,
                     unit="frame" if dimension_name == "t" else "index",
                     range=(float(coordinate.min()), float(coordinate.max())),
-                    step=_discrete_coordinate_step(coordinate),
+                    step=infer_discrete_step(coordinate),
                     display=False,
                     discrete=True,
                 )
@@ -163,21 +164,6 @@ def run_import(
         _verify(output_path, name, mesh, wrote_normals=normals is not None)
         aprint(f"✓ Wrote {output_path}")
     return mesh
-
-
-def _discrete_coordinate_step(coordinate: np.ndarray) -> float:
-    """Return the largest zero-anchored integer grid containing every coordinate.
-
-    Viewer snapping in ``scene-dims-manager.ts`` and ``step-math.ts`` is anchored at
-    zero, so use the GCD of values, not differences: differences for ``[1, 3]`` would
-    yield step 2 and put both imported coordinates off-grid.
-    A singleton carries no stride evidence, and gcd({0}) would produce a step rejected
-    by ``Dimension``, so singleton dimensions retain the safe unit-step fallback.
-    """
-    unique_coordinates = np.unique(coordinate).astype(np.int64)
-    if unique_coordinates.size < 2:
-        return 1.0
-    return float(np.gcd.reduce(unique_coordinates))
 
 
 def _verify(

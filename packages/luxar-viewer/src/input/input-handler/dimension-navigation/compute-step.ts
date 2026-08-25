@@ -23,8 +23,8 @@
  */
 
 import type { SimpleDims } from '../../../types/dims';
-import { getNonDisplayedDimensions, mapKeyToDimension } from './selection';
-import { calculateStepSize, calculateNextPosition } from './step-math';
+import { getNonDisplayedDimensions, mapKeyToDimension } from '../../../scene/dims/selection';
+import { calculateStepSize, calculateNextPosition } from '../../../scene/dims/step-math';
 
 /** Result of `computeDimensionStep` — the next position for the targeted dim. */
 export interface DimensionStepResult {

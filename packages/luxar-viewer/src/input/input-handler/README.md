@@ -2,12 +2,12 @@
 
 Private implementation of the `InputHandler` orchestrator. Nothing in this
 folder is part of the package's public API — external callers import
-`InputHandler` from `../input-handler.ts`, which is the one file in the
-parent folder. Everything here is reachable only through that façade.
+`InputHandler` from `../index.ts`, the package façade. Everything here is
+reachable only through that façade.
 
 The orchestrator does not own logic — it owns wiring. The actual work is
-split into five thematic subfolders plus one top-level file: a
-context-aware key routing core (`context-manager.ts`). When
+split into five thematic subfolders plus two top-level files: the
+context-aware key routing core and the UI capability contracts. When
 `InputHandler.init()` runs, it pulls dependencies from each subfolder and
 hands them a narrow `*Ctx` object — never `this` — so the subfolders stay
 unit-testable in isolation.
@@ -16,16 +16,22 @@ unit-testable in isolation.
 
 ```
 input-handler/
-└── context-manager.ts          # InputContextManager + InputContext + KeyBinding (the routing core)
+├── context-manager.ts          # InputContextManager + InputContext + KeyBinding (the routing core)
+└── panel-capabilities.ts       # Narrow UI contracts consumed by input
 ```
 
 - `context-manager.ts` — `InputContextManager` class plus the
   `InputContext` enum (`NAVIGATION` / `FLY_CONTROLS` / `TYPING` /
-  `UI_INTERACTION` / `DIMENSION_NAV`), the `KeyBinding` /
+  `UI_INTERACTION`), the `KeyBinding` /
   `ContextConfig` interfaces, and the `MAX_KEY_EVENT_DEPTH = 10`
   recursion cap. This is the routing table the orchestrator pushes
-  contexts onto and the per-context bindings are registered into.
+  contexts onto and the per-context bindings are registered into. Bindings
+  require a stable action id, description, and explicit help metadata or
+  opt-out. Contexts can derive an allowlist from their registered chords and
+  name explicit fallback contexts for shared shortcuts.
   Pure-function helpers live one level down in `context-manager/`.
+- `panel-capabilities.ts` — structural contracts for UI panels and injected
+  factories, keeping concrete `ui/` classes out of the input layer.
 
 ## Subpackages
 
@@ -34,7 +40,7 @@ input-handler/
 ├── context-manager/        # Pure routing-rules helpers for context-manager.ts
 ├── key-bindings/           # The per-context key→command table
 ├── window-events/          # Window/document-level listeners (resize, wheel, fullscreen)
-├── dimension-navigation/   # nD navigation math + slider lifecycle
+├── dimension-navigation/   # nD input coordination + slider lifecycle
 └── commands/               # Command bodies the orchestrator delegates to
 ```
 
@@ -52,16 +58,16 @@ input-handler/
   - `fullscreenchange`) and the `toggleFullscreen` body.
 - **`dimension-navigation/`** — `computeDimensionStep` /
   `resolveSelectedDimension` for the `[`/`]` and digit bindings, plus
-  the `calculateStepSize` / `calculateNextPosition` math, dim-index
-  helpers (`getNonDisplayedDimensions`, `mapKeyToDimension`), and the
-  four lifecycle bodies (`initDimensionSliders`, `initAnimationManager`,
-  `clearDimensionUI`, `updateAllNDNodes`).
+  the three lifecycle bodies (`initDimensionSliders`, `initAnimationManager`,
+  `clearDimensionUI`). Current-slice loading lives in
+  `scene/dimension-loading.ts`. Pure step and selection helpers
+  live under `scene/dims/`.
 - **`commands/`** — command bodies the orchestrator delegates to:
   `PanelCoordinator` (Escape priority flow + recording short-circuit +
   fullscreen-defer rule), `exportViewerState` (Ctrl+Shift+S clipboard
   export), `toggleControlMode` / `toggleInertialMode` / `nextControlType`
-  (V and I keys), `isTypingInInput` / `isFocusOnSceneCanvas` focus
-  helpers, and `cycleDataMonitor`.
+  (V and I keys; the cycle helper is re-exported from `controls/types.ts`),
+  and `cycleDataMonitor`. Shared focus predicates live under `utils/dom/`.
 
 ## Lifecycle through the subfolders
 
@@ -78,10 +84,19 @@ input-handler/
 4. Construct `PanelCoordinator` (`commands/`) so Escape and the
    panel-cycle binding have a single drain.
 
+The active input context is derived from the live control type through the
+ControlsManager `change` listener. Control-mode commands also set the context
+directly as a defensive backstop, but new control-type callers only need to use
+`SceneManager.setControlType()`.
+
 Binding handlers consume an event by default. A synchronous `false` declines
 it so passthrough can continue to lower-priority contexts; async handlers are
 always treated as handled. `preventDefault` runs only after a handler accepts
 the event, so declining leaves browser behavior untouched.
+
+NAVIGATION no longer reserves fly chords globally: an embedder can register
+its own `w/a/s/d/q/e` actions there, while the stock fly bindings remain scoped
+to FLY_CONTROLS.
 
 Optional setters (`setRenderingControls`, `setRecordingPanel`, etc.) are
 called by `core/app.ts` as panels are constructed; each one forwards

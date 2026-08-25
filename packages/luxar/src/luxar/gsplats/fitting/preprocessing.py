@@ -822,6 +822,24 @@ def _ensure_minimum_seeds(
     return current_seeds, grid_spacing
 
 
+def _regular_grid_coords(ranges: list[np.ndarray], ndim: int) -> np.ndarray:
+    """Cartesian product of per-axis ranges as an ``(N, ndim)`` float array.
+
+    Always ``(N, ndim)``, including when N is 0. That is the whole point: an
+    empty ``itertools.product`` fed to ``np.array`` collapses to shape ``(0,)``,
+    and the spatial-hash query rejects that with
+    "query must have shape (Q, 3); got (0,)" rather than treating it as an empty
+    point set. It is reached whenever ``spacing // 2`` lands past the end of any
+    axis — easy on an anisotropic tile, where a spacing derived from the total
+    volume can exceed the short axis outright — and it took down a whole tiled
+    fit 29 minutes in, on the last tile, after all the real work was done.
+    """
+    import itertools
+
+    coords = np.array(list(itertools.product(*ranges)), dtype=float)
+    return coords if coords.size else np.empty((0, ndim), dtype=float)
+
+
 def _add_grid_fallback_seeds(
     V: np.ndarray,
     target_count: int,
@@ -865,19 +883,15 @@ def _add_grid_fallback_seeds(
     spacing = max(spacing, 1)  # Allow minimum spacing of 1 (dense grid)
 
     # Generate grid points
-    grid_coords_list: list[tuple[Any, ...]] = []
     ranges = [np.arange(spacing // 2, s, spacing) for s in shape]
 
-    import itertools
-
-    for coords in itertools.product(*ranges):
-        grid_coords_list.append(coords)
-
-    grid_coords: np.ndarray = np.array(grid_coords_list, dtype=float)
+    grid_coords: np.ndarray = _regular_grid_coords(ranges, ndim)
 
     # Remove grid points too close to existing seeds (if any exist)
     # But be less aggressive about filtering to ensure we get enough
-    if len(existing_seeds) > 0:
+    # (skip entirely when there is nothing to filter — querying an empty set is
+    # both wasteful and, historically, fatal).
+    if len(existing_seeds) > 0 and len(grid_coords) > 0:
         from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
         # Use smaller min_distance to be more permissive
@@ -908,10 +922,7 @@ def _add_grid_fallback_seeds(
         spacing_dense = max(1, int((volume / (needed * 2)) ** (1.0 / ndim)))
         final_spacing = float(spacing_dense)  # Update to denser spacing
         ranges_dense = [np.arange(0, s, spacing_dense) for s in shape]
-        grid_coords_dense: list[tuple[Any, ...]] = []
-        for coords in itertools.product(*ranges_dense):
-            grid_coords_dense.append(coords)
-        grid_coords = np.array(grid_coords_dense, dtype=float)
+        grid_coords = _regular_grid_coords(ranges_dense, ndim)
 
     # Sort by intensity and take top N
     if len(grid_coords) > 0:

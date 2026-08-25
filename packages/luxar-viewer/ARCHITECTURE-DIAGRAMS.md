@@ -87,16 +87,16 @@ graph TB
 
 ### Key Transformations
 
-| Stage | Input | Output | Purpose |
-|-------|-------|--------|---------|
-| **Encoding** | Float32 arrays | uint8/uint16 + metadata | Compression (2-10x) |
-| **Spatial Ordering** | Random order | Morton/Hilbert order | Locality optimization |
-| **Chunking** | Full arrays | 10K-point chunks | Streaming support |
-| **Indexing** | Point positions | Chunk bounding boxes | Fast queries |
-| **Decoding** | Encoded chunks | Float32 arrays | Restore original values |
-| **Projection** | nD positions | 3D display coords | Dimensionality reduction |
-| **GPU Upload** | CPU arrays | GPU buffers | Hardware acceleration |
-| **Shading** | Vertex positions | Pixel colors | Visual representation |
+| Stage                | Input            | Output                  | Purpose                  |
+| -------------------- | ---------------- | ----------------------- | ------------------------ |
+| **Encoding**         | Float32 arrays   | uint8/uint16 + metadata | Compression (2-10x)      |
+| **Spatial Ordering** | Random order     | Morton/Hilbert order    | Locality optimization    |
+| **Chunking**         | Full arrays      | 10K-point chunks        | Streaming support        |
+| **Indexing**         | Point positions  | Chunk bounding boxes    | Fast queries             |
+| **Decoding**         | Encoded chunks   | Float32 arrays          | Restore original values  |
+| **Projection**       | nD positions     | 3D display coords       | Dimensionality reduction |
+| **GPU Upload**       | CPU arrays       | GPU buffers             | Hardware acceleration    |
+| **Shading**          | Vertex positions | Pixel colors            | Visual representation    |
 
 ---
 
@@ -191,6 +191,7 @@ Plus the cross-cutting layers — importable from any layer:
 `utils`, `themes`, `wasm`, `workers`, `profiling`, `controls`.
 
 **Inverted seams** (data does not depend on ui):
+
 - `SceneLoaderMonitorPort` — data emits events through a port the UI
   registers against.
 - `DimensionSlidersFactory` — `input/` constructs sliders via a
@@ -268,10 +269,10 @@ Point C at t=5.0: Distance 0.0 → VISIBLE with full radius ✓
 
 ```typescript
 function calculateEffectiveRadius(
-  pointPosition: number[],    // nD position
-  slicePosition: number[],    // Current slice in each dim
-  displayDims: number[],      // Which dims are displayed [0,1,2]
-  maxRadius: number           // Original point radius
+  pointPosition: number[], // nD position
+  slicePosition: number[], // Current slice in each dim
+  displayDims: number[], // Which dims are displayed [0,1,2]
+  maxRadius: number // Original point radius
 ): number {
   let squaredDistance = 0;
 
@@ -484,9 +485,8 @@ graph TB
     D{Current Context?}
     E1[TYPING<br/>Priority: 10]
     E2[UI_INTERACTION<br/>Priority: 5]
-    E3[DIMENSION_NAV<br/>Priority: 2]
-    E4[FLY_CONTROLS<br/>Priority: 1]
-    E5[NAVIGATION<br/>Priority: 0]
+    E3[FLY_CONTROLS<br/>Priority: 1]
+    E4[NAVIGATION<br/>Priority: 0]
 
     F{Key allowed<br/>in context?}
     G[Execute Handler<br/>✅]
@@ -498,8 +498,8 @@ graph TB
     B -->|Yes| C
     B -->|No| D
 
-    D --> E1 & E2 & E3 & E4 & E5
-    E1 & E2 & E3 & E4 & E5 --> F
+    D --> E1 & E2 & E3 & E4
+    E1 & E2 & E3 & E4 --> F
 
     F -->|Yes| G
     F -->|No| H
@@ -515,18 +515,18 @@ graph TB
 
 ### Context Examples
 
-| Key | NAVIGATION | FLY_CONTROLS | TYPING | Result |
-|-----|------------|--------------|---------|--------|
-| **W** | ❌ Blocked | ✅ Forward | ❌ Blocked | Depends on context |
-| **F** | ✅ Toggle center | ✅ Toggle center | ❌ Blocked | Letter 'f' typed |
-| **[** | ✅ Dim nav | ✅ Dim nav | ❌ Blocked | Navigate dimension |
-| **Esc** | ✅ Reset | ✅ Exit fly | ✅ Unfocus + dispatch | Always handled |
+| Key     | NAVIGATION         | FLY_CONTROLS     | TYPING                | Result             |
+| ------- | ------------------ | ---------------- | --------------------- | ------------------ |
+| **W**   | Unbound by default | ✅ Forward       | ❌ Blocked            | Depends on context |
+| **F**   | ✅ Toggle center   | ✅ Toggle center | ❌ Blocked            | Letter 'f' typed   |
+| **[**   | ✅ Dim nav         | ✅ Dim nav       | ❌ Blocked            | Navigate dimension |
+| **Esc** | ✅ Reset           | ✅ Exit fly      | ✅ Unfocus + dispatch | Always handled     |
 
 **Escape-from-typing**: pressing **Esc** while in TYPING blurs the
 focused element and re-routes the same event through the underlying
 context, so a typing field can be exited without a separate
-keystroke. The chain is `TYPING → UI_INTERACTION → DIMENSION_NAV →
-NAVIGATION` (recursion depth-capped to prevent infinite passthrough
+keystroke. The chain is `TYPING → UI_INTERACTION → NAVIGATION`
+(recursion depth-capped to prevent infinite passthrough
 loops).
 
 ---
@@ -699,6 +699,7 @@ stateDiagram-v2
 ### Cache Benefits
 
 **Without Caching**:
+
 ```typescript
 // Creates new material every time (memory leak!)
 for (let i = 0; i < 100; i++) {
@@ -708,6 +709,7 @@ for (let i = 0; i < 100; i++) {
 ```
 
 **With Caching**:
+
 ```typescript
 // Reuses same material (memory efficient)
 for (let i = 0; i < 100; i++) {
@@ -822,6 +824,7 @@ graph TB
 5. **Recovery**: Allow retry without reload
 
 **Example**:
+
 ```
 Scenario: One point cloud fails to load in a multi-object scene
 
@@ -860,12 +863,14 @@ graph LR
 ### Critical Cleanup Operations
 
 **Why Manual Disposal is Required**:
+
 - WebGL resources are NOT garbage collected automatically
 - Textures, buffers, shaders stay in GPU memory
 - Event listeners keep references alive
 - Proper cleanup prevents memory leaks in long-running apps
 
 **Cleanup Order** (Reverse of initialization):
+
 1. Stop animation (prevents new work)
 2. Remove event listeners (prevents callbacks)
 3. Dispose UI components (free DOM)
@@ -1013,14 +1018,17 @@ Legend:
 ### Dependency Rules
 
 **Allowed**:
+
 - Lower level → Higher level ✅
 - Same level (with caution) ⚠️
 
 **Forbidden**:
+
 - Higher level → Lower level ❌
 - Circular dependencies ❌
 
 **Example**:
+
 - ✅ scene/ can import from rendering/ (lower level)
 - ✅ core/ can import from scene/ (lower level)
 - ❌ rendering/ cannot import from scene/ (higher level)
@@ -1031,11 +1039,13 @@ Legend:
 ## Usage
 
 These diagrams are rendered automatically in:
+
 - GitHub markdown viewers
 - VS Code with Mermaid extension
 - Documentation sites (Docusaurus, MkDocs with mermaid plugin)
 
 **To view locally**:
+
 ```bash
 # Install mermaid CLI
 npm install -g @mermaid-js/mermaid-cli
@@ -1049,6 +1059,7 @@ mmdc -i ARCHITECTURE-DIAGRAMS.md -o diagrams.pdf
 ## Maintenance
 
 **Update these diagrams when**:
+
 - Adding new packages
 - Changing initialization order
 - Modifying data flow

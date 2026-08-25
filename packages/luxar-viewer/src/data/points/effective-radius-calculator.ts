@@ -51,7 +51,7 @@ export function calculateEffectiveRadii(
   // the chunk-QUERY tolerance (quarter-cell, see calculateSpatialQueryTolerance
   // below): the query decides which chunks to fetch; this decides which of the
   // fetched points are visible. Keep at 0.5 — the viewer snaps discrete
-  // navigation TARGETS to the absolute k·step grid
+  // navigation TARGETS to the range-min-anchored grid
   // (SceneDimsManager.setDimensionValue), and the compiler warns when discrete
   // DATA sits more than a quarter-step off that grid
   // (validate_discrete_dimension_ranges' on-grid check), so for conforming
