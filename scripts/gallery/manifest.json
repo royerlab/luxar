@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit \u2014 an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees \u2014 orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), readme (true = a current top pick for the README gallery), note (free-text human annotation; the capture code never reads it).",
+  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit — an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units — bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees — orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} — advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), readme (true = a current top pick for the README gallery), note (free-text human annotation; the capture code never reads it).",
   "demos": [
     {
       "id": "lorenz",
@@ -85,7 +85,7 @@
     },
     {
       "id": "asteroids_solar_system",
-      "title": "Solar System \u2014 1.5M Asteroids",
+      "title": "Solar System — 1.5M Asteroids",
       "geometry": "points+lines",
       "category": "astronomy",
       "script": "demo_asteroids_solar_system.py",
@@ -136,7 +136,7 @@
       "script": "demo_gsplats_3d_cryoem_virus.py",
       "dataset": "datasets/demos/gsplats_3d_cryoem_virus.luxar.zarr",
       "fillTarget": 0.65,
-      "note": "FILLTARGET: the default 0.95 framed this as an edge-to-edge texture wall \u2014 you could not tell it was a capsid. Measured border-lit across the pose set, 10/10 poses flagged at every step: 70.6% at 0.95, 34.2% at 0.85, 17.7% at 0.75, 15.2% at 0.65. The harness keeps suggesting lower because a dense icosahedron inherently clips its own silhouette, so 0.65 was chosen on the RENDER, not on the warning clearing: at 0.65 the hexagonal outline, the capsomer texture and the tail stalk are all legible. Auto-exposure tracks the framing and is the other half of the fix \u2014 -1.06 stops at 0.95 (subject filled the frame, so the meter crushed it to muddy brown) vs +2.33 at 0.65. Coverage cannot see any of this: it read 93% at 0.95 and 63% at 0.65, i.e. it preferred the broken framing, because its percentile bbox ignores exactly these outliers. This is a FRAMING fault, not the fit: at 19.2 dB foreground PSNR it is among the four lowest-scoring hosted archives, but opencell_map4 renders well at 18.0 dB, so the metric was never what made this tile look bad.",
+      "note": "FILLTARGET: the default 0.95 framed this as an edge-to-edge texture wall — you could not tell it was a capsid. Measured border-lit across the pose set, 10/10 poses flagged at every step: 70.6% at 0.95, 34.2% at 0.85, 17.7% at 0.75, 15.2% at 0.65. The harness keeps suggesting lower because a dense icosahedron inherently clips its own silhouette, so 0.65 was chosen on the RENDER, not on the warning clearing: at 0.65 the hexagonal outline, the capsomer texture and the tail stalk are all legible. Auto-exposure tracks the framing and is the other half of the fix — -1.06 stops at 0.95 (subject filled the frame, so the meter crushed it to muddy brown) vs +2.33 at 0.65. Coverage cannot see any of this: it read 93% at 0.95 and 63% at 0.65, i.e. it preferred the broken framing, because its percentile bbox ignores exactly these outliers. This is a FRAMING fault, not the fit: at 19.2 dB foreground PSNR it is among the four lowest-scoring hosted archives, but opencell_map4 renders well at 18.0 dB, so the metric was never what made this tile look bad.",
       "citation": "Zhang et al. 2011 (EMDB EMD-5384)"
     },
     {
@@ -211,7 +211,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_lod_embryo_line.py",
       "dataset": "datasets/demos/gsplats_lod_embryo_line.luxar.zarr",
-      "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Ma\u0161ka et al. 2023)",
+      "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Maška et al. 2023)",
       "autoFrame": false
     },
     {
@@ -236,7 +236,7 @@
       "autoFrame": false,
       "autoExpose": false,
       "readme": true,
-      "note": "87 tract bundles, 6.83M segments at the finest level. lodFinest:false so the coverage LOD serves the ~640K-element coarse levels \u2014 forcing every element never reaches networkidle inside the 120s goto budget. autoFrame/autoExpose off because both closed loops re-screenshot a scene this heavy until they converge (one run took an hour before timing out in measureLuminance), and because the demo's opening pose and its additive opacity/intensity window are deliberately baked \u2014 letting the harness retune them would undo the tuning"
+      "note": "87 tract bundles, 6.83M segments at the finest level. lodFinest:false so the coverage LOD serves the ~640K-element coarse levels — forcing every element never reaches networkidle inside the 120s goto budget. autoFrame/autoExpose off because both closed loops re-screenshot a scene this heavy until they converge (one run took an hour before timing out in measureLuminance), and because the demo's opening pose and its additive opacity/intensity window are deliberately baked — letting the harness retune them would undo the tuning"
     },
     {
       "id": "cellxgene_census_umap",
@@ -249,7 +249,7 @@
     },
     {
       "id": "cosmicflows_laniakea",
-      "title": "Cosmicflows \u2014 Laniakea Supercluster",
+      "title": "Cosmicflows — Laniakea Supercluster",
       "geometry": "points+lines",
       "category": "astronomy",
       "script": "demo_cosmicflows_laniakea.py",
@@ -351,13 +351,7 @@
       "category": "synthetic",
       "script": "demo_4d_fractals.py",
       "dataset": "datasets/demos/fractals_4d.luxar.zarr",
-      "dimensionNav": {
-        "key": "2",
-        "steps": 15
-      },
-      "zoom": 0.7,
-      "exposure": -1.5,
-      "note": "Calibrated against a PRE-#842 fractals_4d store, where `w` was continuous over [-2.5, 2.5] with step 0.1 and only ~1 position in 10 held a slice \u2014 hence 15 steps to reach the first populated one, and the zoom/exposure that frame a thin sparse slice. Since #842 the generator declares `w` discrete on the grid it writes (step = 2/grid_size), so a REGENERATED store is populated at its default slice and needs no dimensionNav: re-derive these three values (or drop them) after rebuilding the dataset."
+      "note": "dimensionNav/zoom/exposure dropped after the #842 regeneration, as the previous note instructed. Re-derived from the rebuilt store rather than adjusted: `w` is now declared discrete over [-1.0, 0.96] at step 0.04, i.e. 50 materialised stops, and the store opens already populated at its default slice. The old `steps: 15` was calibrated when `w` was continuous and only ~1 position in 10 held a slice; on the current store it just lands on an arbitrary populated frame, and the zoom/exposure that framed a thin sparse slice no longer describe what is there. The scene's own ViewerConfig and auto-exposure now drive the capture."
     },
     {
       "id": "galaxy_simulation",
@@ -475,7 +469,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_tribolium_embryo.py",
       "dataset": "datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr",
-      "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Ma\u0161ka et al. 2023)",
+      "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Maška et al. 2023)",
       "note": "the old volumetric white-out was fixed by coupling strong absorption (kappa 3.13) with low opacity (0.06); the scene bakes exposure=1.97 and a 0-1.085 display window, so auto-exposure recalibrates. The faint bg rectangle is gone as of the floor fix: the fit now subtracts the specimen's ~675-count haze, not just the ~205-count detector offset, removing ~84% of the scene's emitted mass while leaving nuclei brightness ~unchanged"
     },
     {
@@ -485,7 +479,11 @@
       "category": "microscopy",
       "script": "demo_gsplats_4d_zebrafish_timelapse.py",
       "dataset": "datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr",
-      "citation": "Aanstad 2018"
+      "citation": "Aanstad 2018",
+      "timelapse": {
+        "framePoint": 0.9
+      },
+      "note": "framePoint 0.9 because the specimen migrates and grows: the labelled endoderm is ~2-4 cells at t=0 and ~185 by t=300 min, while the scene bounds are the acquisition cage (859 x 859 x 316 um), not the specimen. A bounds-based auto-fit at frame 0 therefore frames an almost-empty box with a dot in it -- correct by every metric and useless as a tile. 0.9 rather than 1.0 keeps structure legible while the endoderm has spread across the yolk. fillTarget is deliberately left at the cage-based default: the cage IS the scale reference for a 2%-occupancy specimen, so cropping to the specimen would lose the idea."
     },
     {
       "id": "gsplats_4d_nexrad_supercell",
@@ -705,7 +703,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_lod_tribolium.py",
       "dataset": "datasets/demos/gsplats_lod_tribolium.luxar.zarr",
-      "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Ma\u0161ka et al. 2023)"
+      "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Maška et al. 2023)"
     },
     {
       "id": "gsplats_recipes_tribolium",
@@ -714,7 +712,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_recipes_tribolium.py",
       "dataset": "datasets/demos/gsplats_recipes_tribolium.luxar.zarr",
-      "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Ma\u0161ka et al. 2023)"
+      "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Maška et al. 2023)"
     },
     {
       "id": "gsplats_interop_inria_bonsai",
@@ -832,7 +830,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_2d_codex_pancreas.py",
       "dataset": "datasets/demos/gsplats_2d_codex_pancreas.luxar.zarr",
-      "citation": "Bj\u00f6rklund et al. 2023",
+      "citation": "Björklund et al. 2023",
       "lodFinest": false
     },
     {
