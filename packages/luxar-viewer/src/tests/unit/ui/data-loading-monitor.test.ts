@@ -1644,7 +1644,9 @@ describe('DataLoadingMonitor — accumulator provider record', () => {
       });
     }
 
-    const metrics = (monitor as unknown as { getMemoryMetrics(): MemoryMetrics }).getMemoryMetrics();
+    const metrics = (
+      monitor as unknown as { getMemoryMetrics(): MemoryMetrics }
+    ).getMemoryMetrics();
 
     for (const [i, type] of POOLED_GEOMETRY_TYPES.entries()) {
       expect(metrics.accumulators[type], `missing accumulator for ${type}`).not.toBeNull();
@@ -1664,7 +1666,9 @@ describe('DataLoadingMonitor — accumulator provider record', () => {
 
     monitor.resetSceneProviders();
 
-    const metrics = (monitor as unknown as { getMemoryMetrics(): MemoryMetrics }).getMemoryMetrics();
+    const metrics = (
+      monitor as unknown as { getMemoryMetrics(): MemoryMetrics }
+    ).getMemoryMetrics();
     for (const type of POOLED_GEOMETRY_TYPES) {
       expect(metrics.accumulators[type], `${type} slot survived the reset`).toBeNull();
     }
