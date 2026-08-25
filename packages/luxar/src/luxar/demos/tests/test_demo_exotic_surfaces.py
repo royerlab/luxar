@@ -21,6 +21,9 @@ from luxar.demos.demo_exotic_surfaces import (
     AO_STRENGTH,
     CELL_PITCH,
     CELL_SIZE,
+    DETAIL_FONT_SIZE,
+    DETAIL_LEADING,
+    DETAIL_TOP,
     FAMILY_COLORS,
     FAMILY_NAMES,
     GRID,
@@ -29,6 +32,7 @@ from luxar.demos.demo_exotic_surfaces import (
     SURFACES,
     TARGET_PEAK,
     Surface,
+    _detail_lines,
     _gyroid,
     auto_exposure,
     cell_offset,
@@ -164,10 +168,33 @@ def test_every_surface_is_credited_and_described():
     """The demo's premise is that each surface has a stateable property."""
     for surface in SURFACES:
         assert surface.credit.strip(), f"{surface.key} has no credit"
-        assert len(surface.note) > 40, f"{surface.key}'s note says too little"
+        assert len(surface.note) > 25, f"{surface.key}'s note says too little"
         # A credit should name a year, which is what makes it a citation rather
         # than a label. "Banchoff" is the one deliberate exception.
         assert any(c.isdigit() for c in surface.credit) or surface.key == "tanglecube"
+
+
+def test_detail_lines_fit_on_one_line():
+    """Each detail is its own overlay, and an overlay cannot break its own lines.
+
+    `overlay-manager.ts` sets `white-space: normal` on every non-hover overlay,
+    so a newline in the text collapses to a space — which is why the details are
+    stacked as separate overlays rather than one block, and why each one has to
+    be short enough not to wrap against its own right-anchored edge.
+    """
+    for family in (0, 1):
+        lines = _detail_lines(family)
+        assert len(lines) == GRID * GRID
+        for line in lines:
+            assert "\n" not in line, "a newline here would render as a space"
+            assert len(line) <= 95, f"too long to sit on one line: {line!r}"
+
+
+def test_detail_stack_clears_the_caption_and_the_nav_panel():
+    """Nine hand-stacked lines must not collide with the rest of the UI."""
+    bottom = DETAIL_TOP + (GRID * GRID - 1) * DETAIL_LEADING
+    assert bottom < 0.75, f"detail stack reaches {bottom:.2f}, into the nav panel"
+    assert DETAIL_LEADING > DETAIL_FONT_SIZE, "lines would overlap each other"
 
 
 def test_surface_keys_and_titles_are_unique():

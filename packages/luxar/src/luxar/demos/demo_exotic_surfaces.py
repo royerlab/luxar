@@ -420,8 +420,7 @@ SURFACES: List[Surface] = [
         "gyroid",
         "Gyroid",
         0,
-        "No straight lines and no mirror symmetries — the only TPMS of its "
-        "kind; found in butterfly-wing photonic crystals.",
+        "no straight lines, no mirror symmetries",
         "Schoen 1970",
         np.pi,
         _gyroid,
@@ -430,8 +429,7 @@ SURFACES: List[Surface] = [
         "schwarz_p",
         "Schwarz P",
         0,
-        "The first TPMS ever described. Cubic symmetry, with open channels "
-        "along all three axes.",
+        "the first one ever described; channels on all three axes",
         "Schwarz 1865",
         np.pi,
         _schwarz_p,
@@ -440,8 +438,7 @@ SURFACES: List[Surface] = [
         "schwarz_d",
         "Schwarz D (Diamond)",
         0,
-        "Two interwoven diamond lattices; the shape a lipid bilayer takes "
-        "in the cubic phase.",
+        "two interwoven diamond lattices",
         "Schwarz 1865",
         np.pi,
         _schwarz_d,
@@ -450,8 +447,7 @@ SURFACES: List[Surface] = [
         "neovius",
         "Neovius",
         0,
-        "Higher genus than Schwarz P, so a far more ornate cell for the "
-        "same cubic symmetry.",
+        "higher genus: a far more ornate cubic cell",
         "Neovius 1883",
         np.pi,
         _neovius,
@@ -460,8 +456,7 @@ SURFACES: List[Surface] = [
         "iwp",
         "Schoen I-WP",
         0,
-        "'Wrapped package' — a cage of struts around isolated pockets, so "
-        "its two labyrinths are NOT congruent.",
+        "a cage of struts; its two labyrinths are not congruent",
         "Schoen 1970",
         np.pi,
         _iwp,
@@ -470,8 +465,7 @@ SURFACES: List[Surface] = [
         "frd",
         "Schoen F-RD",
         0,
-        "Face-centred rhombic dodecahedral: the densest packing symmetry "
-        "of the family.",
+        "face-centred rhombic dodecahedral, densest of the family",
         "Schoen 1970",
         np.pi,
         _frd,
@@ -480,8 +474,7 @@ SURFACES: List[Surface] = [
         "lidinoid",
         "Lidinoid",
         0,
-        "A gyroid relative found 20 years later, with hexagonal rather "
-        "than cubic symmetry.",
+        "a gyroid relative, but hexagonal rather than cubic",
         "Lidin & Larsson 1990",
         np.pi,
         _lidinoid,
@@ -490,8 +483,7 @@ SURFACES: List[Surface] = [
         "split_p",
         "Split P",
         0,
-        "Schwarz P split into a doubled sheet — a distinct surface, not a "
-        "deformation of it.",
+        "Schwarz P split into a doubled sheet",
         "Schoen 1970",
         np.pi,
         _split_p,
@@ -500,8 +492,7 @@ SURFACES: List[Surface] = [
         "fischer_koch_s",
         "Fischer-Koch S",
         0,
-        "One of the balanced surfaces found by systematic enumeration of "
-        "space groups rather than by construction.",
+        "found by enumerating space groups, not by construction",
         "Fischer & Koch 1987",
         np.pi,
         _fischer_koch_s,
@@ -511,8 +502,7 @@ SURFACES: List[Surface] = [
         "barth",
         "Barth Sextic",
         1,
-        "65 ordinary double points — the MAXIMUM possible for a degree-6 "
-        "surface. Icosahedral symmetry.",
+        "65 nodes, the maximum possible for a sextic",
         "Barth 1996",
         1.9,
         _barth_sextic,
@@ -521,8 +511,7 @@ SURFACES: List[Surface] = [
         "clebsch",
         "Clebsch Diagonal Cubic",
         1,
-        "Contains exactly 27 real straight lines — every smooth cubic has "
-        "27, and this is the one where all of them are real.",
+        "27 straight lines, and all of them real",
         "Clebsch 1871",
         2.6,
         _clebsch,
@@ -531,8 +520,7 @@ SURFACES: List[Surface] = [
         "kummer",
         "Kummer Quartic",
         1,
-        "16 nodal singularities, the maximum for a quartic; self-dual, and "
-        "the wave surface of 19th-century optics.",
+        "16 nodes, the maximum for a quartic; self-dual",
         "Kummer 1864",
         2.4,
         _kummer,
@@ -541,8 +529,7 @@ SURFACES: List[Surface] = [
         "cayley",
         "Cayley Cubic",
         1,
-        "4 nodes — the most a cubic surface can have. Its 27 lines "
-        "degenerate down to just 9.",
+        "4 nodes, the most a cubic can have",
         "Cayley 1869",
         1.3,
         _cayley,
@@ -551,8 +538,7 @@ SURFACES: List[Surface] = [
         "roman",
         "Roman (Steiner) Surface",
         1,
-        "A one-sided immersion of the real projective plane, with three "
-        "lines of self-intersection meeting at a triple point.",
+        "one-sided: the projective plane, immersed",
         "Steiner 1844",
         1.1,
         _roman,
@@ -561,8 +547,7 @@ SURFACES: List[Surface] = [
         "chmutov",
         "Chmutov Sextic",
         1,
-        "Built from Chebyshev polynomials, which is how its singularities "
-        "are placed by construction rather than found.",
+        "singularities placed by Chebyshev polynomials",
         "Chmutov 1992",
         1.35,
         _chmutov,
@@ -571,8 +556,7 @@ SURFACES: List[Surface] = [
         "whitney",
         "Whitney Umbrella",
         1,
-        "The canonical pinch point: a self-intersection line that simply "
-        "stops, which no smooth surface can do.",
+        "the canonical pinch point, which no smooth surface has",
         "Whitney 1943",
         1.6,
         _whitney,
@@ -581,8 +565,7 @@ SURFACES: List[Surface] = [
         "heart",
         "Heart Surface",
         1,
-        "A sextic with no mathematical record to its name, included "
-        "because a closed-form heart is a good joke.",
+        "no record to its name; a closed-form heart is a good joke",
         "Taubin 1994",
         1.5,
         _heart,
@@ -591,8 +574,7 @@ SURFACES: List[Surface] = [
         "tanglecube",
         "Tanglecube",
         1,
-        "A quartic whose four separate sheets link through one another "
-        "without ever touching.",
+        "four sheets linked through one another, never touching",
         "Banchoff",
         3.1,
         _tanglecube,
@@ -742,38 +724,54 @@ def auto_exposure(positions: np.ndarray, radius: float) -> Tuple[float, int]:
 # Scene
 # =============================================================================
 
-_OVERLAY = {
-    0: (
-        "MINIMAL SURFACES  ·  triply-periodic, zero mean curvature\n"
-        "Every point is a saddle: curving up in one direction exactly as much "
-        "as it curves down in the perpendicular one. Each divides space into "
-        "two interpenetrating labyrinths that never touch — which is how block "
-        "copolymers, lipid membranes and butterfly-wing photonic crystals pack "
-        "two phases with the least interface.\n"
-        "Shown as nodal approximations (von Schnering & Nesper 1991), not exact "
-        "minimal surfaces."
-    ),
-    1: (
-        "ALGEBRAIC SURFACES  ·  zero sets of polynomials\n"
-        "For each degree there is a maximum number of singular points a surface "
-        "can have, and several of these attain it: Barth's sextic has 65 nodes, "
-        "Kummer's quartic 16, Cayley's cubic 4. The Clebsch cubic instead holds "
-        "a record for lines — all 27 of them real.\n"
-        "These are the landmarks of 19th- and 20th-century algebraic geometry."
-    ),
-}
+# =============================================================================
+# Overlays
+# =============================================================================
+#
+# Authored to the house pattern the other demos use: a large title, a small
+# subtitle under it, and a dim caption bottom-right (see demo_lsystem_forest,
+# which also gates per-slice labels on `visible_range` exactly as this does).
+#
+# ONE LINE PER `add_text` CALL. A newline inside an overlay string does NOT
+# produce a line break — `overlay-manager.ts` sets `white-space: normal` for
+# every non-hover overlay, so "\n" collapses to a space and a carefully
+# formatted block renders as one run-on paragraph. Only `width` wrapping works.
+
+#: Fixed for the whole demo, so the wall keeps an identity across both families.
+TITLE = "Exotic Surfaces"
+
+#: Per family: the subtitle line, then a short description paragraph (which the
+#: `width` wrap handles), then the nine detail lines.
+SUBTITLES = (
+    "triply-periodic minimal surfaces · zero mean curvature",
+    "algebraic surfaces · zero sets of polynomials",
+)
+
+DESCRIPTIONS = (
+    "Every point is a saddle, curving up exactly as much as it curves down. "
+    "Each divides space into two interpenetrating labyrinths that never touch — "
+    "how block copolymers, lipid membranes and butterfly wings pack two phases "
+    "with the least interface. Rendered as nodal approximations, not exact "
+    "minimal surfaces.",
+    "For each degree there is a maximum number of singular points a surface can "
+    "have, and most of these attain it. The Clebsch cubic instead holds a record "
+    "for lines. The landmarks of 19th- and 20th-century algebraic geometry.",
+)
 
 
-def _family_roster(family: int) -> str:
-    """The nine surfaces of a family, in grid order, with credits."""
-    lines = []
-    for index, surface in enumerate(s for s in SURFACES if s.family == family):
-        column, row = index % GRID, index // GRID
-        where = "  ".join(
-            [["left", "centre", "right"][column], ["top", "middle", "bottom"][row]]
-        )
-        lines.append(f"{surface.title} ({surface.credit}) — {where}\n   {surface.note}")
-    return "\n".join(lines)
+#: Detail-list geometry, hand-stacked because each line is its own overlay.
+#: Nine lines from DETAIL_TOP at DETAIL_LEADING apart end at 0.29, well clear of
+#: the caption at 0.97 and of the dimension-navigation panel along the bottom.
+DETAIL_TOP = 0.055
+DETAIL_LEADING = 0.029
+DETAIL_FONT_SIZE = 0.0145
+
+
+def _detail_lines(family: int) -> List[str]:
+    """One line per surface, in grid order: what it is and who found it."""
+    return [
+        f"{s.title} — {s.note}  ·  {s.credit}" for s in SURFACES if s.family == family
+    ]
 
 
 def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
@@ -897,32 +895,55 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
                     f"deepest column {deepest} -> intensity {intensity:.4f}"
                 )
 
+            # Fixed title: the demo's identity, constant across both families.
+            scene.add_text(
+                TITLE,
+                position=(0.02, 0.02),
+                font_size=0.05,
+                anchor="top-left",
+                color="rgba(255,255,255,0.62)",
+                blend_mode="difference",
+            )
+
             for family in (0, 1):
-                # `visible_range` ties each overlay to its own slice of the
-                # hidden axis, so the explanation swaps with the geometry.
+                # Everything below is gated on the hidden axis, so the whole
+                # caption stack swaps with the geometry.
                 scene.add_text(
-                    _OVERLAY[family],
-                    position=(0.02, 0.02),
-                    font_size=0.019,
-                    width=0.42,
+                    SUBTITLES[family],
+                    position=(0.02, 0.085),
+                    font_size=0.02,
                     anchor="top-left",
-                    color="rgba(255,255,255,0.82)",
-                    line_height=1.45,
+                    color="rgba(255,255,255,0.45)",
+                    blend_mode="difference",
                     visible_range={"family": family},
                     transition="fade",
                 )
+                # The one place `width` is used: word wrapping works, only
+                # explicit newlines do not.
                 scene.add_text(
-                    _family_roster(family),
-                    position=(0.98, 0.03),
-                    font_size=0.0135,
-                    width=0.33,
-                    anchor="top-right",
-                    text_align="right",
-                    color="rgba(255,255,255,0.60)",
-                    line_height=1.4,
+                    DESCRIPTIONS[family],
+                    position=(0.02, 0.125),
+                    font_size=0.0145,
+                    width=0.24,
+                    anchor="top-left",
+                    color="rgba(255,255,255,0.38)",
+                    line_height=1.5,
                     visible_range={"family": family},
                     transition="fade",
                 )
+                # Details: ONE overlay per line, stacked by hand. A single
+                # string with newlines would render as one run-on paragraph.
+                for row, detail in enumerate(_detail_lines(family)):
+                    scene.add_text(
+                        detail,
+                        position=(0.985, DETAIL_TOP + row * DETAIL_LEADING),
+                        font_size=DETAIL_FONT_SIZE,
+                        anchor="top-right",
+                        text_align="right",
+                        color="rgba(255,255,255,0.42)",
+                        visible_range={"family": family},
+                        transition="fade",
+                    )
 
             add_demo_caption(
                 scene,
