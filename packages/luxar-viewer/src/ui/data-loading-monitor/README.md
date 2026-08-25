@@ -37,7 +37,7 @@ LoaderMonitor events ──► EventQueue ──► PollingLoop.onTick ─┐
    templates/* (full repaint)   ◄──┐
                 │                  │ structure missing
                 ▼                  │
-   tabs/* (incremental)  ───────┘ patch-by-`data-field`
+   tabs/* (incremental)  ──────────┘ patch-by-`data-field`
                 │
                 ▼
         advisor.ts (emits Recommendations into the Insights tab)
