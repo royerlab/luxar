@@ -589,10 +589,10 @@
     "packages/luxar/src/luxar/utils/cache.py::cached_download": [
       12
     ],
-    "packages/luxar/src/luxar/utils/download.py::_parse_remote_zip_directory": [
+    "packages/luxar/src/luxar/utils/remote_zip.py::_parse_remote_zip_directory": [
       11
     ],
-    "packages/luxar/src/luxar/utils/download.py::download_zip_member": [
+    "packages/luxar/src/luxar/utils/remote_zip.py::download_zip_member": [
       24
     ],
     "packages/luxar/src/luxar/utils/download.py::robust_download": [
