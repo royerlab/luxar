@@ -114,6 +114,7 @@ Setters wire optional panels as they're created:
 - `setLayersPanel(panel)`
 - `setOverlayManager(manager)`
 - `setDatasetBrowser(handle | undefined)`
+- `setControlRail(handle | undefined)`
 
 Lifecycle:
 

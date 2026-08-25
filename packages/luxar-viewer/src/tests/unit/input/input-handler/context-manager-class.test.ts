@@ -368,7 +368,7 @@ describe('InputContextManager', () => {
   });
 
   describe('key event handling', () => {
-    it('passes unhandled global shortcuts through UI_INTERACTION', () => {
+    it('routes a key UI_INTERACTION does not claim through to NAVIGATION, reporting it handled', () => {
       const globalShortcut = vi.fn();
       registerTestBinding(manager, InputContext.NAVIGATION, { key: 'h', handler: globalShortcut });
       manager.pushContext(InputContext.UI_INTERACTION);
