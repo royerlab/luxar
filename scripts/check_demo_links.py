@@ -24,7 +24,6 @@ from luxar.demos.link_registry import (
 TIMEOUT_SECONDS = 20
 USER_AGENT = "LuxarDemoLinkAudit/1.0"
 HUMAN_CHECK_MAX_AGE_DAYS = 183
-AUDIT_MODES = frozenset({"body-marker", "human", "json-count", "redirect", "status"})
 REQUIRED_FIELDS_BY_MODE = {
     "body-marker": frozenset({"good_marker"}),
     "human": frozenset({"reason", "verified_in", "last_checked"}),
@@ -32,6 +31,7 @@ REQUIRED_FIELDS_BY_MODE = {
     "redirect": frozenset({"good_final_marker"}),
     "status": frozenset(),
 }
+AUDIT_MODES = frozenset(REQUIRED_FIELDS_BY_MODE)
 
 
 class Response(NamedTuple):
