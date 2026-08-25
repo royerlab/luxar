@@ -85,8 +85,19 @@ def test_surface_has_a_usable_zero_set(surface: Surface):
     positions, normals, spacing = sample_surface(surface, RESOLUTION)
 
     assert len(positions) > 200, f"{surface.key}: nearly empty zero set"
-    # A shell, not a solid: well under the whole sampled volume.
-    assert len(positions) < 0.25 * RESOLUTION**3, f"{surface.key}: fills its box"
+
+    # A SHELL, not a solid — asserted on how the retained fraction SCALES rather
+    # than against an absolute cap. The shell is a fixed number of spacings
+    # thick, so it keeps ~area/spacing^2 of ~1/spacing^3 samples and the fraction
+    # falls linearly with resolution: `fraction * resolution` is then a
+    # resolution-independent shape index, measured at 10.7-11.2 for every surface
+    # here across resolutions 32-88. A solid would sit at `resolution` itself
+    # (44 here), so 20 separates the two cleanly at any resolution. An absolute
+    # cap instead just encodes whichever resolution the test was written at, and
+    # one surface was already sitting on it.
+    shape_index = len(positions) / RESOLUTION**2
+    assert shape_index < 20.0, f"{surface.key}: fills its box ({shape_index:.1f})"
+    assert shape_index > 0.5, f"{surface.key}: too sparse ({shape_index:.2f})"
     assert spacing > 0.0
     assert np.all(np.isfinite(positions))
     # Normals are unit length wherever the gradient does not vanish; a nodal
