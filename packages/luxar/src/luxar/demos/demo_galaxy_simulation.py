@@ -279,10 +279,9 @@ DUST_REDDENING = (0.75, 1.00, 1.42)
 #: to build and 14.4 GB peak RSS — too heavy for what it bought, so the budget is
 #: spent on TIME instead: 241 frames x 100k stars is 29.7M points, 218 MB, 1.3 min
 #: and 139k points on screen per frame. `density_scale` is what makes the lighter
-#: disc look like the heavy one instead of merely dimmer (measured on matched
-#: headless frames at T = 160 Myr: mean luminance 0.044 vs 0.039, lit-pixel mean
-#: 0.186 vs 0.181, neither clipping). Both knobs stay exposed (`--stars`,
-#: `--frames`); neither changes the physics.
+#: disc look like the heavy one instead of merely dimmer: each population keeps
+#: the additive-light invariant `N * gain * radius^2`. Both knobs stay exposed
+#: (`--stars`, `--frames`); neither changes the physics.
 #:
 #: The count does NOT have to be odd: T is declared DISCRETE (see
 #: `time_dimension`), so the slider and the keyboard both snap to `k * step`

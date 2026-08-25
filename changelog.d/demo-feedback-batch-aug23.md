@@ -270,10 +270,10 @@ it was not worth it. The budget goes to time instead: the default disc is now
 **100k stars**, so the scene is 29.7M points and 218 MB, builds in 1.3 min, and
 puts 139k points on screen per frame. A quarter of the stars would ordinarily be
 a quarter of the light, so radii and per-point gain now scale with the sample
-density (`density_scale`, a cube-root of the thinning): mean luminance on matched
-headless frames moves from 0.039 to 0.044 rather than to a quarter of it, and
-nothing clips. `--stars` and `--frames` both remain, and neither touches the
-physics.
+density (`density_scale`, a cube-root of the thinning), while every population's
+sample count tracks the disc. That holds the additive-light invariant
+`N * gain * radius^2` instead of making a lighter build proportionally dimmer.
+`--stars` and `--frames` both remain, and neither touches the physics.
 
 #### 4D fractals: four times the resolution, and no more haze
 
