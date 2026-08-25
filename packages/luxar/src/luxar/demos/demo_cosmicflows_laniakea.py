@@ -156,12 +156,17 @@ PRESETS: Final[dict[str, StreamlinePreset]] = {
 
 @dataclass(frozen=True)
 class GalaxyData:
-    """Galaxy positions and basin labels."""
+    """Galaxy positions, basin labels, and catalogue identity."""
 
     positions: np.ndarray
     basin_ids: np.ndarray
     radii: np.ndarray
     colors: np.ndarray
+    # Principal Galaxies Catalogue number, already read from the source table
+    # but previously discarded here. It is the only per-galaxy IDENTITY in the
+    # dataset: the hover label is its basin, which is a property of tens of
+    # thousands of galaxies at once and cannot address any single one.
+    pgc: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -273,7 +278,11 @@ def load_galaxies(galaxy_path: Path, basins: np.ndarray) -> GalaxyData:
         )
         aprint(f"Basin counts: {basin_summary}")
 
-        return GalaxyData(positions, basin_ids, radii, colors)
+        # Same `inside` mask the positions went through, so pgc stays aligned
+        # row-for-row with every other per-galaxy array.
+        pgc = np.asarray(raw["pgc"])[inside]
+
+        return GalaxyData(positions, basin_ids, radii, colors, pgc)
 
 
 # ---------------------------------------------------------------------------
@@ -683,6 +692,13 @@ def write_laniakea_scene(
                 layer=True,
                 # Hover: which basin of attraction each galaxy flows into.
                 labels=[f"Basin {int(b)}" for b in galaxies.basin_ids],
+                # Click: the galaxy itself. The label names a basin shared by
+                # tens of thousands of galaxies, so searching it resolves
+                # nothing — the PGC number is the per-galaxy identity, and NED
+                # resolves "PGC<number>" directly to the object page.
+                keys=[f"PGC{int(p)}" for p in galaxies.pgc],
+                link="https://ned.ipac.caltech.edu/byname?objname={hover_key}",
+                copy="{hover_key}",
             )
 
             for basin in basin_lines:

@@ -245,9 +245,14 @@ SYNTHETIC_ID_PREFIX = "Protein_"
 
 
 def _uniprot_link_attrs(protein_ids: list[str]) -> dict[str, object]:
-    """Build links only for real accessions, never synthetic fallback ids."""
+    """Deep-link real accessions; leave synthetic stand-ins unlinked.
+
+    Never build an entry URL from a synthetic id — it would 404 on UniProt, which
+    is worse than no link. The stand-in and generic cluster label contain no
+    per-point identity worth searching either.
+    """
     if all(pid.startswith(SYNTHETIC_ID_PREFIX) for pid in protein_ids):
-        aprint("  ⓘ Synthetic accessions — skipping UniProt links")
+        aprint("  ⓘ Synthetic accessions — no reliable per-protein link available")
         return {}
     return {
         "keys": list(protein_ids),

@@ -29,6 +29,15 @@ SEQUENCES = ["MKV", "MTL", "MGG"]
 HEAVY_DEPS = ("torch", "esm", "umap")
 
 
+def _decode_strings(node, channel: str) -> list[str]:
+    offsets = np.asarray(node[f"{channel}_offsets"][:]).astype(int)
+    data = bytes(np.asarray(node[f"{channel}_bytes"][:]).tobytes())
+    return [
+        data[offsets[i] : offsets[i + 1]].decode("utf-8")
+        for i in range(len(offsets) - 1)
+    ]
+
+
 @pytest.fixture
 def without_heavy_deps(monkeypatch):
     """Make torch / esm / umap-learn look uninstalled, machine-independently.
@@ -498,6 +507,36 @@ class TestCompleteCacheRunsWithoutLodDeps:
         assert attrs.get("kind") != "lod", (
             f"expected a flat Points leaf, got a substitutive-LOD group: {attrs.get('kind')!r}"
         )
+
+    def test_legacy_cache_writes_protein_name_search_keys(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        cache_dir = tmp_path / "cache"
+        n = _write_instant_cache(cache_dir)
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        out_path = tmp_path / "esm3.luxar.zarr"
+        generate_esm3_landscape(
+            out_path, sample_size=0, model_name="esmc-300m", cache_dir=cache_dir
+        )
+
+        import zarr
+
+        proteins = zarr.open_group(str(out_path), mode="r")["proteins"]
+        attrs = dict(proteins.attrs)
+        assert attrs["link"] == "https://www.uniprot.org/uniprotkb?query={hover_key}"
+        assert attrs["copy"] == "{hover_key}"
+        assert attrs["has_keys"] is True
+
+        keys = _decode_strings(proteins, "key")
+        labels = _decode_strings(proteins, "label")
+        assert len(keys) == len(labels) == 2 * n
+        expected = {f"PROT_{i}" for i in range(n)}
+        assert set(keys) == expected
+        assert all(keys.count(key) == 2 for key in expected)
+        assert all(label.startswith(f"{key} — ") for key, label in zip(keys, labels))
+        assert all(label.endswith(")") for label in labels)
+        assert "using protein-name search" in capsys.readouterr().out
 
     def test_full_cache_path_builds_lod_when_deps_present(
         self, tmp_path, capsys
