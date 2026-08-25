@@ -47,7 +47,7 @@ input/
     └── commands/                             # Command bodies the orchestrator delegates to
         ├── panel-coordinator.ts              # PanelCoordinator (Escape flow)
         ├── viewer-state-export.ts            # exportViewerState body
-        ├── control-mode.ts                   # toggleControlMode + toggleInertialMode + nextControlType
+        ├── control-mode.ts                   # commands + nextControlType re-export from controls/types.ts
         └── data-monitor-cycle.ts             # cycleDataMonitor body
 ```
 

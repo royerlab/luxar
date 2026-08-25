@@ -62,8 +62,8 @@ input-handler/
   `PanelCoordinator` (Escape priority flow + recording short-circuit +
   fullscreen-defer rule), `exportViewerState` (Ctrl+Shift+S clipboard
   export), `toggleControlMode` / `toggleInertialMode` / `nextControlType`
-  (V and I keys), and `cycleDataMonitor`. Shared focus predicates live under
-  `utils/dom/`.
+  (V and I keys; the cycle helper is re-exported from `controls/types.ts`),
+  and `cycleDataMonitor`. Shared focus predicates live under `utils/dom/`.
 
 ## Lifecycle through the subfolders
 

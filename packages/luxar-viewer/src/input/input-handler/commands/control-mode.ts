@@ -1,9 +1,9 @@
 /**
  * Camera control-mode command bodies for the V (cycle) and I (inertial)
- * shortcuts, plus the pure `nextControlType` cycle helper. Extracted
- * from input-handler.ts so the orchestrator delegates rather than
- * inlining the SceneManager + InputContextManager + RenderingControls
- * coordination.
+ * shortcuts, plus the pure `nextControlType` cycle helper re-exported
+ * from `controls/types.ts`. Extracted from input-handler.ts so the
+ * orchestrator delegates rather than inlining the SceneManager +
+ * InputContextManager + RenderingControls coordination.
  *
  * @module input/input-handler/commands/control-mode
  */

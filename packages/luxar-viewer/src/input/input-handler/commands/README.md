@@ -15,6 +15,6 @@ directly; pure DOM focus predicates live under `utils/dom/`.
   programmatic access. Triggered by Ctrl+Shift+S.
 - `control-mode.ts` — `toggleControlMode` (Orbit → Fly → Ortho cycle,
   V key) + `toggleInertialMode` (I key, fly only) + `nextControlType`
-  (pure cycle helper).
+  (pure cycle helper re-exported from `controls/types.ts`).
 - `data-monitor-cycle.ts` — `cycleDataMonitor`. Single eventBus emit +
   log; pulled out so the orchestrator only owns the binding wiring.
