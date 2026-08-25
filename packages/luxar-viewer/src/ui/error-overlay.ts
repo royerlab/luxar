@@ -13,6 +13,7 @@ import { escapeHtml } from '../utils/escape-html';
 import { trapFocus } from './help-overlay/focus-trap';
 import { getViewerContainer } from '../utils/viewer-container';
 
+/** Resolve a registered action id to its currently active display chord. */
 export type ShortcutForAction = (actionId: string) => string | undefined;
 
 /**
