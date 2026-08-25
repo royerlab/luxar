@@ -336,6 +336,8 @@ MIN_NODE_MINOR := 22
 | `make check-docs-verbose` | Same gate with verbose completeness output |
 | `make check-docs-external-links` | Opt-in external HTTP link audit (`sphinx-build -b linkcheck`); deliberately not a required CI gate |
 | `make check-demo-links` | Opt-in demo click-through destination audit; reports request failures and human-only checks without failing the command |
+| `make check-zenodo-live` | Opt-in live Zenodo manifest-pin audit using the system Python; requires `ZENODO_TOKEN` and is deliberately not a required CI gate |
+| `make check-external-references` | Run all network-backed reference audits and emit one PASS/NOTICE/WARNING/ERROR report; always non-gating |
 | `make build-typedoc` | Generate TypeScript API documentation with TypeDoc |
 
 ### Utilities
