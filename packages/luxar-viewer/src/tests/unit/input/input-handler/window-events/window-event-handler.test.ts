@@ -16,6 +16,7 @@ import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { AnimationController } from '../../../../../scene/animation/animation-controller';
 import type { RenderingControls } from '../../../../../ui/rendering-controls';
 import type { LuxarCamera } from '../../../../../utils/camera-utils';
+import { resetViewerContainer, setViewerContainer } from '../../../../../utils/viewer-container';
 
 function makeSceneManager(camera?: LuxarCamera): {
   sceneManager: SceneManager;
@@ -49,6 +50,17 @@ function makeAnimationController(): {
   return { animationController, startAnimation };
 }
 
+function dispatchWheel(target: EventTarget, init: WheelEventInit): WheelEvent {
+  const event = new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    ...init,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
 function setFullscreen(fullscreen: boolean): void {
   Object.defineProperty(document, 'fullscreenElement', {
     configurable: true,
@@ -59,10 +71,12 @@ function setFullscreen(fullscreen: boolean): void {
 describe('WindowEventHandler', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
+    resetViewerContainer();
     setFullscreen(false);
   });
 
   afterEach(() => {
+    resetViewerContainer();
     document.body.innerHTML = '';
   });
 
@@ -131,35 +145,106 @@ describe('WindowEventHandler', () => {
   });
 
   describe('wheel', () => {
-    it('plain wheel: only kicks the animation loop (no FOV change)', () => {
+    it('suppresses Ctrl+wheel from viewer UI without changing FOV or starting animation', () => {
       const { sceneManager, updateFOV } = makeSceneManager();
       const { animationController, startAnimation } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
+      const viewer = document.createElement('div');
+      const control = document.createElement('input');
+      viewer.appendChild(control);
+      document.body.appendChild(viewer);
+      setViewerContainer(viewer);
+      const event = dispatchWheel(control, {
+        ctrlKey: true,
+        deltaY: 75,
+      });
 
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
+      expect(event.defaultPrevented).toBe(true);
+      expect(startAnimation).not.toHaveBeenCalled();
+      expect(updateFOV).not.toHaveBeenCalled();
+    });
+
+    it('leaves Ctrl+wheel from host-page UI outside the viewer untouched', () => {
+      const { sceneManager, updateFOV } = makeSceneManager();
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+      const viewer = document.createElement('div');
+      const hostControl = document.createElement('input');
+      document.body.append(viewer, hostControl);
+      setViewerContainer(viewer);
+
+      const event = dispatchWheel(hostControl, { ctrlKey: true, deltaY: 75 });
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(startAnimation).not.toHaveBeenCalled();
+      expect(updateFOV).not.toHaveBeenCalled();
+    });
+
+    it('handles Ctrl+wheel from a canvas outside the configured viewer container', () => {
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+      const viewer = document.createElement('div');
+      document.body.appendChild(viewer);
+      setViewerContainer(viewer);
+
+      const event = dispatchWheel(canvas, { ctrlKey: true, deltaY: 75 });
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(startAnimation).toHaveBeenCalledTimes(1);
+      expect(updateFOV).toHaveBeenCalledWith(75);
+    });
+
+    it('handles Ctrl+wheel from the canvas across a shadow boundary', () => {
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+      const host = document.createElement('div');
+      const shadowRoot = host.attachShadow({ mode: 'open' });
+      document.body.appendChild(host);
+      shadowRoot.appendChild(canvas);
+
+      const event = dispatchWheel(canvas, { ctrlKey: true, deltaY: 75 });
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(startAnimation).toHaveBeenCalledTimes(1);
+      expect(updateFOV).toHaveBeenCalledWith(75);
+    });
+
+    it('plain wheel: only kicks the animation loop (no FOV change)', () => {
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+
+      dispatchWheel(canvas, { deltaY: 100 });
       expect(startAnimation).toHaveBeenCalledTimes(1);
       expect(updateFOV).not.toHaveBeenCalled();
     });
 
     it('Ctrl+wheel: forwards delta to updateFOV', () => {
-      const { sceneManager, updateFOV } = makeSceneManager();
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
       const { animationController } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
 
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 75, ctrlKey: true }));
+      const event = dispatchWheel(canvas, { deltaY: 75, ctrlKey: true });
+      expect(event.defaultPrevented).toBe(true);
       expect(updateFOV).toHaveBeenCalledTimes(1);
       expect(updateFOV).toHaveBeenCalledWith(75);
     });
 
     it('Meta+wheel: forwards delta to updateFOV', () => {
-      const { sceneManager, updateFOV } = makeSceneManager();
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
       const { animationController } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
 
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: -33, metaKey: true }));
+      dispatchWheel(canvas, { deltaY: -33, metaKey: true });
       expect(updateFOV).toHaveBeenCalledWith(-33);
     });
 
@@ -168,18 +253,18 @@ describe('WindowEventHandler', () => {
     // plain wheel event (animation kick, no updateFOV) so a mutation
     // that added `event.shiftKey` to the gate is caught.
     it('Shift+wheel: only kicks the animation loop (Shift is not a FOV modifier)', () => {
-      const { sceneManager, updateFOV } = makeSceneManager();
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
       const { animationController, startAnimation } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
 
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 50, shiftKey: true }));
+      dispatchWheel(canvas, { deltaY: 50, shiftKey: true });
       expect(startAnimation).toHaveBeenCalledTimes(1);
       expect(updateFOV).not.toHaveBeenCalled();
     });
 
     it('Ctrl+wheel: switches rendering-controls preset to Custom and syncs', () => {
-      const { sceneManager } = makeSceneManager();
+      const { sceneManager, canvas } = makeSceneManager();
       const { animationController } = makeAnimationController();
       const settings = { fovPreset: '60° Standard' };
       const syncCurrentState = vi.fn();
@@ -191,7 +276,7 @@ describe('WindowEventHandler', () => {
       handler.setRenderingControls(renderingControls);
       handler.attach([]);
 
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, ctrlKey: true }));
+      dispatchWheel(canvas, { deltaY: 1, ctrlKey: true });
       expect(settings.fovPreset).toBe('Custom');
       expect(syncCurrentState).toHaveBeenCalledTimes(1);
     });
@@ -203,7 +288,7 @@ describe('WindowEventHandler', () => {
       // pinch/ctrl-wheel zoom (browsers synthesize pinch as ctrlKey wheel)
       // in ortho would drag the stash and flip the preset to "Custom".
       const ortho = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000);
-      const { sceneManager, updateFOV } = makeSceneManager(ortho);
+      const { sceneManager, updateFOV, canvas } = makeSceneManager(ortho);
       const { animationController } = makeAnimationController();
       const settings = { fovPreset: '60° Standard' };
       const syncCurrentState = vi.fn();
@@ -211,7 +296,7 @@ describe('WindowEventHandler', () => {
       handler.setRenderingControls({ settings, syncCurrentState } as unknown as RenderingControls);
       handler.attach([]);
 
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, ctrlKey: true }));
+      dispatchWheel(canvas, { deltaY: 1, ctrlKey: true });
       // Gate short-circuits BEFORE updateFOV — stash cannot be corrupted.
       expect(updateFOV).not.toHaveBeenCalled();
       expect(settings.fovPreset).toBe('60° Standard');
@@ -222,12 +307,12 @@ describe('WindowEventHandler', () => {
       // Symmetric macOS path: Cmd/Meta+wheel and trackpad pinch must not
       // reach updateFOV in ortho either.
       const ortho = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000);
-      const { sceneManager, updateFOV } = makeSceneManager(ortho);
+      const { sceneManager, updateFOV, canvas } = makeSceneManager(ortho);
       const { animationController, startAnimation } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
 
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: -20, metaKey: true }));
+      dispatchWheel(canvas, { deltaY: -20, metaKey: true });
       // Animation loop still kicked (unconditional), but no FOV mutation.
       expect(startAnimation).toHaveBeenCalledTimes(1);
       expect(updateFOV).not.toHaveBeenCalled();
@@ -237,7 +322,7 @@ describe('WindowEventHandler', () => {
       // The reciprocal of the ortho gate: with a perspective camera the wheel
       // path fires updateFOV and stamps the preset, so the gate is specific
       // to ortho — a mutant that gated ALL cameras would fail this.
-      const { sceneManager, updateFOV } = makeSceneManager(); // perspective default
+      const { sceneManager, updateFOV, canvas } = makeSceneManager(); // perspective default
       const { animationController } = makeAnimationController();
       const settings = { fovPreset: '60° Standard' };
       const syncCurrentState = vi.fn();
@@ -245,7 +330,7 @@ describe('WindowEventHandler', () => {
       handler.setRenderingControls({ settings, syncCurrentState } as unknown as RenderingControls);
       handler.attach([]);
 
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, ctrlKey: true }));
+      dispatchWheel(canvas, { deltaY: 1, ctrlKey: true });
       expect(updateFOV).toHaveBeenCalledTimes(1);
       expect(settings.fovPreset).toBe('Custom');
       expect(syncCurrentState).toHaveBeenCalledTimes(1);
@@ -257,15 +342,13 @@ describe('WindowEventHandler', () => {
       // mutation that removed the guard would crash on `undefined.settings`
       // — but only when renderingControls is unset. Pin the no-crash
       // contract explicitly for the unset path.
-      const { sceneManager, updateFOV } = makeSceneManager();
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
       const { animationController } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       // INTENTIONALLY skip setRenderingControls() — it remains undefined.
       handler.attach([]);
 
-      expect(() =>
-        window.dispatchEvent(new WheelEvent('wheel', { deltaY: 75, ctrlKey: true }))
-      ).not.toThrow();
+      expect(() => dispatchWheel(canvas, { deltaY: 75, ctrlKey: true })).not.toThrow();
       expect(updateFOV).toHaveBeenCalledTimes(1);
       expect(updateFOV).toHaveBeenCalledWith(75);
     });
@@ -273,14 +356,12 @@ describe('WindowEventHandler', () => {
     it('[input.md G15] Meta+wheel without setRenderingControls: same no-crash contract', () => {
       // Symmetric: macOS users on Cmd+wheel must also not crash when
       // renderingControls is unset. Pin both branches of the OR-gate.
-      const { sceneManager, updateFOV } = makeSceneManager();
+      const { sceneManager, updateFOV, canvas } = makeSceneManager();
       const { animationController } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
 
-      expect(() =>
-        window.dispatchEvent(new WheelEvent('wheel', { deltaY: -33, metaKey: true }))
-      ).not.toThrow();
+      expect(() => dispatchWheel(canvas, { deltaY: -33, metaKey: true })).not.toThrow();
       expect(updateFOV).toHaveBeenCalledWith(-33);
     });
   });

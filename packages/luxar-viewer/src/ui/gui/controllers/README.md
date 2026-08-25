@@ -47,8 +47,9 @@ The wheel modifier tiers are relative to the `step × 0.1` base and match every
 other slider in the app (dimension sliders, layers range sliders): `Shift`
 divides by 10, `Ctrl` multiplies by 10 (one full `step`), `Ctrl+Shift` divides
 by 100. The handler reads whichever scroll axis carries the motion — Shift+wheel
-arrives as a horizontal scroll on a standard mouse — and stops propagation, so
-the window-level `Ctrl`+wheel FOV zoom never fires alongside the coarse tier.
+arrives as a horizontal scroll on a standard mouse. The window-level
+`Ctrl`+wheel FOV path is gated to the scene canvas, so controller-originated
+wheel events never enter it alongside the coarse tier.
 
 **Number input behavior**
 

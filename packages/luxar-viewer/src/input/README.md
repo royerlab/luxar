@@ -80,6 +80,15 @@ Owns concerns that span the whole viewer surface:
 - Wheel-based zoom and FOV adjust (Ctrl+wheel).
 - Fullscreen enter/exit canvas styling.
 
+Camera pointer input remains outside the keyboard context router by design:
+orbit/pan/dolly and fly steering belong to their control implementations. The
+Ctrl/Cmd+wheel FOV path is the one global pointer listener, so although it is
+registered on `window`, it changes FOV and pokes rendering only for events whose
+composed origin is the scene canvas. Modifier-wheel page zoom is still
+suppressed anywhere inside the viewer container, while host-page UI outside an
+embedded viewer is untouched. Wheel-sensitive widgets no longer need to stop
+propagation.
+
 ### Layer 2 — control implementations (`controls/`)
 
 Each control class (orbit, fly, ortho) owns its own pointer + key handlers

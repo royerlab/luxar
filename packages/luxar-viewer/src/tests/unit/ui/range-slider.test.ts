@@ -244,6 +244,26 @@ describe('RangeSlider — bound wheel adjustment', () => {
     expect(onBoundsChange).toHaveBeenCalled();
   });
 
+  it('wheel bubbles after the local bound update while page scroll stays suppressed', () => {
+    makeSlider({ min: 0, max: 10 });
+    const lowBound = host.querySelectorAll('.luxar-range-slider__bound')[0];
+    const windowSpy = vi.fn();
+    window.addEventListener('wheel', windowSpy);
+    const event = new WheelEvent('wheel', {
+      deltaY: -100,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    lowBound.dispatchEvent(event);
+    window.removeEventListener('wheel', windowSpy);
+
+    const { low } = getInputs();
+    expect(parseFloat(low.min)).toBeCloseTo(1, 5);
+    expect(event.defaultPrevented).toBe(true);
+    expect(windowSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('shift+scroll uses a 10× finer step', () => {
     makeSlider({ min: 0, max: 10 });
     const lowBound = host.querySelectorAll('.luxar-range-slider__bound')[0];
