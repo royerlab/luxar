@@ -180,6 +180,8 @@ def dim_order_reverses_winding(
     * no ``normal_dims`` — ``sorted(normal_dims)`` is the only declared winding
       frame there is (§3.2), so without it nothing is decidable, and the viewer
       already renders such a mesh ``DoubleSide`` regardless of ``double_sided``;
+    * malformed ``normal_dims`` — this advisory lint defers to the writer's
+      authoritative validator and must not replace its actionable error;
     * a frame axis that no authored column maps onto (an unmapped scene dimension
       filled with a constant) — it has no preimage, so the restricted map is not a
       permutation at all.
