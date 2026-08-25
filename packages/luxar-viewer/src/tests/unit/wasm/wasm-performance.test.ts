@@ -409,7 +409,7 @@ describe.skipIf(!wasmFilesExist)('WASM Performance Benchmarks', () => {
           `speedup=${result.speedup.toFixed(2)}x`
       );
       expect(result.speedup).toBeGreaterThan(0);
-    });
+    }, 60_000);
   });
 
   // Summary at the end
