@@ -19,9 +19,11 @@ ambiguous: corrupt bytes and a superseded-but-valid generation are
 indistinguishable from the digest. So the ambiguity is removed first.
 
 File entries gain an optional `superseded_sha256` — digests this project pinned
-in an earlier generation — which `gen_data_manifest` now maintains itself,
-appending the outgoing digest whenever a pin changes. That information was
-previously discarded at exactly the moment it stopped being recoverable.
+in an earlier generation. When an in-repo file changes, `gen_data_manifest`
+records the outgoing digest automatically. Hosted-only re-pins have no old bytes
+on disk to discover, so their outgoing digest must be appended as part of the
+manifest edit. That information was previously discarded at exactly the moment
+it stopped being recoverable.
 
 `ensure_dataset` gains a third, deliberately weaker verdict. Bytes matching a
 superseded digest are kept **only** when nothing can replace them (no in-repo

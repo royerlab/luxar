@@ -676,15 +676,16 @@ _HOSTED_KEYS = ("hosted_sha256", "hosted_bytes")
 
 #: Digests this project pinned in an EARLIER generation, newest last.
 #:
-#: Recorded so a re-pin can never brick a dataset. When a pin changes, every
-#: cache still holds the old bytes; without a record of what those were,
-#: `data_fetch` cannot tell "out of date" from "corrupt" and must quarantine —
-#: which destroys the last copy of a hosted-only dataset whose record is not yet
-#: published. That is what #1734 did to `gsplats_3d_drosophila_gastrulation`.
+#: When an in-repo pin changes, regeneration records the outgoing digest while
+#: the old bytes are still knowable. A hosted-only re-pin has no bytes on disk to
+#: compare, so its outgoing digest must be appended by hand as part of the edit.
+#: Without that history, `data_fetch` cannot tell "out of date" from "corrupt"
+#: and must quarantine the cache. That is what #1734 did to
+#: `gsplats_3d_drosophila_gastrulation`.
 #:
-#: Unbounded and append-only: a flat list of 64-char hashes is a few hundred
-#: bytes even after many re-pins, and capping it would reintroduce exactly the
-#: stranding it prevents for anyone who skipped a generation.
+#: Unbounded and ordered newest-last: a flat list of 64-char hashes is a few
+#: hundred bytes even after many re-pins. Reverting a pin moves that digest to
+#: the end so the runtime's one-generation fallback remains correct.
 _SUPERSEDED_KEY = "superseded_sha256"
 
 
@@ -723,12 +724,9 @@ def _carry_hosted(found: list[dict], committed: list[dict]) -> list[dict]:
         # is the only thing that later distinguishes superseded from corrupt.
         history = list(old_entry.get(_SUPERSEDED_KEY) or ())
         outgoing = old_entry.get("sha256")
-        if (
-            outgoing
-            and merged.get("sha256")
-            and outgoing != merged["sha256"]
-            and outgoing not in history
-        ):
+        if outgoing and merged.get("sha256") and outgoing != merged["sha256"]:
+            if outgoing in history:
+                history.remove(outgoing)
             history.append(outgoing)
         if history:
             merged[_SUPERSEDED_KEY] = history
