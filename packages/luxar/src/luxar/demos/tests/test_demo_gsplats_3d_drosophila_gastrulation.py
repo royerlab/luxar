@@ -87,6 +87,25 @@ def test_normalize_amplitudes_maps_constant_signal_into_range() -> None:
     np.testing.assert_array_equal(sublod.amplitudes, np.ones(4, dtype=np.float32))
 
 
+def test_robust_scale_compensation_preserves_approved_appearance() -> None:
+    raw = np.array([5.0, 70.0, 512.0, 798.0], dtype=np.float64)
+    old_normalized = (raw - 5.0) / (798.0 - 5.0)
+    robust_normalized = (raw - 5.0) / (512.0 - 5.0)
+
+    np.testing.assert_allclose(
+        robust_normalized / _demo.DISPLAY_WINDOW_TOP,
+        old_normalized / 0.737,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        robust_normalized * _demo.GSPLAT_OPACITY,
+        old_normalized * 0.41,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
 def test_add_gsplat_node_preserves_partition_structure(tmp_path: Path) -> None:
     partition = GSplatPartition(
         children=[
