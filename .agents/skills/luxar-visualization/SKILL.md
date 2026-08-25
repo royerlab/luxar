@@ -144,7 +144,7 @@ sha256/bytes lines.
 
 The Layers panel (press `L`) is where you dial a scene in — but it rewrites the
 node's uniforms at every load, so whatever you tune there must be written back into
-the `add_*` call or it is lost. Four things about that round-trip surprise people:
+the `add_*` call or it is lost. Five things about that round-trip surprise people:
 
 - **The display window is stored as an `intensity`/`offset` PAIR, not a gain.** For
   a window `[lo, hi]`: `intensity = 1/(hi-lo)`, `offset = -lo/(hi-lo)`. Passing the
@@ -154,6 +154,19 @@ the `add_*` call or it is lost. Four things about that round-trip surprise peopl
 - **`opacity` is the exposure lever, and it wants to be tiny** (1e-2 is normal).
   Scaling the amplitudes instead does nothing — the viewer normalises by the stored
   maximum.
+- **For a colormapped node, the display window is NOT an exposure lever, and
+  reaching for it first is the classic wrong turn.** Under `volumetric` (or any sum
+  projection) a pixel accumulates along the ray, while the window only picks each
+  element's LUT index. The symptom that tells the two apart: if widening the window
+  *dims the whole object toward the colormap's dark foot and shrinks its footprint*
+  rather than spreading it across the LUT, you are over-accumulated and want
+  `opacity`. A frame whose bright regions are genuinely clipped flat is the
+  window's problem. With explicit `colors=`, the pair is a direct color gain and
+  offset: a `[0, hi]` window is pure pre-gamma gain. Under additive at
+  `gamma=1`, it scales RGB like lowering `opacity`; under `volumetric`, `opacity`
+  also lowers optical depth and coverage. Any nonzero `lo` carries an offset that
+  shifts the authored colors. Prefer `opacity`, which the panel round-trips as
+  exposure rather than as a window.
 - **`absorption` (volumetric blending) is optical depth and ACCUMULATES along the
   ray**, so the right value depends on how deep the object is, not on how bright it
   is. It is not portable between datasets: a value tuned on a 170 µm brain will
@@ -179,6 +192,40 @@ scene = compiler.create_scene(
     ),
 )
 ```
+
+**In a bundled demo this exact call fails required tests.** Demos run under the
+cinematic 35 mm preset, and `test_demos_cinematic_mode.py` refuses an authored
+pose that pins `fov`/`fov_preset` or that is not visibly composed for the 63°
+lens. It also requires literal `cinematic_mode=True` on every `ViewerConfig`
+built under `luxar/demos/`. Leave the FOV unset, derive the distance at
+`CINEMATIC_FOV_DEG` directly, and show the full wrapper:
+
+```python
+import math
+
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+
+half_fov = math.radians(CINEMATIC_FOV_DEG) / 2
+d = (
+    max(
+        (W / fill) / (2 * math.tan(half_fov) * aspect),
+        (H / fill) / (2 * math.tan(half_fov)),
+    )
+    + depth / 2
+)
+camera = CameraConfig(position=(cx, cy, cz + d), target=(cx, cy, cz))
+scene = compiler.create_scene(
+    dimensions=dims,
+    viewer_config=ViewerConfig(
+        cinematic_mode=True, tone_mapping="ACES", camera=camera
+    ),
+)
+```
+
+The guard also recognises an inline `position=pull_in(...)` when carrying over an
+empirically tuned distance from another FOV. For a derived distance, importing
+`CINEMATIC_FOV_DEG` or `framing_scale` vouches for the module and lets the pose use
+a local variable normally.
 
 Two decisions this formula makes explicit:
 
