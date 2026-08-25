@@ -2,9 +2,9 @@
 
 HTTP success is not enough for these links: search endpoints often return 200
 for nonsense, while GeneCards returns the same Cloudflare 403 for valid and
-invalid symbols. This offline guard records the canonical templates established
-by hand review of each destination's current URL scheme and rejects any
-unreviewed path or host.
+invalid symbols. This offline guard consumes the canonical templates recorded in
+``link_registry.py`` — established by hand review of each destination's current
+URL scheme — and rejects any unreviewed path or host.
 
 The guard runs two passes: registry resolution for supported link forms, then a
 backstop over unclaimed link-like literals that subsumes the GeneCards lint.

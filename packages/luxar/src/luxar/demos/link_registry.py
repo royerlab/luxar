@@ -174,10 +174,11 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     },
     "ned.ipac.caltech.edu": {
         "mode": "body-marker",
-        # The byname page is a Drupal shell that renders its result client-side,
-        # so it answers 200 with a body of the same size for a bogus name. The
-        # name resolver behind it does discriminate: it omits the Preferred
-        # block entirely when nothing resolves.
+        # The byname page is a Drupal shell that fetches its result client-side,
+        # so a bogus name answers 200 with a body carrying no object data at all
+        # and differing only in the echoed name and the per-request form tokens.
+        # Its own UI route rejects a plain GET, so this probes the sibling name
+        # resolver, which omits the Preferred block when nothing resolves.
         "url_template": "https://ned.ipac.caltech.edu/srs/ObjectLookup?name={value}",
         "good": "PGC17223",
         "bad": "LUXARNOSUCH2089",
@@ -186,12 +187,13 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     },
     "scholar.google.com": {
         "mode": "human",
-        # Scholar answers 200 for anything and echoes the query verbatim into
-        # its advanced-search form, so every naive marker matches a miss too.
-        # Its only real signal is the negative "did not match any articles",
-        # which a positive-marker probe cannot express, and result titles are
-        # term-bolded so the queried title never appears as contiguous text.
-        "reason": "the query is echoed on a miss and result titles are term-bolded",
+        # A result-container class does discriminate here, but the probe cannot
+        # be run: after a few dozen requests Google serves this user agent a 200
+        # bot-check page and then 429s for minutes, which the audit reads as
+        # "good and bad both rejected" — i.e. it reports a moved route. The
+        # cheaper markers are out too: the query is echoed back on a miss, and
+        # result titles are term-bolded so a queried title is never contiguous.
+        "reason": "repeated probes are served a bot check and then 429, faking a moved route",
         "verified_in": "#2091",
         "last_checked": "2026-08-24",
     },

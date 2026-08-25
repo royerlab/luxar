@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import urlsplit
 
 from luxar.demos.link_registry import CANONICAL_LINKS_BY_HOST, DEMO_LINK_AUDITS_BY_HOST
 
@@ -216,6 +217,15 @@ def test_registry_specs_are_complete_and_use_canonical_landing_routes() -> None:
     assert DEMO_LINK_AUDITS_BY_HOST.keys() == CANONICAL_LINKS_BY_HOST.keys()
     for host, spec in DEMO_LINK_AUDITS_BY_HOST.items():
         checker.validate_spec(host, spec, CANONICAL_LINKS_BY_HOST[host])
+
+
+def test_every_canonical_template_is_filed_under_its_own_host() -> None:
+    # Nothing downstream notices a template filed under the wrong host: the
+    # static demo guard only ever sees the flattened union, and an audit would
+    # then probe another destination's page as this host's landing route.
+    for host, templates in CANONICAL_LINKS_BY_HOST.items():
+        for template in templates:
+            assert urlsplit(template).netloc == host, template
 
 
 def test_api_override_cannot_probe_an_unrelated_host() -> None:
