@@ -34,6 +34,7 @@ The main orchestrator. Owns:
 - **First-run hint** — localStorage-gated one-time nudge ("New here? Hover these controls..."), auto-fades after 10s, dismisses on any click or handled routed keypress
 - **Docked footer** — optional element (e.g. the performance readout) inserted above the collapse handle
 - **Overlay delegation** — opens flyouts/popovers via `RailOverlay` and re-syncs active-state when the overlay changes
+- **Routed-keydown reception** — `InputHandler` calls `handleRoutedKeyDown()` after it handles a key; dismisses the hint and schedules a refresh
 
 **Responsibilities**:
 
@@ -123,9 +124,8 @@ const rail = new ControlRail(items: ControlRailItem[], footer?: HTMLElement);
    - `document.click` → schedule refresh (active-state may have changed)
    - `window.luxar-layers-changed` → schedule refresh (Layers disabled state)
    - `window.luxar-control-mode-changed` → schedule refresh (Navigation icon/tooltip)
-6. Receives handled keydowns from `InputHandler` through `handleRoutedKeyDown()` to dismiss the hint and schedule refresh
-7. Shows the first-run hint (localStorage-gated)
-8. Increments `bodyMarkerRefs` and adds `luxar-has-control-rail` to `document.body`
+6. Shows the first-run hint (localStorage-gated)
+7. Increments `bodyMarkerRefs` and adds `luxar-has-control-rail` to `document.body`
 
 ### Refresh Cycle (Event-Driven)
 

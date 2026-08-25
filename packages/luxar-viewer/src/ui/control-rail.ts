@@ -523,7 +523,11 @@ export class ControlRail {
     window.removeEventListener('luxar-control-mode-changed', this.onExternalStateChange);
     bodyMarkerRefs = Math.max(0, bodyMarkerRefs - 1);
     if (bodyMarkerRefs === 0) document.body.classList.remove(BODY_MARKER_CLASS);
+    // Null the field, not just the DOM: a post-dispose handleRoutedKeyDown()
+    // would otherwise pass dismissHint()'s `!this.hint` guard and persist the
+    // "hint seen" flag (burning the first-run hint), and retain the element.
     this.hint?.remove();
+    this.hint = undefined;
     this.root.remove();
     this.buttons.clear();
   }

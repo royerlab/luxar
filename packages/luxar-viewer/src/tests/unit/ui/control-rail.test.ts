@@ -105,10 +105,10 @@ describe('ControlRail', () => {
   });
 
   it('re-evaluates active-state on document interaction (event-driven refresh)', () => {
-    // #3: active-state is refreshed on document click/keydown (rAF-debounced),
-    // NOT by polling — so it reflects a panel opened or CLOSED by any means,
-    // including a panel's own × button. Capture the rAF callback so we can flush
-    // it deterministically in the same order the real loop would.
+    // #3: active-state is refreshed on a document click and on a routed keydown
+    // (rAF-debounced), NOT by polling — so it reflects a panel opened or CLOSED
+    // by any means, including a panel's own × button. Capture the rAF callback
+    // so we can flush it deterministically in the same order the real loop would.
     const rafQueue: FrameRequestCallback[] = [];
     const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(((
       cb: FrameRequestCallback
@@ -134,6 +134,20 @@ describe('ControlRail', () => {
     // …and clears again when the panel is closed (e.g. via its own × button).
     open = false;
     document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    flushRaf();
+    expect(active()).toBe(false);
+
+    // A keydown the input router reports as handled reaches the rail through
+    // handleRoutedKeyDown(), which must schedule a refresh too — a shortcut
+    // (L, R, N, …) opens a panel with no click anywhere.
+    open = true;
+    rail.handleRoutedKeyDown();
+    flushRaf();
+    expect(active()).toBe(true);
+
+    // …and the same path clears it when the shortcut closes the panel again.
+    open = false;
+    rail.handleRoutedKeyDown();
     flushRaf();
     expect(active()).toBe(false);
 
@@ -224,6 +238,19 @@ describe('ControlRail', () => {
     rail.handleRoutedKeyDown();
     expect(document.querySelector('.luxar-control-rail-hint')).toBeNull();
     expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBe('1');
+  });
+
+  it('a routed keypress after dispose does not burn the first-run hint', () => {
+    // dispose() detaches the hint without dismissing it (the user never saw it
+    // long enough to count). A late routed keydown must not persist the
+    // "seen" flag on its way out, or the next session loses the hint for good.
+    rail = new ControlRail(items());
+    expect(document.querySelector('.luxar-control-rail-hint')).not.toBeNull();
+    rail.dispose();
+    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBeNull();
+
+    rail.handleRoutedKeyDown();
+    expect(localStorage.getItem('luxar-control-rail-hint-dismissed')).toBeNull();
   });
 
   it('returns focus to the body after a pointer click (keeps Space/global shortcuts working)', () => {
