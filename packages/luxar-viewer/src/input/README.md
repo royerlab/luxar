@@ -35,12 +35,13 @@ type-only imports are exempt, and loading orchestration belongs in `scene/`.
 without exposing the context-manager implementation. Context identifiers must
 be non-empty and unique. Built-in context configurations cannot be replaced or
 removed, but their bindings remain mutable through `registerBinding()` and
-`unregisterBinding()`. `reset()` removes every custom context and binding.
+`unregisterBinding()`. The context manager's `reset()` removes every custom
+context and binding.
 
 Every `fallbackContexts` entry must already be registered. `registerContext()`,
-`pushContext()`, and `setContext()` throw for unknown identifiers. To keep viewer
-shortcuts reachable, use `passthrough: true`, a registered fallback route, or
-both; a custom context with neither is a dead end until it is popped.
+`registerBinding()`, and `pushContext()` throw for unknown identifiers. To keep
+viewer shortcuts reachable, use `passthrough: true`, a registered fallback route,
+or both; a custom context with neither is a dead end until it is popped.
 
 Use either an authored `allowedKeys` list or `allowRegisteredBindings: true`,
 never both. The latter derives the allowlist from live registrations.
