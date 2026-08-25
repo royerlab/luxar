@@ -21,8 +21,8 @@
  * model. There's no separate `dispose()` — the InputHandler runs the
  * cleanup array on its own dispose path.
  *
- * Behavior is identical to the inline originals byte-for-byte
- * (same Ctrl/Meta gating, same rAF, same style set).
+ * The global wheel listener only handles events from the scene canvas;
+ * wheel-sensitive viewer UI remains responsible for its own local behavior.
  *
  * @module input/handlers/window-event-handler
  */
@@ -167,6 +167,8 @@ export class WindowEventHandler {
    *     "Custom" so the panel value matches the slider.
    */
   private onWheel(event: WheelEvent): void {
+    if (event.target !== this.sceneManager.renderer.domElement) return;
+
     this.animationController.startAnimation();
 
     if (event.ctrlKey || event.metaKey) {
