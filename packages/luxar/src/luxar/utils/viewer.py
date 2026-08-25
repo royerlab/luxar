@@ -9,7 +9,7 @@ from typing import Optional, Union
 
 from arbol import aprint
 
-from .process import run_child_process
+from .._process import run_child_process
 
 # Derived demo port ranges. Deliberately DISJOINT from the bare `luxar serve`
 # defaults (8000 data / 5173 viewer): a demo must never contend with a manually

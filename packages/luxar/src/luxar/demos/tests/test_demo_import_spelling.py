@@ -52,8 +52,6 @@ import re
 import tomllib
 from pathlib import Path
 
-from coverage.files import GlobMatcher
-
 import luxar.demos as demos_barrel
 
 from ._scanned_modules import EXCLUDED, scanned_demo_modules
@@ -92,13 +90,11 @@ MIN_GSPLAT_DEMO_MODULES = 25
 
 #: The helper modules the barrel exists to front. Importing any one
 #: directly from a demo — under any spelling — is the drift this module fails on.
-DEEP_MODULES = frozenset(
+SPLIT_DEMO_UTILITY_MODULES = frozenset(
     {
-        "luxar.demos._support._fields",
         "luxar.utils.bundles",
         "luxar.utils.cache",
         "luxar.utils.colors",
-        "luxar.utils.data_fetch",
         "luxar.utils.device",
         "luxar.utils.flags",
         "luxar.utils.lfs",
@@ -109,6 +105,10 @@ DEEP_MODULES = frozenset(
         "luxar.utils.zip_safety",
     }
 )
+DEEP_MODULES = SPLIT_DEMO_UTILITY_MODULES | {
+    "luxar.demos._support._fields",
+    "luxar.utils.data_fetch",
+}
 
 #: ``(package, leaf)`` PAIRS, so ``from luxar.utils import viewer`` is recognised
 #: (it binds the same module object as ``import luxar.utils.viewer``) without a
@@ -272,15 +272,16 @@ def _barrel_allowed_names() -> set[str]:
 
 def test_coverage_omits_only_the_split_demo_utilities() -> None:
     """Coverage exclusions must not hide same-named production utilities."""
+    from coverage.files import GlobMatcher
+
     pyproject = LUXAR_DIR.parents[3] / "pyproject.toml"
     config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     omit = config["tool"]["coverage"]["run"]["omit"]
 
     split_modules = {
         f"{module.removeprefix('luxar.utils.')}.py"
-        for module in DEEP_MODULES
-        if module.startswith("luxar.utils.")
-    } - {"data_fetch.py"}
+        for module in SPLIT_DEMO_UTILITY_MODULES
+    }
     split_patterns = {f"*/luxar/utils/{module}" for module in split_modules}
     assert split_patterns <= set(omit)
 

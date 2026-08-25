@@ -43,6 +43,36 @@ def test_import_luxar_does_not_import_torch() -> None:
     assert "ok" in result.stdout
 
 
+@pytest.mark.parametrize(
+    "module",
+    [
+        "luxar.utils.bundles",
+        "luxar.utils.cache",
+        "luxar.utils.colors",
+        "luxar.utils.device",
+        "luxar.utils.flags",
+        "luxar.utils.lfs",
+        "luxar.utils.payload_agreement",
+        "luxar.utils.provenance",
+        "luxar.utils.scenes",
+        "luxar.utils.viewer",
+        "luxar.utils.zip_safety",
+    ],
+)
+def test_demo_utilities_do_not_import_cli_dependencies(module: str) -> None:
+    """Shared demo helpers must not pull in the eager CLI package."""
+    result = _run(
+        "import importlib, sys; "
+        f"importlib.import_module({module!r}); "
+        "assert 'luxar.cli' not in sys.modules, 'luxar.cli imported by demo utilities'; "
+        "assert 'typer' not in sys.modules, 'typer imported by demo utilities'; "
+        "assert 'click' not in sys.modules, 'click imported by demo utilities'; "
+        "print('ok')"
+    )
+    assert result.returncode == 0, f"{module}: {result.stderr}"
+    assert "ok" in result.stdout
+
+
 def test_lazy_gsplat_export_is_accessible() -> None:
     """Accessing luxar.GSplatData resolves it lazily (and only then loads gsplats)."""
     result = _run(
