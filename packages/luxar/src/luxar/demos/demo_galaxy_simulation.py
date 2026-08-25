@@ -375,6 +375,7 @@ def galaxy_camera_position() -> tuple[float, float, float]:
 #: rather than dimmer and grainier.
 STAR_GAIN = 0.030
 GAIN_REFERENCE_STARS = 400_000
+GLOBULAR_STARS_PER_CLUSTER = 90
 
 
 def density_scale(n_disc: int) -> float:
@@ -388,6 +389,12 @@ def density_scale(n_disc: int) -> float:
     jobs, and it is 1.0 at the reference count.
     """
     return float(GAIN_REFERENCE_STARS / max(n_disc, 1)) ** (1.0 / 3.0)
+
+
+def globular_stars_per_cluster(n_disc: int) -> int:
+    """Sample each globular at the same relative density as the disc."""
+    relative_density = n_disc / GAIN_REFERENCE_STARS
+    return max(round(GLOBULAR_STARS_PER_CLUSTER * relative_density), 1)
 
 
 #: Scene exposure in LOG2 STOPS, on top of the gain above.
@@ -719,7 +726,9 @@ def build_bulge(n: int, rng: np.random.Generator) -> dict:
     }
 
 
-def build_halo(n: int, n_globulars: int, rng: np.random.Generator) -> dict:
+def build_halo(
+    n: int, n_globulars: int, per_cluster: int, rng: np.random.Generator
+) -> dict:
     """Stellar halo plus globular clusters, both old and metal-poor.
 
     The field halo follows ``rho ~ r^-3.5``, the observed slope; sampling it
@@ -741,7 +750,6 @@ def build_halo(n: int, n_globulars: int, rng: np.random.Generator) -> dict:
 
     # Globular clusters: a Plummer sphere each, radius ~ a few parsecs scaled up
     # to stay visible at galaxy scale.
-    per_cluster = 90
     u_c = rng.random(n_globulars)
     r_c = (r_min**exponent + u_c * (r_max**exponent - r_min**exponent)) ** (
         1.0 / exponent
@@ -789,6 +797,7 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
     n_bulge = max(n_disc // 5, 1)
     n_halo = max(n_disc // 18, 1)
     n_globulars = 120
+    per_cluster = globular_stars_per_cluster(n_disc)
 
     # Radii and gain both track the sample density (see `density_scale`).
     scale = density_scale(n_disc)
@@ -801,7 +810,7 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
     with asection("Building populations"):
         disc = build_disc(n_disc, rng)
         bulge = build_bulge(n_bulge, rng)
-        halo = build_halo(n_halo, n_globulars, rng)
+        halo = build_halo(n_halo, n_globulars, per_cluster, rng)
         aprint(f"disc {n_disc:,} · bulge {n_bulge:,} · halo {n_halo:,} field")
         aprint(f"globular clusters: {n_globulars} ({len(halo['clusters']):,} stars)")
 

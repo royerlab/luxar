@@ -159,6 +159,21 @@ def test_summed_additive_light_is_held_across_star_counts(factor: int) -> None:
     assert light == pytest.approx(reference, rel=1e-9)
 
 
+@pytest.mark.parametrize("factor", [1, 4, 16])
+def test_globular_light_is_held_across_star_counts(factor: int) -> None:
+    """The static cluster population must thin with the dynamic populations."""
+    n = _demo.GAIN_REFERENCE_STARS // factor
+    scale = _demo.density_scale(n)
+    per_cluster = _demo.globular_stars_per_cluster(n)
+    light = per_cluster * (_demo.STAR_GAIN * scale) * scale**2
+    reference = _demo.GLOBULAR_STARS_PER_CLUSTER * _demo.STAR_GAIN
+
+    # Integer points per cluster quantise the requested density. The residual
+    # may be at most half a point's contribution at the requested scale.
+    tolerance = 0.5 * (_demo.STAR_GAIN * scale) * scale**2
+    assert abs(light - reference) <= tolerance + 1e-12
+
+
 def test_density_scale_survives_a_degenerate_star_count() -> None:
     """A zero would divide by zero before the count validator ever sees it."""
     assert _demo.density_scale(0) > 0.0
