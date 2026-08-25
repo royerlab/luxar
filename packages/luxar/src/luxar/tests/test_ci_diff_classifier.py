@@ -412,7 +412,7 @@ def test_only_dev_pushes_run_the_full_python_version_matrix(workflow: str) -> No
     )
     assert matrix == (
         "${{(github.event_name=='push')"
-        "&&fromJSON('[\"3.12\",\"3.13\",\"3.14\"]')"
+        '&&fromJSON(\'["3.12","3.13","3.14"]\')'
         "||fromJSON('[\"3.12\"]')}}"
     )
 

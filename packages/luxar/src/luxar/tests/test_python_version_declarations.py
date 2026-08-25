@@ -42,13 +42,16 @@ def _declared(pyproject: str) -> set[str]:
 
 
 def _ci_legs(workflow: str) -> tuple[set[str], set[str]]:
-    """``(pull-request legs, off-PR legs)`` from the python-tests matrix."""
+    """``(push legs, non-push legs)`` from the python-tests matrix."""
     line = next(ln for ln in workflow.splitlines() if "python-version: ${{" in ln)
+    assert "github.event_name == 'push'" in line, (
+        f"matrix must distinguish dev pushes from PR/schedule events: {line.strip()}"
+    )
     lists = re.findall(r"fromJSON\('(\[[^\]]*\])'\)", line)
-    assert len(lists) >= 2, f"matrix expression lost a branch: {line.strip()}"
+    assert len(lists) == 2, f"matrix expression lost a branch: {line.strip()}"
     return (
         set(re.findall(r"3\.\d+", lists[0])),
-        set(re.findall(r"3\.\d+", lists[-1])),
+        set(re.findall(r"3\.\d+", lists[1])),
     )
 
 
@@ -66,7 +69,9 @@ def test_requires_python_is_the_floor(pyproject: str) -> None:
     assert re.search(r'requires-python\s*=\s*">=' + FLOOR + '"', pyproject)
 
 
-def test_every_declared_version_is_tested_off_pr(pyproject: str, workflow: str) -> None:
+def test_every_declared_version_is_tested_on_dev_push(
+    pyproject: str, workflow: str
+) -> None:
     """A classifier the wheel advertises must be a version CI actually runs.
 
     This is the drift that happened: 3.13 was advertised and never exercised.
@@ -74,27 +79,27 @@ def test_every_declared_version_is_tested_off_pr(pyproject: str, workflow: str) 
     mismatch worth knowing about.
     """
     declared = _declared(pyproject)
-    _, off_pr = _ci_legs(workflow)
-    assert declared == off_pr, (
-        f"classifiers advertise {sorted(declared)} but CI's off-PR matrix runs "
-        f"{sorted(off_pr)}"
+    push_legs, _ = _ci_legs(workflow)
+    assert declared == push_legs, (
+        f"classifiers advertise {sorted(declared)} but CI's dev-push matrix runs "
+        f"{sorted(push_legs)}"
     )
 
 
 def test_the_hatch_matrix_mirrors_ci(pyproject: str, workflow: str) -> None:
     """``hatch run test.pyX.YZ:cov`` must exist for every version CI runs."""
-    _, off_pr = _ci_legs(workflow)
-    assert _hatch_matrix(pyproject) == off_pr
+    push_legs, _ = _ci_legs(workflow)
+    assert _hatch_matrix(pyproject) == push_legs
 
 
-def test_the_pull_request_leg_is_the_floor_alone(workflow: str) -> None:
+def test_pull_request_and_schedule_legs_are_the_floor_alone(workflow: str) -> None:
     """Branch protection requires ``python-tests (3.12)``, so the floor must run.
 
     Kept to one leg on purpose: the self-hosted pool is the throughput ceiling
     (see #1484). Widening this is a deliberate cost decision, not a tidy-up.
     """
-    pr_legs, _ = _ci_legs(workflow)
-    assert pr_legs == {FLOOR}
+    _, non_push_legs = _ci_legs(workflow)
+    assert non_push_legs == {FLOOR}
 
 
 def test_the_source_gates_agree_with_the_floor(pyproject: str) -> None:
