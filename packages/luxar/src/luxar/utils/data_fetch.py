@@ -595,12 +595,17 @@ def _ensure_one(
             "good copy to fall back to. Re-pull the LFS object, or regenerate the "
             "manifest if the data was intentionally updated."
         )
+    source_remedy = (
+        "In a source checkout, run `git lfs pull`."
+        if lfs_file.exists()
+        else "This archive is hosted-only and has no in-repo Git LFS copy."
+    )
     raise DatasetUnavailable(
         f"{fname} is not cached (any cached copy failed its checksum and was "
         "quarantined), not available from the in-repo Git LFS copy, and the "
         "demo-data manifest builds no Zenodo URL for it yet — its record has no "
-        "id, or is still an unpublished draft. In a source checkout, run "
-        "`git lfs pull`. Otherwise, publish the record and populate its manifest "
+        f"id, or is still an unpublished draft. {source_remedy} Publish the "
+        "record and populate its manifest "
         "URL, or rerun the demo with --recompute when that demo provides a build "
         "path."
     )

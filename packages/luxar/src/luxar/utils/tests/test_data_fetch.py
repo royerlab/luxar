@@ -817,6 +817,23 @@ def test_unpulled_lfs_pointer_names_the_available_remedies(fake_repo):
     assert "git lfs pull" in message
 
 
+def test_hosted_only_archive_does_not_recommend_git_lfs(fake_repo):
+    """An archive absent from the repository cannot be hydrated with Git LFS."""
+    manifest, cache = fake_repo
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.unlink()
+
+    with pytest.raises(DatasetUnavailable) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "hosted-only" in message
+    assert "unpublished draft" in message
+    assert "git lfs pull" not in message
+
+
 def test_inrepo_source_failing_its_own_checksum_is_never_used(fake_repo):
     """A bad packaged copy is reported, never loaded, and never renamed.
 
