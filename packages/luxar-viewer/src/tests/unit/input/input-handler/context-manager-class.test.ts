@@ -173,6 +173,21 @@ describe('InputContextManager', () => {
       expect(manager.getContext()).toBe(InputContext.NAVIGATION);
     });
 
+    it('does not route to navigation with passthrough but no fallback', () => {
+      const navigationHandler = vi.fn();
+      manager.registerContext('annotation', { priority: 5, passthrough: true });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'h',
+        handler: navigationHandler,
+      });
+      manager.pushContext('annotation');
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'h' }), 'down')).toBe(
+        false
+      );
+      expect(navigationHandler).not.toHaveBeenCalled();
+    });
+
     it('rejects duplicate custom and built-in context names', () => {
       manager.registerContext('annotation', { priority: 5 });
       expect(() => manager.registerContext('annotation', { priority: 6 })).toThrow(

@@ -40,8 +40,9 @@ context and binding.
 
 Every `fallbackContexts` entry must already be registered. `registerContext()`,
 `registerBinding()`, and `pushContext()` throw for unknown identifiers. To keep
-viewer shortcuts reachable, use `passthrough: true`, a registered fallback route,
-or both; a custom context with neither is a dead end until it is popped.
+viewer shortcuts reachable, use `passthrough: true` and at least one registered
+`fallbackContexts` entry. Either one alone is a dead end until the custom context
+is popped.
 
 Use either an authored `allowedKeys` list or `allowRegisteredBindings: true`,
 never both. The latter derives the allowlist from live registrations.
