@@ -498,16 +498,18 @@ jobs:
     # GitHub VM, and false on the 16-core self-hosted box, where the original
     # `-n 4` benchmark cut each leg from ~45 min to ~16. Combined with the thread
     # pinning below; neither works without the other. The memory-safe `-n 2`
-    # coverage run now takes 1:16:49 under the runner's CPU and memory limits.
+    # runner-equivalent coverage runs took 1:16:49-1:25:17 under the runner's
+    # CPU and memory limits.
     #
-    # 120, not 60, because the self-hosted runners are deliberately SCHED_IDLE
+    # 180, not 60, because the self-hosted runners are deliberately SCHED_IDLE
     # (see luxar-ci-slot@.service): CI only gets CPU nobody else on that box
     # wants, so a sustained burst from the other workloads there can stretch a
     # leg arbitrarily. That is starvation, not a hang, and the heartbeat cannot
     # detect it — an idle-priority job is perfectly healthy, just slow. A
-    # timeout here would be a self-inflicted red. The measured `-n 2` capped run
-    # takes 1:16:49, about 64% of this limit before SCHED_IDLE contention.
-    timeout-minutes: 120
+    # timeout here would be a self-inflicted red. Including the ~5.5 min outside
+    # the coverage step, the capped runs imply ~83-91 min jobs before contention;
+    # completed obsidian legs have stretched 2.4-3.3x over their unloaded time.
+    timeout-minutes: 180
     strategy:
       # Report every interpreter's verdict in one run: fail-fast would cancel the
       # siblings on the first red leg, losing precisely the per-version information
