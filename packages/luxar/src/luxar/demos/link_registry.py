@@ -88,6 +88,8 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     },
     "earthquake.usgs.gov": {
         "mode": "status",
+        # The client-routed public shell answers 200 for arbitrary paths, so this
+        # request confirms availability but cannot prove the route is unchanged.
         "url_template": (
             "https://earthquake.usgs.gov/fdsnws/event/1/query"
             "?format=geojson&eventid={value}"
@@ -149,6 +151,8 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
     },
     "www.uniprot.org": {
         "mode": "status",
+        # The client-routed public shell answers 200 for arbitrary paths, so this
+        # request confirms availability but cannot prove the route is unchanged.
         "url_template": "https://rest.uniprot.org/uniprotkb/{value}",
         "good": "P04637",
         "bad": "LUXAR2089",
