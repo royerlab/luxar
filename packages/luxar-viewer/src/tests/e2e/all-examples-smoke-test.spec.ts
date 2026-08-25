@@ -1,9 +1,9 @@
 /**
  * Comprehensive Smoke Tests for ALL Example Datasets
  *
- * CRITICAL: This test suite loads every example dataset EXCEPT the ones parked
- * in `KNOWN_FLAKY_LARGE_DATASETS` below (each with its documented reason, and a
- * tracking issue where one exists), and validates:
+ * CRITICAL: This test suite loads a hand-maintained subset of example datasets,
+ * minus the ones parked in `KNOWN_FLAKY_LARGE_DATASETS`; #2121 tracks full
+ * generated-dataset coverage. It validates:
  * - No console errors
  * - No WebGL errors
  * - Renderable geometry loaded successfully
@@ -179,17 +179,21 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       expect(state.totalElements).toBeGreaterThan(0);
 
       // A strict per-node assertion is not valid: nd_points_example has a visible
-      // /Reference5D node with pointCount=0 while its sibling carries all 820 points.
-      // Per-type totals still catch a geometry loader silently producing no elements.
+      // /Reference5D node with pointCount=0 while its sibling carries all 820 points,
+      // and hidden LOD nodes can also legitimately report zero. Per-type totals still
+      // catch a geometry loader silently producing no elements.
       const geometryTypes = [
-        { nodes: state.pointClouds, total: state.totalPoints },
-        { nodes: state.lineMeshes, total: state.totalLines },
-        { nodes: state.gsplatMeshes, total: state.totalGSplats },
-        { nodes: state.meshNodes, total: state.totalTriangles },
+        { label: 'points', nodes: state.pointClouds, total: state.totalPoints },
+        { label: 'line', nodes: state.lineMeshes, total: state.totalLines },
+        { label: 'gsplat', nodes: state.gsplatMeshes, total: state.totalGSplats },
+        { label: 'mesh', nodes: state.meshNodes, total: state.totalTriangles },
       ];
       for (const geometryType of geometryTypes) {
         if (geometryType.nodes.length > 0) {
-          expect(geometryType.total).toBeGreaterThan(0);
+          expect(
+            geometryType.total,
+            `${example}: ${geometryType.label} nodes present but 0 elements`
+          ).toBeGreaterThan(0);
         }
       }
 
