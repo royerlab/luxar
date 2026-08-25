@@ -84,12 +84,13 @@ function makeInputHandlerStub() {
     // The control rail reads this to wire its buttons to the same commands the
     // keyboard uses; the closures are only invoked on click (never in tests).
     getUiActions: vi.fn(() => ({ commands: {}, panels: {} })),
-    // Stands in for the live key-binding registry: exactly one action resolves
-    // to a distinctive label, so a test can tell "the registry's answer reached
-    // the rail" apart from "some truthy stub did". Everything else is unbound,
-    // which is what an un-init'd registry answers for every action.
+    // Stands in for the live key-binding registry: exactly one action resolves,
+    // and to a label the real config never produces, so a test can tell "the
+    // registry's answer reached the rail" apart from both "some truthy stub
+    // did" and "the production letter was baked in". Everything else is
+    // unbound, which is what an un-init'd registry answers for every action.
     getShortcutLabel: vi.fn((actionId: string) =>
-      actionId === KeyAction.toggleHelp ? 'H' : undefined
+      actionId === KeyAction.toggleHelp ? '?' : undefined
     ),
   };
 }
@@ -659,9 +660,13 @@ describe('runInitPipeline', () => {
       expect(inputHandler.getShortcutLabel).toHaveBeenCalledWith(KeyAction.toggleHelp);
 
       // And the registry's ANSWER is what the item carries — read off the real
-      // buildRailItems output the pipeline handed to the (mocked) rail.
+      // buildRailItems output the pipeline handed to the (mocked) rail. Assert
+      // the item exists first, so renaming it reads as a missing item rather
+      // than as a broken label.
       const railItems = vi.mocked(ControlRail).mock.calls[0][0];
-      expect(railItems.find((item) => item.id === 'help')?.shortcut).toBe('H');
+      const helpItem = railItems.find((item) => item.id === 'help');
+      expect(helpItem).toBeDefined();
+      expect(helpItem?.shortcut).toBe('?');
 
       // Bindings exist only after init(), so the rail must be built later.
       expect(inputHandler.init.mock.invocationCallOrder[0]).toBeLessThan(
