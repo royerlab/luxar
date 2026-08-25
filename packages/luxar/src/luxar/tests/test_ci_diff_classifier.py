@@ -811,6 +811,29 @@ def test_queue_watchdog_accepts_fresh_positive_heartbeat_without_running_sibling
     assert not cancelled
 
 
+def test_queue_watchdog_accepts_fresh_zero_capacity_publisher_without_scanning_runs(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A live saturated publisher must short-circuit repository run scanning."""
+    snapshots = [
+        [_obsidian_job("python-tests (3.12)", "queued")],
+        [_obsidian_job("python-tests (3.12)", "in_progress")],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        heartbeat_snapshots=[_heartbeat("0", 1000)],
+        run_api_error=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 2
+    assert "heartbeat publisher refreshed 0s ago" in result.stdout
+    assert "run liveness unreadable" not in result.stdout
+    assert not cancelled
+
+
 def test_queue_watchdog_reloads_fresh_heartbeat_while_jobs_remain_queued(
     workflow: str, tmp_path: Path
 ) -> None:
@@ -910,7 +933,11 @@ def test_queue_watchdog_accepts_fresh_zero_heartbeat_when_every_job_is_queued(
         [_obsidian_job("python-tests (3.12)", "in_progress")],
     ]
     result, calls, cancelled = _run_queue_watchdog(
-        workflow, tmp_path, snapshots, other_run_active=True
+        workflow,
+        tmp_path,
+        snapshots,
+        heartbeat_snapshots=[_heartbeat("0", 1)],
+        other_run_active=True,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -935,6 +962,7 @@ def test_queue_watchdog_fails_liveness_reads_open(
         workflow,
         tmp_path,
         snapshots,
+        heartbeat_snapshots=[_heartbeat("0", 1)],
         other_run_active=True,
         run_api_error=api_error == "runs",
         job_api_error=api_error == "jobs",

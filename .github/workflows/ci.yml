@@ -372,6 +372,11 @@ jobs:
               echo "capacity heartbeat is ${capacity_age}s old; still queued: $queued"
               sleep 30; continue
             fi
+            update_age=$(( now - hb_updated ))
+            if [ "$update_age" -ge -30 ] && [ "$update_age" -lt 180 ]; then
+              echo "heartbeat publisher refreshed ${update_age}s ago (capacity=$hb); still queued: $queued"
+              sleep 30; continue
+            fi
             other_runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
               2>/dev/null) || other_runs=""
             if [ -z "$other_runs" ]; then
@@ -399,18 +404,12 @@ jobs:
               echo "other runs have active obsidian jobs ($other_running); still queued: $queued"
               sleep 30; continue
             fi
-            update_age=$(( now - hb_updated ))
-            if [ "$update_age" -ge -30 ] && [ "$update_age" -lt 180 ]; then
-              echo "heartbeat publisher refreshed ${update_age}s ago (capacity=$hb); still queued: $queued"
-            else
-              echo "::error::obsidian has no active jobs and its heartbeat publisher is stale (update age ${update_age}s, capacity=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
-              gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
-              # The cancel sweeps this job too; don't fall through to success
-              # while it lands.
-              sleep 120
-              exit 1
-            fi
-            sleep 30
+            echo "::error::obsidian has no active jobs and its heartbeat publisher is stale (update age ${update_age}s, capacity=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
+            # The cancel sweeps this job too; don't fall through to success
+            # while it lands.
+            sleep 120
+            exit 1
           done
           if [ "$seen_obsidian" -eq 1 ]; then
             echo "watchdog window over; jobs still queued but obsidian stayed live — leaving the run alone"
