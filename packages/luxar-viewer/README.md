@@ -146,6 +146,51 @@ pass `allowLinks: false` to observe or replace navigation without allowing it.
 > index it against `hitNodeName`, which equals `nodeName` when the node is not
 > partitioned.
 
+## 🧩 Layer mode (Luxar inside a host's own renderer)
+
+`LuxarApp` embeds *the viewer*. `LuxarLayer` is for the other case: the host
+already has a Three.js scene and wants Luxar's data as one more thing in it,
+sharing a single WebGL context, camera, and set of controls.
+
+```ts
+import { LuxarLayer } from '@royerlab/luxar-viewer';
+
+const layer = new LuxarLayer({
+  renderer,                                              // host-owned
+  getCamera: () => camera,                               // live getter
+  getViewportSize: () => renderer.getSize(new THREE.Vector2()),
+  scene,                                                 // host-owned
+});
+await layer.load('https://example.com/imaging.luxar.zarr');
+
+function animate() {
+  requestAnimationFrame(animate);
+  layer.update();                 // BEFORE the host renders
+  renderer.render(scene, camera);
+}
+
+await layer.dispose();
+```
+
+The layer owns no renderer, camera, controls, post-processing, or UI — it
+contributes a `THREE.Group` plus the per-frame LOD and depth-sort bookkeeping.
+The host must call `update()` each frame before rendering, `resize()` after a
+viewport or camera-projection change, and pass `requestRender` if it renders
+on demand rather than continuously.
+
+nD navigation coalesces, so a host can drive it from a slider at frame rate:
+
+```ts
+const t = layer.findDimension('time');
+layer.prefetchDimensionValue(t!, frame + 1);   // warm the next slice
+void layer.setDimensionValue(t!, frame);        // don't await during playback
+```
+
+`alignTo(matrix)` places the data in the host's world space (for a host that
+normalizes its own coordinates). Same single-instance rule as `LuxarApp`, and
+the two are mutually exclusive. See
+[`src/core/layer/README.md`](src/core/layer/README.md) for the full contract.
+
 ### What's NOT supported in v1
 
 - **Multiple viewers on the same page.** `ThemeManager`, the worker pool, and several UI components are still page-singletons. Mounting two `LuxarApp` instances at once will share state.
