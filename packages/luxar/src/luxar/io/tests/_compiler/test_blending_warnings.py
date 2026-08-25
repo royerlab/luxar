@@ -383,6 +383,22 @@ def test_spatial_boundary_contact_is_not_reported_as_overlap(capsys) -> None:
     assert capsys.readouterr().out == ""
 
 
+def test_non_sweep_axis_boundary_contact_is_not_reported_as_overlap(capsys) -> None:
+    root = _root()
+    _leaf(root, "points", "points", maximum=[1.0, 1.0, 1.0])
+    _leaf(
+        root,
+        "mesh",
+        "mesh",
+        minimum=[0.0, 1.0, 0.0],
+        maximum=[1.0, 2.0, 1.0],
+    )
+
+    warn_overlapping_blending(root)
+
+    assert capsys.readouterr().out == ""
+
+
 def test_spatial_sweep_prunes_disjoint_leaf_pairs() -> None:
     leaves = [
         _BlendLeaf(
