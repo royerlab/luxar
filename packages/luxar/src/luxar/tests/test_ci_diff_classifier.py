@@ -229,7 +229,10 @@ NON_DOMAIN_PATHS: list[str] = ["CHANGELOG.md", "docs/index.rst"]
 #: ``dom_py`` and make pure-viewer PRs pay for the Python matrix.
 NON_PYTHON_DOMAIN_PATHS: list[str] = [
     "packages/luxar-viewer/src/config/sections/adaptive-dpr/data.ts",
+    "packages/luxar-viewer/src/data/loaders/spatial-query/spatial-query-builder.ts",
     "packages/luxar-viewer/src/rendering/display-range.ts",
+    "packages/luxar-viewer/src/scene/lod-fade.ts",
+    "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",
     "packages/luxar-viewer/tools/example-smoke-inventory.ts",
 ]
 
