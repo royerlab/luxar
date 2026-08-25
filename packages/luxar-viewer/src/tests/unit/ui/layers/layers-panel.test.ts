@@ -3322,6 +3322,30 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it.each([
+    ['Home', false],
+    ['ArrowUp', true],
+  ])('contains consumed %s row navigation before it reaches window', (key, shiftKey) => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+    panel.show();
+
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('.luxar-layer-row'));
+    const row = rows[1];
+    row.focus();
+    const globalHandler = vi.fn();
+    window.addEventListener('keydown', globalHandler);
+
+    row.dispatchEvent(
+      new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true })
+    );
+
+    expect(document.activeElement).toBe(rows[0]);
+    expect(globalHandler).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', globalHandler);
+    panel.dispose();
+  });
+
   it('right-clicking a text field inside the panel leaves the native menu alone', () => {
     // The delegated handler suppresses the native menu everywhere on the
     // glass surface, but a text field has no replacement verbs of ours —

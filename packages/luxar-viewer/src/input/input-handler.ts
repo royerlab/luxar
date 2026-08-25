@@ -74,6 +74,7 @@ import {
 } from './input-handler/commands/viewer-state-export';
 import { log, Modules } from '../utils/log';
 import type {
+  ControlRailHandle,
   DebugConsoleHandle,
   DimensionSlidersFactory,
   DimensionSlidersHandle,
@@ -86,7 +87,10 @@ import type {
 
 // Re-exported through the package facade (`input/index.ts`).
 export { KeyAction, type KeyActionId };
-export type { DimensionSlidersFactory } from './input-handler/panel-capabilities';
+export type {
+  ControlRailHandle,
+  DimensionSlidersFactory,
+} from './input-handler/panel-capabilities';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -158,6 +162,7 @@ export class InputHandler {
    * once `debugConsole` and `animationController` are available.
    */
   private panelCoordinator: PanelCoordinator;
+  private controlRail?: ControlRailHandle;
 
   /**
    * Window-event concern: owns resize / wheel / fullscreenchange.
@@ -294,6 +299,11 @@ export class InputHandler {
     // the panel. Without this, Escape only flows through key-bindings
     // for the `L` shortcut and never reaches LayersPanel.hide().
     this.panelCoordinator.setLayersPanel(panel);
+  }
+
+  setControlRail(rail: ControlRailHandle | undefined): void {
+    this.controlRail = rail;
+    this.panelCoordinator.setControlRail(rail);
   }
 
   /**
@@ -646,7 +656,8 @@ export class InputHandler {
     }
 
     // Route ALL keys through context manager (including Shift, fly controls, etc.)
-    this.contextManager.handleKeyEvent(event, 'down');
+    const handled = this.contextManager.handleKeyEvent(event, 'down');
+    if (handled) this.controlRail?.handleRoutedKeyDown();
   }
 
   /**

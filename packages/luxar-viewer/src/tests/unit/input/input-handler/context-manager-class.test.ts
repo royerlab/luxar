@@ -368,6 +368,15 @@ describe('InputContextManager', () => {
   });
 
   describe('key event handling', () => {
+    it('passes unhandled global shortcuts through UI_INTERACTION', () => {
+      const globalShortcut = vi.fn();
+      registerTestBinding(manager, InputContext.NAVIGATION, { key: 'h', handler: globalShortcut });
+      manager.pushContext(InputContext.UI_INTERACTION);
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'h' }), 'down')).toBe(true);
+      expect(globalShortcut).toHaveBeenCalledTimes(1);
+    });
+
     it('falls through when a matching handler explicitly declines the event', () => {
       const higher = vi.fn(() => false);
       const lower = vi.fn();

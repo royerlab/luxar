@@ -631,6 +631,21 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
+  it('does not own document Escape while the animation context menu is open', () => {
+    const sliders = buildSliders();
+    sliders.setAnimationManager(makeAnimationManagerStub() as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+    expect(document.querySelector('.luxar-dimension-slider__context-menu')).not.toBeNull();
+    sliders.closeContextMenu();
+    expect(document.querySelector('.luxar-dimension-slider__context-menu')).toBeNull();
+    sliders.dispose();
+  });
+
   it('speed chips: sub-1 fps reads as a fraction; aria-checked tracks the radio state', () => {
     const sliders = buildSliders();
     const stub = makeAnimationManagerStub();

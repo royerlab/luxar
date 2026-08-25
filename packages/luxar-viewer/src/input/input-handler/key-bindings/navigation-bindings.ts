@@ -102,14 +102,12 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
   // The command surface owns the window event dispatch because the listener is
   // rebuilt on every dataset load while this binding lives for the app's lifetime.
   //
-  // Gated on focus being on the scene itself. The layers panel handles these
-  // same two keys on its own row listener and calls `preventDefault()` but NOT
-  // `stopPropagation()`, so the event still bubbles to the window-level
-  // handler — and `openContextMenu` is module-global, so without this guard a
-  // Shift+F10 on a focused layer row would CLOSE the layer menu and open the
-  // canvas one instead. (Reaching the panel by mouse hides the bug: leaving
-  // the canvas fires `mouseleave`, which invalidates the cached pick. Reaching
-  // it by Tab does not.) Same guard the other scene-scoped global keys use.
+  // Gated on focus being on the scene itself. Layer rows contain these keys,
+  // but the guard still matters when the panel is reached by mouse: a cached
+  // scene pick may remain while focus sits on body, and `openContextMenu` is
+  // module-global. Without the focus check, the keyboard shortcut could open
+  // a canvas menu while the user is interacting with UI outside the canvas.
+  // Same guard the other scene-scoped global keys use.
   const openElementMenu = (event: KeyboardEvent): void => {
     if (!isFocusOnSceneCanvas(document.activeElement, sceneManager.renderer?.domElement ?? null)) {
       return;
