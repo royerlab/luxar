@@ -186,8 +186,9 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       // A strict per-node assertion is not valid: nd_points_example has a visible
       // /Reference5D node with pointCount=0 while its sibling carries all 820 points,
       // and hidden LOD nodes can also legitimately report zero. Per-type totals still
-      // catch a geometry loader silently producing no elements. This assumes each type
-      // present in the current corpus has elements in the initial slice.
+      // catch a geometry loader silently producing no elements. Mixed-type substitutive
+      // LOD examples satisfy this initial-slice contract through their eagerly registered
+      // coarse GSplat level; changing default-level or release behavior may require revisiting it.
       for (const geometryType of geometryTypes) {
         if (geometryType.nodes.length > 0) {
           expect(
