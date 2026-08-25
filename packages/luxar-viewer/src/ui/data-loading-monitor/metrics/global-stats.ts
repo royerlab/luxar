@@ -15,8 +15,7 @@ import type {
 
 export interface AggregateGlobalStatsParams {
   metrics: ReadonlyMap<string, LoaderMetrics>;
-  loaderPaths: Iterable<string>;
-  loaderCount: number;
+  loaders: ReadonlyMap<string, unknown>;
   lodStates: ReadonlyMap<string, LODProgressState>;
   rates: { queriesPerSec: number };
   sceneGraph: Pick<SceneGraphState, 'totalByType' | 'visibleByType'>;
@@ -26,8 +25,7 @@ export interface AggregateGlobalStatsParams {
 /** Aggregate one monitor tick's loader and scene totals without mutating inputs. */
 export function aggregateGlobalStats({
   metrics,
-  loaderPaths,
-  loaderCount,
+  loaders,
   lodStates,
   rates,
   sceneGraph,
@@ -72,14 +70,13 @@ export function aggregateGlobalStats({
   // built from spatial-typed metrics only). Drawing each from its own
   // population keeps a future non-spatial loader nested under a LOD group
   // from over-subtracting `activeSpatial`.
-  const paths = Array.from(loaderPaths);
   let lodLoaderExcess = 0;
   let lodSpatialExcess = 0;
   for (const [path, state] of lodStates) {
     if (state.kind !== 'lod') continue;
     let present = 0;
     let presentSpatial = 0;
-    for (const loaderPath of paths) {
+    for (const loaderPath of loaders.keys()) {
       if (loaderPath === path || loaderPath.startsWith(`${path}/`)) {
         present++;
         if (isSpatialType(metrics.get(loaderPath)?.type)) presentSpatial++;
@@ -99,7 +96,7 @@ export function aggregateGlobalStats({
   // scene-graph tree (`templates/scene-graph.ts`, `faceCount`).
   const { totalByType, visibleByType } = sceneGraph;
   return {
-    totalLoaders: Math.max(0, loaderCount - lodLoaderExcess),
+    totalLoaders: Math.max(0, loaders.size - lodLoaderExcess),
     activeSpatialLoaders: Math.max(0, activeSpatial - lodSpatialExcess),
     totalElementsLoaded,
     totalMemory,

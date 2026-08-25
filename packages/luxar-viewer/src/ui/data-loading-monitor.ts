@@ -1389,8 +1389,7 @@ export class DataLoadingMonitor {
     this.calculateRates();
     return aggregateGlobalStats({
       metrics: this.metrics,
-      loaderPaths: this.loaders.keys(),
-      loaderCount: this.loaders.size,
+      loaders: this.loaders,
       lodStates: this.providers.lodStates,
       rates: this.cachedRates,
       sceneGraph: this.sceneGraphModel.getSceneGraph(),

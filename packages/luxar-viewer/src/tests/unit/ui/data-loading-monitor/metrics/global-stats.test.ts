@@ -27,8 +27,7 @@ describe('aggregateGlobalStats', () => {
     ]);
     const result = aggregateGlobalStats({
       metrics: snapshots,
-      loaderPaths: snapshots.keys(),
-      loaderCount: snapshots.size,
+      loaders: snapshots,
       lodStates: new Map([['/lod', { kind: 'lod' }]]),
       rates: { queriesPerSec: 7.5 },
       sceneGraph: {
@@ -43,5 +42,35 @@ describe('aggregateGlobalStats', () => {
     expect(result.avgQueryTime).toBe(5);
     expect(result.queriesPerSecond).toBe(7.5);
     expect(result.datasetSplats).toBe(30);
+  });
+
+  it('keeps all-loader and spatial-loader LOD excesses independent across repeated calls', () => {
+    const snapshots = new Map([
+      ['/lod/0', metrics('/lod/0', 'point-spatial-index')],
+      ['/lod/1', metrics('/lod/1', 'point-spatial-index')],
+      [
+        '/lod/metadata',
+        metrics('/lod/metadata', 'metadata' as unknown as LoaderMetrics['type']),
+      ],
+    ]);
+    const params = {
+      metrics: snapshots,
+      loaders: snapshots,
+      lodStates: new Map([['/lod', { kind: 'lod' as const }]]),
+      rates: { queriesPerSec: 0 },
+      sceneGraph: {
+        totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+        visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+      },
+      recommendations: [],
+    };
+
+    const first = aggregateGlobalStats(params);
+    const second = aggregateGlobalStats(params);
+
+    expect(first.totalLoaders).toBe(1);
+    expect(first.activeSpatialLoaders).toBe(1);
+    expect(second.totalLoaders).toBe(1);
+    expect(second.activeSpatialLoaders).toBe(1);
   });
 });
