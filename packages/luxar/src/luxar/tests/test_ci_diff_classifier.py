@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -365,15 +366,24 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
         "the hosted max-parallel branch must not throttle the off-PR Python matrix"
     )
 
-    pytest_addopts = re.sub(r"\s+", "", jobs["python-tests"]["env"]["PYTEST_ADDOPTS"])
+    pytest_addopts = jobs["python-tests"]["env"]["PYTEST_ADDOPTS"]
     worker_branches = re.fullmatch(
-        r"\$\{\{needs\.pick-runner\.outputs\.label=='obsidian'&&'-n(\d+)'\|\|''\}\}",
+        r"\$\{\{\s*needs\.pick-runner\.outputs\.label\s*==\s*'obsidian'\s*"
+        r"&&\s*'([^']*)'\s*\|\|\s*'([^']*)'\s*\}\}",
         pytest_addopts,
     )
     assert worker_branches is not None, (
         "python-tests must enable xdist only on pick-runner's obsidian label"
     )
-    assert int(worker_branches.group(1)) == 3, (
+    obsidian_args = shlex.split(worker_branches.group(1))
+    hosted_args = shlex.split(worker_branches.group(2))
+    assert hosted_args == [], "GitHub-hosted Python coverage must stay serial"
+    worker_flags = [
+        int(obsidian_args[index + 1])
+        for index, arg in enumerate(obsidian_args[:-1])
+        if arg == "-n"
+    ]
+    assert worker_flags == [3], (
         "python-tests must leave memory headroom in obsidian's 12 GiB runner slot"
     )
 
