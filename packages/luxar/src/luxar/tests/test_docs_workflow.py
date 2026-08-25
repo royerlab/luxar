@@ -73,8 +73,10 @@ def test_pages_fetches_only_the_lfs_assets_published_by_sphinx() -> None:
 
 def test_pages_cancels_deployments_superseded_by_newer_main_promotions() -> None:
     """Cancel stale builds without interrupting an in-flight deployment."""
-    jobs = _workflow()["jobs"]
+    workflow = _workflow()
+    jobs = workflow["jobs"]
 
+    assert "concurrency" not in workflow
     assert jobs["build"]["concurrency"] == {
         "group": "pages-build",
         "cancel-in-progress": True,
