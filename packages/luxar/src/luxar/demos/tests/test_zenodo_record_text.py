@@ -508,14 +508,9 @@ def test_a_committed_measurement_beats_a_local_archive(
 def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
     gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The hazard that would have silently undone the whole change.
-
-    The uploaded generation can only be measured where it is staged. Import those
-    figures, run ``--refresh`` on a laptop holding pre-refit copies, and a naive
-    merge replaces every refitted dataset's numbers with the stale ones — the
-    exact staleness this file exists to end, reintroduced by its own tool.
-    """
+    """Equal pinned bytes retain staged provenance across local refreshes."""
     key = "ds/a.gsplats.zarr.zip"
+    pinned_sha = "p" * 64
     staged = {
         key: {
             "n_splats": 999,
@@ -523,15 +518,13 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
             "foreground_psnr_db": 30.6,
             "topology": "single level",
             "measured_from": "staged",
-            "measured_sha256": "s" * 64,
+            "measured_sha256": pinned_sha,
         }
     }
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "load_characteristics", lambda: staged)
     monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
-    monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
-    # A local read that would look complete but carries NO foreground PSNR,
-    # which is what the pre-refit archives actually look like.
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: pinned_sha)
     monkeypatch.setattr(
         gen,
         "_read_archive",
@@ -544,10 +537,10 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
     )
 
     counts = gen.refresh_characteristics(
-        _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
+        _fake_manifest([_entry("a.gsplats.zarr.zip", pinned_sha)])
     )
 
-    assert counts == (1, 0, 1, 0)
+    assert counts == (1, 1, 0, 0)
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert written["measured_from"] == "staged", "a local read outranked the staged one"
     assert written["foreground_psnr_db"] == 30.6

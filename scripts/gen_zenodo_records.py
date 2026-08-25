@@ -401,7 +401,11 @@ def _retain_preferred_measurements(
     existing: dict[str, Any],
     pinned_digests: dict[str, Optional[str]],
 ) -> tuple[int, int]:
-    """Drop unpinned reads and retain stronger measurements of pinned bytes."""
+    """Drop unpinned reads and retain stronger measurements of pinned bytes.
+
+    Staged provenance outranks repo/cache even for identical bytes, avoiding
+    sidecar churn when a later local refresh sees the same pinned archive.
+    """
     rank = {"staged": 2, "repo": 1, "cache": 1}
     retained = 0
     rejected = 0
