@@ -697,7 +697,8 @@ export class LuxarApp {
 
   // ==================== Programmatic embedder API ====================
   // Flat, additive methods so a host page can drive the viewer without the
-  // built-in UI. All guard on `isInitialized` (mirroring captureSnapshot).
+  // built-in UI. Mutating methods guard on `isInitialized`; shortcut lookup
+  // also supports initialization and returns undefined before input exists.
 
   /** Register a custom keyboard-routing context. */
   registerContext(context: InputContextId, config: ContextConfig): void {

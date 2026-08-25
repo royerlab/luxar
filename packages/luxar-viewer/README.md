@@ -91,7 +91,8 @@ group table.
 ### Programmatic API
 
 Beyond `init()`/`dispose()`, `LuxarApp` exposes flat methods so a host page can
-drive the viewer without the built-in UI. All throw if called before `init()`.
+drive the viewer without the built-in UI. All throw if called before `init()`,
+except `shortcutForAction()`, which returns `undefined` until input is available.
 
 ```ts
 // Dataset
@@ -113,6 +114,22 @@ app.resize();
 
 // Screenshot (async — WebGPU readback is async)
 const blob = await app.screenshot({ format: 'png' }); // 'png' | 'webp' | 'jpeg'
+
+// Keyboard input
+app.registerContext('annotation', { priority: 100, passthrough: true });
+app.registerBinding('annotation', {
+  actionId: 'annotation.accept',
+  key: 'x',
+  handler: acceptAnnotation,
+  description: 'Accept annotation',
+  help: { section: 'tools', group: 'Annotation' },
+});
+app.pushContext('annotation');
+app.popContext();
+app.unregisterBinding('annotation', 'x');
+app.unregisterContext('annotation');
+app.setInputEnabled(false);
+const helpKey = app.shortcutForAction('help.toggle');
 ```
 
 **Events** — subscribe with `on(event, listener)`, which returns an unsubscribe:
@@ -737,7 +754,6 @@ config.renderingControls.defaults.bloomThreshold = 0.1;
 // Available components:
 //   sceneManager          - 3D scene, renderer, camera, controls
 //   animationController   - Render loop, per-frame callbacks
-//   inputHandler          - Keyboard/mouse input
 //   renderingControls     - UI panel for rendering settings
 //   adaptiveDPRManager    - Dynamic resolution scaling
 ```

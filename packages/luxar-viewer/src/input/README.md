@@ -41,7 +41,7 @@ app.registerContext('annotation', {
 });
 app.registerBinding('annotation', {
   actionId: 'annotation.accept',
-  key: 'a',
+  key: 'x',
   handler: acceptAnnotation,
   description: 'Accept annotation',
   help: false,
@@ -49,7 +49,7 @@ app.registerBinding('annotation', {
 app.pushContext('annotation');
 // later
 app.popContext();
-app.unregisterBinding('annotation', 'a');
+app.unregisterBinding('annotation', 'x');
 app.unregisterContext('annotation');
 ```
 
@@ -66,6 +66,9 @@ keys in that context; whether a declined key reaches the viewer depends on
 `passthrough` plus `fallbackContexts`. Built-in Escape handling retains first
 claim while focus is in a typing surface.
 
+Set `help: false` to keep a binding out of the built-in help overlay. Supplying
+`help: { section, group, order }` includes it in the overlay under that metadata.
+
 At the current built-in keymap, `x`, `y`, and `z` are the only unclaimed letter
 keys. They are not globally free: while the help overlay or dataset browser is
 open, its type-to-filter field consumes printable characters before viewer
@@ -73,9 +76,12 @@ bindings run.
 
 `setInputEnabled(false)` suspends routed viewer keyboard input without deleting
 contexts or bindings; keyup cleanup still runs so held movement cannot remain
-latched, and re-enabling restores the same registrations. The internal `reset()`
+latched unless an embedder explicitly activates the built-in `TYPING` context,
+and re-enabling restores the same registrations. Custom registrations and the
+enabled state also persist across `switchDataset()`. The internal `reset()`
 lifecycle is stronger: it clears every binding and custom context, empties the
-context stack, and returns to `InputContext.NAVIGATION`.
+context stack, and returns to `InputContext.NAVIGATION`. Because keyup may arrive
+without a matching routed keydown, custom keyup handlers must be idempotent.
 
 The router is keyboard-only. Luxar registers its `window` `keydown`/`keyup`
 listeners in the bubble phase. A host that must preempt a chord independently

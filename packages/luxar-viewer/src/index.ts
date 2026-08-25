@@ -43,8 +43,6 @@ export type {
   InputContextId,
   KeyActionId,
   KeyBinding,
-  RegisteredShortcutBinding,
-  RegisteredShortcutBindings,
   ShortcutHelpMetadata,
   ShortcutHelpSectionId,
 } from './input';
