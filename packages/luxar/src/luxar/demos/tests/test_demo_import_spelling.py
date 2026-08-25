@@ -181,8 +181,8 @@ def _resolved_module(node: ast.ImportFrom, path: Path) -> str:
     """Absolute dotted name of what ``node`` imports *from*.
 
     Relative spellings must resolve, or the guard would pass vacuously against
-    ``from ..utils.viewer import …`` — the form a module inside the package is
-    most likely to reach for.
+    ``from ._support.runtime.viewer import …`` — the form a module inside the
+    package is most likely to reach for.
     """
     if not node.level:
         return node.module or ""
@@ -211,8 +211,12 @@ def _deep_imports(path: Path) -> list[str]:
     ``test_demos_dependencies`` walks, and for the same reason: checking only
     one of them leaves the other spelling invisible.
     """
-    if "_support" in path.parts:
-        return []
+    support_source = "_support" in path.parts
+
+    def is_guarded(module: str) -> bool:
+        return module in DEEP_MODULES and not (
+            support_source and module.startswith("luxar.demos._support.")
+        )
 
     hits: list[tuple[int, str]] = []
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), str(path))):
@@ -221,11 +225,11 @@ def _deep_imports(path: Path) -> list[str]:
             hits += [
                 (node.lineno, f"import {a.name}")
                 for a in node.names
-                if a.name in DEEP_MODULES
+                if is_guarded(a.name)
             ]
         elif isinstance(node, ast.ImportFrom):
             module = _resolved_module(node, path)
-            if module in DEEP_MODULES:
+            if is_guarded(module):
                 hits.append((node.lineno, f"from {module} import …"))
             elif module in DEEP_PARENTS:
                 # `from luxar.demos._support.runtime import viewer` — the module
@@ -234,6 +238,7 @@ def _deep_imports(path: Path) -> list[str]:
                     (node.lineno, f"from {module} import {a.name}")
                     for a in node.names
                     if (module, a.name) in DEEP_PAIRS
+                    and is_guarded(f"{module}.{a.name}")
                 ]
     return [f"line {lineno}: {what}" for lineno, what in sorted(hits)]
 
@@ -297,6 +302,24 @@ def test_coverage_omits_only_the_split_demo_utilities() -> None:
         assert matcher.match(str(LUXAR_DIR / "utils" / module))
         assert not matcher.match(str(LUXAR_DIR / "gsplats" / "utils" / module))
 
+    assert matcher.match(str(LUXAR_DIR / "demos" / "demo_lorenz.py"))
+    assert not matcher.match(
+        str(LUXAR_DIR / "demos" / "_support" / "downloads" / "download.py")
+    )
+    support_patterns = {
+        "*/luxar/demos/_support/_umap_utils.py",
+        "*/luxar/demos/_support/runtime/device.py",
+    }
+    assert {
+        pattern for pattern in omit if "/luxar/demos/_support/" in pattern
+    } == support_patterns
+    for relative in (
+        ("gsplats", "demos", "demo_gsplats.py"),
+        ("gsplats", "multiscale", "demos", "benchmark.py"),
+        ("gsplats", "seeds", "demos", "benchmark.py"),
+    ):
+        assert matcher.match(str(LUXAR_DIR.joinpath(*relative)))
+
 
 def test_no_demo_module_reaches_past_the_barrel() -> None:
     """No demo module may import a shared helper module directly."""
@@ -317,6 +340,20 @@ def test_no_demo_module_reaches_past_the_barrel() -> None:
         "`from luxar.demos import …` inside the function instead: a module-scope "
         "one would be circular."
     )
+
+
+def test_support_module_cannot_reach_an_unrelated_deep_module(tmp_path: Path) -> None:
+    """The support collaboration exception must not disable the whole guard."""
+    fake = tmp_path / "luxar" / "demos" / "_support" / "runtime" / "_probe.py"
+    fake.parent.mkdir(parents=True)
+    fake.write_text(
+        "from luxar.utils.scenes import create_lorenz_attractor\n",
+        encoding="utf-8",
+    )
+
+    assert _deep_imports(fake) == [
+        "line 1: from luxar.utils.scenes import …",
+    ]
 
 
 def test_the_guard_detects_every_deep_spelling(tmp_path: Path) -> None:
@@ -420,9 +457,11 @@ def test_relative_spellings_resolve(tmp_path: Path) -> None:
 
     # An over-deep `level` (more dots than packages) must not wrap: unclamped,
     # `package[: len(package) - (level - 1)]` truncated from the END and made
-    # `from ....utils.viewer import …` resolve to the deep module it cannot
-    # possibly reach, i.e. reported an unreachable import as a real offender.
-    over_deep = ast.parse("from ....utils.viewer import launch_viewer\n").body[0]
+    # this import resolve to ``luxar.demos._support.runtime.viewer``, a deep
+    # module it cannot possibly reach.
+    over_deep = ast.parse(
+        "from ....demos._support.runtime.viewer import launch_viewer\n"
+    ).body[0]
     assert isinstance(over_deep, ast.ImportFrom)
     assert _resolved_module(over_deep, fake) not in DEEP_MODULES
 
