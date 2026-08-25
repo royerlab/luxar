@@ -284,11 +284,10 @@ to ship after). Sequencing is at the bottom.
           exact pending upload ("not yet hosted… upload the two `.gsplats.zarr`
           to the demo data host and switch `load_neuromast_gsplats` to fetch").
         - `h2afva` zebrafish timelapse — **our own data** (Royer lab) → license
-          CC-BY. Fits on obsidian: 51tp ≈ **2.9 GB**, 253tp ≈ **16 GB**. ⚠️ Size
-          decision needed: 16 GB is heavy for fetch-on-demand — likely ship the
-          51tp (or a culled/downsampled cut) as the demo and archive the full
-          253tp separately. **Needs a new demo** (strong R10a / timelapse-showcase
-          candidate; there is no h2afva demo yet).
+          CC-BY. The 51tp demo now exists and uses the 1.87 GB every-fifth-frame
+          archive; the full 253tp fit remains a separate 9.25 GB opt-in variant.
+          Publish Zenodo record 21912284 so fresh checkouts can fetch the demo
+          instead of requiring a hand-placed cache copy.
     - **Bucket 3 — CANNOT redistribute even the derived product → SHIP THE DEMO
       WITH FETCH-RAW-AND-PROCESS-LOCALLY (not dropped; no data on Zenodo):**
       - `gsplats_tng_cosmic_web` — IllustrisTNG is access-gated (account + API
