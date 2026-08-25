@@ -284,7 +284,7 @@ def test_coverage_omits_only_the_split_demo_utilities() -> None:
     split_patterns = {f"*/luxar/utils/{module}" for module in split_modules}
     assert split_patterns <= set(omit)
 
-    matcher = GlobMatcher(split_patterns)
+    matcher = GlobMatcher(omit)
     for module in split_modules:
         assert matcher.match(str(LUXAR_DIR / "utils" / module))
         assert not matcher.match(str(LUXAR_DIR / "gsplats" / "utils" / module))
