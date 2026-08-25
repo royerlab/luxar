@@ -378,8 +378,12 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
         "queue-watchdog must still run when diff classification fails"
     )
 
-    assert jobs["pick-runner"]["permissions"] == {"actions": "read"}, (
+    pick_runner = jobs["pick-runner"]
+    assert pick_runner["permissions"] == {"actions": "read"}, (
         "pick-runner needs only actions:read to inspect heartbeat updated_at"
+    )
+    assert pick_runner["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}", (
+        "pick-runner must authenticate gh api with the workflow token"
     )
 
 
