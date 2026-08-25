@@ -18,6 +18,7 @@
 
 import { test, expect } from './fixtures';
 import { resolve } from 'node:path';
+import type { DebugState } from '../../core/app/debug/debug-state';
 import { discoverExampleDatasets } from '../../../tools/example-smoke-inventory';
 import {
   waitForLuxarReady,
@@ -227,6 +228,20 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
 
 test.describe('Critical Examples - Deep Validation', () => {
   // Deep validation for examples that exposed bugs
+
+  test('mesh_basic - should report its rendered triangles', async ({ page }) => {
+    await page.goto(`/?src=${EXAMPLES_BASE}/mesh_basic_example.luxar.zarr&debug&no-opfs`);
+    await waitForLuxarReady(page, 60000);
+
+    await assertNoConsoleErrors(page);
+
+    const state: DebugState = await getLuxarState(page);
+
+    expect(state.meshNodes).toHaveLength(1);
+    expect(state.meshNodes[0].triangleCount).toBe(4);
+    expect(state.totalTriangles).toBe(4);
+    expect(state.totalElements).toBe(4);
+  });
 
   test('sharpness_showcase - should render all point clouds', async ({ page }) => {
     await page.goto(`/?src=${EXAMPLES_BASE}/sharpness_showcase_example.luxar.zarr&debug&no-opfs`);
