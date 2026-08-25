@@ -396,9 +396,12 @@ class ZarrWriterProtocol(Protocol):
 
     @property
     def store_path(self) -> str:
-        """Get the path to the underlying Zarr store.
+        """Get the current path to the underlying Zarr store.
+
+        Writers may use a staging directory while active and return a different
+        published path after ``finalize()``.
 
         Returns:
-            Path to the Zarr store being written to
+            Current staging or finalized store path.
         """
         ...

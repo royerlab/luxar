@@ -22,6 +22,15 @@ def _write_minimal_scene(compiler) -> None:
 
 
 class TestSceneExtensionNormalization:
+    def test_archive_initialization_log_uses_public_path(self, tmp_path, capsys):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+
+        LuxarZarrCompiler(requested)
+        output = capsys.readouterr().out
+
+        assert f"Zarr compiler initialized at {requested}" in output
+        assert ".compile-" not in output
+
     def test_bare_name_gets_luxar_zarr(self, tmp_path):
         c = LuxarZarrCompiler(tmp_path / "scene")
         assert c.store_path.endswith("scene.luxar.zarr")
@@ -178,7 +187,7 @@ class TestSceneExtensionNormalization:
         assert requested.read_bytes() == b"previous archive"
         assert sorted(path.name for path in tmp_path.iterdir()) == [requested.name]
 
-    def test_body_failure_does_not_publish_or_leave_staging(self, tmp_path):
+    def test_body_failure_does_not_publish_or_leave_staging(self, tmp_path, capsys):
         requested = tmp_path / "scene.luxar.zarr.zip"
 
         with pytest.raises(RuntimeError, match="authoring failed"):
@@ -186,5 +195,8 @@ class TestSceneExtensionNormalization:
                 _write_minimal_scene(compiler)
                 raise RuntimeError("authoring failed")
 
+        output = capsys.readouterr().out
         assert not requested.exists()
         assert list(tmp_path.iterdir()) == []
+        assert f"discarding incomplete archive staging for {requested}" in output
+        assert "leaving the store unfinalized" not in output

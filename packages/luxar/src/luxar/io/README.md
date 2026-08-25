@@ -76,6 +76,7 @@ with (
 
 **Key Features**:
 - Progressive writing (data written immediately, not cached)
+- Single-file `.zarr.zip` output published after successful finalization
 - **Scalar convenience**: Pass uniform values directly (no `np.full()` needed)
 - Morton/Hilbert spatial ordering for better compression
 - Compound ordering for nD data (discrete/barrier dims → spatial curve within)

@@ -106,7 +106,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     enabling processing of datasets larger than available RAM.
 
     Args:
-        store_path: Path where the Zarr store will be created
+        store_path: Path where the Zarr store will be created. A ``.zarr.zip``
+            path publishes a single-file archive after finalization.
         compressor: Compression configuration for datasets
         version: Luxar format version
         enable_spatial_index: Whether to build spatial indices for points
@@ -162,7 +163,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Initialize the Zarr compiler.
 
         Args:
-            store_path: Path for the Zarr store, or None for temporary
+            store_path: Path for the Zarr store, or None for temporary. A
+                ``.zarr.zip`` path publishes a single-file archive after
+                finalization.
             compressor: Compressor for datasets
             version: Luxar format version
             enable_spatial_index: Whether to use spatial ordering for points/gsplats (default: True)
@@ -273,7 +276,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Scene reference for finalize-time hover overlay auto-injection
         self._scene: Optional["Scene"] = None
 
-        aprint(f"✅ Zarr compiler initialized at {self._store_path}")
+        output_path = self._archive_path or self._store_path
+        aprint(f"✅ Zarr compiler initialized at {output_path}")
 
     def __enter__(self) -> LuxarZarrCompiler:
         """Enter context manager."""
@@ -319,10 +323,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 # written: do NOT finalize, mark it incomplete instead.
                 try:
                     self.store.attrs["incomplete"] = True
-                    aprint(
-                        "⚠️ Build errored — leaving the store unfinalized "
-                        "and marked incomplete"
-                    )
+                    if self._archive_path is not None:
+                        aprint(
+                            "⚠️ Build errored — discarding incomplete archive "
+                            f"staging for {self._archive_path}"
+                        )
+                    else:
+                        aprint(
+                            "⚠️ Build errored — leaving the store unfinalized "
+                            "and marked incomplete"
+                        )
                 except BaseException:
                     # Best-effort marker: never raise a new exception that
                     # would mask the one already propagating out of the with
