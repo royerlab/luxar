@@ -26,6 +26,7 @@ scene/
 │   ├── render-pipeline/            # renderer-setup, post-processing-setup, scene-disposal, webgl-context-recovery
 │   └── viewport/                   # dpr-policy, resize-orchestrator
 ├── animation/                      # animation-controller, dimension-animation-manager
+├── dims/                           # Pure nD step and dimension-selection helpers
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
@@ -1159,6 +1160,8 @@ _For implementation details, see the source files in this directory._
 
 - [animation](./animation/README.md) — `AnimationController` render
   loop and `DimensionAnimationManager` per-dimension playback.
+- [dims](./dims/README.md) — Pure step-size, wrap, and non-displayed-dimension
+  selection helpers shared by scene and input code.
 - [scene-manager](./scene-manager/README.md) — Extracted SceneManager
   helpers (camera setup/framing/materials/mode, clipping policy and
   bounds cache, render-pipeline setup, viewport DPR and resize).

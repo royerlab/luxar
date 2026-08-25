@@ -36,15 +36,7 @@ import type {
   RecordingPanelHandle,
 } from '../panel-capabilities';
 
-/**
- * Factory used by `initDimensionSliders` to construct the slider panel.
- * Injected from `core/app.ts` (via `InputHandler`'s constructor) so the
- * input layer never imports the concrete UI class at runtime — it only
- * knows the shape via `import type`. Closes the input → ui layer-cruiser
- * exception (see `.dependency-cruiser.cjs`'s `KNOWN_LAYER_EXCEPTIONS`).
- *
- * Re-exported from `input/index.ts` as the public name.
- */
+/** Mutable dependencies and state accessors for dimension-navigation setup. */
 export interface DimNavSetupCtx {
   sceneManager: SceneManager;
   animationController: AnimationController;

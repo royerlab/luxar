@@ -18,8 +18,9 @@ orchestrator class:
 import { InputHandler } from '../input';
 ```
 
-Dependency-cruiser rejects imports into `input/input-handler/**` from outside
-this package, so the documented boundary is enforced mechanically.
+Dependency-cruiser rejects value imports into `input/input-handler/**` from
+production modules outside this package. Type-only imports and tests are
+currently exempt, so they must still follow the documented boundary by review.
 
 ## Layout
 
@@ -29,6 +30,7 @@ input/
 ├── input-handler.ts                          # InputHandler orchestrator
 └── input-handler/
     ├── context-manager.ts                    # InputContextManager + InputContext + KeyBinding
+    ├── panel-capabilities.ts                 # Narrow UI contracts consumed by input
     ├── context-manager/
     │   └── routing-rules.ts                  # isKeyAllowedInContext + sortContextsByPriority
     ├── key-bindings/                         # The whole key→command table

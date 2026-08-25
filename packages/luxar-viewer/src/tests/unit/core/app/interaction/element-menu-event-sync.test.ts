@@ -2,6 +2,10 @@
 /**
  * Guard: the Shift+F10 and ContextMenu bindings stay synchronized with the
  * canvas-actions listener contract (issue #1917).
+ *
+ * The input package cannot import core, so the binding intentionally repeats
+ * the event string. These dispatch tests protect the keyboard-only path, where
+ * a mismatch otherwise fails silently without pointer feedback.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OPEN_ELEMENT_MENU_EVENT } from '../../../../../core/app/interaction/canvas-actions';

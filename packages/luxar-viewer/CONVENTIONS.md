@@ -33,7 +33,7 @@ is a documented reason not to.
   `src/tests/unit/<area>/`. E2E tests use `.spec.ts` and live under
   `src/tests/e2e/`.
 - **Index/barrel files**: only when a subpackage genuinely has a stable
-  public surface (`config/index.ts`, `rendering/index.ts`). Internal
+  public surface (`config/index.ts`, `input/index.ts`, `rendering/index.ts`). Internal
   scratch modules import directly from each other, not through a
   barrel, to avoid cyclic imports.
 - **Setup-module pattern**: when decomposing a large facade, sibling
@@ -102,16 +102,16 @@ through `log.custom(emoji, module, message)`.
 
 ## 5. Error handling
 
-| Mechanism    | Use when                                                | Example                                                |
-| ------------ | ------------------------------------------------------- | ------------------------------------------------------ |
-| `throw`      | Unrecoverable invariant violation at JS boundary       | `validateNDArrays` rejecting a malformed buffer        |
-| `Result<T,E>`| Recoverable with a typed error code                    | Cache miss vs network error vs corrupt vs aborted      |
-| `log.warning`| Degraded behaviour, app continues                      | localStorage quota exceeded                            |
-| `log.error`  | Unexpected failure, app continues but UX impacted      | WebGL context lost (with rebuild scheduled)           |
+| Mechanism     | Use when                                          | Example                                           |
+| ------------- | ------------------------------------------------- | ------------------------------------------------- |
+| `throw`       | Unrecoverable invariant violation at JS boundary  | `validateNDArrays` rejecting a malformed buffer   |
+| `Result<T,E>` | Recoverable with a typed error code               | Cache miss vs network error vs corrupt vs aborted |
+| `log.warning` | Degraded behaviour, app continues                 | localStorage quota exceeded                       |
+| `log.error`   | Unexpected failure, app continues but UX impacted | WebGL context lost (with rebuild scheduled)       |
 
 Avoid `throw` for "the network was slow" — that is a `Result<…>`.
 Avoid `Result<…>` for "the input is structurally invalid" — that is a
-`throw`. The boundary is whether the caller can plausibly *recover*.
+`throw`. The boundary is whether the caller can plausibly _recover_.
 
 ## 6. Resource lifecycle
 
@@ -136,7 +136,9 @@ class FooManager {
     FooManager.instance = undefined;
   }
 
-  dispose(): void { /* ... idempotent ... */ }
+  dispose(): void {
+    /* ... idempotent ... */
+  }
 }
 ```
 
@@ -234,7 +236,7 @@ thread. Conventions:
   `controls/`) may be imported anywhere. Type-only imports are exempt
   — they're erased at compile time.
 
-  Note: `rendering` sits *below* `data` because rendering primitives
+  Note: `rendering` sits _below_ `data` because rendering primitives
   (materials, geometries, GPU buffer pools) are foundational
   building blocks that the data layer assembles into meshes. This
   order matches the actual dependency direction in the codebase.
@@ -245,10 +247,15 @@ thread. Conventions:
   stay empty unless a reviewed exception includes an owner, a narrow
   scope, and a removal condition.
 
+  The `input-private-modules` depth rule separately rejects production value
+  imports into `input/input-handler/**` from outside the input package. Import
+  the public `input/index.ts` facade instead. Type-only imports and tests are
+  exempt from that mechanical check but should preserve the same boundary.
+
 ## 11. Types
 
 - `any` is allowed only with an inline `// eslint-disable-next-line
-  @typescript-eslint/no-explicit-any` and a justification comment.
+@typescript-eslint/no-explicit-any` and a justification comment.
   See `eslint.config.js` for which directories enforce the rule.
 - Prefer `unknown` over `any` when typing callback args / external
   data. Narrow with type guards.
@@ -281,9 +288,10 @@ Established examples in this repo:
   the `SceneLoader` (data layer) pushes loader telemetry into the
   `DataLoadingMonitor` (ui layer) through this port. The factory is
   passed into `SceneLoaderManager.createLoader` from `core/app.ts`.
-- `DimensionSlidersFactory` (`src/input/input-handler.ts`) — the input
-  layer needs to mount sliders that live in ui/panels. The factory is
-  injected from `core/app.ts`.
+- `DimensionSlidersFactory`
+  (`src/input/input-handler/panel-capabilities.ts`, published by
+  `src/input/index.ts`) — the input layer needs to mount sliders that live in
+  ui/panels. The factory is injected from `core/app.ts`.
 - `LabelTooltipFactory` (`src/rendering/picking/picking-system.ts`) —
   the rendering layer needs a ui tooltip element; the factory lives in
   `core/app.ts`.
