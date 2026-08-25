@@ -87,7 +87,7 @@ export interface PanelRefs {
    */
   layersPanel?: VisiblyHideableHandle;
   /** Optional: control-rail flyout / popover overlay. */
-  controlRail?: ControlRailHandle;
+  controlRail?: OverlayCloseHandle;
 }
 
 /**
@@ -132,8 +132,8 @@ export class PanelCoordinator {
     this.refs.layersPanel = panel;
   }
 
-  /** Set or clear the control-rail routed-keyboard handle. */
-  setControlRail(rail: ControlRailHandle | undefined): void {
+  /** Set or clear the control-rail overlay close handle. */
+  setControlRail(rail: OverlayCloseHandle | undefined): void {
     this.refs.controlRail = rail;
   }
 

@@ -165,7 +165,7 @@ describe('PanelCoordinator.closeAll', () => {
     new PanelCoordinator({
       debugConsole,
       performanceStats: stats,
-      controlRail: { closeOverlay, handleRoutedKeyDown: vi.fn() },
+      controlRail: { closeOverlay },
     }).closeAll();
 
     expect(closeOverlay).toHaveBeenCalledTimes(1);
@@ -358,7 +358,7 @@ describe('PanelCoordinator.handleEscape', () => {
       debugConsole,
       performanceStats: stats,
       recordingPanel: rp.panel,
-      controlRail: { closeOverlay, handleRoutedKeyDown: vi.fn() },
+      controlRail: { closeOverlay },
     });
 
     coord.handleEscape();
@@ -380,7 +380,7 @@ describe('PanelCoordinator.handleEscape', () => {
     const coord = new PanelCoordinator({
       debugConsole,
       performanceStats: stats,
-      controlRail: { closeOverlay, handleRoutedKeyDown: vi.fn() },
+      controlRail: { closeOverlay },
     });
 
     coord.handleEscape();

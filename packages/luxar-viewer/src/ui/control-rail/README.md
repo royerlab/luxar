@@ -123,7 +123,7 @@ const rail = new ControlRail(items: ControlRailItem[], footer?: HTMLElement);
    - `document.click` → schedule refresh (active-state may have changed)
    - `window.luxar-layers-changed` → schedule refresh (Layers disabled state)
    - `window.luxar-control-mode-changed` → schedule refresh (Navigation icon/tooltip)
-6. Receives handled keydowns from `InputHandler.handleRoutedKeyDown()` to dismiss the hint and schedule refresh
+6. Receives handled keydowns from `InputHandler` through `handleRoutedKeyDown()` to dismiss the hint and schedule refresh
 7. Shows the first-run hint (localStorage-gated)
 8. Increments `bodyMarkerRefs` and adds `luxar-has-control-rail` to `document.body`
 
