@@ -284,9 +284,10 @@ DUST_REDDENING = (0.75, 1.00, 1.42)
 #: 0.186 vs 0.181, neither clipping). Both knobs stay exposed (`--stars`,
 #: `--frames`); neither changes the physics.
 #:
-#: The count only has to give a positive step. It does NOT have to be odd:
-#: T is declared DISCRETE (see `time_dimension`), so the slider and the keyboard
-#: both snap to `k * step` and every reachable stop is a frame that exists.
+#: The count does NOT have to be odd: T is declared DISCRETE (see
+#: `time_dimension`), so the slider and the keyboard both snap to `k * step`
+#: and every reachable stop is a frame that exists. It is capped so adjacent
+#: frames stay outside the viewer's inclusive +/-0.5 discrete membership gate.
 #:
 #: That is the whole point of the discrete flag here, and it was learned the hard
 #: way. While T was declared continuous-and-spatial the viewer gave it a slider
@@ -298,6 +299,7 @@ DUST_REDDENING = (0.75, 1.00, 1.42)
 #: rescued only the OPENING frame — the first mouse drag emptied it again.
 T_SPAN_MYR = 480.0
 T_FRAMES = 241
+MAX_FRAME_COUNT = 960
 
 
 def time_step(n_frames: int) -> float:
@@ -943,18 +945,20 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                 # dissolving old.
                 for b, label in enumerate(AGE_BIN_LABELS):
                     pos = stack4(disc_xyz[b], disc_t[b])
-                    col = np.concatenate(disc_col[b], axis=0).astype(
-                        np.float32, copy=False
-                    )
                     # Every layer's per-frame lists are released as soon as that
                     # layer is on disk — at 241 frames the accumulators, not the
                     # integration, are what the process's memory ceiling is made
                     # of, so they must not all be held to the end.
                     disc_xyz[b].clear()
-                    disc_col[b].clear()
                     disc_t[b].clear()
                     if len(pos) == 0:
+                        disc_col[b].clear()
+                        del pos
                         continue
+                    col = np.concatenate(disc_col[b], axis=0).astype(
+                        np.float32, copy=False
+                    )
+                    disc_col[b].clear()
                     rad = np.tile(disc_radii_star[bins == b], n_frames)
                     scene.add_points(
                         f"Disc {label}",
@@ -1087,7 +1091,7 @@ HII regions mark where the shock is making stars right now.
 
 Navigation
 ----------
-  Press 1 then [ / ]  — step time ({n_frames} frames of {step:.0f} Myr over {span:.0f} Myr)
+  Press 1 then [ / ]  — step time ({n_frames} frames of {step:.3g} Myr over {span:.0f} Myr)
   Press L             — Layers: five age bins, HII, bulge, halo, globulars.
                         Solo the youngest bin for knife-edge arms; solo the
                         oldest for a smooth, thick, featureless disc.
@@ -1142,21 +1146,31 @@ def _int_arg(flag: str, default: int) -> int:
 
 
 def validate_frame_count(n_frames: int) -> int:
-    """Reject frame grids that cannot define a time step.
+    """Reject frame grids that cannot be selected one frame at a time.
 
-    Nothing else is required of the count: T is a discrete dimension, so the
-    viewer only ever lands on frames. (This used to also demand an ODD count, to
-    keep the continuous slider's opening midpoint on a frame — see the note on
-    `T_FRAMES`.)
+    T is discrete, so the count need not be odd, but adjacent frames must remain
+    outside the viewer's inclusive +/-0.5 discrete membership tolerance.
     """
     if n_frames < 3:
         raise ValueError("--frames must be at least 3 to define a time step")
+    if n_frames > MAX_FRAME_COUNT:
+        raise ValueError(
+            f"--frames must be at most {MAX_FRAME_COUNT} so adjacent frames stay "
+            "outside the viewer's discrete tolerance"
+        )
     return n_frames
+
+
+def validate_star_count(n_stars: int) -> int:
+    """Reject empty populations before entering the numerical pipeline."""
+    if n_stars < 1:
+        raise ValueError("--stars must be at least 1")
+    return n_stars
 
 
 def main() -> None:
     """Simulate the galaxy and open it in the viewer."""
-    n_disc = _int_arg("stars", 100_000)
+    n_disc = validate_star_count(_int_arg("stars", 100_000))
     n_frames = validate_frame_count(_int_arg("frames", T_FRAMES))
 
     aprint("=" * 70)

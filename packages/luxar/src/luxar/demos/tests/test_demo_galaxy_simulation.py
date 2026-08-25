@@ -39,7 +39,7 @@ def test_validate_frame_count_rejects_grids_without_a_time_step(
         _demo.validate_frame_count(n_frames)
 
 
-@pytest.mark.parametrize("n_frames", [4, 24, 100])
+@pytest.mark.parametrize("n_frames", [4, 24, 100, 960])
 def test_validate_frame_count_accepts_even_grids(n_frames: int) -> None:
     """Even counts are fine now: a DISCRETE T only ever lands on frames.
 
@@ -49,11 +49,45 @@ def test_validate_frame_count_accepts_even_grids(n_frames: int) -> None:
     assert _demo.validate_frame_count(n_frames) == n_frames
 
 
+@pytest.mark.parametrize("n_frames", [961, 1_000])
+def test_validate_frame_count_rejects_overlapping_discrete_frames(
+    n_frames: int,
+) -> None:
+    with pytest.raises(ValueError, match="at most 960.*discrete tolerance"):
+        _demo.validate_frame_count(n_frames)
+
+
+@pytest.mark.parametrize("n_stars", [1, 100_000])
+def test_validate_star_count_accepts_positive_counts(n_stars: int) -> None:
+    assert _demo.validate_star_count(n_stars) == n_stars
+
+
+@pytest.mark.parametrize("n_stars", [-1, 0])
+def test_validate_star_count_rejects_non_positive_counts(n_stars: int) -> None:
+    with pytest.raises(ValueError, match="--stars must be at least 1"):
+        _demo.validate_star_count(n_stars)
+
+
 def test_main_validates_frames_before_building(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", [str(_DEMO_PATH), "--frames=2", "--no-serve"])
 
     with pytest.raises(ValueError, match="at least 3"):
         _demo.main()
+
+
+def test_main_validates_stars_before_building(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", [str(_DEMO_PATH), "--stars=0", "--no-serve"])
+
+    with pytest.raises(ValueError, match="--stars must be at least 1"):
+        _demo.main()
+
+
+def test_scene_description_preserves_fractional_frame_cadence() -> None:
+    description = _demo.scene_description(
+        {"ILR": 1.7, "corotation": 11.4, "OLR": 19.4}, n_frames=24
+    )
+
+    assert "24 frames of 20.9 Myr" in description
 
 
 def test_opening_camera_is_solved_once_at_the_cinematic_lens(tmp_path: Path) -> None:
