@@ -408,67 +408,70 @@ Gated behind a minimum face count so tiny test meshes stay quiet, and routed thr
 
 ---
 
-### 3.7 `dim_order` and orientation data
+### 3.7 `dim_order`, `normal_dims` and face winding
 
-`add_mesh(dim_order=[...])` is a change of basis: it renumbers the vertex
-**columns** into the scene's dimension order (and widens them to the scene's
-`ndim`, filling any dimension the caller did not name). This section exists
-because that operation was unspecified until #2141, and the omission was not
-harmless — it produced a silently wrong store.
+`add_mesh(dim_order=[...])` renumbers the vertex **columns** into the scene's
+dimension order (widening to the scene's `ndim`, filling any dimension the caller
+did not name). This section exists because that interaction was unspecified until
+#2141 — and the omission cost a reviewer a wrong diagnosis before it cost anyone a
+bug, which is the more useful thing to record.
 
-A mesh carries **two** arrays that describe a direction in those columns, and both
-must be carried through the same map:
+**`normal_dims` names SCENE dimension indices**, i.e. the layout *after*
+`dim_order`. This is the contract, and it is worth stating baldly because the
+alternative reading is superficially more natural — the array is "authored", so
+surely its companion attr indexes authored columns? It does not. Three
+independent pieces of evidence:
 
-| Array | Why the permutation invalidates it |
+* §3.4's own example, "for a `(t, x, y, z)` mesh those are `(t, x, y)`", describes
+  the *stored* layout;
+* the writer range-checks `normal_dims` against the post-`dim_order` `ndim`;
+* `demo_lsystem_forest` authors four columns
+  (`dim_order=["season", "x", "y", "z"]`) and passes `normal_dims=[2, 3, 4]` — one
+  of which exceeds every authored column index — with the inline comment "The
+  three scene dims the normals describe".
+
+**So `normals` needs no companion transform, and this is where mesh differs from
+gsplats.** GSplats' Cholesky factors are authored in the *source* frame, so
+`apply_dim_order_cholesky` must carry them through the map alongside the centers.
+A mesh's normal components are already expressed in the destination frame by
+contract, so there is nothing to remap: an `apply_dim_order_normals` would be a
+double transform, and would corrupt exactly the callers who read the contract
+correctly. The asymmetry between the two types is real, and it is in the
+*contract*, not in the adders' completeness.
+
+**Face winding is the part `dim_order` can invalidate, and Luxar deliberately
+does not repair it.** Since `cross(Ra, Rb) = det(R)·R·cross(a, b)`, an
+orientation-reversing column permutation negates a triangle's geometric normal
+while leaving its stored corner order untouched. Whether that makes the store
+*wrong* depends on which frame the caller wound in:
+
+| The caller wound faces CCW in… | After an orientation-reversing `dim_order` |
 |---|---|
-| `normals` | Component `k` is positionally bound to `normal_dims[k]` (§3.4). Renumber the columns and the label no longer names the axis the component describes. |
-| `faces` | Corner order encodes surface orientation (§3.2). Since `cross(Ra, Rb) = det(R)·R·cross(a, b)`, an **orientation-reversing** permutation negates the geometric normal while leaving the stored winding alone. |
+| the SCENE column order (what §3.2 asks for, read literally, since the frame is `sorted(normal_dims)` and those are scene indices) | already correct — nothing to fix |
+| their own AUTHORED column order | now clockwise in the scene frame; violates §3.2 |
 
-This is the same obligation gsplats has for its Cholesky factors, and the shape of
-the fix is the same: the positions transform gets a companion
-(`apply_dim_order_orientation`, beside `apply_dim_order_cholesky`), keyed on the
-identical forward map `dim_mapping[i] = scene_names.index(dim_order[i])`. Points
-and Lines carry no orientation data, which is why one call is correct for them —
-the asymmetry is in the data model, not an oversight in their adders.
+Nothing in the store distinguishes the two, so an automatic flip would fix the
+second caller by breaking the first. The writer therefore **warns** — the same
+warn-only posture as §3.6's unwelded-vertices lint — naming the consequence (with
+`double_sided: false` the surface renders inside-out, and an open surface
+vanishes) and the one-line remedy (`faces[:, [0, 2, 1]]`, or `double_sided=True`).
+It is silent when `double_sided` is true, because then both orientations draw and
+the consequence cannot arise; and silent with no `normals`, because
+`sorted(normal_dims)` is the only declared winding frame there is (§3.2) and the
+viewer already renders such a mesh `DoubleSide` regardless.
 
-**Rules, in order:**
+Handedness is judged on the frame's **preimage**: walk `sorted(normal_dims)` in
+ascending scene order, record which authored column each axis came from, and test
+whether that sequence is an odd permutation. A frame axis with no preimage (an
+unmapped, constant-filled scene dimension) makes the restricted map not a
+permutation at all, and is skipped rather than guessed at.
 
-1. **`normal_dims` is remapped, and the components are permuted to match.** The
-   remap alone would already be *correct* — the component still describes the same
-   physical axis, now under its scene number — but it can leave the triple
-   non-ascending, and the viewer uses stored normals only when `normal_dims`
-   equals `displayDims` **in order** (§3.4), with `displayDims` always built
-   ascending. So the triple is sorted and the components follow it. Without that
-   sort a `dim_order` mesh would silently render on the flat-normal fallback: no
-   error, no warning, just no smooth shading.
-2. **Winding is flipped iff the map restricted to the frame is odd.** The frame is
-   `sorted(normal_dims)` (§3.2), so the parity that matters is that of
-   `[dim_mapping[d] for d in sorted(normal_dims)]`. Exactly two of each triangle's
-   three indices are swapped; swapping all three is a rotation and changes nothing.
-3. **Both are skipped when `normals` is absent** — not as an optimization but
-   because nothing is decidable: §3.2 makes `sorted(normal_dims)` the *only*
-   declared winding frame ("there is no other signal for which three axes the
-   author wound against"), and the viewer already renders such a mesh `DoubleSide`
-   regardless of `double_sided` (§5.4). Flipping on a guess would be worse than
-   not flipping.
-4. **A `normal_dims` entry that indexes no authored column is refused.** Without
-   `dim_order` it is range-checked against the scene width and passes; with
-   `dim_order` it is provably meaningless, and admitting it would bind a component
-   to an axis the caller never supplied.
-
-`faces` is still **not** reindexed, and that remains correct for the reason the
-`add_mesh` docstring gives: it addresses vertex *rows*, and `dim_order` permutes
-*columns*, so a row index names the same physical vertex afterwards. The lesson of
-#2141 is that this was the whole of the reasoning — `faces` was considered as
-indices and never as orientation.
-
-**Applied once, above the structural branches.** The transform runs in
-`add_mesh_impl` before the `partition=` / `substitutive_lod=` / `additive_lod=`
-dispatch, and every recursive re-entry passes `dim_order=None`, so all four routes
-inherit it exactly once. Downstream needs no changes: `split_mesh_by_faces`
-relabels indices without touching corner order, and `decimate` / `qem`
-**re-derive** normals from the stored winding, so a flipped input yields correctly
-flipped coarse levels.
+`faces` is still never reindexed, for the reason the `add_mesh` docstring gives:
+it addresses vertex *rows*, and `dim_order` permutes *columns*, so a row index
+names the same physical vertex afterwards. The lesson of #2141 is that this was
+the *whole* of the recorded reasoning — `faces` was considered as indices and
+never as orientation — and that the missing sentence was about winding, not about
+the arrays.
 
 ---
 

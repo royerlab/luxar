@@ -8,12 +8,15 @@ kwarg:
   centers to the scene's full dimensionality.
 * :func:`apply_dim_order_cholesky` — reorder + embed packed Cholesky
   factors so the GSplats writer can consume them.
-* :func:`apply_dim_order_orientation` — carry a Mesh's normals and face
-  WINDING through the same map, the Mesh peer of the Cholesky one.
+* :func:`warn_if_dim_order_reverses_winding` — report (never repair) a Mesh
+  whose face winding disagrees with the scene frame after the remap.
 
-The last two exist because reordering coordinate columns silently invalidates
-anything that describes a DIRECTION in them. A type with no such array (Points,
-Lines) needs only the first function; GSplats and Mesh each need a second.
+The second exists because reordering coordinate columns silently invalidates
+anything that describes a DIRECTION in them: gsplats' Cholesky factors have to be
+carried through the map. Mesh needs no such transform — ``normal_dims`` names
+SCENE dimensions, so its normals are already expressed in the destination frame —
+but its face winding is a direction that Luxar cannot repair without knowing
+which frame the caller wound in, so the third function reports instead.
 
 They take a ``Scene`` reference and produce pure NumPy arrays. No
 ``Group`` / ``self`` coupling — the prior ``self._apply_dim_order_*``
@@ -149,120 +152,91 @@ def permutation_parity_is_odd(order: Sequence[int]) -> bool:
     return inversions % 2 == 1
 
 
-def apply_dim_order_orientation(
-    normals: Optional[np.ndarray],
+def dim_order_reverses_winding(
     normal_dims: Optional[Sequence[int]],
-    faces: np.ndarray,
     scene: "Scene",
     dim_order: Optional[List[str]],
-) -> Tuple[Optional[np.ndarray], Optional[Sequence[int]], np.ndarray]:
-    """Carry a mesh's ORIENTATION data through a ``dim_order`` change of basis.
+) -> bool:
+    """Whether ``dim_order`` reverses handedness on a mesh's winding frame.
 
-    The Mesh peer of :func:`apply_dim_order_cholesky`, and it exists for the same
-    reason: :func:`apply_dim_order_positions` renumbers the *coordinate columns*,
-    and any array that describes a DIRECTION in those columns has to be carried
-    through the same map or it silently starts describing different axes.
-    GSplats has one such array (the Cholesky factors). Mesh has two, and the
-    second one is not obviously an array at all:
+    ``dim_order`` renumbers the vertex COLUMNS, and a column permutation with
+    ``det = -1`` reflects space: since ``cross(Ra, Rb) = det(R)·R·cross(a, b)``, a
+    triangle's geometric normal is negated relative to the pure permutation while
+    its stored corner order is untouched. Faces that were counter-clockwise in the
+    caller's own column order are clockwise afterwards.
 
-    * ``normals`` — three components positionally bound to ``normal_dims``;
-    * ``faces`` — an index buffer whose *corner order* encodes surface
-      orientation (spec §3.2), which a handedness-reversing permutation inverts.
+    **This function only reports; it changes nothing.** That restraint is the whole
+    point, and the reason is that Luxar cannot know which frame the caller wound
+    in. ``normal_dims`` names SCENE dimension indices — the layout AFTER
+    ``dim_order`` — so a caller who reads the contract literally winds against the
+    scene frame too, and for them the stored winding is already right; silently
+    flipping it would break them. A caller who instead wound against their own
+    authored column order has a store that violates §3.2, and only they can say
+    which they did. So the writer warns, names the consequence, and gives the
+    one-line remedy.
 
-    Both are no-ops without ``dim_order``. Both are skipped when ``normals`` is
-    absent, because ``sorted(normal_dims)`` is the ONLY declared winding frame
-    (§3.2: "there is no other signal for which three axes the author wound
-    against"), so without it there is nothing to be correct against — and the
-    viewer already renders such a mesh ``DoubleSide`` regardless of
-    ``double_sided`` (``data/mesh/projection.ts``, the "no stored normals" arm).
+    Undecidable cases return ``False`` (no warning) rather than guessing:
 
-    **The normals transform is a relabel plus a sort, not a rotation.** Component
-    ``k`` describes authored axis ``normal_dims[k]``, so remapping the LABEL
-    through ``dim_mapping`` already preserves the pairing — the component still
-    describes the same physical axis, now under its scene number. The components
-    are then permuted so the triple comes out ASCENDING, which is load-bearing
-    rather than tidy: the viewer uses stored normals only when ``normal_dims``
-    equals ``displayDims`` **in order** (``storedNormalsUsable``), and
-    ``displayDims`` is always built ascending. Leaving a non-ascending triple
-    would be safe but would silently drop the mesh onto the flat-normal fallback.
-    Normals are NOT widened the way positions and Cholesky factors are: they stay
-    ``(V, 3)`` forever, with the frame carried in the attr.
-
-    **The winding flip is decided on the frame, not on the whole map.** Only the
-    three frame axes participate in the handedness of the surface, so the parity
-    that matters is that of ``[dim_mapping[d] for d in sorted(normal_dims)]``.
-    Swapping exactly two of a triangle's three indices reverses orientation;
-    swapping all three is a rotation and changes nothing.
+    * no ``normal_dims`` — ``sorted(normal_dims)`` is the only declared winding
+      frame there is (§3.2), so without it nothing is decidable, and the viewer
+      already renders such a mesh ``DoubleSide`` regardless of ``double_sided``;
+    * a frame axis that no authored column maps onto (an unmapped scene dimension
+      filled with a constant) — it has no preimage, so the restricted map is not a
+      permutation at all.
 
     Args:
-        normals: Optional ``(V, 3)`` per-vertex normals, in AUTHORED component order.
-        normal_dims: The three AUTHORED column indices those components describe.
-        faces: ``(F, 3)`` or flat ``(3F,)`` triangle indices. Returned in the same shape.
+        normal_dims: The three SCENE dimension indices the normals describe.
         scene: The scene whose dimension order is being mapped onto.
-        dim_order: Scene dimension names, one per authored column. ``None`` is a no-op.
+        dim_order: Scene dimension names, one per authored column.
 
     Returns:
-        ``(normals, normal_dims, faces)``, transformed when applicable.
-
-    Raises:
-        ValidationError: If a ``normal_dims`` entry does not index an authored
-            column. Without ``dim_order`` that entry is checked against the scene
-            width and would pass; here it is provably meaningless, and admitting
-            it would bind a normal component to an axis the caller never supplied.
+        ``True`` when the caller's authored column order and the scene frame
+        disagree about handedness.
     """
-    if dim_order is None or normals is None or normal_dims is None:
-        return normals, normal_dims, faces
-
-    from ...validation import ValidationError
+    if dim_order is None or normal_dims is None or len(list(normal_dims)) != 3:
+        return False
 
     scene_names = scene._dimensions.names
-    # src authored column -> dst scene index. Same map, same construction, as
-    # apply_dim_order_cholesky builds for the gsplat factors.
+    # src authored column -> dst scene index, the same map
+    # `apply_dim_order_cholesky` builds for the gsplat factors.
     dim_mapping = [scene_names.index(name) for name in dim_order]
 
-    for entry in normal_dims:
-        if not 0 <= int(entry) < len(dim_mapping):
-            raise ValidationError(
-                f"normal_dims={list(normal_dims)} indexes column {int(entry)}, but "
-                f"dim_order names only {len(dim_mapping)} authored columns "
-                f"({list(dim_order)}). With dim_order, normal_dims must name the "
-                "AUTHORED columns the normal components describe — the ones being "
-                "remapped — not the scene dimensions they are being mapped onto.",
-                "Give normal_dims the indices of the vertex columns as you authored "
-                "them; they are remapped onto the scene's dimension order for you",
-            )
+    # Walk the frame in ascending SCENE order and record which authored column
+    # each axis came from. If those columns are not themselves ascending, the
+    # restricted map is an odd permutation and handedness flips.
+    preimage: List[int] = []
+    for scene_index in sorted(int(d) for d in normal_dims):
+        if scene_index not in dim_mapping:
+            return False  # filled dimension: no preimage, nothing to decide
+        preimage.append(dim_mapping.index(scene_index))
+    return permutation_parity_is_odd(preimage)
 
-    normals_arr = np.asarray(normals)
 
-    # Pair each component with the SCENE index it now describes, then sort so the
-    # stored triple is ascending (see the docstring: the viewer wants ordered
-    # equality with displayDims, which is ascending).
-    paired = sorted(
-        (dim_mapping[int(d)], component) for component, d in enumerate(normal_dims)
+def warn_if_dim_order_reverses_winding(
+    name: str,
+    normal_dims: Optional[Sequence[int]],
+    scene: "Scene",
+    dim_order: Optional[List[str]],
+    double_sided: bool,
+) -> None:
+    """Warn once when ``dim_order`` reverses handedness on the winding frame.
+
+    Warn-only, in the manner of the mesh writer's unwelded-vertices lint (§3.6):
+    it catches a likely authoring mistake without refusing a store that may be
+    perfectly deliberate. See :func:`dim_order_reverses_winding` for why this
+    cannot be fixed automatically.
+
+    Silent when ``double_sided`` (the default) leaves both orientations drawn, so
+    the consequence the warning describes cannot arise — a single-sided mesh is
+    the one that vanishes.
+    """
+    if double_sided or not dim_order_reverses_winding(normal_dims, scene, dim_order):
+        return
+    aprint(
+        f"  ⚠️ Mesh '{name}': dim_order={list(dim_order or [])} reverses handedness "
+        "on the winding frame. `normal_dims` names SCENE dimensions, so faces are "
+        "expected counter-clockwise in the SCENE column order too. If you wound "
+        "them in your own authored column order they are now clockwise, and with "
+        "double_sided=False this surface renders inside-out (an open surface "
+        "vanishes). Pass faces[:, [0, 2, 1]], or double_sided=True."
     )
-    new_normal_dims = [scene_index for scene_index, _ in paired]
-    component_order = [component for _, component in paired]
-    new_normals = normals_arr[:, component_order]
-
-    # Handedness. `sorted(normal_dims)` is the authored winding frame (§3.2); its
-    # image under dim_mapping is odd exactly when the change of basis reflects.
-    frame_image = [dim_mapping[int(d)] for d in sorted(int(x) for x in normal_dims)]
-    new_faces = faces
-    if permutation_parity_is_odd(frame_image):
-        faces_arr = np.asarray(faces)
-        original_shape = faces_arr.shape
-        # Swap two of the three — a three-way rotation would leave winding alone.
-        new_faces = faces_arr.reshape(-1, 3)[:, [0, 2, 1]].reshape(original_shape)
-        aprint(
-            "  🔄 dim_order reverses handedness on the winding frame "
-            f"{sorted(int(x) for x in normal_dims)} → {new_normal_dims}; "
-            "face winding flipped to keep triangles front-facing"
-        )
-
-    if new_normal_dims != [int(x) for x in normal_dims]:
-        aprint(
-            f"  🧭 dim_order: normal_dims {list(normal_dims)} → {new_normal_dims} "
-            "(components permuted to match)"
-        )
-
-    return new_normals, new_normal_dims, new_faces

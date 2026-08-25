@@ -1,50 +1,34 @@
-#### `dim_order` now carries a mesh's normals and face winding (#2141)
+#### `add_mesh` warns when `dim_order` reverses face handedness (#2141)
 
-`add_mesh(dim_order=[...])` renumbers the vertex columns into the scene's
-dimension order. It left the two arrays that describe a *direction* in those
-columns untouched, so the resulting store was silently wrong: it passed every
-validator, the viewer accepted it, and it rendered with the wrong shading and —
-for an orientation-reversing permutation — inside-out geometry.
+`dim_order` renumbers a mesh's vertex columns, and an orientation-reversing
+permutation reflects space: since `cross(Ra, Rb) = det(R)·R·cross(a, b)`, a
+triangle's geometric normal is negated while its stored corner order is
+untouched. Faces wound counter-clockwise in the caller's own column order come
+out clockwise in the scene's, and with `double_sided=False` the surface renders
+inside-out — an open surface vanishes.
 
-Measured on one triangle whose normal lay along authored axis 0,
-`dim_order=["z","y","x"]` produced a stored normal exactly **orthogonal** to its
-own face, and a face whose cross product had flipped sign. Both follow from the
-same omission. `normals` components are positionally bound to `normal_dims`, so
-renumbering the columns without remapping the label leaves the component
-describing a different axis. And because `cross(Ra, Rb) = det(R)·R·cross(a, b)`,
-a reversing permutation negates the geometric normal while the stored winding
-stays as authored — which inverts the shader's `gl_FrontFacing` normal flip and,
-on a `double_sided: false` mesh, turns an open surface inside out.
+Whether that is a *defect* depends on which frame the caller wound in, and the
+store cannot tell. `normal_dims` names SCENE dimension indices — the layout after
+`dim_order` — so §3.2's winding frame, `sorted(normal_dims)`, is a scene triple:
+a caller who read the contract literally wound against the scene frame and is
+already correct. Flipping their faces to help the other caller would corrupt
+them. So the writer warns, names the consequence, and gives the remedy
+(`faces[:, [0, 2, 1]]`, or `double_sided=True`), in the same warn-only posture as
+the unwelded-vertices lint. It stays quiet when `double_sided` is true (both
+orientations draw, so nothing goes wrong) and when there are no `normals` (no
+declared frame, and the viewer already renders such a mesh double-sided).
 
-`dim_order=["z","y","x"]` — a `(Z,Y,X)` volume into an `(x,y,z)` scene — is the
-standard microscopy call, and it is one of the reversing ones.
-
-The fix is the companion transform the type was missing. GSplats has carried its
-orientation data through `dim_order` since it gained the kwarg
-(`apply_dim_order_cholesky`, applied right after the positions); Points and Lines
-carry no orientation data and need nothing. Mesh has two such arrays and had one
-call, and `apply_dim_order_orientation` is now its peer: it remaps `normal_dims`
-through the same forward map, permutes the components so the triple stays
-ascending (the viewer uses stored normals only when `normal_dims` equals
-`displayDims` *in order*, so leaving it unsorted would have swapped one silent
-failure for another), and flips winding when the map restricted to
-`sorted(normal_dims)` is odd. It runs once above the four structural branches, so
-the flat, `partition=`, `substitutive_lod=` and `additive_lod=` routes all
-inherit it; `split_mesh_by_faces` preserves corner order and the decimators
-re-derive normals from the stored winding, so coarse levels follow for free.
-
-Two carve-outs are deliberate and pinned by tests. A mesh with no `normals` is
-left alone, because `sorted(normal_dims)` is the only declared winding frame
-there is — flipping on a guess would be worse than not flipping, and the viewer
-already renders such a mesh double-sided. And a `normal_dims` entry that indexes
-no authored column is now refused rather than range-checked against the scene
-width, where it would pass while binding a component to an axis the caller never
-supplied.
-
-The interaction was unspecified: `MESH_NODE_SPEC.md` mentioned `dim_order` only
-in a done-list line, and §3.4 warns at length about normals stored against the
-wrong axes without covering the one operation that renumbers axes. §3.7 now
-specifies it.
+The gap this closes is documentation as much as behaviour: the spec mentioned
+`dim_order` only in a done-list line, and §3.4 warns at length about normals
+stored against the wrong axes without covering the one operation that renumbers
+axes. §3.7 now specifies the whole interaction — including, explicitly, that
+`normals` needs **no** companion transform, because its components are already in
+the destination frame. That is where mesh differs from gsplats, whose Cholesky
+factors *are* authored in the source frame and must be carried through the map;
+the asymmetry is in the contract, not in the adders. An `apply_dim_order_normals`
+would be a double transform, and would break precisely the callers who got it
+right — `demo_lsystem_forest` among them, which passes `normal_dims=[2, 3, 4]`
+against four authored columns.
 
 #### Mesh winding parity is decided when the stored-normal shader is active (#2142)
 

@@ -741,19 +741,23 @@ def test_dim_order_permutes_vertex_columns_without_breaking_faces(tmp_path) -> N
         ), f"face {face_index} no longer names its authored vertices"
 
 
-# --- dim_order and orientation data (#2141) ---------------------------------
+# --- dim_order and face winding (#2141) -------------------------------------
 #
-# `dim_order` renumbers the coordinate COLUMNS. Vertices are just coordinates and
-# were always handled; the two things that describe a DIRECTION in those columns
-# were not, and both failed silently:
+# `dim_order` renumbers the vertex COLUMNS. `normals` needs no companion transform
+# — `normal_dims` names SCENE dimension indices, so the components are already
+# expressed in the destination frame (the docstring's own example, "for a
+# (t, x, y, z) mesh those are (t, x, y)", is about the stored layout, and
+# `demo_lsystem_forest` says so inline: "The three scene dims the normals
+# describe"). This differs from gsplats, whose Cholesky factors ARE authored in
+# the source frame and so must be carried through the map.
 #
-#   * `normals` — three components positionally bound to `normal_dims`;
-#   * `faces`   — corner order encodes surface orientation (spec §3.2), which a
-#                 handedness-reversing permutation inverts.
-#
-# The tests below are written against the wrong implementations, not just the
-# right one: each names what it rules out. The measured pre-fix symptom was a
-# stored normal that ended up ORTHOGONAL to its own face.
+# Face winding is the part `dim_order` can invalidate, and the part Luxar
+# deliberately does NOT repair: `cross(Ra, Rb) = det(R)·R·cross(a, b)`, so an
+# orientation-reversing permutation negates a triangle's geometric normal while
+# its corner order is untouched. Whether that is WRONG depends on which frame the
+# caller wound in, which only they know — so the writer reports and leaves the
+# data alone. These tests pin the report and, just as importantly, pin that
+# nothing is silently rewritten.
 
 _XYZ = ("x", "y", "z")
 
@@ -770,19 +774,9 @@ def _xyz_dims():
     )
 
 
-# One triangle in the (0,1)-plane of its authored frame, so its geometric normal
-# lies along authored axis 2 and any axis permutation moves it somewhere visible.
 _TRI_V = np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 4.0, 0.0]], dtype=np.float32)
 _TRI_F = np.array([[0, 1, 2]], dtype=np.uint32)
-# Authored normals: +Z in the authored frame, i.e. PARALLEL to cross(e1, e2).
 _TRI_N = np.tile(np.array([[0.0, 0.0, 1.0]], dtype=np.float32), (3, 1))
-
-
-def _face_normal(vertices, faces):
-    """The triangle's geometric normal, from its stored corner order."""
-    a, b, c = vertices[faces[0]]
-    n = np.cross(b - a, c - a)
-    return n / np.linalg.norm(n)
 
 
 def _write_tri(tmp_path, name, **kwargs):
@@ -794,206 +788,133 @@ def _write_tri(tmp_path, name, **kwargs):
 
 
 @pytest.mark.parametrize(
-    "dim_order,parity,test_id",
+    "dim_order,test_id",
     [
-        (["x", "y", "z"], "even", "identity"),
-        (["y", "z", "x"], "even", "cycle"),
-        (["z", "x", "y"], "even", "cycle_other_way"),
-        (["z", "y", "x"], "odd", "reversal"),
-        (["y", "x", "z"], "odd", "swap_first_two"),
-        (["x", "z", "y"], "odd", "swap_last_two"),
+        (["x", "y", "z"], "identity"),
+        (["y", "z", "x"], "even_cycle"),
+        (["z", "y", "x"], "odd_reversal"),
+        (["y", "x", "z"], "odd_swap"),
     ],
 )
-def test_dim_order_keeps_normals_describing_their_own_face(
-    tmp_path, dim_order, parity, test_id
+def test_dim_order_never_rewrites_faces_or_normals(
+    tmp_path, dim_order, test_id
 ) -> None:
-    """A stored normal must still point along its own face, whatever the basis.
+    """`dim_order` touches vertex columns and NOTHING else.
 
-    This is the assertion whose absence let #2141 ship. It is deliberately
-    phrased as an INVARIANT (`dot(stored_normal, geometric_normal) == +1`)
-    rather than as expected component values, because that single statement
-    catches both halves of the bug at once and needs no per-permutation
-    bookkeeping:
+    The guard against a well-meant "fix". Repairing winding automatically looks
+    right until you notice `normal_dims` names SCENE dimensions: a caller who
+    followed that contract wound against the scene frame and is already correct,
+    so flipping their faces would corrupt working data. Same for permuting normal
+    components — they are already in the destination frame.
 
-    * leave `normals` unpermuted and the stored normal ends up describing the
-      wrong axes — measured at exactly ORTHOGONAL (dot 0) for the reversal;
-    * leave `faces` unflipped under an odd permutation and the geometric normal
-      is negated while the stored one is not, giving dot -1.
-
-    All six permutations run, so an implementation keyed on "is dim_order
-    sorted?" fails the two cycles, and one that flips unconditionally fails
-    every even case.
+    So the invariant is the strong one: faces and normals come out byte-identical
+    to what went in, for every permutation including the reversing ones.
     """
     mesh = _write_tri(
         tmp_path, "m", normals=_TRI_N, normal_dims=[0, 1, 2], dim_order=dim_order
     )
-    geometric = _face_normal(mesh.vertices, mesh.faces)
-    stored = mesh.normals[0] / np.linalg.norm(mesh.normals[0])
-    assert np.isclose(np.dot(geometric, stored), 1.0), (
-        f"{test_id} ({parity}): stored normal {stored} no longer describes its "
-        f"own face, whose geometric normal is {geometric}"
-    )
+    assert np.array_equal(mesh.faces, _TRI_F), f"{test_id}: faces were rewritten"
+    assert np.array_equal(mesh.normals, _TRI_N), f"{test_id}: normals were rewritten"
+    assert mesh.normal_dims == [0, 1, 2], f"{test_id}: normal_dims was rewritten"
 
 
 @pytest.mark.parametrize(
-    "dim_order,expect_flipped,test_id",
+    "dim_order,expect_warning,test_id",
     [
-        (["x", "y", "z"], False, "identity_must_not_flip"),
-        (["y", "z", "x"], False, "even_cycle_must_not_flip"),
-        (["z", "y", "x"], True, "odd_reversal_must_flip"),
-        (["y", "x", "z"], True, "odd_swap_must_flip"),
+        (["x", "y", "z"], False, "identity_is_orientation_preserving"),
+        (["y", "z", "x"], False, "even_cycle_is_orientation_preserving"),
+        (["z", "y", "x"], True, "reversal_flips_handedness"),
+        (["y", "x", "z"], True, "single_swap_flips_handedness"),
     ],
 )
-def test_dim_order_flips_face_winding_exactly_when_handedness_reverses(
-    tmp_path, dim_order, expect_flipped, test_id
+def test_dim_order_warns_exactly_when_handedness_reverses(
+    tmp_path, capsys, dim_order, expect_warning, test_id
 ) -> None:
-    """Winding is flipped iff the change of basis reverses handedness.
+    """The lint fires on the reversing permutations and only those.
 
-    Checked on the stored CORNER ORDER rather than on a normal, because that is
-    the thing the spec §3.2 contract is about and the thing the viewer's
-    `gl_FrontFacing` reads. `cross(Ra, Rb) = det(R)·R·cross(a, b)`, so an odd
-    permutation negates the geometric normal relative to the pure column
-    permutation — and the writer must undo that by swapping two corners.
-
-    The even cases are not padding: a build that flips whenever `dim_order` is
-    non-identity passes every odd case and fails these.
+    `double_sided=False` because that is the configuration with a consequence —
+    the surface renders inside-out and an open one vanishes. The even cases are
+    not padding: a lint that fired on any non-identity `dim_order` would pass
+    every reversing case and fail these, and it would cry wolf on the shipped
+    `demo_lsystem_forest`, whose `dim_order` is orientation-PRESERVING.
     """
-    mesh = _write_tri(
-        tmp_path, "m", normals=_TRI_N, normal_dims=[0, 1, 2], dim_order=dim_order
+    _write_tri(
+        tmp_path,
+        f"m_{test_id}",
+        normals=_TRI_N,
+        normal_dims=[0, 1, 2],
+        dim_order=dim_order,
+        double_sided=False,
     )
-    assert np.array_equal(mesh.faces, _TRI_F) is not expect_flipped, test_id
-    if expect_flipped:
-        assert np.array_equal(mesh.faces, _TRI_F[:, [0, 2, 1]]), (
-            f"{test_id}: expected exactly two corners swapped; a three-way "
-            "rotation would leave winding unchanged"
-        )
+    warned = "reverses handedness" in capsys.readouterr().out
+    assert warned is expect_warning, test_id
 
 
-def test_dim_order_remaps_normal_dims_and_permutes_components_to_match(
-    tmp_path,
+def test_dim_order_winding_warning_is_silent_for_a_double_sided_mesh(
+    tmp_path, capsys
 ) -> None:
-    """`normal_dims` is relabelled, and the components are reordered to suit.
+    """No warning when both orientations draw, because nothing goes wrong.
 
-    Two separate obligations, and the second is easy to miss. Relabelling alone
-    would be *correct* — component k still describes the same physical axis — but
-    it can leave the triple non-ascending, and the viewer uses stored normals
-    only when `normal_dims` equals `displayDims` **in order**
-    (`storedNormalsUsable`), with `displayDims` always built ascending. A
-    non-ascending triple would therefore silently drop the mesh onto the
-    flat-normal fallback: no error, no warning, just no smooth shading.
-
-    Authored with a DISTINCT value per component so a permutation is visible in
-    the values and not only in the shape.
+    `double_sided` defaults TRUE, so without this the lint would fire on the
+    common case and describe a consequence that cannot happen there.
     """
-    normals = np.tile(np.array([[1.0, 2.0, 3.0]], dtype=np.float32), (3, 1))
-    mesh = _write_tri(
+    _write_tri(
         tmp_path,
         "m",
-        normals=normals,
+        normals=_TRI_N,
         normal_dims=[0, 1, 2],
         dim_order=["z", "y", "x"],
+        double_sided=True,
     )
-
-    # Ascending, so the viewer will actually use these normals.
-    assert mesh.normal_dims == [0, 1, 2]
-    # authored col 0 -> scene z(2), col 1 -> y(1), col 2 -> x(0); sorted ascending
-    # puts the authored components in the order (2, 1, 0).
-    assert np.array_equal(mesh.normals[0], np.array([3.0, 2.0, 1.0], dtype=np.float32))
+    assert "reverses handedness" not in capsys.readouterr().out
 
 
-def test_dim_order_leaves_a_mesh_with_no_normals_alone(tmp_path) -> None:
-    """No normals means no declared winding frame, so nothing is decidable.
+def test_dim_order_winding_warning_is_silent_without_a_winding_frame(
+    tmp_path, capsys
+) -> None:
+    """No normals means no declared frame, so handedness is undecidable.
 
     Spec §3.2: `sorted(normal_dims)` is the ONLY signal for which three axes the
-    author wound against — "there is no other signal". Flipping on a guess would
-    be worse than not flipping, and the viewer already renders such a mesh
-    `DoubleSide` regardless of `double_sided`. So this is a deliberate carve-out
-    rather than an oversight, and it is pinned so a later "just always flip"
-    cannot quietly widen it.
+    author wound against. Warning on a guess would be noise, and the viewer
+    already renders such a mesh `DoubleSide` regardless of `double_sided`.
     """
-    mesh = _write_tri(tmp_path, "m", dim_order=["z", "y", "x"])
-    assert np.array_equal(mesh.faces, _TRI_F)
-    assert mesh.normals is None
+    _write_tri(tmp_path, "m", dim_order=["z", "y", "x"], double_sided=False)
+    assert "reverses handedness" not in capsys.readouterr().out
 
 
-def test_dim_order_rejects_normal_dims_that_index_no_authored_column(
-    tmp_path,
-) -> None:
-    """`normal_dims` names AUTHORED columns, and out of range must say so.
+def test_dim_order_scene_semantics_hold_for_normal_dims(tmp_path) -> None:
+    """`normal_dims` indexes the SCENE dimensions, so it may exceed the authored width.
 
-    Without `dim_order` this entry would be range-checked against the scene
-    width and pass. With `dim_order` it is provably meaningless — there is no
-    authored column 3 to remap — and admitting it would bind a normal component
-    to an axis the caller never supplied.
+    Pins the contract my own first reading of this code got backwards, and that
+    `demo_lsystem_forest` depends on: it authors 4 columns
+    (`dim_order=["season", "x", "y", "z"]`) and passes `normal_dims=[2, 3, 4]` —
+    scene indices, one of which is larger than any authored column index. A build
+    that treated `normal_dims` as authored columns rejects that demo outright.
     """
-    # Re-wrapped as ValueError by `add_mesh_impl`'s write guard, like every
-    # other validator on this path — matching the file's other rejection tests.
-    with pytest.raises(ValueError, match="authored columns"):
-        _write_tri(
-            tmp_path,
-            "m",
-            normals=_TRI_N,
-            normal_dims=[0, 1, 3],
-            dim_order=["z", "y", "x"],
-        )
+    from luxar.core.dimensions import Dimension, Dimensions
 
-
-@pytest.mark.parametrize(
-    "route_kwargs,test_id",
-    [
-        ({}, "flat_leaf"),
-        ({"partition": {"max_elements": 2}}, "partition"),
-        ({"substitutive_lod": {"levels": 2}}, "substitutive_lod"),
-        ({"additive_lod": {"n_lods": 2}}, "additive_lod"),
-    ],
-)
-def test_dim_order_orientation_reaches_every_structural_route(
-    tmp_path, route_kwargs, test_id
-) -> None:
-    """One call site serves all four routes — this is what proves it.
-
-    `add_mesh_impl` applies the orientation transform once, above the structural
-    branches, and relies on every recursive re-entry passing `dim_order=None`.
-    That is an argument, not a guarantee, so each route is exercised: a
-    regression that moved the call below a branch, or that let a route re-apply
-    it, shows up here as a normal that no longer describes its face (dot 0 or
-    -1) while the flat leaf stays green.
-
-    Uses a closed tetrahedron rather than the single triangle, because
-    `partition=` needs enough faces to split and the LOD routes need something
-    to coarsen.
-    """
-    store = tmp_path / f"{test_id}.luxar.zarr"
+    dims = Dimensions(
+        [
+            Dimension(name="t", unit="s", range=(0, 3), step=1.0, display=False),
+            Dimension(name="x", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="z", unit="um", range=(0, 30), step=1.0, display=True),
+        ]
+    )
+    store = tmp_path / "scene_dims.luxar.zarr"
     with LuxarZarrCompiler(store) as compiler:
-        scene = compiler.create_scene(dimensions=_xyz_dims())
+        scene = compiler.create_scene(dimensions=dims)
+        # Three authored columns; normal_dims names scene 1..3, above that width.
         scene.add_mesh(
             "m",
-            _V,
-            _F,
-            normals=_N,
-            normal_dims=[0, 1, 2],
-            dim_order=["z", "y", "x"],
-            **route_kwargs,
+            _TRI_V,
+            _TRI_F,
+            normals=_TRI_N,
+            normal_dims=[1, 2, 3],
+            dim_order=["x", "y", "z"],
+            fill={"t": 0.0},
         )
-
-    # Read the frame straight off the stored attrs rather than through
-    # `get_mesh`: the additive route's node is a ladder PARENT whose arrays live
-    # in `additive_<i>/` subgroups, so it has no `vertices` of its own. The attr
-    # is what the viewer reads and what this test is about.
-    root = zarr.open_group(str(store), mode="r")
-    frames = [
-        (path, node.attrs["normal_dims"])
-        for path, node in root.groups()
-        if "normal_dims" in node.attrs
-    ] + [
-        (f"{path}/{sub_path}", sub.attrs["normal_dims"])
-        for path, node in root.groups()
-        for sub_path, sub in node.groups()
-        if "normal_dims" in sub.attrs
-    ]
-    assert frames, f"{test_id}: no mesh node stamped a normal_dims frame"
-    for path, frame in frames:
-        assert list(frame) == [0, 1, 2], f"{test_id}/{path}: frame not remapped"
+    assert LuxarScene.load(store).get_mesh("m").normal_dims == [1, 2, 3]
 
 
 def test_add_mesh_refuses_a_mesh_over_the_viewers_decode_budget(
