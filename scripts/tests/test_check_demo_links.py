@@ -236,6 +236,25 @@ def test_malformed_and_unknown_specs_report_config_without_raising() -> None:
     assert unknown == checker.AuditResult("CONFIG", "unknown audit mode: stauts")
 
 
+def test_body_marker_lists_require_one_marker_per_good_identifier() -> None:
+    checker = CHECKER
+    spec = {
+        "mode": "body-marker",
+        "good": ("one", "two"),
+        "bad": "missing",
+        "good_marker": ("record one",),
+    }
+    canonical = frozenset({"https://example.org/one", "https://example.org/two"})
+
+    result = checker.audit_destination(
+        "example.org", spec, lambda _url: None, canonical
+    )
+
+    assert result == checker.AuditResult(
+        "CONFIG", "body-marker audits require one marker per good identifier"
+    )
+
+
 def test_literal_canonical_urls_are_all_probed() -> None:
     checker = CHECKER
     host = "simbad.cds.unistra.fr"
