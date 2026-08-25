@@ -680,6 +680,31 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
     assert key not in json.loads((tmp_path / "chars.json").read_text())["archives"]
 
 
+def test_refresh_summary_distinguishes_rejected_and_retained_reads(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"datasets": {}}))
+    monkeypatch.setattr(gen, "MANIFEST", manifest_path)
+    monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen, "refresh_characteristics", lambda manifest, extra_root: (4, 2, 1, 3)
+    )
+    monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
+
+    assert gen.main() == 0
+
+    summary = capsys.readouterr().out
+    assert "read 4 archive(s)" in summary
+    assert "skipped 1 read(s) taken from bytes the manifest does not pin" in summary
+    assert "kept 2 committed measurement(s) that outrank the local copy" in summary
+    assert "preserved 3 not on this machine" in summary
+
+
 def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:
     manifest = _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
 
