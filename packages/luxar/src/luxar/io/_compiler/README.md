@@ -88,10 +88,13 @@ Scene-level position-bounds machinery:
   `(N, D)` array (`{"min": [...], "max": [...]}`); empty arrays yield zeros.
 - `update_scene_bounds(scene_bounds, node_bounds)` — running union across nodes,
   extending dimensionality when a later node has more dims.
-- `expand_bounds_with_transforms(store, scene_bounds)` — finalize-time pass that
-  walks the written zarr tree, composes **two** transform families down the
-  hierarchy, and overwrites the scene's `position_bounds` with the world-space
-  union. The 4x4 spatial `transform` (translate/rotate/scale) acts on the
+- `collect_world_bounds(store)` — single finalize-time tree walk that snapshots
+  every geometry leaf's world-space bounds, effective blending mode and opacity,
+  and author-facing owner for all downstream finalize consumers.
+- `expand_bounds_with_transforms(store, scene_bounds, leaves=None)` — unions the
+  shared leaf snapshot into the scene's `position_bounds`, collecting it only
+  when the caller has not supplied one. The 4x4 spatial `transform`
+  (translate/rotate/scale) acts on the
   displayed dims and is applied by transforming all 8 box corners (correct under
   rotation); the per-dimension `nd_transform` (affine scale/offset) acts on the
   non-displayed slider dims. Getting the 4x4 into the scene bounds is
