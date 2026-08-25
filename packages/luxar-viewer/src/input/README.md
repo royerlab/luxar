@@ -7,8 +7,8 @@
 
 `index.ts` is the package facade. It exports `InputHandler`, the
 `DimensionSlidersFactory` type used by its constructor, the `ControlRailHandle`
-contract its `setControlRail()` accepts, the `InputContext`
-identifier used by shortcut-help metadata, and `KeyAction`/`KeyActionId` — the
+contract its `setControlRail()` accepts, the `InputContext` enum that names the
+routing contexts, and `KeyAction`/`KeyActionId` — the
 stable action identities callers address a binding by (the control rail asks
 for an action's current chord rather than hard-coding a letter). The binding
 registry, context manager implementation, dimension-navigation lifecycle,

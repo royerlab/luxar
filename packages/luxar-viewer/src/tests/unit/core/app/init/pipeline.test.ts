@@ -85,7 +85,14 @@ function makeInputHandlerStub() {
     // The control rail reads this to wire its buttons to the same commands the
     // keyboard uses; the closures are only invoked on click (never in tests).
     getUiActions: vi.fn(() => ({ commands: {}, panels: {} })),
-    getShortcutLabel: vi.fn(() => undefined),
+    // Stands in for the live key-binding registry: exactly one action resolves,
+    // and to a label the real config never produces, so a test can tell "the
+    // registry's answer reached the rail" apart from both "some truthy stub
+    // did" and "the production letter was baked in". Everything else is
+    // unbound, which is what an un-init'd registry answers for every action.
+    getShortcutLabel: vi.fn((actionId: string) =>
+      actionId === KeyAction.toggleHelp ? '?' : undefined
+    ),
   };
 }
 
@@ -126,8 +133,12 @@ vi.mock('../../../../../ui/resolution-indicator', () => ({
 }));
 vi.mock('../../../../../input', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../../input')>();
+  // Spread rather than enumerate: only the constructor needs replacing, and an
+  // explicit export list turns the day some module in the pipeline's import
+  // graph value-imports another facade symbol into an opaque
+  // "does not provide an export" with no type error pointing here.
   return {
-    KeyAction: actual.KeyAction,
+    ...actual,
     InputHandler: vi.fn(),
   };
 });
@@ -174,7 +185,8 @@ vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
   evaluateDepthSortPerFrame: vi.fn(),
 }));
 
-import { InputHandler } from '../../../../../input';
+import { InputHandler, KeyAction } from '../../../../../input';
+import { ControlRail } from '../../../../../ui/control-rail';
 import { getSceneLoader } from '../../../../../data/scene-loader-manager';
 import {
   configureDepthSort,
@@ -619,6 +631,48 @@ describe('runInitPipeline', () => {
         notifyPaused: ReturnType<typeof vi.fn>;
       };
       expect(manager.notifyPaused).toHaveBeenCalled();
+    });
+  });
+
+  describe('control-rail shortcut wiring', () => {
+    it('labels rail buttons from the live key-binding registry, and only after inputHandler.init()', async () => {
+      // Every rail button's tooltip/aria-label and <kbd> chip comes from the
+      // LIVE registry (`inputHandler.getShortcutLabel`), not a letter baked
+      // into build-rail-items, so a rebound key shows up on screen. Two ways
+      // that seam breaks with the buttons still working and every chip
+      // silently blank: the pipeline stops supplying `shortcutForAction` (the
+      // build-rail-items suite injects its own, so it stays green and proves
+      // only that the rail CONSUMES the port), or the rail is built before
+      // `init()` has registered the bindings, so the registry is empty and
+      // every action resolves `undefined`.
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const partial: Partial<InitPipelineResult> = {};
+
+      await runInitPipeline(ports, partial);
+
+      const inputHandler = partial.inputHandler as unknown as {
+        init: ReturnType<typeof vi.fn>;
+        getShortcutLabel: ReturnType<typeof vi.fn>;
+      };
+
+      // Asked with the REAL action id (a typo'd/renamed id resolves nothing).
+      expect(inputHandler.getShortcutLabel).toHaveBeenCalledWith(KeyAction.toggleHelp);
+
+      // And the registry's ANSWER is what the item carries — read off the real
+      // buildRailItems output the pipeline handed to the (mocked) rail. Assert
+      // the item exists first, so renaming it reads as a missing item rather
+      // than as a broken label.
+      const railItems = vi.mocked(ControlRail).mock.calls[0][0];
+      const helpItem = railItems.find((item) => item.id === 'help');
+      expect(helpItem).toBeDefined();
+      expect(helpItem?.shortcut).toBe('?');
+
+      // Bindings exist only after init(), so the rail must be built later.
+      expect(inputHandler.init.mock.invocationCallOrder[0]).toBeLessThan(
+        inputHandler.getShortcutLabel.mock.invocationCallOrder[0]
+      );
     });
   });
 });
