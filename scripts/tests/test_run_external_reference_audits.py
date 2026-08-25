@@ -180,9 +180,11 @@ def test_missing_command_interpreter_is_a_configuration_error(monkeypatch) -> No
     assert result.level is audit_module.Level.ERROR
 
 
-@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize(
+    ("status", "reason"), [(401, "UNAUTHORIZED"), (403, "FORBIDDEN")]
+)
 def test_rejected_required_credential_is_a_configuration_error(
-    monkeypatch, status
+    monkeypatch, status: int, reason: str
 ) -> None:
     monkeypatch.setattr(
         subprocess,
@@ -191,7 +193,7 @@ def test_rejected_required_credential_is_a_configuration_error(
             args[0],
             2,
             "",
-            f"Zenodo returned HTTP {status} FORBIDDEN for deposition 21912280.\n"
+            f"Zenodo returned HTTP {status} {reason} for deposition 21912280.\n"
             "make: *** [Makefile:885: check-zenodo-live] Error 1",
         ),
     )
@@ -201,6 +203,21 @@ def test_rejected_required_credential_is_a_configuration_error(
     )
 
     assert result.level is audit_module.Level.ERROR
+
+
+def test_auth_failure_text_without_required_env_remains_a_warning(monkeypatch) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, "", "Zenodo returned HTTP 403 FORBIDDEN"
+        ),
+    )
+    audit = audit_module.Audit("Public endpoint", ("check-public-endpoint",))
+
+    result = audit_module.run_audit(audit, env={})
+
+    assert result.level is audit_module.Level.WARNING
 
 
 def test_missing_make_target_is_not_available_on_this_checkout(monkeypatch) -> None:
