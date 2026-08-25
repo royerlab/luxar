@@ -107,12 +107,12 @@ def test_json_count_mode_and_canonical_landing_route_are_both_required() -> None
     checker = CHECKER
     spec = {
         "mode": "json-count",
-        "landing_template": "https://example.org/page/{value}",
         "url_template": "https://api.example.org/search?q={value}",
         "good": "known",
         "bad": "missing",
         "count_path": ("response", "count"),
     }
+    canonical = frozenset({"https://example.org/page/{hover_key}"})
     responses = {
         "https://example.org/page/known": checker.Response(200, "", ""),
         "https://api.example.org/search?q=known": checker.Response(
@@ -123,11 +123,15 @@ def test_json_count_mode_and_canonical_landing_route_are_both_required() -> None
         ),
     }
 
-    result = checker.audit_destination("example.org", spec, responses.__getitem__)
+    result = checker.audit_destination(
+        "example.org", spec, responses.__getitem__, canonical
+    )
 
     assert result.level == "OK"
     responses["https://example.org/page/known"] = checker.Response(404, "", "")
-    result = checker.audit_destination("example.org", spec, responses.__getitem__)
+    result = checker.audit_destination(
+        "example.org", spec, responses.__getitem__, canonical
+    )
     assert result == checker.AuditResult(
         "FAIL", "canonical page route rejected the good key (404)"
     )
@@ -212,6 +216,23 @@ def test_registry_specs_are_complete_and_use_canonical_landing_routes() -> None:
     assert DEMO_LINK_AUDITS_BY_HOST.keys() == CANONICAL_LINKS_BY_HOST.keys()
     for host, spec in DEMO_LINK_AUDITS_BY_HOST.items():
         checker.validate_spec(host, spec, CANONICAL_LINKS_BY_HOST[host])
+
+
+def test_api_override_cannot_probe_an_unrelated_host() -> None:
+    checker = CHECKER
+    spec = {
+        "mode": "status",
+        "url_template": "https://unrelated.example/api/{value}",
+        "good": "known",
+        "bad": "missing",
+    }
+
+    result = checker.audit_destination("example.org", spec, lambda _url: None)
+
+    assert result == checker.AuditResult(
+        "CONFIG",
+        "probe host 'unrelated.example' does not match destination 'example.org'",
+    )
 
 
 def test_empty_json_count_path_counts_top_level_results() -> None:
