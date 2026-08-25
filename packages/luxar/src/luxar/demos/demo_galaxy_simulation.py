@@ -75,7 +75,7 @@ WHAT IS ACTUALLY COMPUTED
    scattering as they age: ``sigma_R ~ age^0.33``. A star's epicyclic amplitude
    is ``sigma_R / kappa``, so this is not a cosmetic choice — it *derives* the
    most recognisable fact about spiral galaxies, that **the arms are a young
-   population**. Step the Age dimension and watch the arms sharpen to knife
+   population**. Solo the youngest age layer and watch the arms sharpen to knife
    edges in the youngest bin and dissolve into a smooth disc in the oldest.
    Vertical thickness is heated the same way, so the old disc is also the thick
    one.
@@ -109,9 +109,12 @@ NAVIGATION
 Four dimensions: three spatial plus **T** (time). Stellar age is exposed as
 five LAYERS rather than as a fifth dimension — see ``AGE_BIN_LABELS`` for why.
 
-* Press **1**, then **[** / **]** — step time over 480 Myr in 20 Myr frames.
+* Press **1**, then **[** / **]** — step time over 480 Myr in 2 Myr frames.
   (The digit keys index the NAVIGABLE dimensions, so time is 1. Age is exposed
   as layers, not as a dimension.)
+* Or drag the **T** slider, or press play. It is a DISCRETE axis, so it snaps to
+  the 2 Myr frame grid — every stop is a frame that has stars in it, and at the
+  viewer's default 10 fps the 241 frames play as a 24 s loop.
 * Press **L** — the Layers panel: disc, HII regions, bulge, halo, globulars.
 
 Usage:
@@ -142,6 +145,7 @@ DEMO_META = {
     "citation": None,
 }
 
+import math
 import sys
 import tempfile
 from pathlib import Path
@@ -258,16 +262,88 @@ DUST_REDDENING = (0.75, 1.00, 1.42)
 #: Span of the animation and its frame count. 480 Myr is about 2.5 turns at
 #: 8 kpc against 1.8 turns of the pattern, so the overtaking is unmistakable.
 #:
-#: The frame count is ODD on purpose. The viewer opens a non-displayed
-#: dimension at the MIDPOINT of its range, and a point only matches a slice it
-#: sits exactly on. With an even count the midpoint falls BETWEEN two frames and
-#: the whole time-resolved scene renders empty — measured: the first build had
-#: 26 frames over 500 Myr (frames at 0, 20, ... 500), opened at 250 Myr, and
-#: drew only the 21,911 static halo points out of 6.5M. 25 frames over 480 Myr
-#: puts the midpoint, 240 Myr, exactly on frame 12, and keeps the step a round
-#: 20 Myr.
+#: The STEP is set by how far the disc turns between frames, not by the span.
+#: On this rotation curve, per frame:
+#:
+#:      radius     Omega          20 Myr       2 Myr
+#:      2 kpc    102 km/s/kpc     120 deg      12 deg
+#:      8 kpc     32 km/s/kpc      38 deg     3.8 deg
+#:     20 kpc     13 km/s/kpc      15 deg     1.5 deg
+#:
+#: 20 Myr was not merely jumpy at 2 kpc, it was ALIASED: 120 deg per frame is
+#: past the half-turn limit, so the inner disc could read as turning the wrong
+#: way — the opposite of what a demo about differential rotation should show.
+#: 2 Myr keeps every radius well inside it.
+#:
+#: The cost is linear in BOTH factors, because the whole disc is duplicated per
+#: frame. 241 frames x 400k stars measured 118.6M points, 828 MB on disk, 7.4 min
+#: to build and 14.4 GB peak RSS — too heavy for what it bought, so the budget is
+#: spent on TIME instead: 241 frames x 100k stars is 29.7M points, 218 MB, 1.3 min
+#: and 131k points on screen per frame. `density_scale` is what makes the lighter
+#: disc look like the heavy one instead of merely dimmer: each population keeps
+#: the additive-light invariant `N * gain * radius^2`. Both knobs stay exposed
+#: (`--stars`, `--frames`); neither changes the physics.
+#:
+#: The count does NOT have to be odd: T is declared DISCRETE (see
+#: `time_dimension`), so the slider and the keyboard both snap to `k * step`
+#: and every reachable stop is a frame that exists. It is capped so adjacent
+#: frames stay outside the viewer's inclusive +/-0.5 discrete membership gate.
+#:
+#: That is the whole point of the discrete flag here, and it was learned the hard
+#: way. While T was declared continuous-and-spatial the viewer gave it a slider
+#: with 1000 free positions and opened it at the MIDPOINT of its range, while a
+#: point still only matched a slice it sat exactly on. So any stop between two
+#: frames matched nothing: measured at 225.12 Myr (drag position 469/1000), all
+#: five disc layers, the HII regions and the bulge went to ZERO points and the
+#: 33,022 static halo/globular points were the entire scene. An odd frame count
+#: rescued only the OPENING frame — the first mouse drag emptied it again.
 T_SPAN_MYR = 480.0
-T_FRAMES = 25
+T_FRAMES = 241
+DISCRETE_MEMBERSHIP_TOLERANCE = 0.5
+MAX_FRAME_COUNT = math.ceil(T_SPAN_MYR / DISCRETE_MEMBERSHIP_TOLERANCE)
+
+
+def time_step(n_frames: int) -> float:
+    """The frame interval, and the viewer's snap grid for T."""
+    return T_SPAN_MYR / (n_frames - 1)
+
+
+def frame_times(n_frames: int) -> np.ndarray:
+    """Frame times in Myr, built as `k * step` so they sit EXACTLY on the grid.
+
+    Not `linspace`: the viewer snaps a discrete dimension to
+    `round(value / step) * step`, so the stored planes use the same `k * step`
+    arithmetic. The last product can round just below or above `T_SPAN_MYR`;
+    `time_dimension` therefore uses that actual last frame as the range maximum.
+    """
+    return np.arange(n_frames, dtype=np.float64) * time_step(n_frames)
+
+
+def time_dimension(n_frames: int) -> Dimension:
+    """The T axis: DISCRETE, so every slider stop is a frame that exists.
+
+    `discrete=True` is what makes the slider an `n_frames`-stop track snapping
+    to multiples of `step` instead of a 1000-position continuous scrub, and it is
+    what puts the opening position on the first frame rather than at the
+    midpoint of the range. The range ends on the LAST FRAME (not on
+    `T_SPAN_MYR`) so the final stop is reachable for any frame count, whatever
+    rounding `(n - 1) * step` picks up.
+    """
+    times = frame_times(n_frames)
+    return Dimension(
+        "T",
+        unit="Myr",
+        range=(0.0, float(times[-1])),
+        step=time_step(n_frames),
+        display=False,
+        discrete=True,
+        description=(
+            "Time. Stars advance at their own Omega(R); the spiral "
+            "pattern advances at Omega_p. Watch stars overtake the "
+            "arms inside corotation."
+        ),
+    )
+
 
 # =============================================================================
 # Scene scale
@@ -296,8 +372,34 @@ def galaxy_camera_position() -> tuple[float, float, float]:
 
 #: Authored per-point gain. Millions of additive points over a disc sum hard, so
 #: this is small by construction; it is dialled against a render rather than
-#: derived, and moving it means re-checking the frame is not clipping.
+#: derived, and moving it means re-checking the frame is not clipping. The gain
+#: and every radius below were dialled at `GAIN_REFERENCE_STARS`; `--stars`
+#: rescales both through `density_scale`, so a lighter build looks the same
+#: rather than dimmer and grainier.
 STAR_GAIN = 0.030
+GAIN_REFERENCE_STARS = 400_000
+GLOBULAR_STARS_PER_CLUSTER = 90
+
+
+def density_scale(n_disc: int) -> float:
+    """Radius and gain multiplier that holds the picture fixed as N changes.
+
+    A sample thinned by a factor f has its mean nearest-neighbour spacing grow
+    as `f^(1/3)`, so radii scale that way to keep the fill factor — a disc of
+    blobs, not a dust of pinpricks with gaps between them. Summed additive light
+    then goes as `N * gain * radius^2`, i.e. as `gain * N^(1/3)`, so the SAME
+    factor applied to the gain holds surface brightness too. One number, both
+    jobs, and it is 1.0 at the reference count.
+    """
+    return float(GAIN_REFERENCE_STARS / max(n_disc, 1)) ** (1.0 / 3.0)
+
+
+def globular_stars_per_cluster(n_disc: int) -> int:
+    """Sample each globular at the same relative density as the disc."""
+    relative_density = n_disc / GAIN_REFERENCE_STARS
+    return max(round(GLOBULAR_STARS_PER_CLUSTER * relative_density), 1)
+
+
 #: Scene exposure in LOG2 STOPS, on top of the gain above.
 EXPOSURE_EV = -0.4
 
@@ -627,7 +729,9 @@ def build_bulge(n: int, rng: np.random.Generator) -> dict:
     }
 
 
-def build_halo(n: int, n_globulars: int, rng: np.random.Generator) -> dict:
+def build_halo(
+    n: int, n_globulars: int, per_cluster: int, rng: np.random.Generator
+) -> dict:
     """Stellar halo plus globular clusters, both old and metal-poor.
 
     The field halo follows ``rho ~ r^-3.5``, the observed slope; sampling it
@@ -649,7 +753,6 @@ def build_halo(n: int, n_globulars: int, rng: np.random.Generator) -> dict:
 
     # Globular clusters: a Plummer sphere each, radius ~ a few parsecs scaled up
     # to stay visible at galaxy scale.
-    per_cluster = 90
     u_c = rng.random(n_globulars)
     r_c = (r_min**exponent + u_c * (r_max**exponent - r_min**exponent)) ** (
         1.0 / exponent
@@ -697,11 +800,20 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
     n_bulge = max(n_disc // 5, 1)
     n_halo = max(n_disc // 18, 1)
     n_globulars = 120
+    per_cluster = globular_stars_per_cluster(n_disc)
+
+    # Radii and gain both track the sample density (see `density_scale`).
+    scale = density_scale(n_disc)
+    gain = STAR_GAIN * scale
+    if abs(scale - 1.0) > 1e-9:
+        aprint(
+            f"density scale {scale:.3f}x on radii and gain (vs {GAIN_REFERENCE_STARS:,} stars)"
+        )
 
     with asection("Building populations"):
         disc = build_disc(n_disc, rng)
         bulge = build_bulge(n_bulge, rng)
-        halo = build_halo(n_halo, n_globulars, rng)
+        halo = build_halo(n_halo, n_globulars, per_cluster, rng)
         aprint(f"disc {n_disc:,} · bulge {n_bulge:,} · halo {n_halo:,} field")
         aprint(f"globular clusters: {n_globulars} ({len(halo['clusters']):,} stars)")
 
@@ -718,7 +830,9 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
         np.float32
     )
     # Radii follow the same argument: the young are the giants.
-    disc_radii_star = (0.050 + 0.11 * np.exp(-disc["age"] / 0.25)).astype(np.float32)
+    disc_radii_star = (scale * (0.050 + 0.11 * np.exp(-disc["age"] / 0.25))).astype(
+        np.float32
+    )
 
     bins = age_bin_index(disc["age"])
     hii_cut = np.quantile(disc["age"], 0.030)
@@ -729,7 +843,7 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
         np.array([1.9, 0.36, 0.90], dtype=np.float32), (n_hii, 1)
     ) * rng.uniform(0.55, 1.45, (n_hii, 1)).astype(np.float32)
 
-    frames_myr = np.linspace(0.0, T_SPAN_MYR, n_frames)
+    frames_myr = frame_times(n_frames)
 
     # Per-frame accumulators, one list per age-bin layer plus HII and bulge.
     disc_xyz: list[list[np.ndarray]] = [[] for _ in AGE_BIN_LABELS]
@@ -774,10 +888,21 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                 aprint(f"  frame {frame + 1}/{n_frames}  (t = {t_myr:5.0f} Myr)")
 
     def stack4(xyz_list, t_list) -> np.ndarray:
-        """(N, 4) columns: X, Y, Z, T."""
-        return np.hstack([np.vstack(xyz_list), np.concatenate(t_list)[:, None]]).astype(
-            np.float32
-        )
+        """(N, 4) columns: X, Y, Z, T.
+
+        Filled into ONE preallocated array rather than vstack-then-hstack. At
+        241 frames a single age bin is tens of millions of rows, and the two
+        intermediate copies of the naive version were the process's peak.
+        """
+        total_rows = sum(len(x) for x in xyz_list)
+        out = np.empty((total_rows, 4), dtype=np.float32)
+        row = 0
+        for xyz, t in zip(xyz_list, t_list):
+            end = row + len(xyz)
+            out[row:end, :3] = xyz
+            out[row:end, 3] = t
+            row = end
+        return out
 
     with asection("Writing to Zarr"):
         dims = Dimensions(
@@ -785,19 +910,7 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                 Dimension("X", unit="kpc", range=(-36, 36), display=True),
                 Dimension("Y", unit="kpc", range=(-36, 36), display=True),
                 Dimension("Z", unit="kpc", range=(-36, 36), display=True),
-                Dimension(
-                    "T",
-                    unit="Myr",
-                    range=(0.0, float(T_SPAN_MYR)),
-                    step=float(T_SPAN_MYR / (n_frames - 1)),
-                    display=False,
-                    spatial=True,
-                    description=(
-                        "Time. Stars advance at their own Omega(R); the spiral "
-                        "pattern advances at Omega_p. Watch stars overtake the "
-                        "arms inside corotation."
-                    ),
-                ),
+                time_dimension(n_frames),
             ]
         )
 
@@ -824,7 +937,7 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                 ),
             )
             scene.attrs["title"] = "Galaxy Simulation — a density-wave spiral"
-            scene.attrs["description"] = scene_description(res)
+            scene.attrs["description"] = scene_description(res, n_frames)
 
             with asection("Adding layers"):
                 # One layer per age bin. Every bin is visible by default, so the
@@ -833,9 +946,20 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                 # dissolving old.
                 for b, label in enumerate(AGE_BIN_LABELS):
                     pos = stack4(disc_xyz[b], disc_t[b])
+                    # Every layer's per-frame lists are released as soon as that
+                    # layer is on disk — at 241 frames the accumulators, not the
+                    # integration, are what the process's memory ceiling is made
+                    # of, so they must not all be held to the end.
+                    disc_xyz[b].clear()
+                    disc_t[b].clear()
                     if len(pos) == 0:
+                        disc_col[b].clear()
+                        del pos
                         continue
-                    col = np.vstack(disc_col[b]).astype(np.float32)
+                    col = np.concatenate(disc_col[b], axis=0).astype(
+                        np.float32, copy=False
+                    )
+                    disc_col[b].clear()
                     rad = np.tile(disc_radii_star[bins == b], n_frames)
                     scene.add_points(
                         f"Disc {label}",
@@ -845,48 +969,64 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                         sharpness=0.42,
                         opacity=1.0,
                         blending_mode="additive",
-                        intensity=STAR_GAIN,
+                        intensity=gain,
                         layer=True,
                     )
                     total += len(pos)
                     aprint(f"  disc {label:<12} {len(pos):>10,} points")
+                    del pos, col, rad
 
                 hii_pos = stack4(hii_xyz, hii_t)
+                hii_colors = np.concatenate(hii_col, axis=0).astype(
+                    np.float32, copy=False
+                )
+                hii_xyz.clear()
+                hii_col.clear()
+                hii_t.clear()
                 scene.add_points(
                     "HII regions",
                     positions=hii_pos,
-                    colors=np.vstack(hii_col).astype(np.float32),
-                    radii=0.13,
+                    colors=hii_colors,
+                    radii=0.13 * scale,
                     sharpness=0.32,
                     opacity=1.0,
                     blending_mode="additive",
-                    intensity=STAR_GAIN,
+                    intensity=gain,
                     layer=True,
                 )
                 total += len(hii_pos)
                 aprint(f"  HII regions      {len(hii_pos):>10,} points")
+                del hii_pos, hii_colors
 
                 bulge_pos = stack4(bulge_xyz, bulge_t)
+                bulge_xyz.clear()
+                bulge_t.clear()
                 scene.add_points(
                     "Bulge",
                     positions=bulge_pos,
                     colors=np.tile(bulge_rgb, (n_frames, 1)).astype(np.float32),
-                    radii=0.038,
+                    radii=0.038 * scale,
                     sharpness=0.42,
                     opacity=1.0,
                     blending_mode="additive",
-                    intensity=STAR_GAIN,
+                    intensity=gain,
                     layer=True,
                 )
                 total += len(bulge_pos)
                 aprint(f"  bulge            {len(bulge_pos):>10,} points")
+                del bulge_pos
 
                 # Halo and globulars are pressure-supported on orbits far longer
                 # than the animation, so they are static: `extend_to_all` pins
                 # them to every T instead of duplicating them per frame.
                 for name, pos3, col3, rad in (
-                    ("Stellar halo", halo["field"], halo_rgb * 0.5, 0.05),
-                    ("Globular clusters", halo["clusters"], cluster_rgb * 1.1, 0.045),
+                    ("Stellar halo", halo["field"], halo_rgb * 0.5, 0.05 * scale),
+                    (
+                        "Globular clusters",
+                        halo["clusters"],
+                        cluster_rgb * 1.1,
+                        0.045 * scale,
+                    ),
                 ):
                     scene.add_points(
                         name,
@@ -896,7 +1036,7 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
                         sharpness=0.35,
                         opacity=1.0,
                         blending_mode="additive",
-                        intensity=STAR_GAIN,
+                        intensity=gain,
                         dim_order=["X", "Y", "Z"],
                         fill={"T": 0.0},
                         extend_to_all=["T"],
@@ -911,8 +1051,10 @@ def generate_galaxy(output_path: Path, n_disc: int, n_frames: int) -> int:
     return total
 
 
-def scene_description(res: dict) -> str:
+def scene_description(res: dict, n_frames: int) -> str:
     """The long-form scene description shown in the viewer's info panel."""
+    step = time_step(n_frames)
+    span = T_SPAN_MYR
     return f"""
 Galaxy Simulation
 =================
@@ -950,7 +1092,7 @@ HII regions mark where the shock is making stars right now.
 
 Navigation
 ----------
-  Press 1 then [ / ]  — step time (480 Myr total, 20 Myr frames)
+  Press 1 then [ / ]  — step time ({n_frames} frames of {step:.3g} Myr over {span:.0f} Myr)
   Press L             — Layers: five age bins, HII, bulge, halo, globulars.
                         Solo the youngest bin for knife-edge arms; solo the
                         oldest for a smooth, thick, featureless disc.
@@ -980,7 +1122,7 @@ def add_overlays(scene, res: dict) -> None:
         f"corotation ({res['corotation']:.1f} kpc) stars OVERTAKE the\n"
         "arms; outside it they fall behind.\n"
         "\n"
-        "Press 1 then [ / ] to step 480 Myr.\n"
+        f"Press 1 then [ / ] to step {T_SPAN_MYR:.0f} Myr, or press play.\n"
         "Press L for layers: the five age bins show\n"
         "the arms sharpen young and dissolve old.",
         position=(0.02, 0.10),
@@ -1005,19 +1147,33 @@ def _int_arg(flag: str, default: int) -> int:
 
 
 def validate_frame_count(n_frames: int) -> int:
-    """Reject frame grids that cannot contain the viewer's opening midpoint."""
+    """Reject frame grids that cannot be selected one frame at a time.
+
+    T is discrete, so the count need not be odd, but adjacent frames must remain
+    outside the viewer's inclusive +/-0.5 discrete membership tolerance.
+    """
     if n_frames < 3:
         raise ValueError("--frames must be at least 3 to define a time step")
-    if n_frames % 2 == 0:
+    if n_frames > MAX_FRAME_COUNT:
         raise ValueError(
-            "--frames must be odd so the viewer's opening midpoint is a frame"
+            f"--frames must be at most {MAX_FRAME_COUNT} so adjacent frames stay "
+            "outside the viewer's discrete tolerance"
         )
     return n_frames
 
 
+def validate_star_count(n_stars: int) -> int:
+    """Reject populations too small to produce an HII-region sample."""
+    if n_stars < 2:
+        raise ValueError(
+            "--stars must be at least 2 to include a star below the 3rd age percentile"
+        )
+    return n_stars
+
+
 def main() -> None:
     """Simulate the galaxy and open it in the viewer."""
-    n_disc = _int_arg("stars", 400_000)
+    n_disc = validate_star_count(_int_arg("stars", 100_000))
     n_frames = validate_frame_count(_int_arg("frames", T_FRAMES))
 
     aprint("=" * 70)
