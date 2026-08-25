@@ -22,11 +22,11 @@ from typing import Any, Callable, Final, NamedTuple, Optional, Sequence, Union, 
 import numpy as np
 from arbol import aprint, asection
 
+from .._process import run_child_process
 from .._zarr_compat import is_consolidated, read_node_attrs
 from ..core.dimensions import Dimension, Dimensions
 from ..typing_utils.aliases import PathLike
 from ..typing_utils.config import check_dataset_size_warning
-from .process import run_child_process
 from .source_fingerprints import (
     production_source_fingerprint,
     store_writer_environment,
