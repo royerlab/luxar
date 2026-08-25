@@ -882,6 +882,45 @@ def test_dim_order_winding_warning_is_silent_without_a_winding_frame(
     assert "reverses handedness" not in capsys.readouterr().out
 
 
+def test_reveal_ladder_budget_is_charged_as_a_sum(tmp_path, monkeypatch) -> None:
+    """A ladder is charged on its levels' SUM, not on the flat surface.
+
+    The one place the flat write-time check is *multiplicatively* short rather
+    than merely incomplete: the viewer concatenates `additive_<i>` levels into one
+    node's buffers and keeps all of them resident, so it charges the total. A
+    shell ladder duplicates every boundary vertex, so the total runs several times
+    the flat mesh — meaning an under-budget surface could still write a ladder the
+    viewer refuses.
+
+    The ceiling is shrunk rather than the fixture grown, and to a value the FLAT
+    surface fits inside so the assertion can only be satisfied by the sum: a build
+    that checked levels individually, or only the authored mesh, admits this.
+    """
+    from luxar.validation.base import mesh_decoded_value_count
+
+    flat_values = mesh_decoded_value_count(
+        _V.shape[0], _V.shape[1], int(_F.size // 3), normals=_N
+    )
+    # Between one flat surface and the ladder's duplicated total.
+    monkeypatch.setattr(
+        "luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES",
+        int(flat_values * 4 * 1.5),
+        raising=True,
+    )
+    with pytest.raises(ValueError, match="levels decode to"):
+        store = tmp_path / "ladder.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "m",
+                _V,
+                _F,
+                normals=_N,
+                normal_dims=[0, 1, 2],
+                additive_lod={"n_lods": 2},
+            )
+
+
 def test_dim_order_winding_warning_is_silent_when_frame_has_no_preimage(
     tmp_path, capsys
 ) -> None:

@@ -798,6 +798,17 @@ def add_mesh_multi_lod_wrapper_impl(
             }
         )
 
+    # The ladder's levels concatenate into ONE node's buffers on the viewer side
+    # and all stay resident, so the loader charges their SUM against a single
+    # budget (`mesh-progressive-loader.ts`). The flat check only ever sees one
+    # level, and a shell ladder duplicates every boundary vertex — so an
+    # under-budget surface can still write a ladder the viewer refuses. This is
+    # the one gap in that accounting that is multiplicative rather than a bounded
+    # constant, which is why it is closed here rather than documented (#2145).
+    from ....validation.base import validate_mesh_ladder_decode_budget
+
+    validate_mesh_ladder_decode_budget(levels, context=f"mesh '{name}' reveal ladder")
+
     with asection(f"Additive-LOD mesh '{name}'"):
         aprint(
             f"📐 {len(parts)} reveal levels (method={method!r}, "
