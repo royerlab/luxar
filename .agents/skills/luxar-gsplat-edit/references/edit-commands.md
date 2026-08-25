@@ -171,7 +171,7 @@ caches invalidate automatically. Directory stores only (unpack `.zip` first).
 | --- | --- | --- |
 | `info IN` | `--histograms/--no-histograms`, `--bins`/`-b` (40) | counts, ndim, bbox, amplitude/volume/color distributions, metadata |
 | `render IN OUT.npy` | `--shape` (auto from bbox), `--device`/`-d`, `--truncate`/`-t` | rasterize splats → volume (.npy/.tiff) |
-| `compare GS REF` | `--device`/`-d`, `--truncate`/`-t`, `--channel`/`-c`, `--timepoint`, `--output-json`/`-j`, `--quiet`, `--shape` (not an override — it must EQUAL the reference shape or the command exits 1; omit it) | PSNR / SSIM / MSE / rel-L2 / max-abs-err |
+| `compare GS REF` | `--device`/`-d`, `--truncate`/`-t`, `--channel`/`-c`, `--timepoint` (selects the REFERENCE timepoint; does not slice the archive), `--output-json`/`-j`, `--quiet`, `--shape` (not an override — it must EQUAL the reference shape or the command exits 1; omit it) | PSNR / SSIM / MSE / rel-L2 / max-abs-err |
 | `view IN` | `--port`/`-p` (8000), `--viewer-port` (5173), `--open/--no-open`, `--cors-origin` | quick web viewer (handles partition/nested; extracts archives) |
 | `napari IN` | (none) | render to volume + centers overlay in napari |
 

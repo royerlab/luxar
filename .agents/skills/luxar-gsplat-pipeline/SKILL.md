@@ -150,14 +150,16 @@ luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor
 **`fit` already stamps the quality of the fit it just did** into `result.stats`
 (`foreground_psnr_db`, `foreground_threshold`, `foreground_fraction`) and prints
 it, so most arms need no extra run. That stamped number is already scored against
-the input in raw units but on the fit's **background-relative basis**: the
-resolved floor is subtracted and clipped, while fit-time normalization is undone.
+the input in raw units but on the fit's **background-relative basis**: the level
+the fit actually subtracted (`image_min`: the resolved floor when suppression is
+on, otherwise the data minimum or percentile endpoint) is removed and clipped,
+while fit-time normalization is undone.
 Reach for `compare` when scoring against a *different* reference than the volume
 that was fitted — a denoised variant's untouched source, another arm's target:
 
 ```bash
 luxar gsplat compare fitted.gsplats.zarr original.tiff --output-json metrics.json
-#   --channel/--timepoint, --device, --truncate
+#   --channel/--timepoint (reference side only), --device, --truncate
 #   (--shape is not an override: it must equal the reference shape. Omit it.)
 ```
 
