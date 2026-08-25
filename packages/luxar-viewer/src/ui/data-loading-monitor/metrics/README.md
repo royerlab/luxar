@@ -49,7 +49,7 @@ export function aggregateGlobalStats(params: AggregateGlobalStatsParams): Global
 
 ```typescript
 // memory.ts
-export function aggregateMemoryMetrics(params: MemoryMetricsParams): MemoryMetrics;
+export function aggregateMemoryMetrics(params: AggregateMemoryMetricsParams): MemoryMetrics;
 // Pure: reads the optional GPU-pool and accumulator providers and returns
 // a fresh MemoryMetrics object without mutating the registry or snapshots.
 ```
