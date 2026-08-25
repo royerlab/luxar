@@ -329,7 +329,7 @@ Every Zarr dataset defines its dimensions at the scene level:
 Points in nD space are treated as hyperspheres. When viewing a 3D slice:
 
 - Point visibility depends on hypersphere intersection with viewing hyperplane
-- Larger radius = visible across more dimension slices
+- Larger radius = visible across more slices only for dimensions declared `spatial=True` (non-displayed dimensions default to non-spatial)
 - Effective radius shrinks as: `r_eff = sqrt(r² - d²)` where d is distance from slice
 - Natural representation of uncertainty or spread in higher dimensions
 
