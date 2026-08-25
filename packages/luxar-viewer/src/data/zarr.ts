@@ -121,7 +121,9 @@ export function createZipStoreOptions(
  * re-exports only `FetchStore`. Note it is flagged `@experimental` upstream;
  * we lean on that lightly, because only `get()` is ever called here — its
  * `getRange()` is the method that reaches into `unzipit` internals, and nothing
- * in the viewer calls `getRange` on a store.
+ * in the viewer calls `getRange` on a store. Browser builds may warn that
+ * `unzipit` imports Node's `worker_threads`; that import is guarded by its Node
+ * branch, and workers remain disabled in the browser path used here.
  *
  * Wrapped in {@link boundedConcurrencyStore} for the same reason the fetch path
  * is: the ranged GETs are ordinary requests and must share the fetch gate.

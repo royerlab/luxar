@@ -59,19 +59,21 @@
 import { isZippedStoreUrl } from '../../zip/entries';
 
 /**
- * Normalize a dataset URL to absolute, slash-terminated form.
+ * Normalize a dataset URL to absolute form, slash-terminated for directories.
  *
  * - Absolute URLs (http://, https://, case-insensitive): return as-is,
- *   ensuring a trailing slash. The case-insensitive match prevents a
+ *   ensuring a trailing slash unless the URL names a `.zarr.zip` file. The
+ *   case-insensitive match prevents a
  *   mixed-case `HTTPS://...` (which `normalizeDataSourceUrl` already
  *   accepts via `URL.protocol`) from being treated as a relative path
  *   here.
  * - Relative paths: prepend the supplied `windowOrigin`, ensuring a leading
- *   slash on the path and a trailing slash on the result.
+ *   slash on the path and a trailing slash on the result, except for a
+ *   `.zarr.zip` file.
  *
- * The trailing slash on the output is part of the function's contract —
- * see the module docstring for the rationale (downstream string-concat
- * consumers).
+ * The trailing slash on directory outputs is part of the function's contract;
+ * zipped stores are the file-shaped exception. See the module docstring for
+ * the rationale and downstream string-concat consumers.
  *
  * Pure given an explicit origin.
  */

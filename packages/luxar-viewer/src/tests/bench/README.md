@@ -12,6 +12,21 @@ Useful env vars: `LUXAR_BENCH_REPEATS` (default 3), `LUXAR_BENCH_VARIANTS`
 (`directory,zip (STORED),zip (DEFLATE)`), `LUXAR_BENCH_OUT` (write JSON),
 `LUXAR_BENCH_HEADLESS=0`, `LUXAR_BENCH_FIXTURES`.
 
+## Reference run
+
+One headless Chromium repeat on the small generated fixtures produced:
+
+| variant       | ready (ms) | requests | bytes (kB) | long tasks (ms) | central dir (kB) |
+| ------------- | ---------: | -------: | ---------: | --------------: | ---------------: |
+| directory     |       7398 |       87 |      102.8 |            1374 |                — |
+| zip (STORED)  |       7817 |      116 |      203.7 |            1411 |              5.0 |
+| zip (DEFLATE) |       7636 |      116 |      140.4 |            1369 |              5.0 |
+
+This run shows the archive path at about 1.3× the requests and up to about 2×
+the transferred bytes of the equivalent uncached directory path. Treat these
+as reference deltas, not portable absolute timings; regenerate them on the
+target machine before making the Phase 2 cache decision.
+
 ## Why it has its own Playwright config
 
 Both `playwright.config.ts` and `playwright.perf.config.ts` serve data with

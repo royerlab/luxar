@@ -12,7 +12,8 @@
  * the wrong bytes at every offset. The failure is silent and looks like a
  * corrupt archive rather than a misconfigured server, and it is not
  * hypothetical: Python's `http.server` (which the Playwright fixture server
- * uses) has no `Range` support at all.
+ * uses) has no `Range` support at all. Serve the directory containing an
+ * archive with `luxar serve <dir>` instead.
  *
  * So every ranged read here REQUIRES `206 Partial Content` and cross-checks the
  * `Content-Range` total against the length learned up front. Range-protocol
@@ -31,8 +32,8 @@ export class RangeUnsupportedError extends Error {
     super(
       `Cannot read the zipped store at ${url}: ${detail}. ` +
         'Reading a .zarr.zip requires a server that honours HTTP Range requests ' +
-        '(responding 206 Partial Content). Serve the dataset with `luxar serve`, ' +
-        'which does, or unpack the archive into a .zarr directory.'
+        '(responding 206 Partial Content). Serve the directory containing it with ' +
+        '`luxar serve <dir>`, which does, or unpack the archive into a .zarr directory.'
     );
     this.name = 'RangeUnsupportedError';
   }
