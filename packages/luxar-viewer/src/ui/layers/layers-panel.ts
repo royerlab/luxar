@@ -765,8 +765,8 @@ export class LayersPanel {
       // Contain ordinary typing (the help filter's convention). The built-in
       // dispatcher already ignores shortcuts while a text input has focus
       // (context-manager → isTypingInInput), so this is belt-and-braces for
-      // document-level listeners outside it (host pages, embeds). Tab keeps
-      // bubbling for focus traversal; empty Escape falls through above.
+      // document-level listeners outside it (host pages, embeds). Empty Escape
+      // falls through above; Tab is inert here but shared with modal focus traps.
       if (!ALWAYS_GLOBAL_KEYS.has(key)) e.stopPropagation();
     });
     filterWrap.appendChild(filterIcon);

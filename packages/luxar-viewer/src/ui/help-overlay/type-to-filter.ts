@@ -73,8 +73,8 @@
 import { isTypingInInput } from '../../utils/dom/focus';
 
 /**
- * Keys that must always reach the document-level handler, even while the
- * modal holds focus: `Escape` closes the panel, `Tab` drives the focus trap.
+ * Keys shared containment sites always leave global: `Escape` reaches panel
+ * dismissal, while modal consumers need `Tab` to reach their focus trap.
  */
 export const ALWAYS_GLOBAL_KEYS: ReadonlySet<string> = new Set(['Escape', 'Tab']);
 
