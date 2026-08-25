@@ -401,11 +401,13 @@ AO_GRID_CELLS = 128
 #: normalized multiplier) 0.103 at 0.55 against 0.214 at 0.85, with the 5th
 #: percentile still at 0.39 — visibly darker, nowhere near crushed.
 #:
-#: Not pushed to 1.0 because the colours are a CATEGORICAL element encoding (C
-#: grey, N blue, O red, S yellow). A scalar multiplier preserves hue and changes
-#: only lightness, so element identity survives either way, but 1.0 takes the
-#: darkest atoms to 0.15 and there is no reason to spend that.
-AO_STRENGTH = 0.85
+#: At 1.0 the whole ambient is occludable and nothing is left as an indirect
+#: floor. Affordable here in a way it would not be on a thin shell: the ring is
+#: several atoms thick, so the term spans a wide range without pinning the buried
+#: atoms at zero. The colours are a CATEGORICAL element encoding (C grey, N blue,
+#: O red, S yellow) and a scalar multiplier preserves hue while changing only
+#: lightness, so element identity survives the extra darkening.
+AO_STRENGTH = 1.0
 
 
 def _apply_burial_shading(

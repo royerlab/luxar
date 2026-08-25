@@ -104,9 +104,33 @@ COPY_GAP = 0.35
 #: nothing else.
 BASE_COLOR = np.array([0.62, 0.72, 0.95], dtype=np.float32)
 
-#: Point radius. Slightly larger than the sample spacing at the default
-#: resolution so the surface reads as continuous rather than as a dot screen.
-POINT_RADIUS = 0.035
+#: Point radius as a MULTIPLE OF THE SAMPLE SPACING, so the sprites always
+#: overlap and the surface reads as a continuous sheet at any ``--resolution``.
+#:
+#: This has to be derived and not hardcoded, and getting it wrong hides the whole
+#: point of the demo. A fixed 0.035 against a spacing of 4*pi/159 = 0.0790 gave
+#: sprites whose DIAMETER (0.070) was smaller than the gap between their centres:
+#: they never touched, so the surface rendered as a dot screen. Stipple like that
+#: is per-pixel on/off contrast, an order of magnitude stronger than the smooth
+#: occlusion gradient underneath it, so the eye reads noise and the shading
+#: becomes invisible however hard it is pushed. 0.7 puts the diameter at 1.4x the
+#: spacing — comfortably overlapping without smearing the fine channel walls.
+SPRITE_OVERLAP = 0.7
+
+
+def point_radius(resolution: int) -> float:
+    """Render radius that keeps the sampled surface visually continuous.
+
+    Args:
+        resolution: Grid samples per axis, as passed to
+            :func:`sample_gyroid_surface`.
+
+    Returns:
+        World-space point radius.
+    """
+    spacing = 2.0 * CELLS * np.pi / max(resolution - 1, 1)
+    return SPRITE_OVERLAP * spacing
+
 
 #: Occlusion strength: all of the ambient treated as direct, so none of it is
 #: left as an indirect floor. Full strength rather than the library's 0.7 default
@@ -248,7 +272,9 @@ def generate_ambient_occlusion_demo(
             aprint("⚠️  No surface points — raise --resolution")
             return 0
         aprint(f"  Surface density: {len(positions) / resolution**3 * 100:.2f}%")
-        intensity, deepest = auto_exposure(positions, POINT_RADIUS)
+        radius = point_radius(resolution)
+        aprint(f"  Point radius {radius:.4f} = {SPRITE_OVERLAP} x sample spacing")
+        intensity, deepest = auto_exposure(positions, radius)
         aprint(
             f"  Deepest sightline {deepest} points -> intensity {intensity:.4f} "
             f"(peak ~{TARGET_PEAK:.2f}, under white)"
@@ -291,7 +317,7 @@ def generate_ambient_occlusion_demo(
 
         # Ranges must cover every copy, so they are derived from the laid-out
         # extent rather than from one copy's own bounds.
-        margin = POINT_RADIUS
+        margin = radius
         x_range = [
             float(positions[:, 0].min() - stride - margin),
             float(positions[:, 0].max() + stride + margin),
@@ -332,7 +358,7 @@ def generate_ambient_occlusion_demo(
                     name,
                     shifted,
                     colors=np.ascontiguousarray(colors),
-                    radii=np.full(len(shifted), POINT_RADIUS, dtype=np.float32),
+                    radii=np.full(len(shifted), radius, dtype=np.float32),
                     opacity=0.9,
                     blending_mode=BLENDING,
                     intensity=intensity,

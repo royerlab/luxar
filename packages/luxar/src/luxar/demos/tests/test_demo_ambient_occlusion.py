@@ -13,10 +13,11 @@ from luxar.demos.demo_ambient_occlusion import (
     AO_RADIUS,
     AO_STRENGTH,
     BASE_COLOR,
-    POINT_RADIUS,
+    CELLS,
     TARGET_PEAK,
     auto_exposure,
     gyroid_field,
+    point_radius,
     sample_gyroid_surface,
 )
 from luxar.shading import bake_ambient_occlusion
@@ -63,6 +64,26 @@ def test_normals_are_perpendicular_to_the_surface() -> None:
     np.testing.assert_allclose(np.abs(np.sum(normals * unit, axis=1)), 1.0, atol=1e-9)
 
 
+def test_sprites_overlap_so_the_surface_is_not_a_dot_screen() -> None:
+    """The regression that made the whole demo pointless.
+
+    A render radius below half the sample spacing leaves the sprites not even
+    touching, and the surface renders as stipple. That per-pixel on/off contrast
+    is far stronger than the smooth occlusion gradient beneath it, so the eye
+    reads noise and no amount of extra AO strength helps. Diameter must exceed
+    the spacing, at every resolution.
+    """
+    for resolution in (40, 80, 160, 240):
+        spacing = 2.0 * CELLS * np.pi / (resolution - 1)
+        diameter = 2.0 * point_radius(resolution)
+        assert diameter > spacing, (
+            f"resolution {resolution}: sprite diameter {diameter:.4f} does not "
+            f"span the {spacing:.4f} sample spacing — surface will stipple"
+        )
+        # And not so large that the fine channel walls smear together.
+        assert diameter < 3.0 * spacing
+
+
 def test_auto_exposure_keeps_the_deepest_sightline_under_white() -> None:
     """The guard that stops the render clipping the shading flat.
 
@@ -71,7 +92,7 @@ def test_auto_exposure_keeps_the_deepest_sightline_under_white() -> None:
     """
     for resolution in (40, 64):
         positions, _ = sample_gyroid_surface(resolution)
-        intensity, deepest = auto_exposure(positions, POINT_RADIUS)
+        intensity, deepest = auto_exposure(positions, point_radius(resolution))
 
         peak = deepest * intensity * float(BASE_COLOR.max())
         assert peak < 1.0, f"resolution {resolution} clips at {peak:.2f}"
@@ -83,7 +104,8 @@ def test_auto_exposure_dims_as_the_surface_gets_denser() -> None:
     dense, _ = sample_gyroid_surface(80)
 
     assert (
-        auto_exposure(dense, POINT_RADIUS)[0] < auto_exposure(sparse, POINT_RADIUS)[0]
+        auto_exposure(dense, point_radius(80))[0]
+        < auto_exposure(sparse, point_radius(40))[0]
     )
 
 
