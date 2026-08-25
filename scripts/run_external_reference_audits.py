@@ -17,6 +17,7 @@ findings belong in the report rather than in the required CI gate.
 
 from __future__ import annotations
 
+import html
 import os
 import re
 import subprocess
@@ -59,6 +60,8 @@ AUDITS = (
         required_env=("ZENODO_TOKEN",),
     ),
 )
+MAX_SUMMARY_OUTPUT_CHARS = 20_000
+_SENSITIVE_ENV = frozenset(name for audit in AUDITS for name in audit.required_env)
 
 _DEMO_LEVELS = {
     "OK": Level.PASS,
@@ -82,7 +85,7 @@ def run_audit(
     audit: Audit,
     *,
     env: Mapping[str, str] = os.environ,
-    timeout_seconds: int = 1200,
+    timeout_seconds: int = 900,
 ) -> Result:
     missing = [name for name in audit.required_env if not env.get(name)]
     if missing:
@@ -90,13 +93,16 @@ def run_audit(
         return Result(audit, Level.ERROR, f"missing required environment: {names}", "")
 
     try:
+        command_env = dict(env)
+        for name in _SENSITIVE_ENV.difference(audit.required_env):
+            command_env.pop(name, None)
         completed = subprocess.run(
             audit.command,
             check=False,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
-            env=dict(env),
+            env=command_env,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         return Result(audit, Level.ERROR, str(error), "")
@@ -133,14 +139,18 @@ def render_summary(results: Sequence[Result]) -> str:
             f"| {result.audit.name} | **{result.level.name}** | {result.detail} |"
         )
     for result in results:
+        output = result.output
+        if len(output) > MAX_SUMMARY_OUTPUT_CHARS:
+            omitted = len(output) - MAX_SUMMARY_OUTPUT_CHARS
+            output = f"... {omitted} earlier characters omitted ...\n{output[-MAX_SUMMARY_OUTPUT_CHARS:]}"
         lines.extend(
             [
                 "",
                 f"<details><summary>{result.audit.name}: {result.level.name}</summary>",
                 "",
-                "```text",
-                result.output or "(no command output)",
-                "```",
+                "<pre>",
+                html.escape(output or "(no command output)"),
+                "</pre>",
                 "</details>",
             ]
         )

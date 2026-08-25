@@ -63,6 +63,22 @@ def test_missing_configuration_is_an_error_without_running(monkeypatch) -> None:
     assert result.detail == "missing required environment: ZENODO_TOKEN"
 
 
+def test_secret_is_only_exposed_to_the_audit_that_requires_it(monkeypatch) -> None:
+    seen_env = {}
+
+    def run(*args, **kwargs):
+        seen_env.update(kwargs["env"])
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    audit_module.run_audit(
+        audit_module.AUDITS[0], env={"PATH": "/bin", "ZENODO_TOKEN": "secret"}
+    )
+
+    assert seen_env == {"PATH": "/bin"}
+
+
 def test_nonzero_audit_is_reported_without_stopping_later_audits(monkeypatch) -> None:
     completed = iter(
         (
@@ -108,6 +124,19 @@ def test_main_writes_the_same_visible_summary_and_always_exits_zero(
     assert summary_path.read_text() == stdout
     assert stdout.count("**WARNING**") == 3
     assert "report-only and never gate merges" in stdout
+
+
+def test_summary_escapes_and_bounds_command_output() -> None:
+    dangerous = "x" * (audit_module.MAX_SUMMARY_OUTPUT_CHARS + 1) + "</pre>"
+    result = audit_module.Result(
+        audit_module.AUDITS[0], audit_module.Level.WARNING, "finding", dangerous
+    )
+
+    summary = audit_module.render_summary([result])
+
+    assert "earlier characters omitted" in summary
+    assert "&lt;/pre&gt;" in summary
+    assert dangerous not in summary
 
 
 def test_weekly_workflow_is_manual_read_only_and_uses_the_aggregator() -> None:
