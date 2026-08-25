@@ -226,7 +226,7 @@ def main():
                 ),
                 observe=[
                     "Distinct clusters appear and disappear as you step through time.",
-                    "Each cluster stays within one discrete time/channel slice.",
+                    "Time/channel visibility follows point coordinates, not point radius.",
                     "Navigation stays smooth despite the 5D point count.",
                 ],
                 observe_label="Look for",
@@ -258,7 +258,9 @@ def main():
         aprint("🎮 Navigation tips:")
         aprint("   - Press 1 then [ ] to navigate through time")
         aprint("   - Press 2 then [ ] to navigate channels")
-        aprint("   - Notice how clusters appear in one discrete slice at a time")
+        aprint(
+            "   - Notice that time/channel visibility follows coordinates, not radius"
+        )
 
         if not args.no_spatial_index:
             aprint("💡 Try comparing with non-indexed version:")
