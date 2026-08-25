@@ -309,7 +309,7 @@ second rule intentionally uses containment rather than every partial AABB
 intersection: an empirical scan found pairwise partial overlap too noisy for a
 warning authors would keep reading. The final rule set produced one rolled-up
 order warning in `multiple_objects_example.luxar.zarr` across 56 materialized
-demo/example stores. Discrete slider dimensions use inclusive interval overlap,
+demo/example stores. Non-displayed dimensions use inclusive interval overlap,
 while displayed dimensions require positive extent; different children of one
 `kind=lod` group are mutually exclusive and are never compared. Candidate pairs
 are sweep-pruned on a displayed axis, and repeated pairwise hits are rolled up

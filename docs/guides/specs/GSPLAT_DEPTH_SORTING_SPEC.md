@@ -40,8 +40,9 @@ Use `luminous` for the same additive light-summing with depth testing.
 Finalization reports both hazards when co-visible world-space node bounds
 overlap. To avoid noisy warnings from coarse AABBs, the two-sorted-node warning
 requires one box to contain the other; the additive/depth-writing warning still
-fires on any positive spatial overlap. Neither diagnostic rewrites authored
-modes or defaults.
+fires on any positive spatial overlap. Explicitly authored or inherited
+`additive` is treated as intentional X-ray rendering and suppresses the latter
+warning. Neither diagnostic rewrites authored modes or defaults.
 
 **Bandwidth argument for the architecture**: at 10M splats, re-sorting by buffer rewrite costs 520 MB/sort. With splat data in a texture and only a `Uint32` ordering attribute per instance, a re-sort uploads **40 MB** — 13× less — through the attribute `addUpdateRange` machinery that already exists.
 

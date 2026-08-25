@@ -1020,7 +1020,8 @@ correct without sorting, and it is what a surface should look like.
 That asymmetry also makes Mesh the common trigger for cross-geometry depth hazards: a default-additive
 Points/Lines/GSplats node ignores the depth written by an opaque mesh, while two overlapping
 order-dependent nodes cannot be globally interleaved. The authoring rules and finalize-time diagnostics
-are specified in `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §8.
+are specified in `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §1 under
+"Overlapping-node authoring rule".
 
 #### Where the default lives — and where it must NOT
 
