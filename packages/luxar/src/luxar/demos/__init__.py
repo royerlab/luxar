@@ -138,6 +138,6 @@ __all__ = [
     "trilinear_vector",
     "unit_flow",
     "voxel_sampled_payload_agreement",
-    "warn_if_quarantined",
     "warn_if_no_cuda_gpu",
+    "warn_if_quarantined",
 ]

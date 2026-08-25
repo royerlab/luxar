@@ -40,7 +40,7 @@ private lives in (``test_demo_meta`` deep-imports ``_DEFAULT_CACHE_ROOT`` to pin
 that ``registry.DEMO_CACHE_ROOT`` duplicates it, while the concern suites
 import their owning utility modules directly), and a re-export barrel cannot
 serve either need. Deep imports elsewhere in the package — a few
-unit tests building a Lorenz fixture, ``utils/download.py`` reaching for a
+unit tests building a Lorenz fixture, ``utils/remote_zip.py`` reaching for a
 zip-path private, and others — are out of scope for the same reason: the barrel
 is a demo-authoring convenience, not a package-wide facade.
 """
