@@ -189,11 +189,12 @@ scene = compiler.create_scene(
 )
 ```
 
-**In a bundled demo this exact call fails a required test.** Demos run under the
+**In a bundled demo this exact call fails required tests.** Demos run under the
 cinematic 35 mm preset, and `test_demos_cinematic_mode.py` refuses an authored
 pose that pins `fov`/`fov_preset` or that is not visibly composed for the 63°
-lens. So in `luxar/demos/` leave the FOV unset and derive the distance at
-`CINEMATIC_FOV_DEG` directly:
+lens. It also requires literal `cinematic_mode=True` on every `ViewerConfig`
+built under `luxar/demos/`. Leave the FOV unset, derive the distance at
+`CINEMATIC_FOV_DEG` directly, and show the full wrapper:
 
 ```python
 import math
@@ -208,7 +209,13 @@ d = (
     )
     + depth / 2
 )
-camera = CameraConfig(position=(cx, cy, cz + d), target=centre)
+camera = CameraConfig(position=(cx, cy, cz + d), target=(cx, cy, cz))
+scene = compiler.create_scene(
+    dimensions=dims,
+    viewer_config=ViewerConfig(
+        cinematic_mode=True, tone_mapping="ACES", camera=camera
+    ),
+)
 ```
 
 The guard also recognises an inline `position=pull_in(...)` when carrying over an
