@@ -308,7 +308,6 @@ export class RangeSlider {
    */
   private handleBoundWheel(e: WheelEvent, which: 'low' | 'high'): void {
     e.preventDefault();
-    e.stopPropagation();
 
     const curMin = parseFloat(this.lowInput.min);
     const curMax = parseFloat(this.lowInput.max);
