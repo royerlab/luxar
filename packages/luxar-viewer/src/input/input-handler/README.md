@@ -55,7 +55,7 @@ input-handler/
   - `fullscreenchange`) and the `toggleFullscreen` body.
 - **`dimension-navigation/`** — `computeDimensionStep` /
   `resolveSelectedDimension` for the `[`/`]` and digit bindings, plus
-  the four lifecycle bodies (`initDimensionSliders`, `initAnimationManager`,
+  the three lifecycle bodies (`initDimensionSliders`, `initAnimationManager`,
   `clearDimensionUI`). Current-slice loading lives in
   `scene/dimension-loading.ts`. Pure step and selection helpers
   live under `scene/dims/`.

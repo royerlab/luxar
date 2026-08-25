@@ -9,7 +9,7 @@
  * Strategy: mock the two trust-boundary collaborators that take a
  * real THREE.js scene (sceneDimsManager + the loader's
  * updateSceneForDimensions). Drive each setup function with a fake
- * ctx and assert observable state transitions.
+ * ctx and assert observable setup and loading state transitions.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

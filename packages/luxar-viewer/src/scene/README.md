@@ -1105,6 +1105,9 @@ _For implementation details, see the source files in this directory._
 - `scene-dims-manager.ts` — Singleton dimension state across all nD
   objects in the scene (exported as both class `SceneDimsManager`
   and lazy-Proxy singleton `sceneDimsManager`).
+- `dimension-loading.ts` — Applies the current scene-dimension selection,
+  propagates animation frame budgets, warms the projected next slice during
+  playback, and releases shadow-loader resources after playback stops.
 - `lod-group-registry.ts` — `LODGroupRegistry`: per-frame `lod_group`
   child selector (pick on the group's screen-area or legacy diagonal
   metric + frustum off-screen gate
