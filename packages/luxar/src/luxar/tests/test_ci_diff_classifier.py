@@ -42,8 +42,8 @@ import yaml
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
 
-#: One row per gate input that carries NO classified source extension, so the only
-#: thing standing between it and a silent skip is an explicit pattern alternative.
+#: One row per gate input whose required domain is not guaranteed by its ordinary
+#: source extension or package path, so an explicit pattern alternative is required.
 #: ``(path, domain, why)`` — the reason is quoted back in the failure message.
 #:
 #: Not every row is load-bearing to the same degree: some are matched by a broad
@@ -80,6 +80,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_demo_meta.py cross-validates it against the demo registry",
     ),
     (
+        "scripts/gallery/manifest.json",
+        "ts",
+        "gallery-selection.test.ts validates README capture ids against it",
+    ),
+    (
         "docs/guides/user/CLI_REFERENCE.md",
         "py",
         "test_docs_command_coverage.py drift-guards it against the live Typer app; "
@@ -89,6 +94,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "README.md",
         "py",
         "test_readme_demo_docs.py drift-guards the root demo documentation",
+    ),
+    (
+        "README.md",
+        "ts",
+        "gallery-selection.test.ts derives the README capture set from it",
     ),
     (
         "packages/luxar/src/luxar/demos/README.md",
@@ -129,6 +139,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "packages/luxar-viewer/src/tests/README.md",
         "py",
         "test_fixture_environment.py checks its fixture-generator invocation",
+    ),
+    (
+        "packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts",
+        "py",
+        "test_generate_gallery_datasets.py derives the manifest field contract from it",
     ),
     (
         "packages/luxar-viewer/tests/fixtures/README.md",
