@@ -458,7 +458,11 @@ def refresh_characteristics(
             else:
                 measured[key] = old_entry
                 retained += 1
-        elif old_entry is not None and not _outranks(new_entry, old_entry):
+        elif (
+            old_entry is not None
+            and old_entry.get("measured_sha256") == pinned_digests.get(key)
+            and not _outranks(new_entry, old_entry)
+        ):
             measured[key] = old_entry
             retained += 1
     preserved = {k: v for k, v in existing.items() if k in seen and k not in measured}

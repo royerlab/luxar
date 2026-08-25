@@ -595,6 +595,34 @@ def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
     assert written == absent[key]
 
 
+def test_a_current_local_measurement_replaces_a_stale_staged_one(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Digest validity wins before staged/local provenance precedence."""
+    key = "ds/a.gsplats.zarr.zip"
+    stale = {
+        key: {
+            "n_splats": 999,
+            "measured_from": "staged",
+            "measured_sha256": "s" * 64,
+        }
+    }
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: stale)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: "p" * 64)
+    monkeypatch.setattr(gen, "_read_archive", lambda p: {"n_splats": 111})
+
+    counts = gen.refresh_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])
+    )
+
+    assert counts == (1, 0, 0)
+    written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert written["measured_sha256"] == "p" * 64
+    assert written["n_splats"] == 111
+
+
 def test_refresh_preserves_entries_whose_archive_is_absent(
     gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
