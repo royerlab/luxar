@@ -386,6 +386,14 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert worker_flags == [2], (
         "python-tests must leave memory headroom in obsidian's 12 GiB runner slot"
     )
+    dist_flags = [
+        obsidian_args[index + 1]
+        for index, arg in enumerate(obsidian_args[:-1])
+        if arg == "--dist"
+    ]
+    assert dist_flags == ["loadfile"], (
+        "parallel coverage must keep each file's shared fixtures on one worker"
+    )
 
     for hosted_job in ("release-readiness", "wheel-viewer"):
         assert jobs[hosted_job]["runs-on"] == "ubuntu-latest", (

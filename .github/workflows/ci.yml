@@ -570,6 +570,9 @@ jobs:
       # whole process tree at 15% with exit 143. Three workers still reached
       # 12.59 GB in a matching capped run (9.60 GB anonymous RSS), leaving under
       # 300 MB. Two workers retain parallelism without running at the hard limit.
+      # `--dist loadfile` also keeps each file's shared fixtures on one worker,
+      # matching the repository's parallel test contract instead of rebuilding
+      # them as xdist's default load scheduler moves individual tests around.
       #
       # `-n 4` on a GitHub-hosted VM killed all three legs at 97-98% complete
       # with exit 143 + "the runner has received a shutdown signal" -- four
@@ -580,7 +583,7 @@ jobs:
       # Hosted stays serial (21.3/23.8/23.4 min). PYTEST_ADDOPTS is read by
       # pytest itself, so the shared `test-cov` script stays machine-agnostic
       # for local use.
-      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2' || '' }}
+      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2 --dist loadfile' || '' }}
     steps:
       - name: Free disk space (hosted-runner fallback)
         # The full suite exhausts the ~14 GB GitHub-hosted runner and fails with
