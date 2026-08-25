@@ -402,7 +402,7 @@ def _run_pick_runner(
     heartbeat: str = "0",
     force_hosted: str = "0",
     other_run_active: bool = False,
-    api_error: bool = False,
+    api_error: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     """Run the real inline router against deterministic repository activity."""
     router = yaml.safe_load(workflow)["jobs"]["pick-runner"]["steps"][0]["run"]
@@ -416,7 +416,9 @@ import os
 import sys
 
 endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
-if os.environ["ROUTER_API_ERROR"] == "1":
+if os.environ["ROUTER_API_ERROR"] == "runs" and "/actions/runs?" in endpoint:
+    raise SystemExit(1)
+if os.environ["ROUTER_API_ERROR"] == "jobs" and "/runs/" in endpoint and "/jobs?" in endpoint:
     raise SystemExit(1)
 if "/actions/runs?" in endpoint:
     run_ids = [2038, 9999] if os.environ["ROUTER_OTHER_ACTIVE"] == "1" else [2038]
@@ -440,7 +442,7 @@ else:
         "HEAD_REPO": head_repo,
         "FORCE_HOSTED": force_hosted,
         "HEARTBEAT": heartbeat,
-        "ROUTER_API_ERROR": "1" if api_error else "0",
+        "ROUTER_API_ERROR": api_error,
         "ROUTER_OTHER_ACTIVE": "1" if other_run_active else "0",
     }
     result = subprocess.run(
@@ -468,7 +470,7 @@ else:
         ("1031", "ubuntu-latest"),
     ],
 )
-def test_pick_runner_routes_same_repo_by_publisher_liveness_not_capacity(
+def test_pick_runner_routes_same_repo_on_fresh_capacity_heartbeat(
     workflow: str,
     tmp_path: Path,
     heartbeat: str,
@@ -481,11 +483,14 @@ def test_pick_runner_routes_same_repo_by_publisher_liveness_not_capacity(
     assert label == expected
 
 
+@pytest.mark.parametrize("api_error", ["runs", "jobs"])
 def test_pick_runner_fails_api_read_toward_obsidian(
-    workflow: str, tmp_path: Path
+    workflow: str, tmp_path: Path, api_error: str
 ) -> None:
     """A transient GitHub API failure must not restart the paid overflow."""
-    result, label = _run_pick_runner(workflow, tmp_path, api_error=True)
+    result, label = _run_pick_runner(
+        workflow, tmp_path, other_run_active=True, api_error=api_error
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == "obsidian"
@@ -516,7 +521,7 @@ def test_pick_runner_hosted_overrides_bypass_heartbeat(
         workflow,
         tmp_path,
         head_repo=head_repo,
-        api_error=True,
+        api_error="runs",
         force_hosted=force_hosted,
     )
 
@@ -532,6 +537,9 @@ def _run_queue_watchdog(
     heartbeat_snapshots: list[dict[str, str]] | None = None,
     date_step: int = 0,
     other_run_active: bool = False,
+    run_api_error: bool = False,
+    job_api_error: bool = False,
+    heartbeat_api_error: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
     """Run the real inline watchdog against deterministic GitHub API snapshots."""
     watchdog = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"][0]["run"]
@@ -550,6 +558,7 @@ def _run_queue_watchdog(
     ]
     snapshots_path = tmp_path / "snapshots.json"
     counter_path = tmp_path / "jobs-api-calls"
+    heartbeat_counter_path = tmp_path / "heartbeat-api-calls"
     date_counter_path = tmp_path / "date-calls"
     cancel_path = tmp_path / "cancelled"
     snapshots_path.write_text(json.dumps(job_snapshots), encoding="utf-8")
@@ -568,9 +577,13 @@ from pathlib import Path
 
 endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
 if "/actions/runs?" in endpoint:
+    if os.environ["WATCHDOG_RUN_API_ERROR"] == "1":
+        raise SystemExit(1)
     run_ids = [2038, 9999] if os.environ["WATCHDOG_OTHER_ACTIVE"] == "1" else [2038]
     print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
 elif "/runs/9999/jobs?" in endpoint:
+    if os.environ["WATCHDOG_JOB_API_ERROR"] == "1":
+        raise SystemExit(1)
     print(json.dumps({"jobs": [{"name": "other-python", "status": "in_progress", "labels": ["obsidian"]}]}))
 elif "/jobs?" in endpoint:
     if "--jq" in sys.argv:
@@ -584,6 +597,14 @@ elif "/jobs?" in endpoint:
         print("{")
         raise SystemExit(0)
     print(json.dumps({"jobs": jobs}))
+elif "/variables/LUXAR_CI_HEARTBEAT" in endpoint:
+    if os.environ["WATCHDOG_HEARTBEAT_API_ERROR"] == "1":
+        raise SystemExit(1)
+    counter = Path(os.environ["WATCHDOG_HEARTBEAT_COUNTER"])
+    call = int(counter.read_text() or "0") if counter.exists() else 0
+    counter.write_text(str(call + 1))
+    snapshots = json.loads(Path(os.environ["WATCHDOG_HEARTBEATS"]).read_text())
+    print(json.dumps(snapshots[min(call, len(snapshots) - 1)]))
 elif endpoint.endswith("/cancel"):
     Path(os.environ["WATCHDOG_CANCELLED"]).write_text("yes")
 else:
@@ -618,8 +639,11 @@ print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
         "WATCHDOG_SNAPSHOTS": str(snapshots_path),
         "WATCHDOG_COUNTER": str(counter_path),
         "WATCHDOG_HEARTBEATS": str(heartbeats_path),
-        "HEARTBEAT": (heartbeat_snapshots or [_heartbeat("0", 1000)])[0]["value"],
+        "WATCHDOG_HEARTBEAT_COUNTER": str(heartbeat_counter_path),
         "WATCHDOG_OTHER_ACTIVE": "1" if other_run_active else "0",
+        "WATCHDOG_RUN_API_ERROR": "1" if run_api_error else "0",
+        "WATCHDOG_JOB_API_ERROR": "1" if job_api_error else "0",
+        "WATCHDOG_HEARTBEAT_API_ERROR": "1" if heartbeat_api_error else "0",
         "WATCHDOG_DATE_COUNTER": str(date_counter_path),
         "WATCHDOG_DATE_STEP": str(date_step),
         "WATCHDOG_CANCELLED": str(cancel_path),
@@ -787,6 +811,28 @@ def test_queue_watchdog_accepts_fresh_positive_heartbeat_without_running_sibling
     assert not cancelled
 
 
+def test_queue_watchdog_reloads_fresh_heartbeat_while_jobs_remain_queued(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A live publisher must keep a wholly queued run alive past three minutes."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
+    snapshots = [queued] * 7 + [[_obsidian_job("python-tests (3.12)", "in_progress")]]
+    heartbeats = [_heartbeat(str(epoch), epoch) for epoch in range(1030, 1240, 30)]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        heartbeat_snapshots=heartbeats,
+        date_step=30,
+        run_api_error=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 8
+    assert "run liveness unreadable" not in result.stdout
+    assert not cancelled
+
+
 @pytest.mark.parametrize("heartbeat", [_heartbeat("0", 1), _heartbeat("1", 1)])
 def test_queue_watchdog_cancels_stale_heartbeat_without_active_jobs(
     workflow: str, tmp_path: Path, heartbeat: dict[str, str]
@@ -799,7 +845,7 @@ def test_queue_watchdog_cancels_stale_heartbeat_without_active_jobs(
 
     assert result.returncode == 1
     assert calls == 1
-    assert "capacity heartbeat is stale" in result.stdout
+    assert "heartbeat publisher is stale" in result.stdout
     assert cancelled
 
 
@@ -837,6 +883,24 @@ def test_queue_watchdog_retries_unparseable_jobs_response(
     assert not cancelled
 
 
+def test_queue_watchdog_fails_heartbeat_read_open(
+    workflow: str, tmp_path: Path
+) -> None:
+    """An unreadable publisher update must not cancel queued obsidian work."""
+    snapshots = [
+        [_obsidian_job("python-tests (3.12)", "queued")],
+        [_obsidian_job("python-tests (3.12)", "in_progress")],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow, tmp_path, snapshots, heartbeat_api_error=True
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 2
+    assert "heartbeat unreadable" in result.stdout
+    assert not cancelled
+
+
 def test_queue_watchdog_accepts_fresh_zero_heartbeat_when_every_job_is_queued(
     workflow: str, tmp_path: Path
 ) -> None:
@@ -852,6 +916,33 @@ def test_queue_watchdog_accepts_fresh_zero_heartbeat_when_every_job_is_queued(
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 2
     assert "other runs have active obsidian jobs" in result.stdout
+    assert not cancelled
+
+
+@pytest.mark.parametrize(
+    ("api_error", "expected_message"),
+    [("runs", "run liveness unreadable"), ("jobs", "job liveness unreadable")],
+)
+def test_queue_watchdog_fails_liveness_reads_open(
+    workflow: str, tmp_path: Path, api_error: str, expected_message: str
+) -> None:
+    """An unreadable cross-run signal must never cancel queued obsidian work."""
+    snapshots = [
+        [_obsidian_job("python-tests (3.12)", "queued")],
+        [_obsidian_job("python-tests (3.12)", "in_progress")],
+    ]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        snapshots,
+        other_run_active=True,
+        run_api_error=api_error == "runs",
+        job_api_error=api_error == "jobs",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == 2
+    assert expected_message in result.stdout
     assert not cancelled
 
 
