@@ -1,0 +1,29 @@
+name: External reference audits
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '43 10 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: external-reference-audits
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install Hatch
+        run: pipx install hatch
+      - name: Run report-only audits
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+        run: python scripts/run_external_reference_audits.py
