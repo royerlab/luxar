@@ -45,6 +45,9 @@ export enum InputContext {
   UI_INTERACTION = 'ui_interaction', // UI panels and controls
 }
 
+/** Built-in or custom input-context identifier. */
+export type InputContextId = InputContext | (string & {});
+
 /**
  * Key binding configuration
  */
@@ -84,7 +87,7 @@ export interface ContextConfig {
   blockedKeys?: string[]; // Canonical binding keys never handled by this context
   passthrough?: boolean; // If true, unhandled keys pass to lower contexts
   /** Ordered contexts consulted when this context declines a key. */
-  fallbackContexts?: string[];
+  fallbackContexts?: InputContextId[];
   /** Rebuild `allowedKeys` from this context's live registrations. */
   allowRegisteredBindings?: boolean;
 }
@@ -201,7 +204,7 @@ export class InputContextManager {
   }
 
   /** Register a custom input context. Context identifiers must be unique. */
-  public registerContext(context: string, config: ContextConfig): void {
+  public registerContext(context: InputContextId, config: ContextConfig): void {
     if (!context) throw new Error('Input context identifier cannot be empty');
     if (this.contextConfigs.has(context)) {
       throw new Error(`Input context "${context}" is already registered`);
@@ -219,7 +222,7 @@ export class InputContextManager {
   }
 
   /** Remove a custom context and all bindings registered under it. */
-  public unregisterContext(context: string): void {
+  public unregisterContext(context: InputContextId): void {
     if (this.builtInContexts.has(context)) {
       throw new Error(`Built-in input context "${context}" cannot be unregistered`);
     }
@@ -230,7 +233,8 @@ export class InputContextManager {
     this.contextConfigs.delete(context);
     this.bindings.delete(context);
     this.actionBindings.delete(context);
-    for (const config of this.contextConfigs.values()) {
+    for (const [dependentContext, config] of this.contextConfigs) {
+      if (this.builtInContexts.has(dependentContext)) continue;
       config.fallbackContexts = config.fallbackContexts?.filter((fallback) => fallback !== context);
     }
   }
@@ -255,7 +259,7 @@ export class InputContextManager {
    * // Back to previous context
    * ```
    */
-  public pushContext(context: string): void {
+  public pushContext(context: InputContextId): void {
     this.requireRegisteredContext(context);
     if (this.currentContext !== context) {
       this.contextStack.push(this.currentContext);
@@ -305,7 +309,7 @@ export class InputContextManager {
    * contextManager.setContext(InputContext.NAVIGATION);
    * ```
    */
-  public setContext(context: string): void {
+  public setContext(context: InputContextId): void {
     this.requireRegisteredContext(context);
     const oldContext = this.currentContext;
     this.currentContext = context;
@@ -323,7 +327,7 @@ export class InputContextManager {
    *
    * @returns Current context enum value (NAVIGATION, FLY_CONTROLS, etc.)
    */
-  public getContext(): string {
+  public getContext(): InputContextId {
     return this.currentContext;
   }
 
@@ -369,7 +373,7 @@ export class InputContextManager {
    * });
    * ```
    */
-  public registerBinding(context: string, binding: KeyBinding): void {
+  public registerBinding(context: InputContextId, binding: KeyBinding): void {
     this.requireRegisteredContext(context);
     const contextKey = context;
     if (!this.bindings.has(contextKey)) {
@@ -415,7 +419,8 @@ export class InputContextManager {
    * Unregister a previously registered key binding.
    *
    * Removes the binding for the specified key and modifiers in the given
-   * context. Has no effect if the binding doesn't exist.
+   * context. Has no effect if the context or binding doesn't exist, which
+   * keeps teardown idempotent after context removal.
    *
    * @param context - Context containing the binding to remove
    * @param key - Key that was bound
@@ -435,7 +440,7 @@ export class InputContextManager {
    * ```
    */
   public unregisterBinding(
-    context: string,
+    context: InputContextId,
     key: string,
     modifiers?: KeyBinding['modifiers']
   ): void {
@@ -907,7 +912,7 @@ export class InputContextManager {
    *
    * @param context - Context whose bindings should be cleared
    */
-  public clearContextBindings(context: string): void {
+  public clearContextBindings(context: InputContextId): void {
     this.bindings.delete(context);
     this.actionBindings.delete(context);
     this.recomputeContextFilters();

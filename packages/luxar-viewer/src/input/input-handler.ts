@@ -42,6 +42,7 @@ import {
   InputContext,
   InputContextManager,
   type ContextConfig,
+  type InputContextId,
   type KeyBinding,
 } from './input-handler/context-manager';
 import {
@@ -710,23 +711,23 @@ export class InputHandler {
   }
 
   /** Register a custom keyboard-routing context. */
-  public registerContext(context: string, config: ContextConfig): void {
+  public registerContext(context: InputContextId, config: ContextConfig): void {
     this.contextManager.registerContext(context, config);
   }
 
   /** Remove a custom keyboard-routing context and its bindings. */
-  public unregisterContext(context: string): void {
+  public unregisterContext(context: InputContextId): void {
     this.contextManager.unregisterContext(context);
   }
 
   /** Register a binding in a built-in or custom context. */
-  public registerBinding(context: string, binding: KeyBinding): void {
+  public registerBinding(context: InputContextId, binding: KeyBinding): void {
     this.contextManager.registerBinding(context, binding);
   }
 
   /** Remove a binding from a built-in or custom context. */
   public unregisterBinding(
-    context: string,
+    context: InputContextId,
     key: string,
     modifiers?: KeyBinding['modifiers']
   ): void {
@@ -734,7 +735,7 @@ export class InputHandler {
   }
 
   /** Activate a nested input context until {@link popContext} is called. */
-  public pushContext(context: string): void {
+  public pushContext(context: InputContextId): void {
     this.contextManager.pushContext(context);
   }
 

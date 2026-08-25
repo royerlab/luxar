@@ -138,6 +138,12 @@ describe('InputContextManager', () => {
   });
 
   describe('custom context lifecycle', () => {
+    it('rejects an empty context identifier', () => {
+      expect(() => manager.registerContext('', { priority: 5 })).toThrow(
+        'Input context identifier cannot be empty'
+      );
+    });
+
     it('registers a copied config and routes push → handle → pop with explicit fallback', () => {
       const allowedKeys = ['x'];
       const fallbackContexts = [InputContext.NAVIGATION];
@@ -222,6 +228,43 @@ describe('InputContextManager', () => {
       expect(() => manager.unregisterContext(InputContext.NAVIGATION)).toThrow(
         'Built-in input context "navigation" cannot be unregistered'
       );
+    });
+
+    it('treats unregistering an unknown custom context as a no-op', () => {
+      expect(() => manager.unregisterContext('missing')).not.toThrow();
+      expect(manager.getContext()).toBe(InputContext.NAVIGATION);
+    });
+
+    it('removes an unregistered custom context from custom fallback routes', () => {
+      const handler = vi.fn();
+      manager.registerContext('annotation-base', { priority: 4 });
+      manager.registerContext('annotation-overlay', {
+        priority: 5,
+        passthrough: true,
+        fallbackContexts: ['annotation-base'],
+      });
+      registerTestBinding(manager, 'annotation-base', { key: 'x', handler });
+      manager.unregisterContext('annotation-base');
+      manager.pushContext('annotation-overlay');
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'x' }), 'down')).toBe(
+        false
+      );
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('copies blocked keys instead of retaining the caller array', () => {
+      const blockedKeys = ['x'];
+      const handler = vi.fn();
+      manager.registerContext('annotation', { priority: 5, blockedKeys });
+      registerTestBinding(manager, 'annotation', { key: 'x', handler });
+      blockedKeys.length = 0;
+      manager.pushContext('annotation');
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'x' }), 'down')).toBe(
+        false
+      );
+      expect(handler).not.toHaveBeenCalled();
     });
 
     it('refuses to unregister a context that is still active', () => {

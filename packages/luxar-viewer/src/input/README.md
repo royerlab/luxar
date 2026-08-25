@@ -8,7 +8,8 @@
 `index.ts` is the package facade. It exports `InputHandler`, the
 `DimensionSlidersFactory` type used by its constructor, the `ControlRailHandle`
 contract its `setControlRail()` accepts, the `InputContext` enum that names the
-routing contexts, and `KeyAction`/`KeyActionId` — the
+routing contexts, `InputContextId`, `ContextConfig`, `KeyBinding`, the registered
+shortcut/help metadata types, and `KeyAction`/`KeyActionId` — the
 stable action identities callers address a binding by (the control rail asks
 for an action's current chord rather than hard-coding a letter). The binding
 registry, context manager implementation, dimension-navigation lifecycle,
@@ -26,6 +27,22 @@ production modules outside this package. Type-only imports and tests are
 currently exempt, so they must still follow the documented boundary by review.
 It also rejects runtime imports from `input/` into `data/` at severity `error`;
 type-only imports are exempt, and loading orchestration belongs in `scene/`.
+
+## Custom contexts
+
+`InputHandler` exposes `registerContext()`, `unregisterContext()`,
+`registerBinding()`, `unregisterBinding()`, `pushContext()`, and `popContext()`
+without exposing the context-manager implementation. Context identifiers must
+be non-empty and unique; built-in identifiers cannot be replaced or removed,
+and `reset()` removes every custom context and binding.
+
+Use either an authored `allowedKeys` list or `allowRegisteredBindings: true`,
+never both. The latter derives the allowlist from live registrations.
+`unregisterBinding()` is intentionally idempotent when its context or chord has
+already been removed. Built-in Escape handlers retain precedence while typing;
+only the active custom context may handle Escape after every built-in declines.
+Shortcut-overlay metadata should use an embedder-owned `help.group` identifier,
+because help groups are deduplicated first-wins across all registered contexts.
 
 ## Layout
 
