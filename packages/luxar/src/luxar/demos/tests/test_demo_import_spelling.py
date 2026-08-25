@@ -2,7 +2,8 @@
 
 ``luxar/demos/__init__.py`` is the barrel that re-exports shared plumbing from
 the guarded concern modules under ``luxar/utils`` (historically a single
-``luxar/utils/demos.py``) and ``luxar/utils/data_fetch.py``, and selected
+``luxar/utils/demos.py``), ``luxar/utils/data_fetch.py``,
+``luxar/utils/download.py``, and ``luxar/utils/remote_zip.py``, and selected
 demo-owned helpers from private modules such as ``demos/_support/_fields.py``.
 ``demos/README.md`` §6 documents the barrel as the way to reach them. Even so,
 38 demo scripts reached *past* the barrel with ``from luxar.utils.demos import
