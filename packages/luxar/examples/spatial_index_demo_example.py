@@ -101,6 +101,8 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
 
 def main():
     """Create spatial index demonstration dataset."""
+    np.random.seed(1)
+
     parser = argparse.ArgumentParser(description="Create spatial index demo dataset")
     parser.add_argument(
         "--no-spatial-index",

@@ -17,6 +17,7 @@
  */
 
 import { test, expect } from './fixtures';
+import type { DebugState } from '../../core/app/debug/debug-state';
 import {
   waitForLuxarReady,
   getLuxarState,
@@ -27,7 +28,7 @@ import {
 // Base URL for examples (served by HTTP server on port 9000)
 const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 
-// ALL example datasets (auto-discovered from datasets/examples/)
+// Hand-maintained subset of datasets/examples/.
 const ALL_EXAMPLES = [
   'build_example_manual.luxar.zarr',
   'build_example_structured.luxar.zarr',
@@ -88,15 +89,9 @@ const KNOWN_FLAKY_LARGE_DATASETS = [
   'dense_cubic_gradient_example.luxar.zarr',
 ];
 
-// Datasets that may legitimately have 0 visible points:
-// - nD datasets where initial slice position has no points
-// - Lines-only datasets have no point clouds (geometry is line segments)
-// - Datasets with only 3D spatial dims but specific loading quirks
+// Geometry-only datasets have no point clouds.
 const DATASETS_ALLOW_ZERO_POINTS = [
-  'rainbow_sphere_4d_example.luxar.zarr', // 4D sphere - initial slice may have 0 points
-  'spatial_index_demo_example.luxar.zarr', // May have 0 points at initial position
   'lines_basic_example.luxar.zarr', // Lines geometry only - no point clouds
-  'build_example_manual.luxar.zarr', // Simple 3D manual build - scene loaded without points sometimes
   'gsplats_basic_example.luxar.zarr', // GSplats geometry only - no point clouds (totalPoints=0)
   'gsplats_lod_example.luxar.zarr', // GSplats kind=lod - no point clouds (totalPoints=0)
 ];
@@ -160,11 +155,11 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       expect(actualErrors.length).toBe(0);
 
       // Get scene state
-      const state = await getLuxarState(page);
+      const state: DebugState = await getLuxarState(page);
 
-      // Debug: If no points loaded, dump console logs to help diagnose
-      if (state.totalPoints === 0) {
-        console.error(`\n[${example}] ⚠️ No points loaded! Dumping console logs:`);
+      // Debug: If no geometry loaded, dump console logs to help diagnose
+      if (state.totalElements === 0) {
+        console.error(`\n[${example}] ⚠️ No geometry loaded! Dumping console logs:`);
         consoleMessages.logs.slice(-50).forEach((log, i) => {
           console.error(`  [LOG ${i}] ${log}`);
         });
@@ -182,6 +177,21 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       // counts. Keep this unconditional: DATASETS_ALLOW_ZERO_POINTS waives only
       // the point-specific assertion, not the requirement that geometry loaded.
       expect(state.totalElements).toBeGreaterThan(0);
+
+      // A strict per-node assertion is not valid: nd_points_example has a visible
+      // /Reference5D node with pointCount=0 while its sibling carries all 820 points.
+      // Per-type totals still catch a geometry loader silently producing no elements.
+      const geometryTypes = [
+        { nodes: state.pointClouds, total: state.totalPoints },
+        { nodes: state.lineMeshes, total: state.totalLines },
+        { nodes: state.gsplatMeshes, total: state.totalGSplats },
+        { nodes: state.meshNodes, total: state.totalTriangles },
+      ];
+      for (const geometryType of geometryTypes) {
+        if (geometryType.nodes.length > 0) {
+          expect(geometryType.total).toBeGreaterThan(0);
+        }
+      }
 
       // Check for WebGL errors (CRITICAL for rendering issues)
       const webglErrors = await page.evaluate(() => {
@@ -222,7 +232,9 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       expect(hasLoadSuccess).toBe(true);
 
       // Log success
-      console.log(`  ✅ ${example}: ${state.totalPoints} points loaded, no errors\n`);
+      console.log(
+        `  ✅ ${example}: ${state.totalElements} elements (${state.totalPoints} points) loaded, no errors\n`
+      );
     });
   }
 });
