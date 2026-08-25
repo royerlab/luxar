@@ -6,7 +6,7 @@
  * tracking issue where one exists), and validates:
  * - No console errors
  * - No WebGL errors
- * - Points loaded successfully
+ * - Renderable geometry loaded successfully
  * - Scene rendered without crashes
  *
  * This is a PRIMARY defense against regressions. If this passes, all the
@@ -178,32 +178,10 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       if (!allowZeroPoints) {
         expect(state.totalPoints).toBeGreaterThan(0);
       }
-      // Some datasets are lines-only or gsplats-only and have no pointClouds.
-      // For those, verify the scene has at least one renderable node of any
-      // supported type (points, lines, or gsplats). The previous assertion of
-      // `totalPoints + pointClouds.length >= 0` was structurally always-true
-      // when both sides were zero.
-      if (state.pointClouds && state.pointClouds.length > 0) {
-        expect(state.pointClouds.length).toBeGreaterThan(0);
-      } else if (!allowZeroPoints) {
-        const renderableCount = await page.evaluate(() => {
-          const debug = (window as any).__luxarDebug;
-          if (!debug?.scene) return 0;
-          let count = 0;
-          debug.scene.traverse((obj: any) => {
-            const nodeType = obj?.userData?.nodeType;
-            if (
-              obj.userData?.nodeType === 'points' ||
-              nodeType === 'lines' ||
-              nodeType === 'gsplats'
-            ) {
-              count += 1;
-            }
-          });
-          return count;
-        });
-        expect(renderableCount).toBeGreaterThan(0);
-      }
+      // `totalElements` sums the actual point, segment, splat, and triangle
+      // counts. Keep this unconditional: DATASETS_ALLOW_ZERO_POINTS waives only
+      // the point-specific assertion, not the requirement that geometry loaded.
+      expect(state.totalElements).toBeGreaterThan(0);
 
       // Check for WebGL errors (CRITICAL for rendering issues)
       const webglErrors = await page.evaluate(() => {
