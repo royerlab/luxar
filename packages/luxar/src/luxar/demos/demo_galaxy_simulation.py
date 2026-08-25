@@ -278,7 +278,7 @@ DUST_REDDENING = (0.75, 1.00, 1.42)
 #: frame. 241 frames x 400k stars measured 118.6M points, 828 MB on disk, 7.4 min
 #: to build and 14.4 GB peak RSS — too heavy for what it bought, so the budget is
 #: spent on TIME instead: 241 frames x 100k stars is 29.7M points, 218 MB, 1.3 min
-#: and 139k points on screen per frame. `density_scale` is what makes the lighter
+#: and 131k points on screen per frame. `density_scale` is what makes the lighter
 #: disc look like the heavy one instead of merely dimmer: each population keeps
 #: the additive-light invariant `N * gain * radius^2`. Both knobs stay exposed
 #: (`--stars`, `--frames`); neither changes the physics.
@@ -294,7 +294,7 @@ DUST_REDDENING = (0.75, 1.00, 1.42)
 #: point still only matched a slice it sat exactly on. So any stop between two
 #: frames matched nothing: measured at 225.12 Myr (drag position 469/1000), all
 #: five disc layers, the HII regions and the bulge went to ZERO points and the
-#: 11,911 static halo/globular points were the entire scene. An odd frame count
+#: 33,022 static halo/globular points were the entire scene. An odd frame count
 #: rescued only the OPENING frame — the first mouse drag emptied it again.
 T_SPAN_MYR = 480.0
 T_FRAMES = 241

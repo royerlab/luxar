@@ -268,7 +268,7 @@ Since the whole disc is duplicated per frame, that resolution is paid for
 linearly — 241 frames at the old 400k stars came to 118.6M points and 828 MB, and
 it was not worth it. The budget goes to time instead: the default disc is now
 **100k stars**, so the scene is 29.7M points and 218 MB, builds in 1.3 min, and
-puts 139k points on screen per frame. A quarter of the stars would ordinarily be
+puts 131k points on screen per frame. A quarter of the stars would ordinarily be
 a quarter of the light, so radii and per-point gain now scale with the sample
 density (`density_scale`, a cube-root of the thinning), while every population's
 sample count tracks the disc. That holds the additive-light invariant
