@@ -281,7 +281,7 @@ def audit_destination(
         bad = fetch(bad_url)
         good_accepted = _good_responses_accepted(good, spec)
         bad_accepted = _accepted(bad, spec)
-    except OSError as error:
+    except (OSError, http.client.HTTPException) as error:
         return AuditResult("ERROR", str(error))
     except (ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
         return AuditResult("CONFIG", str(error))

@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import http.client
 import importlib.util
+import io
+from email.message import Message
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
+
+import pytest
 
 from luxar.demos.link_registry import CANONICAL_LINKS_BY_HOST, DEMO_LINK_AUDITS_BY_HOST
 
@@ -177,8 +182,9 @@ def test_request_outage_is_reported_without_raising() -> None:
     assert "temporary DNS failure" in result.message
 
 
+@pytest.mark.parametrize("failure_location", ["urlopen", "http-error-body"])
 def test_protocol_failure_does_not_abort_later_destinations(
-    monkeypatch: Any, capsys: Any
+    monkeypatch: Any, capsys: Any, failure_location: str
 ) -> None:
     checker = CHECKER
     audits = {
@@ -210,10 +216,17 @@ def test_protocol_failure_does_not_abort_later_destinations(
         def read(self) -> bytes:
             return b""
 
+    class TruncatedBody(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            raise http.client.IncompleteRead(b"partial", 10)
+
     def open_url(request: Any, **_kwargs: Any) -> Response:
         url = request.full_url
         if url.startswith("https://broken.example/"):
-            raise http.client.IncompleteRead(b"partial", 10)
+            if failure_location == "urlopen":
+                raise http.client.IncompleteRead(b"partial", 10)
+            if url.endswith("/missing"):
+                raise HTTPError(url, 404, "Not Found", Message(), TruncatedBody())
         status = 200 if url.endswith("/known") else 404
         return Response(status, url)
 
