@@ -22,7 +22,7 @@
  */
 
 import { trapFocus } from './help-overlay/focus-trap';
-import { installTypeToFilter } from './help-overlay/type-to-filter';
+import { ALWAYS_GLOBAL_KEYS, installTypeToFilter } from './help-overlay/type-to-filter';
 import { getViewerContainer } from '../utils/viewer-container';
 import { RAIL_ICONS } from './control-rail/icons';
 import type { RegisteredShortcutBindings, ShortcutHelpSectionId } from '../types/shortcut-help';
@@ -306,7 +306,7 @@ export function showHelpOverlay(bindings: RegisteredShortcutBindings) {
       applyHelpFilter();
       return;
     }
-    if (e.key !== 'Escape' && e.key !== 'Tab') e.stopPropagation();
+    if (!ALWAYS_GLOBAL_KEYS.has(e.key)) e.stopPropagation();
   });
 
   // Add footer note
