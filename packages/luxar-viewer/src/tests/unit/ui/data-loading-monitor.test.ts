@@ -14,13 +14,13 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
+import { aggregateMemoryMetrics } from '../../../ui/data-loading-monitor/metrics/memory';
 import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import type {
   MonitorEvent,
   LoaderMonitor,
   LoaderMetrics,
   LODProgressState,
-  MemoryMetrics,
   SceneGraphNode,
 } from '../../../types/data-monitor-types';
 import type { TimingEntry, UpdateProfiler } from '../../../profiling/update-profiler';
@@ -1644,9 +1644,9 @@ describe('DataLoadingMonitor — accumulator provider record', () => {
       });
     }
 
-    const metrics = (
-      monitor as unknown as { getMemoryMetrics(): MemoryMetrics }
-    ).getMemoryMetrics();
+    const metrics = aggregateMemoryMetrics(
+      (monitor as unknown as { providers: Parameters<typeof aggregateMemoryMetrics>[0] }).providers
+    );
 
     for (const [i, type] of POOLED_GEOMETRY_TYPES.entries()) {
       expect(metrics.accumulators[type], `missing accumulator for ${type}`).not.toBeNull();
@@ -1666,9 +1666,9 @@ describe('DataLoadingMonitor — accumulator provider record', () => {
 
     monitor.resetSceneProviders();
 
-    const metrics = (
-      monitor as unknown as { getMemoryMetrics(): MemoryMetrics }
-    ).getMemoryMetrics();
+    const metrics = aggregateMemoryMetrics(
+      (monitor as unknown as { providers: Parameters<typeof aggregateMemoryMetrics>[0] }).providers
+    );
     for (const type of POOLED_GEOMETRY_TYPES) {
       expect(metrics.accumulators[type], `${type} slot survived the reset`).toBeNull();
     }

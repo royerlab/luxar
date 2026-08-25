@@ -3,10 +3,7 @@ import type { AccumulatorProvider, MemoryMetrics } from '../../../types/data-mon
 
 export interface MemoryMetricsParams {
   gpuBufferPoolProvider: { getStats: () => MemoryMetrics['gpuPool'] } | null;
-  accumulatorProviders: Record<
-    (typeof POOLED_GEOMETRY_TYPES)[number],
-    AccumulatorProvider | null
-  >;
+  accumulatorProviders: Record<(typeof POOLED_GEOMETRY_TYPES)[number], AccumulatorProvider | null>;
 }
 
 export function aggregateMemoryMetrics({
@@ -16,10 +13,7 @@ export function aggregateMemoryMetrics({
   return {
     gpuPool: gpuBufferPoolProvider?.getStats() ?? null,
     accumulators: Object.fromEntries(
-      POOLED_GEOMETRY_TYPES.map((type) => [
-        type,
-        accumulatorProviders[type]?.getStats() ?? null,
-      ])
+      POOLED_GEOMETRY_TYPES.map((type) => [type, accumulatorProviders[type]?.getStats() ?? null])
     ) as MemoryMetrics['accumulators'],
   };
 }
