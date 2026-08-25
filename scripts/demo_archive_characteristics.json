@@ -18,79 +18,158 @@
       "measured_sha256": null
     },
     "gsplats_3d_h2afva_decimation/h2afva_full.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 1653405,
       "ndim": null,
       "format_version": null,
       "topology": null,
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
+      "psnr_db": 63.66,
+      "foreground_psnr_db": 48.93,
+      "foreground_fraction": 0.02208508923649788,
+      "source_shape": [
+        407,
+        2048,
+        2048
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 3414163456,
       "frames": null,
       "measured_from": null,
-      "measured_sha256": null
+      "measured_sha256": null,
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
     },
     "gsplats_3d_h2afva_decimation/h2afva_quarter.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 411180,
       "ndim": null,
       "format_version": null,
       "topology": null,
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
+      "psnr_db": 57.14,
+      "foreground_psnr_db": 41.66,
+      "foreground_fraction": 0.02208508923649788,
+      "source_shape": [
+        407,
+        2048,
+        2048
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 3414163456,
       "frames": null,
       "measured_from": null,
-      "measured_sha256": null
+      "measured_sha256": null,
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
     },
     "gsplats_3d_h2afva_decimation/h2afva_tenth.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 165276,
       "ndim": null,
       "format_version": null,
       "topology": null,
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
+      "psnr_db": 53.8,
+      "foreground_psnr_db": 38.28,
+      "foreground_fraction": 0.02208508923649788,
+      "source_shape": [
+        407,
+        2048,
+        2048
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 3414163456,
       "frames": null,
       "measured_from": null,
-      "measured_sha256": null
+      "measured_sha256": null,
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
     },
     "gsplats_3d_h2afva_decimation/h2afva_twentieth.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 82660,
       "ndim": null,
       "format_version": null,
       "topology": null,
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
+      "psnr_db": 51.72,
+      "foreground_psnr_db": 36.21,
+      "foreground_fraction": 0.02208508923649788,
+      "source_shape": [
+        407,
+        2048,
+        2048
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 3414163456,
       "frames": null,
       "measured_from": null,
-      "measured_sha256": null
+      "measured_sha256": null,
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
     },
     "gsplats_3d_h2afva_stack/h2afva_tp234.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 1653405,
       "ndim": null,
       "format_version": null,
       "topology": null,
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
+      "psnr_db": 63.66,
+      "foreground_psnr_db": 48.93,
+      "foreground_fraction": 0.02208508923649788,
+      "source_shape": [
+        407,
+        2048,
+        2048
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 3414163456,
       "frames": null,
       "measured_from": null,
-      "measured_sha256": null
+      "measured_sha256": null,
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
+    },
+    "gsplats_4d_neuromast_2ch/neuromast_membranes.gsplats.zarr.zip": {
+      "n_splats": 5864440,
+      "ndim": null,
+      "format_version": null,
+      "topology": null,
+      "psnr_db": [
+        45.85,
+        50.92
+      ],
+      "foreground_psnr_db": [
+        45.93,
+        50.68
+      ],
+      "foreground_fraction": 0.0735,
+      "source_shape": [
+        100,
+        84,
+        580,
+        576
+      ],
+      "source_dtype": "float32",
+      "source_bytes": 11225088000,
+      "frames": 100,
+      "measured_from": null,
+      "measured_sha256": null,
+      "quality_note": "measured 2026-08-25 PER TIMEPOINT against the background-subtracted volume the fit consumed; range is over frames 0/25/50/75/99. A stacked archive cannot be scored whole -- its time axis is last and the source's is first, which understates foreground PSNR by ~33 dB"
+    },
+    "gsplats_4d_neuromast_2ch/neuromast_nuclei.gsplats.zarr.zip": {
+      "n_splats": 5530300,
+      "ndim": null,
+      "format_version": null,
+      "topology": null,
+      "psnr_db": [
+        53.57,
+        57.97
+      ],
+      "foreground_psnr_db": [
+        50.93,
+        55.83
+      ],
+      "foreground_fraction": 0.0259,
+      "source_shape": [
+        100,
+        84,
+        580,
+        576
+      ],
+      "source_dtype": "float32",
+      "source_bytes": 11225088000,
+      "frames": 100,
+      "measured_from": null,
+      "measured_sha256": null,
+      "quality_note": "measured 2026-08-25 PER TIMEPOINT against the background-subtracted volume the fit consumed; range is over frames 0/25/50/75/99. A stacked archive cannot be scored whole -- its time axis is last and the source's is first, which understates foreground PSNR by ~33 dB"
     },
     "gsplats_celegans/celegans_s1.gsplats.zarr.zip": {
       "n_splats": null,
