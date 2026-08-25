@@ -170,6 +170,18 @@ def test_vertex_cap_is_the_alias_free_bound() -> None:
     assert MAX_MESH_VERTICES - 1 < 2**27
 
 
+def test_decode_budget_matches_the_viewer_ceiling() -> None:
+    """The write-time lower bound must track the viewer's admission ceiling.
+
+    MIRROR: ``MESH_DECODE_BUDGET_BYTES`` in
+    ``packages/luxar-viewer/src/config/constants.ts`` must hold this value. The
+    Python validator charges fewer terms deliberately, but it must compare them
+    against the same ceiling; a lower Python value would reject stores the viewer
+    accepts, while a higher one would weaken the fail-fast guarantee.
+    """
+    assert MESH_DECODE_BUDGET_BYTES == 512 * 1024 * 1024
+
+
 # =============================================================================
 # normals + normal_dims
 # =============================================================================

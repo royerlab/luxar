@@ -7,10 +7,12 @@
  * store the viewer refuses — the exact fail-fast contract the pair exists to
  * uphold.
  *
- * `MESH_DECODE_BUDGET_BYTES` has no Python twin (the write side cannot know what
- * a tab survives), so what is pinned instead is the reasoning: it must stay well
- * under what a tab can hold, because the tab has to survive the ~3-4x transient
- * multiple, not the ceiling.
+ * `MESH_DECODE_BUDGET_BYTES` has a deliberately weaker Python twin: the writer
+ * can charge only decoded logical values, while the viewer also knows stored and
+ * chunk footprints. Both sides still compare against the same literal ceiling,
+ * so each pins it and names the other. The viewer tests additionally pin why the
+ * ceiling stays well under what a tab can hold: the tab has to survive the ~3-4x
+ * transient multiple, not just the admitted node.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -35,6 +37,10 @@ describe('MAX_MESH_VERTICES', () => {
 
 describe('MESH_DECODE_BUDGET_BYTES', () => {
   it('is 512 MiB', () => {
+    // MIRROR: MESH_DECODE_BUDGET_BYTES in
+    // packages/luxar/src/luxar/typing_utils/constants.py must hold this value.
+    // If you change one, change the other — a Python test pins that side
+    // (validation/tests/test_mesh_validation.py::test_decode_budget_matches_the_viewer_ceiling).
     expect(MESH_DECODE_BUDGET_BYTES).toBe(512 * 1024 * 1024);
   });
 
