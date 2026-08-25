@@ -533,7 +533,17 @@ class Group(Node):
                 ``transform``, ``nd_transform``, ``blending_mode``, and the
                 mesh-only appearance controls ``ambient``, ``specular``,
                 ``alpha_cutoff`` (each in ``[0, 1]``), ``shade_exponent``, and
-                ``shininess`` (both strictly positive and finite). Note
+                ``shininess`` (both strictly positive and finite). Also mesh-only,
+                and a LOADING knob rather than an appearance one:
+                ``slab_tolerance`` (strictly positive and finite, default ``1.0``)
+                — the thickness, IN CELLS, of the nD membership slab a
+                *continuous* hidden dimension is culled against. A mesh renders a
+                triangle only when all three of its vertices fall inside that
+                slab, so on a continuous hidden axis it shows "the surface near
+                this slice" rather than a planar cut, and this is the only
+                control over how thick "near" is. It has no effect on a discrete
+                hidden axis (time, channel), which uses a half-cell membership
+                rule instead. Note
                 ``volumetric`` blending is rejected — it has no meaning for an
                 opaque surface. An explicit ``None`` for ``colormap`` or
                 ``coverage_fraction`` means "absent" — identical to omitting the

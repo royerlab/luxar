@@ -1026,6 +1026,57 @@ def test_add_mesh_refuses_a_mesh_over_the_viewers_decode_budget(
     assert "m" not in dict(root.groups()), "the refused node was partly written"
 
 
+def test_slab_tolerance_round_trips_under_exactly_that_key(tmp_path) -> None:
+    """`slab_tolerance` reaches zarr spelled the way the viewer reads it.
+
+    The viewer's `MeshMetadata` is a closed TypeScript interface, so its read
+    site is compile-checked — but nothing checks that the key Python WRITES is
+    the key TypeScript declares. `check-contract` does not model node appearance
+    attrs at all, and no fixture authors one, so the two spellings agree by
+    review alone. This pins the Python half against a rename, and names its twin
+    so a future rename has somewhere to look.
+
+    TWIN: `slab_tolerance` in `packages/luxar-viewer/src/types/mesh.ts`
+    (`MeshMetadata`), consumed at
+    `data/scene-loader/process/data-processor-mesh.ts` as the
+    `meshSlabTolerance` tolerance option.
+    """
+    store = _write(tmp_path, slab_tolerance=2.5)
+    node = zarr.open_group(str(store), mode="r")["m"]
+    assert node.attrs["slab_tolerance"] == 2.5
+
+
+@pytest.mark.parametrize(
+    "value,test_id",
+    [(0.0, "zero_would_render_nothing"), (-1.0, "negative"), (float("nan"), "nan")],
+)
+def test_slab_tolerance_rejects_a_non_positive_value(tmp_path, value, test_id) -> None:
+    """Zero is the one that matters, and it is refused for a concrete reason.
+
+    A zero slab reduces mesh's whole-triangle membership test to exact float
+    equality with the slice plane, so the node renders NOTHING — the same trap
+    that stops mesh reusing the Lines tolerance arm (spec §5.2.1). Accepting it
+    would hand the user a silent blank node.
+    """
+    with pytest.raises(ValueError, match="Slab tolerance"):
+        _write(tmp_path, name=f"m_{test_id}", slab_tolerance=value)
+
+
+def test_slab_tolerance_is_refused_on_the_other_geometry_types(tmp_path) -> None:
+    """Mesh-only, and enforced by the same guard as the shading controls.
+
+    It is a loading knob rather than an appearance one, so it rides in the set
+    named `MESH_ONLY_APPEARANCE_ATTRS` on a technicality. This pins the
+    behaviour that name is a technicality ABOUT: a points node must still refuse
+    it, or a user would silently author a no-op.
+    """
+    store = tmp_path / "pts.luxar.zarr"
+    with pytest.raises(ValueError, match="slab_tolerance"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("p", _V, slab_tolerance=2.0)
+
+
 @pytest.mark.filterwarnings("ignore:Dimension 't' has range")
 def test_extend_to_all_on_a_mesh(tmp_path) -> None:
     """A mesh stays visible across a named non-displayed dimension.

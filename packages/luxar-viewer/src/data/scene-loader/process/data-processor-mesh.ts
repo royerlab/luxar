@@ -62,7 +62,7 @@ export async function processMeshData(
   path: string,
   data: LoadedMeshData,
   viewState: MeshViewState,
-  attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
+  attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all' | 'slab_tolerance'>
 ): Promise<StagedMeshCommit> {
   // The whole-triangle cull is a MEMBERSHIP gate applied after the node is fully
   // resident, so it must run on the mesh's own per-dimension slab tolerance — the
@@ -72,7 +72,19 @@ export async function processMeshData(
   // unrelated to a mesh's cell size, for continuous ones). Recompute it here, exactly
   // as `processLinesData` does for the lines clipping slab. `computeTolerance('mesh', …)`
   // always uses the membership role — mesh has no query path.
-  let tolerance = computeTolerance('mesh', viewState.displayDims, data.ndim, viewState.dimensions);
+  //
+  // `slab_tolerance` is the node's authored thickness for the CONTINUOUS arm, in
+  // cells (§5.2.1) — the only per-node input this call takes, and mesh's only
+  // control over the thick-slab approximation (§5.3). Undefined is the common
+  // case and `computeMeshHiddenTolerance` defaults it to one cell; the discrete
+  // arm ignores it entirely.
+  let tolerance = computeTolerance(
+    'mesh',
+    viewState.displayDims,
+    data.ndim,
+    viewState.dimensions,
+    { meshSlabTolerance: attrs.slab_tolerance }
+  );
 
   // Re-apply extend_to_all: an extended dim is slice-invariant, so its slab is
   // infinite. Mirrors the lines processor — the fresh recompute above dropped the
