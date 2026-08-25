@@ -3359,33 +3359,34 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
 
     const globalHandler = vi.fn();
     window.addEventListener('keydown', globalHandler);
-
-    for (const slider of sliders) {
-      for (const event of [
-        new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }),
-        new KeyboardEvent('keydown', {
-          key: 'ArrowDown',
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      ]) {
-        slider!.dispatchEvent(event);
-        expect(event.defaultPrevented).toBe(false);
+    try {
+      for (const slider of sliders) {
+        for (const event of [
+          new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }),
+          new KeyboardEvent('keydown', {
+            key: 'ArrowDown',
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ]) {
+          slider!.dispatchEvent(event);
+          expect(event.defaultPrevented).toBe(false);
+        }
       }
-    }
-    expect(globalHandler).not.toHaveBeenCalled();
+      expect(globalHandler).not.toHaveBeenCalled();
 
-    for (const key of ['Escape', 'Tab']) {
-      sliders[0]!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      for (const key of ['Escape', 'Tab']) {
+        sliders[0]!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      }
+      expect(globalHandler.mock.calls.map(([event]) => (event as KeyboardEvent).key)).toEqual([
+        'Escape',
+        'Tab',
+      ]);
+    } finally {
+      window.removeEventListener('keydown', globalHandler);
+      panel.dispose();
     }
-    expect(globalHandler.mock.calls.map(([event]) => (event as KeyboardEvent).key)).toEqual([
-      'Escape',
-      'Tab',
-    ]);
-
-    window.removeEventListener('keydown', globalHandler);
-    panel.dispose();
   });
 
   it('right-clicking a text field inside the panel leaves the native menu alone', () => {
