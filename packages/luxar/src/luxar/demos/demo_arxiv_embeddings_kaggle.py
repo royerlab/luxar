@@ -1095,7 +1095,7 @@ def generate_paper_landscape(
     # `ids` field after v3 bundles were written. Bumping would invalidate every
     # warm bundle and force a 40 GB PCA stream plus a UMAP over 3.29M points on
     # each machine — the cost this cache exists to avoid. A pre-ids bundle
-    # instead degrades to a title search (see `link_attrs` below), so the pick
+    # instead degrades to a decorated-label search (see `link_attrs` below), so the pick
     # stays useful without anyone paying for a recompute. Regenerate explicitly
     # if you want the real DOI deep links locally.
     cache_key = (
@@ -1195,7 +1195,10 @@ def generate_paper_landscape(
 
         have_ids = len(paper_ids) == n_papers
         if not have_ids:
-            aprint("  ⓘ Cached bundle predates stored paper ids — skipping DOI links")
+            aprint(
+                "  ⓘ Cached bundle predates stored paper ids — "
+                "using Scholar label search"
+            )
 
         stacked = stack_colorings(
             positions,
@@ -1219,7 +1222,7 @@ def generate_paper_landscape(
             # No stored ids (a cached bundle predating them) used to mean NO
             # click-through at all, which is the worst outcome: every point
             # already carries a title as its hover label, so the pick was
-            # actionable and silently did nothing. Fall back to a title search
+            # actionable and silently did nothing. Fall back to a label search
             # instead — same shape as the label-search links cellxgene
             # (EBI OLS) and dmri_tractography (Wikipedia) already use. Scholar
             # rather than arXiv search because this set is arXiv + bioRxiv +

@@ -1003,10 +1003,10 @@ class TestDoiLinks:
             assert attrs["link"] == "https://doi.org/{hover_key}"
             assert not attrs.get("has_keys")
 
-    def test_a_bundle_without_ids_falls_back_to_a_title_search(
+    def test_a_bundle_without_ids_falls_back_to_a_label_search(
         self, monkeypatch, capsys, tmp_path
     ) -> None:
-        """A cache written before ids were stored degrades to a title search.
+        """A cache written before ids were stored degrades to a label search.
 
         Rebuilding that bundle costs a 40 GB PCA stream plus a UMAP over 3.29M
         points, so it is still honoured rather than invalidated — the missing
@@ -1055,4 +1055,4 @@ class TestDoiLinks:
 
         # The scene is otherwise intact: labels still work, points still exist.
         assert any(attrs.get("has_labels") for _, attrs in nodes)
-        assert "skipping DOI links" in capsys.readouterr().out
+        assert "using Scholar label search" in capsys.readouterr().out

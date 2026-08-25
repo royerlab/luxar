@@ -245,19 +245,15 @@ SYNTHETIC_ID_PREFIX = "Protein_"
 
 
 def _uniprot_link_attrs(protein_ids: list[str]) -> dict[str, object]:
-    """Deep-link real accessions; fall back to a label search for synthetic ids.
+    """Deep-link real accessions; leave synthetic stand-ins unlinked.
 
     Never build an entry URL from a synthetic id — it would 404 on UniProt, which
-    is worse than no link. But returning ``{}`` was also wrong: the points still
-    carry an "<accession> · <function>" label, so picking looked live and did
-    nothing. A search on that label lands somewhere useful either way.
+    is worse than no link. The stand-in and generic cluster label contain no
+    per-point identity worth searching either.
     """
     if all(pid.startswith(SYNTHETIC_ID_PREFIX) for pid in protein_ids):
-        aprint("  ⓘ Synthetic accessions — linking to a UniProt search instead")
-        return {
-            "link": "https://www.uniprot.org/uniprotkb?query={hover_label}",
-            "copy": "{hover_label}",
-        }
+        aprint("  ⓘ Synthetic accessions — no reliable per-protein link available")
+        return {}
     return {
         "keys": list(protein_ids),
         "link": "https://www.uniprot.org/uniprotkb/{hover_key}/entry",

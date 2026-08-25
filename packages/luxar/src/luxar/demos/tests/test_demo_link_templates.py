@@ -73,23 +73,23 @@ CANONICAL_LINKS_BY_HOST = {
     "ned.ipac.caltech.edu": frozenset(
         {"https://ned.ipac.caltech.edu/byname?objname={hover_key}"}
     ),
-    # Title search, for the arXiv/bioRxiv/medRxiv corpus specifically. The
+    # Decorated-label search, for the arXiv/bioRxiv/medRxiv corpus specifically. The
     # per-paper DOI (doi.org above) is the real destination; this is the
     # fallback for a cached bundle that predates stored ids, where the only
-    # per-point identity is the paper title. Scholar rather than arXiv search
+    # per-point identity is the hover label. Scholar rather than arXiv search
     # because that corpus spans all three preprint servers.
     "scholar.google.com": frozenset(
         {"https://scholar.google.com/scholar?q={hover_label}"}
     ),
     # The /uniprotkb/<accession>/entry form is the canonical deep link and is
     # what both protein demos use when real accessions are available. The
-    # ?query= search form is the reviewed fallback for the two cases where they
-    # are not: synthetic CAFA5 accessions, and an ESM3 cache that supplies no
-    # keys. Its query is the "<name> — <organism>" hover label.
+    # ?query= search form is the reviewed fallback for an ESM3 cache that
+    # supplies no accessions. Its query is the clean protein-name key, not the
+    # decorated hover label that UniProt's parser rejects.
     "www.uniprot.org": frozenset(
         {
             "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
-            "https://www.uniprot.org/uniprotkb?query={hover_label}",
+            "https://www.uniprot.org/uniprotkb?query={hover_key}",
         }
     ),
     "www.youtube.com": frozenset(
