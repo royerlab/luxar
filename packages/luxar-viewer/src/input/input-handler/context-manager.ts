@@ -513,8 +513,8 @@ export class InputContextManager {
       // Escape from a typing context (e.g. focus inside the
       // dataset-browser manual-path field, debug-console filter input)
       // must still close the panel. Look up the Escape binding in the
-      // current context AND every other context, firing the first
-      // match. Going through the normal dispatch path would re-enter
+      // built-in contexts and the active custom context, firing the
+      // first match. Going through the normal dispatch path would re-enter
       // this branch, and `tryLowerContexts` alone would skip the
       // current context where Escape is usually registered.
       if (event.key === 'Escape') {
