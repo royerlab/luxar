@@ -100,7 +100,7 @@ def _parametrize_stems(stems: Iterable[str]) -> list[pytest.param]:
     return params
 
 
-@pytest.mark.parametrize("n_clusters", [8, 19, 40])
+@pytest.mark.parametrize("n_clusters", [8, 19, 20, 40])
 def test_spatial_index_demo_discrete_coordinates_stay_navigable(n_clusters):
     """The initial slice stays populated and all discrete values stay on-grid."""
     module = _load_example("spatial_index_demo_example")
@@ -111,14 +111,34 @@ def test_spatial_index_demo_discrete_coordinates_stay_navigable(n_clusters):
     for actual, expected in zip((positions, colors, radii), repeated, strict=True):
         np.testing.assert_array_equal(actual, expected)
 
-    time_offset = np.abs(positions[:, 3] - np.round(positions[:, 3] / 0.5) * 0.5)
-    channel_offset = np.abs(positions[:, 4] - np.round(positions[:, 4]))
-    initial_slice = (np.abs(positions[:, 3]) <= 0.125) & (
-        np.abs(positions[:, 4]) <= 0.25
+    time_offset = np.abs(
+        positions[:, 3]
+        - (
+            module.TIME_RANGE[0]
+            + np.round((positions[:, 3] - module.TIME_RANGE[0]) / module.TIME_STEP)
+            * module.TIME_STEP
+        )
     )
+    channel_offset = np.abs(
+        positions[:, 4]
+        - (
+            module.CHANNEL_RANGE[0]
+            + np.round(
+                (positions[:, 4] - module.CHANNEL_RANGE[0]) / module.CHANNEL_STEP
+            )
+            * module.CHANNEL_STEP
+        )
+    )
+    initial_slice = (
+        np.abs(positions[:, 3] - module.TIME_RANGE[0]) <= module.TIME_STEP / 4
+    ) & (np.abs(positions[:, 4] - module.CHANNEL_RANGE[0]) <= module.CHANNEL_STEP / 4)
 
-    assert np.all(time_offset <= 0.125)
-    assert np.all(channel_offset <= 0.25)
+    assert np.all(time_offset <= module.TIME_STEP / 4)
+    assert np.all(channel_offset <= module.CHANNEL_STEP / 4)
+    assert positions[:, 3].min() >= module.TIME_RANGE[0]
+    assert positions[:, 3].max() <= module.TIME_RANGE[1]
+    assert positions[:, 4].min() >= module.CHANNEL_RANGE[0]
+    assert positions[:, 4].max() <= module.CHANNEL_RANGE[1]
     assert np.count_nonzero(initial_slice) > 0
 
 

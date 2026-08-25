@@ -31,6 +31,11 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.utils.paths import get_examples_output_dir
 
+TIME_RANGE = (0.0, 10.0)
+TIME_STEP = 0.5
+CHANNEL_RANGE = (0.0, 2.0)
+CHANNEL_STEP = 1.0
+
 
 def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> tuple:
     """Create clustered 5D point data.
@@ -55,19 +60,29 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
     # Create random cluster centers across 5D space
     cluster_centers = np.random.uniform(-50, 50, (n_clusters, 5)).astype(np.float32)
 
-    # Ensure clusters are distributed across time and channel dimensions
-    cluster_centers[:, 3] = np.round(np.linspace(0, 10, n_clusters) / 0.5) * 0.5
-    cluster_centers[:, 4] = np.arange(n_clusters) % 3
+    # Keep discrete values within the viewer's quarter-step query tolerance.
+    time_centers = np.linspace(*TIME_RANGE, n_clusters)
+    cluster_centers[:, 3] = (
+        TIME_RANGE[0] + np.round((time_centers - TIME_RANGE[0]) / TIME_STEP) * TIME_STEP
+    )
+    channel_values = np.arange(
+        CHANNEL_RANGE[0], CHANNEL_RANGE[1] + CHANNEL_STEP, CHANNEL_STEP
+    )
+    cluster_centers[:, 4] = np.resize(channel_values, n_clusters)
 
     for i, center in enumerate(cluster_centers):
         # Create points around this cluster center
         cluster_points = np.random.randn(points_per_cluster, 5).astype(np.float32)
         cluster_points[:, :3] *= 2
-        cluster_points[:, 3] = np.random.uniform(-0.1, 0.1, points_per_cluster)
-        cluster_points[:, 4] = np.random.uniform(-0.2, 0.2, points_per_cluster)
+        cluster_points[:, 3] = np.random.uniform(
+            -TIME_STEP / 4, TIME_STEP / 4, points_per_cluster
+        )
+        cluster_points[:, 4] = np.random.uniform(
+            -CHANNEL_STEP / 4, CHANNEL_STEP / 4, points_per_cluster
+        )
         cluster_points += center
-        cluster_points[:, 3] = np.clip(cluster_points[:, 3], 0, 10)
-        cluster_points[:, 4] = np.clip(cluster_points[:, 4], 0, 2)
+        cluster_points[:, 3] = np.clip(cluster_points[:, 3], *TIME_RANGE)
+        cluster_points[:, 4] = np.clip(cluster_points[:, 4], *CHANNEL_RANGE)
 
         # Assign colors based on cluster
         hue = i / n_clusters
@@ -154,16 +169,16 @@ def main():
                     "time",
                     unit="s",
                     display=False,
-                    range=(0, 10),
-                    step=0.5,
+                    range=TIME_RANGE,
+                    step=TIME_STEP,
                     discrete=True,
                 ),
                 Dimension(
                     "channel",
                     unit="ch",
                     display=False,
-                    range=(0, 2),
-                    step=1,
+                    range=CHANNEL_RANGE,
+                    step=CHANNEL_STEP,
                     discrete=True,
                 ),
             ]
