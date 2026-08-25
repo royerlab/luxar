@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import http.client
 import importlib.util
 import io
 import subprocess
@@ -251,7 +252,9 @@ def test_rejected_credential_markers_match_the_zenodo_producer(
     assert str(exc_info.value).startswith(audit_module._REJECTED_CREDENTIAL_MARKERS)
 
 
-@pytest.mark.parametrize("failure", ["url", "timeout", "json"])
+@pytest.mark.parametrize(
+    "failure", ["url", "timeout", "json", "reset", "http", "bad-utf8"]
+)
 def test_zenodo_transport_failures_remain_warnings(monkeypatch, failure: str) -> None:
     producer = SCRIPT.with_name("zenodo_migration_audit.py")
     spec = importlib.util.spec_from_file_location("zenodo_migration_audit", producer)
@@ -260,11 +263,29 @@ def test_zenodo_transport_failures_remain_warnings(monkeypatch, failure: str) ->
     monkeypatch.setattr(sys, "argv", [str(producer)])
     spec.loader.exec_module(module)
 
-    if failure == "json":
+    if failure in {"json", "bad-utf8"}:
         monkeypatch.setattr(
             module.urllib.request,
             "urlopen",
-            lambda *args, **kwargs: io.BytesIO(b"not json"),
+            lambda *args, **kwargs: io.BytesIO(
+                b"not json" if failure == "json" else b"\x80abc"
+            ),
+        )
+    elif failure in {"reset", "http"}:
+        error = (
+            ConnectionResetError("connection reset by peer")
+            if failure == "reset"
+            else http.client.IncompleteRead(b"partial response")
+        )
+
+        class BrokenResponse(io.BytesIO):
+            def read(self, *args, **kwargs):
+                raise error
+
+        monkeypatch.setattr(
+            module.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: BrokenResponse(),
         )
     else:
         error = (
