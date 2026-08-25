@@ -43,7 +43,7 @@ export interface CacheStats {
  *   stale indefinitely until manually cleared. Surfaced in the UI as a
  *   warning badge so the user knows what they're getting.
  */
-export type CacheValidationMode = 'content-hash' | 'zattrs-hash' | 'ttl' | 'none';
+export type CacheValidationMode = 'content-hash' | 'zattrs-hash' | 'archive-etag' | 'ttl' | 'none';
 
 /**
  * Metadata structure persisted to OPFS for L2 cache management.

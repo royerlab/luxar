@@ -8,12 +8,11 @@
  */
 
 import * as zarrita from 'zarrita';
-import ZipFileStore from '@zarrita/storage/zip';
 
 import { boundedConcurrencyStore } from '../utils/fetch-concurrency';
 import { LuxarDeltaCodec } from './codecs/luxar-delta';
-import { isZippedStoreUrl, normalizeZipEntries } from './zip/entries';
-import { LuxarHttpRangeReader } from './zip/range-reader';
+import { isZippedStoreUrl } from './zip/entries';
+import { LuxarZipStore } from './zip/store';
 import type { AbsolutePath, AsyncReadable, GetOptions, Readable } from '@zarrita/storage';
 
 /** `@zarrita/storage` primitives (path, readable-store, and get-option types) re-exported so callers depend only on this facade. */
@@ -104,15 +103,6 @@ export function createFetchStore(url: string): FetchStore {
   return boundedConcurrencyStore(new zarrita.FetchStore(url));
 }
 
-/** Options shared by HTTP- and Blob-backed zip stores. */
-export function createZipStoreOptions(
-  url: string
-): NonNullable<ConstructorParameters<typeof ZipFileStore>[1]> {
-  return {
-    transformEntries: (entries) => normalizeZipEntries(entries, url),
-  };
-}
-
 /**
  * Create a store that reads a zipped Zarr archive (`.zarr.zip`) in place, over
  * HTTP range requests — one ranged GET per chunk, no unpacking.
@@ -126,13 +116,15 @@ export function createZipStoreOptions(
  * Wrapped in {@link boundedConcurrencyStore} for the same reason the fetch path
  * is: the ranged GETs are ordinary requests and must share the fetch gate.
  *
- * KNOWN COST: the constructor eagerly reads the whole central directory
- * (~116 bytes per member, measured), so cold open pays a fixed preamble
- * proportional to chunk count before the first chunk arrives.
+ * KNOWN COST: reading an archive pays a fixed preamble before the first chunk —
+ * `unzipit` reads a 65,557-byte tail to find the end-of-central-directory
+ * record and then the central directory itself, so a store whose directory sits
+ * just before that tail transfers part of it twice (~141 kB measured at 1081
+ * members). {@link LuxarZipStore} at least defers that to the first read rather
+ * than paying it at construction.
  */
 export function createZipStore(url: string): AsyncReadable {
-  const store = new ZipFileStore(new LuxarHttpRangeReader(url), createZipStoreOptions(url));
-  return boundedConcurrencyStore(store);
+  return boundedConcurrencyStore(new LuxarZipStore(url));
 }
 
 /**

@@ -413,9 +413,11 @@ describe('DatasetBrowser', () => {
     });
 
     it('does NOT select paths where .zarr is a mere substring (navigates instead)', async () => {
-      // `.zarr` must terminate the last path segment; `archives.zarr-backup`
-      // and `foo.zarr.zip` are ordinary names, not datasets.
-      for (const value of ['archives.zarr-backup', 'foo.zarr.zip', 'my.zarrs/dir']) {
+      // `.zarr` must terminate the last path segment. `archives.zarr-backup` and
+      // `my.zarrs/dir` are ordinary names. (`foo.zarr.zip` USED to be listed
+      // here; a zipped store is now a dataset the viewer reads in place — see
+      // the zipped-store case below.)
+      for (const value of ['archives.zarr-backup', 'my.zarrs/dir']) {
         vi.clearAllMocks();
         document.body.innerHTML = '';
         container = makeContainer();
@@ -458,6 +460,29 @@ describe('DatasetBrowser', () => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
 
       expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/sub/sample.zarr/');
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('selects a zipped store (.zarr.zip) rather than navigating into it', async () => {
+      // An archive IS a dataset — the viewer reads it in place over range
+      // requests — and it has no listable children to navigate into.
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult());
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('#luxar-dataset-browser-path-edit')).not.toBeNull();
+      });
+
+      (container.querySelector('#luxar-dataset-browser-path-edit') as HTMLButtonElement).click();
+      navigateMock.mockClear();
+      const input = container.querySelector(
+        '.luxar-dataset-browser__path-input'
+      ) as HTMLInputElement;
+      input.value = 'sub/scene.luxar.zarr.zip';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+      expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/sub/scene.luxar.zarr.zip');
+      expect(navigateMock).not.toHaveBeenCalled();
       expect(onClose).toHaveBeenCalled();
     });
 

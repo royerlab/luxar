@@ -8,6 +8,7 @@ Following the principle from TESTING_GUIDELINES.md: mock only external dependenc
 import socket
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -489,6 +490,33 @@ class TestServeIntegration:
         assert len(entries) > 0
         # Verify structure
         assert any(e["type"] == "zarr" for e in entries)
+
+    def test_directory_listing_marks_zipped_stores_as_datasets(
+        self, test_server, sample_scene
+    ):
+        """A ``.zarr.zip`` is a dataset, not a file to download.
+
+        The viewer reads a zipped store in place over HTTP range requests, so it
+        must appear in the listing as ``type: "zarr"`` — otherwise the dataset
+        browser cannot offer a perfectly loadable scene, and the only way in is
+        to hand-type its URL.
+        """
+        # `test_server` roots at the scene directory itself, so the archive has
+        # to live inside it to appear in the listing at all.
+        served_root = Path(sample_scene)
+        archive = served_root / "zipped_scene.luxar.zarr.zip"
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("zarr.json", '{"zarr_format": 3, "node_type": "group"}')
+
+        try:
+            response = requests.get(
+                f"{test_server}/", headers={"Accept": "application/json"}
+            )
+            assert response.status_code == 200
+            entries = {e["name"]: e["type"] for e in response.json()["entries"]}
+            assert entries.get("zipped_scene.luxar.zarr.zip") == "zarr"
+        finally:
+            archive.unlink(missing_ok=True)
 
 
 class TestInfoCommand:

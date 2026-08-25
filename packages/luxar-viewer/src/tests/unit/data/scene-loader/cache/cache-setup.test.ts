@@ -9,6 +9,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+import { MultiLevelCachingStore } from '../../../../../cache/multi-level-caching-store';
+
 // Mock ONLY the I/O-heavy tiers (OPFS/network). NOTE: cache-setup.ts imports
 // the CONCRETE modules, not the `cache` barrel — the previous barrel mock was
 // silently ineffective and these tests ran against the real store. The
@@ -58,17 +60,17 @@ describe('setupCaches — cache telemetry state resolution', () => {
     appConfig.cache.l0Enabled = originalL0Enabled;
   });
 
-  it('a .zarr.zip gets NO caching store, while its directory twin does', async () => {
-    // `setupCaches` now changes tier policy by URL SUFFIX: MultiLevelCachingStore
-    // builds its own chunk URLs from a base and cannot address a member inside an
-    // archive, so a zipped store reads uncached rather than 404ing every chunk.
-    // Pinned here because nothing else would notice the policy silently flipping.
+  it('a .zarr.zip is cached like its directory twin', async () => {
+    // Phase 2 inverts what Phase 1 pinned here. MultiLevelCachingStore now takes
+    // a ChunkSource instead of building chunk URLs from a base, so an archive
+    // member is reachable and a zipped store gets the full tier stack. Caching
+    // earns MORE on an archive: ~2 requests per member, and repeat reads cannot
+    // fall back to the browser HTTP cache the way a per-chunk URL can.
     appConfig.cache.enabled = true;
     appConfig.cache.l0Enabled = true;
 
     const zipped = await setupCaches('http://example.com/scene.luxar.zarr.zip', {});
-    expect(zipped.cachingStore).toBeNull();
-    // The in-memory tiers are unaffected — only L1/L2 need a URL per chunk.
+    expect(zipped.cachingStore).not.toBeNull();
     expect(zipped.l0Cache).not.toBeNull();
 
     const directory = await setupCaches('http://example.com/scene.luxar.zarr/', {});
@@ -130,16 +132,23 @@ describe('setupCaches — cache telemetry state resolution', () => {
     expect(result.l0Cache).not.toBeNull();
   });
 
-  it('bypasses L1/L2 for zipped stores while directory stores keep them', async () => {
+  it('hands the caching store a zip SOURCE for an archive and a bare URL otherwise', async () => {
+    // The two must never be interchangeable. A zipped store and its unzipped
+    // twin cache the same decoded bytes but have different key namespaces, and
+    // the OPFS bucket is derived from the source's identity — so passing a bare
+    // URL for an archive would both fail to read it and risk sharing a bucket.
     appConfig.cache.enabled = true;
     appConfig.cache.l0Enabled = true;
 
-    const zipped = await setupCaches('http://example.com/scene.luxar.zarr.zip', {});
-    const directory = await setupCaches('http://example.com/scene.zarr/', {});
+    await setupCaches('http://example.com/scene.luxar.zarr.zip', {});
+    const zippedArg = vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[0];
 
-    expect(zipped.cachingStore).toBeNull();
-    expect(zipped.rawStore).not.toBeNull();
-    expect(directory.cachingStore).not.toBeNull();
+    await setupCaches('http://example.com/scene.zarr/', {});
+    const directoryArg = vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[0];
+
+    expect(typeof zippedArg).toBe('object');
+    expect(zippedArg).toHaveProperty('identity', 'http://example.com/scene.luxar.zarr.zip');
+    expect(directoryArg).toBe('http://example.com/scene.zarr/');
   });
 
   it('L0-only configuration (l1/l2 off, l0 on) → enabled', async () => {

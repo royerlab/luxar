@@ -6,6 +6,8 @@
  * It uses multiple detection strategies to work with any static file server.
  */
 
+import { isZippedStoreUrl } from '../zip/entries';
+
 export interface DirectoryEntry {
   name: string;
   path: string;
@@ -183,9 +185,10 @@ export class DirectoryNavigator {
           const name = displayName || href.split('/').filter(Boolean).pop() || '';
           const isDir = !!collection;
 
-          // Check if it's a Zarr directory
+          // Check if it's a Zarr directory — or a zipped store, which is a
+          // FILE the viewer reads in place over range requests.
           let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
-          if (isDir && name.endsWith('.zarr')) {
+          if (isDir ? name.endsWith('.zarr') : isZippedStoreUrl(name)) {
             type = 'zarr';
           }
 
@@ -263,7 +266,7 @@ export class DirectoryNavigator {
             const name = text.replace(/\/$/, '');
 
             let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
-            if (isDir && name.endsWith('.zarr')) {
+            if (isDir ? name.endsWith('.zarr') : isZippedStoreUrl(name)) {
               type = 'zarr';
             }
 
@@ -288,7 +291,7 @@ export class DirectoryNavigator {
             const name = text.replace(/\/$/, '');
 
             let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
-            if (isDir && name.endsWith('.zarr')) {
+            if (isDir ? name.endsWith('.zarr') : isZippedStoreUrl(name)) {
               type = 'zarr';
             }
 

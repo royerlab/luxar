@@ -2,6 +2,7 @@
  * Cache-tab templates and shared cache display helpers.
  */
 
+import type { CacheValidationMode } from '../../../cache/types';
 import type {
   CacheMetrics,
   CacheStatusBadge,
@@ -249,14 +250,14 @@ function renderCacheStatusRow(badges: CacheStatusBadge[] | undefined, always = f
  * this verbatim; null/undefined render as a neutral placeholder so
  * callers don't have to guard the value themselves.
  */
-export function formatValidationMode(
-  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
-): string {
+export function formatValidationMode(mode: CacheValidationMode | undefined): string {
   switch (mode) {
     case 'content-hash':
       return 'Content Hash';
     case 'zattrs-hash':
       return 'Metadata Hash';
+    case 'archive-etag':
+      return 'Archive ETag';
     case 'ttl':
       return 'TTL';
     case 'none':
@@ -274,9 +275,7 @@ export function formatValidationMode(
  * so the tooltip stays correct when the mode changes after the first
  * validation completes (e.g. '—' → Content Hash).
  */
-export function validationModeTooltip(
-  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
-): string {
+export function validationModeTooltip(mode: CacheValidationMode | undefined): string {
   switch (mode) {
     case 'content-hash':
       return (
@@ -293,6 +292,14 @@ export function validationModeTooltip(
         'a fresh timestamp on every save, so a dataset regenerated at the same URL is detected ' +
         'and every cache tier cleared. Only a producer that rewrites chunk data without touching ' +
         'root metadata could still serve stale chunks.'
+      );
+    case 'archive-etag':
+      return (
+        'Archive-ETag validation: this dataset is a single zipped store (.zarr.zip), whose root ' +
+        'metadata lives INSIDE the archive and so cannot be re-fetched on its own. The viewer ' +
+        "instead asks the server for the archive's ETag (or its modification time and size) and " +
+        'compares that with the one stored next to the disk cache. This covers the whole store at ' +
+        'once rather than one document, so any change to the archive clears every cache tier.'
       );
     case 'ttl':
       return (
@@ -324,9 +331,7 @@ export function validationModeTooltip(
  * baseline (when the cache was established) that does NOT advance on
  * repeat offline checks.
  */
-export function lastValidatedTooltip(
-  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
-): string {
+export function lastValidatedTooltip(mode: CacheValidationMode | undefined): string {
   const base =
     'The viewer re-fetches the dataset root metadata from the server at load time. For the ' +
     'content-hash and .zattrs-hash modes this timestamp updates on each successful check; for ' +
@@ -345,6 +350,13 @@ export function lastValidatedTooltip(
         'At this moment the fingerprint of the dataset root metadata (.zattrs bytes) was ' +
         'compared against the server and the cache was confirmed current (or cleared if it did ' +
         'not match). "Never" = no check has completed yet, e.g. offline.'
+      );
+    case 'archive-etag':
+      return (
+        base +
+        "At this moment the archive's ETag (or modification time and size) was compared against " +
+        'the server and the cache was confirmed current (or cleared if it did not match). ' +
+        '"Never" = no check has completed yet, e.g. offline.'
       );
     case 'ttl':
       return (
@@ -374,9 +386,7 @@ export function lastValidatedTooltip(
  * ttl/none the timestamp is a fixed baseline marking when the cache was
  * established, not a per-check event, so "Cached Since" is the honest label.
  */
-export function lastValidatedLabel(
-  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
-): string {
+export function lastValidatedLabel(mode: CacheValidationMode | undefined): string {
   // Both hash modes genuinely VALIDATE the cache against the server on each
   // successful check; ttl/none record a fixed baseline that does not advance.
   return mode === 'content-hash' || mode === 'zattrs-hash' ? 'Last Validated' : 'Cached Since';

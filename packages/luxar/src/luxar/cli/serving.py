@@ -278,6 +278,12 @@ class DirectoryListingStaticFiles(StaticFiles):
                     # Check if it's a zarr directory
                     if item.is_dir() and item.name.endswith(".zarr"):
                         item_type = "zarr"
+                    # A zipped store is a FILE, and the viewer reads it in place
+                    # over range requests (no unpacking) — so it is a dataset,
+                    # not an archive to download. Listing it as `file` made a
+                    # perfectly loadable scene invisible in the dataset browser.
+                    elif item.is_file() and item.name.lower().endswith(".zarr.zip"):
+                        item_type = "zarr"
                     # Fallback for a zarr store whose directory is not named
                     # `*.zarr`. BOTH root-group documents count: format 2 writes
                     # `.zgroup`, format 3 writes `zarr.json`, and Luxar now

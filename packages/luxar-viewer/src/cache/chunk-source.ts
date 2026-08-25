@@ -46,6 +46,19 @@ export type ChunkFetchOutcome =
   /** Transient failure after the source exhausted its own retries. */
   | { kind: 'error'; cause: Error };
 
+/**
+ * The minimum a byte-container has to offer for {@link ChunkSource} to read it.
+ *
+ * Declared HERE, and injected, rather than importing a concrete store: `src/cache`
+ * sits below `src/data` in the layer order, so the cache layer must not reach up
+ * for `data/zip/store`. The cache defines the port; the data layer supplies the
+ * adapter. It also keeps this module ignorant of zip specifics entirely.
+ */
+export interface ArchiveByteReader {
+  get(key: string): Promise<Uint8Array | undefined>;
+  dispose(): void;
+}
+
 /** Where {@link MultiLevelCachingStore} gets its bytes. */
 export interface ChunkSource {
   /**
