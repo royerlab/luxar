@@ -33,6 +33,8 @@ import { waitForLuxarReady } from '../e2e/helpers';
 
 /** How many times each variant is sampled; the median is reported. */
 const REPEATS = Number(process.env.LUXAR_BENCH_REPEATS ?? 3);
+/** Ready-wait budget. Software rendering in headless is slow; be generous. */
+const READY_TIMEOUT_MS = Number(process.env.LUXAR_BENCH_READY_TIMEOUT_MS ?? 240_000);
 
 interface Variant {
   readonly label: string;
@@ -56,6 +58,9 @@ interface Sample {
   requests: number;
   bytes: number;
   longTaskMs: number;
+  /** What actually got loaded — see the equivalence guard in the test body. */
+  totalPoints: number;
+  pointClouds: number;
 }
 
 function median(values: number[]): number {
@@ -120,7 +125,7 @@ async function sample(page: import('@playwright/test').Page, datasetUrl: string)
   const started = Date.now();
   await page.goto(`/?src=${encodeURIComponent(datasetUrl)}&debug&no-cache`);
   try {
-    await waitForLuxarReady(page, 120_000);
+    await waitForLuxarReady(page, READY_TIMEOUT_MS);
   } catch (error) {
     throw new Error(
       `${datasetUrl} never reached initialized.\n` +
@@ -136,7 +141,23 @@ async function sample(page: import('@playwright/test').Page, datasetUrl: string)
     () => (window as unknown as { __longTaskMs: number }).__longTaskMs ?? 0
   );
 
-  return { readyMs, requests, bytes, longTaskMs };
+  const content = await page.evaluate(() => {
+    const state = (
+      window as unknown as {
+        __luxarDebug?: { getState?: () => { totalPoints?: number; pointClouds?: unknown[] } };
+      }
+    ).__luxarDebug?.getState?.();
+    return {
+      totalPoints: state?.totalPoints ?? 0,
+      pointClouds: state?.pointClouds?.length ?? 0,
+    };
+  });
+
+  if (process.env.LUXAR_BENCH_DEBUG && problems.length) {
+    console.log(`[bench] ${datasetUrl} console errors:\n  ${problems.slice(0, 10).join('\n  ')}`);
+  }
+
+  return { readyMs, requests, bytes, longTaskMs, ...content };
 }
 
 test('zipped vs directory cold open', async ({ browser }) => {
@@ -168,6 +189,8 @@ test('zipped vs directory cold open', async ({ browser }) => {
       requests: median(samples.map((s) => s.requests)),
       bytes: median(samples.map((s) => s.bytes)),
       longTaskMs: median(samples.map((s) => s.longTaskMs)),
+      totalPoints: samples[0].totalPoints,
+      pointClouds: samples[0].pointClouds,
       preambleBytes,
     };
     results[variant.label] = merged;
@@ -196,9 +219,22 @@ test('zipped vs directory cold open', async ({ browser }) => {
     fs.writeFileSync(outFile, JSON.stringify({ repeats: REPEATS, results }, null, 2));
   }
 
-  // The benchmark's job is to REPORT, not to gate — a regression here is a
-  // decision for #1716, not a red build. Assert only that it measured something.
+  // EQUIVALENCE GUARD. Without this the bench happily reports a spectacular
+  // "win" for a store that loaded NOTHING: an empty scene still reaches
+  // `initialized`, in a few hundred ms and a handful of requests. Every variant
+  // is the same scene, so every variant must end up with the same geometry —
+  // anything else means the run measured a failure, not a speed-up.
+  const baseline = results[VARIANTS[0].label];
   for (const variant of VARIANTS) {
-    expect(results[variant.label].requests).toBeGreaterThan(0);
+    const row = results[variant.label];
+    expect(row.requests, `${variant.label}: no requests observed`).toBeGreaterThan(0);
+    expect(row.totalPoints, `${variant.label}: loaded an EMPTY scene`).toBeGreaterThan(0);
+    expect(
+      row.totalPoints,
+      `${variant.label} loaded ${row.totalPoints} points but ` +
+        `${VARIANTS[0].label} loaded ${baseline.totalPoints} — the variants are not ` +
+        `the same scene, so their timings are not comparable`
+    ).toBe(baseline.totalPoints);
+    expect(row.pointClouds, `${variant.label}: node count differs`).toBe(baseline.pointClouds);
   }
 });

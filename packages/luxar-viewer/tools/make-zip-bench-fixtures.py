@@ -35,8 +35,14 @@ from luxar import Dimensions, LuxarZarrCompiler
 
 
 def build_scene(out_dir: Path, points: int, nodes: int) -> Path:
-    """Compile a directory scene with enough chunks to make the archive's
-    central directory a measurable cost rather than a rounding error."""
+    """Compile a directory scene with enough MEMBERS for the archive's central
+    directory to be a measurable cost rather than a rounding error.
+
+    Deliberately many small nodes rather than a few large ones: member count is
+    what the central-directory preamble scales with, while total point count is
+    what the (software-rendered, headless) draw cost scales with. Keeping the
+    first high and the second low is what makes the run finish in minutes
+    instead of timing out."""
     store = out_dir / "bench.luxar.zarr"
     if store.exists():
         shutil.rmtree(store)
@@ -79,8 +85,8 @@ def describe(artifact: Path) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("out_dir", type=Path)
-    parser.add_argument("--points", type=int, default=20_000)
-    parser.add_argument("--nodes", type=int, default=8)
+    parser.add_argument("--points", type=int, default=4_000)
+    parser.add_argument("--nodes", type=int, default=120)
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
