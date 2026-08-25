@@ -547,7 +547,7 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
     )
 
-    assert counts == (1, 1, 0)
+    assert counts == (1, 0, 1, 0)
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert written["measured_from"] == "staged", "a local read outranked the staged one"
     assert written["foreground_psnr_db"] == 30.6
@@ -590,7 +590,7 @@ def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
 
     counts = gen.refresh_characteristics(manifest)
 
-    assert counts == (1, 1, 0)
+    assert counts == (1, 0, 1, 0)
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert written == absent[key]
 
@@ -617,7 +617,7 @@ def test_a_current_local_measurement_replaces_a_stale_staged_one(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])
     )
 
-    assert counts == (1, 0, 0)
+    assert counts == (1, 0, 0, 0)
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert written["measured_sha256"] == "p" * 64
     assert written["n_splats"] == 111
@@ -638,11 +638,11 @@ def test_refresh_preserves_entries_whose_archive_is_absent(
     )
     monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
 
-    measured, retained, preserved = gen.refresh_characteristics(
+    read, retained, rejected, preserved = gen.refresh_characteristics(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
     )
 
-    assert (measured, retained, preserved) == (0, 0, 1)
+    assert (read, retained, rejected, preserved) == (0, 0, 0, 1)
     assert (
         json.loads((tmp_path / "chars.json").read_text())["archives"][key]["n_splats"]
         == 7
@@ -667,6 +667,24 @@ def test_a_prefix_matching_cache_path_is_not_labelled_staged(
 
     entry = gen.load_characteristics()[f"ds/{cache_archive.name}"]
     assert entry["measured_from"] == "cache"
+
+
+def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = "ds/a.gsplats.zarr.zip"
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: {})
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
+    monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
+    monkeypatch.setattr(gen, "_read_archive", lambda p: {"n_splats": 111})
+
+    counts = gen.refresh_characteristics(
+        _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])
+    )
+
+    assert counts == (1, 0, 1, 0)
+    assert key not in json.loads((tmp_path / "chars.json").read_text())["archives"]
 
 
 def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:

@@ -400,19 +400,20 @@ def _retain_preferred_measurements(
     measured: dict[str, Any],
     existing: dict[str, Any],
     pinned_digests: dict[str, Optional[str]],
-) -> int:
+) -> tuple[int, int]:
     """Drop unpinned reads and retain stronger measurements of pinned bytes."""
     rank = {"staged": 2, "repo": 1, "cache": 1}
     retained = 0
+    rejected = 0
     for key, new_entry in list(measured.items()):
         old_entry = existing.get(key)
         pinned_digest = pinned_digests.get(key)
         if new_entry.get("measured_sha256") != pinned_digest:
+            rejected += 1
             if old_entry is None:
                 del measured[key]
             else:
                 measured[key] = old_entry
-                retained += 1
         elif (
             old_entry is not None
             and old_entry.get("measured_sha256") == pinned_digest
@@ -421,13 +422,13 @@ def _retain_preferred_measurements(
         ):
             measured[key] = old_entry
             retained += 1
-    return retained
+    return retained, rejected
 
 
 def refresh_characteristics(
     manifest: dict[str, Any], extra_root: Optional[Path] = None
-) -> tuple[int, int, int]:
-    """Re-measure archives present here; returns (read, retained, preserved).
+) -> tuple[int, int, int, int]:
+    """Re-measure archives; returns (read, retained, rejected, preserved).
 
     PRESERVES entries whose archive is not on this machine, for the same reason
     ``gen_data_manifest`` preserves committed file lists: a refresh run from a
@@ -465,7 +466,9 @@ def refresh_characteristics(
             }
 
     read = len(measured)
-    retained = _retain_preferred_measurements(measured, existing, pinned_digests)
+    retained, rejected = _retain_preferred_measurements(
+        measured, existing, pinned_digests
+    )
     preserved = {k: v for k, v in existing.items() if k in seen and k not in measured}
     archives = dict(sorted({**preserved, **measured}.items()))
     CHARACTERISTICS.write_text(
@@ -487,7 +490,7 @@ def refresh_characteristics(
         )
         + "\n"
     )
-    return read, retained, len(preserved)
+    return read, retained, rejected, len(preserved)
 
 
 def _stale_characteristics(manifest: dict[str, Any]) -> list[str]:
@@ -776,11 +779,12 @@ def main() -> int:
 
     manifest = json.loads(MANIFEST.read_text())
     if args.refresh:
-        measured, retained, preserved = refresh_characteristics(
+        read, retained, rejected, preserved = refresh_characteristics(
             manifest, args.archives_root
         )
         print(
-            f"measured {measured} archive(s) here, kept {retained} committed "
+            f"read {read} archive(s) here, skipped {rejected} read(s) taken from "
+            f"bytes the manifest does not pin, kept {retained} committed "
             f"measurement(s) that outrank the local copy, preserved {preserved} "
             f"not on this machine -> {CHARACTERISTICS.relative_to(REPO_ROOT)}"
         )
