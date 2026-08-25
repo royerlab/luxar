@@ -227,13 +227,15 @@ jobs:
           # failing OPEN, in the one direction this gate must never fail. Real
           # skew measured at 8s, so a few seconds of slop is tolerated and
           # anything further routes to hosted.
-          if [ "$hb" -gt 0 ] && [ "$age" -ge -30 ] && [ "$age" -lt 180 ]; then
-            echo "obsidian heartbeat is ${age}s old -> routing to obsidian"
-            echo "label=obsidian" >> "$GITHUB_OUTPUT"
-          else
-            echo "obsidian heartbeat is ${age}s old (hb=$hb) -> routing to ubuntu-latest"
-            echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
-          fi
+          # FORCE OBSIDIAN (2026-08-24): the heartbeat gate sent ~100% of runs to
+          # PAID ubuntu-latest -- obsidian's runners saturate under PR-CI volume so
+          # the heartbeat sat at 0 and everything overflowed. Same-repo runs now
+          # ALWAYS use the self-hosted box; overflow QUEUES on obsidian instead of
+          # spilling to paid. Fork PRs already routed to ubuntu-latest above
+          # (security). If obsidian is truly down the whole fleet is down too, so
+          # the removed hosted fallback was moot. (age/hb computed above, now unused.)
+          echo "routing to obsidian (forced; heartbeat gate removed to stop paid overflow)"
+          echo "label=obsidian" >> "$GITHUB_OUTPUT"
 
   # pick-runner's heartbeat check is a snapshot: it proves obsidian was alive
   # when the run was ROUTED, not that it survives long enough to pick the jobs
