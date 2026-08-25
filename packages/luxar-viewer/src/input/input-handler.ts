@@ -745,8 +745,13 @@ export class InputHandler {
   }
 
   /** Resolve the active binding label for a registered action. */
-  public getShortcutLabel(actionId: KeyActionId): string | undefined {
+  public getShortcutLabel(actionId: string): string | undefined {
     return this.contextManager.getShortcutLabel(actionId);
+  }
+
+  /** Enable or disable all routed keyboard input. */
+  public setEnabled(enabled: boolean): void {
+    this.contextManager.setEnabled(enabled);
   }
 
   /**

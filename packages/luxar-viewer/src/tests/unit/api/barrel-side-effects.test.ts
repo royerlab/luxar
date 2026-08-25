@@ -208,6 +208,8 @@ describe('Public barrel side effects', () => {
     const valueExports = Object.keys(mod).sort();
     expect(valueExports).toEqual(
       [
+        'InputContext',
+        'KeyAction',
         'LuxarApp',
         'StorageKeys',
         'applyBlendingStateToMaterial',
