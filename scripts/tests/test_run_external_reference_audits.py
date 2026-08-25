@@ -162,6 +162,47 @@ def test_command_traceback_is_a_configuration_error(monkeypatch) -> None:
     assert result.level is audit_module.Level.ERROR
 
 
+def test_missing_command_interpreter_is_a_configuration_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            2,
+            "",
+            "bash: /tmp/empty/.local/bin/hatch: No such file or directory\n"
+            "make: *** [Makefile:882: check-docs-external-links] Error 127",
+        ),
+    )
+
+    result = audit_module.run_audit(audit_module.AUDITS[0], env={})
+
+    assert result.level is audit_module.Level.ERROR
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_rejected_required_credential_is_a_configuration_error(
+    monkeypatch, status
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0],
+            2,
+            "",
+            f"Zenodo returned HTTP {status} FORBIDDEN for deposition 21912280.\n"
+            "make: *** [Makefile:885: check-zenodo-live] Error 1",
+        ),
+    )
+
+    result = audit_module.run_audit(
+        audit_module.AUDITS[2], env={"ZENODO_TOKEN": "rejected-token"}
+    )
+
+    assert result.level is audit_module.Level.ERROR
+
+
 def test_missing_make_target_is_not_available_on_this_checkout(monkeypatch) -> None:
     monkeypatch.setattr(
         subprocess,

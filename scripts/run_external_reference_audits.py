@@ -81,6 +81,11 @@ _COMMAND_ERROR_MARKERS = (
     "No rule to make target",
     "Traceback (most recent call last):",
     "command not found",
+    "Error 127",
+)
+_REJECTED_CREDENTIAL_MARKERS = (
+    "Zenodo returned HTTP 401",
+    "Zenodo returned HTTP 403",
 )
 
 
@@ -139,6 +144,7 @@ def run_audit(
 
     output = _captured_output(completed.stdout, completed.stderr)
     if completed.returncode != 0:
+        # Compatibility until #2091 lands; remove once check-demo-links is on dev.
         if audit.command == ("make", "check-demo-links") and (
             "No rule to make target" in output
         ):
@@ -149,7 +155,10 @@ def run_audit(
                 output,
             )
         command_error = any(marker in output for marker in _COMMAND_ERROR_MARKERS)
-        level = Level.ERROR if command_error else Level.WARNING
+        rejected_credentials = bool(audit.required_env) and any(
+            marker in output for marker in _REJECTED_CREDENTIAL_MARKERS
+        )
+        level = Level.ERROR if command_error or rejected_credentials else Level.WARNING
         return Result(audit, level, f"exited {completed.returncode}", output)
 
     level = _level_from_output(output) if audit.parse_levels else Level.PASS
