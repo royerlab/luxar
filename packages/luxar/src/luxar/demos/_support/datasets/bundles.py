@@ -10,9 +10,9 @@ from typing import Optional
 
 from arbol import aprint, asection
 
+from ..downloads.zip_safety import _safe_extract_zip_member, _validate_zip_member_path
 from .cache import _DEFAULT_CACHE_ROOT, _cache_is_stale
 from .lfs import _DEMOS_DATA_DIR, _unshippable_reason, _validate_lfs_files
-from ..downloads.zip_safety import _safe_extract_zip_member, _validate_zip_member_path
 
 
 class BundleMemberNotFound(FileNotFoundError):

@@ -19,11 +19,11 @@ from luxar._zarr_compat import read_node_attrs
 from luxar.demos import demo_esm3_protein_landscape as demo
 from luxar.demos import require_module
 from luxar.demos._dependencies import MissingDependencyError
+from luxar.demos._support.downloads.download import QUARANTINE_SUFFIX
 from luxar.demos.demo_esm3_protein_landscape import (
     _compute_esm3_embeddings,
     generate_esm3_landscape,
 )
-from luxar.demos._support.downloads.download import QUARANTINE_SUFFIX
 
 SEQUENCES = ["MKV", "MTL", "MGG"]
 HEAVY_DEPS = ("torch", "esm", "umap")

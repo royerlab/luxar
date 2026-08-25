@@ -11,6 +11,32 @@ To run a demo:
 See demos/README.md for more information on creating new demos.
 """
 
+from ..utils.colors import hsv_to_rgb, stack_colorings
+from ..utils.scenes import (
+    create_lorenz_attractor,
+    create_random_spheres,
+    create_time_series_demo,
+)
+from ._caption import add_demo_caption, format_demo_caption
+from ._dependencies import (
+    INSTALL_SPECS,
+    DependencySpec,
+    DependencyStatus,
+    MissingDependencyError,
+    extras_for,
+    is_installed,
+    require_module,
+    substitutive_lod_or_flat,
+    survey,
+)
+from ._support._fields import (
+    FlowField,
+    add_reference_cube_to_scene,
+    cubic_bounds,
+    rk4_step,
+    trilinear_vector,
+    unit_flow,
+)
 from ._support.datasets.bundles import (
     BundleMemberNotFound,
     load_dataset_bundle,
@@ -18,7 +44,6 @@ from ._support.datasets.bundles import (
     load_precomputed_gsplats,
 )
 from ._support.datasets.cache import cache_computed, cached_download
-from ..utils.colors import hsv_to_rgb, stack_colorings
 from ._support.datasets.data_fetch import (
     LOCAL_FIT_DIRNAME,
     DatasetNotFound,
@@ -52,32 +77,7 @@ from ._support.runtime.provenance import (
     print_data_provenance,
     scene_is_current,
 )
-from ..utils.scenes import (
-    create_lorenz_attractor,
-    create_random_spheres,
-    create_time_series_demo,
-)
 from ._support.runtime.viewer import launch_viewer
-from ._caption import add_demo_caption, format_demo_caption
-from ._dependencies import (
-    INSTALL_SPECS,
-    DependencySpec,
-    DependencyStatus,
-    MissingDependencyError,
-    extras_for,
-    is_installed,
-    require_module,
-    substitutive_lod_or_flat,
-    survey,
-)
-from ._support._fields import (
-    FlowField,
-    add_reference_cube_to_scene,
-    cubic_bounds,
-    rk4_step,
-    trilinear_vector,
-    unit_flow,
-)
 
 __all__ = [
     "BUILDER_FINGERPRINT_ATTR",

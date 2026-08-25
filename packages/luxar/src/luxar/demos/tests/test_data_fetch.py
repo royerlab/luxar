@@ -1400,8 +1400,8 @@ def test_load_dataset_bundle_refreshes_frames_after_superseded_bundle_is_replace
     tmp_path, monkeypatch
 ):
     """A superseded extraction must not inherit the current bundle's stamp."""
-    from luxar.gsplats import gsplat_data
     from luxar.demos._support.datasets import bundles
+    from luxar.gsplats import gsplat_data
 
     monkeypatch.setattr(
         gsplat_data.GSplatData,
