@@ -118,9 +118,9 @@ export function showError(message: string, shortcutForAction?: ShortcutForAction
   const guidanceList = document.createElement('div');
   guidanceList.className = 'luxar-error-dialog__guidance-content';
   const datasetBrowserShortcut = escapeHtml(
-    shortcutForAction?.(KeyAction.toggleDatasetBrowser) ?? 'O'
+    shortcutForAction?.(KeyAction.toggleDatasetBrowser) || 'O'
   );
-  const helpShortcut = escapeHtml(shortcutForAction?.(KeyAction.toggleHelp) ?? 'H');
+  const helpShortcut = escapeHtml(shortcutForAction?.(KeyAction.toggleHelp) || 'H');
   guidanceList.innerHTML = `
     <div class="luxar-error-dialog__guidance-item">
       <strong>1. Add dataset to URL</strong><br/>

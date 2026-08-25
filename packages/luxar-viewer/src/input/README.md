@@ -72,9 +72,10 @@ open, its type-to-filter field consumes printable characters before viewer
 bindings run.
 
 `setInputEnabled(false)` suspends routed viewer keyboard input without deleting
-contexts or bindings; re-enabling restores the same registrations. The internal
-`reset()` lifecycle is stronger: it clears every binding and custom context,
-empties the context stack, and returns to `InputContext.NAVIGATION`.
+contexts or bindings; keyup cleanup still runs so held movement cannot remain
+latched, and re-enabling restores the same registrations. The internal `reset()`
+lifecycle is stronger: it clears every binding and custom context, empties the
+context stack, and returns to `InputContext.NAVIGATION`.
 
 The router is keyboard-only. Luxar registers its `window` `keydown`/`keyup`
 listeners in the bubble phase. A host that must preempt a chord independently

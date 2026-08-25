@@ -1418,6 +1418,8 @@ describe('LuxarApp', () => {
       expect(() => app.setDimensionValue(0, 1)).toThrow(/before init/);
       expect(() => app.recenterCamera()).toThrow(/before init/);
       expect(() => app.resize()).toThrow(/before init/);
+      expect(() => app.registerContext('annotation', { priority: 1 })).toThrow(/before init/);
+      expect(app.shortcutForAction('help.toggle')).toBeUndefined();
     });
 
     it('registers a scene-dims listener on init and removes it on dispose', async () => {

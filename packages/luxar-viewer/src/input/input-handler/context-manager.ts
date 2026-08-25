@@ -486,7 +486,9 @@ export class InputContextManager {
    * ```
    */
   public handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    if (!this.enabled) return false;
+    // Disabling suppresses new keydown actions, but keyup handlers must still
+    // run so held-state bindings (notably fly movement) cannot remain latched.
+    if (!this.enabled && type === 'down') return false;
 
     // Re-entrance guard: a misbehaving binding handler that triggers
     // another keyboard event through this manager could otherwise
@@ -817,10 +819,10 @@ export class InputContextManager {
   /**
    * Enable or disable the entire context manager.
    *
-   * When disabled, handleKeyEvent() immediately returns false without
-   * processing. Useful for temporarily suspending all context-based
-   * input handling (e.g., during initialization or modal dialogs that
-   * need to bypass the context system).
+   * When disabled, keydown events return false without processing. Keyup
+   * handlers still run so stateful bindings can release held input. Useful
+   * for temporarily suspending context-based input handling without leaving
+   * movement or modifier state latched.
    *
    * @param enabled - true to enable context management, false to disable
    */

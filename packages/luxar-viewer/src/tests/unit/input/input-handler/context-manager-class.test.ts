@@ -799,6 +799,26 @@ describe('InputContextManager', () => {
       expect(handled).toBe(false);
       expect(handler).not.toHaveBeenCalled();
     });
+
+    it('still routes keyup cleanup while disabled', () => {
+      const handler = vi.fn();
+      const keyupHandler = vi.fn();
+
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'w',
+        handler,
+        keyupHandler,
+      });
+
+      manager.setEnabled(false);
+      const keydown = new KeyboardEvent('keydown', { key: 'w' });
+      const keyup = new KeyboardEvent('keyup', { key: 'w' });
+
+      expect(manager.handleKeyEvent(keydown, 'down')).toBe(false);
+      expect(manager.handleKeyEvent(keyup, 'up')).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(keyupHandler).toHaveBeenCalledExactlyOnceWith(keyup);
+    });
   });
 
   describe('typing context', () => {
