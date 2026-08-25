@@ -27,11 +27,11 @@ ui/
 The main orchestrator. Owns:
 
 - **Button construction** — one button per `ControlRailItem` (passed at construction)
-- **Active-state refresh** — event-driven (click/keydown/luxar-layers-changed/luxar-control-mode-changed), rAF-debounced, reads each item's `isActive()` or `openSelector` to highlight open panels
+- **Active-state refresh** — event-driven (click/routed keydown/luxar-layers-changed/luxar-control-mode-changed), rAF-debounced, reads each item's `isActive()` or `openSelector` to highlight open panels
 - **Idle-dim behavior** — wakes on pointer movement (expanded) or hover (collapsed/fullscreen); schedules sleep after `IDLE_MS` (2600ms) unless `:hover` or `:focus-within`
 - **Collapse/expand** — chevron handle at the bottom; persisted to localStorage
 - **Fullscreen sync** — hides the rail (hover-to-reveal) when `document.fullscreenElement` exists
-- **First-run hint** — localStorage-gated one-time nudge ("New here? Hover these controls..."), auto-fades after 10s, dismisses on any click/keypress
+- **First-run hint** — localStorage-gated one-time nudge ("New here? Hover these controls..."), auto-fades after 10s, dismisses on any click or handled routed keypress
 - **Docked footer** — optional element (e.g. the performance readout) inserted above the collapse handle
 - **Overlay delegation** — opens flyouts/popovers via `RailOverlay` and re-syncs active-state when the overlay changes
 
@@ -42,11 +42,13 @@ The main orchestrator. Owns:
 - Manage idle/wake/collapse/fullscreen/hint behaviors
 - Blur buttons after pointer clicks so canvas/body shortcuts (e.g. Space = fullscreen) keep working
 - Reference-count the global `luxar-has-control-rail` body marker class (left-anchored panels offset to clear the rail)
+- Expose `closeOverlay()` for `PanelCoordinator` and `handleRoutedKeyDown()` for post-routing hint dismissal/refresh
 
 **Does NOT**:
 
 - Own panel logic (delegates to each item's `activate()` callback)
 - Own flyout/popover DOM (delegated to `RailOverlay`)
+- Own Escape routing (`PanelCoordinator` decides when overlays close)
 
 ### RailOverlay (rail-overlay.ts)
 
@@ -56,7 +58,7 @@ The flyout + panel-popover lifecycle coordinator. Owns:
 - **Flyout construction** — horizontal row of `ControlRailToggle` chips (e.g. View options: scale bar, legend, overlays, cinematic, fullscreen)
 - **Popover construction** — vertical panel hosting arbitrary rich controls built by `item.popover.build(host)` (lazy, rebuilt on each open; teardown callback run on close)
 - **Positioning** — flyouts align vertically with their button; popovers anchor near their button and clamp inside the viewport
-- **Focus return** — when closing via Escape (focus inside the overlay), returns focus to the opener button
+- **Focus return** — when `PanelCoordinator` closes the overlay for Escape (focus inside it), returns focus to the opener button
 - **Outside-click dismissal** — via `maybeCloseOnPointer(e)` (called by ControlRail's document pointerdown listener)
 - **Viewport-change sync** — flyout tooltip flip (--up modifier) recalculates on resize/fullscreenchange while open
 
@@ -118,16 +120,16 @@ const rail = new ControlRail(items: ControlRailItem[], footer?: HTMLElement);
    - `root.focusin` → wake (keyboard focus entering)
    - `document.fullscreenchange` / `webkitfullscreenchange` → `syncFullscreen()`
    - `document.pointerdown` (capture) → dismiss hint + `overlay.maybeCloseOnPointer(e)`
-   - `document.keydown` → dismiss hint + overlay close on Escape + schedule refresh
    - `document.click` → schedule refresh (active-state may have changed)
    - `window.luxar-layers-changed` → schedule refresh (Layers disabled state)
    - `window.luxar-control-mode-changed` → schedule refresh (Navigation icon/tooltip)
-6. Shows the first-run hint (localStorage-gated)
-7. Increments `bodyMarkerRefs` and adds `luxar-has-control-rail` to `document.body`
+6. Receives handled keydowns from `InputHandler.handleRoutedKeyDown()` to dismiss the hint and schedule refresh
+7. Shows the first-run hint (localStorage-gated)
+8. Increments `bodyMarkerRefs` and adds `luxar-has-control-rail` to `document.body`
 
 ### Refresh Cycle (Event-Driven)
 
-**Triggers**: document click, keydown, `luxar-layers-changed`, `luxar-control-mode-changed`, overlay open/close, fullscreen change.
+**Triggers**: document click, handled routed keydown, `luxar-layers-changed`, `luxar-control-mode-changed`, overlay open/close, fullscreen change.
 
 **Flow** (rAF-debounced via `scheduleRefresh()`):
 

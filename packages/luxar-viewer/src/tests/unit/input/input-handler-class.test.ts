@@ -28,7 +28,6 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { InputHandler } from '../../../input/input-handler';
-import { InputContext } from '../../../input/input-handler/context-manager';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';

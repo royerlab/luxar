@@ -55,7 +55,7 @@ import {
 import { describeNavigableKeys } from './input-handler/dimension-navigation/selection';
 import {
   PanelCoordinator,
-  type OverlayCloseHandle,
+  type ControlRailHandle,
 } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
@@ -160,7 +160,7 @@ export class InputHandler {
    * once `debugConsole` and `animationController` are available.
    */
   private panelCoordinator: PanelCoordinator;
-  private controlRail?: OverlayCloseHandle & { handleRoutedKeyDown(): void };
+  private controlRail?: ControlRailHandle;
 
   /**
    * Window-event concern: owns resize / wheel / fullscreenchange.
@@ -299,7 +299,7 @@ export class InputHandler {
     this.panelCoordinator.setLayersPanel(panel);
   }
 
-  setControlRail(rail: (OverlayCloseHandle & { handleRoutedKeyDown(): void }) | undefined): void {
+  setControlRail(rail: ControlRailHandle | undefined): void {
     this.controlRail = rail;
     this.panelCoordinator.setControlRail(rail);
   }

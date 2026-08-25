@@ -329,9 +329,9 @@ describe('LuxarApp', () => {
     });
 
     it('cross-links every documented orchestrator pair', async () => {
-      // core.md C3 fix: previous version asserted only 2 of the 8 cross-link
-      // edges the orchestrator wires. Mutations dropping any of the other
-      // six would have slipped through silently. Pin them all here.
+      // core.md C3 fix: previous coverage asserted only two orchestrator
+      // cross-links. Mutations dropping any remaining edge would have slipped
+      // through silently. Pin the complete graph here.
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
