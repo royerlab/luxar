@@ -345,8 +345,8 @@ dependencies = [
 # benchmark took the suite from 45.5/44.0/47.5 min to 15.8/16.6/16.9 for the
 # SAME 6261 passed / 288 skipped and 86.44% coverage; CI now uses `-n 2` to fit
 # the runner's 12 GiB memory cap. Neither thread pinning nor process parallelism
-# buys the same result alone. None of the thread pin reached `hatch run test`,
-# the documented pre-push gate, until now.
+# buys the same result alone. The thread pin did not reach `hatch run test`, the
+# documented pre-push gate, until now.
 #
 # Set here rather than in conftest.py so the pin also reaches the subprocesses
 # some tests spawn (`luxar gsplat fit --tile`, the `-j 2` worker pools), and so

@@ -495,17 +495,18 @@ jobs:
     # The suite runs under pytest-xdist ON THE SELF-HOSTED BOX ONLY (see
     # PYTEST_ADDOPTS below; hosted runners stay serial). The old note
     # here said xdist "doesn't help on the 1-core runner" — true of a 2-core
-    # GitHub VM, and false on the 16-core self-hosted box, where it cut each leg
-    # from ~45 min to ~16. Combined with the thread pinning below; neither works
-    # without the other.
+    # GitHub VM, and false on the 16-core self-hosted box, where the original
+    # `-n 4` benchmark cut each leg from ~45 min to ~16. Combined with the thread
+    # pinning below; neither works without the other. The memory-safe `-n 2`
+    # coverage run now takes 1:16:49 under the runner's CPU and memory limits.
     #
     # 120, not 60, because the self-hosted runners are deliberately SCHED_IDLE
     # (see luxar-ci-slot@.service): CI only gets CPU nobody else on that box
     # wants, so a sustained burst from the other workloads there can stretch a
     # leg arbitrarily. That is starvation, not a hang, and the heartbeat cannot
     # detect it — an idle-priority job is perfectly healthy, just slow. A
-    # timeout here would be a self-inflicted red. Measured: 16.9 min under xdist,
-    # 47.5 min in the pre-xdist serial worst case.
+    # timeout here would be a self-inflicted red. The measured `-n 2` capped run
+    # takes 1:16:49, about 64% of this limit before SCHED_IDLE contention.
     timeout-minutes: 120
     strategy:
       # Report every interpreter's verdict in one run: fail-fast would cancel the
@@ -566,10 +567,10 @@ jobs:
       NUMEXPR_NUM_THREADS: '1'
       # Worker count must fit both the MACHINE and the runner cgroup. Four
       # coverage-traced workers plus the controller repeatedly reached the
-      # obsidian slot's exact 12 GiB memory.max; one held 3.14 leg then lost its
-      # whole process tree at 15% with exit 143. Three workers still reached
+      # obsidian slot's exact 12 GiB memory.max. Three workers still reached
       # 12.59 GB in a matching capped run (9.60 GB anonymous RSS), leaving under
-      # 300 MB. Two workers retain parallelism without running at the hard limit.
+      # 300 MB. Two workers completed at a 10.28 GB peak with zero cgroup max,
+      # OOM, or OOM-kill events, retaining parallelism without the hard limit.
       # `--dist loadfile` also keeps each file's shared fixtures on one worker,
       # matching the repository's parallel test contract instead of rebuilding
       # them as xdist's default load scheduler moves individual tests around.
@@ -580,9 +581,9 @@ jobs:
       # the OOM killer takes the runner agent with them. That would have broken
       # the fallback path, i.e. exactly the safety net obsidian relies on.
       #
-      # Hosted stays serial (21.3/23.8/23.4 min). PYTEST_ADDOPTS is read by
-      # pytest itself, so the shared `test-cov` script stays machine-agnostic
-      # for local use.
+      # Hosted stays serial (about 1h17m in recent fallback runs).
+      # PYTEST_ADDOPTS is read by pytest itself, so the shared `test-cov` script
+      # stays machine-agnostic for local use.
       PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2 --dist loadfile' || '' }}
     steps:
       - name: Free disk space (hosted-runner fallback)
