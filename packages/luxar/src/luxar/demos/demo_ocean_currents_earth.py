@@ -104,6 +104,11 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.partition import (
+    BSPNode,
+    persist_pruned_bsp_tree,
+    spatial_bsp_tree,
+)
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     BUILDER_FINGERPRINT_ATTR,
@@ -152,9 +157,14 @@ N_GLOBE: Final = 8_000_000  # jittered Fibonacci-sphere surface points
 GLOBE_RADII: Final = 0.098  # ~0.78x mean point spacing -> a sealed shell
 N_SEEDS: Final = 220_000  # streamlines
 N_STEPS: Final = 52  # advection steps per streamline (-> N_STEPS + 1 vertices)
+N_PARTITIONS: Final = 32
+LOD_THINNING: Final = (16, 8, 4, 2, 1)
+LOD_COVERAGE_FRACTIONS: Final = (0.0, 0.08, 0.20, 0.45, 0.90)
 STEP_KM: Final = 14.0  # arc-length step -> ~730 km ribbons
 FIELD_STRIDE: Final = 2  # subsample the 1/12 deg grid for advection
-FLOW_LIFT: Final = 0.0015  # lift ribbons just clear of the globe shell
+# Clear the coarsest globe shell, whose point radius is enlarged by
+# sqrt(LOD_THINNING[0]) to preserve surface coverage.
+FLOW_LIFT: Final = 0.0045
 LINE_WIDTH: Final = 0.026
 LINE_OPACITY: Final = 0.77
 LINE_INTENSITY: Final = 1.0
@@ -402,6 +412,64 @@ def polyline_segment_indices(n_paths: int, n_vertices: int) -> np.ndarray:
     return np.stack([starts, starts + 1], axis=-1).reshape(-1).astype(np.uint32)
 
 
+def _partition_indices_by_tree(
+    positions: np.ndarray, tree: BSPNode
+) -> list[np.ndarray]:
+    """Assign points to the leaves of an existing BSP split-plane tree."""
+    parts: list[np.ndarray] = []
+
+    def visit(node: BSPNode, indices: np.ndarray) -> None:
+        if node.is_leaf:
+            parts.append(indices)
+            return
+        assert node.axis is not None and node.split is not None
+        assert node.left is not None and node.right is not None
+        left_mask = positions[indices, node.axis] < node.split
+        visit(node.left, indices[left_mask])
+        visit(node.right, indices[~left_mask])
+
+    visit(tree, np.arange(len(positions), dtype=np.intp))
+    return parts
+
+
+def shared_globe_partitions(
+    globe_positions: np.ndarray,
+    ribbon_vertices: np.ndarray,
+    n_vertices_per_ribbon: int,
+    *,
+    n_partitions: int = N_PARTITIONS,
+) -> tuple[list[np.ndarray], list[np.ndarray], BSPNode]:
+    """Partition globe points and whole ribbons with one median BSP."""
+    if n_partitions < 1 or n_partitions & (n_partitions - 1):
+        raise ValueError(
+            f"n_partitions must be a positive power of two, got {n_partitions}"
+        )
+    if n_vertices_per_ribbon < 2:
+        raise ValueError(
+            f"n_vertices_per_ribbon must be >= 2, got {n_vertices_per_ribbon}"
+        )
+    if len(ribbon_vertices) % n_vertices_per_ribbon:
+        raise ValueError(
+            "ribbon vertex count must be divisible by n_vertices_per_ribbon"
+        )
+    n_ribbons = len(ribbon_vertices) // n_vertices_per_ribbon
+    if n_ribbons < n_partitions:
+        raise ValueError(
+            f"need at least one ribbon per partition; got {n_ribbons} ribbons "
+            f"for {n_partitions} partitions"
+        )
+
+    centroids = ribbon_vertices.reshape(n_ribbons, n_vertices_per_ribbon, -1).mean(
+        axis=1
+    )
+    max_ribbons = (n_ribbons + n_partitions - 1) // n_partitions
+    tree = spatial_bsp_tree(centroids, max_ribbons, rule="median")
+    ribbon_parts = [leaf.indices for leaf in tree.leaves()]
+    assert all(part is not None for part in ribbon_parts)
+    point_parts = _partition_indices_by_tree(globe_positions, tree)
+    return point_parts, [part for part in ribbon_parts if part is not None], tree
+
+
 def seed_ocean_points(
     field: LonLatField, n: int, *, seed: int = 0, min_speed: float = MIN_SEED_SPEED
 ) -> tuple:
@@ -554,6 +622,16 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
             f"{n_paths:,} ribbons, {len(indices) // 2:,} segments, {total:,} vertices"
         )
 
+    with asection(f"Partitioning both layers into {N_PARTITIONS} shared tiles"):
+        globe_parts, ribbon_parts, bsp_tree = shared_globe_partitions(
+            gpos, vertices, n_vertices
+        )
+        aprint(
+            f"globe points/tile: {min(map(len, globe_parts)):,}.."
+            f"{max(map(len, globe_parts)):,}; ribbons/tile: "
+            f"{min(map(len, ribbon_parts)):,}..{max(map(len, ribbon_parts)):,}"
+        )
+
     with asection("Writing scene"):
         dims = Dimensions(
             [
@@ -580,11 +658,10 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
             )
             scene.attrs["title"] = "Ocean Currents of Earth — HYCOM surface circulation"
             scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
-            scene.add_points(
+            earth = scene.add_partition_group(
                 "earth",
-                positions=gpos,
-                radii=GLOBE_RADII,
-                colors=gcolors,
+                display_type="points",
+                max_elements=max(map(len, globe_parts)),
                 # `opaque`, NOT `normal` — the globe is the BACKDROP. Opaque is
                 # the only mode that leaves the viewer's sorted transparent set
                 # and the only one that unconditionally depth-writes, so it is
@@ -593,37 +670,57 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 blending_mode="opaque",
                 opacity=1.0,
                 layer=True,
-                # A geometric `stream:` ladder gives a fast first paint where a
-                # stratified sampler would dump ~all 8M into one final commit.
-                additive_lod=dict(counts="stream:20000", method="random", seed=0),
-                # 8M points exceed a single Points node's element-texture cap
-                # (1365 * maxTextureSize points; 5,591,040 on a 4096-class GPU)
-                # just as the ribbons exceed the segment cap, and the clamp is
-                # equally silent. Partition to stay under the bound; each part
-                # carries its own stream ladder.
-                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
             )
-            scene.add_lines(
+            currents = scene.add_partition_group(
                 "currents",
-                vertices=vertices,
-                widths=LINE_WIDTH,
-                colors=colors,
-                indices=indices,
-                line_type="indexed",
+                display_type="lines",
+                max_elements=max(map(len, ribbon_parts)) * n_vertices,
                 # `normal`, NOT `additive` — see the module docstring: additive
                 # ignores depth, so far-side currents bleed across the continents.
                 blending_mode="normal",
                 opacity=LINE_OPACITY,
                 intensity=LINE_INTENSITY,
                 layer=True,
-                # 11.66M vertices / 11.44M segments blow past a single Lines
-                # node's element-texture cap (682 * maxTextureSize segments;
-                # 2,793,472 on a 4096-class GPU), which clamps the tail silently.
-                # Auto-partition the ribbons (polyline-centroid BSP, each ribbon
-                # atomic) so every part stays under the bound; the wrapper is one
-                # `kind=partition` "currents" node in the Layers panel.
-                partition=dict(max_elements=MAX_LINE_VERTICES_PER_NODE),
             )
+            ribbon_positions = vertices.reshape(n_paths, n_vertices, 3)
+            ribbon_colors = colors.reshape(n_paths, n_vertices, 4)
+            for part_index, (globe_ids, ribbon_ids) in enumerate(
+                zip(globe_parts, ribbon_parts, strict=True)
+            ):
+                earth_lod = earth.add_lod_group(
+                    f"part_{part_index}", selector="screen-area"
+                )
+                currents_lod = currents.add_lod_group(
+                    f"part_{part_index}", selector="screen-area"
+                )
+                for level, (thinning, coverage) in enumerate(
+                    zip(LOD_THINNING, LOD_COVERAGE_FRACTIONS, strict=True)
+                ):
+                    level_globe_ids = globe_ids[::thinning]
+                    earth_lod.add_points(
+                        f"level_{level}",
+                        positions=gpos[level_globe_ids],
+                        radii=GLOBE_RADII * np.sqrt(thinning),
+                        colors=gcolors[level_globe_ids],
+                        coverage_fraction=coverage,
+                    )
+
+                    level_ribbon_ids = ribbon_ids[::thinning]
+                    level_vertices = ribbon_positions[level_ribbon_ids].reshape(-1, 3)
+                    currents_lod.add_lines(
+                        f"level_{level}",
+                        vertices=level_vertices,
+                        widths=LINE_WIDTH * thinning,
+                        colors=ribbon_colors[level_ribbon_ids].reshape(-1, 4),
+                        indices=polyline_segment_indices(
+                            len(level_ribbon_ids), n_vertices
+                        ),
+                        line_type="indexed",
+                        coverage_fraction=coverage,
+                    )
+            serialized_tree = bsp_tree.to_serializable()
+            persist_pruned_bsp_tree(earth, serialized_tree, range(N_PARTITIONS))
+            persist_pruned_bsp_tree(currents, serialized_tree, range(N_PARTITIONS))
             scene.add_text(
                 "Ocean Currents of Earth",
                 position=(0.02, 0.02),

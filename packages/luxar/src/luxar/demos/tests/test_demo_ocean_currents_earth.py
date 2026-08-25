@@ -18,7 +18,10 @@ from luxar._zarr_compat import consolidate, open_group
 from luxar.demos import demo_global_rivers_earth, demo_ocean_currents_earth
 from luxar.demos._globe_common import surface_point_radius
 from luxar.demos.demo_ocean_currents_earth import (
+    GLOBE_RADII,
     LINE_OPACITY,
+    LINE_WIDTH,
+    LOD_THINNING,
     MAX_GLOBE_POINTS_PER_NODE,
     MAX_LINE_VERTICES_PER_NODE,
     N_GLOBE,
@@ -34,6 +37,7 @@ from luxar.demos.demo_ocean_currents_earth import (
     polyline_segment_indices,
     sample_equirect,
     seed_ocean_points,
+    shared_globe_partitions,
 )
 from luxar.typing_utils.constants import (
     MAX_POINTS_PER_POINTS_NODE,
@@ -404,6 +408,60 @@ def test_segment_indices_reject_degenerate_paths() -> None:
         polyline_segment_indices(4, 1)
 
 
+def test_shared_globe_partitions_preserve_inputs_and_split_planes() -> None:
+    globe = np.array(
+        [[-3.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    ribbons = np.array(
+        [
+            [-3.0, 0.0, 0.0],
+            [-2.5, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [-0.5, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.5, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [3.5, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    globe_parts, ribbon_parts, tree = shared_globe_partitions(
+        globe, ribbons, 2, n_partitions=4
+    )
+
+    assert len(globe_parts) == len(ribbon_parts) == 4
+    assert np.array_equal(np.sort(np.concatenate(globe_parts)), np.arange(4))
+    assert np.array_equal(np.sort(np.concatenate(ribbon_parts)), np.arange(4))
+    assert tree.to_serializable()["left"]["left"] == {"part": 0}
+    for globe_ids, ribbon_ids in zip(globe_parts, ribbon_parts, strict=True):
+        assert len(globe_ids) == len(ribbon_ids) == 1
+        assert globe_ids[0] == ribbon_ids[0]
+
+
+@pytest.mark.parametrize("n_partitions", [0, 3])
+def test_shared_globe_partitions_reject_non_power_of_two_parts(
+    n_partitions: int,
+) -> None:
+    with pytest.raises(ValueError, match="positive power of two"):
+        shared_globe_partitions(
+            np.zeros((4, 3), dtype=np.float32),
+            np.zeros((8, 3), dtype=np.float32),
+            2,
+            n_partitions=n_partitions,
+        )
+
+
+def test_lod_scaling_preserves_surface_coverage_and_ribbon_ink() -> None:
+    finest = LOD_THINNING[-1]
+    for thinning in LOD_THINNING:
+        assert GLOBE_RADII * np.sqrt(thinning) == pytest.approx(
+            GLOBE_RADII * np.sqrt(thinning / finest)
+        )
+        assert (1.0 / thinning) * (LINE_WIDTH * thinning) == pytest.approx(LINE_WIDTH)
+
+
 def test_per_node_budget_stays_under_the_segment_texture_bound() -> None:
     """The per-part vertex budget must stay under one Lines node's segment cap.
 
@@ -438,7 +496,7 @@ def test_per_node_globe_budget_stays_under_the_point_texture_bound() -> None:
 
 
 def test_both_geometry_nodes_are_actually_partitioned() -> None:
-    """`partition=` must reach `add_lines`/`add_points`, not just be budgeted.
+    """Both layers must be a partition of per-tile substitutive ladders.
 
     The budget constants above only prove the NUMBERS are right. #1957 was a
     scene built before `partition=` was passed at all: the ribbons overflowed a
@@ -447,10 +505,15 @@ def test_both_geometry_nodes_are_actually_partitioned() -> None:
     the North Atlantic missing. Nothing failed, so pin the call itself.
     """
     source = Path(demo_ocean_currents_earth.__file__).read_text()
-    lines_call = source.split("scene.add_lines(")[1].split("scene.add_text(")[0]
-    points_call = source.split("scene.add_points(")[1].split("scene.add_lines(")[0]
-    assert "partition=dict(max_elements=MAX_LINE_VERTICES_PER_NODE)" in lines_call
-    assert "partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE)" in points_call
+    writer = source.split("earth = scene.add_partition_group(")[1].split(
+        "scene.add_text("
+    )[0]
+    assert "currents = scene.add_partition_group(" in writer
+    assert writer.count('selector="screen-area"') == 2
+    assert "earth_lod.add_points(" in writer
+    assert "currents_lod.add_lines(" in writer
+    assert writer.count("persist_pruned_bsp_tree(") == 2
+    assert "serialized_tree = bsp_tree.to_serializable()" in writer
 
 
 def test_layer_appearance_matches_the_authored_intent() -> None:
@@ -463,10 +526,14 @@ def test_layer_appearance_matches_the_authored_intent() -> None:
     across the continents) at the tuned opacity.
     """
     source = Path(demo_ocean_currents_earth.__file__).read_text()
-    points_call = source.split("scene.add_points(")[1].split("scene.add_lines(")[0]
-    lines_call = source.split("scene.add_lines(")[1].split("scene.add_text(")[0]
-    assert 'blending_mode="opaque"' in points_call
-    assert 'blending_mode="normal"' in lines_call
+    earth_wrapper = source.split("earth = scene.add_partition_group(")[1].split(
+        "currents = scene.add_partition_group("
+    )[0]
+    currents_wrapper = source.split("currents = scene.add_partition_group(")[1].split(
+        "ribbon_positions ="
+    )[0]
+    assert 'blending_mode="opaque"' in earth_wrapper
+    assert 'blending_mode="normal"' in currents_wrapper
     assert LINE_OPACITY == pytest.approx(0.77)
 
 
