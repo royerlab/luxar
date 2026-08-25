@@ -56,6 +56,16 @@ export type ChunkFetchOutcome =
  */
 export interface ArchiveByteReader {
   get(key: string): Promise<Uint8Array | undefined>;
+  /**
+   * Fresh identity of the container, bypassing caches — an opaque token, so
+   * this layer needs to know nothing about ETags or HTTP. `null` means "cannot
+   * tell", which is never evidence of a change.
+   *
+   * The container answers this rather than the caller because it is a request
+   * against the same URL the container already reads: doing it here lets one
+   * `HEAD` serve both identity and the archive length.
+   */
+  probeIdentity?(signal?: AbortSignal): Promise<string | null>;
   dispose(): void;
 }
 

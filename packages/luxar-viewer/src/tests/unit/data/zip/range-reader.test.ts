@@ -183,3 +183,147 @@ describe('LuxarHttpRangeReader.read', () => {
     await expect(reader.read(0, 1)).rejects.toThrow(/changed size during the read/);
   });
 });
+
+describe('LuxarHttpRangeReader.probeIdentity', () => {
+  it('prefers the ETag', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response(new Uint8Array(0), {
+          headers: { etag: '"abc123"', 'content-length': '4096' },
+        })
+      )
+    );
+
+    expect(await new LuxarHttpRangeReader(URL_).probeIdentity()).toBe('etag:"abc123"');
+  });
+
+  it('falls back to modification time AND size when there is no ETag', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response(new Uint8Array(0), {
+          headers: { 'last-modified': 'Mon, 01 Jan 2035 00:00:00 GMT', 'content-length': '4096' },
+        })
+      )
+    );
+
+    expect(await new LuxarHttpRangeReader(URL_).probeIdentity()).toBe(
+      'mtime:Mon, 01 Jan 2035 00:00:00 GMT:4096'
+    );
+  });
+
+  it('returns null rather than a false verdict when it cannot tell', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      })
+    );
+    expect(await new LuxarHttpRangeReader(URL_).probeIdentity()).toBeNull();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(new Uint8Array(0), { headers: {} }))
+    );
+    expect(await new LuxarHttpRangeReader(URL_).probeIdentity()).toBeNull();
+  });
+
+  it('SEEDS the length, so getLength costs no second request', async () => {
+    // The whole point of the probe living here: identity and length are the
+    // same HEAD, and paying twice adds a serialised round trip to every load.
+    const fetchMock = vi.fn(async () =>
+      response(new Uint8Array(0), { headers: { etag: '"x"', 'content-length': '9001' } })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const reader = new LuxarHttpRangeReader(URL_);
+    await reader.probeIdentity();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    expect(await reader.getLength()).toBe(9001);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('LuxarHttpRangeReader — retained ranges', () => {
+  it('serves a read contained in an already-retained range from memory', async () => {
+    // This is the guaranteed duplication: unzipit reads a fixed 65,557-byte
+    // tail, then re-reads the central directory sitting inside it.
+    const body = new Uint8Array(Array.from({ length: 100 }, (_, i) => i));
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit = {}) => {
+      const header = (init.headers as Record<string, string> | undefined)?.Range ?? '';
+      const [, start, end] = /bytes=(\d+)-(\d+)/.exec(header) ?? [];
+      const from = Number(start);
+      const to = Number(end);
+      return response(body.slice(from, to + 1), {
+        status: 206,
+        headers: { 'content-range': `bytes ${from}-${to}/100` },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const reader = new LuxarHttpRangeReader(URL_);
+    reader.retainReads(true);
+    await reader.read(0, 100);
+    const afterFirst = fetchMock.mock.calls.length;
+
+    const inner = await reader.read(10, 5);
+
+    expect(Array.from(inner)).toEqual([10, 11, 12, 13, 14]);
+    expect(fetchMock.mock.calls.length).toBe(afterFirst);
+  });
+
+  it('STITCHES a read that overruns a retained range, fetching only the gap', async () => {
+    // The case this class exists for, and the one plain containment misses:
+    // unzipit retains a 65,557-byte tail and then asks for a central directory
+    // LARGER than it, starting before it. Only the missing prefix should move.
+    const body = new Uint8Array(Array.from({ length: 100 }, (_, i) => i));
+    const asked: string[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit = {}) => {
+      const header = (init.headers as Record<string, string> | undefined)?.Range ?? '';
+      asked.push(header);
+      const [, start, end] = /bytes=(\d+)-(\d+)/.exec(header) ?? [];
+      const from = Number(start);
+      const to = Number(end);
+      return response(body.slice(from, to + 1), {
+        status: 206,
+        headers: { 'content-range': `bytes ${from}-${to}/100` },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const reader = new LuxarHttpRangeReader(URL_);
+    reader.retainReads(true);
+    await reader.read(60, 40); // the "tail": [60, 100)
+    asked.length = 0;
+
+    // Overlaps the tail but starts before it — exactly the directory's shape.
+    const stitched = await reader.read(50, 30); // [50, 80)
+
+    expect(Array.from(stitched)).toEqual(Array.from({ length: 30 }, (_, i) => 50 + i));
+    // One request, and only for the 10 missing bytes.
+    expect(asked).toEqual(['bytes=50-59']);
+  });
+
+  it('does NOT retain once the directory phase is over', async () => {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit = {}) => {
+      const header = (init.headers as Record<string, string> | undefined)?.Range ?? '';
+      const [, start, end] = /bytes=(\d+)-(\d+)/.exec(header) ?? [];
+      return response(new Uint8Array(Number(end) - Number(start) + 1), {
+        status: 206,
+        headers: { 'content-range': `bytes ${start}-${end}/100` },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    // Member payloads are cached a layer up by chunk key; retaining them here
+    // would double the memory for the same bytes.
+    const reader = new LuxarHttpRangeReader(URL_);
+    await reader.read(0, 50);
+    const afterFirst = fetchMock.mock.calls.length;
+    await reader.read(10, 5);
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(afterFirst);
+  });
+});

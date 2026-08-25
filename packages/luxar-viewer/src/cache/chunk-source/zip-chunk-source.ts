@@ -68,48 +68,25 @@ export class ZipChunkSource implements ChunkSource {
   }
 
   /**
-   * Identity of the archive, from a fresh `HEAD`.
+   * Identity of the archive, delegated to the container.
    *
    * A directory store re-reads its root `zarr.json` to answer "is this still
    * the scene I cached?". An archive cannot: its root attrs live inside the
    * file, and the reader's central directory is a snapshot — a replaced archive
-   * would keep answering from the old offsets. One `HEAD` on the archive covers
+   * would keep answering from the old offsets. One probe on the archive covers
    * the WHOLE store instead, which is both cheaper and a stronger guarantee
    * than a single document's hash.
    *
-   * `ETag` first, falling back to `Last-Modified` + `Content-Length`. `null`
-   * when neither is available, which the store treats as "cannot tell" (not as
-   * evidence of a change).
-   *
-   * Requires the headers to be readable cross-origin; `luxar serve` exposes
-   * them (`cli/serving.py`), since the viewer and data are on different ports
-   * in the documented setup.
+   * The reader owns the request so its `HEAD` also seeds the archive length,
+   * which the zip reader would otherwise fetch a second time. Requires the
+   * headers to be readable cross-origin; `luxar serve` exposes them.
    */
   async probeIdentityToken(options: {
     signal?: AbortSignal;
     timeoutMsOverride?: number;
   }): Promise<RemoteValidationToken | null> {
-    try {
-      const response = await fetch(this.archiveUrl, {
-        method: 'HEAD',
-        cache: 'no-store',
-        signal: options.signal,
-      });
-      if (!response.ok) return null;
-
-      const etag = response.headers.get('etag');
-      if (etag) return { hash: `etag:${etag}`, mode: 'archive-etag' };
-
-      const modified = response.headers.get('last-modified');
-      const length = response.headers.get('content-length');
-      if (modified && length) {
-        return { hash: `mtime:${modified}:${length}`, mode: 'archive-etag' };
-      }
-      return null;
-    } catch {
-      // Offline, CORS, or aborted — all "cannot tell", never "changed".
-      return null;
-    }
+    const hash = await this.reader.probeIdentity?.(options.signal);
+    return hash ? { hash, mode: 'archive-etag' } : null;
   }
 
   dispose(): void {

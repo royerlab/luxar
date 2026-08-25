@@ -23,3 +23,12 @@ the other's members undetected.
 Image overlays and local drag-and-drop of an archive remain unsupported; both need a path
 that does not exist yet (reading an overlay through the store rather than by URL, and
 loading a dataset from a file rather than a URL).
+
+Reading an archive also stops re-downloading part of its own index. The zip reader is
+given a fixed 65,557-byte window to locate the end-of-central-directory record, and then
+asks for the central directory itself — which sits immediately before that window and is
+mostly inside it. Those bytes were being transferred twice on every load. The reader now
+retains what the directory read touched and splices, fetching only the part it is missing:
+measured 152 kB → 88 kB per visit at ~1000 members. The identity probe and the archive
+length are also one request now instead of two, since they were asking the same server the
+same question.

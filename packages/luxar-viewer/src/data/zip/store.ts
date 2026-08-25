@@ -52,8 +52,20 @@ export class LuxarZipStore implements AsyncReadable {
   #store: ZipFileStore | undefined;
   #opening: Promise<ZipFileStore> | undefined;
   #disposed = false;
+  readonly #reader: LuxarHttpRangeReader;
 
-  constructor(private readonly url: string) {}
+  constructor(private readonly url: string) {
+    this.#reader = new LuxarHttpRangeReader(url);
+  }
+
+  /**
+   * Fresh identity of the archive, delegated to the reader so the `HEAD` it
+   * costs also seeds the length {@link ZipFileStore} would otherwise ask for
+   * separately.
+   */
+  probeIdentity(signal?: AbortSignal): Promise<string | null> {
+    return this.#reader.probeIdentity(signal);
+  }
 
   /**
    * Resolve the underlying store, reading the central directory on the first
@@ -65,13 +77,19 @@ export class LuxarZipStore implements AsyncReadable {
     if (this.#disposed) throw new Error(`Zipped store already disposed: ${this.url}`);
 
     this.#opening ??= (async () => {
-      const store = new ZipFileStore(
-        new LuxarHttpRangeReader(this.url),
-        createZipStoreOptions(this.url)
-      );
-      // Force the directory read HERE so a failure surfaces as this promise
-      // rejecting — and so the memoize-on-success below is meaningful.
-      await store.has('/zarr.json' as AbsolutePath);
+      const store = new ZipFileStore(this.#reader, createZipStoreOptions(this.url));
+      // Retain the ranges the DIRECTORY read touches, and only those: unzipit
+      // reads a fixed 65,557-byte tail and then re-reads the central directory
+      // that mostly sits inside it. Member payloads are cached a layer up, by
+      // chunk key, so retaining them here would only double the memory.
+      this.#reader.retainReads(true);
+      try {
+        // Force the directory read HERE so a failure surfaces as this promise
+        // rejecting — and so the memoize-on-success below is meaningful.
+        await store.has('/zarr.json' as AbsolutePath);
+      } finally {
+        this.#reader.retainReads(false);
+      }
       return store;
     })()
       .then((store) => {

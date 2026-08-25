@@ -29,16 +29,6 @@ function fakeReader(
 
 const emptyReader = () => fakeReader(async () => undefined);
 
-function headResponse(headers: Record<string, string>, ok = true): Response {
-  return {
-    ok,
-    status: ok ? 200 : 404,
-    statusText: '',
-    headers: new Headers(headers),
-    arrayBuffer: async () => new ArrayBuffer(0),
-  } as unknown as Response;
-}
-
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -55,67 +45,39 @@ describe('ZipChunkSource — identity', () => {
 });
 
 describe('ZipChunkSource — identity probe', () => {
-  it('prefers the ETag', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => headResponse({ etag: '"abc123"', 'last-modified': 'Mon, 01 Jan 2035' }))
-    );
+  // The HEAD itself lives in the reader (so the one request also seeds the
+  // archive length) — see range-reader.test.ts. What matters here is that the
+  // source forwards it and labels the result.
+  it('wraps the container token as an archive-etag verdict', async () => {
+    const reader = fakeReader(async () => undefined);
+    reader.probeIdentity = async () => 'etag:"abc123"';
 
-    const token = await new ZipChunkSource(ARCHIVE_URL, emptyReader()).probeIdentityToken({});
+    const token = await new ZipChunkSource(ARCHIVE_URL, reader).probeIdentityToken({});
 
     expect(token).toEqual({ hash: 'etag:"abc123"', mode: 'archive-etag' });
   });
 
-  it('falls back to modification time AND size when there is no ETag', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        headResponse({ 'last-modified': 'Mon, 01 Jan 2035 00:00:00 GMT', 'content-length': '4096' })
-      )
-    );
+  it('reports null — never a change verdict — when the container cannot tell', async () => {
+    const reader = fakeReader(async () => undefined);
+    reader.probeIdentity = async () => null;
 
-    const token = await new ZipChunkSource(ARCHIVE_URL, emptyReader()).probeIdentityToken({});
-
-    expect(token?.mode).toBe('archive-etag');
-    expect(token?.hash).toContain('4096');
+    expect(await new ZipChunkSource(ARCHIVE_URL, reader).probeIdentityToken({})).toBeNull();
   });
 
-  it('uses HEAD and bypasses the browser cache', async () => {
-    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
-      headResponse({ etag: '"x"' })
-    );
-    vi.stubGlobal('fetch', fetchMock);
+  it('forwards the abort signal to the container', async () => {
+    const seen: (AbortSignal | undefined)[] = [];
+    const reader = fakeReader(async () => undefined);
+    reader.probeIdentity = async (signal) => {
+      seen.push(signal);
+      return null;
+    };
+    const controller = new AbortController();
 
-    await new ZipChunkSource(ARCHIVE_URL, emptyReader()).probeIdentityToken({});
+    await new ZipChunkSource(ARCHIVE_URL, reader).probeIdentityToken({
+      signal: controller.signal,
+    });
 
-    const init = fetchMock.mock.calls[0]?.[1];
-    expect(init?.method).toBe('HEAD');
-    // A cached probe answer would defeat the point of probing.
-    expect(init?.cache).toBe('no-store');
-  });
-
-  it('returns null — never a change verdict — when it cannot tell', async () => {
-    // Offline, CORS-blocked, or a server exposing neither header. None of these
-    // say the scene changed, and reporting one would raise a false banner.
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new TypeError('Failed to fetch');
-      })
-    );
-    expect(await new ZipChunkSource(ARCHIVE_URL, emptyReader()).probeIdentityToken({})).toBeNull();
-
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => headResponse({}))
-    );
-    expect(await new ZipChunkSource(ARCHIVE_URL, emptyReader()).probeIdentityToken({})).toBeNull();
-
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => headResponse({}, false))
-    );
-    expect(await new ZipChunkSource(ARCHIVE_URL, emptyReader()).probeIdentityToken({})).toBeNull();
+    expect(seen[0]).toBe(controller.signal);
   });
 });
 
