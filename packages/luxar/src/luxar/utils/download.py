@@ -11,7 +11,7 @@ import hashlib
 import os
 import time
 from pathlib import Path
-from typing import Any, BinaryIO, Optional, Union
+from typing import Any, Optional, Union
 
 from arbol import aprint, asection
 

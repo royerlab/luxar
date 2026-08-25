@@ -139,6 +139,7 @@ from luxar.demos import (
     DatasetUnavailable,
     MissingDependencyError,
     add_demo_caption,
+    download_with_checksum,
     ensure_dataset,
     launch_viewer,
     local_fit_path,
@@ -149,7 +150,6 @@ from luxar.demos import (
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
-from luxar.demos import download_with_checksum
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
