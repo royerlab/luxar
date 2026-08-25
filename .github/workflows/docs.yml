@@ -1,26 +1,11 @@
 name: Deploy Documentation
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'docs/**'
-      - 'packages/luxar/src/luxar/**'
-      - 'packages/luxar-viewer/src/**'
-      - 'packages/luxar-viewer/typedoc.json'
-      - 'packages/luxar-viewer/typedoc-warnings-baseline.json'
-      - 'packages/luxar-viewer/scripts/check-overrides.mjs'
-      - 'packages/luxar-viewer/scripts/check-typedoc-warnings.mjs'
-      - 'packages/luxar-viewer/scripts/check-typedoc-warnings-tests.mjs'
-      - 'packages/luxar-viewer/package.json'
-      - 'packages/luxar-viewer/tsconfig*.json'
-      - 'scripts/check_documentation.py'
-      - 'scripts/docs_baseline.json'
-      - 'pyproject.toml'
-      - 'packages/luxar-viewer/pnpm-lock.yaml'
-      - 'packages/luxar-viewer/pnpm-workspace.yaml'
-      - '.github/workflows/docs.yml'
   workflow_dispatch: # Allow manual trigger from Actions UI
+  schedule:
+    # Publish daily instead of rebuilding on every main promotion. Use the
+    # manual trigger above when documentation needs to go live immediately.
+    - cron: '37 10 * * *'
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -30,15 +15,19 @@ permissions:
 
 jobs:
   build:
-    # A newer main promotion makes an older build obsolete, so do not serialize
-    # paid runners behind stale work.
+    # A newer publication run makes an older build obsolete, so do not
+    # serialize paid runners behind stale work.
     concurrency:
       group: pages-build
       cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # The workflow steps come from the default branch (dev), while the site
+      # content comes from main so only promoted documentation is published.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
 
       # Sphinx publishes these four LFS-tracked screenshots. Fetch them
       # explicitly instead of smudging every demo dataset and gallery asset in

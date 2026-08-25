@@ -20,8 +20,14 @@ def _workflow() -> dict[str, Any]:
     return yaml.safe_load(WORKFLOW.read_text())
 
 
+def _workflow_triggers() -> dict[str, Any]:
+    """Load workflow triggers without YAML 1.1 coercing ``on`` to true."""
+    workflow = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+    return workflow["on"]
+
+
 def _published_lfs_assets() -> set[str]:
-    """Find LFS-tracked assets referenced by Sphinx source files."""
+    """Find assets referenced by this checkout's Sphinx source files."""
     sources = [
         source
         for source in DOCS.rglob("*")
@@ -43,6 +49,25 @@ def _published_lfs_assets() -> set[str]:
     return published
 
 
+def test_pages_publishes_daily_or_on_demand_not_on_main_push() -> None:
+    """Keep publication off pushes; scheduling is active only on default dev."""
+    triggers = _workflow_triggers()
+
+    assert "push" not in triggers
+    assert triggers.get("schedule")
+    assert "workflow_dispatch" in triggers
+
+
+def test_pages_publishes_promoted_main_content() -> None:
+    """Use dev's workflow steps to publish only promoted main content."""
+    steps = _workflow()["jobs"]["build"]["steps"]
+    checkout = next(
+        step for step in steps if step.get("uses", "").startswith("actions/checkout@")
+    )
+
+    assert checkout.get("with", {}).get("ref") == "main"
+
+
 def test_pages_checkout_does_not_smudge_the_whole_lfs_repository() -> None:
     """Keep the checkout from downloading every repository LFS object."""
     steps = _workflow()["jobs"]["build"]["steps"]
@@ -54,7 +79,7 @@ def test_pages_checkout_does_not_smudge_the_whole_lfs_repository() -> None:
 
 
 def test_pages_fetches_only_the_lfs_assets_published_by_sphinx() -> None:
-    """Fetch the four published screenshots without pulling unrelated payloads."""
+    """Keep dev's asset oracle compatible with main until it is promoted."""
     steps = _workflow()["jobs"]["build"]["steps"]
     fetch = next(
         step for step in steps if step.get("name") == "Fetch documentation LFS assets"
@@ -72,7 +97,7 @@ def test_pages_fetches_only_the_lfs_assets_published_by_sphinx() -> None:
     assert fetch_index < build_index
 
 
-def test_pages_cancels_deployments_superseded_by_newer_main_promotions() -> None:
+def test_pages_cancels_builds_superseded_by_newer_publication_runs() -> None:
     """Cancel stale builds without interrupting an in-flight deployment."""
     workflow = _workflow()
     jobs = workflow["jobs"]
