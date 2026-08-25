@@ -945,7 +945,7 @@ def test_queue_watchdog_cross_run_activity_breaks_no_activity_streak(
 def test_queue_watchdog_leaves_live_busy_run_alone_when_window_closes(
     workflow: str, tmp_path: Path
 ) -> None:
-    """A continuously refreshed busy host may outlive the hosted watchdog window."""
+    """Continuously reported active work may outlive the hosted watchdog window."""
     snapshots = [
         [
             _obsidian_job("python-tests (3.12)", "in_progress"),
