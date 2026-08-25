@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import importlib.util
 from pathlib import Path
 from types import ModuleType
@@ -175,6 +176,55 @@ def test_request_outage_is_reported_without_raising() -> None:
     assert "temporary DNS failure" in result.message
 
 
+def test_protocol_failure_does_not_abort_later_destinations(
+    monkeypatch, capsys
+) -> None:
+    checker = CHECKER
+    audits = {
+        "broken.example": {
+            "mode": "status",
+            "url_template": "https://broken.example/{value}",
+            "good": "known",
+            "bad": "missing",
+        },
+        "healthy.example": {
+            "mode": "status",
+            "url_template": "https://healthy.example/{value}",
+            "good": "known",
+            "bad": "missing",
+        },
+    }
+
+    class Response:
+        def __init__(self, status: int, url: str) -> None:
+            self.status = status
+            self.url = url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self) -> bytes:
+            return b""
+
+    def open_url(request, **_kwargs):
+        url = request.full_url
+        if url.startswith("https://broken.example/"):
+            raise http.client.IncompleteRead(b"partial", 10)
+        status = 200 if url.endswith("/known") else 404
+        return Response(status, url)
+
+    monkeypatch.setattr(checker, "urlopen", open_url)
+
+    assert checker.main(audits=audits, fetch=checker.fetch_url) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "[ERROR]  broken.example: IncompleteRead(7 bytes read, 10 more expected)",
+        "[OK]     healthy.example: good matched; bad rejected (200/404)",
+    ]
+
+
 def test_human_only_destination_reports_review_state() -> None:
     checker = CHECKER
     spec = {
@@ -245,6 +295,22 @@ def test_api_override_cannot_probe_an_unrelated_host() -> None:
     )
 
 
+def test_api_override_requires_identifier_placeholder() -> None:
+    checker = CHECKER
+    spec = {
+        "mode": "status",
+        "url_template": "https://example.org/api/search",
+        "good": "known",
+        "bad": "missing",
+    }
+
+    result = checker.audit_destination("example.org", spec, lambda _url: None)
+
+    assert result == checker.AuditResult(
+        "CONFIG", "url_template override must contain {value}"
+    )
+
+
 def test_api_override_rejects_an_unrelated_two_label_suffix() -> None:
     checker = CHECKER
     four_label_spec = {
@@ -298,6 +364,23 @@ def test_empty_json_count_path_counts_top_level_results() -> None:
 
     assert checker._accepted(checker.Response(200, "", '[{"gene": "TP53"}]'), spec)
     assert not checker._accepted(checker.Response(200, "", "[]"), spec)
+
+
+def test_invalid_json_count_index_reports_config_without_raising() -> None:
+    checker = CHECKER
+    spec = {
+        "mode": "json-count",
+        "url_template": "https://example.org/{value}",
+        "good": "known",
+        "bad": "missing",
+        "count_path": (3,),
+    }
+    response = checker.Response(200, "https://example.org/known", "[1, 2]")
+
+    result = checker.audit_destination("example.org", spec, lambda _url: response)
+
+    assert result.level == "CONFIG"
+    assert result.message == "list index out of range"
 
 
 def test_malformed_and_unknown_specs_report_config_without_raising() -> None:
@@ -405,7 +488,7 @@ def test_main_reports_every_destination_and_always_returns_zero(capsys) -> None:
 
     assert exit_code == 0
     assert capsys.readouterr().out.splitlines() == [
-        "[FAIL]  broken.example: good and bad both rejected (404/404)",
-        "[HUMAN] manual.example: browser-only; verified in #2091 on 2026-08-24 "
+        "[FAIL]   broken.example: good and bad both rejected (404/404)",
+        "[HUMAN]  manual.example: browser-only; verified in #2091 on 2026-08-24 "
         "(1 day ago)",
     ]

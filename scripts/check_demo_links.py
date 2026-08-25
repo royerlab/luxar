@@ -6,6 +6,7 @@ line and request failures never change the process exit status.
 
 from __future__ import annotations
 
+import http.client
 import json
 import sys
 from collections.abc import Callable, Mapping
@@ -71,6 +72,8 @@ def fetch_url(url: str) -> Response:
         )
     except URLError as error:
         raise OSError(str(error.reason)) from error
+    except http.client.HTTPException as error:
+        raise OSError(str(error)) from error
 
 
 def _format_url(template: str, value: str) -> str:
@@ -112,6 +115,8 @@ def _validate_request_spec(
     if canonical_templates is None and "url_template" not in spec:
         raise KeyError("request audit requires canonical templates or url_template")
     if override := spec.get("url_template"):
+        if "{value}" not in str(override):
+            raise ValueError("url_template override must contain {value}")
         probe_host = urlsplit(str(override)).netloc
         if not _same_destination_family(host, probe_host):
             raise ValueError(
@@ -278,7 +283,7 @@ def audit_destination(
         bad_accepted = _accepted(bad, spec)
     except OSError as error:
         return AuditResult("ERROR", str(error))
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+    except (ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
         return AuditResult("CONFIG", str(error))
 
     statuses = f"{','.join(str(response.status) for response in good)}/{bad.status}"
@@ -305,7 +310,7 @@ def main(
             CANONICAL_LINKS_BY_HOST.get(host),
             today=today,
         )
-        print(f"[{result.level}]".ljust(8) + f"{host}: {result.message}")
+        print(f"[{result.level}]".ljust(9) + f"{host}: {result.message}")
     return 0
 
 
