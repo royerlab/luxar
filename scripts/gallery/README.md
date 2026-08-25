@@ -29,11 +29,10 @@ make generate-gallery-datasets ONLY=lorenz,desi_galaxies
 # 2. Capture stills + orbit videos → docs/images/gallery/ (staging, gitignored)
 make generate-gallery                       # datasets (if missing) + capture
 make generate-gallery ONLY=desi_galaxies    # a subset
-make generate-gallery ONLY=readme            # root README media only
 
 # Under the hood (from packages/luxar-viewer/):
 GALLERY_ONLY=lorenz pnpm gallery
-GALLERY_ONLY=readme pnpm gallery
+GALLERY_ONLY=readme pnpm gallery             # root README media already on disk
 ```
 
 Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
