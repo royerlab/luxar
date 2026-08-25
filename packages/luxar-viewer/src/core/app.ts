@@ -16,7 +16,7 @@ import type {
 } from './app/embedder/events';
 import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
-import type { InputHandler } from '../input/input-handler';
+import type { InputHandler } from '../input';
 import type { RenderingControls } from '../ui/rendering-controls';
 import { showHelpOverlay } from '../ui/help-overlay';
 import type { DatasetBrowser } from '../ui/dataset-browser';

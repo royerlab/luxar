@@ -5,27 +5,34 @@
 
 ## Overview
 
-`InputHandler`, `KeyAction`, and `KeyActionId` are the public symbols of this
-package. The rest of the tree is private: the binding table, the context
-manager, the dimension-navigation lifecycle, the window-event handler, and the
-command bodies all live one level deeper under `input-handler/`.
+`index.ts` is the package facade. It exports `InputHandler`, the
+`DimensionSlidersFactory` type used by its constructor, the `InputContext`
+identifier used by shortcut-help metadata, and `KeyAction`/`KeyActionId` — the
+stable action identities callers address a binding by (the control rail asks
+for an action's current chord rather than hard-coding a letter). The binding
+registry, context manager implementation, dimension-navigation lifecycle,
+window-event handler, and command bodies remain private under `input-handler/`.
 
 External callers (`core/app.ts`, `types/window.d.ts`) import the
 orchestrator class:
 
 ```typescript
-import { InputHandler, KeyAction, type KeyActionId } from '../input/input-handler';
+import { InputHandler, KeyAction, type KeyActionId } from '../input';
 ```
 
-Nothing else is part of the public API of this package.
+Dependency-cruiser rejects value imports into `input/input-handler/**` from
+production modules outside this package. Type-only imports and tests are
+currently exempt, so they must still follow the documented boundary by review.
 
 ## Layout
 
 ```
 input/
-├── input-handler.ts                          # Public — orchestrator façade
+├── index.ts                                  # Public package facade
+├── input-handler.ts                          # InputHandler orchestrator
 └── input-handler/
     ├── context-manager.ts                    # InputContextManager + InputContext + KeyBinding
+    ├── panel-capabilities.ts                 # Narrow UI contracts consumed by input
     ├── context-manager/
     │   └── routing-rules.ts                  # isKeyAllowedInContext + sortContextsByPriority
     ├── key-bindings/                         # The whole key→command table
@@ -34,10 +41,8 @@ input/
     │   ├── navigation-bindings.ts            # Orbit-mode UI shortcuts (H/P/R/V/F/C/L/M/[/]/digits/…)
     │   ├── fly-bindings.ts                   # WASD + arrows + Shift speed boost (FLY_CONTROLS)
     │   └── animation-shortcuts.ts            # K/Home/End/Shift+↑/Shift+↓ (NAVIGATION)
-    ├── dimension-navigation/                 # nD navigation math + UI lifecycle
+    ├── dimension-navigation/                 # nD input coordination + UI lifecycle
     │   ├── compute-step.ts                   # computeDimensionStep + resolveSelectedDimension
-    │   ├── step-math.ts                      # calculateStepSize + calculateNextPosition
-    │   ├── selection.ts                      # getNonDisplayedDimensions + mapKeyToDimension
     │   └── setup.ts                          # initDimensionSliders / clearDimensionUI bodies
     ├── window-events/                        # Window/document-level listeners
     │   ├── window-event-handler.ts           # resize + wheel + fullscreenchange class
@@ -45,13 +50,12 @@ input/
     └── commands/                             # Command bodies the orchestrator delegates to
         ├── panel-coordinator.ts              # PanelCoordinator (Escape flow)
         ├── viewer-state-export.ts            # exportViewerState body
-        ├── control-mode.ts                   # toggleControlMode + toggleInertialMode + nextControlType
-        ├── focus-utils.ts                    # isTypingInInput + isFocusOnSceneCanvas
+        ├── control-mode.ts                   # commands + nextControlType re-export from controls/types.ts
         └── data-monitor-cycle.ts             # cycleDataMonitor body
 ```
 
-The depth encodes audience. `input-handler.ts` is public; everything
-under `input-handler/` is private to the package; thematic subfolders
+The depth encodes audience. `index.ts` is public; everything under
+`input-handler/` is private to the package; thematic subfolders
 (`key-bindings/`, `dimension-navigation/`, `window-events/`, `commands/`,
 `context-manager/`) group cohesive helpers.
 
@@ -160,15 +164,17 @@ tests/unit/input/
     │   └── animation-shortcuts.test.ts
     ├── dimension-navigation/
     │   ├── compute-step.test.ts
-    │   ├── setup.test.ts
-    │   └── utils.test.ts
+    │   └── setup.test.ts
     ├── window-events/
     │   ├── fullscreen-toggle.test.ts
     │   └── window-event-handler.test.ts
     └── commands/
         ├── control-mode.test.ts
         ├── data-monitor-cycle.test.ts
-        ├── focus-utils.test.ts
         ├── panel-coordinator.test.ts
         └── viewer-state-export.test.ts
 ```
+
+Pure dimension math lives with scene dimension state under
+`scene/dims/` (and `tests/unit/scene/dims/`). Pure DOM focus predicates live
+under `utils/dom/` (and `tests/unit/utils/dom/`).

@@ -42,7 +42,8 @@ scene.add_mesh(
 )
 ```
 
-Use `import_mesh_directory(...)` to stack `T<number>`-indexed files into one nD mesh.
+Use `import_mesh_directory(...)` to stack `T<number>`-indexed files, or supply
+`index_regex=` for other filename conventions.
 
 ```bash
 luxar mesh import bunny.ply bunny.luxar.zarr

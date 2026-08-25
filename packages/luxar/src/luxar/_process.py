@@ -8,9 +8,12 @@ on its port. :func:`run_child_process` fixes that: it *owns* the child's
 lifecycle and, on any exit path, escalates SIGINT → SIGTERM → SIGKILL until the
 child (and its whole process group, when isolated) is gone.
 
-Kept in ``luxar.utils`` — not ``luxar.cli`` — so importing it does not drag in
-uvicorn/fastapi (``luxar.cli.__init__`` → ``main``). Both the CLI (L0
-``demo run``) and the demo helper (L1 ``launch_viewer``) import it cleanly.
+This module lives at the package root, outside both ``luxar.utils`` and
+``luxar.cli``. The ``Shared utils must not import leaf packages`` contract
+forbids the demo helper in ``luxar.utils`` from importing ``luxar.cli``, whose
+``__init__`` eagerly imports Typer, uvicorn, and FastAPI through ``main``. The
+package-root home preserves that layer boundary while keeping the shared
+process primitive stdlib-only apart from its lightweight logging dependency.
 """
 
 from __future__ import annotations

@@ -364,6 +364,27 @@ def test_low_coverage_below_threshold_is_flagged(tmp_path: Path) -> None:
     assert f"Docstring coverage::{rel}" in keys
 
 
+def test_overload_signatures_do_not_lower_docstring_coverage(tmp_path: Path) -> None:
+    """Only the documented implementation counts, not its typing signatures."""
+    pkg = _make_pkg(tmp_path)
+    module = pkg / "gadget.py"
+    module.write_text(
+        '"""Module."""\n\n'
+        "from typing import overload\n\n"
+        "@overload\n"
+        "def parse(value: int) -> int: ...\n\n"
+        "@overload\n"
+        "def parse(value: str) -> str: ...\n\n"
+        "def parse(value: int | str) -> int | str:\n"
+        '    """Return the parsed value."""\n'
+        "    return value\n"
+    )
+    checker = _scan(tmp_path)
+    keys = cd.failure_keys(checker.results, tmp_path)
+    rel = "packages/luxar/src/luxar/widgets/gadget.py"
+    assert f"Docstring coverage::{rel}" not in keys
+
+
 def test_declared_non_utf8_source_is_parsed_not_reported(tmp_path: Path) -> None:
     # PEP 263: a source file declaring a non-UTF-8 encoding is valid Python.
     # Decoding as UTF-8 before parsing turned it into a bogus syntax finding.

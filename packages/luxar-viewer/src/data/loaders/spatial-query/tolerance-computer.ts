@@ -238,8 +238,8 @@ const DISPLAYED_TOLERANCE = 1e10;
  * gate but its chunk is not fetched — remains open on the barrier arm, and is
  * unreachable for a CORRECTLY authored axis: discrete-dim navigation snaps the slice
  * position to exact category values (see `SceneDimsManager.setDimensionValue`), so an
- * axis whose stored values ARE multiples of its declared step is queried on-grid
- * (offset 0) and its target cell always matches. An axis whose stored values are
+ * axis whose stored values ARE `range[0] + k·step` is queried on-grid and its
+ * target cell always matches. An axis whose stored values are
  * off-grid is a write-time authoring fault, which the compiler already reports —
  * `io/_compiler/finalize/validation.py::validate_discrete_dimension_ranges` warns
  * when a scene-declared discrete axis's declared range sits more than a quarter step
@@ -798,7 +798,7 @@ function computeLinesHiddenTolerance(
  *   half is a write-side pad-budget constraint — `DISCRETE_TOLERANCE_FRACTION` argues
  *   it. Be clear about what that leaves open: against the renderer's own half-cell
  *   gate this arm keeps a `(0.25, 0.5] × step` gap, unreachable for an axis whose
- *   stored values are multiples of its declared step and reachable for one whose are
+ *   stored values follow its range-min-anchored step grid and reachable for one whose are
  *   not. This function does not close it — the pad budget is real, and off-grid
  *   values on a scene-declared discrete axis are a write-time authoring fault the
  *   compiler already reports (`validate_discrete_dimension_ranges`).
@@ -828,23 +828,21 @@ function computeLinesHiddenTolerance(
  * spanning both and still matches; what is lost is every chunk sitting entirely
  * inside one value, which on a stacked timelapse is nearly all of them.
  *
- * The half-cell rather than the quarter is what covers an OFF-GRID demoted axis. The
- * query snaps to a multiple of the step (`snapDiscreteValue`, `Math.round(v/s)·s`)
- * while the splats sit where they were written, so a stored value 0.3 off a `step: 1`
- * grid (`luxar gsplat merge --as-dimension --values 0.3,1.3,2.3` writes exactly that)
- * passes the render gate at 0.3 ≤ 0.5 and matches no chunk under a 0.25-cell window
- * either — σ is 0 on a stacked axis, so its bound is the bare coordinate, with
- * neither a σ expansion nor a barrier pad. On an on-grid axis the offset is 0 and
- * even the bare epsilon matches, so the half-cell costs a half cell of reach there
- * and buys the off-grid case outright.
+ * The half-cell rather than the quarter keeps chunk FETCH equal to the renderer's
+ * binary MEMBERSHIP gate. A demoted axis has neither a σ expansion nor a barrier pad,
+ * so any stored coordinate that the half-cell gate accepts must also be reachable by
+ * the chunk query; narrowing this arm would make the index reject data the renderer
+ * is defined to draw. Range-min anchoring means a standalone stacked axis such as
+ * `0.3,1.3,2.3` is now exactly on its synthesized `range[0] + k·step` grid, but that
+ * removes one historical offset case rather than changing the demote contract.
  *
  * THE REACHABLE PATH IS THE STANDALONE OPEN, NOT A GRAFT. Serving a `.gsplats.zarr`
  * directly (`?src=….gsplats.zarr`; the writer supports it — `save_gsplats.py` stamps
  * `layer` on the root) leaves the scene with no `scene_dimensions`, so
  * `data/scene-loader/lifecycle/load-scene.ts::synthesizeSceneDimensionsFromNode`
- * marks every axis ≥ 3 `discrete: true, step: 1` REGARDLESS of the stored values,
- * while the store publishes whatever its writer detected — `[]` for a stacked axis
- * whose values are not near-integers, which `detect_barrier_dims` rejects.
+ * marks every axis ≥ 3 `discrete: true, step: 1` and anchors its range at the stored
+ * bounds, while the store publishes whatever its writer detected — `[]` for a stacked
+ * axis whose values are not near-integers, which `detect_barrier_dims` rejects.
  * Scene-discrete, writer-omitted: the demote arm. GRAFTING such a store into a scene
  * does NOT reach it: `add_gsplats_from_file_impl` routes through
  * `add_gsplats_from_data_impl` / `graft_gsplat_node`, both of which write through the

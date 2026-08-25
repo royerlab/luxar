@@ -15,7 +15,7 @@ import type { AnimationController } from '../../../scene/animation/animation-con
 import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
 import type { ResolutionIndicator } from '../../../ui/resolution-indicator';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { LayersPanel } from '../../../ui/layers';

@@ -10,10 +10,11 @@ then calls into these updaters each polling tick.
 
 ## Files
 
-| File             | Role                                                                                                |
-| ---------------- | --------------------------------------------------------------------------------------------------- |
-| `cache.ts`       | `updateCacheTab(container, cacheMetrics)` — patches L0/L1/L2 stats, status pills, totals, error row |
-| `dom-helpers.ts` | `patchField` + `updateColorClass` — shared selector-based patch primitives                          |
+| File                    | Role                                                                                                                    |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `cache.ts`              | `updateCacheTab(container, cacheMetrics)` — patches L0/L1/L2 stats, status pills, totals, error row                     |
+| `dom-helpers.ts`        | `patchField` + `updateColorClass` — shared selector-based patch primitives                                              |
+| `scene-graph-badges.ts` | Patches scene-graph counts, LOD/draw-order chips, active-level rows, and the header summary from live monitor snapshots |
 
 ## The `data-field` selector pattern
 
@@ -52,5 +53,7 @@ to a full rebuild via `../templates/cache.ts`.
   paired with these updaters).
 - `../metrics/cache.ts` — aggregates raw events into the
   `CacheMetrics` payload consumed by `updateCacheTab`.
+- `../scene-graph-model.ts` — owns the tree state and path index consumed by
+  `updateSceneGraphBadges`.
 - `../../data-loading-monitor.ts` — orchestrator that wires both
   halves together each polling tick.

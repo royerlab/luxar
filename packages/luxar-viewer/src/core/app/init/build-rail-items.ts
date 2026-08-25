@@ -16,9 +16,9 @@ import { buildSettingsPopover } from '../../../ui/rail-panels/settings-popover';
 import { buildNavigationPopover } from '../../../ui/rail-panels/navigation-popover';
 import { buildPerformancePopover } from '../../../ui/rail-panels/performance-popover';
 import { buildHomePopover } from '../../../ui/rail-panels/home-popover';
-import { nextControlType } from '../../../input/input-handler/commands/control-mode';
 import { getSceneLoader } from '../../../data/scene-loader-manager';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
+import { nextControlType } from '../../../controls/types';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { RenderingControls } from '../../../ui/rendering-controls';
@@ -28,7 +28,7 @@ import type { PerformanceMonitor } from '../../../ui/performance-monitor';
 import type { LayersPanel } from '../../../ui/layers';
 import type { DebugConsole } from '../../../ui/debug-console';
 import type { RecordingPanel } from '../../../ui/recording-panel';
-import { KeyAction, type KeyActionId } from '../../../input/input-handler';
+import { KeyAction, type KeyActionId } from '../../../input';
 
 /** Everything the rail item closures reference (all constructed by the pipeline). */
 export interface RailItemsDeps {
@@ -147,7 +147,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         if (svg) svg.outerHTML = icon;
         // `type` is a fixed enum (orbit|fly|ortho) — safe to interpolate.
         const modeLabel = type.charAt(0).toUpperCase() + type.slice(1);
-        const next = nextControlType(type); // next mode a click would select
+        const next = nextControlType(type);
         const shortcutLabel = controlModeShortcut ? ` (${controlModeShortcut})` : '';
         btn.setAttribute(
           'aria-label',

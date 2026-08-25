@@ -2,7 +2,7 @@ import { getSceneLoader } from '../../../data/scene-loader-manager';
 import type * as THREE from 'three';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 import type { LayersPanel } from '../../../ui/layers';
 import type { LoaderConfig } from '../../../data/data-loader-types';

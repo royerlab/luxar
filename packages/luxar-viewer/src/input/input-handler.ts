@@ -36,23 +36,14 @@
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation/animation-controller';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
-import { RenderingControls } from '../ui/rendering-controls';
-import type { RecordingPanel } from '../ui/recording-panel';
-import type { LayersPanel } from '../ui/layers';
-import type { ScaleBar } from '../ui/scale-bar';
-import type { ColormapLegend } from '../ui/colormap-legend';
-import type { OverlayManager } from '../ui/overlay-manager';
 import { notifier } from '../utils/cross-layer/notifier';
-import type { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import type { DebugConsole } from '../ui/debug-console';
-import type { PerformanceMonitor } from '../ui/performance-monitor';
 import { InputContext, InputContextManager } from './input-handler/context-manager';
 import {
   computeDimensionStep,
   resolveSelectedDimension,
 } from './input-handler/dimension-navigation/compute-step';
-import { describeNavigableKeys } from './input-handler/dimension-navigation/selection';
+import { describeNavigableKeys } from '../scene/dims/selection';
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
@@ -62,7 +53,7 @@ import type {
   KeyBindingsCommands,
   KeyBindingsPanelGetters,
 } from './input-handler/key-bindings/register-all';
-import { isTypingInInput, isFocusOnSceneCanvas } from './input-handler/commands/focus-utils';
+import { isTypingInInput, isFocusOnSceneCanvas } from '../utils/dom/focus';
 import {
   toggleControlMode,
   setControlMode,
@@ -73,7 +64,6 @@ import {
 import {
   clearDimensionUI,
   initDimensionSliders,
-  type DimensionSlidersFactory,
   type DimNavSetupCtx,
 } from './input-handler/dimension-navigation/setup';
 import { toggleFullscreen } from './input-handler/window-events/fullscreen-toggle';
@@ -83,12 +73,20 @@ import {
   type ViewerStateExportCtx,
 } from './input-handler/commands/viewer-state-export';
 import { log, Modules } from '../utils/log';
+import type {
+  DebugConsoleHandle,
+  DimensionSlidersFactory,
+  DimensionSlidersHandle,
+  LayersPanelHandle,
+  PerformanceMonitorHandle,
+  RecordingPanelHandle,
+  RenderingControlsHandle,
+  ToggleableHandle,
+} from './input-handler/panel-capabilities';
 
+// Re-exported through the package facade (`input/index.ts`).
 export { KeyAction, type KeyActionId };
-
-// Re-export DimensionSlidersFactory so external callers (e.g. core/app.ts)
-// can keep importing it from '../input/input-handler' unchanged.
-export type { DimensionSlidersFactory } from './input-handler/dimension-navigation/setup';
+export type { DimensionSlidersFactory } from './input-handler/panel-capabilities';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -108,19 +106,19 @@ export class InputHandler {
   private _initialized = false;
 
   /** Optional reference to advanced rendering controls */
-  private renderingControls?: RenderingControls;
+  private renderingControls?: RenderingControlsHandle;
 
   /** Optional reference to scale bar overlay */
-  private scaleBar?: ScaleBar;
+  private scaleBar?: ToggleableHandle;
 
   /** Optional reference to colormap legend overlay */
-  private colormapLegend?: ColormapLegend;
+  private colormapLegend?: ToggleableHandle;
 
   /** Optional reference to recording panel */
-  private recordingPanel?: RecordingPanel;
+  private recordingPanel?: RecordingPanelHandle;
 
   /** Optional reference to layers panel */
-  private layersPanel?: LayersPanel;
+  private layersPanel?: LayersPanelHandle;
 
   /**
    * The command + panel surface shared with the keyboard bindings.
@@ -129,13 +127,13 @@ export class InputHandler {
   private uiActions?: { commands: KeyBindingsCommands; panels: KeyBindingsPanelGetters };
 
   /** Optional reference to overlay manager */
-  private overlayManager?: OverlayManager;
+  private overlayManager?: ToggleableHandle;
 
   /** Index of currently selected dimension for keyboard navigation */
   private selectedDimension: number = 0;
 
   /** UI component for interactive dimension sliders */
-  private dimensionSliders?: DimensionSliders;
+  private dimensionSliders?: DimensionSlidersHandle;
 
   /** Animation manager for dimension playback */
   private animationManager?: DimensionAnimationManager;
@@ -149,7 +147,7 @@ export class InputHandler {
   private sceneDimsListener?: () => Promise<void>;
 
   /** Debug console for capturing browser console output */
-  private debugConsole: DebugConsole;
+  private debugConsole: DebugConsoleHandle;
 
   /** Input context manager for handling keyboard conflicts */
   private contextManager: InputContextManager;
@@ -210,8 +208,8 @@ export class InputHandler {
   constructor(
     private sceneManager: SceneManager,
     private animationController: AnimationController,
-    private performanceMonitor: PerformanceMonitor,
-    debugConsole: DebugConsole,
+    private performanceMonitor: PerformanceMonitorHandle,
+    debugConsole: DebugConsoleHandle,
     dimensionSlidersFactory?: DimensionSlidersFactory
   ) {
     this.dimensionSlidersFactory = dimensionSlidersFactory;
@@ -255,21 +253,21 @@ export class InputHandler {
    * // Now 'C' key toggles cinematic mode
    * ```
    */
-  setRenderingControls(controls: RenderingControls): void {
+  setRenderingControls(controls: RenderingControlsHandle): void {
     this.renderingControls = controls;
     this.panelCoordinator.setRenderingControls(controls);
     this.windowEvents.setRenderingControls(controls);
   }
 
-  setScaleBar(scaleBar: ScaleBar): void {
+  setScaleBar(scaleBar: ToggleableHandle): void {
     this.scaleBar = scaleBar;
   }
 
-  setColormapLegend(legend: ColormapLegend): void {
+  setColormapLegend(legend: ToggleableHandle): void {
     this.colormapLegend = legend;
   }
 
-  setRecordingPanel(panel: RecordingPanel): void {
+  setRecordingPanel(panel: RecordingPanelHandle): void {
     this.recordingPanel = panel;
     this.panelCoordinator.setRecordingPanel(panel);
   }
@@ -285,11 +283,11 @@ export class InputHandler {
     this.panelCoordinator.setDatasetBrowser(browser);
   }
 
-  setOverlayManager(manager: OverlayManager): void {
+  setOverlayManager(manager: ToggleableHandle): void {
     this.overlayManager = manager;
   }
 
-  setLayersPanel(panel: LayersPanel): void {
+  setLayersPanel(panel: LayersPanelHandle): void {
     this.layersPanel = panel;
     // Forward to PanelCoordinator so Escape (the shortcut the panel's
     // close button advertises via aria-keyshortcuts) actually closes

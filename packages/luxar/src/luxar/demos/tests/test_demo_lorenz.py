@@ -1,7 +1,7 @@
 """Tests for the Lorenz integrator in demo_lorenz.
 
 ``lorenz_trajectory`` is the demo's distinctive scientific content, and it also
-backs the ``create_lorenz_attractor`` fixture builder in ``luxar.utils.demos``,
+backs the ``create_lorenz_attractor`` fixture builder in ``luxar.utils.scenes``,
 so its determinism and framing are worth pinning down here.
 """
 

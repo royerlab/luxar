@@ -17,7 +17,7 @@ import {
   isKeyAllowedInContext as isKeyAllowedInContextPure,
   sortContextsByPriority,
 } from './context-manager/routing-rules';
-import { isTypingInInput } from './commands/focus-utils';
+import { isTypingInInput } from '../../utils/dom/focus';
 import type {
   RegisteredShortcutBinding,
   RegisteredShortcutBindings,

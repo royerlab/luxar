@@ -143,14 +143,22 @@ sha256.
 - `load_local_fit_gsplats_at(paths)`: The same door for paths the caller already holds. A demo that publishes a module-level `LOCAL_FIT` constant and writes its refit through it must READ through it too, or the two halves can be pointed at different files
 - Raises `DatasetNotFound` for an unknown key and `LocalComputeDataset` for data we cannot redistribute (the caller builds it locally). `DatasetUnavailable` (a `FileNotFoundError` subclass) is the narrow "not obtainable from anywhere yet" case a demo may route around by computing its own stand-in; every other `FileNotFoundError` here is a fault (unknown file name, missing packaged manifest, an in-repo copy matching neither pinned digest) and must propagate
 
-### `demos.py`
-Demo scene generators, precomputed data helpers, and viewer launch utilities.
+### Demo support modules
+Concern-owned scene, data, cache, CLI, and viewer helpers re-exported through
+``luxar.demos`` for demo authors. Reusable scene generators remain public through
+``luxar.utils``.
 
 **Key Functions:**
-- `create_lorenz_attractor()`: Generate Lorenz attractor visualization
-- `create_random_spheres()`: Create random spherical points
-- `create_time_series_demo()`: Generate time-varying data
-- `launch_viewer()`: Launch the Luxar viewer for a given dataset path
+- `scenes.py`: `create_lorenz_attractor()`, `create_random_spheres()`, and
+  `create_time_series_demo()` reusable scene generators
+- `viewer.py`: `launch_viewer()` and stable `demo_ports()` allocation
+- `bundles.py`: Precomputed GSplat and bundle loading
+- `cache.py`, `lfs.py`, `zip_safety.py`: Cache and packaged-data plumbing
+- `flags.py`, `device.py`, `provenance.py`: Demo CLI/runtime helpers
+- `colors.py`, `payload_agreement.py`: Color assembly and fit-QA helpers
+
+**Public barrel highlights:**
+
 - `demo_ports()`: Stable per-dataset (data, viewer) port pair derived from the
   dataset name — demos never contend for 8000/5173, and no two of them share a
   full port PAIR, so a browser tab left over from one demo can never silently
@@ -186,46 +194,10 @@ Stable fingerprints for Python sources that produce Luxar stores.
 - `production_source_fingerprint()`: Cache that production-source hash per package root and process
 - `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
 
-### `process.py`
-Deterministic teardown for long-lived child processes (stdlib-only). Owns the
-lifecycle of the subprocess trees `luxar demo run` spawns so Ctrl-C (or
-SIGTERM/SIGHUP) never orphans a `luxar serve` on its port.
+### Process lifecycle
 
-**Key Functions:**
-- `run_child_process()`: Spawn a command, wait for it, and tear it (and its
-  whole process group, when isolated) down on every exit path via a
-  SIGINT → SIGTERM → SIGKILL escalation; optional `on_spawn` hook receives the
-  child PID (= new pgid when isolated)
-- `terminate_process_group()`: The same escalation for a group discovered
-  after the fact (used by `luxar demo stop`); True only once the group is
-  provably finished — an unreaped zombie counts as gone, `EPERM` (someone
-  else's group) never does
-- `can_kill_process_groups()`: Whether POSIX process-group signalling exists
-- `proc_table()`: Best-effort `(pid, pgid, state, command)` rows from `/proc`,
-  with a `ps` fallback on POSIX systems such as macOS (empty means *unknown*)
-
-### `demo_runs.py`
-Discovery + kill engine behind `luxar demo stop` (stdlib-only): find every
-running demo — even one forgotten in another terminal — and free its ports.
-
-**Key Functions:**
-- `register_run()` / `unregister_run()`: JSON pidfile per launch under
-  `~/.cache/luxar/running/`, written by `demo run`'s `on_spawn` hook and
-  removed on exit (so the registry only ever names survivors)
-- `discover_runs()`: Live demo runs from the registry plus a `ps` sweep for
-  strays — a process that *leads its own group* and is genuinely running
-  `python -m luxar.demos.demo_*`; prunes dead/hijacked
-  entries, never returns the caller's own process group. On Linux, falls back
-  to `proc_table()` when `ps` is missing, so the identity check that keeps a
-  recycled pgid alive-and-innocent never silently disappears. Off POSIX, where
-  neither exists, a pid listing (`tasklist`) still prunes a record left behind
-  by a reboot or a hard-killed owner
-- `stop_run()`: Tear one run's process group down via `terminate_process_group`,
-  re-validating the group at kill time; returns False without signalling
-  anything off POSIX, where a recorded pid cannot be checked before a hard
-  terminate
-- `describe_port_holder()`: Best-effort "port N is held by demo 'X'" hint
-  for `pick_port`'s busy-port warning
+Process lifecycle support used by `viewer.py` lives in the package-root
+`../_process.py`; see `../README.md` for its API and teardown guarantees.
 
 ## Usage Examples
 
@@ -364,5 +336,5 @@ Internal:
 External:
 - `numpy`: Array operations
 - `arbol`: Progress display in demos and downloads
-- `torch`: Device availability probing in `demos.py`
+- `torch`: Device availability probing in `device.py`
 - `requests` / `urllib3`: HTTP downloads with retry (lazily imported in `download.py`)

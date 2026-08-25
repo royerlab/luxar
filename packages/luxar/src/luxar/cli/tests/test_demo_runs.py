@@ -1,4 +1,4 @@
-"""Tests for :mod:`luxar.utils.demo_runs` — the ``luxar demo stop`` engine."""
+"""Tests for :mod:`luxar.cli.demo_runs` — the ``luxar demo stop`` engine."""
 
 from __future__ import annotations
 
@@ -11,8 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from luxar.utils import demo_runs
-from luxar.utils.demo_runs import (
+from luxar._process import terminate_process_group
+from luxar.cli import demo_runs
+from luxar.cli.demo_runs import (
     DemoRun,
     _registry_runs,
     _sweep_runs,
@@ -21,7 +22,6 @@ from luxar.utils.demo_runs import (
     stop_run,
     unregister_run,
 )
-from luxar.utils.process import terminate_process_group
 
 _POSIX = hasattr(os, "killpg")
 posix_only = pytest.mark.skipif(not _POSIX, reason="requires os.killpg (POSIX)")

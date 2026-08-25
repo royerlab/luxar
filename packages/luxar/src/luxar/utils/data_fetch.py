@@ -62,9 +62,10 @@ from arbol import aprint, asection
 # NOTE: _cache_is_stale is deliberately NOT imported. Its (size, mtime) test is
 # blind to an in-place corruption of unchanged length — precisely how a
 # checksum-failing cache entry used to survive step 1 and be handed back.
-from .demos import _DEFAULT_CACHE_ROOT, _DEMOS_DATA_DIR, is_lfs_pointer
+from .cache import _DEFAULT_CACHE_ROOT
+from .lfs import _DEMOS_DATA_DIR, is_lfs_pointer
 
-#: Packaged manifest, resolved the same way ``demos._DEMOS_DATA_DIR`` is: this
+#: Packaged manifest, resolved the same way ``lfs._DEMOS_DATA_DIR`` is: this
 #: module lives in ``luxar/utils/`` and the manifest ships in ``luxar/demos/``.
 #: Anchored to ``__file__`` rather than derived from ``_DEMOS_DATA_DIR`` so it
 #: stays reachable once R17 step 4 removes the data tree.
@@ -830,7 +831,7 @@ def load_dataset_gsplats(
     manifest: Optional[Manifest] = None,
     verbose: bool = True,
 ) -> Optional[list[Any]]:
-    """Manifest-driven stand-in for :func:`luxar.utils.demos.load_precomputed_gsplats`.
+    """Manifest-driven stand-in for :func:`luxar.utils.bundles.load_precomputed_gsplats`.
 
     Same contract as the helper it is meant to replace — a list of ``GSplatData``
     in the requested order, or ``None`` when the caller must build the data
@@ -869,7 +870,7 @@ def load_dataset_gsplats(
         * **Bundle datasets.** ``gsplats_celegans`` ships one outer zip holding
           many per-frame files; the manifest addresses the bundle, not its
           members. That demo stays on
-          :func:`~luxar.utils.demos.load_precomputed_bundle`. (``gsplats_zebrafish``
+          :func:`~luxar.utils.bundles.load_precomputed_bundle`. (``gsplats_zebrafish``
           was one until it moved to a single stacked 4D archive, which this
           function serves.)
         * **Runtime-computed file lists** that are not manifest entries. A

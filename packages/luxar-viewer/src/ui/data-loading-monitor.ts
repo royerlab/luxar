@@ -21,7 +21,6 @@ import type {
   CacheTelemetryState,
   SceneGraphNode,
   SceneGraphState,
-  GeometryCounters,
   LODProgressProvider,
   DrawOrderProvider,
   MemoryMetrics,
@@ -35,6 +34,8 @@ import { LoadingAdvisor } from './data-loading-monitor/advisor';
 import { EventQueue } from './data-loading-monitor/event-queue';
 import { PollingLoop } from './data-loading-monitor/polling-loop';
 import { MonitorProviderRegistry } from './data-loading-monitor/providers';
+import { SceneGraphModel } from './data-loading-monitor/scene-graph-model';
+import { updateSceneGraphBadges } from './data-loading-monitor/tabs/scene-graph-badges';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { notifier } from '../utils/cross-layer/notifier';
@@ -65,16 +66,7 @@ import {
   getReuseRateColorClass,
 } from './data-loading-monitor/templates/memory';
 import { renderInsightsContent } from './data-loading-monitor/templates/insights';
-import {
-  renderSceneGraphTree,
-  summariseLodStates,
-  lodChipContent,
-  drawOrderChipContent,
-  nodeStatsContent,
-  countAdditiveNodes,
-  levelRoleTitleSuffix,
-  activeLevelRole,
-} from './data-loading-monitor/templates/scene-graph';
+import { renderSceneGraphTree } from './data-loading-monitor/templates/scene-graph';
 import {
   formatNumber as templateFormatNumber,
   formatBytes as templateFormatBytes,
@@ -98,83 +90,7 @@ import type { UpdateProfiler } from '../profiling/update-profiler';
 import { isDepthSortAvailable } from '../rendering/depth-sort-coordinator';
 import { POOLED_GEOMETRY_TYPES } from '../types/data-monitor-types';
 import type { PooledGeometryType, AccumulatorProvider } from '../types/data-monitor-types';
-import { GEOMETRY_TYPES, type GeometryTypeName } from '../types/format-contract';
-
-/**
- * A fresh all-zero per-type counter record, one slot per geometry type.
- *
- * Written as a plain loop, not `Object.fromEntries(GEOMETRY_TYPES.map(...))`:
- * `calculateSceneGraphStats` calls this twice per scene-graph node, and the
- * `fromEntries` form allocates an intermediate array of `[key, 0]` pairs on every
- * call. Measured on a 5000-node tree that shape cost ~6-10 ms per
- * `setSceneGraph` against ~0.4-1.3 ms for the loop — a 5-15x difference for no
- * behavioural gain.
- */
-function zeroCounters(): GeometryCounters {
-  const counters = {} as GeometryCounters;
-  for (const t of GEOMETRY_TYPES) counters[t] = 0;
-  return counters;
-}
-
-/** The empty scene-graph state (no scene loaded / scene torn down). */
-function emptySceneGraphState(): SceneGraphState {
-  return {
-    root: null,
-    totalNodes: 0,
-    nodesByType: zeroCounters(),
-    totalByType: zeroCounters(),
-    visibleByType: zeroCounters(),
-  };
-}
-
-/**
- * This node's own element count for `type`, or 0 when it is not that type.
- *
- * The per-type count fields are named after each type's ELEMENT (points have
- * points, lines have segments, gsplats have splats), so a table cannot key them
- * by type name. The `never` tail makes adding a geometry type a compile error
- * here — a plain `return 0` would leave the new type's elements out of every
- * dataset total with nothing to explain why.
- *
- * The tail still returns 0 rather than the unhandled value: breaking at compile
- * time is the point, but at runtime a count must stay a number (returning the
- * type string would poison every total it is summed into).
- *
- * The integer check and not `?? 0` / `|| 0`: these counts are read
- * straight off zarr `.zattrs` with a bare cast (`scene-graph-converter.ts`), so
- * a hand-edited or third-party store can put anything there. `?? 0` would let
- * `NaN` through and turn the whole HUD into `NaN`; `|| 0` would still admit
- * truthy non-numbers (`'1000'` string-concatenates into every downstream sum),
- * `Infinity`, and impossible negative or fractional "counts". Only a
- * non-negative integer may enter the totals.
- */
-function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
-  if (node.type !== type) return 0;
-  let count: number | undefined;
-  switch (type) {
-    case 'points':
-      count = node.pointCount;
-      break;
-    case 'lines':
-      count = node.segmentCount;
-      break;
-    case 'gsplats':
-      count = node.splatCount;
-      break;
-    case 'mesh':
-      // Faces, matching the drawn-primitive convention above (`lines` counts
-      // segments, not vertices, for the same reason). Populated by
-      // `scene-graph-converter.ts` from the node's `n_faces` attr now that the mesh
-      // loader has landed; still optional, so a store omitting the attr reads as 0
-      // via the integer check below rather than NaN.
-      count = node.faceCount;
-      break;
-    default:
-      void (type satisfies never);
-      return 0;
-  }
-  return typeof count === 'number' && Number.isInteger(count) && count >= 0 ? count : 0;
-}
+import type { GeometryTypeName } from '../types/format-contract';
 
 /**
  * Main Data Loading Monitor class
@@ -229,22 +145,16 @@ export class DataLoadingMonitor {
   private readonly providers = new MonitorProviderRegistry(() => {
     this.structureDirty = true;
   });
+  private readonly sceneGraphModel = new SceneGraphModel(() => {
+    this.structureDirty = true;
+  });
 
   /** In-flight guard so the banner's Retry button can't stack batches. */
   private retryFailedLoadsInFlight = false;
   /** Last-rendered failed-loads state; a change marks the overview structure dirty. */
   private lastFailedLoadsSignature = '';
-  /** Per-path visible counts pushed by the SceneLoader's visible-counts walk. */
-  private visibleCountsByPath: ReadonlyMap<string, number> = new Map();
-
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;
-
-  // Scene graph state
-  private sceneGraphState: SceneGraphState = emptySceneGraphState();
-
-  // Track expanded nodes in scene graph tree (by path)
-  private expandedNodes = new Set<string>(['/']);
 
   // Cache-tab sections currently collapsed to their compact one-line
   // summary. All sections start collapsed — 4 stacked full sections
@@ -257,13 +167,6 @@ export class DataLoadingMonitor {
   // rebuilds (scene-tree toggles, failed-loads banner), which would replay
   // the staggered reveal as visible flicker.
   private animateNextBuild = false;
-
-  // Memoized path→node index over the current scene-graph tree, rebuilt
-  // only when the root reference changes (a wholesale `setSceneGraph`).
-  // Makes per-frame LOD-chip patching O(1) per chip instead of a full DFS
-  // per chip (previously O(chips × nodes)).
-  private sceneGraphNodeIndex = new Map<string, SceneGraphNode>();
-  private sceneGraphNodeIndexRoot: SceneGraphNode | null = null;
 
   // Flag to force a full DOM rebuild on next update (set by structural changes like
   // tree node toggle, scene graph mutation). Cleared after rebuild.
@@ -489,11 +392,8 @@ export class DataLoadingMonitor {
    * collapsed tree (the root '/' marker preserves the previous default).
    */
   private resetSceneGraphState(): void {
-    this.sceneGraphState = emptySceneGraphState();
-    this.expandedNodes = new Set<string>(['/']);
-    this.visibleCountsByPath = new Map();
+    this.sceneGraphModel.resetSceneGraphState();
     this.providers.clearDrawOrderStates();
-    this.structureDirty = true;
   }
 
   /**
@@ -596,18 +496,12 @@ export class DataLoadingMonitor {
    * Called by SceneLoader after loading scene.
    */
   public setSceneGraph(root: SceneGraphNode): void {
-    // Calculate stats from scene graph
-    const stats = this.calculateSceneGraphStats(root);
-    this.sceneGraphState = {
-      root,
-      ...stats,
-    };
+    this.sceneGraphModel.setSceneGraph(root);
+    const stats = this.sceneGraphModel.getSceneGraph();
     log.info(
       Modules.DATA_MONITOR,
       `Scene graph updated: ${stats.totalNodes} nodes, ${stats.totalByType.points} points, ${stats.totalByType.lines} segments`
     );
-    // Scene graph structure changed — need full rebuild on next update
-    this.structureDirty = true;
     if (this.uiState.isVisible) {
       this.updateUI();
     }
@@ -617,19 +511,14 @@ export class DataLoadingMonitor {
    * Get current scene graph state.
    */
   public getSceneGraph(): SceneGraphState {
-    return this.sceneGraphState;
+    return this.sceneGraphModel.getSceneGraph();
   }
 
   /**
    * Toggle expansion state of a node in the scene graph tree.
    */
   public toggleNodeExpansion(path: string): void {
-    if (this.expandedNodes.has(path)) {
-      this.expandedNodes.delete(path);
-    } else {
-      this.expandedNodes.add(path);
-    }
-    this.structureDirty = true;
+    this.sceneGraphModel.toggleNodeExpansion(path);
     this.updateUI();
   }
 
@@ -637,48 +526,7 @@ export class DataLoadingMonitor {
    * Check if a node is expanded in the tree view.
    */
   public isNodeExpanded(path: string): boolean {
-    return this.expandedNodes.has(path);
-  }
-
-  /**
-   * Calculate statistics from scene graph tree.
-   */
-  private calculateSceneGraphStats(node: SceneGraphNode): Omit<SceneGraphState, 'root'> {
-    let totalNodes = 1;
-    const nodesByType = zeroCounters();
-    const totalByType = zeroCounters();
-    for (const t of GEOMETRY_TYPES) {
-      if (node.type === t) nodesByType[t] = 1;
-      totalByType[t] = elementCountOf(node, t);
-    }
-
-    const childStats = node.children.map((child) => this.calculateSceneGraphStats(child));
-
-    // Structural counters (node + per-type node counts) always reflect the
-    // real tree — a kind=lod group genuinely contains K child nodes.
-    for (const cs of childStats) {
-      totalNodes += cs.totalNodes;
-      for (const t of GEOMETRY_TYPES) nodesByType[t] += cs.nodesByType[t];
-    }
-
-    // Geometry TOTALS: a substitutive kind=lod group's children are
-    // mutually-exclusive representations of the SAME data at different
-    // resolutions — summing them would inflate the dataset total ~K×. Use
-    // the finest level (the last child; the Python writer guarantees
-    // coarsest→finest order, see load-lod-group-node.ts) so the total
-    // reflects true full-detail size. Partition parts are disjoint and
-    // additive children are skipped from the scene graph, so both keep the
-    // straight sum.
-    const contributing =
-      node.kind === 'lod' && childStats.length > 0
-        ? [childStats[childStats.length - 1]]
-        : childStats;
-    for (const cs of contributing) {
-      for (const t of GEOMETRY_TYPES) totalByType[t] += cs.totalByType[t];
-    }
-
-    // Initialize visible counts to totals (will be updated by scene loader)
-    return { totalNodes, nodesByType, totalByType, visibleByType: { ...totalByType } };
+    return this.sceneGraphModel.isNodeExpanded(path);
   }
 
   /**
@@ -691,7 +539,7 @@ export class DataLoadingMonitor {
    * identical apart from the field each wrote.
    */
   public updateVisibleCount(type: GeometryTypeName, count: number): void {
-    this.sceneGraphState.visibleByType[type] = count;
+    this.sceneGraphModel.updateVisibleCount(type, count);
   }
 
   /**
@@ -699,12 +547,13 @@ export class DataLoadingMonitor {
    * Pushed by the SceneLoader's visible-counts walk (only rendered meshes
    * contribute). Merged into the tree nodes so badge tooltips can show
    * "(N visible after slicing)" per layer; the merge happens in
-   * `updateSceneGraphBadges` on the next poll tick. Nodes whose path is
-   * absent from the latest map (the walk prunes non-visible subtrees)
-   * have their count cleared so tooltips never show a stale number.
+   * `SceneGraphModel.syncVisibleCountsIntoTree()`, run on the poll tick
+   * immediately before the incremental badge patch. Nodes whose path is
+   * absent from the latest map (the walk prunes non-visible subtrees) have
+   * their count cleared so tooltips never show a stale number.
    */
   public updateVisibleCountsByPath(counts: ReadonlyMap<string, number>): void {
-    this.visibleCountsByPath = counts;
+    this.sceneGraphModel.updateVisibleCountsByPath(counts);
   }
 
   /**
@@ -1403,157 +1252,18 @@ export class DataLoadingMonitor {
     }
 
     // Update scene graph badges (by data-node-path)
-    this.updateSceneGraphBadges();
-
-    return true;
-  }
-
-  /**
-   * Update scene graph tree badge values without rebuilding the tree DOM.
-   */
-  private updateSceneGraphBadges(): void {
-    if (!this.contentContainer || !this.sceneGraphState.root) return;
-
-    // Merge the latest per-path visible counts into the tree nodes so the
-    // badge tooltips (via nodeStatsContent) reflect post-slicing visibility.
-    this.syncVisibleCountsIntoTree();
-
-    const badges = this.contentContainer.querySelectorAll(
-      '.luxar-scene-graph__badge[data-node-path]'
-    );
-    badges.forEach((badge) => {
-      const path = (badge as HTMLElement).dataset.nodePath;
-      if (!path) return;
-      const node = this.getSceneGraphNodeByPath(path);
-      if (!node) return;
-
-      // Same helper as the initial render so text + tooltip stay in sync.
-      const stats = nodeStatsContent(node);
-      if (stats) {
-        badge.textContent = stats.text;
-        (badge as HTMLElement).title = stats.title;
-      }
-    });
-
-    // Patch live LOD chips (active level / loaded-of-total / refining) in
-    // place — these change every frame without altering tree structure.
-    const lodChips = this.contentContainer.querySelectorAll(
-      '.luxar-scene-graph__lod[data-lod-path]'
-    );
-    lodChips.forEach((chip) => {
-      const path = (chip as HTMLElement).dataset.lodPath;
-      if (!path) return;
-      const node = this.getSceneGraphNodeByPath(path);
-      if (!node) return;
-      const content = lodChipContent(node, this.providers.lodStates.get(path));
-      if (content) {
-        chip.textContent = content.text;
-        (chip as HTMLElement).title = content.title;
-      } else {
-        // Node no longer has LOD content (e.g. state vanished on reload):
-        // clear rather than leaving a stale value on screen.
-        chip.textContent = '';
-        (chip as HTMLElement).title = '';
-      }
-    });
-
-    // Patch live draw-order chips (bucket / depthWrite / renderOrder) in
-    // place — renderOrder is recomputed per frame from the camera pose.
-    const drawOrderChips = this.contentContainer.querySelectorAll(
-      '.luxar-scene-graph__draworder[data-draworder-path]'
-    );
-    drawOrderChips.forEach((chip) => {
-      const path = (chip as HTMLElement).dataset.draworderPath;
-      if (!path) return;
-      const content = drawOrderChipContent(this.providers.drawOrderStates.get(path));
-      if (content) {
-        chip.textContent = content.text;
-        (chip as HTMLElement).title = content.title;
-      } else {
-        // No live mesh for this node right now (hidden layer / reload):
-        // clear rather than leaving a stale value on screen.
-        chip.textContent = '';
-        (chip as HTMLElement).title = '';
-      }
-    });
-
-    // Re-mark active/inactive substitutive-level rows: the LOD selector can
-    // switch levels between structural rebuilds, so classes + tooltips are
-    // patched each tick from the parent group's live state.
-    const levelRows = this.contentContainer.querySelectorAll(
-      '.luxar-scene-graph__node-row[data-level-of]'
-    );
-    levelRows.forEach((row) => {
-      const el = row as HTMLElement;
-      const parentPath = el.dataset.levelOf;
-      const indexRaw = el.dataset.levelIndex;
-      if (!parentPath || indexRaw === undefined) return;
-      // Same helper as the initial render so both derive the role identically.
-      const role = activeLevelRole(this.providers.lodStates.get(parentPath), Number(indexRaw));
-      el.classList.toggle('luxar-scene-graph__node-row--active-level', role === 'active');
-      el.classList.toggle('luxar-scene-graph__node-row--inactive-level', role === 'inactive');
-      const baseTitle = el.dataset.baseTitle;
-      if (baseTitle !== undefined) {
-        el.title = `${baseTitle}${levelRoleTitleSuffix(role)}`;
-      }
-    });
-
-    // Refresh the header LOD/partition summary line.
-    const summaryEl = this.contentContainer.querySelector(
-      '[data-field="lod-summary"]'
-    ) as HTMLElement | null;
-    if (summaryEl) {
-      summaryEl.textContent = summariseLodStates(
+    if (this.contentContainer) {
+      // Badge tooltips read visible counts directly from the aliased tree nodes.
+      this.sceneGraphModel.syncVisibleCountsIntoTree();
+      updateSceneGraphBadges(
+        this.contentContainer,
+        this.sceneGraphModel,
         this.providers.lodStates,
-        countAdditiveNodes(this.sceneGraphState.root)
+        this.providers.drawOrderStates
       );
     }
-  }
 
-  /**
-   * Sync the latest per-path visible counts (from the SceneLoader's
-   * visible-counts walk) onto every geometry node in the tree. The walk
-   * prunes non-visible subtrees, so a path ABSENT from the latest map
-   * (hidden layer, switched-away substitutive level) has its count reset
-   * to `undefined` — the tooltip then omits the "(N visible after
-   * slicing)" suffix (unknown) instead of showing a stale number.
-   */
-  private syncVisibleCountsIntoTree(): void {
-    const index = this.ensureSceneGraphNodeIndex();
-    if (!index) return;
-    for (const node of index.values()) {
-      const visible = this.visibleCountsByPath.get(node.path);
-      if (node.type === 'points') node.visiblePointCount = visible;
-      else if (node.type === 'lines') node.visibleSegmentCount = visible;
-      else if (node.type === 'gsplats') node.visibleSplatCount = visible;
-    }
-  }
-
-  /**
-   * Build (or reuse) the memoized path→node index for the current tree.
-   * Rebuilt only when the tree root reference changes (a wholesale
-   * `setSceneGraph`), so repeated per-frame lookups and full-tree sweeps
-   * are O(1)/O(N) rather than a fresh DFS each.
-   */
-  private ensureSceneGraphNodeIndex(): Map<string, SceneGraphNode> | null {
-    const root = this.sceneGraphState.root;
-    if (!root) return null;
-    if (this.sceneGraphNodeIndexRoot !== root) {
-      this.sceneGraphNodeIndex.clear();
-      const stack: SceneGraphNode[] = [root];
-      while (stack.length > 0) {
-        const node = stack.pop()!;
-        this.sceneGraphNodeIndex.set(node.path, node);
-        for (const child of node.children) stack.push(child);
-      }
-      this.sceneGraphNodeIndexRoot = root;
-    }
-    return this.sceneGraphNodeIndex;
-  }
-
-  /** Resolve a scene-graph node by path via the memoized path→node index. */
-  private getSceneGraphNodeByPath(path: string): SceneGraphNode | null {
-    return this.ensureSceneGraphNodeIndex()?.get(path) ?? null;
+    return true;
   }
 
   /**
@@ -1808,12 +1518,13 @@ export class DataLoadingMonitor {
     const content = banner + renderOverviewContent(stats, cacheMetrics);
 
     // Replace the loader list placeholder with scene graph tree (or compact loader list if no scene graph)
-    if (this.sceneGraphState.root) {
+    const sceneGraphState = this.sceneGraphModel.getSceneGraph();
+    if (sceneGraphState.root) {
       return content.replace(
         '<div id="loader-list-content"></div>',
         renderSceneGraphTree(
-          this.sceneGraphState,
-          this.expandedNodes,
+          sceneGraphState,
+          this.sceneGraphModel.expandedNodes,
           this.providers.lodStates,
           this.providers.drawOrderStates
         )
@@ -1981,7 +1692,7 @@ export class DataLoadingMonitor {
     // model is projected onto them. Only three are projected here: mesh has no
     // headline field of its own — its triangle counts are shown per node in the
     // scene-graph tree (`templates/scene-graph.ts`, `faceCount`).
-    const { totalByType, visibleByType } = this.sceneGraphState;
+    const { totalByType, visibleByType } = this.sceneGraphModel.getSceneGraph();
     const datasetSize = totalByType.points;
     const visiblePoints = visibleByType.points;
 
@@ -2318,7 +2029,7 @@ export class DataLoadingMonitor {
       this.uiState.isVisible = false;
       this.uiState.isExpanded = false;
       this.contentContainer = null;
-      this.expandedNodes.clear();
+      this.sceneGraphModel.clearExpandedNodes();
     } catch (error) {
       errors.push(new Error(`Failed to clear internal state: ${error}`));
     }

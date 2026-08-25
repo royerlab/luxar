@@ -286,10 +286,10 @@ export function levelRoleTitleSuffix(role: 'active' | 'inactive' | undefined): s
  */
 function renderSceneGraphNode(
   node: SceneGraphNode,
-  expandedNodes: Set<string>,
+  expandedNodes: ReadonlySet<string>,
   depth: number = 0,
-  lodStates?: Map<string, LODProgressState>,
-  drawOrderStates?: Map<string, NodeDrawOrder>,
+  lodStates?: ReadonlyMap<string, LODProgressState>,
+  drawOrderStates?: ReadonlyMap<string, NodeDrawOrder>,
   levelCtx?: LevelContext
 ): string {
   const hasChildren = node.children.length > 0;
@@ -426,9 +426,9 @@ export function activeLevelRole(
  */
 export function renderSceneGraphTree(
   state: SceneGraphState,
-  expandedNodes: Set<string>,
-  lodStates?: Map<string, LODProgressState>,
-  drawOrderStates?: Map<string, NodeDrawOrder>
+  expandedNodes: ReadonlySet<string>,
+  lodStates?: ReadonlyMap<string, LODProgressState>,
+  drawOrderStates?: ReadonlyMap<string, NodeDrawOrder>
 ): string {
   if (!state.root) {
     return `
@@ -501,7 +501,7 @@ export function countAdditiveNodes(root: SceneGraphNode | null | undefined): num
  *   number of additive chips visible in the tree.
  */
 export function summariseLodStates(
-  lodStates?: Map<string, LODProgressState>,
+  lodStates?: ReadonlyMap<string, LODProgressState>,
   additiveTotal?: number
 ): string {
   if (!lodStates || lodStates.size === 0) return '';

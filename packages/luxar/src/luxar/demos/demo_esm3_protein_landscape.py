@@ -100,17 +100,28 @@ DEFAULT_SAMPLE_SIZE = 0  # 0 = all (~572K)
 
 
 def _linkable_accessions(accessions: list[str], n_proteins: int) -> list[str] | None:
-    """Return aligned accessions, or preserve an old cache without links."""
+    """Return aligned accessions, or preserve an old cache with search fallback."""
     if len(accessions) == n_proteins:
         return accessions
-    aprint("  ⓘ Cached metadata has no accessions — skipping UniProt links")
+    aprint("  ⓘ Cached metadata has no accessions — using protein-name search")
     return None
 
 
-def _uniprot_link_attrs(keys: list[str] | None) -> dict[str, object]:
-    """Build link attributes only when the cache supplied aligned keys."""
-    if keys is None:
-        return {}
+def _uniprot_link_attrs(
+    keys: list[str], *, exact_accessions: bool
+) -> dict[str, object]:
+    """Link exact accessions, or search clean protein-name keys.
+
+    The visible label also includes organism and taxonomic category, whose
+    punctuation makes UniProt's query parser return no results. Cached metadata
+    predating accessions therefore uses the bare protein name as ``hover_key``.
+    """
+    if not exact_accessions:
+        return {
+            "keys": keys,
+            "link": "https://www.uniprot.org/uniprotkb?query={hover_key}",
+            "copy": "{hover_key}",
+        }
     return {
         "keys": keys,
         "link": "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
@@ -712,10 +723,9 @@ def generate_esm3_landscape(
             protein_names = list(meta["names"])
             organism_names = list(meta["organisms"])
             kingdoms = list(meta["kingdoms"])
-            # Absent from caches written before accessions were persisted, and
-            # this cache is expensive to rebuild (a 90 MB download plus an ESM
-            # pass), so a missing key degrades to "no links" rather than
-            # forcing a regeneration.
+            # Absent from caches written before accessions were persisted. The
+            # cache is expensive to rebuild, so the protein name becomes a
+            # UniProt search key rather than forcing regeneration.
             accessions = list(meta["accessions"]) if "accessions" in meta.files else []
             n = len(positions)
             aprint(f"✓ Loaded {n:,} proteins from cache")
@@ -824,19 +834,23 @@ def generate_esm3_landscape(
         # `keys=`, passed once for the whole cloud because a protein's accession
         # does not change with the colour scheme, only its label does.
         #
-        # Empty when the cached metadata predates accessions being stored (the
-        # cache costs a 90 MB download plus a full ESM pass to rebuild, so it is
-        # honoured rather than invalidated); the demo then simply ships without
-        # links.
+        # When cached metadata predates accessions, retain the expensive cache
+        # and use the clean protein name as a UniProt search key instead.
+        linkable_accessions = _linkable_accessions(accessions, n)
         stacked = stack_colorings(
             positions,
             [
                 {"label": "Taxon", "colors": taxon_colors, "labels": taxon_labels},
                 {"label": "Domain", "colors": domain_colors, "labels": domain_labels},
             ],
-            keys=_linkable_accessions(accessions, n),
+            keys=linkable_accessions
+            if linkable_accessions is not None
+            else protein_names,
         )
-        link_attrs = _uniprot_link_attrs(stacked.keys)
+        assert stacked.keys is not None
+        link_attrs = _uniprot_link_attrs(
+            stacked.keys, exact_accessions=linkable_accessions is not None
+        )
         radii = np.full(len(stacked.positions), 0.012, dtype=np.float32)
 
     with asection("Writing to Zarr"):
