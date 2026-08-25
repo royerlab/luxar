@@ -3346,6 +3346,48 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     panel.dispose();
   });
 
+  it('contains slider keydowns at the panel boundary except Escape and Tab', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeManyLayerSceneGraph());
+    panel.show();
+
+    const sliders = [
+      container.querySelector<HTMLInputElement>('.luxar-layers-panel__slider'),
+      container.querySelector<HTMLInputElement>('.luxar-range-slider__input'),
+    ];
+    expect(sliders.every((slider) => slider !== null)).toBe(true);
+
+    const globalHandler = vi.fn();
+    window.addEventListener('keydown', globalHandler);
+
+    for (const slider of sliders) {
+      for (const event of [
+        new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }),
+        new KeyboardEvent('keydown', {
+          key: 'ArrowDown',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ]) {
+        slider!.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+      }
+    }
+    expect(globalHandler).not.toHaveBeenCalled();
+
+    for (const key of ['Escape', 'Tab']) {
+      sliders[0]!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+    }
+    expect(globalHandler.mock.calls.map(([event]) => (event as KeyboardEvent).key)).toEqual([
+      'Escape',
+      'Tab',
+    ]);
+
+    window.removeEventListener('keydown', globalHandler);
+    panel.dispose();
+  });
+
   it('right-clicking a text field inside the panel leaves the native menu alone', () => {
     // The delegated handler suppresses the native menu everywhere on the
     // glass surface, but a text field has no replacement verbs of ours —

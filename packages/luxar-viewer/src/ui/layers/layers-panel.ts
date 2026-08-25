@@ -685,6 +685,13 @@ export class LayersPanel {
     panel.style.zIndex = String(config.ui.zIndex.layersPanel);
     panel.style.display = 'none'; // Hidden by default
     this.panelEl = panel;
+    this.events.on(panel, 'keydown', (e) => {
+      const key = (e as KeyboardEvent).key;
+      // Keep panel controls' native keyboard behaviour, but do not let their
+      // keys also trigger viewer shortcuts. Escape still dismisses through
+      // PanelCoordinator, and Tab still performs normal focus traversal.
+      if (key !== 'Escape' && key !== 'Tab') e.stopPropagation();
+    });
 
     // Header
     const header = document.createElement('div');
@@ -1148,7 +1155,6 @@ export class LayersPanel {
 
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
         e.preventDefault();
-        e.stopPropagation();
         const nextIdx =
           e.key === 'ArrowDown'
             ? Math.min(layers.length - 1, idx + 1)
@@ -1165,7 +1171,6 @@ export class LayersPanel {
         }
       } else if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        e.stopPropagation();
         let mode: SelectionMode = 'single';
         if (e.ctrlKey || e.metaKey) mode = 'add';
         else if (e.shiftKey) mode = 'range';
@@ -1176,7 +1181,6 @@ export class LayersPanel {
         // own aria-haspopup, so menu keys on it must open the eye menu,
         // not the row's.
         e.preventDefault();
-        e.stopPropagation();
         const live = this.state.getLayer(layer.path);
         if (!live) return;
         if (!live.selected) this.state.select(layer.path, 'single');
