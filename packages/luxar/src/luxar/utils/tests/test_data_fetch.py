@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import runpy
+import shutil
 import sys
 from pathlib import Path
 
@@ -216,7 +217,7 @@ def test_pending_upload_flag_matches_the_file_lists():
 
 
 def test_h2afva_has_light_default_and_full_variant():
-    """The 11.4 GB timelapse ships as an opt-in; the demo default is the light cut."""
+    """The 9.3 GB timelapse ships as an opt-in; the demo default is the light cut."""
     variants = load_manifest()["datasets"]["h2afva"]["variants"]
     assert set(variants) == {"51tp", "253tp"}
     assert variants["51tp"]["default"] is True
@@ -795,6 +796,60 @@ def test_corrupt_cache_without_a_source_raises_and_still_quarantines(
 
     assert not good.exists(), "corrupt bytes left under the canonical name"
     assert find_quarantined_files(good)
+
+
+def test_unpulled_lfs_pointer_names_the_available_remedies(fake_repo):
+    """An unhydrated source checkout must name Git LFS and fallback remedies."""
+    manifest, cache = fake_repo
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.write_text(
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "unpublished draft" in message
+    assert "publish the record" in message.lower()
+    assert "--recompute" in message
+    assert "git lfs pull" in message
+
+
+def test_hosted_only_archive_does_not_recommend_git_lfs(fake_repo):
+    """An archive absent from the repository cannot be hydrated with Git LFS."""
+    manifest, cache = fake_repo
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.unlink()
+
+    with pytest.raises(DatasetUnavailable) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "hosted-only" in message
+    assert "unpublished draft" in message
+    assert "git lfs pull" not in message
+
+
+def test_installed_package_recommends_source_checkout_git_lfs(fake_repo):
+    """A wheel has no data tree, even when the source checkout has the archive."""
+    manifest, cache = fake_repo
+    shutil.rmtree(data_fetch._DEMOS_DATA_DIR)
+
+    with pytest.raises(DatasetUnavailable) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "installed package ships no demo payloads" in message
+    assert "source checkout" in message
+    assert "git lfs pull" in message
+    assert "hosted-only" not in message
 
 
 def test_inrepo_source_failing_its_own_checksum_is_never_used(fake_repo):

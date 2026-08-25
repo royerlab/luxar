@@ -37,6 +37,7 @@ import io
 import json
 import sys
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
@@ -308,8 +309,8 @@ def _locate(
     variant: str,
     file_name: str,
     extra_root: Optional[Path] = None,
-) -> Optional[Path]:
-    """Find an archive in *extra_root*, the repo copy, or the local cache.
+) -> Iterator[Path]:
+    """Yield archives from *extra_root*, the repo copy, then the local cache.
 
     The roots namespace differently, as ``ensure_dataset`` does: in-repo by the
     manifest ``dir``, the cache by the DATASET NAME, and both by the variant.
@@ -327,8 +328,7 @@ def _locate(
         parts = [p for p in (subdir, variant, file_name) if p]
         candidate = base.joinpath(*parts)
         if candidate.exists():
-            return candidate
-    return None
+            yield candidate
 
 
 # ---------------------------------------------------------------------------
@@ -396,10 +396,71 @@ def _sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _select_pinned_location(
+    candidates: Iterator[Path], pinned_digest: Optional[str]
+) -> tuple[Optional[Path], Optional[str]]:
+    """Prefer pinned bytes, falling back to the first existing candidate."""
+    fallback: tuple[Optional[Path], Optional[str]] = (None, None)
+    for path in candidates:
+        digest = _sha256_of(path)
+        if fallback[0] is None:
+            fallback = (path, digest)
+        if digest == pinned_digest:
+            return path, digest
+    return fallback
+
+
+def _retain_preferred_measurements(
+    measured: dict[str, Any],
+    existing: dict[str, Any],
+    pinned_digests: dict[str, Optional[str]],
+) -> tuple[int, int]:
+    """Blank unpinned reads and retain stronger measurements of pinned bytes.
+
+    Staged provenance outranks repo/cache even for identical bytes, avoiding
+    sidecar churn when a later local refresh sees the same pinned archive.
+    """
+    rank = {"staged": 2, "repo": 1, "cache": 1}
+    retained = 0
+    rejected = 0
+    for key, new_entry in list(measured.items()):
+        old_entry = existing.get(key)
+        pinned_digest = pinned_digests.get(key)
+        if new_entry.get("measured_sha256") != pinned_digest:
+            rejected += 1
+            if old_entry is None:
+                measured[key] = {
+                    "n_splats": None,
+                    "ndim": None,
+                    "format_version": None,
+                    "topology": None,
+                    "psnr_db": None,
+                    "foreground_psnr_db": None,
+                    "foreground_fraction": None,
+                    "source_shape": None,
+                    "source_dtype": None,
+                    "source_bytes": None,
+                    "frames": None,
+                    "measured_from": None,
+                    "measured_sha256": None,
+                }
+            else:
+                measured[key] = old_entry
+        elif (
+            old_entry is not None
+            and old_entry.get("measured_sha256") == pinned_digest
+            and rank.get(new_entry.get("measured_from"), 0)
+            < rank.get(old_entry.get("measured_from"), 0)
+        ):
+            measured[key] = old_entry
+            retained += 1
+    return retained, rejected
+
+
 def refresh_characteristics(
     manifest: dict[str, Any], extra_root: Optional[Path] = None
-) -> tuple[int, int, int]:
-    """Re-measure archives present here; returns (read, retained, preserved).
+) -> tuple[int, int, int, int]:
+    """Re-measure archives; returns (read, retained, rejected, preserved).
 
     PRESERVES entries whose archive is not on this machine, for the same reason
     ``gen_data_manifest`` preserves committed file lists: a refresh run from a
@@ -408,6 +469,7 @@ def refresh_characteristics(
     """
     existing = load_characteristics()
     measured: dict[str, Any] = {}
+    pinned_digests: dict[str, Optional[str]] = {}
     seen: set[str] = set()
     for dataset, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
@@ -415,7 +477,11 @@ def refresh_characteristics(
         for variant, spec in _files_of(entry):
             key = _char_key(dataset, variant, spec["name"])
             seen.add(key)
-            path = _locate(dataset, entry, variant, spec["name"], extra_root)
+            pinned_digests[key] = _pinned_digest(spec)
+            path, measured_sha256 = _select_pinned_location(
+                _locate(dataset, entry, variant, spec["name"], extra_root),
+                pinned_digests[key],
+            )
             info = _read_archive(path) if path else None
             if info is None:
                 continue
@@ -431,27 +497,13 @@ def refresh_characteristics(
                 # stale measurement is indistinguishable from a current one, which
                 # is precisely the state the hand-edited descriptions were in.
                 "measured_from": root,
-                "measured_sha256": _sha256_of(path) if path else None,
+                "measured_sha256": measured_sha256,
             }
 
-    # An entry measured from the STAGED (uploaded) generation outranks one read
-    # from the repo or the cache, and a later local refresh must not clobber it.
-    # Without this, importing the staged measurements and then running --refresh
-    # here silently replaces every refitted dataset's figures with the pre-refit
-    # ones — the exact staleness this file exists to end, reintroduced by the
-    # tool meant to prevent it.
-    def _outranks(new_entry: dict[str, Any], old_entry: dict[str, Any]) -> bool:
-        rank = {"staged": 2, "repo": 1, "cache": 1}
-        return rank.get(new_entry.get("measured_from"), 0) >= rank.get(
-            old_entry.get("measured_from"), 0
-        )
-
     read = len(measured)
-    retained = 0
-    for key, old_entry in existing.items():
-        if key in measured and not _outranks(measured[key], old_entry):
-            measured[key] = old_entry
-            retained += 1
+    retained, rejected = _retain_preferred_measurements(
+        measured, existing, pinned_digests
+    )
     preserved = {k: v for k, v in existing.items() if k in seen and k not in measured}
     archives = dict(sorted({**preserved, **measured}.items()))
     CHARACTERISTICS.write_text(
@@ -473,7 +525,7 @@ def refresh_characteristics(
         )
         + "\n"
     )
-    return read, retained, len(preserved)
+    return read, retained, rejected, len(preserved)
 
 
 def _stale_characteristics(manifest: dict[str, Any]) -> list[str]:
@@ -555,7 +607,7 @@ def _dataset_rows(
     for variant, spec in _files_of(entry):
         info = chars.get(_char_key(dataset, variant, spec["name"]))
         if info is None:
-            path = _locate(dataset, entry, variant, spec["name"])
+            path = next(_locate(dataset, entry, variant, spec["name"]), None)
             info = _read_archive(path) if path else None
         stored = hosted_size(spec)
         name = f"{variant}/{spec['name']}" if variant else spec["name"]
@@ -762,11 +814,12 @@ def main() -> int:
 
     manifest = json.loads(MANIFEST.read_text())
     if args.refresh:
-        measured, retained, preserved = refresh_characteristics(
+        read, retained, rejected, preserved = refresh_characteristics(
             manifest, args.archives_root
         )
         print(
-            f"measured {measured} archive(s) here, kept {retained} committed "
+            f"read {read} archive(s) here, skipped {rejected} read(s) taken from "
+            f"bytes the manifest does not pin, kept {retained} committed "
             f"measurement(s) that outrank the local copy, preserved {preserved} "
             f"not on this machine -> {CHARACTERISTICS.relative_to(REPO_ROOT)}"
         )

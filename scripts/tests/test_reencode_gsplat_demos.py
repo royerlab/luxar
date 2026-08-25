@@ -11,6 +11,7 @@ then re-encoding the dataset anyway would be the whole bug back.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -44,21 +45,39 @@ def test_ordinary_datasets_are_not_refused() -> None:
 def test_the_refused_set_matches_the_datasets_that_ship_an_npz() -> None:
     """Spell out the coupling, so a NEW sidecar-bearing dataset cannot slip in.
 
-    Enumerated through the SCRIPT's own ``DATA_DIR.glob("gsplats_*/*.zip")`` —
-    the set of dirs it will actually visit — rather than every child of
-    ``DATA_DIR``, so an unrelated directory can never redden this. The assertion
-    is bidirectional, as the name says: a refused dir that ships no sidecar has
-    no reason to be excluded either.
+    The pairing is read from the MANIFEST, which lists every dataset's files
+    even when a hosted-only dataset has no in-repo archive. Anything actually on
+    disk is folded in as well, so a locally-added sidecar still trips this. Only
+    ``gsplats_*`` directories count — the shape the script's own glob visits — so
+    a dataset it could never reach cannot redden this. That is wider than what
+    is *currently* fetchable (a ``local-compute`` dataset builds into the same
+    directory), and deliberately so: the refusal keys on the directory name,
+    not on the bucket.
+    The assertion is bidirectional, as the name says: a refused dir that ships no
+    sidecar has no reason to be excluded.
     """
     if not rg.DATA_DIR.exists():  # pragma: no cover - source checkouts have it
         pytest.skip(f"packaged demo data absent at {rg.DATA_DIR}")
+
+    manifest = json.loads((rg.DATA_DIR.parent / "data_manifest.json").read_text())
+    with_sidecar = set()
+    for name, spec in manifest["datasets"].items():
+        directory = spec.get("dir", name)
+        if not directory.startswith("gsplats_"):
+            continue
+        files = [f["name"] for f in spec.get("files", [])]
+        if any(f.endswith(".zip") for f in files) and any(
+            f.endswith(".npz") for f in files
+        ):
+            with_sidecar.add(directory)
+
     visited = {z.parent for z in rg.DATA_DIR.glob("gsplats_*/*.zip")}
-    with_sidecar = {d.name for d in visited if any(d.glob("*.npz"))}
+    with_sidecar |= {d.name for d in visited if any(d.glob("*.npz"))}
+
     assert with_sidecar == set(rg.SIDECAR_PAIRED_DIRS), (
-        "SIDECAR_PAIRED_DIRS must name exactly the visited datasets that ship a "
-        "per-splat .npz sidecar next to their fit: re-encoding a missing one "
-        "would silently misindex its sidecar, and a spurious one is refused for "
-        "no reason"
+        "SIDECAR_PAIRED_DIRS must name exactly the datasets that pair a per-splat "
+        ".npz sidecar with their fit: re-encoding a missing one would silently "
+        "misindex its sidecar, and a spurious one is refused for no reason"
     )
 
 
