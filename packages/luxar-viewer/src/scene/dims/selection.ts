@@ -3,10 +3,10 @@
  * maps to which dim, how to cycle through them). Pure functions so the
  * selection rules are unit-testable in isolation.
  *
- * @module input/input-handler/dimension-navigation/selection
+ * @module scene/dims/selection
  */
 
-import type { SimpleDims } from '../../../types/dims';
+import type { SimpleDims } from '../../types/dims';
 
 /**
  * Get list of non-displayed dimension indices available for keyboard navigation.

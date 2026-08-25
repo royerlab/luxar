@@ -6,7 +6,7 @@
  *
  * `src/tests/e2e/page-predicates.ts::isTypingSurfaceInPage` has to be
  * self-contained so Playwright can serialize it into the page, so it cannot
- * import the production `input/input-handler/commands/focus-utils.ts::
+ * import the production `utils/dom/focus.ts::
  * isTypingInInput` — the exact predicate `InputHandler.onKeyDown` guards on
  * (issue #1922). Without this test a case added to one copy could silently
  * diverge from the other, and the E2E panel-toggle assertions
@@ -21,7 +21,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, afterEach } from 'vitest';
 import { isTypingSurfaceInPage } from '../../e2e/page-predicates';
-import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
+import { isTypingInInput } from '../../../utils/dom/focus';
 
 interface Case {
   name: string;
@@ -115,7 +115,7 @@ const CASES: Case[] = [
   },
 ];
 
-describe('E2E typing-surface predicate matches focus-utils::isTypingInInput', () => {
+describe('E2E typing-surface predicate matches utils/dom/focus::isTypingInInput', () => {
   afterEach(() => {
     document.body.innerHTML = '';
   });

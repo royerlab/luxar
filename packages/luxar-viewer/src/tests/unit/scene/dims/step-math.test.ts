@@ -10,13 +10,13 @@ import {
   getNextDimensionIndex,
   getNonDisplayedDimensions,
   mapKeyToDimension,
-} from '../../../../../input/input-handler/dimension-navigation/selection';
+} from '../../../../scene/dims/selection';
 import {
   calculateStepSize,
   calculateNextPosition,
   NavigationConfig,
-} from '../../../../../input/input-handler/dimension-navigation/step-math';
-import { DimensionsBuilder } from '../../../../builders/test-data-builders';
+} from '../../../../scene/dims/step-math';
+import { DimensionsBuilder } from '../../../builders/test-data-builders';
 
 describe('nD Navigation Utilities', () => {
   describe('getNextDimensionIndex', () => {

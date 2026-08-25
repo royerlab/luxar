@@ -56,6 +56,8 @@ utils/
 │   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
 │   ├── event-group.ts       # DOM-listener group with single dispose() teardown
 │   └── notifier.ts          # Notifier facade + setNotifierBackend dependency inversion
+├── dom/                     # Pure DOM focus predicates
+│   └── focus.ts             # Typing-surface and scene-canvas focus checks
 └── hdr/                     # HDR display + color-conversion pipeline
     ├── hdr-color-conversion.ts  # Linear sRGB → BT.2020 PQ I420P10 (Uint16 planar)
     └── hdr-detection.ts         # CSS-media-query HDR/gamut probes + decision helpers

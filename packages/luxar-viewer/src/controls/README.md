@@ -48,7 +48,7 @@ controls/
 │       ├── mouse.ts
 │       └── wheel.ts
 │
-├── types.ts                            # TypeScript type definitions
+├── types.ts                            # TypeScript type definitions + cycle helper
 └── README.md                           # This documentation
 ```
 
@@ -241,6 +241,7 @@ Key types and type guards exported from this package:
 - `ControlInstance` — Union of `LuxarOrbitControls | LuxarFlyControls`
 - `isOrbitControls(control)` — Type guard for orbit controls
 - `isFlyControls(control)` — Type guard for fly controls
+- `nextControlType(current)` — Orbit → Fly → Ortho cycle helper
 
 (GUI-controller reference types such as `RenderingControllers` live alongside
 their consumers in `ui/rendering-controls/types.ts`, not here.)

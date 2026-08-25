@@ -7,7 +7,7 @@
 import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import { InputContext } from '../context-manager';
-import { isFocusOnSceneCanvas } from '../commands/focus-utils';
+import { isFocusOnSceneCanvas } from '../../../utils/dom/focus';
 import type { KeyBindingsDeps } from './register-all';
 
 export function registerNavigationBindings(deps: KeyBindingsDeps): void {

@@ -1,6 +1,6 @@
 import { ColormapLegend } from '../../../ui/colormap-legend';
 import type { LayersPanel } from '../../../ui/layers';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
 
 /**
  * Build a fresh {@link ColormapLegend} for the current layers panel and

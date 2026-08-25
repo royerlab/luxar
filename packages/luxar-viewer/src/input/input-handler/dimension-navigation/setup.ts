@@ -29,33 +29,26 @@ import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
-import type { DimensionSliders, SliderConfig } from '../../../ui/dimension-sliders';
-import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { PanelCoordinator } from '../commands/panel-coordinator';
+import type {
+  DimensionSlidersFactory,
+  DimensionSlidersHandle,
+  RecordingPanelHandle,
+} from '../panel-capabilities';
 
-/**
- * Factory used by `initDimensionSliders` to construct the slider panel.
- * Injected from `core/app.ts` (via `InputHandler`'s constructor) so the
- * input layer never imports the concrete UI class at runtime — it only
- * knows the shape via `import type`. Closes the input → ui layer-cruiser
- * exception (see `.dependency-cruiser.cjs`'s `KNOWN_LAYER_EXCEPTIONS`).
- *
- * Re-exported from `input/input-handler.ts` as the public name.
- */
-export type DimensionSlidersFactory = (config: SliderConfig) => DimensionSliders;
-
+/** Mutable dependencies and state accessors for dimension-navigation setup. */
 export interface DimNavSetupCtx {
   sceneManager: SceneManager;
   animationController: AnimationController;
   dimensionSlidersFactory: DimensionSlidersFactory | undefined;
   panelCoordinator: PanelCoordinator;
-  recordingPanel: RecordingPanel | undefined;
+  recordingPanel: RecordingPanelHandle | undefined;
   getSelectedDimension(): number;
   setSelectedDimension(value: number): void;
   getAnimationManager(): DimensionAnimationManager | undefined;
   setAnimationManager(manager: DimensionAnimationManager | undefined): void;
-  getDimensionSliders(): DimensionSliders | undefined;
-  setDimensionSliders(sliders: DimensionSliders | undefined): void;
+  getDimensionSliders(): DimensionSlidersHandle | undefined;
+  setDimensionSliders(sliders: DimensionSlidersHandle | undefined): void;
   getSceneDimsListener(): (() => Promise<void>) | undefined;
   setSceneDimsListener(listener: (() => Promise<void>) | undefined): void;
 }
