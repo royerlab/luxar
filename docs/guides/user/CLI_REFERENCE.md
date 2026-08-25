@@ -396,10 +396,17 @@ aligned strided exports navigate directly between populated slices. Mixed channe
 naming and duplicate time/channel coordinates are refused rather than guessed. Pass the
 directory and output scene as the two positional arguments, e.g.
 `luxar mesh import 000_deconv.ome.zarr/meshes/cells cells.luxar.zarr`. Use `--pattern`
-for another mesh format:
+for another mesh format.
+
+For other naming schemes, pass `--index-regex` with a required named `t` capture and an
+optional named `c` capture. The regex searches each filename stem (without the final
+extension) and must match exactly once. Captures must be integers exactly representable
+as float32 coordinates. For example:
 
 ```bash
-luxar mesh import --pattern '*.ply'  # import a directory of T-indexed frames
+luxar mesh import --pattern '*.ply' frames out.luxar.zarr
+luxar mesh import --index-regex 'frame_(?P<t>\d+)' frames out.luxar.zarr
+luxar mesh import --index-regex 't=(?P<t>\d+)-c=(?P<c>\d+)' surfaces out.luxar.zarr
 ```
 
 The resulting mesh node has no spatial index: the viewer downloads the entire stacked

@@ -239,6 +239,31 @@ class TestMeshImport:
         assert int(second_faces.min()) == 4
         assert int(second_faces.max()) == 8
 
+    def test_directory_import_accepts_a_named_group_index_regex(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "frames"
+        source.mkdir()
+        WRITERS["vtp"](source / "surface.0042.vtp", GT)
+        out = tmp_path / "surface.luxar.zarr"
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(out),
+                "--index-regex",
+                r"surface\.(?P<t>\d+)",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        node = LuxarScene.load(out).get_mesh("mesh")
+        assert node.vertices.shape == (4, 4)
+        assert np.array_equal(node.vertices[:, 3], [42] * 4)
+
     def test_centering_is_on_by_default_and_can_be_turned_off(
         self, fixtures: dict[str, Path], tmp_path: Path
     ) -> None:
@@ -401,6 +426,40 @@ class TestMeshImport:
             app, ["mesh", "import", str(fixtures["ply"]), str(out), "--overwrite"]
         )
         assert result.exit_code == 0, result.stdout
+
+    @pytest.mark.parametrize(
+        ("index_regex", "message"),
+        [
+            (r"frame_(?P<t>\d+", "Invalid index regex"),
+            (r"frame_(?P<c>\d+)", "named 't' capture"),
+        ],
+    )
+    def test_a_rejected_index_regex_leaves_existing_output_intact(
+        self, tmp_path: Path, index_regex: str, message: str
+    ) -> None:
+        source = tmp_path / "frames"
+        source.mkdir()
+        out = tmp_path / "existing.luxar.zarr"
+        out.mkdir()
+        marker = out / "keep.me"
+        marker.write_text("existing output")
+
+        result = runner.invoke(
+            app,
+            [
+                "mesh",
+                "import",
+                str(source),
+                str(out),
+                "--index-regex",
+                index_regex,
+                "--overwrite",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert message in result.stdout
+        assert marker.read_text() == "existing output"
 
     @pytest.mark.parametrize("as_parent", [False, True])
     def test_an_output_that_would_destroy_the_input_is_refused(
