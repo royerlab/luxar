@@ -8,6 +8,10 @@ are implementation details and should not be imported directly by demos.
 
 .. automodule:: luxar.demos
    :members:
+   :exclude-members: FlowField
    :undoc-members:
    :show-inheritance:
+
+.. autoclass:: luxar.demos.FlowField
+   :members:
    :no-index:
