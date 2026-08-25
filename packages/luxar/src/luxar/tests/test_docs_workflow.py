@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +88,7 @@ def test_pages_cancels_deployments_superseded_by_newer_main_promotions() -> None
     }
 
 
-def test_pages_rejects_lfs_pointers_before_upload() -> None:
+def test_pages_rejects_lfs_pointers_before_upload(tmp_path: Path) -> None:
     """Fail closed if an LFS pointer reaches Sphinx's published asset trees."""
     steps = _workflow()["jobs"]["build"]["steps"]
     check_index = next(
@@ -112,3 +113,35 @@ def test_pages_rejects_lfs_pointers_before_upload() -> None:
     assert "docs/_build/html/_downloads" in run
     assert "version https://git-lfs.github.com/spec/v1" in run
     assert "::error file=" in run
+
+    images = tmp_path / "docs/_build/html/_images"
+    images.mkdir(parents=True)
+    (images / "valid.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    clean = subprocess.run(
+        ["bash", "-c", run],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+
+    (images / "bad.png").write_text(
+        "version https://git-lfs.github.com/spec/v1\n"
+        "oid sha256:0123456789abcdef\n"
+        "size 8\n"
+    )
+    rejected = subprocess.run(
+        ["bash", "-c", run],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert rejected.returncode == 1, rejected.stdout + rejected.stderr
+    assert (
+        "::error file=docs/_build/html/_images/bad.png::"
+        "Git LFS pointer would be published"
+    ) in rejected.stdout
