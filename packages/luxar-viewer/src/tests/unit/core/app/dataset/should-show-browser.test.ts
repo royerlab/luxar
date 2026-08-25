@@ -44,6 +44,16 @@ describe('shouldShowBrowser', () => {
       expect(result).toBe(true);
       expect(fetchSpy).not.toHaveBeenCalled();
     });
+
+    it('loads zipped stores directly without probing URL-addressable children', async () => {
+      for (const src of [
+        'https://example.com/scene.luxar.zarr.zip',
+        'https://example.com/SCENE.LUXAR.ZARR.ZIP?token=abc#view',
+      ]) {
+        expect(await shouldShowBrowser(src)).toBe(false);
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('zarr metadata probes', () => {

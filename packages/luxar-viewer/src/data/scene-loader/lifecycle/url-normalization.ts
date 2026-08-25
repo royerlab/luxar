@@ -45,8 +45,8 @@
  * EXCEPTION — zipped stores. A `.zarr.zip` is a single file, so it gets NO
  * trailing slash: the rationale above is about making directory children
  * concatenable, and an archive has no URL-addressable children (its members are
- * read through the store). `overlays/…` concatenation therefore does not apply
- * to zipped stores and is handled separately.
+ * read through the store). Image overlays still concatenate URL children and
+ * are unsupported for zipped stores until archive-member loading is added.
  *
  * @module data/scene-loader/lifecycle/url-normalization
  */

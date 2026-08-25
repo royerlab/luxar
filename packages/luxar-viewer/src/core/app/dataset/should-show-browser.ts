@@ -1,4 +1,5 @@
 import { classifyBrowserUrl } from './browser-decision';
+import { isZippedStoreUrl } from '../../../data/zip/entries';
 
 /**
  * Decide whether to open the dataset browser or load `src` directly.
@@ -16,6 +17,10 @@ export async function shouldShowBrowser(src: string): Promise<boolean> {
   // Synchronous classification: empty / trailing-slash URLs always
   // need the browser, no point firing a zarr-metadata probe.
   if (classifyBrowserUrl(src) === 'must-browse') return true;
+
+  // Archive members are not URL-addressable children, so probing
+  // `archive.zip/zarr.json` can only fail and incorrectly open the browser.
+  if (isZippedStoreUrl(src)) return false;
 
   // Check if it's a Zarr dataset by looking for zarr metadata files
   // Try both v2 (.zgroup) and v3 (zarr.json) formats

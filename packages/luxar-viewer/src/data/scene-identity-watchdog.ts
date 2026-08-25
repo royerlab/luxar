@@ -41,6 +41,7 @@
 import { ROOT_ATTR_DOCS, rootAttrDocOf, rootAttributes } from '../types/zarr-documents';
 import { log, Modules } from '../utils/log';
 import { notifier } from '../utils/cross-layer/notifier';
+import { isZippedStoreUrl } from './zip/entries';
 
 /** Periodic probe cadence. Focus/visibility probes fire immediately. */
 const CHECK_INTERVAL_MS = 15_000;
@@ -205,7 +206,10 @@ export class SceneIdentityWatchdog {
 
   /** Whether this dataset URL is one the watchdog can meaningfully watch. */
   static isWatchable(datasetUrl: string): boolean {
-    return /^https?:\/\//i.test(datasetUrl);
+    // Re-probing archive identity requires reading an attrs member through the
+    // zip store; appending `/zarr.json` to the archive URL always probes a
+    // nonexistent HTTP child and falsely reports the scene as changed.
+    return /^https?:\/\//i.test(datasetUrl) && !isZippedStoreUrl(datasetUrl);
   }
 
   /**

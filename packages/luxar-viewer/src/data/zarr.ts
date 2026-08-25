@@ -104,9 +104,6 @@ export function createFetchStore(url: string): FetchStore {
   return boundedConcurrencyStore(new zarrita.FetchStore(url));
 }
 
-/** Re-exported so callers route suffix decisions through the facade. */
-export { isZippedStoreUrl };
-
 /**
  * Create a store that reads a zipped Zarr archive (`.zarr.zip`) in place, over
  * HTTP range requests — one ranged GET per chunk, no unpacking.
