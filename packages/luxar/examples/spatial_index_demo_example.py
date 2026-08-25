@@ -96,9 +96,9 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
             np.float32
         )
 
-        # Add some large radius points that span multiple time slices
-        if i % 3 == 0:
-            # Every third cluster has some large-radius points
+        # Use a stride coprime with the 3-channel cycle so every channel gets
+        # large-radius points that span multiple time slices.
+        if i % 2 == 0:
             large_indices = np.random.choice(points_per_cluster, size=50, replace=False)
             cluster_radii[large_indices] = np.random.uniform(3.0, 5.0, 50)
             cluster_colors[large_indices] *= 2.0  # Make them brighter (HDR)

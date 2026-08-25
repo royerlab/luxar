@@ -102,7 +102,7 @@ def _parametrize_stems(stems: Iterable[str]) -> list[pytest.param]:
 
 @pytest.mark.parametrize("n_clusters", [8, 19, 20, 40])
 def test_spatial_index_demo_discrete_coordinates_stay_navigable(n_clusters):
-    """The initial slice stays populated and all discrete values stay on-grid."""
+    """Discrete values stay navigable and large radii span every channel."""
     module = _load_example("spatial_index_demo_example")
 
     positions, colors, radii = module.create_5d_clusters(n_clusters, 100)
@@ -140,6 +140,20 @@ def test_spatial_index_demo_discrete_coordinates_stay_navigable(n_clusters):
     assert positions[:, 4].min() >= module.CHANNEL_RANGE[0]
     assert positions[:, 4].max() <= module.CHANNEL_RANGE[1]
     assert np.count_nonzero(initial_slice) > 0
+
+    large_radius_channels = (
+        module.CHANNEL_RANGE[0]
+        + np.round(
+            (positions[radii >= 3.0, 4] - module.CHANNEL_RANGE[0]) / module.CHANNEL_STEP
+        )
+        * module.CHANNEL_STEP
+    )
+    expected_channels = np.arange(
+        module.CHANNEL_RANGE[0],
+        module.CHANNEL_RANGE[1] + module.CHANNEL_STEP,
+        module.CHANNEL_STEP,
+    )
+    np.testing.assert_array_equal(np.unique(large_radius_channels), expected_channels)
 
 
 _ALL_STEMS = [s for s in _discover_example_stems() if s not in HEAVY_EXAMPLES]
