@@ -547,9 +547,10 @@ export class DataLoadingMonitor {
    * Pushed by the SceneLoader's visible-counts walk (only rendered meshes
    * contribute). Merged into the tree nodes so badge tooltips can show
    * "(N visible after slicing)" per layer; the merge happens in
-   * `updateSceneGraphBadges` on the next poll tick. Nodes whose path is
-   * absent from the latest map (the walk prunes non-visible subtrees)
-   * have their count cleared so tooltips never show a stale number.
+   * `SceneGraphModel.syncVisibleCountsIntoTree()`, run on the poll tick
+   * immediately before the incremental badge patch. Nodes whose path is
+   * absent from the latest map (the walk prunes non-visible subtrees) have
+   * their count cleared so tooltips never show a stale number.
    */
   public updateVisibleCountsByPath(counts: ReadonlyMap<string, number>): void {
     this.sceneGraphModel.updateVisibleCountsByPath(counts);

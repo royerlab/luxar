@@ -14,7 +14,7 @@ import {
   summariseLodStates,
 } from '../templates/scene-graph';
 
-interface SceneGraphBadgeSource {
+export interface SceneGraphBadgeSource {
   getSceneGraph(): SceneGraphState;
   getSceneGraphNodeByPath(path: string): SceneGraphNode | null;
 }

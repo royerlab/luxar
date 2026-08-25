@@ -176,7 +176,10 @@ export class SceneGraphModel {
     }
 
     // Substitutive LOD children represent the same data at different
-    // resolutions, so only the finest (last) level contributes to totals.
+    // resolutions. The Python writer guarantees coarsest-to-finest child
+    // order, so only the finest (last) level contributes to totals. Partition
+    // parts are disjoint, while additive children never reach the scene graph,
+    // so only kind === 'lod' needs this de-duplication.
     const contributing =
       node.kind === 'lod' && childStats.length > 0
         ? [childStats[childStats.length - 1]]
