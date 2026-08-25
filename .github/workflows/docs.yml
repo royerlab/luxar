@@ -28,19 +28,24 @@ permissions:
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   build:
+    # A newer main promotion makes an older build obsolete, so do not serialize
+    # paid runners behind stale work.
+    concurrency:
+      group: pages-build
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          lfs: true
+
+      # Sphinx publishes these four LFS-tracked screenshots. Fetch them
+      # explicitly instead of smudging every demo dataset and gallery asset in
+      # the repository on each main promotion. The empty exclude neutralizes
+      # any inherited lfs.fetchexclude so the include list is authoritative.
+      - name: Fetch documentation LFS assets
+        run: git lfs pull --include="docs/images/docs/basic-3d-pointcloud.png,docs/images/docs/gsplats-scene.png,docs/images/docs/nd-navigation-sliders.png,docs/images/docs/viewer-ui-overview.png" --exclude=""
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         id: setup-python-docs
@@ -84,6 +89,24 @@ jobs:
       - name: Build Sphinx documentation
         run: hatch run docs:build
 
+      - name: Reject unresolved LFS pointers
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=false
+          for directory in docs/_build/html/_images docs/_build/html/_downloads; do
+            [ -d "$directory" ] || continue
+            while IFS= read -r -d '' path; do
+              if [ "$(head -n 1 "$path")" = "version https://git-lfs.github.com/spec/v1" ]; then
+                echo "::error file=$path::Git LFS pointer would be published"
+                found=true
+              fi
+            done < <(find "$directory" -type f -print0)
+          done
+          if [ "$found" = true ]; then
+            exit 1
+          fi
+
       # Build TypeDoc (TypeScript API) and copy into Sphinx output
       - name: Build TypeDoc documentation
         run: |
@@ -104,6 +127,10 @@ jobs:
           path: docs/_build/html
 
   deploy:
+    # Never interrupt an in-flight production deployment.
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
