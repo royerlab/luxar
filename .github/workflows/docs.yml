@@ -28,14 +28,13 @@ permissions:
   pages: write
   id-token: write
 
-# Allow only one current deployment. A newer main promotion makes an older
-# build obsolete, so do not serialize paid runners behind stale work.
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
   build:
+    # A newer main promotion makes an older build obsolete, so do not serialize
+    # paid runners behind stale work.
+    concurrency:
+      group: pages-build
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -89,6 +88,24 @@ jobs:
       - name: Build Sphinx documentation
         run: hatch run docs:build
 
+      - name: Reject unresolved LFS pointers
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=false
+          for directory in docs/_build/html/_images docs/_build/html/_downloads; do
+            [ -d "$directory" ] || continue
+            while IFS= read -r -d '' path; do
+              if [ "$(head -n 1 "$path")" = "version https://git-lfs.github.com/spec/v1" ]; then
+                echo "::error file=$path::Git LFS pointer would be published"
+                found=true
+              fi
+            done < <(find "$directory" -type f -print0)
+          done
+          if [ "$found" = true ]; then
+            exit 1
+          fi
+
       # Build TypeDoc (TypeScript API) and copy into Sphinx output
       - name: Build TypeDoc documentation
         run: |
@@ -109,6 +126,10 @@ jobs:
           path: docs/_build/html
 
   deploy:
+    # Never interrupt an in-flight production deployment.
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
