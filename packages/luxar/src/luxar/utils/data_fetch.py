@@ -19,8 +19,9 @@ publication onto the critical path of every demo-data PR. ``hosted_sha256`` is
 usually absent, and then the two contracts are one.
 
 Resolution order for a ``zenodo`` dataset (per file). A checksum is the authority
-at every step — bytes matching NEITHER contract are quarantined, never returned,
-and the download leg is strict on the hosted digest specifically:
+at every step. Bytes matching neither live contract are quarantined unless they
+match the most recent ``superseded_sha256`` and no source can replace them; the
+download leg remains strict on the hosted digest specifically:
 
     1. Local cache ``~/.cache/luxar/<dataset>/<file>``, if it verifies.
     2. In-repo git-LFS copy ``demos/data/<dir>/<file>``, where ``<dir>`` is the
@@ -443,7 +444,7 @@ def _verdict_from_one_pass(
             }
             for digest, kind in candidates:
                 aprint(f"   Expected {label[kind]:<12s}{digest}")
-            aprint(f"   Actual       {actual}")
+            aprint(f"   {'Actual:':<21s}{actual}")
         return None
 
 
@@ -563,10 +564,13 @@ def _ensure_one(
     ``hosted_sha`` is optional and usually absent; when it is, the two contracts
     are one and the behaviour is exactly as before.
 
-    Bytes already in hand are accepted if they satisfy EITHER contract, in that
-    order of preference — hosted (canonical, silent), then local (usable, with a
-    one-line notice that the record holds something newer). Both legs that can
-    supply such bytes have to agree on this: the cache slot is keyed on
+    Bytes already in hand prefer the two live contracts in order — hosted
+    (canonical, silent), then local (usable, with a one-line notice that the
+    record holds something newer). A cached copy matching the most recent
+    ``superseded_sha256`` is a third, weaker verdict: it is reused only when no
+    in-repo copy or download route can replace it, and is reported as out of
+    date. Both legs that can supply live bytes have to agree on the live
+    contracts: the cache slot is keyed on
     ``(dataset, variant, basename)`` and nothing else, with no record of which
     source filled it, so a cache leg stricter than the leg that wrote it would
     quarantine its own copy and re-make it on every single run.
@@ -582,7 +586,8 @@ def _ensure_one(
 
     The checksum authority at every step:
 
-    * a cached file that fails it is QUARANTINED and never reused. The previous
+    * a cached file matching neither live contract is QUARANTINED unless it
+      matches the newest superseded digest and is irreplaceable. The previous
       version fell through to step 2 instead, where a (size, mtime) staleness
       test could not see an in-place corruption and returned the bad file;
     * a copy taken from the in-repo git-LFS tree is verified AFTER copying, so
@@ -610,9 +615,10 @@ def _ensure_one(
     # Same shape as #854, where a quarantine on a stale EXPECTATION destroyed a
     # good file and looped; there the fix was to stop quarantining, and here the
     # superseded list is what lets us tell "out of date" from "corrupt".
-    lfs_candidate = lfs_dir / fname
-    has_repo_copy = lfs_candidate.is_file() and not is_lfs_pointer(lfs_candidate)
-    irreplaceable = not has_repo_copy and not zenodo_file_url(record, fname)
+    lfs_file = lfs_dir / fname
+    has_repo_copy = lfs_file.is_file() and not is_lfs_pointer(lfs_file)
+    url = zenodo_file_url(record, fname)
+    irreplaceable = not has_repo_copy and not url
 
     cached = _resolve_from_cache(
         dest,
@@ -630,9 +636,8 @@ def _ensure_one(
     # INVARIANT from here on: `dest` does not exist.
 
     # ── 2. In-repo git-LFS copy (the migration fallback) ────────────────────
-    lfs_file = lfs_dir / fname
     inrepo_is_bad = False
-    if lfs_file.is_file() and not is_lfs_pointer(lfs_file):
+    if has_repo_copy:
         if verbose:
             aprint(f"Copying {fname} from packaged data to cache")
         # Atomic: a Ctrl-C mid-copy must not leave a truncated file under the
@@ -674,7 +679,6 @@ def _ensure_one(
         )
 
     # ── 3. Zenodo (only once the record URL is populated) ───────────────────
-    url = zenodo_file_url(record, fname)
     if url:
         if verbose:
             aprint(f"↓ Fetching {fname} from Zenodo")
