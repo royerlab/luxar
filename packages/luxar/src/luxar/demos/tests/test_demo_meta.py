@@ -204,9 +204,8 @@ def test_iter_demos_does_not_import_demo_modules() -> None:
     )
 
 
-def test_cache_root_matches_utils_cache() -> None:
-    """registry.DEMO_CACHE_ROOT duplicates utils.cache's constant (import-weight);
-    they must never diverge."""
+def test_cache_root_matches_demo_cache() -> None:
+    """The registry and dataset-cache roots must never diverge."""
     from luxar.demos._support.datasets.cache import _DEFAULT_CACHE_ROOT
 
     assert registry.DEMO_CACHE_ROOT == _DEFAULT_CACHE_ROOT

@@ -737,9 +737,9 @@ def _download_from_google_drive(
     # `requests` advertises `gzip, deflate` by default and `iter_content`
     # DECODES the body, while Content-Length describes the COMPRESSED bytes — a
     # gzipped text/csv would then look truncated and be rejected even though it
-    # arrived intact. The shared demo downloader codifies
-    # this precondition, but its "unless the caller already set it" guard would
-    # preserve the Session's own gzip default, so the header is set outright.
+    # arrived intact. `_support.downloads.download._force_identity_encoding`
+    # codifies this precondition, but its "unless the caller already set it"
+    # guard would preserve the Session's own gzip default, so the header is set outright.
     # Setting it on the session makes all four strategies below inherit it.
     session.headers["Accept-Encoding"] = "identity"
 

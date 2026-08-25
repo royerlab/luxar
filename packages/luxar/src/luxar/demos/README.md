@@ -1288,9 +1288,9 @@ same information inside its own error message.
 Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
 
-`luxar.demos` is the ONLY spelling for these helpers: never import the guarded
-concern modules behind the `luxar.demos` barrel (including dataset, download,
-and remote-ZIP support) or private demo helpers
+`luxar.demos` is the ONLY spelling for these helpers: never import guarded
+`luxar.demos._support.*` concern modules (including dataset, download, and
+remote-ZIP support) or private demo helpers
 such as `luxar.demos._support._fields` directly from a demo, even though that is
 where they live. The authoritative guarded set is
 `tests/test_demo_import_spelling.py`'s `DEEP_MODULES`. That test fails the build

@@ -16,7 +16,7 @@ from luxar.demos import detect_device, parse_demo_flags
 
 flags = parse_demo_flags()
 device = detect_device()
-print(device, flags.recompute)
+print(device, flags["recompute"])
 ```
 
 `device.py` probes CUDA, MPS, and CPU availability. `flags.py` implements the

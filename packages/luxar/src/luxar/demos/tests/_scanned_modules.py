@@ -42,8 +42,9 @@ no entry point of its own had every function unreachable and passed vacuously.
 module-level ``def``s for such modules; the two changes only work together.
 
 The set is a DENYLIST on purpose: every ``*.py`` directly under ``demos/``
-*except* :data:`EXCLUDED`, plus every helper in ``demos/_support/`` except its
-barrel. An allowlist keyed on a filename pattern would be opt-in, so a future
+*except* :data:`EXCLUDED`, plus every helper recursively below
+``demos/_support/`` except package barrels. An allowlist keyed on a filename
+pattern would be opt-in, so a future
 ``demos/_plot_helpers.py`` or ``demos/_support/_plot_helpers.py`` would escape
 all seventeen guards and reopen the very blind spot this module exists to close.
 
@@ -66,8 +67,8 @@ infrastructure rather than demo code, and one would produce a *false* positive:
 ``__init__.py``
     A pure re-export barrel; it holds no demo code and no gates.
 
-``_support/__init__.py`` is excluded for the same barrel-only reason. Every
-other module in ``_support/`` is scanned.
+Every ``__init__.py`` below ``_support/`` is excluded for the same barrel-only
+reason. Every other Python module in that subtree is scanned recursively.
 
 ``registry.py`` is deliberately NOT excluded — it passes all seventeen guards, so
 there is no reason to carve it out.

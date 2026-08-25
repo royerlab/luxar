@@ -185,6 +185,7 @@ def robust_download(
     """Download a file with automatic retry, resume capability, and progress tracking.
 
     Features:
+
     - Automatic retry on network errors (exponential backoff)
     - Resume partial downloads (HTTP Range requests), validated with
       ``If-Range`` against the recorded ETag/Last-Modified of the staged bytes
@@ -228,7 +229,7 @@ def robust_download(
         ValueError: If downloaded file size doesn't match expected size
 
     Example:
-        >>> from luxar.demos._support.downloads.download import robust_download
+        >>> from luxar.demos import robust_download
         >>> path = robust_download(
         ...     "https://example.com/large_dataset.zip",
         ...     Path("data/dataset.zip"),
