@@ -36,7 +36,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_rainbow_sphere.py",
-      "dataset": "datasets/demos/rainbow_sphere.luxar.zarr"
+      "dataset": "datasets/demos/rainbow_sphere.luxar.zarr",
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65: at the default 0.95 the tile was a featureless colour blur with no discernible sphere -- 3647/4316 border pixels (84.5%) lit."
     },
     {
       "id": "quantum_orbitals",
@@ -301,7 +303,8 @@
       "script": "demo_earthquakes_3d.py",
       "dataset": "datasets/demos/earthquakes.luxar.zarr",
       "citation": "USGS ANSS Comprehensive Catalog",
-      "note": "real Earth + short spikes, no override needed"
+      "note": "real Earth + short spikes, no override needed fillTarget 0.65: at the default 0.95 the globe was cropped past its own limb and read as a noise wall rather than as Earth -- 3658/4316 border pixels (84.8%) lit. That matters more since the #2014 rebuild took the surface from 120k to 2M points with a derived radius, which only reads as terrain if the sphere is actually in frame.",
+      "fillTarget": 0.65
     },
     {
       "id": "global_rivers_earth",
@@ -351,7 +354,9 @@
       "category": "synthetic",
       "script": "demo_4d_fractals.py",
       "dataset": "datasets/demos/fractals_4d.luxar.zarr",
-      "note": "dimensionNav/zoom/exposure dropped after the #842 regeneration, as the previous note instructed. Re-derived from the rebuilt store rather than adjusted: `w` is now declared discrete over [-1.0, 0.96] at step 0.04, i.e. 50 materialised stops, and the store opens already populated at its default slice. The old `steps: 15` was calibrated when `w` was continuous and only ~1 position in 10 held a slice; on the current store it just lands on an arbitrary populated frame, and the zoom/exposure that framed a thin sparse slice no longer describe what is there. The scene's own ViewerConfig and auto-exposure now drive the capture."
+      "note": "dimensionNav dropped after the #842 regeneration: `w` is now declared discrete over [-1.0, 0.96] at step 0.04 (50 materialised stops, not the 15 the old hint assumed) and the store opens already populated, so there is no empty slice to step past. zoom and exposure are KEPT and were re-measured rather than dropped -- the previous note lumped all three together, but removing them takes border-lit from 0/4316 to 3419/4316 and blows the slice out to a pale wash. They describe the render, not the old navigation.",
+      "zoom": 0.7,
+      "exposure": -1.5
     },
     {
       "id": "galaxy_simulation",
@@ -460,7 +465,9 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_blastocyst_dapi_nuclei.py",
       "dataset": "datasets/demos/gsplats_3d_blastocyst_dapi_nuclei.luxar.zarr",
-      "citation": "Blin et al. 2019"
+      "citation": "Blin et al. 2019",
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65: at the default 0.95 the nuclei blurred into a single purple mass -- 3338/4316 border pixels (77.3%) lit. Its sibling gsplats_3d_blastocyst_multichannel renders the same specimen legibly at 0.0% border-lit because it carries an explicit distance override; this one had no framing hint at all."
     },
     {
       "id": "gsplats_3d_tribolium_embryo",
@@ -642,7 +649,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_cubic_array.py",
-      "dataset": "datasets/demos/cubic_array.luxar.zarr"
+      "dataset": "datasets/demos/cubic_array.luxar.zarr",
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65: at the default 0.95 the camera sat inside the array and the tile was an illegible gradient wash with a few faint lines -- 3758/4316 border pixels (87.1%) lit. The demo is about depth of field across a regular lattice, which needs the lattice visible as a lattice."
     },
     {
       "id": "particle_collision_animated",
