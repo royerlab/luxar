@@ -1,5 +1,5 @@
-import { classifyBrowserUrl } from './browser-decision';
 import { isZippedStoreUrl } from '../../../data/zip/entries';
+import { classifyBrowserUrl } from './browser-decision';
 
 /**
  * Decide whether to open the dataset browser or load `src` directly.
@@ -7,10 +7,11 @@ import { isZippedStoreUrl } from '../../../data/zip/entries';
  * Order of checks:
  *   1. Synchronous URL classification — empty / trailing-slash URLs are
  *      always must-browse, no need to probe.
- *   2. HEAD-probe zarr v2 (`.zgroup`, `.zattrs`) and v3 (`zarr.json`)
+ *   2. Zipped stores load directly — see below.
+ *   3. HEAD-probe zarr v2 (`.zgroup`, `.zattrs`) and v3 (`zarr.json`)
  *      markers in parallel; short-circuit on the first 2xx response.
  *      Returns `false` (load directly) when any probe hits.
- *   3. If all probes fail or time out after 5s, fall through to `true`
+ *   4. If all probes fail or time out after 5s, fall through to `true`
  *      (show the browser — likely a directory listing or non-zarr URL).
  */
 export async function shouldShowBrowser(src: string): Promise<boolean> {
@@ -18,8 +19,11 @@ export async function shouldShowBrowser(src: string): Promise<boolean> {
   // need the browser, no point firing a zarr-metadata probe.
   if (classifyBrowserUrl(src) === 'must-browse') return true;
 
-  // Archive members are not URL-addressable children, so probing
-  // `archive.zip/zarr.json` can only fail and incorrectly open the browser.
+  // A `.zarr.zip` is a FILE whose store documents live INSIDE it, so the
+  // child probes below are meaningless: `archive.zip/zarr.json` 404s for
+  // every archive, all three probes fail, and a perfectly loadable dataset
+  // gets diverted into the browser — which cannot even list it. Decide from
+  // the suffix and let the loader's zip store do the real work.
   if (isZippedStoreUrl(src)) return false;
 
   // Check if it's a Zarr dataset by looking for zarr metadata files
