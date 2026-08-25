@@ -798,6 +798,23 @@ def test_result_dtype_and_range():
     assert shade.max() <= 1.0
 
 
+def test_default_direction_counts_match_the_converged_floors():
+    positions = _ball(1_000, seed=32)
+    normals = positions / np.linalg.norm(positions, axis=1, keepdims=True)
+    kwargs = dict(radius=0.3, grid_cells=24)
+
+    np.testing.assert_allclose(
+        bake_ambient_occlusion(positions, **kwargs),
+        bake_ambient_occlusion(positions, n_directions=24, **kwargs),
+        atol=1e-7,
+    )
+    np.testing.assert_allclose(
+        bake_ambient_occlusion(positions, normals=normals, **kwargs),
+        bake_ambient_occlusion(positions, normals=normals, n_directions=48, **kwargs),
+        atol=1e-7,
+    )
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [

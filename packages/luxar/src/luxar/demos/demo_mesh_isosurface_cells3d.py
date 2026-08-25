@@ -200,7 +200,7 @@ AO_RADIUS_UM = 4.0
 #: Left alone when the library's auto target was retuned for stronger contrast,
 #: which is a checked decision rather than an oversight: because this demo
 #: normalizes against the term's own maximum, the retune moved its measured
-#: contrast by only ~12% (membranes 0.115 -> 0.140), and every LOWER strength
+#: contrast by only ~22% (membranes 0.115 -> 0.140), and every LOWER strength
 #: moved it further from the appearance that was already reviewed. Points needed
 #: the extra push; a shaded surface, which puts one element in each pixel, did not.
 AO_STRENGTH = 0.45
@@ -302,6 +302,7 @@ def _occluded_albedo(
     occlusion = bake_ambient_occlusion(
         vertices,
         normals=normals,
+        occluder="opaque",
         radius=AO_RADIUS_UM,
         strength=AO_STRENGTH,
     )

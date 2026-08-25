@@ -135,8 +135,8 @@ def point_radius(resolution: int) -> float:
 #: Occlusion strength: all of the ambient treated as direct, so none of it is
 #: left as an indirect floor. Full strength rather than the library's 0.7 default
 #: because this scene exists to show the term as clearly as it can be shown, and
-#: the auto-exposure below absorbs the extra darkening. Measured contrast (std of
-#: the multiplier) at the default radius: 0.070 full-sphere, 0.147 hemisphere.
+#: the auto-exposure below absorbs the extra darkening. At the default resolution
+#: the measured multiplier std is 0.071 full-sphere and 0.127 hemisphere.
 AO_STRENGTH = 1.0
 
 #: Target peak accumulation for the auto-exposure, in linear light. Additive
@@ -150,8 +150,8 @@ TARGET_PEAK = 0.7
 #: wall blocks a direction and a second wall behind it changes nothing. Under the
 #: default Beer-Lambert reading a one-cell-thick shell only attenuates by
 #: exp(-k), so a wall would pass roughly half the light — measured, the
-#: saturating mapping carries about a quarter more contrast here at a matched
-#: median.
+#: saturating mapping carries about a fifth more contrast here at a matched
+#: median, while clipping a small dark tail to zero.
 OCCLUDER = "opaque"
 
 #: Additive, not volumetric, and that is the whole point. Volumetric blending
@@ -232,8 +232,8 @@ def auto_exposure(positions: np.ndarray, radius: float) -> Tuple[float, int]:
     """Node gain that keeps the deepest additive sightline under white.
 
     Derived rather than hardcoded, because the answer moves with
-    ``--resolution``: the deepest column through the labyrinth measures 20 points
-    at 100³ and 62 at 200³, so any fixed gain is either clipped at one end of
+    ``--resolution``: the deepest column through the labyrinth measures 51 points
+    at 100³ and 110 at 200³, so any fixed gain is either clipped at one end of
     that range or needlessly dim at the other. Emitted radiance is linear in
     ``intensity`` (the point shader multiplies colour by ``uIntensity``), so
     scaling by the measured depth holds the peak roughly fixed.

@@ -8,8 +8,9 @@ optical-depth grid, `demo_lsystem_forest` from vertex normals). The reusable par
 of that is now a package.
 
 `bake_ambient_occlusion(positions, ...)` returns a per-element multiplier in
-`[0, 1]` computed as a windowed Beer–Lambert column integral over a spherical
-direction set. It is deliberately **ambient only**: occlusion is a scalar
+`[0, 1]` computed from a windowed column integral over a spherical direction
+set, mapped as Beer–Lambert density or an opaque surface. It is deliberately
+**ambient only**: occlusion is a scalar
 function of the geometry, identical from every camera, which is what makes baking
 it sound. A directional key light is not offered, because baking one fixes it in
 world space and it stops reading the moment the camera orbits — a key light has
@@ -41,11 +42,11 @@ purpose. A `.gsplats.zarr` is a reconstruction; colormaps, tone mapping and now
 occlusion are authored on the way into a scene. Keeping it here avoids adding
 another per-element sidecar for `reencode`, `lod`, `decimate` and refits to carry,
 reorder or invalidate, and leaves the caller holding the scene's `Dimensions` so
-it can say which axes are spatial — `group_by` then keeps occlusion from crossing
-a time or channel axis, the same hazard `--coarsen-dims` exists for on the LOD
-side.
+it can say which axes are spatial. `group_by` keeps occlusion from crossing a
+time or channel axis while sharing cell size, radius and auto extinction across
+the population, so real temporal density changes remain comparable.
 
-Three demos exercise it. A new `ambient_occlusion` demo puts the same gyroid
+Four demos exercise it. A new `ambient_occlusion` demo puts the same gyroid
 surface on screen three times — unshaded, full-sphere, cosine-hemisphere — with
 identical colour, radii and blending, so the only variable is the baked
 multiplier; its exposure is derived from the measured deepest sightline rather
@@ -83,11 +84,10 @@ measuring contrast and the 5th percentile across two deliberately different
 regimes (a thin shell read through the hemisphere path, a solid ball read through
 the full sphere) so the default is not tuned to one shape. It roughly doubles
 contrast in both while keeping p5 near 0.2; below it the gain comes from clipping
-the dark end rather than from revealing structure. Points then take a higher
-`strength` than mesh — 0.85 against 0.45 — because a depth-tested surface puts
-one element in each pixel while a point cloud blends soft overlapping sprites,
-and an additive one shows the ray-averaged shade, costing about 30% of the
-contrast. Mesh was measured and deliberately left where it was.
+the dark end rather than from revealing structure. Points take a higher
+`strength` than mesh because soft overlapping sprites mute per-element contrast:
+mesh stays at 0.45, ATP synthase uses 0.85, and the pore plus the deliberately
+maximal A/B demo use 1.0.
 
 `occluder` selects what the material is taken to BE, because the two cases want
 different mappings of the same column integral. `"density"` (default) is
@@ -101,6 +101,7 @@ which is what a surface sampled as points is made of — attenuates only by
 `exp(-k)`, so at any `k` gentle enough to keep solid regions readable a *wall*
 passes about half the light, and raising `k` until walls block properly
 over-darkens everywhere thick. There is no `k` that serves both. Auto calibration
-is inverted per mode so both land on the same declared target. The gyroid demo,
-being a surface, now uses it: hemisphere contrast 0.147 -> 0.168 with the dark end
-reaching 0.
+is inverted per mode so both aim at the same declared target. The gyroid demo,
+being a surface, uses it: at the shipped 48-direction hemisphere default,
+contrast rises from 0.113 to 0.127 (about 13%; about a fifth at a matched median),
+while the minimum falls from 0.127 to 0.054.

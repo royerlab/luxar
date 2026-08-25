@@ -375,18 +375,19 @@ def spoke_to_color(spoke_ids: np.ndarray, n_spokes: int = 8) -> np.ndarray:
 #: reporting depth — the degenerate case the package README warns about:
 #:
 #:   radius (nm)   1.0     1.5     2.0     3.0     4.0     6.0
-#:   contrast      0.305   0.298   0.282   0.259   0.244   0.231
+#:   contrast      0.463   0.449   0.419   0.379   0.354   0.333
 #:
-#: At 1.5 nm the window is ~7 cells wide and the largest atom is 0.36 of a cell,
+#: At 1.5 nm the window is ~4 cells wide and the largest atom is 0.18 of a cell,
 #: so treating each atom as a point rather than a sphere is a safe approximation
 #: here. Keep the radius comfortably above the cell size (extent /
 #: AO_GRID_CELLS) or the window rounds to one cell and the term flattens.
 AO_RADIUS_NM = 1.5
 
-#: Occlusion grid resolution. Higher than the library default because the
-#: structure is large in world units and the feature of interest is small: at 64
-#: cells one cell would be ~2 nm and a 6 nm radius only three cells wide.
-AO_GRID_CELLS = 128
+#: The library default resolves the scaled 25.6 nm structure at about 0.40 nm per
+#: cell, so the 1.5 nm radius spans four cells. Raising this to 128 measured no
+#: quality gain (normalized contrast 0.458 at 64 versus 0.449 at 128) while
+#: increasing the rotated-grid peak from about 28 MiB to 160 MiB.
+AO_GRID_CELLS = 64
 
 #: Fraction of the ambient illumination that is DIRECT, and so occludable;
 #: `1 - AO_STRENGTH` is the indirect, multiply-scattered ambient that reaches even
@@ -394,19 +395,12 @@ AO_GRID_CELLS = 128
 #: colour IS the emission term, and for matter lit from outside that term is
 #: albedo x incident irradiance.
 #:
-#: 0.85 rather than the library default, because points need more of it than a
-#: mesh does: a shaded surface puts ONE element in each pixel, while a
-#: depth-sorted point cloud shows a sprite whose soft falloff blends with its
-#: neighbours, muting per-element contrast. Measured contrast (std/mean of the
-#: normalized multiplier) 0.103 at 0.55 against 0.214 at 0.85, with the 5th
-#: percentile still at 0.39 — visibly darker, nowhere near crushed.
-#:
 #: At 1.0 the whole ambient is occludable and nothing is left as an indirect
-#: floor. Affordable here in a way it would not be on a thin shell: the ring is
-#: several atoms thick, so the term spans a wide range without pinning the buried
-#: atoms at zero. The colours are a CATEGORICAL element encoding (C grey, N blue,
-#: O red, S yellow) and a scalar multiplier preserves hue while changing only
-#: lightness, so element identity survives the extra darkening.
+#: floor. At the shipped radius the normalized contrast is 0.458, with p5 about
+#: 0.13 and the darkest atoms about 0.05: deliberately strong, but still carrying
+#: colour. The colours are a CATEGORICAL element encoding (C grey, N blue, O red,
+#: S yellow), and a scalar multiplier preserves hue while changing only
+#: lightness, so element identity survives the darkening.
 AO_STRENGTH = 1.0
 
 
@@ -449,14 +443,10 @@ def _apply_burial_shading(
     )
 
     # Rescale so the LEAST buried atom keeps its colour untouched. Nothing in a
-    # structure this dense is ever fully unoccluded — the raw term tops out
-    # around 0.95 and averages 0.77 — so applying it directly would dim the whole
-    # complex by roughly a quarter and quietly undo the exposure this demo was
-    # authored at. Occlusion always costs mean brightness and something has to
-    # absorb it; here the cheapest place is the term's own top end, which spends
-    # it entirely on CONTRAST between exposed and buried atoms and leaves peak
-    # brightness where it was. It also makes the reading explicitly relative,
-    # which is the honest description of it anyway.
+    # structure this dense is ever fully unoccluded, and the raw mean sits far
+    # below its maximum, so applying it directly would materially dim the whole
+    # complex and undo the authored exposure. Normalizing against the term's top
+    # end spends the darkening on CONTRAST and keeps peak brightness unchanged.
     normalized = occlusion / max(float(occlusion.max()), 1e-6)
     aprint(
         f"✓ Burial shading (ambient occlusion, r={AO_RADIUS_NM} nm): "

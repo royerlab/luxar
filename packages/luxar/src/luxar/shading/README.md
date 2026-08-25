@@ -125,7 +125,7 @@ profile *shape*, a modest constant unless it varies per element.
 
 One real approximation: mass is deposited at each element's **centre**, so extent
 is a weight and not a footprint. That holds while the render radius is small next
-to the grid cell (`extent / grid_cells`) — measured at 0.28, 0.36 and 0.44 of a
+to the grid cell (`extent / grid_cells`) — measured at 0.28, 0.18 and 0.44 of a
 cell in the three bundled point demos. Raise `grid_cells` if your elements span
 cells.
 

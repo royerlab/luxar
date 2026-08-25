@@ -114,10 +114,10 @@ DEFAULT_RADIUS_FRACTION = 0.05
 DEFAULT_GRID_CELLS = 64
 
 #: Opposed direction pairs used for a full-sphere bake. The cost is linear in
-#: this count. The per-element working set is about ``8 * N * D`` bytes for the
-#: float32 columns plus their mapped copy, or ``12 * N * D`` with hemisphere
-#: weights. Add the rotated grid, whose worst-case volume is approximately
-#: ``(sqrt(3) * grid_cells) ** 3`` cells.
+#: this count. Budget about ``20 * N * D`` bytes for a full-sphere bake or
+#: ``32 * N * D`` with hemisphere weights (measured peak above a populated input
+#: process, including indexing temporaries). Add the rotated grid, whose
+#: worst-case volume is approximately ``(sqrt(3) * grid_cells) ** 3`` cells.
 DEFAULT_N_DIRECTIONS = 24
 
 #: Hemisphere weighting converges more slowly than a plain sphere average, so
@@ -437,7 +437,7 @@ def bake_ambient_occlusion(
             element's centre, so an element's extent is a weight and not a
             footprint. That holds while the render radius is small next to the
             occlusion grid cell (``extent / grid_cells``) — measured at 0.28,
-            0.36 and 0.44 of a cell in the three bundled point demos. Raise
+            0.18 and 0.44 of a cell in the three bundled point demos. Raise
             ``grid_cells``, or splat pre-spread mass yourself, if your elements
             are large enough to span cells.
         normals: Optional ``(N, 3)`` outward normals, in the ``spatial_dims``

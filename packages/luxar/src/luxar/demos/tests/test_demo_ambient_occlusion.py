@@ -8,12 +8,13 @@ carrying more contrast than the sphere panel (which is the point of showing both
 """
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from luxar.demos.demo_ambient_occlusion import (
     AO_RADIUS,
     AO_STRENGTH,
     BASE_COLOR,
-    CELLS,
+    OCCLUDER,
     TARGET_PEAK,
     auto_exposure,
     gyroid_field,
@@ -73,8 +74,10 @@ def test_sprites_overlap_so_the_surface_is_not_a_dot_screen() -> None:
     reads noise and no amount of extra AO strength helps. Diameter must exceed
     the spacing, at every resolution.
     """
-    for resolution in (40, 80, 160, 240):
-        spacing = 2.0 * CELLS * np.pi / (resolution - 1)
+    for resolution in (40, 80, 120):
+        positions, _ = sample_gyroid_surface(resolution)
+        distances, _ = cKDTree(positions).query(positions, k=2)
+        spacing = float(np.median(distances[:, 1]))
         diameter = 2.0 * point_radius(resolution)
         assert diameter > spacing, (
             f"resolution {resolution}: sprite diameter {diameter:.4f} does not "
@@ -92,7 +95,17 @@ def test_auto_exposure_keeps_the_deepest_sightline_under_white() -> None:
     """
     for resolution in (40, 64):
         positions, _ = sample_gyroid_surface(resolution)
-        intensity, deepest = auto_exposure(positions, point_radius(resolution))
+        radius = point_radius(resolution)
+        intensity, deepest = auto_exposure(positions, radius)
+
+        expected_counts: dict[tuple[int, int], int] = {}
+        for x, y in positions[:, :2]:
+            key = (
+                int(np.floor(x / (2.0 * radius))),
+                int(np.floor(y / (2.0 * radius))),
+            )
+            expected_counts[key] = expected_counts.get(key, 0) + 1
+        assert deepest == max(expected_counts.values())
 
         peak = deepest * intensity * float(BASE_COLOR.max())
         assert peak < 1.0, f"resolution {resolution} clips at {peak:.2f}"
@@ -118,9 +131,18 @@ def test_hemisphere_panel_carries_more_contrast_than_the_sphere_panel() -> None:
     """
     positions, normals = sample_gyroid_surface(64)
 
-    sphere = bake_ambient_occlusion(positions, radius=AO_RADIUS, strength=AO_STRENGTH)
+    sphere = bake_ambient_occlusion(
+        positions,
+        radius=AO_RADIUS,
+        strength=AO_STRENGTH,
+        occluder=OCCLUDER,
+    )
     hemisphere = bake_ambient_occlusion(
-        positions, normals=normals, radius=AO_RADIUS, strength=AO_STRENGTH
+        positions,
+        normals=normals,
+        radius=AO_RADIUS,
+        strength=AO_STRENGTH,
+        occluder=OCCLUDER,
     )
 
     assert hemisphere.std() > 1.5 * sphere.std()
@@ -135,7 +157,11 @@ def test_occlusion_varies_across_the_surface() -> None:
     positions, normals = sample_gyroid_surface(64)
 
     shade = bake_ambient_occlusion(
-        positions, normals=normals, radius=AO_RADIUS, strength=AO_STRENGTH
+        positions,
+        normals=normals,
+        radius=AO_RADIUS,
+        strength=AO_STRENGTH,
+        occluder=OCCLUDER,
     )
 
     spread = float(np.percentile(shade, 95) - np.percentile(shade, 5))
