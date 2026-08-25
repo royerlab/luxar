@@ -464,7 +464,7 @@ def download_catalogs() -> list[tuple[str, Path]]:
     (tracer_name, local_path) for each NGC/SGC file."""
     from requests.exceptions import RequestException
 
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     out: list[tuple[str, Path]] = []

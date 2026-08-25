@@ -88,7 +88,7 @@ function makePorts(overrides: Partial<Parameters<typeof installDebugInterface>[0
   const renderingControls = { id: 'rendering' };
   return {
     debug: true,
-    app: { id: 'app' } as never,
+    app: { id: 'app', shortcutForAction: vi.fn().mockReturnValue('F1') } as never,
     sceneManager: sceneManager as never,
     animationController: animationController as never,
     inputHandler: inputHandler as never,
@@ -167,9 +167,19 @@ describe('installDebugInterface', () => {
       expect(dbg.workers!.getStats()).toEqual({ inFlight: 1, completed: 99 });
     });
 
-    it('exposes showError so visual-regression specs can drive the error dialog', () => {
-      installDebugInterface(makePorts());
-      expect(typeof window.__luxarDebug?.showError).toBe('function');
+    it('exposes showError so visual-regression specs can drive the error dialog', async () => {
+      const { showError } = await import('../../../../../ui/error-overlay');
+      const showErrorMock = vi.mocked(showError);
+      const ports = makePorts();
+      installDebugInterface(ports);
+      window.__luxarDebug!.showError!('Synthetic failure');
+
+      expect(showErrorMock).toHaveBeenCalledWith('Synthetic failure', expect.any(Function), {
+        datasetBrowser: 'dataset-browser.toggle',
+        help: 'help.toggle',
+      });
+      const shortcutForAction = showErrorMock.mock.calls[0][1]!;
+      expect(shortcutForAction('help.toggle')).toBe('F1');
     });
   });
 
@@ -343,7 +353,9 @@ describe('installDebugInterface', () => {
       // error overlay so silent-await callers (typical debug-URL flow)
       // still see something.
       expect(showError).toHaveBeenCalledWith(
-        expect.stringMatching(/Synthetic-scene injection failed.*simulated bundle-load failure/)
+        expect.stringMatching(/Synthetic-scene injection failed.*simulated bundle-load failure/),
+        expect.any(Function),
+        { datasetBrowser: 'dataset-browser.toggle', help: 'help.toggle' }
       );
       // AND log.error must record the failure with module + payload.
       expect(log.error).toHaveBeenCalledWith(

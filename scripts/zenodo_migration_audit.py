@@ -57,6 +57,7 @@ The checks that matter, and why each one is here:
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -597,6 +598,15 @@ def fetch_deposition(dep_id: str, token: str) -> dict:
         raise SystemExit(
             f"Zenodo returned HTTP {exc.code} {exc.reason} for deposition {dep_id}. "
             "Check the id and that ZENODO_TOKEN has deposit:write scope."
+        ) from exc
+    except (
+        OSError,
+        http.client.HTTPException,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+    ) as exc:
+        raise SystemExit(
+            f"Zenodo request failed for deposition {dep_id}: {exc}"
         ) from exc
     return payload
 

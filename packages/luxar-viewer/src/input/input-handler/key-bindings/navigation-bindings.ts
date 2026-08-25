@@ -102,8 +102,8 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
   // The command surface owns the window event dispatch because the listener is
   // rebuilt on every dataset load while this binding lives for the app's lifetime.
   //
-  // Gated on focus being on the scene itself. Layer rows bind these same keys
-  // and stop propagation, so a row press never arrives here — but the guard
+  // Gated on focus being on the scene itself. The Layers panel contains these
+  // keys at its boundary, so a row press never arrives here — but the guard
   // still matters for the other focusable controls outside the canvas (a panel
   // button, a dimension slider): Tab-reaching a panel keeps the cached scene
   // pick alive, because the pointer never left the canvas to fire the

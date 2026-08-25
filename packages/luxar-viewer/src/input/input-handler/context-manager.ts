@@ -45,6 +45,9 @@ export enum InputContext {
   UI_INTERACTION = 'ui_interaction', // UI panels and controls
 }
 
+/** Built-in or custom input-context identifier. */
+export type InputContextId = InputContext | (string & {});
+
 /**
  * Key binding configuration
  */
@@ -77,13 +80,14 @@ export interface KeyBinding {
  * Context configuration
  */
 export interface ContextConfig {
-  name: string;
+  /** Optional display name used by diagnostics. Defaults to the context identifier. */
+  name?: string;
   priority: number; // Higher priority contexts override lower ones
   allowedKeys?: string[]; // Base or canonical binding keys handled by this context
   blockedKeys?: string[]; // Canonical binding keys never handled by this context
   passthrough?: boolean; // If true, unhandled keys pass to lower contexts
   /** Ordered contexts consulted when this context declines a key. */
-  fallbackContexts?: InputContext[];
+  fallbackContexts?: InputContextId[];
   /** Rebuild `allowedKeys` from this context's live registrations. */
   allowRegisteredBindings?: boolean;
 }
@@ -127,11 +131,12 @@ export interface ContextConfig {
  * ```
  */
 export class InputContextManager {
-  private currentContext: InputContext = InputContext.NAVIGATION;
-  private contextStack: InputContext[] = [];
+  private currentContext: string = InputContext.NAVIGATION;
+  private contextStack: string[] = [];
   private bindings = new Map<string, Map<string, KeyBinding>>();
   private actionBindings = new Map<string, Map<string, string>>();
-  private contextConfigs = new Map<InputContext, ContextConfig>();
+  private contextConfigs = new Map<string, ContextConfig>();
+  private readonly builtInContexts = new Set<string>(Object.values(InputContext));
   private enabled = true;
 
   /**
@@ -165,6 +170,7 @@ export class InputContextManager {
    * @private
    */
   private initializeContexts(): void {
+    this.contextConfigs.clear();
     this.contextConfigs.set(InputContext.NAVIGATION, {
       name: 'Navigation',
       priority: 0,
@@ -197,6 +203,42 @@ export class InputContextManager {
     });
   }
 
+  /** Register a custom input context. Context identifiers must be unique. */
+  public registerContext(context: InputContextId, config: ContextConfig): void {
+    if (!context) throw new Error('Input context identifier cannot be empty');
+    if (this.contextConfigs.has(context)) {
+      throw new Error(`Input context "${context}" is already registered`);
+    }
+    if (config.allowedKeys && config.allowRegisteredBindings) {
+      throw new Error(
+        `Input context "${context}" cannot define allowedKeys with allowRegisteredBindings`
+      );
+    }
+    for (const fallback of config.fallbackContexts ?? []) {
+      this.requireRegisteredContext(fallback);
+    }
+    this.contextConfigs.set(context, this.copyContextConfig(context, config));
+    this.recomputeContextFilters();
+  }
+
+  /** Remove a custom context and all bindings registered under it. */
+  public unregisterContext(context: InputContextId): void {
+    if (this.builtInContexts.has(context)) {
+      throw new Error(`Built-in input context "${context}" cannot be unregistered`);
+    }
+    if (!this.contextConfigs.has(context)) return;
+    if (this.currentContext === context || this.contextStack.includes(context)) {
+      throw new Error(`Input context "${context}" cannot be unregistered while active`);
+    }
+    this.contextConfigs.delete(context);
+    this.bindings.delete(context);
+    this.actionBindings.delete(context);
+    for (const [dependentContext, config] of this.contextConfigs) {
+      if (this.builtInContexts.has(dependentContext)) continue;
+      config.fallbackContexts = config.fallbackContexts?.filter((fallback) => fallback !== context);
+    }
+  }
+
   /**
    * Push a new context onto the stack, saving current context.
    *
@@ -217,7 +259,8 @@ export class InputContextManager {
    * // Back to previous context
    * ```
    */
-  public pushContext(context: InputContext): void {
+  public pushContext(context: InputContextId): void {
+    this.requireRegisteredContext(context);
     if (this.currentContext !== context) {
       this.contextStack.push(this.currentContext);
       this.setContext(context);
@@ -266,7 +309,8 @@ export class InputContextManager {
    * contextManager.setContext(InputContext.NAVIGATION);
    * ```
    */
-  public setContext(context: InputContext): void {
+  public setContext(context: InputContextId): void {
+    this.requireRegisteredContext(context);
     const oldContext = this.currentContext;
     this.currentContext = context;
 
@@ -283,7 +327,7 @@ export class InputContextManager {
    *
    * @returns Current context enum value (NAVIGATION, FLY_CONTROLS, etc.)
    */
-  public getContext(): InputContext {
+  public getContext(): InputContextId {
     return this.currentContext;
   }
 
@@ -329,7 +373,8 @@ export class InputContextManager {
    * });
    * ```
    */
-  public registerBinding(context: InputContext, binding: KeyBinding): void {
+  public registerBinding(context: InputContextId, binding: KeyBinding): void {
+    this.requireRegisteredContext(context);
     const contextKey = context;
     if (!this.bindings.has(contextKey)) {
       this.bindings.set(contextKey, new Map());
@@ -360,13 +405,22 @@ export class InputContextManager {
     contextBindings.set(bindingKey, binding);
     contextActions.set(actionKey, bindingKey);
     this.recomputeContextFilters();
+    const config = this.contextConfigs.get(context)!;
+    // Derived allowlists already contain every live registration after recomputation.
+    if (!this.isKeyAllowedInContext(binding.key, bindingKey, config)) {
+      log.warning(
+        Modules.INPUT_CONTEXT,
+        `Key binding ${bindingKey} is unreachable in context ${context}`
+      );
+    }
   }
 
   /**
    * Unregister a previously registered key binding.
    *
    * Removes the binding for the specified key and modifiers in the given
-   * context. Has no effect if the binding doesn't exist.
+   * context. Has no effect if the context or binding doesn't exist, which
+   * keeps teardown idempotent after context removal.
    *
    * @param context - Context containing the binding to remove
    * @param key - Key that was bound
@@ -386,7 +440,7 @@ export class InputContextManager {
    * ```
    */
   public unregisterBinding(
-    context: InputContext,
+    context: InputContextId,
     key: string,
     modifiers?: KeyBinding['modifiers']
   ): void {
@@ -405,8 +459,8 @@ export class InputContextManager {
    *
    * Routes the event through the context system to find and execute the
    * appropriate handler. Processing order:
-   * 1. Check if manager is enabled
-   * 2. Check if in typing context (blocks most keys)
+   * 1. Check if manager is enabled (keydown only)
+   * 2. Check if in typing context (blocks most keydown events)
    * 3. Check if key is allowed in current context
    * 4. Look for registered binding in current context
    * 5. If passthrough is enabled, try the declared fallback contexts
@@ -432,7 +486,9 @@ export class InputContextManager {
    * ```
    */
   public handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    if (!this.enabled) return false;
+    // Disabling suppresses new keydown actions, but keyup handlers must still
+    // run so held-state bindings (notably fly movement) cannot remain latched.
+    if (!this.enabled && type === 'down') return false;
 
     // Re-entrance guard: a misbehaving binding handler that triggers
     // another keyboard event through this manager could otherwise
@@ -459,15 +515,16 @@ export class InputContextManager {
       // Escape from a typing context (e.g. focus inside the
       // dataset-browser manual-path field, debug-console filter input)
       // must still close the panel. Look up the Escape binding in the
-      // current context AND every other context, firing the first
-      // match. Going through the normal dispatch path would re-enter
+      // built-in contexts and the active custom context, firing the
+      // first match. Going through the normal dispatch path would re-enter
       // this branch, and `tryLowerContexts` alone would skip the
       // current context where Escape is usually registered.
       if (event.key === 'Escape') {
         return this.dispatchEscapeFromTypingContext(event, type);
       }
-      // Block all other keys while typing
-      return true;
+      // Block new actions while typing, but let keyup cleanup fall through so
+      // a key held before focus moved cannot remain latched.
+      if (type === 'down') return true;
     }
 
     // Get the current context configuration
@@ -543,7 +600,7 @@ export class InputContextManager {
   /**
    * Dispatch Escape from a typing context.
    *
-   * Walks all contexts in priority order (including the current one)
+   * Walks built-in contexts plus the active context in priority order
    * and fires the first matching Escape binding. Mirrors the dispatch
    * shape of {@link tryLowerContexts} but does not exclude the current
    * context — Escape is most often registered in NAVIGATION (the
@@ -551,9 +608,14 @@ export class InputContextManager {
    * `tryLowerContexts` does would skip it.
    */
   private dispatchEscapeFromTypingContext(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    const sortedContexts = Array.from(this.contextConfigs.entries()).sort(
-      (a, b) => (b[1].priority ?? 0) - (a[1].priority ?? 0)
-    );
+    const sortedContexts = Array.from(this.contextConfigs.entries())
+      .filter(([context]) => this.builtInContexts.has(context) || context === this.currentContext)
+      .sort((a, b) => {
+        // Built-in Escape handlers retain viewer ownership before an active custom context.
+        const builtInOrder =
+          Number(this.builtInContexts.has(b[0])) - Number(this.builtInContexts.has(a[0]));
+        return builtInOrder || (b[1].priority ?? 0) - (a[1].priority ?? 0);
+      });
 
     for (const [context] of sortedContexts) {
       const contextBindings = this.bindings.get(context);
@@ -758,10 +820,10 @@ export class InputContextManager {
   /**
    * Enable or disable the entire context manager.
    *
-   * When disabled, handleKeyEvent() immediately returns false without
-   * processing. Useful for temporarily suspending all context-based
-   * input handling (e.g., during initialization or modal dialogs that
-   * need to bypass the context system).
+   * When disabled, keydown events return false without processing. Keyup
+   * handlers still run so stateful bindings can release held input. Useful
+   * for temporarily suspending context-based input handling without leaving
+   * movement or modifier state latched.
    *
    * @param enabled - true to enable context management, false to disable
    */
@@ -794,15 +856,15 @@ export class InputContextManager {
    * ```
    */
   public getDebugInfo(): {
-    currentContext: InputContext;
-    contextStack: InputContext[];
-    registeredBindings: Map<InputContext, RegisteredShortcutBinding[]>;
+    currentContext: string;
+    contextStack: string[];
+    registeredBindings: Map<string, RegisteredShortcutBinding[]>;
   } {
-    const registeredBindings = new Map<InputContext, RegisteredShortcutBinding[]>();
+    const registeredBindings = new Map<string, RegisteredShortcutBinding[]>();
 
     this.bindings.forEach((bindings, context) => {
       registeredBindings.set(
-        context as InputContext,
+        context,
         Array.from(bindings.entries()).map(([key, binding]) => ({
           actionId: binding.actionId,
           actionParameter: binding.actionParameter,
@@ -853,7 +915,7 @@ export class InputContextManager {
    *
    * @param context - Context whose bindings should be cleared
    */
-  public clearContextBindings(context: InputContext): void {
+  public clearContextBindings(context: InputContextId): void {
     this.bindings.delete(context);
     this.actionBindings.delete(context);
     this.recomputeContextFilters();
@@ -866,14 +928,31 @@ export class InputContextManager {
    * to NAVIGATION context. Useful when reinitializing the application
    * or cleaning up for testing.
    *
-   * Does NOT reset context configurations (those remain from initialization).
+   * Restores the built-in context configurations and removes custom contexts.
    */
   public reset(): void {
     this.currentContext = InputContext.NAVIGATION;
     this.contextStack = [];
     this.bindings.clear();
     this.actionBindings.clear();
+    this.initializeContexts();
     this.recomputeContextFilters();
+  }
+
+  private copyContextConfig(context: string, config: ContextConfig): ContextConfig {
+    return {
+      ...config,
+      name: config.name ?? context,
+      allowedKeys: config.allowedKeys ? [...config.allowedKeys] : undefined,
+      blockedKeys: config.blockedKeys ? [...config.blockedKeys] : undefined,
+      fallbackContexts: config.fallbackContexts ? [...config.fallbackContexts] : undefined,
+    };
+  }
+
+  private requireRegisteredContext(context: string): void {
+    if (!this.contextConfigs.has(context)) {
+      throw new Error(`Input context "${context}" is not registered`);
+    }
   }
 
   private recomputeContextFilters(): void {

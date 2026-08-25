@@ -892,6 +892,7 @@ test.describe('Dimension Animation - Error Handling', () => {
     const custom = page.locator('.luxar-dimension-slider__context-step-input');
     await expect(custom).toHaveAttribute('type', 'number');
     await page.keyboard.press('Escape');
+    await expect(page.locator('.luxar-dimension-slider__context-menu')).toHaveCount(0);
   });
 
   test('the step override drives the animation increment', async ({ page }) => {

@@ -556,7 +556,7 @@ def load_or_build_orbitals() -> GSplatData:
             try:
                 return GSplatData.load(cache_file)
             except Exception as exc:  # truncated / incompatible archive
-                from luxar.utils.download import quarantine_file
+                from luxar.demos import quarantine_file
 
                 quarantine_file(cache_file, reason=f"unreadable gsplats cache ({exc})")
                 aprint("Refitting from scratch.")

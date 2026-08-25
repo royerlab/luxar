@@ -12,6 +12,7 @@ import {
   InputContext,
   MAX_KEY_EVENT_DEPTH,
 } from '../../../../input/input-handler/context-manager';
+import { log } from '../../../../utils/log';
 import { registerTestBinding } from './context-manager-test-utils';
 
 describe('InputContextManager', () => {
@@ -133,6 +134,251 @@ describe('InputContextManager', () => {
       expect(() => manager.popContext()).not.toThrow();
       // Should remain in current context
       expect(manager.getContext()).toBe(InputContext.NAVIGATION);
+    });
+  });
+
+  describe('custom context lifecycle', () => {
+    it('rejects an empty context identifier', () => {
+      expect(() => manager.registerContext('', { priority: 5 })).toThrow(
+        'Input context identifier cannot be empty'
+      );
+    });
+
+    it('registers a copied config and routes push → handle → pop with explicit fallback', () => {
+      const allowedKeys = ['x'];
+      const fallbackContexts = [InputContext.NAVIGATION];
+      manager.registerContext('annotation', {
+        priority: 5,
+        passthrough: true,
+        allowedKeys,
+        fallbackContexts,
+      });
+      const annotationHandler = vi.fn();
+      const navigationHandler = vi.fn();
+      registerTestBinding(manager, 'annotation', { key: 'x', handler: annotationHandler });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'h',
+        handler: navigationHandler,
+      });
+
+      allowedKeys.splice(0, allowedKeys.length, 'y');
+      fallbackContexts.length = 0;
+      manager.pushContext('annotation');
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'x' }), 'down')).toBe(true);
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'h' }), 'down')).toBe(true);
+      expect(annotationHandler).toHaveBeenCalledOnce();
+      expect(navigationHandler).toHaveBeenCalledOnce();
+      manager.popContext();
+      expect(manager.getContext()).toBe(InputContext.NAVIGATION);
+    });
+
+    it('does not route to navigation with passthrough but no fallback', () => {
+      const navigationHandler = vi.fn();
+      manager.registerContext('annotation', { priority: 5, passthrough: true });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'h',
+        handler: navigationHandler,
+      });
+      manager.pushContext('annotation');
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'h' }), 'down')).toBe(
+        false
+      );
+      expect(navigationHandler).not.toHaveBeenCalled();
+    });
+
+    it('rejects duplicate custom and built-in context names', () => {
+      manager.registerContext('annotation', { priority: 5 });
+      expect(() => manager.registerContext('annotation', { priority: 6 })).toThrow(
+        'Input context "annotation" is already registered'
+      );
+      expect(() => manager.registerContext(InputContext.TYPING, { priority: 1 })).toThrow(
+        'Input context "typing" is already registered'
+      );
+    });
+
+    it('rejects authored and derived allowed-key filters together', () => {
+      expect(() =>
+        manager.registerContext('annotation', {
+          priority: 5,
+          allowedKeys: ['x'],
+          allowRegisteredBindings: true,
+        })
+      ).toThrow(
+        'Input context "annotation" cannot define allowedKeys with allowRegisteredBindings'
+      );
+    });
+
+    it('rejects unknown fallback contexts but allows built-in priority ties', () => {
+      expect(() =>
+        manager.registerContext('annotation', {
+          priority: 5,
+          fallbackContexts: ['misspelled-navigation'],
+        })
+      ).toThrow('Input context "misspelled-navigation" is not registered');
+
+      expect(() => manager.registerContext('annotation', { priority: 5 })).not.toThrow();
+    });
+
+    it('leaves the context stack unchanged when an unknown push is rejected', () => {
+      expect(() => manager.pushContext('missing')).toThrow(
+        'Input context "missing" is not registered'
+      );
+      expect(() => registerTestBinding(manager, 'missing', { key: 'x', handler: vi.fn() })).toThrow(
+        'Input context "missing" is not registered'
+      );
+      expect(manager.getDebugInfo().contextStack).toEqual([]);
+      expect(manager.getContext()).toBe(InputContext.NAVIGATION);
+    });
+
+    it('unregisters custom bindings and rejects later activation', () => {
+      manager.registerContext('annotation', { priority: 5 });
+      registerTestBinding(manager, 'annotation', { key: 'x', handler: vi.fn() });
+      manager.pushContext('annotation');
+      manager.popContext();
+      manager.unregisterContext('annotation');
+
+      expect(manager.getRegisteredShortcutBindings().has('annotation')).toBe(false);
+      expect(() => manager.pushContext('annotation')).toThrow(
+        'Input context "annotation" is not registered'
+      );
+      expect(() => manager.unregisterContext(InputContext.NAVIGATION)).toThrow(
+        'Built-in input context "navigation" cannot be unregistered'
+      );
+    });
+
+    it('treats unregistering an unknown custom context as a no-op', () => {
+      expect(() => manager.unregisterContext('missing')).not.toThrow();
+      expect(manager.getContext()).toBe(InputContext.NAVIGATION);
+    });
+
+    it('removes an unregistered custom context from custom fallback routes', () => {
+      const handler = vi.fn();
+      manager.registerContext('annotation-base', { priority: 4 });
+      manager.registerContext('annotation-overlay', {
+        priority: 5,
+        passthrough: true,
+        fallbackContexts: ['annotation-base'],
+      });
+      manager.unregisterContext('annotation-base');
+      manager.registerContext('annotation-base', { priority: 4 });
+      registerTestBinding(manager, 'annotation-base', { key: 'x', handler });
+      manager.pushContext('annotation-overlay');
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'x' }), 'down')).toBe(
+        false
+      );
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('copies blocked keys instead of retaining the caller array', () => {
+      const blockedKeys = ['x'];
+      const handler = vi.fn();
+      manager.registerContext('annotation', { priority: 5, blockedKeys });
+      registerTestBinding(manager, 'annotation', { key: 'x', handler });
+      blockedKeys.length = 0;
+      manager.pushContext('annotation');
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'x' }), 'down')).toBe(
+        false
+      );
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('refuses to unregister a context that is still active', () => {
+      manager.registerContext('annotation', { priority: 5 });
+      manager.pushContext('annotation');
+
+      expect(() => manager.unregisterContext('annotation')).toThrow(
+        'Input context "annotation" cannot be unregistered while active'
+      );
+      expect(manager.getContext()).toBe('annotation');
+    });
+
+    it('reset removes custom contexts as well as their bindings', () => {
+      manager.registerContext('annotation', { priority: 5 });
+      registerTestBinding(manager, 'annotation', { key: 'x', handler: vi.fn() });
+      manager.reset();
+
+      expect(() => manager.setContext('annotation')).toThrow(
+        'Input context "annotation" is not registered'
+      );
+      expect(manager.getRegisteredShortcutBindings().has('annotation')).toBe(false);
+    });
+
+    it('keeps built-in Escape precedence while typing', () => {
+      const navigationEscape = vi.fn();
+      const customEscape = vi.fn();
+      manager.registerContext('annotation', { priority: 100 });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: navigationEscape,
+      });
+      registerTestBinding(manager, 'annotation', { key: 'Escape', handler: customEscape });
+      manager.pushContext('annotation');
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Escape' }), 'down')).toBe(
+        true
+      );
+      expect(navigationEscape).toHaveBeenCalledOnce();
+      expect(customEscape).not.toHaveBeenCalled();
+      input.remove();
+    });
+
+    it('ignores inactive custom Escape bindings when built-in handlers decline', () => {
+      const customEscape = vi.fn();
+      manager.registerContext('annotation', { priority: 100 });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: () => false,
+      });
+      registerTestBinding(manager, 'annotation', { key: 'Escape', handler: customEscape });
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Escape' }), 'down')).toBe(
+        false
+      );
+      expect(customEscape).not.toHaveBeenCalled();
+      input.remove();
+    });
+
+    it('uses the active custom Escape binding when built-in handlers decline', () => {
+      const customEscape = vi.fn();
+      manager.registerContext('annotation', { priority: 100 });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: () => false,
+      });
+      registerTestBinding(manager, 'annotation', { key: 'Escape', handler: customEscape });
+      manager.pushContext('annotation');
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Escape' }), 'down')).toBe(
+        true
+      );
+      expect(customEscape).toHaveBeenCalledOnce();
+      input.remove();
+    });
+
+    it('warns after registration when an authored filter makes the binding unreachable', () => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+      manager.registerContext('annotation', { priority: 5, allowedKeys: ['y'] });
+
+      registerTestBinding(manager, 'annotation', { key: 'x', handler: vi.fn() });
+
+      expect(warning).toHaveBeenCalledWith(
+        expect.anything(),
+        'Key binding x is unreachable in context annotation'
+      );
+      warning.mockRestore();
     });
   });
 
@@ -552,6 +798,48 @@ describe('InputContextManager', () => {
 
       expect(handled).toBe(false);
       expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('still routes keyup cleanup while disabled without a focused input', () => {
+      const handler = vi.fn();
+      const keyupHandler = vi.fn();
+
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'w',
+        handler,
+        keyupHandler,
+      });
+
+      manager.setEnabled(false);
+      const keydown = new KeyboardEvent('keydown', { key: 'w' });
+      const keyup = new KeyboardEvent('keyup', { key: 'w' });
+
+      expect(manager.handleKeyEvent(keydown, 'down')).toBe(false);
+      expect(manager.handleKeyEvent(keyup, 'up')).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(keyupHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it('still routes keyup cleanup while focus is in a text input', () => {
+      const handler = vi.fn();
+      const keyupHandler = vi.fn();
+
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'w',
+        handler,
+        keyupHandler,
+      });
+
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
+      const keydown = new KeyboardEvent('keydown', { key: 'w' });
+      const keyup = new KeyboardEvent('keyup', { key: 'w' });
+
+      expect(manager.handleKeyEvent(keydown, 'down')).toBe(true);
+      expect(manager.handleKeyEvent(keyup, 'up')).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+      expect(keyupHandler).toHaveBeenCalledExactlyOnceWith(keyup);
     });
   });
 

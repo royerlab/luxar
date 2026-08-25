@@ -8,7 +8,8 @@
 `index.ts` is the package facade. It exports `InputHandler`, the
 `DimensionSlidersFactory` type used by its constructor, the `ControlRailHandle`
 contract its `setControlRail()` accepts, the `InputContext` enum that names the
-routing contexts, and `KeyAction`/`KeyActionId` — the
+routing contexts, `InputContextId`, `ContextConfig`, `KeyBinding`, the registered
+shortcut/help metadata types, and `KeyAction`/`KeyActionId` — the
 stable action identities callers address a binding by (the control rail asks
 for an action's current chord rather than hard-coding a letter). The binding
 registry, context manager implementation, dimension-navigation lifecycle,
@@ -26,6 +27,107 @@ production modules outside this package. Type-only imports and tests are
 currently exempt, so they must still follow the documented boundary by review.
 It also rejects runtime imports from `input/` into `data/` at severity `error`;
 type-only imports are exempt, and loading orchestration belongs in `scene/`.
+
+## LuxarApp keyboard surface
+
+Embedders use the flat `LuxarApp` methods after `await app.init(...)`:
+
+```typescript
+app.registerContext('annotation', {
+  priority: 100,
+  passthrough: true,
+  fallbackContexts: [InputContext.NAVIGATION],
+  allowRegisteredBindings: true,
+});
+app.registerBinding('annotation', {
+  actionId: 'annotation.accept',
+  key: 'x',
+  handler: acceptAnnotation,
+  description: 'Accept annotation',
+  help: false,
+});
+app.pushContext('annotation');
+// later
+app.popContext();
+app.unregisterBinding('annotation', 'x');
+app.unregisterContext('annotation');
+```
+
+The surface also provides `setInputEnabled()` and `shortcutForAction()`. It
+does not expose `InputHandler` or `InputContextManager`; `app.components`
+deliberately omits the input handler so those implementation classes can
+change without becoming embedder API.
+
+The active context owns a matching chord before any fallback is considered.
+Priority orders the active context's declared fallback candidates; it does not
+globally arbitrate two bindings. Consequently, an active custom context may
+deliberately shadow a built-in chord. Its `blockedKeys` may also suppress viewer
+keys in that context; whether a declined key reaches the viewer depends on
+`passthrough` plus `fallbackContexts`. Built-in Escape handling retains first
+claim while focus is in a typing surface.
+
+Set `help: false` to keep a binding out of the built-in help overlay. Supplying
+`help: { section, group, order }` includes it in the overlay under that metadata.
+
+At the current built-in keymap, `x`, `y`, and `z` are the only unclaimed letter
+keys. They are not globally free: while the help overlay or dataset browser is
+open, its type-to-filter field consumes printable characters before viewer
+bindings run.
+
+`setInputEnabled(false)` suspends routed viewer keyboard input without deleting
+contexts or bindings; keyup cleanup still runs so held movement cannot remain
+latched unless an embedder explicitly activates the built-in `TYPING` context,
+and re-enabling restores the same registrations. Custom registrations and the
+enabled state also persist across `switchDataset()`. The internal `reset()`
+lifecycle is stronger: it clears every binding and custom context, empties the
+context stack, and returns to `InputContext.NAVIGATION`. Because keyup may arrive
+without a matching routed keydown, custom keyup handlers must be idempotent.
+
+The router is keyboard-only. Luxar registers its `window` `keydown`/`keyup`
+listeners in the bubble phase. A host that must preempt a chord independently
+of the context API may register a capture-phase listener and call
+`stopImmediatePropagation()` when it owns the event:
+
+```typescript
+window.addEventListener(
+  'keydown',
+  (event) => {
+    if (annotationIsActive && event.key === 'a') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      acceptAnnotation(event);
+    }
+  },
+  { capture: true }
+);
+```
+
+Pointer and camera-control preemption remains the embedder's responsibility;
+it is not part of this public context surface.
+
+## Custom contexts
+
+`InputHandler` exposes `registerContext()`, `unregisterContext()`,
+`registerBinding()`, `unregisterBinding()`, `pushContext()`, and `popContext()`
+without exposing the context-manager implementation. Context identifiers must
+be non-empty and unique. Built-in context configurations cannot be replaced or
+removed, but their bindings remain mutable through `registerBinding()` and
+`unregisterBinding()`. The context manager's `reset()` removes every custom
+context and binding.
+
+Every `fallbackContexts` entry must already be registered. `registerContext()`,
+`registerBinding()`, and `pushContext()` throw for unknown identifiers. To keep
+viewer shortcuts reachable, use `passthrough: true` and at least one registered
+`fallbackContexts` entry. Either one alone is a dead end until the custom context
+is popped.
+
+Use either an authored `allowedKeys` list or `allowRegisteredBindings: true`,
+never both. The latter derives the allowlist from live registrations.
+`unregisterBinding()` is intentionally idempotent when its context or chord has
+already been removed. Built-in Escape handlers retain precedence while typing;
+only the active custom context may handle Escape after every built-in declines.
+Shortcut-overlay metadata should use an embedder-owned `help.group` identifier,
+because help groups are deduplicated first-wins across all registered contexts.
 
 ## Layout
 
@@ -80,6 +182,15 @@ Owns concerns that span the whole viewer surface:
 - Wheel-based zoom and FOV adjust (Ctrl+wheel).
 - Fullscreen enter/exit canvas styling.
 
+Camera pointer input remains outside the keyboard context router by design:
+orbit/pan/dolly and fly steering belong to their control implementations. The
+Ctrl/Cmd+wheel FOV path is the one global pointer listener, so although it is
+registered on `window`, it changes FOV and pokes rendering only for events whose
+composed origin is the scene canvas. Modifier-wheel page zoom is still
+suppressed anywhere inside the viewer container, while host-page UI outside an
+embedded viewer is untouched. Wheel-sensitive widgets no longer need to stop
+propagation.
+
 ### Layer 2 — control implementations (`controls/`)
 
 Each control class (orbit, fly, ortho) owns its own pointer + key handlers
@@ -90,6 +201,8 @@ trackball rotations — they all live in `controls/`, not here.
 
 Panels own their own buttons + form controls. Slider drags, range-input
 typing, modal close buttons — they live with the panel that needs them.
+Non-modal panels may contain keys their controls own while allowing unrelated
+viewer shortcuts to continue through the global router.
 
 ## Orchestrator surface
 

@@ -27,7 +27,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { InputHandler } from '../../../input';
+import { InputContext, InputHandler, type ContextConfig, type KeyBinding } from '../../../input';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
@@ -710,6 +710,36 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
     }
   });
 
+  it('routes a held-key release after focus moves into a text input', () => {
+    const handler = makeHandler();
+    const keydownHandler = vi.fn();
+    const keyupHandler = vi.fn();
+    handler.init();
+    handler.registerBinding(InputContext.FLY_CONTROLS, {
+      actionId: 'test.fly.release',
+      key: 'x',
+      handler: keydownHandler,
+      keyupHandler,
+      description: 'Test fly release',
+      help: false,
+    });
+    handler.pushContext(InputContext.FLY_CONTROLS);
+
+    try {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
+      window.dispatchEvent(new KeyboardEvent('keyup', { key: 'x' }));
+
+      expect(keydownHandler).toHaveBeenCalledTimes(1);
+      expect(keyupHandler).toHaveBeenCalledTimes(1);
+    } finally {
+      handler.dispose();
+      document.body.innerHTML = '';
+    }
+  });
+
   it('setScaleBar / setColormapLegend / setOverlayManager do NOT forward', () => {
     // Sanity: these setters only store local references. If
     // panelCoordinator forwarding is added, update this test alongside.
@@ -726,6 +756,70 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
     // The coordinator's own state shape should not have grown; only
     // its setters add forwarding paths.
     expect(Object.keys(coordinator)).toEqual(before);
+  });
+});
+
+describe('InputHandler — context-manager forwarding', () => {
+  it('forwards custom context and binding lifecycle calls', () => {
+    const handler = new InputHandler(
+      makeSceneManagerStub(),
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+    const contextManager = (
+      handler as unknown as {
+        contextManager: {
+          registerContext: (context: string, config: ContextConfig) => void;
+          unregisterContext: (context: string) => void;
+          registerBinding: (context: string, binding: KeyBinding) => void;
+          unregisterBinding: (
+            context: string,
+            key: string,
+            modifiers?: KeyBinding['modifiers']
+          ) => void;
+          pushContext: (context: string) => void;
+          popContext: () => void;
+        };
+      }
+    ).contextManager;
+    const registerContext = vi
+      .spyOn(contextManager, 'registerContext')
+      .mockImplementation(() => {});
+    const unregisterContext = vi
+      .spyOn(contextManager, 'unregisterContext')
+      .mockImplementation(() => {});
+    const registerBinding = vi
+      .spyOn(contextManager, 'registerBinding')
+      .mockImplementation(() => {});
+    const unregisterBinding = vi
+      .spyOn(contextManager, 'unregisterBinding')
+      .mockImplementation(() => {});
+    const pushContext = vi.spyOn(contextManager, 'pushContext').mockImplementation(() => {});
+    const popContext = vi.spyOn(contextManager, 'popContext').mockImplementation(() => {});
+    const config: ContextConfig = { priority: 5 };
+    const binding: KeyBinding = {
+      actionId: 'embedder.annotate',
+      key: 'x',
+      modifiers: { shift: true },
+      handler: vi.fn(),
+      description: 'Annotate',
+      help: false,
+    };
+
+    handler.registerContext('annotation', config);
+    handler.unregisterContext('annotation');
+    handler.registerBinding('annotation', binding);
+    handler.unregisterBinding('annotation', 'x', binding.modifiers);
+    handler.pushContext(InputContext.UI_INTERACTION);
+    handler.popContext();
+
+    expect(registerContext).toHaveBeenCalledWith('annotation', config);
+    expect(unregisterContext).toHaveBeenCalledWith('annotation');
+    expect(registerBinding).toHaveBeenCalledWith('annotation', binding);
+    expect(unregisterBinding).toHaveBeenCalledWith('annotation', 'x', binding.modifiers);
+    expect(pushContext).toHaveBeenCalledWith(InputContext.UI_INTERACTION);
+    expect(popContext).toHaveBeenCalledOnce();
   });
 });
 
