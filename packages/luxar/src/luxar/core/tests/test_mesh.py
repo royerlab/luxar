@@ -314,6 +314,15 @@ def test_mesh_blending_mode_setter_also_rejects_volumetric(tmp_path) -> None:
         assert mesh.blending_mode == "additive"
 
 
+def test_mesh_reports_viewer_default_blending_mode(tmp_path) -> None:
+    with LuxarZarrCompiler(tmp_path / "default-mode.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        mesh = scene.add_mesh("surface", _V, _F)
+
+        assert mesh.blending_mode == "opaque"
+        assert "blending_mode" not in mesh.attrs
+
+
 def test_mesh_under_a_lod_group_is_accepted(tmp_path) -> None:
     """A mesh IS a valid substitutive level, now that a producer exists.
 

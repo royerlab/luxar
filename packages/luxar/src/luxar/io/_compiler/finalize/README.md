@@ -17,6 +17,7 @@ and the bodies live here so `compiler.py` stays a thin orchestration layer.
 finalize/
 ├── __init__.py          (empty — functions imported directly by module)
 ├── amplitude_window.py  harmonize_gsplat_amplitude_windows()
+├── blending_warnings.py warn_overlapping_blending()
 ├── hashing.py           compute_content_hashes()
 ├── lod_backfill.py      finalize_lod_position_bounds(), finalize_lod_display_types(),
 │                        warn_one_part_partition_anchors()
@@ -290,6 +291,34 @@ is one level's real p99.9, while an `overview` / `adaptive` one is a pooled
 estimate over parts, so the same splats can tone slightly differently depending
 on the topology they were written in (measured 222.34 vs 160.50 on one dataset).
 
+### `blending_warnings.warn_overlapping_blending(store) -> None`
+
+Read-only authoring diagnostics over transform-expanded leaf bounds. Effective
+`blending_mode` uses nearest-setter-wins ancestor→leaf composition; effective
+opacity multiplies down the same chain. The scene root is a carrier and does not
+contribute rendering attrs, matching the viewer. Per-type defaults mirror the
+viewer (`additive` for Points/Lines/GSplats, `opaque` for Mesh), and source-lock
+tests fail if those factories or blend-state predicates drift.
+
+Two hazards are reported: any positive spatial overlap between a node whose
+`additive` mode came from its per-type default and a depth-writing node, and
+containment between two internally order-dependent, depth-testing nodes that do
+not write depth. An explicit `additive` anywhere on the node's ancestry is
+treated as intentional X-ray rendering and suppresses the first warning. The
+second rule intentionally uses containment rather than every partial AABB
+intersection: an empirical scan found pairwise partial overlap too noisy for a
+warning authors would keep reading. The final rule set produced one rolled-up
+order warning in `multiple_objects_example.luxar.zarr` across 56 materialized
+demo/example stores. Non-displayed dimensions use inclusive interval overlap,
+while displayed dimensions require positive extent. Every physical leaf resolves
+to its author-facing owner: the first geometry node or `kind=lod` /
+`kind=partition` wrapper above it. Leaves sharing an owner are never compared,
+and warning names and deduplication use that owner so implementation-level LOD
+chunks and partition parts report once as the node the author wrote. Candidate
+pairs are sweep-pruned on a displayed axis, and repeated pairwise hits are rolled
+up when either owner was already reported so enveloping nodes cannot flood the
+log.
+
 ### `validation.prune_childless_wrappers(store) -> None`
 
 Post-order cleanup of empty `kind=partition` and `kind=lod` wrapper chains.
@@ -324,12 +353,13 @@ before the LOD back-fills can aggregate over them. The display-type pass then
 runs before the position-bounds pass (LOD-of-LOD constructions need a resolved
 type before bounds aggregation), the amplitude-window harmonization after
 those, the one-part-anchor warning after all three (it only reads), and
-`compute_content_hashes` runs last so the stamped hashes cover the back-filled
-and corrected attrs.
+the overlapping-blending warning beside it. `compute_content_hashes` runs last
+so the stamped hashes cover the back-filled and corrected attrs.
 
 ```python
 # packages/luxar/src/luxar/io/compiler.py (finalize-time)
 from ._compiler.finalize.amplitude_window import harmonize_gsplat_amplitude_windows
+from ._compiler.finalize.blending_warnings import warn_overlapping_blending
 from ._compiler.finalize.hashing import compute_content_hashes
 from ._compiler.finalize.lod_backfill import (
     finalize_lod_display_types,
