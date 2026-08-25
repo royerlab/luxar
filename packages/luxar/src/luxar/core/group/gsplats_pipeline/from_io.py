@@ -39,9 +39,11 @@ if TYPE_CHECKING:
 def _grafted_partition_bsp_tree(
     node: "GSplatPartition",
 ) -> Optional[Dict[str, Any]]:
-    """Return stored or exactly recoverable split planes for a partition."""
+    """Return stored or exactly recoverable planes and report recovery."""
     if node.bsp_tree is not None:
         return node.bsp_tree
+
+    from arbol import aprint
 
     from luxar.core.group.partition import (
         reconstruct_serialized_bsp_tree,
@@ -51,10 +53,15 @@ def _grafted_partition_bsp_tree(
 
     child_bounds = [center_bounds(child) for child in node.children]
     if any(bounds is None for bounds in child_bounds):
+        aprint("  🧭 No exact BSP split planes recovered; using centroid part ordering")
         return None
     boxes = [bounds for bounds in child_bounds if bounds is not None]
     recovered = reconstruct_serialized_bsp_tree(boxes)
-    return recovered if serialized_bsp_tree_separates(recovered, boxes) else None
+    if serialized_bsp_tree_separates(recovered, boxes):
+        aprint(f"  🧭 Recovered BSP split planes for {len(node.children)} parts")
+        return recovered
+    aprint("  🧭 No exact BSP split planes recovered; using centroid part ordering")
+    return None
 
 
 def add_gsplats_from_file_impl(
@@ -875,8 +882,6 @@ def graft_gsplat_node(
         return wrapper
 
     if isinstance(node, GSplatPartition):
-        from arbol import aprint
-
         # Local import: the sibling `GSplatLodGroup` branch above imports this
         # too, but that branch does not run on this path.
         from luxar.gsplats.tree import total_splats
@@ -890,16 +895,6 @@ def graft_gsplat_node(
         bsp_tree = _grafted_partition_bsp_tree(node)
         if bsp_tree is not None:
             partition_attrs["bsp_tree"] = bsp_tree
-        if node.bsp_tree is None:
-            if bsp_tree is not None:
-                aprint(
-                    f"  🧭 Recovered BSP split planes for {len(node.children)} parts"
-                )
-            else:
-                aprint(
-                    "  🧭 No exact BSP split planes recovered; "
-                    "using centroid part ordering"
-                )
         # `max_elements` is a per-part CAP, so only a capped splitter sets it
         # (uniform tiling, BSP `--parts`/`--max-elements`). A CONTENT-tiled fit
         # balances its boxes by feature density instead and leaves the field at
