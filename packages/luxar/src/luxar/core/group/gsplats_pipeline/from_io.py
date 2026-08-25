@@ -875,6 +875,8 @@ def graft_gsplat_node(
         return wrapper
 
     if isinstance(node, GSplatPartition):
+        from arbol import aprint
+
         # Local import: the sibling `GSplatLodGroup` branch above imports this
         # too, but that branch does not run on this path.
         from luxar.gsplats.tree import total_splats
@@ -888,6 +890,16 @@ def graft_gsplat_node(
         bsp_tree = _grafted_partition_bsp_tree(node)
         if bsp_tree is not None:
             partition_attrs["bsp_tree"] = bsp_tree
+        if node.bsp_tree is None:
+            if bsp_tree is not None:
+                aprint(
+                    f"  🧭 Recovered BSP split planes for {len(node.children)} parts"
+                )
+            else:
+                aprint(
+                    "  🧭 No exact BSP split planes recovered; "
+                    "using centroid part ordering"
+                )
         # `max_elements` is a per-part CAP, so only a capped splitter sets it
         # (uniform tiling, BSP `--parts`/`--max-elements`). A CONTENT-tiled fit
         # balances its boxes by feature density instead and leaves the field at
