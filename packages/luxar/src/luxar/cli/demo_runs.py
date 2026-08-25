@@ -1,11 +1,11 @@
 """Track and stop running ``luxar demo`` processes (stdlib-only).
 
 ``luxar demo run`` spawns its demo script as an isolated process-group leader
-(see :mod:`luxar.utils.process`), and that script in turn spawns
+(see :mod:`luxar._process`), and that script in turn spawns
 ``luxar serve``. Ctrl-C teardown is deterministic — but a demo the user simply
 *forgot* in another terminal never receives a signal, and keeps its ports, its
 memory and its GPU. Re-running that demo then shifts to a neighbouring port
-(a demo's derived port pair is stable, see :func:`luxar.utils.demos.demo_ports`)
+(a demo's derived port pair is stable, see :func:`luxar.utils.viewer.demo_ports`)
 while the old tab keeps serving the stale scene. ``luxar demo stop`` fixes
 that; this module is its discovery + kill engine, with two complementary
 sources:
@@ -17,9 +17,7 @@ sources:
   ``python -m luxar.demos.demo_*`` command lines catches runs that predate the
   registry or whose pidfile was lost.
 
-Kept in ``luxar.utils`` — not ``luxar.cli`` — and stdlib-only for the same
-reason as :mod:`luxar.utils.process`: importing it must not drag in
-uvicorn/fastapi or the demo registry.
+The module body imports only the standard library and :mod:`luxar._process`.
 """
 
 from __future__ import annotations
@@ -34,10 +32,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .process import can_kill_process_groups, proc_table, terminate_process_group
+from .._process import can_kill_process_groups, proc_table, terminate_process_group
 
-# Matches luxar.demos.registry.DEMO_CACHE_ROOT (not imported: that module pulls
-# in the whole demo table, and cli/utils.py imports us on the serve hot path).
+# A unit test pins this path to luxar.demos.registry.DEMO_CACHE_ROOT so the
+# duplicated location cannot drift.
 DEMO_RUNS_DIR = Path.home() / ".cache" / "luxar" / "running"
 
 # The L1 demo script every `demo run` spawns: `<python> -m luxar.demos.demo_X`.

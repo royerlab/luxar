@@ -586,7 +586,7 @@
     "packages/luxar/src/luxar/utils/data_fetch.py::_ensure_one": [
       15
     ],
-    "packages/luxar/src/luxar/utils/demos.py::cached_download": [
+    "packages/luxar/src/luxar/utils/cache.py::cached_download": [
       12
     ],
     "packages/luxar/src/luxar/utils/download.py::_parse_remote_zip_directory": [

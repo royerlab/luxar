@@ -177,6 +177,12 @@ scene.add_mesh(
 
 # P12_Ch0-registered-T0001.vtp, ... → vertices shaped (V, 5): x, y, z, t, c
 timelapse = import_mesh_directory("000_deconv.ome.zarr/meshes/cells")
+
+# Override filename parsing when frames do not use T<number>/Ch<number> tokens.
+frames = import_mesh_directory(
+    "exported_frames",
+    index_regex=r"frame_(?P<t>\d+)",
+)
 time_range = (
     float(timelapse.vertices[:, 3].min()),
     float(timelapse.vertices[:, 3].max()),
@@ -189,7 +195,11 @@ channel_range = (
 
 def discrete_step(values):
     unique_values = np.unique(values).astype(np.int64)
-    return 1.0 if unique_values.size < 2 else float(np.gcd.reduce(unique_values))
+    return (
+        1.0
+        if unique_values.size < 2
+        else float(np.gcd.reduce(np.diff(unique_values)))
+    )
 
 
 dimensions = Dimensions(

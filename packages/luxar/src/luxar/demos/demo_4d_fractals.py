@@ -89,11 +89,10 @@ TARGET_MAX_POINTS_PER_PLANE = 150_000
 def axis_world_values(grid_size: int) -> np.ndarray:
     """World coordinate of each grid index, on the viewer's snap grid.
 
-    The viewer snaps discrete-dimension navigation to exact multiples of
-    ``step`` (anchored at 0, not at the range minimum) and only fetches
-    chunks within 0.25×step of the snapped position. Placing every data
-    plane at ``k × step`` with ``step = 2/grid_size`` guarantees each
-    slider stop lands exactly on a data plane.
+    The viewer anchors discrete navigation at the declared range minimum.
+    The scene range is built from the first and last materialised planes, so
+    declaring their spacing as ``step`` makes every slider stop land exactly
+    on a data plane.
 
     Args:
         grid_size: Number of samples per axis
@@ -390,8 +389,8 @@ def materialised_w_planes(grid_size: int, stride: int) -> np.ndarray:
     geometry inside every slice is at full resolution; only the number of
     SLIDER STOPS is reduced. At the default grid 200 / stride 4 that is 50
     stops — the same slider the demo has always had — with four times the
-    linear detail in each one. The starting phase keeps those stops on the
-    zero-anchored snap grid for every supported grid size.
+    linear detail in each one. The starting phase keeps the historical plane
+    selection stable across supported grid sizes.
     """
     phase = grid_size // 2 % stride
     return np.arange(phase, grid_size, stride, dtype=np.int64)

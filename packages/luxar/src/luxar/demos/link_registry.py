@@ -53,8 +53,31 @@ CANONICAL_LINKS_BY_HOST = {
     "www.proteinatlas.org": frozenset(
         {"https://www.proteinatlas.org/search/{hover_key}"}
     ),
+    # NED resolves "PGC<number>" by name; cosmicflows keys its galaxies on the
+    # Principal Galaxies Catalogue number because its hover LABEL is the basin
+    # of attraction, which tens of thousands of galaxies share and which
+    # therefore resolves nothing.
+    "ned.ipac.caltech.edu": frozenset(
+        {"https://ned.ipac.caltech.edu/byname?objname={hover_key}"}
+    ),
+    # Decorated-label search, for the arXiv/bioRxiv/medRxiv corpus specifically. The
+    # per-paper DOI (doi.org above) is the real destination; this is the
+    # fallback for a cached bundle that predates stored ids, where the only
+    # per-point identity is the hover label. Scholar rather than arXiv search
+    # because that corpus spans all three preprint servers.
+    "scholar.google.com": frozenset(
+        {"https://scholar.google.com/scholar?q={hover_label}"}
+    ),
+    # The /uniprotkb/<accession>/entry form is the canonical deep link and is
+    # what both protein demos use when real accessions are available. The
+    # ?query= search form is the reviewed fallback for an ESM3 cache that
+    # supplies no accessions. Its query is the clean protein-name key, not the
+    # decorated hover label that UniProt's parser rejects.
     "www.uniprot.org": frozenset(
-        {"https://www.uniprot.org/uniprotkb/{hover_key}/entry"}
+        {
+            "https://www.uniprot.org/uniprotkb/{hover_key}/entry",
+            "https://www.uniprot.org/uniprotkb?query={hover_key}",
+        }
     ),
     "www.youtube.com": frozenset(
         {"https://www.youtube.com/results?search_query={hover_key}"}
@@ -148,6 +171,29 @@ DEMO_LINK_AUDITS_BY_HOST: dict[str, dict[str, Any]] = {
         "good": "TP53",
         "bad": "LUXAR_NO_SUCH_GENE_2089",
         "count_path": (),
+    },
+    "ned.ipac.caltech.edu": {
+        "mode": "body-marker",
+        # The byname page is a Drupal shell that renders its result client-side,
+        # so it answers 200 with a body of the same size for a bogus name. The
+        # name resolver behind it does discriminate: it omits the Preferred
+        # block entirely when nothing resolves.
+        "url_template": "https://ned.ipac.caltech.edu/srs/ObjectLookup?name={value}",
+        "good": "PGC17223",
+        "bad": "LUXARNOSUCH2089",
+        # The resolved object name proves the PGC number matched a record.
+        "good_marker": "Large Magellanic Cloud",
+    },
+    "scholar.google.com": {
+        "mode": "human",
+        # Scholar answers 200 for anything and echoes the query verbatim into
+        # its advanced-search form, so every naive marker matches a miss too.
+        # Its only real signal is the negative "did not match any articles",
+        # which a positive-marker probe cannot express, and result titles are
+        # term-bolded so the queried title never appears as contiguous text.
+        "reason": "the query is echoed on a miss and result titles are term-bolded",
+        "verified_in": "#2091",
+        "last_checked": "2026-08-24",
     },
     "www.uniprot.org": {
         "mode": "status",
