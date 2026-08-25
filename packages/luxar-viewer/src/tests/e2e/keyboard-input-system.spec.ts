@@ -746,3 +746,44 @@ test.describe('Keyboard Input System - Case Sensitivity', () => {
     expect(helpVisible).toBe(true);
   });
 });
+
+test.describe('Keyboard Input System - Custom Contexts', () => {
+  test('routes a custom context through the live window listener and restores navigation', async ({
+    page,
+  }) => {
+    await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
+    await waitForLuxarReady(page);
+
+    await page.evaluate(() => {
+      const input = (window as any).__luxarDebug.inputHandler;
+      (window as any).__customContextHits = 0;
+      input.registerContext('annotation', {
+        priority: 5,
+        passthrough: true,
+        allowRegisteredBindings: true,
+        fallbackContexts: ['navigation'],
+      });
+      input.registerBinding('annotation', {
+        actionId: 'embedder.annotate',
+        key: 'x',
+        handler: () => {
+          (window as any).__customContextHits += 1;
+        },
+        description: 'Annotate sample',
+        help: false,
+      });
+      input.pushContext('annotation');
+    });
+
+    await page.keyboard.press('x');
+    await expect.poll(() => page.evaluate(() => (window as any).__customContextHits)).toBe(1);
+
+    await page.evaluate(() => (window as any).__luxarDebug.inputHandler.popContext());
+    await page.keyboard.press('x');
+    expect(await page.evaluate(() => (window as any).__customContextHits)).toBe(1);
+
+    await page.evaluate(() =>
+      (window as any).__luxarDebug.inputHandler.unregisterContext('annotation')
+    );
+  });
+});

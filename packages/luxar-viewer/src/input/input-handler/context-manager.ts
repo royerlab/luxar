@@ -206,6 +206,9 @@ export class InputContextManager {
     if (this.contextConfigs.has(context)) {
       throw new Error(`Input context "${context}" is already registered`);
     }
+    for (const fallback of config.fallbackContexts ?? []) {
+      this.requireRegisteredContext(fallback);
+    }
     this.contextConfigs.set(context, this.copyContextConfig(context, config));
   }
 
@@ -589,9 +592,11 @@ export class InputContextManager {
    * `tryLowerContexts` does would skip it.
    */
   private dispatchEscapeFromTypingContext(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    const sortedContexts = Array.from(this.contextConfigs.entries())
-      .filter(([context]) => this.builtInContexts.has(context))
-      .sort((a, b) => (b[1].priority ?? 0) - (a[1].priority ?? 0));
+    const sortedContexts = Array.from(this.contextConfigs.entries()).sort((a, b) => {
+      const builtInOrder =
+        Number(this.builtInContexts.has(b[0])) - Number(this.builtInContexts.has(a[0]));
+      return builtInOrder || (b[1].priority ?? 0) - (a[1].priority ?? 0);
+    });
 
     for (const [context] of sortedContexts) {
       const contextBindings = this.bindings.get(context);

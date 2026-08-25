@@ -12,6 +12,7 @@ import {
   InputContext,
   MAX_KEY_EVENT_DEPTH,
 } from '../../../../input/input-handler/context-manager';
+import { log } from '../../../../utils/log';
 import { registerTestBinding } from './context-manager-test-utils';
 
 describe('InputContextManager', () => {
@@ -176,6 +177,17 @@ describe('InputContextManager', () => {
       );
     });
 
+    it('rejects unknown fallback contexts but allows built-in priority ties', () => {
+      expect(() =>
+        manager.registerContext('annotation', {
+          priority: 5,
+          fallbackContexts: ['misspelled-navigation'],
+        })
+      ).toThrow('Input context "misspelled-navigation" is not registered');
+
+      expect(() => manager.registerContext('annotation', { priority: 5 })).not.toThrow();
+    });
+
     it('unregisters custom bindings and rejects later activation', () => {
       manager.registerContext('annotation', { priority: 5 });
       registerTestBinding(manager, 'annotation', { key: 'x', handler: vi.fn() });
@@ -190,6 +202,16 @@ describe('InputContextManager', () => {
       expect(() => manager.unregisterContext(InputContext.NAVIGATION)).toThrow(
         'Built-in input context "navigation" cannot be unregistered'
       );
+    });
+
+    it('refuses to unregister a context that is still active', () => {
+      manager.registerContext('annotation', { priority: 5 });
+      manager.pushContext('annotation');
+
+      expect(() => manager.unregisterContext('annotation')).toThrow(
+        'Input context "annotation" cannot be unregistered while active'
+      );
+      expect(manager.getContext()).toBe('annotation');
     });
 
     it('reset removes custom contexts as well as their bindings', () => {
@@ -219,6 +241,35 @@ describe('InputContextManager', () => {
       );
       expect(navigationEscape).toHaveBeenCalledOnce();
       expect(customEscape).not.toHaveBeenCalled();
+    });
+
+    it('falls back to a custom Escape binding when built-in handlers decline', () => {
+      const customEscape = vi.fn();
+      manager.registerContext('annotation', { priority: 100 });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'Escape',
+        handler: () => false,
+      });
+      registerTestBinding(manager, 'annotation', { key: 'Escape', handler: customEscape });
+      manager.setContext(InputContext.TYPING);
+
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'Escape' }), 'down')).toBe(
+        true
+      );
+      expect(customEscape).toHaveBeenCalledOnce();
+    });
+
+    it('warns after registration when an authored filter makes the binding unreachable', () => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => undefined);
+      manager.registerContext('annotation', { priority: 5, allowedKeys: ['y'] });
+
+      registerTestBinding(manager, 'annotation', { key: 'x', handler: vi.fn() });
+
+      expect(warning).toHaveBeenCalledWith(
+        expect.anything(),
+        'Key binding x is unreachable in context annotation'
+      );
+      warning.mockRestore();
     });
   });
 
