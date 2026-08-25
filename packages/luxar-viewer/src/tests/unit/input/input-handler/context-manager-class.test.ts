@@ -243,8 +243,9 @@ describe('InputContextManager', () => {
         passthrough: true,
         fallbackContexts: ['annotation-base'],
       });
-      registerTestBinding(manager, 'annotation-base', { key: 'x', handler });
       manager.unregisterContext('annotation-base');
+      manager.registerContext('annotation-base', { priority: 4 });
+      registerTestBinding(manager, 'annotation-base', { key: 'x', handler });
       manager.pushContext('annotation-overlay');
 
       expect(manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'x' }), 'down')).toBe(
