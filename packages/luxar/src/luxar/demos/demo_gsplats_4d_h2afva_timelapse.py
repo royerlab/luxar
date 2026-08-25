@@ -266,10 +266,9 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     intensity=17.57,
                     offset=-0.00879,
                     gamma=2.2,
-                    # Stated explicitly even though the archive carries it:
-                    # `test_demo_layers` reads the module SOURCE, so a demo that
-                    # inherits its layer flag looks like one with no toggleable
-                    # layer.
+                    # Grafting carries none of the archive's root attrs, so the
+                    # layer flag must be authored here. `test_demo_layers` also
+                    # reads the module source to enforce that contract.
                     layer=True,
                 )
 
