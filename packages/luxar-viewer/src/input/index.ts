@@ -3,6 +3,6 @@
  *
  * @module input
  */
-export { InputHandler } from './input-handler';
-export type { DimensionSlidersFactory } from './input-handler';
+export { InputHandler, KeyAction } from './input-handler';
+export type { DimensionSlidersFactory, KeyActionId } from './input-handler';
 export { InputContext } from './input-handler/context-manager';

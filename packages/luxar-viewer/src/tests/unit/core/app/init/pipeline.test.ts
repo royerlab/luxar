@@ -84,6 +84,7 @@ function makeInputHandlerStub() {
     // The control rail reads this to wire its buttons to the same commands the
     // keyboard uses; the closures are only invoked on click (never in tests).
     getUiActions: vi.fn(() => ({ commands: {}, panels: {} })),
+    getShortcutLabel: vi.fn(() => undefined),
   };
 }
 
@@ -122,9 +123,13 @@ vi.mock('../../../../../ui/resolution-indicator', () => ({
     reset: vi.fn(),
   })),
 }));
-vi.mock('../../../../../input', () => ({
-  InputHandler: vi.fn(),
-}));
+vi.mock('../../../../../input', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../../input')>();
+  return {
+    KeyAction: actual.KeyAction,
+    InputHandler: vi.fn(),
+  };
+});
 vi.mock('../../../../../ui/dimension-sliders', () => ({
   DimensionSliders: vi.fn(),
 }));

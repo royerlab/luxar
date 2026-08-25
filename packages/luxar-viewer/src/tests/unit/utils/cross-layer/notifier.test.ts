@@ -69,7 +69,7 @@ describe('notifier — without a backend registered', () => {
   it.each<{ method: string; invoke: (n: typeof notifier) => void }>([
     { method: 'error', invoke: (n) => n.error('e') },
     { method: 'toast', invoke: (n) => n.toast('t') },
-    { method: 'showHelp', invoke: (n) => n.showHelp() },
+    { method: 'showHelp', invoke: (n) => n.showHelp(new Map()) },
     { method: 'hideHelp', invoke: (n) => n.hideHelp() },
     { method: 'showLoading', invoke: (n) => n.showLoading() },
     { method: 'hideLoading', invoke: (n) => n.hideLoading() },
@@ -81,7 +81,7 @@ describe('notifier — without a backend registered', () => {
   it('warns exactly once across many missing-backend calls', () => {
     notifier.error('a');
     notifier.toast('b');
-    notifier.showHelp();
+    notifier.showHelp(new Map());
     notifier.hideHelp();
     notifier.showLoading();
     notifier.hideLoading();
@@ -128,13 +128,25 @@ describe('notifier — with a backend registered', () => {
   });
 
   it('forwards showHelp / hideHelp', () => {
-    notifier.showHelp();
+    notifier.showHelp(new Map());
     notifier.hideHelp();
     expect(backend.calls.map((c) => c.method)).toEqual(['showHelpOverlay', 'hideHelpOverlay']);
   });
 
   it('forwards the registered shortcut snapshot to the help backend', () => {
-    const bindings = new Map([['navigation', ['h']]]);
+    const bindings = new Map([
+      [
+        'navigation',
+        [
+          {
+            actionId: 'help.toggle',
+            key: 'h',
+            description: 'Toggle help',
+            help: false as const,
+          },
+        ],
+      ],
+    ]);
     notifier.showHelp(bindings);
     expect(backend.calls).toEqual([{ method: 'showHelpOverlay', args: [bindings] }]);
   });
@@ -156,7 +168,7 @@ describe('notifier — with a backend registered', () => {
   it('does NOT warn when the backend is registered', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     notifier.toast('x');
-    notifier.showHelp();
+    notifier.showHelp(new Map());
     expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });

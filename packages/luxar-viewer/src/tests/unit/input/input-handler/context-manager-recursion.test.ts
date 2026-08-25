@@ -14,6 +14,7 @@ import {
   MAX_KEY_EVENT_DEPTH,
 } from '../../../../input/input-handler/context-manager';
 import { log } from '../../../../utils/log';
+import { registerTestBinding } from './context-manager-test-utils';
 
 function makeKeyEvent(key = 'p'): KeyboardEvent {
   // jsdom doesn't ship KeyboardEvent('keydown', ...) with a key property
@@ -28,7 +29,7 @@ describe('InputContextManager re-entrance guard', () => {
     const errSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
 
     let recursiveCalls = 0;
-    mgr.registerBinding(InputContext.NAVIGATION, {
+    registerTestBinding(mgr, InputContext.NAVIGATION, {
       key: 'p',
       handler: (event) => {
         recursiveCalls++;
@@ -57,7 +58,7 @@ describe('InputContextManager re-entrance guard', () => {
     const errSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
 
     let calls = 0;
-    mgr.registerBinding(InputContext.NAVIGATION, {
+    registerTestBinding(mgr, InputContext.NAVIGATION, {
       key: 'p',
       handler: () => {
         calls++;
@@ -75,7 +76,7 @@ describe('InputContextManager re-entrance guard', () => {
 
   it('exception in a handler still releases the depth counter (try/finally)', () => {
     const mgr = new InputContextManager();
-    mgr.registerBinding(InputContext.NAVIGATION, {
+    registerTestBinding(mgr, InputContext.NAVIGATION, {
       key: 'p',
       handler: () => {
         throw new Error('boom');
@@ -86,7 +87,7 @@ describe('InputContextManager re-entrance guard', () => {
     // Depth counter should be back to 0 — a follow-up dispatch must
     // not be incorrectly throttled.
     let secondCallReached = false;
-    mgr.registerBinding(InputContext.NAVIGATION, {
+    registerTestBinding(mgr, InputContext.NAVIGATION, {
       key: 'g',
       handler: () => {
         secondCallReached = true;

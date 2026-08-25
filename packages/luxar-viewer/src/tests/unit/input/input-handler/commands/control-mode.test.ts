@@ -76,6 +76,10 @@ function makeCtx(opts: {
     getControlType: vi.fn(() => controls.type),
     getFlyControls: vi.fn(() => (opts.flyControls === undefined ? null : opts.flyControls)),
   };
+  let inputContext = controls.type === 'fly' ? InputContext.FLY_CONTROLS : InputContext.NAVIGATION;
+  setContext.mockImplementation((context: InputContext) => {
+    inputContext = context;
+  });
 
   const sceneManager = {
     controls: {
@@ -87,6 +91,7 @@ function makeCtx(opts: {
 
   const contextManager = {
     setContext,
+    getContext: vi.fn(() => inputContext),
   } as unknown as ControlModeCtx['contextManager'];
 
   const renderingControls = opts.withRenderingControls
@@ -126,7 +131,7 @@ describe('toggleControlMode', () => {
     expect(setContext).toHaveBeenCalledWith(InputContext.NAVIGATION);
   });
 
-  it('cycles ortho → orbit and sets NAVIGATION context', () => {
+  it('cycles ortho → orbit without resetting the matching NAVIGATION context', () => {
     const { ctx, setControlType, setContext } = makeCtx({
       initialControlType: 'ortho',
     });
@@ -134,7 +139,7 @@ describe('toggleControlMode', () => {
     toggleControlMode(ctx);
 
     expect(setControlType).toHaveBeenCalledWith('orbit');
-    expect(setContext).toHaveBeenCalledWith(InputContext.NAVIGATION);
+    expect(setContext).not.toHaveBeenCalled();
   });
 
   it('syncs renderingControls when one is wired', () => {

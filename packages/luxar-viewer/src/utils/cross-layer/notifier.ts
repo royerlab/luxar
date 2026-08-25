@@ -33,7 +33,7 @@ import type { RegisteredShortcutBindings } from '../../types/shortcut-help';
 export interface NotifierBackend {
   showError(message: string): void;
   showToast(message: string, durationMs?: number): void;
-  showHelpOverlay(bindings?: RegisteredShortcutBindings): void;
+  showHelpOverlay(bindings: RegisteredShortcutBindings): void;
   hideHelpOverlay(): void;
   showLoadingIndicator(): HTMLElement | void;
   hideLoadingIndicator(): void;
@@ -89,7 +89,7 @@ export const notifier = {
     else warnIfMissing('toast');
   },
   /** Show the keyboard-shortcuts help overlay. */
-  showHelp(bindings?: RegisteredShortcutBindings): void {
+  showHelp(bindings: RegisteredShortcutBindings): void {
     if (backend) backend.showHelpOverlay(bindings);
     else warnIfMissing('showHelp');
   },

@@ -22,10 +22,13 @@ input-handler/
 
 - `context-manager.ts` — `InputContextManager` class plus the
   `InputContext` enum (`NAVIGATION` / `FLY_CONTROLS` / `TYPING` /
-  `UI_INTERACTION` / `DIMENSION_NAV`), the `KeyBinding` /
+  `UI_INTERACTION`), the `KeyBinding` /
   `ContextConfig` interfaces, and the `MAX_KEY_EVENT_DEPTH = 10`
   recursion cap. This is the routing table the orchestrator pushes
-  contexts onto and the per-context bindings are registered into.
+  contexts onto and the per-context bindings are registered into. Bindings
+  require a stable action id, description, and explicit help metadata or
+  opt-out. Contexts can derive an allowlist from their registered chords and
+  name explicit fallback contexts for shared shortcuts.
   Pure-function helpers live one level down in `context-manager/`.
 - `panel-capabilities.ts` — structural contracts for UI panels and injected
   factories, keeping concrete `ui/` classes out of the input layer.
@@ -80,10 +83,19 @@ input-handler/
 4. Construct `PanelCoordinator` (`commands/`) so Escape and the
    panel-cycle binding have a single drain.
 
+The active input context is derived from the live control type through the
+ControlsManager `change` listener. Control-mode commands also set the context
+directly as a defensive backstop, but new control-type callers only need to use
+`SceneManager.setControlType()`.
+
 Binding handlers consume an event by default. A synchronous `false` declines
 it so passthrough can continue to lower-priority contexts; async handlers are
 always treated as handled. `preventDefault` runs only after a handler accepts
 the event, so declining leaves browser behavior untouched.
+
+NAVIGATION no longer reserves fly chords globally: an embedder can register
+its own `w/a/s/d/q/e` actions there, while the stock fly bindings remain scoped
+to FLY_CONTROLS.
 
 Optional setters (`setRenderingControls`, `setRecordingPanel`, etc.) are
 called by `core/app.ts` as panels are constructed; each one forwards
