@@ -380,7 +380,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
 
     pick_runner = jobs["pick-runner"]
     assert pick_runner["permissions"] == {"actions": "read"}, (
-        "pick-runner needs only actions:read to inspect heartbeat updated_at"
+        "pick-runner needs only actions:read to inspect repository run activity"
     )
     assert pick_runner["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}", (
         "pick-runner must authenticate gh api with the workflow token"
@@ -399,26 +399,32 @@ def _run_pick_runner(
     tmp_path: Path,
     *,
     head_repo: str = "royerlab/luxar",
-    heartbeat: dict[str, str] | str = _heartbeat("0", 1000),
+    heartbeat: str = "0",
     force_hosted: str = "0",
+    other_run_active: bool = False,
+    api_error: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
-    """Run the real inline router against a deterministic heartbeat response."""
+    """Run the real inline router against deterministic repository activity."""
     router = yaml.safe_load(workflow)["jobs"]["pick-runner"]["steps"][0]["run"]
     output_path = tmp_path / "github-output"
-    heartbeat_path = tmp_path / "heartbeat.json"
-    heartbeat_path.write_text(json.dumps(heartbeat), encoding="utf-8")
 
     fake_gh = tmp_path / "gh"
     fake_gh.write_text(
         """#!/usr/bin/env python3
 import json
 import os
-from pathlib import Path
+import sys
 
-heartbeat = json.loads(Path(os.environ["ROUTER_HEARTBEAT"]).read_text())
-if heartbeat == "api-error":
+endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
+if os.environ["ROUTER_API_ERROR"] == "1":
     raise SystemExit(1)
-print(json.dumps(heartbeat))
+if "/actions/runs?" in endpoint:
+    run_ids = [2038, 9999] if os.environ["ROUTER_OTHER_ACTIVE"] == "1" else [2038]
+    print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
+elif "/runs/9999/jobs?" in endpoint:
+    print(json.dumps({"jobs": [{"status": "in_progress", "labels": ["obsidian"]}]}))
+else:
+    print(json.dumps({"jobs": []}))
 """,
         encoding="utf-8",
     )
@@ -433,7 +439,9 @@ print(json.dumps(heartbeat))
         "GITHUB_REPOSITORY": "royerlab/luxar",
         "HEAD_REPO": head_repo,
         "FORCE_HOSTED": force_hosted,
-        "ROUTER_HEARTBEAT": str(heartbeat_path),
+        "HEARTBEAT": heartbeat,
+        "ROUTER_API_ERROR": "1" if api_error else "0",
+        "ROUTER_OTHER_ACTIVE": "1" if other_run_active else "0",
     }
     result = subprocess.run(
         ["bash", "-e", "-c", router],
@@ -454,19 +462,19 @@ print(json.dumps(heartbeat))
 @pytest.mark.parametrize(
     ("heartbeat", "expected"),
     [
-        (_heartbeat("0", 950), "obsidian"),
-        (_heartbeat("123", 950), "obsidian"),
-        (_heartbeat("0", 700), "ubuntu-latest"),
-        (_heartbeat("123", 1031), "ubuntu-latest"),
+        ("950", "obsidian"),
+        ("0", "ubuntu-latest"),
+        ("700", "ubuntu-latest"),
+        ("1031", "ubuntu-latest"),
     ],
 )
 def test_pick_runner_routes_same_repo_by_publisher_liveness_not_capacity(
     workflow: str,
     tmp_path: Path,
-    heartbeat: dict[str, str],
+    heartbeat: str,
     expected: str,
 ) -> None:
-    """Capacity zero is healthy while updated_at moves; stale or future is not."""
+    """Fresh capacity routes obsidian; unavailable, stale, or future does not."""
     result, label = _run_pick_runner(workflow, tmp_path, heartbeat=heartbeat)
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -477,7 +485,17 @@ def test_pick_runner_fails_api_read_toward_obsidian(
     workflow: str, tmp_path: Path
 ) -> None:
     """A transient GitHub API failure must not restart the paid overflow."""
-    result, label = _run_pick_runner(workflow, tmp_path, heartbeat="api-error")
+    result, label = _run_pick_runner(workflow, tmp_path, api_error=True)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == "obsidian"
+
+
+def test_pick_runner_routes_busy_box_to_obsidian(workflow: str, tmp_path: Path) -> None:
+    """An active obsidian job proves a zero-capacity box is live and busy."""
+    result, label = _run_pick_runner(
+        workflow, tmp_path, heartbeat="0", other_run_active=True
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == "obsidian"
@@ -498,7 +516,7 @@ def test_pick_runner_hosted_overrides_bypass_heartbeat(
         workflow,
         tmp_path,
         head_repo=head_repo,
-        heartbeat="api-error",
+        api_error=True,
         force_hosted=force_hosted,
     )
 
@@ -513,6 +531,7 @@ def _run_queue_watchdog(
     *,
     heartbeat_snapshots: list[dict[str, str]] | None = None,
     date_step: int = 0,
+    other_run_active: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
     """Run the real inline watchdog against deterministic GitHub API snapshots."""
     watchdog = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"][0]["run"]
@@ -531,7 +550,6 @@ def _run_queue_watchdog(
     ]
     snapshots_path = tmp_path / "snapshots.json"
     counter_path = tmp_path / "jobs-api-calls"
-    heartbeat_counter_path = tmp_path / "heartbeat-api-calls"
     date_counter_path = tmp_path / "date-calls"
     cancel_path = tmp_path / "cancelled"
     snapshots_path.write_text(json.dumps(job_snapshots), encoding="utf-8")
@@ -549,7 +567,12 @@ import sys
 from pathlib import Path
 
 endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
-if "/jobs?" in endpoint:
+if "/actions/runs?" in endpoint:
+    run_ids = [2038, 9999] if os.environ["WATCHDOG_OTHER_ACTIVE"] == "1" else [2038]
+    print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
+elif "/runs/9999/jobs?" in endpoint:
+    print(json.dumps({"jobs": [{"name": "other-python", "status": "in_progress", "labels": ["obsidian"]}]}))
+elif "/jobs?" in endpoint:
     if "--jq" in sys.argv:
         raise SystemExit(f"unexpected --jq for jobs endpoint: {sys.argv!r}")
     counter = Path(os.environ["WATCHDOG_COUNTER"])
@@ -561,15 +584,6 @@ if "/jobs?" in endpoint:
         print("{")
         raise SystemExit(0)
     print(json.dumps({"jobs": jobs}))
-elif "/variables/LUXAR_CI_HEARTBEAT" in endpoint:
-    if "--jq" in sys.argv:
-        raise SystemExit(f"unexpected --jq for heartbeat endpoint: {sys.argv!r}")
-    counter = Path(os.environ["WATCHDOG_HEARTBEAT_COUNTER"])
-    call = int(counter.read_text() or "0") if counter.exists() else 0
-    counter.write_text(str(call + 1))
-    snapshots = json.loads(Path(os.environ["WATCHDOG_HEARTBEATS"]).read_text())
-    heartbeat = snapshots[min(call, len(snapshots) - 1)]
-    print(json.dumps(heartbeat))
 elif endpoint.endswith("/cancel"):
     Path(os.environ["WATCHDOG_CANCELLED"]).write_text("yes")
 else:
@@ -604,7 +618,8 @@ print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
         "WATCHDOG_SNAPSHOTS": str(snapshots_path),
         "WATCHDOG_COUNTER": str(counter_path),
         "WATCHDOG_HEARTBEATS": str(heartbeats_path),
-        "WATCHDOG_HEARTBEAT_COUNTER": str(heartbeat_counter_path),
+        "HEARTBEAT": (heartbeat_snapshots or [_heartbeat("0", 1000)])[0]["value"],
+        "WATCHDOG_OTHER_ACTIVE": "1" if other_run_active else "0",
         "WATCHDOG_DATE_COUNTER": str(date_counter_path),
         "WATCHDOG_DATE_STEP": str(date_step),
         "WATCHDOG_CANCELLED": str(cancel_path),
@@ -768,28 +783,23 @@ def test_queue_watchdog_accepts_fresh_positive_heartbeat_without_running_sibling
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 2
-    assert "heartbeat publisher refreshed" in result.stdout
+    assert "capacity heartbeat is 0s old" in result.stdout
     assert not cancelled
 
 
 @pytest.mark.parametrize("heartbeat", [_heartbeat("0", 1), _heartbeat("1", 1)])
-def test_queue_watchdog_cancels_stale_heartbeat_despite_running_sibling(
+def test_queue_watchdog_cancels_stale_heartbeat_without_active_jobs(
     workflow: str, tmp_path: Path, heartbeat: dict[str, str]
 ) -> None:
-    """A frozen runner state must not make either stale heartbeat form look live."""
-    snapshots = [
-        [
-            _obsidian_job("python-tests (3.12)", "in_progress"),
-            _obsidian_job("python-tests (3.14)", "queued"),
-        ]
-    ]
+    """Neither zero nor stale capacity can keep a wholly queued run alive."""
+    snapshots = [[_obsidian_job("python-tests (3.14)", "queued")]]
     result, calls, cancelled = _run_queue_watchdog(
         workflow, tmp_path, snapshots, heartbeat_snapshots=[heartbeat]
     )
 
     assert result.returncode == 1
     assert calls == 1
-    assert "heartbeat publisher went stale" in result.stdout
+    assert "capacity heartbeat is stale" in result.stdout
     assert cancelled
 
 
@@ -835,11 +845,13 @@ def test_queue_watchdog_accepts_fresh_zero_heartbeat_when_every_job_is_queued(
         [_obsidian_job("python-tests (3.12)", "queued")],
         [_obsidian_job("python-tests (3.12)", "in_progress")],
     ]
-    result, calls, cancelled = _run_queue_watchdog(workflow, tmp_path, snapshots)
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow, tmp_path, snapshots, other_run_active=True
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 2
-    assert "heartbeat publisher refreshed" in result.stdout
+    assert "other runs have active obsidian jobs" in result.stdout
     assert not cancelled
 
 
