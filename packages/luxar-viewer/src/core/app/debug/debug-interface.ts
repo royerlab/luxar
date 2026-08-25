@@ -5,6 +5,7 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { getWorkerPool } from '../../../workers/worker-pool';
 import { showError } from '../../../ui/error-overlay';
+import { KeyAction } from '../../../input';
 import { createInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { createInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
 import { createPointsGeometry } from '../../../rendering/node-factory/create-points-node';
@@ -200,7 +201,11 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // visual-regression specs render the dialog directly without going
     // through URL-routing failure paths (whose semantics evolve
     // independently of the dialog's appearance).
-    showError: (message) => showError(message, (actionId) => ports.app.shortcutForAction(actionId)),
+    showError: (message) =>
+      showError(message, (actionId) => ports.app.shortcutForAction(actionId), {
+        datasetBrowser: KeyAction.toggleDatasetBrowser,
+        help: KeyAction.toggleHelp,
+      }),
 
     // Debug-only synthetic-scene injector for the perf bench. Builds
     // a large lines / points / gsplats payload purely in JS, wires it
@@ -405,7 +410,14 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log.error(Modules.LUXAR, `__luxarDebug.injectSyntheticScene failed: ${message}`, error);
-        showError(`Synthetic-scene injection failed: ${message}`);
+        showError(
+          `Synthetic-scene injection failed: ${message}`,
+          (actionId) => ports.app.shortcutForAction(actionId),
+          {
+            datasetBrowser: KeyAction.toggleDatasetBrowser,
+            help: KeyAction.toggleHelp,
+          }
+        );
         throw error;
       }
     },

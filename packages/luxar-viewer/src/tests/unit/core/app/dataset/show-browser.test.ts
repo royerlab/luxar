@@ -252,7 +252,8 @@ describe('showDatasetBrowser', () => {
       // AND the error overlay must be surfaced (silent-caller path).
       expect(mocks.showError).toHaveBeenCalledWith(
         expect.stringMatching(/Failed to load dataset.*simulated zarr 404/),
-        ports.shortcutForAction
+        ports.shortcutForAction,
+        { datasetBrowser: 'dataset-browser.toggle', help: 'help.toggle' }
       );
       // AND log.error was called with the structured payload.
       expect(mocks.logError).toHaveBeenCalledWith(

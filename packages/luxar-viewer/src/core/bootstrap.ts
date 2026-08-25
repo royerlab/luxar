@@ -17,6 +17,7 @@
  */
 
 import { LuxarApp, type LuxarAppOptions } from './app';
+import { KeyAction } from '../input';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
@@ -169,7 +170,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // .showHelp etc. without importing the ui/ helper modules directly —
   // that's what keeps the dependency-cruiser layer order clean.
   setNotifierBackend({
-    showError: (message) => showError(message, shortcutForAction),
+    showError: (message) =>
+      showError(message, shortcutForAction, {
+        datasetBrowser: KeyAction.toggleDatasetBrowser,
+        help: KeyAction.toggleHelp,
+      }),
     showToast,
     showHelpOverlay,
     hideHelpOverlay,

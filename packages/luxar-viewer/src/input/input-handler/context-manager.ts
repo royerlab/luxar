@@ -459,8 +459,8 @@ export class InputContextManager {
    *
    * Routes the event through the context system to find and execute the
    * appropriate handler. Processing order:
-   * 1. Check if manager is enabled
-   * 2. Check if in typing context (blocks most keys)
+   * 1. Check if manager is enabled (keydown only)
+   * 2. Check if in typing context (blocks most keydown events)
    * 3. Check if key is allowed in current context
    * 4. Look for registered binding in current context
    * 5. If passthrough is enabled, try the declared fallback contexts

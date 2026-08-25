@@ -72,7 +72,10 @@ describe('showError - ARIA Attributes', () => {
       if (actionId === 'help.toggle') return 'F1';
       return undefined;
     });
-    showError('Live labels', shortcutForAction);
+    showError('Live labels', shortcutForAction, {
+      datasetBrowser: 'dataset-browser.toggle',
+      help: 'help.toggle',
+    });
 
     expect(
       Array.from(document.querySelectorAll('.luxar-error-dialog__guidance-kbd')).map(
@@ -83,7 +86,10 @@ describe('showError - ARIA Attributes', () => {
   });
 
   it('falls back from empty labels and escapes resolver output', () => {
-    showError('Safe labels', (actionId) => (actionId === 'dataset-browser.toggle' ? '' : '<F1>'));
+    showError('Safe labels', (actionId) => (actionId === 'dataset-browser.toggle' ? '' : '<F1>'), {
+      datasetBrowser: 'dataset-browser.toggle',
+      help: 'help.toggle',
+    });
 
     const labels = Array.from(
       document.querySelectorAll<HTMLElement>('.luxar-error-dialog__guidance-kbd')
