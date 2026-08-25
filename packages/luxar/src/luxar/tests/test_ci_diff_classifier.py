@@ -540,6 +540,7 @@ def _run_queue_watchdog(
     date_step: int = 0,
     other_run_active: bool = False,
     run_api_error: bool = False,
+    run_api_error_once: bool = False,
     job_api_error: bool = False,
     heartbeat_api_error: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
@@ -561,6 +562,7 @@ def _run_queue_watchdog(
     snapshots_path = tmp_path / "snapshots.json"
     counter_path = tmp_path / "jobs-api-calls"
     heartbeat_counter_path = tmp_path / "heartbeat-api-calls"
+    run_counter_path = tmp_path / "runs-api-calls"
     date_counter_path = tmp_path / "date-calls"
     cancel_path = tmp_path / "cancelled"
     snapshots_path.write_text(json.dumps(job_snapshots), encoding="utf-8")
@@ -579,7 +581,11 @@ from pathlib import Path
 
 endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
 if "/actions/runs?" in endpoint:
-    if os.environ["WATCHDOG_RUN_API_ERROR"] == "1":
+    counter = Path(os.environ["WATCHDOG_RUN_COUNTER"])
+    call = int(counter.read_text() or "0") if counter.exists() else 0
+    counter.write_text(str(call + 1))
+    error_mode = os.environ["WATCHDOG_RUN_API_ERROR"]
+    if error_mode == "1" or (error_mode == "once" and call == 1):
         raise SystemExit(1)
     run_ids = [2038, 9999] if os.environ["WATCHDOG_OTHER_ACTIVE"] == "1" else [2038]
     print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
@@ -642,8 +648,11 @@ print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
         "WATCHDOG_COUNTER": str(counter_path),
         "WATCHDOG_HEARTBEATS": str(heartbeats_path),
         "WATCHDOG_HEARTBEAT_COUNTER": str(heartbeat_counter_path),
+        "WATCHDOG_RUN_COUNTER": str(run_counter_path),
         "WATCHDOG_OTHER_ACTIVE": "1" if other_run_active else "0",
-        "WATCHDOG_RUN_API_ERROR": "1" if run_api_error else "0",
+        "WATCHDOG_RUN_API_ERROR": (
+            "once" if run_api_error_once else "1" if run_api_error else "0"
+        ),
         "WATCHDOG_JOB_API_ERROR": "1" if job_api_error else "0",
         "WATCHDOG_HEARTBEAT_API_ERROR": "1" if heartbeat_api_error else "0",
         "WATCHDOG_DATE_COUNTER": str(date_counter_path),
@@ -807,11 +816,8 @@ def test_queue_watchdog_accepts_fresh_positive_heartbeat_without_running_sibling
     workflow: str, tmp_path: Path
 ) -> None:
     """An idle live host may have queued work before a runner picks it up."""
-    queued = [_obsidian_job("python-tests (3.12)", "queued")]
     snapshots = [
-        queued,
-        queued,
-        queued,
+        [_obsidian_job("python-tests (3.12)", "queued")],
         [_obsidian_job("python-tests (3.12)", "in_progress")],
     ]
     result, calls, cancelled = _run_queue_watchdog(
@@ -822,7 +828,7 @@ def test_queue_watchdog_accepts_fresh_positive_heartbeat_without_running_sibling
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == 4
+    assert calls == 2
     assert "capacity heartbeat is 0s old" in result.stdout
     assert not cancelled
 
@@ -949,11 +955,8 @@ def test_queue_watchdog_fails_heartbeat_read_open(
     workflow: str, tmp_path: Path
 ) -> None:
     """An unreadable publisher update must not cancel queued obsidian work."""
-    queued = [_obsidian_job("python-tests (3.12)", "queued")]
     snapshots = [
-        queued,
-        queued,
-        queued,
+        [_obsidian_job("python-tests (3.12)", "queued")],
         [_obsidian_job("python-tests (3.12)", "in_progress")],
     ]
     result, calls, cancelled = _run_queue_watchdog(
@@ -961,7 +964,7 @@ def test_queue_watchdog_fails_heartbeat_read_open(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == 4
+    assert calls == 2
     assert "heartbeat unreadable" in result.stdout
     assert not cancelled
 
@@ -1020,6 +1023,26 @@ def test_queue_watchdog_fails_liveness_reads_open(
     assert calls == 4
     assert expected_message in result.stdout
     assert not cancelled
+
+
+def test_queue_watchdog_api_error_breaks_no_activity_streak(
+    workflow: str, tmp_path: Path
+) -> None:
+    """An unreadable scan must break consecutive no-activity evidence."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        [queued] * 12,
+        heartbeat_snapshots=[_heartbeat("0", 1)],
+        run_api_error_once=True,
+        date_step=30,
+    )
+
+    assert result.returncode == 1
+    assert calls == 12
+    assert "run liveness unreadable" in result.stdout
+    assert cancelled
 
 
 def test_queue_watchdog_leaves_live_busy_run_alone_when_window_closes(

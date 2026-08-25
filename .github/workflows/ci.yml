@@ -320,23 +320,24 @@ jobs:
             jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100") \
               || jobs=__api_error__
             if [ "$jobs" = "__api_error__" ]; then
+              no_activity_checks=0
               echo "jobs API read failed; retrying"
               sleep 30; continue
             fi
             visible=$(echo "$jobs" | jq '[.jobs[] | select(.labels | index("obsidian"))] | length') \
-              || { echo "jobs API response was not parseable; retrying"; sleep 30; continue; }
+              || { no_activity_checks=0; echo "jobs API response was not parseable; retrying"; sleep 30; continue; }
             queued=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "queued")
                                                      | select(.labels | index("obsidian"))
                                                      | .name] | join(", ")') \
-              || { echo "queued-job selection failed; retrying"; sleep 30; continue; }
+              || { no_activity_checks=0; echo "queued-job selection failed; retrying"; sleep 30; continue; }
             running=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "in_progress")
                                                       | select(.labels | index("obsidian"))
                                                       | .name] | join(", ")') \
-              || { echo "running-job selection failed; retrying"; sleep 30; continue; }
+              || { no_activity_checks=0; echo "running-job selection failed; retrying"; sleep 30; continue; }
             fanout_pending=$(echo "$jobs" | jq -r '[.jobs[] | select(.name == "changes")
                                                             | select(.status == "queued" or .status == "in_progress")
                                                             | .name] | join(", ")') \
-              || { echo "fan-out job selection failed; retrying"; sleep 30; continue; }
+              || { no_activity_checks=0; echo "fan-out job selection failed; retrying"; sleep 30; continue; }
             if [ "$visible" -gt 0 ]; then seen_obsidian=1; fi
             if [ -z "$queued" ]; then
               if [ "$seen_obsidian" -eq 1 ]; then
@@ -362,6 +363,7 @@ jobs:
             hb_updated=$(echo "$heartbeat" | jq -r 'try (.updated_at | fromdateiso8601) catch empty') \
               || hb_updated=""
             if ! echo "$hb_updated" | grep -qE '^[0-9]+$'; then
+              no_activity_checks=0
               echo "heartbeat unreadable ('$heartbeat'); not cancelling on a fluke — retrying"
               sleep 30; continue
             fi
