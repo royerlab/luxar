@@ -14,7 +14,9 @@ and compares the two sets in BOTH directions:
 That first guard truncates each documented invocation at its first ``-`` token,
 so it only ever validates command PATHS, never OPTION SPELLINGS — a doc that
 told readers to pass an option the command doesn't declare (e.g. ``-o`` on a
-command whose output is a positional argument) would sail through it. The
+command whose output is a positional argument) would sail through it. Full
+invocations with positional arguments must therefore put options first, or the
+positional values are mistaken for part of the command path. The
 second guard below closes part of that gap: for every ``### `luxar <path>` ``
 -style per-command section heading, it collects the option-looking tokens
 named in that section's prose — but only from INLINE-CODE spans (single
