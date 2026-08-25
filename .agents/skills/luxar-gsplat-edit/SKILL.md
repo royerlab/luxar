@@ -132,6 +132,10 @@ luxar gsplat view in.gsplats.zarr                      # quick web viewer
 luxar gsplat napari in.gsplats.zarr                    # napari + centers overlay
 ```
 
+Before scoring a stacked or transformed archive, read "Scoring a STACKED or
+TRANSFORMED archive" in the `luxar-gsplat-pipeline` skill; `compare --timepoint`
+slices the reference, not the splat archive.
+
 ### `render --shape` is in the SPLATS' coordinate space, not the volume's
 
 If the fit was run with a physical `voxel_size`, the centres are in **microns**, not
