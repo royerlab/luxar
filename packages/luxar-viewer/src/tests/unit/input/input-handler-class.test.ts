@@ -13,6 +13,7 @@
  *   - Constructor wiring (no-throw, manager-style storage)
  *   - Optional setters (setRenderingControls / setScaleBar / etc.)
  *   - Setter forwarding to PanelCoordinator (R/C/Esc shortcuts)
+ *   - Routed keyboard dispatch to the control rail
  *   - clearDimensionUI is a no-op when no dimension UI exists
  *   - clearDimensionUI removes the sceneDimsManager listener
  *   - init() idempotency
@@ -21,10 +22,8 @@
  *   - dispose() idempotency
  *
  * What we deliberately skip (needs WebGL or extensive DOM choreography):
- *   - init() side effects (window/canvas listener registration); covered
- *     by E2E spec keyboard-input-system.spec.ts
  *   - initDimensionSliders / showDimensionSliders / setDimensionPosition
- *   - broader keyboard binding dispatch
+ *   - broader keyboard binding dispatch (the WebGL-dependent actions)
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -63,6 +62,7 @@ function makeSceneManagerStub(): SceneManager {
     controls: {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
+      getFlyControls: vi.fn(() => undefined),
     },
     camera: {},
     postProcessing: {},
@@ -661,6 +661,53 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
     handler.setDatasetBrowser(undefined);
     expect(spy).toHaveBeenLastCalledWith(undefined);
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('setControlRail forwards to panelCoordinator and accepts undefined', () => {
+    const handler = makeHandler();
+    const coordinator = (
+      handler as unknown as {
+        panelCoordinator: { setControlRail: (rail: unknown) => void };
+      }
+    ).panelCoordinator;
+    const spy = vi.spyOn(coordinator, 'setControlRail');
+    const rail = { closeOverlay: vi.fn(), handleRoutedKeyDown: vi.fn() };
+    handler.setControlRail(rail);
+    expect(spy).toHaveBeenLastCalledWith(rail);
+    handler.setControlRail(undefined);
+    expect(spy).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it('notifies the control rail only after routed keydown handling', () => {
+    const handler = makeHandler();
+    const rail = { closeOverlay: vi.fn(), handleRoutedKeyDown: vi.fn() };
+    setNotifierBackend({
+      showError: vi.fn(),
+      showToast: vi.fn(),
+      showHelpOverlay: vi.fn(),
+      hideHelpOverlay: vi.fn(),
+      showLoadingIndicator: vi.fn(),
+      hideLoadingIndicator: vi.fn(),
+      clearError: vi.fn(),
+    });
+    handler.setControlRail(rail);
+    handler.init();
+
+    try {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' }));
+      expect(rail.handleRoutedKeyDown).toHaveBeenCalledTimes(1);
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q' }));
+      expect(rail.handleRoutedKeyDown).toHaveBeenCalledTimes(1);
+
+      rail.handleRoutedKeyDown.mockClear();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(rail.closeOverlay).toHaveBeenCalledTimes(1);
+      expect(rail.handleRoutedKeyDown).toHaveBeenCalledTimes(1);
+    } finally {
+      clearNotifierBackend();
+      handler.dispose();
+    }
   });
 
   it('setScaleBar / setColormapLegend / setOverlayManager do NOT forward', () => {

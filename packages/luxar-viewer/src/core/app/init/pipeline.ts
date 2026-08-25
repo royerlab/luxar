@@ -579,6 +579,7 @@ export async function runInitPipeline(
   // Dock the perf readout as the rail's footer; the gauge above toggles it.
   const controlRail = new ControlRail(railItems, performanceMonitor.element);
   partial.controlRail = controlRail;
+  inputHandler.setControlRail(controlRail);
 
   // Start animation loop first to ensure background is rendered
   animationController.startAnimation();

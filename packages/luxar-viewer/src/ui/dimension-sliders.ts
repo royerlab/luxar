@@ -148,7 +148,6 @@ export class DimensionSliders {
   /** Stored event handlers for context menu cleanup */
   private contextMenuCleanup: {
     clickOutside?: (e: MouseEvent) => void;
-    escape?: (e: KeyboardEvent) => void;
     /**
      * Pending setTimeout that will install the click-outside handler.
      * Tracked so closeContextMenu() can cancel it if the menu is closed
@@ -1337,7 +1336,7 @@ export class DimensionSliders {
     }
     // Commit once, on Enter or on blur (blur also fires when the
     // click-outside close removes the menu, so a typed value is not lost).
-    // Escape closes the menu without committing (document-level handler).
+    // Routed Escape closes the menu without committing via PanelCoordinator.
     // Only an actually-edited value commits: the input is seeded with the
     // 3-significant-digit display form, so committing it untouched would
     // silently truncate a full-precision override (0.123456 → 0.123).
@@ -1418,22 +1417,12 @@ export class DimensionSliders {
         document.addEventListener('click', closeOnClickOutside);
       }
     }, 0);
-
-    // Close on escape - store handler for cleanup
-    const closeOnEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        this.closeContextMenu();
-      }
-    };
-    this.contextMenuCleanup.escape = closeOnEscape;
-    document.addEventListener('keydown', closeOnEscape);
   }
 
   /**
    * Close active context menu and clean up event listeners
-   * @private
    */
-  private closeContextMenu(): void {
+  public closeContextMenu(): void {
     if (this.activeContextMenu) {
       this.activeContextMenu.remove();
       this.activeContextMenu = null;
@@ -1451,10 +1440,6 @@ export class DimensionSliders {
     if (this.contextMenuCleanup.clickOutside) {
       document.removeEventListener('click', this.contextMenuCleanup.clickOutside);
       this.contextMenuCleanup.clickOutside = undefined;
-    }
-    if (this.contextMenuCleanup.escape) {
-      document.removeEventListener('keydown', this.contextMenuCleanup.escape);
-      this.contextMenuCleanup.escape = undefined;
     }
   }
 

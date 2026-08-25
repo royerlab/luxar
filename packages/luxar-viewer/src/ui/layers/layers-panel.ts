@@ -1148,6 +1148,7 @@ export class LayersPanel {
 
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
         e.preventDefault();
+        e.stopPropagation();
         const nextIdx =
           e.key === 'ArrowDown'
             ? Math.min(layers.length - 1, idx + 1)
@@ -1164,6 +1165,7 @@ export class LayersPanel {
         }
       } else if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
+        e.stopPropagation();
         let mode: SelectionMode = 'single';
         if (e.ctrlKey || e.metaKey) mode = 'add';
         else if (e.shiftKey) mode = 'range';
@@ -1174,6 +1176,7 @@ export class LayersPanel {
         // own aria-haspopup, so menu keys on it must open the eye menu,
         // not the row's.
         e.preventDefault();
+        e.stopPropagation();
         const live = this.state.getLayer(layer.path);
         if (!live) return;
         if (!live.selected) this.state.select(layer.path, 'single');

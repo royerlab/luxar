@@ -151,8 +151,9 @@ Performance open rail popovers (see [`rail-panels/`](./rail-panels/README.md)).
   keyboard shortcut, via `InputHandler.getUiActions()` (the command/panel surface
   the key bindings dispatch into). The rail never re-implements panel logic.
 - **Live active-state** — a button highlights while its panel is open. Refreshed
-  event-driven (on document click / keydown, rAF-debounced), so it also clears
-  when a panel is closed via its own × button.
+  event-driven (on document click, and on a keydown the input router reports as
+  handled, rAF-debounced), so it also clears when a panel is closed via its own
+  × button.
 - **Idle-dim** — recedes when the pointer is idle; wakes on movement (expanded)
   or hover (collapsed / fullscreen).
 - **Collapse** — a chevron handle collapses the rail into the lower-left corner

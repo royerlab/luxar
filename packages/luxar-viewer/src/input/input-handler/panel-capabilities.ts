@@ -55,6 +55,7 @@ export interface DimensionSlidersConfig {
 
 /** Dimension sliders surface used by navigation lifecycle and shortcuts. */
 export interface DimensionSlidersHandle extends ToggleableHandle {
+  closeContextMenu(): void;
   dispose(): void;
   getIsVisible(): boolean;
   hide(): void;
@@ -98,4 +99,14 @@ export interface CloseableHandle {
 export interface VisiblyHideableHandle {
   isVisible(): boolean;
   hide(): void;
+}
+
+/** Minimal handle for transient overlays owned by a larger UI component. */
+export interface OverlayCloseHandle {
+  closeOverlay(): void;
+}
+
+/** Control-rail hooks used by routed keyboard handling. */
+export interface ControlRailHandle extends OverlayCloseHandle {
+  handleRoutedKeyDown(): void;
 }

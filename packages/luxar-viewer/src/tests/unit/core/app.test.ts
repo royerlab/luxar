@@ -201,6 +201,7 @@ describe('LuxarApp', () => {
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),
       setLayersPanel: vi.fn(),
+      setControlRail: vi.fn(),
       setDatasetBrowser: vi.fn(),
       setOverlayManager: vi.fn(),
       setColormapLegend: vi.fn(),
@@ -328,10 +329,10 @@ describe('LuxarApp', () => {
       );
     });
 
-    it('cross-links every documented orchestrator pair (full eight-edge graph)', async () => {
-      // core.md C3 fix: previous version asserted only 2 of the 8 cross-link
-      // edges the orchestrator wires. Mutations dropping any of the other
-      // six would have slipped through silently. Pin them all here.
+    it('cross-links every documented orchestrator pair', async () => {
+      // core.md C3 fix: previous coverage asserted only two orchestrator
+      // cross-links. Mutations dropping any remaining edge would have slipped
+      // through silently. Pin the complete graph here.
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
@@ -353,6 +354,7 @@ describe('LuxarApp', () => {
       if (mockInputHandler.setLayersPanel) {
         expect(mockInputHandler.setLayersPanel).toHaveBeenCalled();
       }
+      expect(mockInputHandler.setControlRail).toHaveBeenCalled();
 
       // RecordingPanel receives panel-state callbacks and (when present)
       // the adaptive-DPR manager.
