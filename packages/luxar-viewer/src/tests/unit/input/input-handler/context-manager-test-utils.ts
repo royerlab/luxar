@@ -13,7 +13,7 @@ import {
 /** Register a binding with stable test defaults for required registry metadata. */
 export function registerTestBinding(
   manager: InputContextManager,
-  context: InputContext,
+  context: InputContext | string,
   binding: Omit<KeyBinding, 'actionId' | 'description' | 'help'> &
     Partial<Pick<KeyBinding, 'actionId' | 'description' | 'help'>>
 ): void {
