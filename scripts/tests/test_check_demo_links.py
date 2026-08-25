@@ -6,6 +6,7 @@ import http.client
 import importlib.util
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 from urllib.parse import urlsplit
 
 from luxar.demos.link_registry import CANONICAL_LINKS_BY_HOST, DEMO_LINK_AUDITS_BY_HOST
@@ -177,7 +178,7 @@ def test_request_outage_is_reported_without_raising() -> None:
 
 
 def test_protocol_failure_does_not_abort_later_destinations(
-    monkeypatch, capsys
+    monkeypatch: Any, capsys: Any
 ) -> None:
     checker = CHECKER
     audits = {
@@ -200,16 +201,16 @@ def test_protocol_failure_does_not_abort_later_destinations(
             self.status = status
             self.url = url
 
-        def __enter__(self):
+        def __enter__(self) -> Response:
             return self
 
-        def __exit__(self, *_args):
+        def __exit__(self, *_args: Any) -> None:
             return None
 
         def read(self) -> bytes:
             return b""
 
-    def open_url(request, **_kwargs):
+    def open_url(request: Any, **_kwargs: Any) -> Response:
         url = request.full_url
         if url.startswith("https://broken.example/"):
             raise http.client.IncompleteRead(b"partial", 10)
