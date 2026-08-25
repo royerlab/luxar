@@ -457,6 +457,7 @@ def _resolve_from_cache(
     verbose: bool,
     superseded: Sequence[str] = (),
     irreplaceable: bool = False,
+    source_remedy: str = "",
 ) -> Optional[Path]:
     """Step 1: reuse the cached copy, or quarantine it and return None.
 
@@ -489,9 +490,9 @@ def _resolve_from_cache(
         if irreplaceable:
             aprint(
                 f"⚠️  Using a SUPERSEDED copy of {fname}: it matches a digest this "
-                "project pinned previously, and the current bytes are not "
-                "obtainable (no in-repo copy, and the record is not published). "
-                "It is out of date, not corrupt."
+                "project pinned previously, and no current copy is immediately "
+                f"available. {source_remedy} The record is not published. It is "
+                "out of date, not corrupt."
             )
             return dest
         if verbose:
@@ -619,6 +620,15 @@ def _ensure_one(
     has_repo_copy = lfs_file.is_file() and not is_lfs_pointer(lfs_file)
     url = zenodo_file_url(record, fname)
     irreplaceable = not has_repo_copy and not url
+    if lfs_file.exists():
+        source_remedy = "In a source checkout, run `git lfs pull`."
+    elif not _DEMOS_DATA_DIR.exists():
+        source_remedy = (
+            "This installed package ships no demo payloads. If this archive has "
+            "an in-repo copy, use a source checkout and run `git lfs pull`."
+        )
+    else:
+        source_remedy = "This archive is hosted-only and has no in-repo Git LFS copy."
 
     cached = _resolve_from_cache(
         dest,
@@ -629,6 +639,7 @@ def _ensure_one(
         verbose,
         superseded=superseded,
         irreplaceable=irreplaceable,
+        source_remedy=source_remedy,
     )
     if cached is not None:
         return cached
@@ -698,15 +709,6 @@ def _ensure_one(
             "good copy to fall back to. Re-pull the LFS object, or regenerate the "
             "manifest if the data was intentionally updated."
         )
-    if lfs_file.exists():
-        source_remedy = "In a source checkout, run `git lfs pull`."
-    elif not _DEMOS_DATA_DIR.exists():
-        source_remedy = (
-            "This installed package ships no demo payloads. If this archive has "
-            "an in-repo copy, use a source checkout and run `git lfs pull`."
-        )
-    else:
-        source_remedy = "This archive is hosted-only and has no in-repo Git LFS copy."
     raise DatasetUnavailable(
         f"{fname} is not cached (any cached copy failed its checksum and was "
         "quarantined), not available from the in-repo Git LFS copy, and the "

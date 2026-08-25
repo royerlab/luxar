@@ -2068,6 +2068,31 @@ def test_a_superseded_cache_is_kept_when_nothing_can_replace_it(fake_repo, monke
     assert find_quarantined_files(dest) == [], "the last copy was destroyed"
 
 
+def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys):
+    """An unpulled current copy is obtainable by hydrating its LFS pointer."""
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["sha256"] = "9" * 64
+    entry["superseded_sha256"] = [old_digest]
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / dest.name
+    payload.write_text(
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path == dest
+    notice = capsys.readouterr().out
+    assert "git lfs pull" in notice
+    assert "no in-repo copy" not in notice
+
+
 def test_a_superseded_cache_is_replaced_when_a_route_exists(fake_repo, monkeypatch):
     """Keeping it is a LAST resort, not a preference.
 
@@ -2265,7 +2290,9 @@ def test_a_reverted_pin_moves_the_outgoing_digest_to_the_end(tmp_path, monkeypat
 
     def _regenerate(previous, generation):
         payload.write_bytes(generation)
-        return mod.build(previous, prune=False)["datasets"]["gsplats_kidney"]["files"][0]
+        return mod.build(previous, prune=False)["datasets"]["gsplats_kidney"]["files"][
+            0
+        ]
 
     digest_a = hashlib.sha256(b"A").hexdigest()
     digest_b = hashlib.sha256(b"B").hexdigest()
@@ -2284,12 +2311,8 @@ def test_a_reverted_pin_moves_the_outgoing_digest_to_the_end(tmp_path, monkeypat
     }
 
     pin_b = _regenerate(initial, b"B")
-    pin_a = _regenerate(
-        {"datasets": {"gsplats_kidney": {"files": [pin_b]}}}, b"A"
-    )
-    pin_c = _regenerate(
-        {"datasets": {"gsplats_kidney": {"files": [pin_a]}}}, b"C"
-    )
+    pin_a = _regenerate({"datasets": {"gsplats_kidney": {"files": [pin_b]}}}, b"A")
+    pin_c = _regenerate({"datasets": {"gsplats_kidney": {"files": [pin_a]}}}, b"C")
 
     assert pin_b["superseded_sha256"] == [digest_a]
     assert pin_a["superseded_sha256"] == [digest_a, digest_b]
@@ -2321,7 +2344,7 @@ def test_a_hosted_only_repin_history_must_be_authored_before_regeneration(
         "gsplats_3d_drosophila_gastrulation"
     ]["files"][0]
 
-    assert entry == repinned["datasets"]["gsplats_3d_drosophila_gastrulation"][
-        "files"
-    ][0]
+    assert (
+        entry == repinned["datasets"]["gsplats_3d_drosophila_gastrulation"]["files"][0]
+    )
     assert "superseded_sha256" not in entry
