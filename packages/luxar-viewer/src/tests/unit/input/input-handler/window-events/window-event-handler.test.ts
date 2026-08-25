@@ -16,10 +16,7 @@ import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { AnimationController } from '../../../../../scene/animation/animation-controller';
 import type { RenderingControls } from '../../../../../ui/rendering-controls';
 import type { LuxarCamera } from '../../../../../utils/camera-utils';
-import {
-  resetViewerContainer,
-  setViewerContainer,
-} from '../../../../../utils/viewer-container';
+import { resetViewerContainer, setViewerContainer } from '../../../../../utils/viewer-container';
 
 function makeSceneManager(camera?: LuxarCamera): {
   sceneManager: SceneManager;
