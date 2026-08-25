@@ -3,7 +3,7 @@
  *
  * CRITICAL: This test suite loads every generated example dataset EXCEPT the
  * ones parked in `KNOWN_FLAKY_LARGE_DATASETS` below (each with its documented
- * reason), and validates:
+ * reason, and a tracking issue where one exists), and validates:
  * - No console errors
  * - No WebGL errors
  * - Renderable geometry loaded successfully
@@ -153,8 +153,16 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
         (geometryType) => geometryType.nodes.length > 0 && geometryType.total === 0
       );
 
-      // Debug: If geometry is wholly or partially missing, dump console logs to diagnose
-      if (state.totalElements === 0 || zeroGeometryTypes.length > 0) {
+      // Debug: If geometry is wholly or partially missing, dump console logs to
+      // diagnose. The last clause covers the case the per-type scan cannot see —
+      // points were expected but no point node loaded at all, so `points` never
+      // enters `zeroGeometryTypes` while another type keeps `totalElements` above
+      // zero. That still fails the assertion below, and wants the same logs.
+      if (
+        state.totalElements === 0 ||
+        zeroGeometryTypes.length > 0 ||
+        (state.totalPoints === 0 && !allowZeroPoints)
+      ) {
         console.error(`\n[${example}] ⚠️ Geometry missing! Dumping console logs:`);
         consoleMessages.logs.slice(-50).forEach((log, i) => {
           console.error(`  [LOG ${i}] ${log}`);
