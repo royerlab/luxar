@@ -200,8 +200,8 @@ AO_RADIUS_UM = 4.0
 #: Left alone when the library's auto target was retuned for stronger contrast,
 #: which is a checked decision rather than an oversight: because this demo
 #: normalizes against the term's own maximum, the retune moved its measured
-#: contrast by only ~22% (membranes 0.115 -> 0.140), and every LOWER strength
-#: moved it further from the appearance that was already reviewed. Points needed
+#: opaque-mode contrast by only ~7% (membranes 0.142 -> 0.152), and every LOWER
+#: strength moved it further from the appearance that was already reviewed. Points needed
 #: the extra push; a shaded surface, which puts one element in each pixel, did not.
 AO_STRENGTH = 0.45
 
@@ -308,9 +308,8 @@ def _occluded_albedo(
     )
 
     # Rescale so the most exposed vertex keeps the channel colour untouched.
-    # Occlusion always costs mean brightness, and letting it fall on the whole
-    # surface would dim the demo relative to the exposure it was authored at;
-    # normalizing against the term's own top end spends it on CONTRAST instead.
+    # This preserves peak brightness while the mean still falls, spending the
+    # available range on contrast without retuning the authored peak exposure.
     normalized = occlusion / max(float(occlusion.max()), 1e-6)
     aprint(
         f"  {channel['name']}: occlusion raw "

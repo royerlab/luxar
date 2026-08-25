@@ -46,20 +46,22 @@ it can say which axes are spatial. `group_by` keeps occlusion from crossing a
 time or channel axis while sharing cell size, radius and auto extinction across
 the population, so real temporal density changes remain comparable.
 
-Four demos exercise it. A new `ambient_occlusion` demo puts the same gyroid
-surface on screen three times — unshaded, full-sphere, cosine-hemisphere — with
-identical colour, radii and blending, so the only variable is the baked
-multiplier; its exposure is derived from the measured deepest sightline rather
-than hardcoded, because a fixed gain clips at high `--resolution` and the clipping
-would hide the very term the demo is about. `mesh_isosurface_cells3d` gains
-per-vertex occlusion from the marching-cubes normals it already computed, baked
-per channel so an independently-toggled layer never wears its neighbour's
-shadows. `nuclear_pore_complex` gains burial shading: occlusion over a sphere of
-directions is a close correlate of how much solvent could reach an atom, so the
-darkening tracks a real property rather than decorating one — and because CPK is
-a categorical hue encoding, a scalar multiplier changes lightness while leaving
-element identity readable. Both demos normalize against the term's own maximum,
-so occlusion is spent on contrast instead of dimming an authored exposure.
+Four demos exercise it. A new `exotic_surfaces` demo uses occlusion to make a
+wall of eighteen point-sampled surfaces legible: nine triply-periodic minimal
+surfaces and nine algebraic surfaces occupy a 3x3 grid split across a hidden
+two-category `family` axis. Its exposure is derived from the measured deepest
+sightline rather than hardcoded, because a fixed gain clips at high
+`--resolution` and hides the term the demo is exercising.
+
+`mesh_isosurface_cells3d` gains per-vertex occlusion from the marching-cubes
+normals it already computed, baked per channel so an independently-toggled layer
+never wears its neighbour's shadows. `nuclear_pore_complex` gains burial
+shading: occlusion over a sphere of directions is a close correlate of how much
+solvent could reach an atom, so the darkening tracks a real property rather than
+decorating one — and because CPK is a categorical hue encoding, a scalar
+multiplier changes lightness while leaving element identity readable. Both
+demos normalize against the term's own maximum, which preserves peak brightness
+while the mean still falls.
 
 `atp_synthase` gains the same burial shading. It renders `volumetric`, which
 might look like double-counting, and the reason it is not is the framing the
@@ -76,8 +78,8 @@ radiance terms on and the mandelbulb writes as its ambient floor of 0.32.
 The multiplier is premultiplied into linear-light colour, which is the only route
 available today. Carrying it as a per-element attribute so the viewer could scale
 it live is the better contract, and needs format, loader and shader work that does
-not exist yet — the new demo sidesteps that entirely, since a fixed side-by-side
-wants each panel's answer baked in anyway.
+not exist yet — the surface-wall demo sidesteps that entirely because its answer
+is authored once with the scene.
 
 The auto calibration's target sits at 0.25 rather than a timider 0.5, picked by
 measuring contrast and the 5th percentile across two deliberately different
@@ -86,8 +88,8 @@ the full sphere) so the default is not tuned to one shape. It roughly doubles
 contrast in both while keeping p5 near 0.2; below it the gain comes from clipping
 the dark end rather than from revealing structure. Points take a higher
 `strength` than mesh because soft overlapping sprites mute per-element contrast:
-mesh stays at 0.45, ATP synthase uses 0.85, and the pore plus the deliberately
-maximal A/B demo use 1.0.
+mesh stays at 0.45, ATP synthase uses 0.85, and the pore plus the surface-wall
+demo use 1.0.
 
 `occluder` selects what the material is taken to BE, because the two cases want
 different mappings of the same column integral. `"density"` (default) is
@@ -101,17 +103,10 @@ which is what a surface sampled as points is made of — attenuates only by
 `exp(-k)`, so at any `k` gentle enough to keep solid regions readable a *wall*
 passes about half the light, and raising `k` until walls block properly
 over-darkens everywhere thick. There is no `k` that serves both. Auto calibration
-is inverted per mode so both aim at the same declared target. On the gyroid
-reference surface at the shipped 48-direction hemisphere default, opaque
-contrast is 0.127 against 0.113 for density (about 13%; about a fifth at a
-matched median), while the minimum falls from 0.127 to 0.054.
-
-The original A/B demo was recast and renamed. `ambient_occlusion` became
-`exotic_surfaces`: a subject-centric demo where occlusion makes the subject
-legible rather than being the advertised subject. Eighteen surfaces occupy a
-3x3 grid split across a hidden two-category `family` axis — nine
-triply-periodic minimal surfaces and nine algebraic surfaces, most of them
-extremal. Stepping the axis swaps the whole wall and explanatory overlay.
+is inverted per mode so both aim at the same declared target. On the shipped
+gyroid, opaque contrast is about 10% higher than density at the demo settings
+and about 13% higher at the library defaults; the darkest directions can clip to
+zero, so the lower-percentile guard remains part of the calibration.
 
 `family` is categorical, so it has exactly two discrete stops. Every surface is
 credited on screen, and the demo cites the nodal-approximation technique used by

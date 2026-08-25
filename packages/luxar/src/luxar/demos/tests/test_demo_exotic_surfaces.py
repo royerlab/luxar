@@ -14,7 +14,6 @@ import sys
 
 import numpy as np
 import pytest
-from scipy.spatial import cKDTree
 
 from luxar.demos.demo_exotic_surfaces import (
     AO_RADIUS_FRACTION,
@@ -29,6 +28,7 @@ from luxar.demos.demo_exotic_surfaces import (
     GRID,
     OCCLUDER,
     SPRITE_OVERLAP,
+    SUBTITLES,
     SURFACES,
     TARGET_PEAK,
     Surface,
@@ -177,10 +177,9 @@ def test_every_surface_is_credited_and_described():
 def test_detail_lines_fit_on_one_line():
     """Each detail is its own overlay, and an overlay cannot break its own lines.
 
-    `overlay-manager.ts` sets `white-space: normal` on every non-hover overlay,
-    so a newline in the text collapses to a space — which is why the details are
-    stacked as separate overlays rather than one block, and why each one has to
-    be short enough not to wrap against its own right-anchored edge.
+    Detail overlays have no `width`, so `overlay-manager.ts` sets `nowrap`; the
+    lines are stacked separately and capped so they do not overflow their
+    right-anchored edge.
     """
     for family in (0, 1):
         lines = _detail_lines(family)
@@ -188,6 +187,10 @@ def test_detail_lines_fit_on_one_line():
         for line in lines:
             assert "\n" not in line, "a newline here would render as a space"
             assert len(line) <= 95, f"too long to sit on one line: {line!r}"
+
+
+def test_overlay_explains_detail_order():
+    assert all("reading order" in subtitle for subtitle in SUBTITLES)
 
 
 def test_detail_stack_clears_the_caption_and_the_nav_panel():
@@ -231,8 +234,9 @@ def test_sprites_overlap_so_no_surface_renders_as_a_dot_screen(surface: Surface)
     per-pixel on/off contrast drowns the occlusion gradient entirely — which is
     exactly what went wrong before this demo was rebuilt.
     """
+    c_kd_tree = pytest.importorskip("scipy.spatial").cKDTree
     positions, _, spacing = sample_surface(surface, RESOLUTION)
-    distances, _ = cKDTree(positions).query(positions, k=2)
+    distances, _ = c_kd_tree(positions).query(positions, k=2)
     actual_spacing = float(np.median(distances[:, 1]))
     diameter = 2.0 * SPRITE_OVERLAP * spacing
 

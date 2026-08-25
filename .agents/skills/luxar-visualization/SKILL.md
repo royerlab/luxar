@@ -307,9 +307,10 @@ Choosing settings:
 
 Three traps worth knowing before you judge a result:
 
-- **AO always lowers mean brightness.** Normalize by the term's own maximum
-  (`shade / shade.max()`) if you want to spend it on contrast rather than dim an
-  exposure you already authored.
+- **AO always lowers mean brightness.** Dividing by the term's own maximum
+  (`normalized = shade / shade.max()`) preserves peak brightness, not the mean;
+  scale node intensity by `1 / normalized.mean()` if the authored mean exposure
+  must survive.
 - **A frame that merely looks crisper may just be darker.** Compare against the
   unshaded original, and judge a stronger setting on the 5th percentile, not the
   contrast number — crushing the dark end to black raises contrast while showing

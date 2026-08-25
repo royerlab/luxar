@@ -116,9 +116,9 @@ geometry, what it needs, and whether you have already built it:
 
  SYNTHETIC ──────────────────────────────────────────────────────────── 20 demos
  ✓  9  cloud                                   points
- ✓ 19  exotic_surfaces                         points
    10  collision                               points
  ...
+ ✓ 19  exotic_surfaces                         points
 
  ✓ built   • inputs cached   (blank) not generated yet
  GPU/GPU? = required/optional     git-lfs kaggle manual = data you supply

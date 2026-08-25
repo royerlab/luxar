@@ -436,10 +436,10 @@ def bake_ambient_occlusion(
             One real approximation to know about: mass is deposited at each
             element's centre, so an element's extent is a weight and not a
             footprint. That holds while the render radius is small next to the
-            occlusion grid cell (``extent / grid_cells``) — measured at 0.28,
-            0.18 and 0.44 of a cell in the three bundled point demos. Raise
-            ``grid_cells``, or splat pre-spread mass yourself, if your elements
-            are large enough to span cells.
+            occlusion grid cell (``extent / grid_cells``) — measured at 0.40,
+            0.18 and 0.44 of a cell in the three bundled point demos at their
+            default resolutions. Raise ``grid_cells``, or splat pre-spread mass
+            yourself, if your elements are large enough to span cells.
         normals: Optional ``(N, 3)`` outward normals, in the ``spatial_dims``
             frame. When given, directions are cosine-weighted into the hemisphere
             each normal faces instead of averaged over the full sphere — still
@@ -478,9 +478,10 @@ def bake_ambient_occlusion(
             attenuates by ``exp(-k)``, so at any ``k`` gentle enough to keep solid
             regions readable a WALL passes about half the light, and raising ``k``
             until walls block properly over-darkens everywhere thick. Saturation
-            has no such trade. Measured on the gyroid shell at a matched median,
-            ``"opaque"`` carries about a fifth more contrast than ``"density"``
-            at a matched median, at the cost of clipping the darkest directions.
+            has no such trade. Measured on the shipped gyroid shell,
+            ``"opaque"`` carries about 10% more contrast than ``"density"`` at
+            the demo settings and about 13% more at the library defaults, at the
+            cost of clipping the darkest directions.
         radius: World-space occlusion radius — the scale of structure AO
             responds to. Defaults to :data:`DEFAULT_RADIUS_FRACTION` of the
             bounding-box diagonal, and is the first thing to tune.

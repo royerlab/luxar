@@ -352,12 +352,10 @@ def _apply_burial_shading(
         strength=AO_STRENGTH,
     )
 
-    # Rescale so the LEAST buried atom keeps its colour untouched. Nothing in a
-    # packed complex is ever fully unoccluded, so applying the term directly would
-    # dim everything and undo the exposure this demo was tuned at — and that
-    # exposure is a matched pair with kappa (`intensity=1.62` was chosen against
-    # `absorption=2.5`), so a global dimming here would silently break it.
-    # Normalizing against the term's own top end spends it purely on CONTRAST.
+    # Rescale so the LEAST buried atom keeps its colour untouched. This preserves
+    # peak brightness, while the mean still falls to about half at the shipped
+    # settings; the bake therefore changes the intensity/absorption balance as
+    # well as adding burial contrast.
     normalized = occlusion / max(float(occlusion.max()), 1e-6)
     aprint(
         f"✓ Burial shading (ambient occlusion, r={AO_RADIUS_NM} nm): "

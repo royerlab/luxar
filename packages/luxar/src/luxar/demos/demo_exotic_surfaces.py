@@ -68,10 +68,11 @@ for all nine TPMS is:
     fundamental invariants of structured matter." Zeitschrift für Physik B 83,
     407-412. DOI: 10.1007/BF01313411
 
-Individual surfaces are credited to: Schwarz (1865, P/D/CLP), Neovius (1883),
-Schoen (1970, gyroid/I-WP/F-RD), Lidin & Larsson (1990, lidinoid), Fischer &
-Koch (1987, S), Clebsch (1871), Kummer (1864), Cayley (1869), Steiner (1844),
-Chmutov (1992), Whitney (1943), Barth (1996), Taubin (1994, heart).
+Individual surfaces are credited to: Schwarz (1865, P/D), Neovius (1883),
+Schoen (1970, gyroid/I-WP/F-RD/Split P), Lidin & Larsson (1990, lidinoid),
+Fischer & Koch (1987, S), Clebsch (1871), Kummer (1864), Cayley (1869),
+Steiner (1844), Banchoff (tanglecube), Chmutov (1992), Whitney (1943), Barth
+(1996), Taubin (1994, heart).
 
 USAGE:
 ======
@@ -732,10 +733,9 @@ def auto_exposure(positions: np.ndarray, radius: float) -> Tuple[float, int]:
 # subtitle under it, and a dim caption bottom-right (see demo_lsystem_forest,
 # which also gates per-slice labels on `visible_range` exactly as this does).
 #
-# ONE LINE PER `add_text` CALL. A newline inside an overlay string does NOT
-# produce a line break — `overlay-manager.ts` sets `white-space: normal` for
-# every non-hover overlay, so "\n" collapses to a space and a carefully
-# formatted block renders as one run-on paragraph. Only `width` wrapping works.
+# ONE LINE PER `add_text` CALL. With `width`, `overlay-manager.ts` sets
+# `white-space: normal`, so "\n" collapses to a space; without `width`, it sets
+# `nowrap`, so a detail line cannot wrap and must be short enough not to overflow.
 
 #: Fixed for the whole demo, so the wall keeps an identity across both families.
 TITLE = "Exotic Surfaces"
@@ -743,8 +743,8 @@ TITLE = "Exotic Surfaces"
 #: Per family: the subtitle line, then a short description paragraph (which the
 #: `width` wrap handles), then the nine detail lines.
 SUBTITLES = (
-    "triply-periodic minimal surfaces · zero mean curvature",
-    "algebraic surfaces · zero sets of polynomials",
+    "triply-periodic minimal surfaces · zero mean curvature · listed in reading order",
+    "algebraic surfaces · zero sets of polynomials · listed in reading order",
 )
 
 DESCRIPTIONS = (

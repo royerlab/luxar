@@ -125,9 +125,9 @@ profile *shape*, a modest constant unless it varies per element.
 
 One real approximation: mass is deposited at each element's **centre**, so extent
 is a weight and not a footprint. That holds while the render radius is small next
-to the grid cell (`extent / grid_cells`) — measured at 0.28, 0.18 and 0.44 of a
-cell in the three bundled point demos. Raise `grid_cells` if your elements span
-cells.
+to the grid cell (`extent / grid_cells`) — measured at 0.40, 0.18 and 0.44 of a
+cell in the three bundled point demos at their default resolutions. Raise
+`grid_cells` if your elements span cells.
 
 ### Points need more of it than a mesh does
 
@@ -138,7 +138,7 @@ an additive one sums along the ray — a pixel then shows the *ray-averaged* sha
 which costs about 30% of the contrast (measured 0.280 additive against 0.403
 nearest-element on the gyroid). So the same value that looks right on a mesh reads
 as barely-there on points. The structure demos use `0.45` for mesh, `0.85` for
-ATP synthase and `1.0` for the pore; the A/B point demo deliberately uses `1.0`.
+ATP synthase and `1.0` for the pore; the surface-wall demo also uses `1.0`.
 
 ## Method
 
@@ -165,11 +165,11 @@ over-darkens everywhere thick. There is no `k` that serves both. Saturation has
 no such trade — it reaches full occlusion at one wall and stops, so a thick wall
 darkens exactly as much as a thin one.
 
-Measured on the gyroid shell at a matched median, `"opaque"` carries about a
-fifth more contrast than `"density"`. It is not free: the darkest directions can
-clip to zero, which is why the auto target is guarded by a lower-percentile
-measurement. Auto calibration is inverted per mode so both aim at the same
-declared target.
+Measured on the shipped gyroid shell, `"opaque"` carries about 10% more contrast
+than `"density"` at the demo settings and about 13% more at the library defaults.
+It is not free: the darkest directions can clip to zero, which is why the auto
+target is guarded by a lower-percentile measurement. Auto calibration is
+inverted per mode so both aim at the same declared target.
 
 ### Volumetric or surface? Pass `normals` if you have them
 
