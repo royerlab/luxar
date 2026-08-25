@@ -8,7 +8,7 @@
  * DOM context and tests don't have to programmatically focus elements
  * to assert behaviour.
  *
- * @module input/handlers/focus-utils
+ * @module utils/dom/focus
  */
 
 /**
@@ -22,8 +22,8 @@
  * even if focus has landed on them after a click.
  *
  * Canonical typing-detection helper. Both
- * {@link InputHandler.isTypingInInput} and
- * {@link InputContextManager.isTypingContext} delegate here so the
+ * `InputHandler.isTypingInInput` and
+ * `InputContextManager.isTypingContext` delegate here so the
  * two paths cannot diverge — a fix to this function propagates to
  * every typing-aware code path.
  *

@@ -7,11 +7,11 @@
  * the next position lands, including discrete rounding and wrap-around
  * or clamping at the dimension's bounds.
  *
- * @module input/input-handler/dimension-navigation/step-math
+ * @module scene/dims/step-math
  */
 
-import type { SimpleDims } from '../../../types/dims';
-import { clamp } from '../../../utils/clamp';
+import type { SimpleDims } from '../../types/dims';
+import { clamp } from '../../utils/clamp';
 
 /** Keyboard navigation configuration */
 export interface NavigationConfig {

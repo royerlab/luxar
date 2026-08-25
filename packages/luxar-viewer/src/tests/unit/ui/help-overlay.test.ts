@@ -4,7 +4,7 @@
 // helpers (`ui/error-overlay`) live in `error-overlay.test.ts`.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
-import { isTypingInInput } from '../../../input/input-handler/commands/focus-utils';
+import { isTypingInInput } from '../../../utils/dom/focus';
 import { InputContext, InputContextManager } from '../../../input/input-handler/context-manager';
 import { registerAllKeyBindings } from '../../../input/input-handler/key-bindings/register-all';
 

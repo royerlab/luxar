@@ -72,12 +72,12 @@ import {
   releasePrefetchResources,
 } from '../../../../../data';
 import { DimensionAnimationManager } from '../../../../../scene/animation/dimension-animation-manager';
-import type { DimensionSliders } from '../../../../../ui/dimension-sliders';
+import type { DimensionSlidersHandle } from '../../../../../input/input-handler/panel-capabilities';
 
 function makeCtx(overrides: Partial<DimNavSetupCtx> = {}): DimNavSetupCtx {
   let selectedDimension = 0;
   let animManager: DimensionAnimationManager | undefined;
-  let sliders: DimensionSliders | undefined;
+  let sliders: DimensionSlidersHandle | undefined;
   let listener: (() => Promise<void>) | undefined;
 
   const panelCoordinator = {

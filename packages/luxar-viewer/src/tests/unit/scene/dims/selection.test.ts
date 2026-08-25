@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SimpleDims } from '../../../../../types/dims';
-import { describeNavigableKeys } from '../../../../../input/input-handler/dimension-navigation/selection';
+import type { SimpleDims } from '../../../../types/dims';
+import { describeNavigableKeys } from '../../../../scene/dims/selection';
 
 const dims: SimpleDims = {
   ndim: 5,

@@ -16,9 +16,9 @@ import { buildSettingsPopover } from '../../../ui/rail-panels/settings-popover';
 import { buildNavigationPopover } from '../../../ui/rail-panels/navigation-popover';
 import { buildPerformancePopover } from '../../../ui/rail-panels/performance-popover';
 import { buildHomePopover } from '../../../ui/rail-panels/home-popover';
-import { nextControlType } from '../../../input/input-handler/commands/control-mode';
 import { getSceneLoader } from '../../../data/scene-loader-manager';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
+import { nextControlType } from '../../../controls/types';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { RenderingControls } from '../../../ui/rendering-controls';
@@ -143,7 +143,7 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         if (svg) svg.outerHTML = icon;
         // `type` is a fixed enum (orbit|fly|ortho) — safe to interpolate.
         const modeLabel = type.charAt(0).toUpperCase() + type.slice(1);
-        const next = nextControlType(type); // next mode a click would select
+        const next = nextControlType(type);
         btn.setAttribute(
           'aria-label',
           `Navigation: ${modeLabel} — click for ${next} (V), right-click for options`

@@ -15,13 +15,15 @@
  *   - factories.* are invoked, with overrides honored
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
 import {
   runInitPipeline,
   type InitPipelineResult,
   type InitPipelinePorts,
 } from '../../../../../core/app/init/pipeline';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
+import type { DimensionSlidersConfig } from '../../../../../input/input-handler/panel-capabilities';
+import type { SliderConfig } from '../../../../../ui/dimension-sliders';
 
 // Stub every heavy constructor at module level. Each one returns a
 // minimal object that satisfies the pipeline's subsequent member access.
@@ -120,7 +122,7 @@ vi.mock('../../../../../ui/resolution-indicator', () => ({
     reset: vi.fn(),
   })),
 }));
-vi.mock('../../../../../input/input-handler', () => ({
+vi.mock('../../../../../input', () => ({
   InputHandler: vi.fn(),
 }));
 vi.mock('../../../../../ui/dimension-sliders', () => ({
@@ -166,7 +168,7 @@ vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
   evaluateDepthSortPerFrame: vi.fn(),
 }));
 
-import { InputHandler } from '../../../../../input/input-handler';
+import { InputHandler } from '../../../../../input';
 import { getSceneLoader } from '../../../../../data/scene-loader-manager';
 import {
   configureDepthSort,
@@ -203,6 +205,10 @@ function makeFactoryOverrides(opts: { sceneInitThrows?: boolean } = {}) {
 }
 
 describe('runInitPipeline', () => {
+  it('keeps the injected dimension-slider config identical to the UI config', () => {
+    expectTypeOf<DimensionSlidersConfig>().toEqualTypeOf<SliderConfig>();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     (InputHandler as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>

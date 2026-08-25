@@ -1074,8 +1074,7 @@ describe('InputContextManager', () => {
       it(`agrees with focus-utils for ${c.name}`, async () => {
         // Import focus-utils canonical helper synchronously via dynamic
         // import to avoid a hoisting hazard with the mocked top-level.
-        const { isTypingInInput } =
-          await import('../../../../input/input-handler/commands/focus-utils');
+        const { isTypingInInput } = await import('../../../../utils/dom/focus');
 
         const el = c.build();
         document.body.appendChild(el);
