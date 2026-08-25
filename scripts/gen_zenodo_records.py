@@ -37,6 +37,7 @@ import io
 import json
 import sys
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
@@ -308,8 +309,8 @@ def _locate(
     variant: str,
     file_name: str,
     extra_root: Optional[Path] = None,
-) -> Optional[Path]:
-    """Find an archive in *extra_root*, the repo copy, or the local cache.
+) -> Iterator[Path]:
+    """Yield archives from *extra_root*, the repo copy, then the local cache.
 
     The roots namespace differently, as ``ensure_dataset`` does: in-repo by the
     manifest ``dir``, the cache by the DATASET NAME, and both by the variant.
@@ -327,8 +328,7 @@ def _locate(
         parts = [p for p in (subdir, variant, file_name) if p]
         candidate = base.joinpath(*parts)
         if candidate.exists():
-            return candidate
-    return None
+            yield candidate
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +394,20 @@ def _sha256_of(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _select_pinned_location(
+    candidates: Iterator[Path], pinned_digest: Optional[str]
+) -> tuple[Optional[Path], Optional[str]]:
+    """Prefer pinned bytes, falling back to the first existing candidate."""
+    fallback: tuple[Optional[Path], Optional[str]] = (None, None)
+    for path in candidates:
+        digest = _sha256_of(path)
+        if fallback[0] is None:
+            fallback = (path, digest)
+        if digest == pinned_digest:
+            return path, digest
+    return fallback
 
 
 def _retain_preferred_measurements(
@@ -464,7 +478,10 @@ def refresh_characteristics(
             key = _char_key(dataset, variant, spec["name"])
             seen.add(key)
             pinned_digests[key] = _pinned_digest(spec)
-            path = _locate(dataset, entry, variant, spec["name"], extra_root)
+            path, measured_sha256 = _select_pinned_location(
+                _locate(dataset, entry, variant, spec["name"], extra_root),
+                pinned_digests[key],
+            )
             info = _read_archive(path) if path else None
             if info is None:
                 continue
@@ -480,7 +497,7 @@ def refresh_characteristics(
                 # stale measurement is indistinguishable from a current one, which
                 # is precisely the state the hand-edited descriptions were in.
                 "measured_from": root,
-                "measured_sha256": _sha256_of(path) if path else None,
+                "measured_sha256": measured_sha256,
             }
 
     read = len(measured)
@@ -590,7 +607,7 @@ def _dataset_rows(
     for variant, spec in _files_of(entry):
         info = chars.get(_char_key(dataset, variant, spec["name"]))
         if info is None:
-            path = _locate(dataset, entry, variant, spec["name"])
+            path = next(_locate(dataset, entry, variant, spec["name"]), None)
             info = _read_archive(path) if path else None
         stored = hosted_size(spec)
         name = f"{variant}/{spec['name']}" if variant else spec["name"]

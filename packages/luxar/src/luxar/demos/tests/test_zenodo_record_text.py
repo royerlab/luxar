@@ -400,8 +400,9 @@ class TestSizeVariantsAreDescribed:
         )
         cached.parent.mkdir(parents=True)
         cached.write_bytes(b"")
-        found = gen._locate(
-            "movie_ds", self.ENTRY, "full", "movie_full.gsplats.zarr.zip"
+        found = next(
+            gen._locate("movie_ds", self.ENTRY, "full", "movie_full.gsplats.zarr.zip"),
+            None,
         )
         assert found == cached
 
@@ -495,7 +496,7 @@ def test_a_committed_measurement_beats_a_local_archive(
         },
     )
     # Any local read would have to go through _locate; make it impossible.
-    monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter(()))
 
     (row,) = gen._dataset_rows(
         "ds", _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])["datasets"]["ds"]
@@ -523,7 +524,7 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
     }
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "load_characteristics", lambda: staged)
-    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((tmp_path / "local.zip",)))
     monkeypatch.setattr(gen, "_sha256_of", lambda p: pinned_sha)
     monkeypatch.setattr(
         gen,
@@ -547,6 +548,40 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
     assert written["n_splats"] == 999
 
 
+def test_refresh_uses_a_pinned_cache_copy_over_an_unpinned_repo_copy(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file_name = "a.gsplats.zarr.zip"
+    repo_archive = tmp_path / "repo" / "ds" / file_name
+    cache_archive = tmp_path / "cache" / "ds" / file_name
+    repo_archive.parent.mkdir(parents=True)
+    cache_archive.parent.mkdir(parents=True)
+    _write_frame(repo_archive, n_splats=111)
+    _write_frame(cache_archive, n_splats=999)
+    pinned_sha = gen._sha256_of(cache_archive)
+    monkeypatch.setattr(gen, "DATA_DIR", tmp_path / "repo")
+    monkeypatch.setattr(gen, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+
+    counts = gen.refresh_characteristics(
+        _fake_manifest(
+            [
+                _entry(
+                    file_name,
+                    gen._sha256_of(repo_archive),
+                    hosted_sha256=pinned_sha,
+                )
+            ]
+        )
+    )
+
+    assert counts == (1, 0, 0, 0)
+    written = gen.load_characteristics()[f"ds/{file_name}"]
+    assert written["measured_from"] == "cache"
+    assert written["measured_sha256"] == pinned_sha
+    assert written["n_splats"] == 999
+
+
 def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
     gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -564,7 +599,7 @@ def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
     }
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "load_characteristics", lambda: absent)
-    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((tmp_path / "local.zip",)))
     monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
     monkeypatch.setattr(
         gen,
@@ -602,7 +637,7 @@ def test_a_current_local_measurement_replaces_a_stale_staged_one(
     }
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "load_characteristics", lambda: stale)
-    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((tmp_path / "local.zip",)))
     monkeypatch.setattr(gen, "_sha256_of", lambda p: "p" * 64)
     monkeypatch.setattr(gen, "_read_archive", lambda p: {"n_splats": 111})
 
@@ -629,7 +664,7 @@ def test_refresh_preserves_entries_whose_archive_is_absent(
     monkeypatch.setattr(
         gen, "load_characteristics", lambda: {key: {"n_splats": 7, "psnr_db": 1.0}}
     )
-    monkeypatch.setattr(gen, "_locate", lambda *a, **k: None)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter(()))
 
     read, retained, rejected, preserved = gen.refresh_characteristics(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
@@ -650,7 +685,7 @@ def test_a_prefix_matching_cache_path_is_not_labelled_staged(
     cache_archive.parent.mkdir(parents=True)
     cache_archive.write_bytes(b"archive")
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
-    monkeypatch.setattr(gen, "_locate", lambda *args: cache_archive)
+    monkeypatch.setattr(gen, "_locate", lambda *args: iter((cache_archive,)))
     monkeypatch.setattr(gen, "_read_archive", lambda path: {"n_splats": 7})
     monkeypatch.setattr(gen, "_sha256_of", lambda path: "a" * 64)
 
@@ -668,7 +703,7 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
     key = "ds/a.gsplats.zarr.zip"
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(gen, "load_characteristics", lambda: {})
-    monkeypatch.setattr(gen, "_locate", lambda *a, **k: tmp_path / "local.zip")
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((tmp_path / "local.zip",)))
     monkeypatch.setattr(gen, "_sha256_of", lambda p: "l" * 64)
     monkeypatch.setattr(gen, "_read_archive", lambda p: {"n_splats": 111})
 
