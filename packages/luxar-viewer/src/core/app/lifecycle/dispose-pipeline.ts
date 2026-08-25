@@ -135,6 +135,11 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   safeDispose('controlRail', () => {
     ports.controlRail?.dispose();
     ports.clearControlRail();
+    // Same reason as the dataset browser below: the input handler holds the
+    // rail for routed-keydown notification and Escape, and the rail's item
+    // closures capture the scene manager and every panel. Dropping the
+    // reference here keeps a disposed-but-retained app from pinning that graph.
+    ports.inputHandler?.setControlRail(undefined);
   });
   safeDispose('layersPanel', () => {
     ports.layersPanel?.dispose();

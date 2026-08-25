@@ -50,6 +50,7 @@ function makeInputHandler() {
   return {
     dispose: vi.fn(),
     setDatasetBrowser: vi.fn(),
+    setControlRail: vi.fn(),
   };
 }
 
@@ -324,6 +325,23 @@ describe('runDisposePipeline', () => {
 
       // browser.close → input.setDatasetBrowser(undefined) → input.dispose
       expect(order).toEqual(['browser-close', 'clear-browser-ref', 'input-dispose']);
+    });
+
+    it('clears the control-rail handle on input-handler BEFORE input-handler dispose', () => {
+      // The input handler holds the rail for routed-keydown notification and
+      // Escape, and every rail item closure captures the scene manager and the
+      // panels. An embedder that keeps a disposed app would otherwise pin that
+      // whole graph until a re-init happens to overwrite the field.
+      const s = makeStubs();
+      const order: string[] = [];
+      s.controlRail.dispose.mockImplementation(() => order.push('rail-dispose'));
+      s.inputHandler.setControlRail.mockImplementation(() => order.push('clear-rail-ref'));
+      s.inputHandler.dispose.mockImplementation(() => order.push('input-dispose'));
+
+      runDisposePipeline(makePorts(s));
+
+      expect(s.inputHandler.setControlRail).toHaveBeenCalledWith(undefined);
+      expect(order).toEqual(['rail-dispose', 'clear-rail-ref', 'input-dispose']);
     });
   });
 
