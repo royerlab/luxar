@@ -147,10 +147,7 @@ test.describe('Real Dataset Loading', () => {
     const state = await getLuxarState(page);
     expect(state.initialized).toBe(true);
 
-    // This dataset may load with 0 points due to known loading issues with
-    // build_example_manual.luxar.zarr. The key assertion is that the app initializes
-    // without crashing, even without a spatial index.
-    expect(state.totalPoints).toBeGreaterThanOrEqual(0);
+    expect(state.totalPoints).toBeGreaterThan(0);
   });
 
   test('should load multiple point clouds in hierarchy', async ({ page }) => {
