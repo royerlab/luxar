@@ -34,7 +34,6 @@ export interface DimNavSetupCtx extends DimensionLoadingContext {
   recordingPanel: RecordingPanelHandle | undefined;
   getSelectedDimension(): number;
   setSelectedDimension(value: number): void;
-  getAnimationManager(): DimensionAnimationManager | undefined;
   setAnimationManager(manager: DimensionAnimationManager | undefined): void;
   getDimensionSliders(): DimensionSlidersHandle | undefined;
   setDimensionSliders(sliders: DimensionSlidersHandle | undefined): void;

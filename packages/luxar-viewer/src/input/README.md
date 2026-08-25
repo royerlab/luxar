@@ -21,6 +21,8 @@ import { InputHandler } from '../input';
 Dependency-cruiser rejects value imports into `input/input-handler/**` from
 production modules outside this package. Type-only imports and tests are
 currently exempt, so they must still follow the documented boundary by review.
+It also rejects runtime imports from `input/` into `data/` at severity `error`;
+type-only imports are exempt, and loading orchestration belongs in `scene/`.
 
 ## Layout
 
