@@ -17,6 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { ChunkFetchOutcome, ChunkSource } from '../../../cache/chunk-source';
+import { hashUrl } from '../../../cache/multi-level-caching-store/fetch-retry';
 import type { RemoteValidationToken } from '../../../cache/multi-level-caching-store/validation-queue';
 
 /** A source that records what the store asked of it. */
@@ -105,7 +106,19 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     const store = new MultiLevelCachingStore(source, {});
     await store.init();
 
-    expect(calls.probes).toBeGreaterThanOrEqual(1);
+    // Exactly one: ValidationQueue serializes per dataset, and `>= 1` would
+    // sail past a regression that probed twice.
+    expect(calls.probes).toBe(1);
+
+    // The OPFS bucket must come from `identity`, never `describe` — the two
+    // differ for a container whose identity is not its label, and nothing else
+    // in the repo would notice the swap.
+    expect(dir.getDirectoryHandle).toHaveBeenCalledWith(await hashUrl('fake://identity'), {
+      create: true,
+    });
+    expect(dir.getDirectoryHandle).not.toHaveBeenCalledWith(await hashUrl('fake://describe'), {
+      create: true,
+    });
     await store.dispose();
   });
 
