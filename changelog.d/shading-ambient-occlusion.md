@@ -49,9 +49,10 @@ the population, so real temporal density changes remain comparable.
 Four demos exercise it. A new `exotic_surfaces` demo uses occlusion to make a
 wall of eighteen point-sampled surfaces legible: nine triply-periodic minimal
 surfaces and nine algebraic surfaces occupy a 3x3 grid split across a hidden
-two-category `family` axis. Its exposure is derived from the measured deepest
-sightline rather than hardcoded, because a fixed gain clips at high
-`--resolution` and hides the term the demo is exercising.
+two-category `family` axis. Volumetric blending composes the baked illumination
+with outgoing attenuation, and each family authors a display window measured at
+the default resolution. Those fixed windows trade resolution-adaptive exposure
+for a stable authored appearance at the demo's supported default.
 
 `mesh_isosurface_cells3d` gains per-vertex occlusion from the marching-cubes
 normals it already computed, baked per channel so an independently-toggled layer

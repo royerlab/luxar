@@ -4,17 +4,20 @@ Eighteen hand-transcribed equations is eighteen chances to fat-finger a
 coefficient, and a wrong one does not crash — it quietly renders a different
 (often plausible-looking) surface. So the tests check each surface actually has a
 zero set of the right size, that the numerical gradient is trustworthy, and that
-the sprite/exposure arithmetic that made the previous version of this demo
+the sprite and layer appearance that made the previous version of this demo
 illegible cannot come back.
 """
 
 import os
 import subprocess
 import sys
+import warnings
 
 import numpy as np
 import pytest
+import zarr
 
+from luxar.demos import demo_exotic_surfaces as _demo
 from luxar.demos.demo_exotic_surfaces import (
     AO_RADIUS_FRACTION,
     AO_STRENGTH,
@@ -24,18 +27,18 @@ from luxar.demos.demo_exotic_surfaces import (
     DETAIL_LEADING,
     DETAIL_TOP,
     FAMILY_COLORS,
+    FAMILY_DISPLAY_MAXIMA,
     FAMILY_NAMES,
     GRID,
     OCCLUDER,
     SPRITE_OVERLAP,
     SUBTITLES,
     SURFACES,
-    TARGET_PEAK,
     Surface,
     _detail_lines,
     _gyroid,
-    auto_exposure,
     cell_offset,
+    generate_exotic_surfaces,
     implicit_normals,
     sample_surface,
 )
@@ -161,7 +164,7 @@ def test_surface_is_normalized_into_its_cell(surface: Surface):
 def test_two_families_of_exactly_nine():
     counts = [sum(1 for s in SURFACES if s.family == f) for f in (0, 1)]
     assert counts == [GRID * GRID, GRID * GRID]
-    assert len(FAMILY_NAMES) == len(FAMILY_COLORS) == 2
+    assert len(FAMILY_NAMES) == len(FAMILY_COLORS) == len(FAMILY_DISPLAY_MAXIMA) == 2
 
 
 def test_every_surface_is_credited_and_described():
@@ -222,8 +225,36 @@ def test_cells_tile_without_overlapping():
 
 
 # ---------------------------------------------------------------------------
-# The two arithmetic bugs that made the previous demo illegible
+# The appearance bugs that made the previous demo illegible
 # ---------------------------------------------------------------------------
+
+
+def test_generated_layers_pin_the_authored_volumetric_appearance(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        _demo,
+        "bake_ambient_occlusion",
+        lambda points, **_kwargs: np.ones(len(points), dtype=np.float32),
+    )
+
+    expected_counts = [len(sample_surface(surface, 8)[0]) for surface in SURFACES]
+    assert all(expected_counts), "every surface must reach the write path"
+
+    output = tmp_path / "exotic.luxar.zarr"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        assert generate_exotic_surfaces(output, resolution=8) == sum(expected_counts)
+
+    root = zarr.open_group(str(output), mode="r")
+    for family_name, display_max in zip(FAMILY_NAMES, (2.177, 2.085), strict=True):
+        attrs = dict(root[family_name].attrs)
+        assert attrs["blending_mode"] == "volumetric"
+        assert attrs["opacity"] == pytest.approx(0.60)
+        assert attrs["absorption"] == pytest.approx(1.0)
+        assert attrs["gamma"] == pytest.approx(1.0)
+        assert attrs["intensity"] == pytest.approx(1.0 / display_max)
+        assert attrs.get("offset", 0.0) == pytest.approx(0.0)
 
 
 @pytest.mark.parametrize("surface", SURFACES[:3] + SURFACES[9:12], ids=lambda s: s.key)
@@ -242,35 +273,6 @@ def test_sprites_overlap_so_no_surface_renders_as_a_dot_screen(surface: Surface)
 
     assert diameter > actual_spacing, f"{surface.key} would stipple"
     assert diameter < 3.0 * actual_spacing, f"{surface.key} would smear"
-
-
-def test_auto_exposure_holds_the_deepest_sightline_under_white():
-    positions, _, spacing = sample_surface(SURFACES[0], RESOLUTION)
-    radius = SPRITE_OVERLAP * spacing
-    intensity, deepest = auto_exposure(positions, radius)
-
-    expected_counts: dict[tuple[int, int], int] = {}
-    for x, y in positions[:, :2]:
-        key = (
-            int(np.floor(x / (2.0 * radius))),
-            int(np.floor(y / (2.0 * radius))),
-        )
-        expected_counts[key] = expected_counts.get(key, 0) + 1
-    assert deepest == max(expected_counts.values())
-
-    peak = deepest * intensity * float(max(c.max() for c in FAMILY_COLORS))
-    assert peak == pytest.approx(TARGET_PEAK, abs=1e-6)
-    assert peak < 1.0
-
-
-def test_auto_exposure_dims_as_the_surface_gets_denser():
-    sparse, _, sp_s = sample_surface(SURFACES[0], 40)
-    dense, _, sp_d = sample_surface(SURFACES[0], 72)
-
-    assert (
-        auto_exposure(dense, SPRITE_OVERLAP * sp_d)[0]
-        < auto_exposure(sparse, SPRITE_OVERLAP * sp_s)[0]
-    )
 
 
 # ---------------------------------------------------------------------------
