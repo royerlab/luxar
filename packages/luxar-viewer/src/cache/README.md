@@ -865,6 +865,12 @@ await window.__luxarDebug.cache.clearAll();
 
 ## File Layout
 
+- `chunk-source.ts` — the byte-source port the caching store reads through
+  (`ChunkSource`), plus `ArchiveByteReader` for container-backed sources.
+  Declared here, below `src/data`, so the cache layer never reaches up for a
+  concrete store.
+- `chunk-source/http-chunk-source.ts` — the directory-store source: one
+  retrying HTTP request per chunk, owning the response lifetime.
 - `multi-level-caching-store.ts` — L1+L2 facade implementing zarrita's
   `AsyncReadable` with validation, prefetcher hookup, and disposal.
 - `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.

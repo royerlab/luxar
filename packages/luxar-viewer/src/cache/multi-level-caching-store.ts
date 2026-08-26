@@ -567,7 +567,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
     }
 
     // L3: Remote fetch (~100ms)
-    this.log(`HTTP fetch: ${key}`, 'info');
+    // Not necessarily HTTP any more — the source decides how bytes arrive.
+    this.log(`source fetch: ${key}`, 'info');
     // Compose the store-level dispose signal so dataset disposal
     // aborts in-flight prefetch/demand fetches without each call site
     // plumbing its own controller. When the caller passed its own
@@ -649,7 +650,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * Validate cache using content hash. Clears cache if content changed.
    *
    * Validation is serialized per dataset via a static queue keyed on
-   * `datasetId`, which is `SHA-256(baseUrl)` (see {@link hashUrl}). All
+   * `datasetId`, which is `SHA-256(source.identity)` (see {@link hashUrl}). All
    * `MultiLevelCachingStore` instances pointing at the same URL share the
    * same id and therefore the same queue, so rapid same-URL switches
    * cannot let an older validation finish after a newer one and restore
@@ -930,6 +931,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // it via mergeAbortSignals in getResult.
     this.disposed = true;
     this.dataAbort.abort();
+
+    // Release whatever the byte source holds open. `ChunkSource.dispose` is
+    // documented as "called from the store's dispose", and until now nothing
+    // called it — harmless while the only source was HTTP with a no-op
+    // dispose, and a real leak for a source holding an archive's central
+    // directory across a dataset switch.
+    this.source.dispose();
 
     // Tear down the prefetcher: clears queues/seen/parsed/bounds and
     // sets its own isDisposed flag so the in-flight `.finally()` path

@@ -111,7 +111,7 @@ describe('HttpChunkSource — outcomes', () => {
     expect((await new HttpChunkSource(BASE).get('c/0/0', controller.signal)).kind).toBe('aborted');
   });
 
-  it('surfaces a thrown network failure as `error` rather than throwing', async () => {
+  it('surfaces exhausted retries as `error` rather than throwing', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
@@ -120,9 +120,12 @@ describe('HttpChunkSource — outcomes', () => {
     );
 
     const outcome = await new HttpChunkSource(BASE).get('c/0/0');
-    // The store's contract is that a source never throws — a throw here would
-    // escape `getResult` and reject a caller that expects a Result.
+    // `fetchWithRetry` swallows the throw and returns undefined after its
+    // budget, so this lands on the retry-exhaustion branch — NOT the `catch`.
+    // Either way the contract holds: a source reports, it never throws.
     expect(outcome.kind).toBe('error');
+    if (outcome.kind !== 'error') return;
+    expect(outcome.cause.message).toContain('exhausted retries');
   });
 
   it('cancels a body it declines to read', async () => {
@@ -143,5 +146,32 @@ describe('HttpChunkSource — outcomes', () => {
     // Ownership of this moved out of MultiLevelCachingStore's `finally` and
     // into the source; without it the server keeps streaming an ignored body.
     expect(cancel).toHaveBeenCalled();
+  });
+});
+
+describe('HttpChunkSource — identity probe', () => {
+  it('delegates to the root-document probe and reports its token', async () => {
+    // The one method the suite did not touch. It is what `validateCache` calls,
+    // so a silent failure here means a replaced dataset is never detected.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => bodyResponse(new TextEncoder().encode('{"content_hash":"abc123"}')))
+    );
+
+    const token = await new HttpChunkSource(BASE).probeIdentityToken({});
+
+    expect(token?.hash).toContain('abc123');
+    expect(token?.mode).toBe('content-hash');
+  });
+
+  it('reports null when no root document answers', async () => {
+    // "Cannot tell" — never a change verdict, or every offline load would wipe
+    // a perfectly good cache.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => bodyResponse(new Uint8Array(0), 404))
+    );
+
+    expect(await new HttpChunkSource(BASE).probeIdentityToken({})).toBeNull();
   });
 });
