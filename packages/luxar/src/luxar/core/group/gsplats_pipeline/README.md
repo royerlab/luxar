@@ -273,7 +273,12 @@ Both functions produce a `GSplatData` and hand it to
   is GRAFTED node-for-node by `graft_gsplat_node`, which routes attrs exactly
   like `lod_dispatch` does: [`COMPOSITING_ATTRS`](../compositing.py) — including
   `blending_mode` — land on the wrapper **only**, everything else rides onto
-  each child. `blending_mode` must NOT be duplicated onto the parts: it is
+  each child. A `kind=partition` wrapper carries its stored `bsp_tree` unchanged;
+  when legacy input has none, the graft reconstructs one from every child
+  subtree's center bounds and defensively verifies exact separation before
+  stamping it. Empty, overlapping, or interlocking parts keep the attribute
+  absent and therefore retain the viewer's centroid-order fallback.
+  `blending_mode` must NOT be duplicated onto the parts: it is
   nearest-setter-wins, so a part's copy shadows the wrapper and the layer's
   Blend control goes inert. Per-child `coverage_fraction` thresholds ride from
   each node's own `meta`; the **fallback** for a meta-less lod group is
