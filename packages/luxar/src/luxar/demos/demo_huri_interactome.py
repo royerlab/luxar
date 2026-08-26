@@ -227,7 +227,7 @@ def _download_corum_zip_member(
                 # so we never buffer the whole compressed body in RAM. Force
                 # identity encoding so Content-Length matches the decoded byte
                 # stream (house convention — see
-                # utils/download._force_identity_encoding).
+                # demos._support.downloads.download._force_identity_encoding).
                 with requests.get(
                     url,
                     stream=True,

@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 import requests
 
-from luxar.utils.download import robust_download
+from luxar.demos._support.downloads.download import robust_download
 
 
 class _RangeHTTPHandler(http.server.SimpleHTTPRequestHandler):

@@ -710,7 +710,7 @@ class TestPrecomputedRoundTrip:
         or a rename — a fault — and used to come back as ``None`` while the
         expensive fallback was announced over it.
         """
-        from luxar.utils.data_fetch import DatasetNotFound
+        from luxar.demos._support.datasets.data_fetch import DatasetNotFound
 
         manifest = {"records": {"cc-by": {}}, "datasets": {}}
         with pytest.raises(DatasetNotFound):

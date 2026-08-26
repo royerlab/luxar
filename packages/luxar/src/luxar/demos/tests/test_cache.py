@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luxar.utils import cache as cache_utils
+from luxar.demos._support.datasets import cache as cache_utils
 
 
 @pytest.fixture(autouse=True)
@@ -96,8 +96,12 @@ def test_cached_download_returns_present_file_without_network(tmp_path, monkeypa
     def _boom(*a, **k):  # pragma: no cover - must not be called
         raise AssertionError("network download attempted for a cached file")
 
-    monkeypatch.setattr("luxar.utils.download.robust_download", _boom)
-    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _boom)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.robust_download", _boom
+    )
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.download_with_checksum", _boom
+    )
 
     p = cache_utils.cached_download(
         "http://example.invalid/data.bin", "demoZ", "data.bin"
@@ -124,8 +128,12 @@ def test_cached_download_checksum_hit_is_silent_when_quiet(
     def _boom(*a, **k):  # pragma: no cover - must not be called
         raise AssertionError("network download attempted for a cached file")
 
-    monkeypatch.setattr("luxar.utils.download.robust_download", _boom)
-    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _boom)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.robust_download", _boom
+    )
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.download_with_checksum", _boom
+    )
 
     p = cache_utils.cached_download(
         "http://example.invalid/data.bin",
@@ -147,7 +155,7 @@ def test_cached_download_quarantines_a_checksum_failing_cache(tmp_path, monkeypa
     """
     import hashlib
 
-    from luxar.utils.download import find_quarantined_files
+    from luxar.demos._support.downloads.download import find_quarantined_files
 
     monkeypatch.setattr(cache_utils, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
     cache_dir = (tmp_path / "cache") / "demoQ"
@@ -161,7 +169,9 @@ def test_cached_download_quarantines_a_checksum_failing_cache(tmp_path, monkeypa
         Path(output_path).write_bytes(good)
         return Path(output_path)
 
-    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _fake)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.download_with_checksum", _fake
+    )
 
     out = cache_utils.cached_download(
         "http://example.invalid/data.bin",
@@ -187,7 +197,9 @@ def test_cached_download_keeps_a_short_file_so_it_can_resume(tmp_path, monkeypat
         Path(output_path).write_bytes(b"halfhalf")
         return Path(output_path)
 
-    monkeypatch.setattr("luxar.utils.download.robust_download", _fake)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.robust_download", _fake
+    )
 
     cache_utils.cached_download(
         "http://example.invalid/data.bin", "demoQ3", "data.bin", expected_size=8
@@ -207,7 +219,7 @@ def test_cached_download_keeps_an_overlong_file_for_robust_download(
     ``robust_download`` to reconcile — it restarts from scratch when the local
     copy is larger than the true remote size.
     """
-    from luxar.utils.download import find_quarantined_files
+    from luxar.demos._support.downloads.download import find_quarantined_files
 
     monkeypatch.setattr(cache_utils, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
     cache_dir = (tmp_path / "cache") / "demoQ4"
@@ -222,7 +234,9 @@ def test_cached_download_keeps_an_overlong_file_for_robust_download(
         Path(output_path).write_bytes(b"12345678")
         return Path(output_path)
 
-    monkeypatch.setattr("luxar.utils.download.robust_download", _fake)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.robust_download", _fake
+    )
 
     cache_utils.cached_download(
         "http://example.invalid/data.bin", "demoQ4", "data.bin", expected_size=8
@@ -244,7 +258,7 @@ def test_cached_download_no_redownload_loop_on_stale_expected_size(
     the complete file, every launch would re-fetch it forever. With the fix the
     file is never quarantined, so repeated launches don't churn.
     """
-    from luxar.utils.download import find_quarantined_files
+    from luxar.demos._support.downloads.download import find_quarantined_files
 
     monkeypatch.setattr(cache_utils, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
     cache_dir = (tmp_path / "cache") / "demoQ6"
@@ -262,7 +276,9 @@ def test_cached_download_no_redownload_loop_on_stale_expected_size(
         Path(output_path).write_bytes(true_bytes)
         return Path(output_path)
 
-    monkeypatch.setattr("luxar.utils.download.robust_download", _fake)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.robust_download", _fake
+    )
 
     for _ in range(3):
         cache_utils.cached_download(
@@ -282,7 +298,7 @@ def test_cached_download_no_redownload_loop_on_stale_expected_size(
 
 def test_cached_download_quarantines_an_lfs_pointer(tmp_path, monkeypatch):
     """A pointer stub is not data, and is exactly what a resume would append to."""
-    from luxar.utils.download import find_quarantined_files
+    from luxar.demos._support.downloads.download import find_quarantined_files
 
     monkeypatch.setattr(cache_utils, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
     cache_dir = (tmp_path / "cache") / "demoQ5"
@@ -299,7 +315,9 @@ def test_cached_download_quarantines_an_lfs_pointer(tmp_path, monkeypatch):
         Path(output_path).write_bytes(b"real bytes")
         return Path(output_path)
 
-    monkeypatch.setattr("luxar.utils.download.robust_download", _fake)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.robust_download", _fake
+    )
 
     out = cache_utils.cached_download(
         "http://example.invalid/data.bin", "demoQ5", "data.bin"

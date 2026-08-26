@@ -242,6 +242,104 @@ def test_partition_file_grafts_into_a_scene():
         assert _bsp_leaf_order(dict(root.attrs["bsp_tree"])) == list(range(n_parts))
 
 
+@pytest.mark.parametrize("nested", [False, True], ids=["flat-parts", "lod-parts"])
+def test_partition_graft_recovers_missing_bsp_tree_from_disjoint_parts(
+    nested: bool, capsys: pytest.CaptureFixture[str]
+):
+    """A legacy partition without stored planes recovers an exact scene tree."""
+    from dataclasses import replace
+
+    from luxar import Dimensions, LuxarZarrCompiler
+    from luxar.core.group.partition import serialized_bsp_tree_separates
+    from luxar.gsplats.tree import GSplatLodGroup
+
+    partitioned = _clustered(40).to_spatial_partition(max_elements=40)
+    if nested:
+        # Duplicate levels exercise center_bounds across a legacy LOD-wrapped part.
+        legacy = GSplatPartition(
+            children=[
+                GSplatLodGroup(children=[child, child])
+                for child in partitioned.children
+            ],
+            max_elements=partitioned.max_elements,
+        )
+    else:
+        legacy = replace(partitioned, bsp_tree=None)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "legacy.gsplats.zarr"
+        write_gsplats_tree(part, legacy, ordering="none")
+        assert "bsp_tree" not in zarr.open_group(str(part), mode="r").attrs
+
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_file(name="g", path=part)
+
+        grafted = zarr.open_group(str(scene_path), mode="r")["g"]
+        recovered = dict(grafted.attrs["bsp_tree"])
+        boxes = []
+        for part_index in range(len(legacy.children)):
+            bounds = grafted[f"part_{part_index}"].attrs["position_bounds"]
+            boxes.append((np.asarray(bounds["min"]), np.asarray(bounds["max"])))
+        assert serialized_bsp_tree_separates(recovered, boxes)
+        assert (
+            f"Recovered BSP split planes for {len(legacy.children)} parts"
+            in capsys.readouterr().out
+        )
+
+
+def test_partition_graft_leaves_overlapping_parts_without_bsp_tree(
+    capsys: pytest.CaptureFixture[str],
+):
+    """Intersecting parts keep the honest centroid-order fallback."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    data = _clustered(20)
+    overlapping = GSplatPartition(
+        children=[data.tree, data.tree],
+        max_elements=data.n_splats,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "overlapping.gsplats.zarr"
+        write_gsplats_tree(part, overlapping, ordering="none")
+
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_file(name="g", path=part)
+
+        grafted = zarr.open_group(str(scene_path), mode="r")["g"]
+        assert "bsp_tree" not in grafted.attrs
+        assert (
+            "No exact BSP split planes recovered; using centroid part ordering"
+            in capsys.readouterr().out
+        )
+
+
+def test_single_part_graft_does_not_report_recovered_split_planes(
+    capsys: pytest.CaptureFixture[str],
+):
+    """A one-part wrapper gets the canonical leaf tree without recovery noise."""
+    from luxar import Dimensions, LuxarZarrCompiler
+
+    single_part = GSplatPartition(children=[_clustered(5).tree])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "single.gsplats.zarr"
+        write_gsplats_tree(part, single_part, ordering="none")
+
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_file(name="g", path=part)
+
+        grafted = zarr.open_group(str(scene_path), mode="r")["g"]
+        assert dict(grafted.attrs["bsp_tree"]) == {"part": 0}
+        assert "Recovered BSP split planes" not in capsys.readouterr().out
+
+
 def test_grafting_a_partition_rejects_dim_order():
     """A graft preserves the file's own coordinates — dim_order/fill cannot be
     applied to a partition/nested file, and must raise clearly (not silently

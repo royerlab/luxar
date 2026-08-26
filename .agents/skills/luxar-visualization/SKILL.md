@@ -17,8 +17,8 @@ archive served to a WebGL viewer. This skill builds a scene from a dataset.
 
 **The repo's demos and examples are the canonical know-how** — when in doubt, read a
 matching one before writing code:
-- `packages/luxar/src/luxar/demos/demo_*.py` (85 complete demos)
-- `packages/luxar/examples/*_example.py` (52 focused examples)
+- `packages/luxar/src/luxar/demos/demo_*.py` (87 complete demos)
+- `packages/luxar/examples/*_example.py` (53 focused examples)
 
 ## The canonical pattern (every demo follows this)
 
@@ -105,8 +105,7 @@ scene.add_text("Embryo, t=0", position=(0.02, 0.02), font_size=0.05, anchor="top
 ## Demo helpers (for scripts that fit/serve)
 
 From `luxar.demos` (the barrel that re-exports these — the single spelling; never
-import the owning `luxar.utils` modules or `luxar.utils.data_fetch` directly from
-a demo):
+import the owning `luxar.demos._support.*` modules directly from a demo):
 - `launch_viewer(output_path, open_browser=True)` — serve via the CLI viewer.
 - `parse_demo_flags()` — standard `--recompute` / `--no-serve` / `--serve-only` flags.
 - `load_precomputed_gsplats(demo_name, file_names, recompute=...)` — load cached
@@ -345,8 +344,9 @@ luxar info my_scene.luxar.zarr --stats              # inspect a built scene
 ## Gotchas (from the codebase)
 
 - `create_scene` REQUIRES `dimensions=`.
-- GSplat `cholesky_factors` are packed lower-triangular: 3D = `(N,6)`
-  `[L00, L10, L11, L20, L21, L22]`; isotropic std σ -> `[1/σ,0,1/σ,0,0,1/σ]`.
+- GSplat `cholesky_factors` are the packed lower-triangular factor **L of the
+  covariance** (Σ = L·Lᵀ): 3D = `(N,6)` `[L00, L10, L11, L20, L21, L22]`. The
+  diagonal is **scale-like** — isotropic std σ -> `[σ,0,σ,0,0,σ]`, NOT `1/σ`.
 - `transforms.compose(t1, t2, t3)` applies `t1` FIRST.
 - 4D/nD scenes can show 0 elements at a given slice — navigate to a populated slice,
   or use `extend_to_all` to broadcast across a non-displayed dim.

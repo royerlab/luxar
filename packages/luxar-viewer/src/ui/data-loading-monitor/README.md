@@ -85,17 +85,17 @@ looks like (e.g. hit-rate tooltips note that a low rate right after
 load is normal). Two tooltips are _state-dependent_ and therefore
 re-patched by `tabs/cache.ts` on every tick alongside their values:
 `validationModeTooltip(mode)` and `lastValidatedTooltip(mode)`. Under
-the source-validation modes the freshness timestamp updates on each successful online
-check (a real confirmation), but under `validationMode: 'ttl'`/`'none'`
-it is a fixed known-good **baseline** — when the cache was established —
-that does NOT advance on repeat offline checks and does not confirm the
-cached data still matches the server; the tooltip must say so for
-whichever mode is currently displayed. For the same reason the row label
-itself is mode-aware (`lastValidatedLabel(mode)`): "Last Validated" under
-the content-hash/.zattrs-hash/archive-etag modes, "Cached Since" for ttl/none.
-The
-timing panel's per-operation explanations live in the `TOOLTIPS` map in
-`timing-panel.ts`.
+the source-validation modes the freshness timestamp updates on each
+successful online check (a real confirmation), but under
+`validationMode: 'ttl'`/`'none'` it is a fixed known-good **baseline** —
+when the cache was established — that does NOT advance on repeat offline
+checks and does not confirm the cached data still matches the server; the
+tooltip must say so for whichever mode is currently displayed. For the
+same reason the row label itself is mode-aware
+(`lastValidatedLabel(mode)`): "Last Validated" under the
+content-hash/.zattrs-hash/archive-etag modes, "Cached Since" for ttl/none.
+The timing panel's per-operation explanations live in the `TOOLTIPS` map
+in `timing-panel.ts`.
 
 ## Contracts and invariants
 
