@@ -26,6 +26,7 @@ from luxar.demos.demo_exotic_surfaces import (
     DETAIL_LEADING,
     DETAIL_TOP,
     FAMILY_COLORS,
+    FAMILY_DISPLAY_MAXIMA,
     FAMILY_NAMES,
     GRID,
     OCCLUDER,
@@ -162,7 +163,7 @@ def test_surface_is_normalized_into_its_cell(surface: Surface):
 def test_two_families_of_exactly_nine():
     counts = [sum(1 for s in SURFACES if s.family == f) for f in (0, 1)]
     assert counts == [GRID * GRID, GRID * GRID]
-    assert len(FAMILY_NAMES) == len(FAMILY_COLORS) == 2
+    assert len(FAMILY_NAMES) == len(FAMILY_COLORS) == len(FAMILY_DISPLAY_MAXIMA) == 2
 
 
 def test_generated_layers_pin_the_authored_volumetric_appearance(
@@ -186,7 +187,7 @@ def test_generated_layers_pin_the_authored_volumetric_appearance(
     assert generate_exotic_surfaces(output, resolution=8) == 2 * len(SURFACES)
 
     root = zarr.open_group(str(output), mode="r")
-    for family_name, display_max in zip(FAMILY_NAMES, (2.177, 2.085)):
+    for family_name, display_max in zip(FAMILY_NAMES, (2.177, 2.085), strict=True):
         attrs = dict(root[family_name].attrs)
         assert attrs["blending_mode"] == "volumetric"
         assert attrs["opacity"] == pytest.approx(0.60)
