@@ -19,6 +19,7 @@ detection). It does not touch the uniform-tiled path.
 from __future__ import annotations
 
 import contextlib
+import os
 import shutil
 import subprocess
 import threading
@@ -44,6 +45,8 @@ from .spec import FitPlan
 
 # Builds the argv for plan box ``i`` writing to a given output path.
 WorkerCmdBuilder = Callable[[int, Path], "list[str]"]
+
+_SKIP_CONTENT_BOX_STAMP_ENV = "LUXAR_INTERNAL_SKIP_CONTENT_BOX_STAMP"
 
 
 def _default_worker_cmd_builder(
@@ -217,6 +220,11 @@ def fit_planned_parallel(
     budgeted = [i for i, b in enumerate(plan.boxes) if b.budget > 0]
     box_paths = {i: tmp_dir / f"box_{i}.gsplats.zarr" for i in budgeted}
     stop = threading.Event()
+    worker_env = os.environ.copy()
+    if keep_boxes:
+        worker_env.pop(_SKIP_CONTENT_BOX_STAMP_ENV, None)
+    else:
+        worker_env[_SKIP_CONTENT_BOX_STAMP_ENV] = "1"
 
     def _run(i: int) -> tuple[int, int, str]:
         # A worker that dequeued this box after a Ctrl-C must not spawn a new
@@ -225,7 +233,7 @@ def fit_planned_parallel(
             return i, -1, "cancelled before launch"
         try:
             cmd = [str(c) for c in worker_cmd_builder(i, box_paths[i])]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=worker_env)
         except Exception as exc:  # bad argv / builder bug → funnel to failure path
             return i, -1, f"failed to build/launch worker: {exc!r}"
         return i, proc.returncode, proc.stderr or proc.stdout or ""

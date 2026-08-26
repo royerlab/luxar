@@ -10,6 +10,7 @@ when ``--tiling content`` is selected; this is no longer a standalone command.
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -84,6 +85,13 @@ def _stamp_content_box_output(
     core are absent, so the boundary shell is a lower bound and the result is not
     comparable to a whole-fit score.
     """
+    from luxar.gsplats.planner.fit_planned_parallel import (
+        _SKIP_CONTENT_BOX_STAMP_ENV,
+    )
+
+    if os.environ.get(_SKIP_CONTENT_BOX_STAMP_ENV) == "1":
+        return
+
     from luxar.gsplats.fit_basis import fit_image_min, reference_on_fit_basis
     from luxar.gsplats.fitting.results import _occupied_fraction
     from luxar.gsplats.fitting.validation import _resolve_source_dtype

@@ -1128,6 +1128,37 @@ class TestContentFitCullRetention:
 
 
 class TestFitPlannedParallel:
+    @pytest.mark.parametrize(
+        ("keep_boxes", "expected"),
+        [(False, "1"), (True, "unset")],
+    )
+    def test_only_disposable_box_workers_suppress_restamping(
+        self, tmp_path, keep_boxes, expected
+    ):
+        marker = tmp_path / f"worker-env-{keep_boxes}"
+        base = _fake_box_builder(5)
+
+        def builder(i: int, out_path: Path) -> list[str]:
+            cmd = base(i, out_path)
+            cmd[-1] = (
+                "import os; from pathlib import Path; "
+                f"Path(r'{marker}').write_text("
+                "os.environ.get('LUXAR_INTERNAL_SKIP_CONTENT_BOX_STAMP', 'unset')); "
+                + cmd[-1]
+            )
+            return cmd
+
+        fit_planned_parallel(
+            _toy_plan(n_boxes=1),
+            jobs=1,
+            tmp_dir=tmp_path / f"boxes-{keep_boxes}",
+            worker_cmd_builder=builder,
+            keep_boxes=keep_boxes,
+            verbose=False,
+        )
+
+        assert marker.read_text() == expected
+
     def test_merges_all_budgeted_boxes(self, tmp_path):
         plan = _toy_plan(n_boxes=3)
         d = tmp_path / "boxes"
@@ -1508,6 +1539,37 @@ class TestPlannedFitTruncationRadius:
         )
         assert any(b.budget > 0 for b in plan.boxes)
         return V, plan
+
+    def test_internal_parallel_worker_skips_disposable_box_restamp(self, monkeypatch):
+        from luxar.cli.gsplat_ops.planner import _stamp_content_box_output
+        from luxar.gsplats import merged_quality
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner import PlanBox
+
+        stats = {"floor": 0.0, "image_min": 0.0, "intensity_range": 1.0}
+        result = GSplatData(
+            centers=np.zeros((1, 3), np.float32),
+            amplitudes=np.ones(1, np.float32),
+            cholesky_factors=np.ones((1, 6), np.float32),
+            stats=stats.copy(),
+        )
+        box = PlanBox(box=[0, 1, 0, 1, 0, 1], n_features=1, budget=1)
+
+        def fail_if_scored(*args, **kwargs):
+            raise AssertionError("disposable parallel box was scored")
+
+        monkeypatch.setenv("LUXAR_INTERNAL_SKIP_CONTENT_BOX_STAMP", "1")
+        monkeypatch.setattr(merged_quality, "stamp_merged_quality", fail_if_scored)
+
+        _stamp_content_box_output(
+            result,
+            np.ones((1, 1, 1), np.float32),
+            box,
+            "cpu",
+            verbose=False,
+        )
+
+        assert result.stats == stats
 
     def test_flat_leaf_keeps_the_configured_radius(self):
         """Sequential ``partition=False``: the flat leaf carries ``truncate``."""
