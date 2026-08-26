@@ -289,7 +289,8 @@ def test_a_single_downscaled_tile_does_not_claim_the_whole_acquisition(
     src = tmp_path / "vol.npy"
     V = _sparse_blobs(shape=(32, 32, 32), n=16)
     np.save(src, V)
-    n_tiles = len(compute_tile_specs((16, 16, 16), 8, 2))
+    specs = compute_tile_specs((16, 16, 16), 8, 2)
+    n_tiles = len(specs)
     assert n_tiles > 1, "a single tile would cover the whole grid, proving nothing"
     out = tmp_path / "tile0.gsplats.zarr"
     result = CliRunner().invoke(
@@ -322,5 +323,5 @@ def test_a_single_downscaled_tile_does_not_claim_the_whole_acquisition(
     attrs = read_node_attrs(out / "fitting")
     assert attrs["psnr_db"] > 0
     assert np.isfinite(attrs["foreground_psnr_db"])
-    assert attrs["source_shape"] != [32, 32, 32], attrs
+    assert attrs["source_shape"] == list(specs[0].shape), attrs
     assert "source_declared" not in attrs, attrs

@@ -27,6 +27,8 @@ from .fitting.fit_utils import (
 
 if TYPE_CHECKING:
     from luxar.gsplats.calibration import SplatDensity
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.planner import PlanBox
 
 
 def _parallel_staging_dir(output: Path, token: str) -> Path:
@@ -62,7 +64,18 @@ def _require_plan_volume_shape(volume: Any, fitplan: Any) -> None:
         )
 
 
-def _stamp_content_box_output(result: Any, volume: Any, box: Any, device: Any) -> None:
+def _fill_source_dtype(fit_config: dict, source_dtype: Optional[str]) -> None:
+    """Use the loader-observed dtype unless the user declared one in config."""
+    if not fit_config.get("source_dtype") and source_dtype:
+        fit_config["source_dtype"] = source_dtype
+
+
+def _stamp_content_box_output(
+    result: "GSplatData",
+    volume: Any,
+    box: "PlanBox",
+    device: Optional[str],
+) -> None:
     """Describe a standalone content box after its halo splats were removed."""
     from luxar.gsplats.fit_basis import fit_image_min
     from luxar.gsplats.gsplat_data import GSplatData
@@ -279,8 +292,7 @@ def run_content_fit(
             # cannot disagree about what a preset-less content box is fitted at.
             command_defaults={"cull_retention": CONTENT_CULL_RETENTION},
         )
-        if not fk.get("source_dtype") and source_dtype:
-            fk["source_dtype"] = source_dtype
+        _fill_source_dtype(fk, source_dtype)
         fk.pop("seeds", None)
         fk.pop("device", None)
         fk["verbose"] = False

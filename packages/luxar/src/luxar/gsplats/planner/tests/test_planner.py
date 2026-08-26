@@ -1942,6 +1942,13 @@ class TestPlannedFitTruncationRadius:
         assert fitting["source_dtype"] == "uint16"
         assert fitting["source_bytes"] == int(np.prod(plan.boxes[box_idx].dims)) * 2
 
+    def test_content_source_dtype_keeps_an_explicit_config_value(self):
+        from luxar.cli.gsplat_ops.planner import _fill_source_dtype
+
+        fit_config = {"source_dtype": "uint16"}
+        _fill_source_dtype(fit_config, "float32")
+        assert fit_config["source_dtype"] == "uint16"
+
     def test_parallel_flat_merge_keeps_the_boxes_radius(self, tmp_path):
         """``fit -j N --flat``: the reloaded boxes' radius survives the merge."""
         from luxar.gsplats.gsplat_data import GSplatData
