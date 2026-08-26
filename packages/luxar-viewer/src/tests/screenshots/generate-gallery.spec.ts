@@ -1304,6 +1304,8 @@ for (const demo of DEMOS) {
     } else {
       console.log(`[${demo.id}] exposure=baked (autoExpose off)`);
     }
+    const { coverage } = await measureCoverage(page);
+    console.log(`[${demo.id}] final coverage=${(coverage * 100).toFixed(0)}%`);
 
     // Let the forced-finest LOD stream/commit and a couple of frames render
     // before the still (fine gsplat/point levels load progressively).
