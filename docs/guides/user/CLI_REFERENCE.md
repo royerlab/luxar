@@ -45,6 +45,8 @@ luxar profiles  # List the network-simulation profiles usable via --profile
 ```
 
 - Serving and viewing → [Viewer guide](./VIEWER_GUIDE.md)
+- Serving a single-file scene (`.luxar.zarr.zip`), and what a host must
+  support to make one readable → [Zipped scenes](./VIEWER_GUIDE.md#zipped-scenes-zarrzip)
 - Offline / native export (and the `make build-launchers` prerequisite) →
   [Build system guide](../developer/BUILD_SYSTEM_SPEC.md)
 - Network profiles → [Network simulation spec](../developer/NETWORK_SIMULATION_SPEC.md)

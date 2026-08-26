@@ -39,6 +39,75 @@ trailing slash as the canonical spelling used in examples and logs.
 
 ---
 
+## Zipped scenes (`.zarr.zip`)
+
+A whole scene can be one file. The viewer reads a `.luxar.zarr.zip` in place,
+over HTTP range requests: it fetches the archive's central directory once, then
+one byte window per chunk. Nothing is unpacked, and chunks go through the same
+L1/L2 cache a directory store uses, so a revisit costs almost nothing.
+
+**Produce one** by naming the archive as the output — the compiler stages a
+directory and packages it at the end:
+
+```python
+from luxar import LuxarZarrCompiler
+
+with LuxarZarrCompiler("scene.luxar.zarr.zip") as compiler:
+    ...
+```
+
+An existing store can be packaged by giving `luxar optimise` a `.zip`
+destination:
+
+```bash
+luxar optimise scene.luxar.zarr scene.luxar.zarr.zip
+```
+
+**Serve one** the same way as any scene. `luxar serve <dir>` lists archives
+alongside directory stores, so a zipped scene shows up in the dataset browser
+and opens with a click:
+
+```bash
+luxar serve ./datasets --viewer
+```
+
+You can also drag a `.luxar.zarr.zip` from the desktop onto the viewer window,
+which needs no server at all.
+
+**Hosting requires HTTP range support.** The server must answer `206 Partial
+Content` for a `bytes=` request, and — when the viewer runs on a different
+origin than the data — expose `Content-Range`, `Content-Length`,
+`Accept-Ranges`, and `ETag` via CORS. `luxar serve` does both. So do S3, GCS,
+Azure Blob, and essentially every static host and CDN. A plain
+`python3 -m http.server` does **not**: it ignores `Range` and replies `200` with
+the whole file.
+
+A host that ignores `Range` fails loudly rather than showing an empty scene, and
+says what to do about it:
+
+> Cannot read the zipped store at …: the server answered a Range request with
+> 200 instead of 206 … Reading a .zarr.zip requires a server that honours HTTP
+> Range requests (responding 206 Partial Content). Serve the directory
+> containing it with `luxar serve <dir>`, which does, or unpack the archive into
+> a .zarr directory.
+
+### When to use one
+
+Packaging, not speed. Publishing a scene as one file collapses what can be
+hundreds of thousands of objects into a single upload — on one measured scene,
+~606 K objects became ~80 PUTs — and gives people one artifact to download,
+archive, or attach to a paper.
+
+A **first** load is modestly slower than the directory equivalent, because the
+archive's central directory must be read before any chunk and each member costs
+an extra round trip for its local file header. On the benchmark fixture that is
+roughly +39% requests and +48–60% bytes, worth +1–7% on time to first render. A
+**revisit** is served from cache — 4 requests and ~88 kB on that same fixture —
+so the cost is confined to the first visit.
+
+Pick the archive when distribution matters, and the directory when cold-open
+latency does.
+
 ## URL Parameters
 
 Append parameters to the viewer URL to control startup behavior.
