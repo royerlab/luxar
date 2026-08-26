@@ -8,6 +8,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts/sync_demo_counts.py"
+EXAMPLE_SMOKE_TEST = REPO / "packages/luxar/examples/tests/test_examples_smoke.py"
 
 
 @pytest.fixture
@@ -144,6 +145,17 @@ def test_check_passes_after_sync(sync_module: ModuleType, tmp_path: Path) -> Non
             visualization_skill=skill,
         )
         == 0
+    )
+
+
+def test_example_count_matches_smoke_test_discovery(sync_module: ModuleType) -> None:
+    spec = importlib.util.spec_from_file_location("test_examples_smoke", EXAMPLE_SMOKE_TEST)
+    assert spec is not None and spec.loader is not None
+    smoke_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke_module)
+
+    assert sync_module._example_count(sync_module.EXAMPLES_DIR) == len(
+        smoke_module._discover_example_stems()
     )
 
 
