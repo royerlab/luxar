@@ -1911,3 +1911,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if self._archive_path is not None and self._is_finalized:
             return str(self._archive_path)
         return str(self._store_path)
+
+    @property
+    def final_store_path(self) -> str:
+        """Get the directory store or archive path produced by finalization."""
+        return str(self._archive_path or self._store_path)

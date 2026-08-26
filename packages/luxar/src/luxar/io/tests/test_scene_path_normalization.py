@@ -109,6 +109,23 @@ class TestSceneExtensionNormalization:
             3,
         )
 
+    def test_scene_to_zarr_replaces_existing_requested_archive(self, tmp_path):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+        with LuxarZarrCompiler(requested) as compiler:
+            _write_minimal_scene(compiler)
+
+        with LuxarZarrCompiler(requested) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points(
+                "replacement",
+                np.array([[4.0, 5.0, 6.0]], dtype=np.float32),
+            )
+            scene.to_zarr(requested)
+
+        with zipfile.ZipFile(requested) as archive:
+            assert not any(name.startswith("pts/") for name in archive.namelist())
+            assert any(name.startswith("replacement/") for name in archive.namelist())
+
     def test_scene_to_zarr_is_idempotent_for_finalized_archive(self, tmp_path):
         requested = tmp_path / "scene.luxar.zarr.zip"
 
@@ -122,17 +139,19 @@ class TestSceneExtensionNormalization:
         assert requested.is_file()
         assert compiler.store_path == str(requested)
 
-    def test_scene_to_zarr_rejects_destination_after_archive_relocation(self, tmp_path):
+    def test_scene_to_zarr_rejects_other_destination_before_archive_publish(
+        self, tmp_path
+    ):
         requested = tmp_path / "scene.luxar.zarr.zip"
         copy = tmp_path / "copy.luxar.zarr"
 
         with LuxarZarrCompiler(requested) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             compiler.write_points("pts", np.zeros((1, 3), dtype=np.float32))
-            with pytest.raises(
-                ValueError, match="relocated the store during finalization"
-            ):
+            with pytest.raises(ValueError, match="only supports its final destination"):
                 scene.to_zarr(copy)
+            assert not requested.exists()
+            assert not copy.exists()
 
         assert requested.is_file()
         assert not copy.exists()

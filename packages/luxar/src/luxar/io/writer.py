@@ -405,3 +405,8 @@ class ZarrWriterProtocol(Protocol):
             Current staging or finalized store path.
         """
         ...
+
+    @property
+    def final_store_path(self) -> str:
+        """Get the path where the finalized Zarr store will be published."""
+        ...
