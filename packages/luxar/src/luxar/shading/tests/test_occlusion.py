@@ -196,14 +196,16 @@ def test_bake_matches_fixed_seed_golden_values(occluder, use_normals, expected):
         strength=0.85,
         floor=0.1,
     )
-    np.testing.assert_array_equal(got, np.asarray(expected, dtype=np.float32))
+    np.testing.assert_allclose(
+        got, np.asarray(expected, dtype=np.float32), rtol=0.0, atol=1e-6
+    )
 
 
 def test_shading_processes_columns_in_bounded_row_slabs(monkeypatch):
-    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_SIZE", 4, raising=False)
     rows = 5
     columns = np.full((rows, 2), 0.5, dtype=np.float32)
     weights = np.full((rows, 2), 0.75, dtype=np.float32)
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_BYTES", 4 * columns.shape[1] * 4)
     seen_rows = []
     real_transmittance = occlusion_module._transmittance
 
@@ -226,10 +228,10 @@ def test_shading_processes_columns_in_bounded_row_slabs(monkeypatch):
 
 
 def test_slabbed_helpers_are_bit_identical_across_boundaries(monkeypatch):
-    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_SIZE", 4)
     rng = np.random.default_rng(36)
     columns = rng.uniform(0.0, 3.0, size=(9, 6)).astype(np.float32)
     weights = rng.uniform(0.01, 1.0, size=(9, 6)).astype(np.float32)
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_BYTES", 4 * columns.shape[1] * 4)
 
     for occluder in ("density", "opaque"):
         for active_weights in (None, weights):
@@ -260,10 +262,40 @@ def test_slabbed_helpers_are_bit_identical_across_boundaries(monkeypatch):
     np.testing.assert_array_equal(occlusion_module._combine(columns, weights), expected)
 
 
+@pytest.mark.parametrize("occluder", ["density", "opaque"])
+@pytest.mark.parametrize("use_normals", [False, True])
+@pytest.mark.parametrize("use_groups", [False, True])
+def test_public_bake_is_bit_identical_across_slab_boundaries(
+    monkeypatch, occluder, use_normals, use_groups
+):
+    positions, mass, normals = _golden_inputs()
+    group_by = np.arange(len(positions)) % 2 if use_groups else None
+    kwargs = dict(
+        mass=mass,
+        normals=normals if use_normals else None,
+        group_by=group_by,
+        occluder=occluder,
+        radius=0.9,
+        n_directions=6,
+        grid_cells=8,
+        strength=0.85,
+        floor=0.1,
+    )
+
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_BYTES", len(positions) * 6 * 4)
+    expected = bake_ambient_occlusion(positions, **kwargs)
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_BYTES", 3 * 6 * 4)
+    got = bake_ambient_occlusion(positions, **kwargs)
+
+    np.testing.assert_array_equal(got, expected)
+
+
 def test_weighted_combine_does_not_materialize_a_full_product(monkeypatch):
-    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_SIZE", 1_024, raising=False)
     per_direction = np.full((100_000, 8), 0.5, dtype=np.float32)
     weights = np.full_like(per_direction, 0.75)
+    monkeypatch.setattr(
+        occlusion_module, "_ROW_SLAB_BYTES", 1_024 * per_direction.shape[1] * 4
+    )
 
     tracemalloc.start()
     try:

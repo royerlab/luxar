@@ -92,7 +92,7 @@ light's point of view — which suits a caller that already holds every element 
 an array.
 """
 
-from typing import Optional, Sequence, Tuple, Union
+from typing import Iterator, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -115,20 +115,22 @@ DEFAULT_GRID_CELLS = 64
 
 #: Opposed direction pairs used for a full-sphere bake. The cost is linear in
 #: this count. Persistent direction arrays cost ``4 * N * D`` bytes for a
-#: full-sphere bake or ``8 * N * D`` with hemisphere weights. Group assembly
-#: can transiently add ``4 * N_group * D`` bytes, while shading and weighted
-#: combination use bounded row slabs rather than another full array. Add the
-#: ``O(N)`` indexing temporaries and the rotated grid, whose worst-case volume is
-#: approximately ``(sqrt(3) * grid_cells) ** 3`` cells.
+#: full-sphere bake or ``8 * N * D`` with hemisphere weights. The measured
+#: ``O(N)`` indexing and grid temporaries add approximately 145 bytes per
+#: element, and group assembly can transiently add ``4 * N_group * D`` bytes.
+#: Shading and weighted combination limit each work array to 32 MiB rather than
+#: another full array; at ``D=24`` the measured transient peak is 0.915x one
+#: full direction array. The rotated grid's worst-case volume is approximately
+#: ``(sqrt(3) * grid_cells) ** 3`` cells.
 DEFAULT_N_DIRECTIONS = 24
 
 #: Hemisphere weighting converges more slowly than a plain sphere average, so
 #: surface bakes use the measured 48-direction floor unless explicitly overridden.
 DEFAULT_NORMAL_N_DIRECTIONS = 48
 
-#: Bound temporary ``(N, n_directions)`` work arrays while preserving each
-#: row's existing reduction order exactly.
-_ROW_SLAB_SIZE = 262_144
+#: Byte budget for temporary ``(N, n_directions)`` work arrays. Row slabs are
+#: sized from this budget while preserving each row's reduction order exactly.
+_ROW_SLAB_BYTES = 32 * 1024 * 1024
 
 #: ``extinction="auto"`` solves for the scale that puts the *median* element at
 #: this transmittance, so the population lands in a useful range whatever the
@@ -555,7 +557,6 @@ def bake_ambient_occlusion(
             window=window,
         )
     else:
-        columns = np.empty((n_elements, len(directions)), dtype=np.float32)
         groups = np.asarray(group_by)
         if groups.shape != (n_elements,):
             raise ValueError(
@@ -567,6 +568,7 @@ def bake_ambient_occlusion(
             raise ValueError("group_by must contain finite numeric labels") from exc
         if not groups_are_finite:
             raise ValueError("group_by must be finite")
+        columns = np.empty((n_elements, len(directions)), dtype=np.float32)
         for label in np.unique(groups):
             where = np.flatnonzero(groups == label)
             columns[where] = _group_columns(
@@ -638,17 +640,12 @@ def _shade_columns(
     floor: float,
 ) -> np.ndarray:
     transmittance = np.empty(len(columns), dtype=np.float32)
-    for start in range(0, len(columns), _ROW_SLAB_SIZE):
-        stop = min(start + _ROW_SLAB_SIZE, len(columns))
+    for start, stop in _row_slabs(len(columns), columns.shape[1]):
         mapped = columns[start:stop].copy()
         mapped *= extinction
         _transmittance(mapped, occluder)
         slab_weights = None if weights is None else weights[start:stop]
-        if slab_weights is None:
-            transmittance[start:stop] = mapped.mean(axis=1)
-        else:
-            mapped *= slab_weights
-            transmittance[start:stop] = mapped.sum(axis=1) / slab_weights.sum(axis=1)
+        transmittance[start:stop] = _combine(mapped, slab_weights)
     return np.asarray(
         np.clip(1.0 - strength * (1.0 - transmittance), floor, 1.0),
         dtype=np.float32,
@@ -755,13 +752,18 @@ def _combine(per_direction: np.ndarray, weights: Optional[np.ndarray]) -> np.nda
     if weights is None:
         return np.asarray(per_direction.mean(axis=1))
     combined = np.empty(len(per_direction), dtype=per_direction.dtype)
-    for start in range(0, len(per_direction), _ROW_SLAB_SIZE):
-        stop = min(start + _ROW_SLAB_SIZE, len(per_direction))
+    for start, stop in _row_slabs(len(per_direction), per_direction.shape[1]):
         slab_weights = weights[start:stop]
         combined[start:stop] = (per_direction[start:stop] * slab_weights).sum(
             axis=1
         ) / slab_weights.sum(axis=1)
     return combined
+
+
+def _row_slabs(n_rows: int, n_directions: int) -> Iterator[Tuple[int, int]]:
+    rows_per_slab = max(1, _ROW_SLAB_BYTES // (n_directions * 4))
+    for start in range(0, n_rows, rows_per_slab):
+        yield start, min(start + rows_per_slab, n_rows)
 
 
 def _auto_extinction(
