@@ -164,10 +164,6 @@ AO_STRENGTH = 1.0
 #: blocks a direction rather than accumulating as an unbounded medium density.
 OCCLUDER = "opaque"
 
-#: Peak additive accumulation to expose for. Additive SUMS along the ray, and a
-#: clipped frame flattens exactly the shading this demo depends on.
-TARGET_PEAK = 0.7
-
 #: Per-family albedo in LINEAR light. One flat colour per family, so every
 #: variation across a surface is the occlusion term.
 FAMILY_COLORS = (
@@ -176,6 +172,9 @@ FAMILY_COLORS = (
 )
 
 FAMILY_NAMES = ("Minimal surfaces", "Algebraic surfaces")
+#: Viewer display-window maxima measured for the two baked-RGB families at the
+#: default resolution. With a zero offset, the authored intensity is 1 / max.
+FAMILY_DISPLAY_MAXIMA = (2.177, 2.085)
 
 
 # =============================================================================
@@ -701,26 +700,6 @@ def cell_offset(index: int) -> Tuple[float, float]:
     return origin + column * CELL_PITCH, -(origin + row * CELL_PITCH)
 
 
-def auto_exposure(positions: np.ndarray, radius: float) -> Tuple[float, int]:
-    """Node gain holding the deepest additive sightline under white.
-
-    Derived, not hardcoded: the deepest column grows with ``--resolution``, so a
-    fixed gain either clips at one end of the range or is needlessly dim at the
-    other. Approximate — it counts points per column, where the true per-point
-    contribution also depends on opacity and the sprite profile — hence a
-    :data:`TARGET_PEAK` well below 1.0.
-
-    Returns:
-        ``(intensity, deepest_column)``.
-    """
-    cell = 2.0 * radius
-    keys = np.floor(positions[:, :2] / cell).astype(np.int64)
-    _, counts = np.unique(keys, axis=0, return_counts=True)
-    deepest = max(int(counts.max()), 1)
-    brightest = float(max(c.max() for c in FAMILY_COLORS))
-    return TARGET_PEAK / (deepest * brightest), deepest
-
-
 # =============================================================================
 # Scene
 # =============================================================================
@@ -866,7 +845,8 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
                 positions = np.vstack([e[0] for e in entries])
                 occlusion = np.concatenate([e[1] for e in entries])
                 radii = np.concatenate([e[2] for e in entries])
-                intensity, deepest = auto_exposure(positions, float(radii.max()))
+                display_max = FAMILY_DISPLAY_MAXIMA[family]
+                intensity = 1.0 / display_max
 
                 # The hidden axis: every point of a family sits at that family's
                 # coordinate, and nothing extends through the axis, so stepping
@@ -884,15 +864,17 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
                     nd,
                     colors=np.ascontiguousarray(colors),
                     radii=radii,
-                    opacity=0.9,
-                    blending_mode="additive",
+                    opacity=0.60,
+                    absorption=1.0,
+                    gamma=1.0,
+                    blending_mode="volumetric",
                     intensity=intensity,
                     layer=True,
                 )
                 total += len(nd)
                 aprint(
                     f"✓ {FAMILY_NAMES[family]}: {len(nd):,} points, "
-                    f"deepest column {deepest} -> intensity {intensity:.4f}"
+                    f"display range 0–{display_max:.3f} -> intensity {intensity:.4f}"
                 )
 
             # Fixed title: the demo's identity, constant across both families.
