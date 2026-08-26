@@ -878,6 +878,7 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = RESOLUTION) ->
                     gamma=1.0,
                     blending_mode="volumetric",
                     intensity=intensity,
+                    extend_to_all=[],
                     layer=True,
                 )
                 total += len(nd)
