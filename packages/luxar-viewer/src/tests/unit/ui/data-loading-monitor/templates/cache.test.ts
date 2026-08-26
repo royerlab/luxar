@@ -20,8 +20,11 @@ import {
   CACHE_BADGE_COLOR,
   formatValidationMode,
   formatLastValidated,
+  lastValidatedLabel,
+  lastValidatedTooltip,
   l2ErrorTotal,
   renderCacheStatusBadges,
+  validationModeTooltip,
   getCacheHitRateColorClass,
   getCacheHitRateColorClassWithGuard,
   CACHE_WARMUP_ACCESSES,
@@ -118,6 +121,10 @@ describe('formatValidationMode', () => {
     expect(formatValidationMode('content-hash')).toBe('Content Hash');
   });
 
+  it('formats archive-etag as "Archive ETag"', () => {
+    expect(formatValidationMode('archive-etag')).toBe('Archive ETag');
+  });
+
   it('formats ttl as "TTL"', () => {
     expect(formatValidationMode('ttl')).toBe('TTL');
   });
@@ -128,6 +135,19 @@ describe('formatValidationMode', () => {
 
   it('returns em-dash for undefined', () => {
     expect(formatValidationMode(undefined)).toBe('—');
+  });
+});
+
+describe('archive-etag validation presentation', () => {
+  it('describes validation against the whole archive', () => {
+    expect(validationModeTooltip('archive-etag')).toContain('Archive-ETag validation');
+    expect(validationModeTooltip('archive-etag')).toContain('whole store');
+    expect(lastValidatedTooltip('archive-etag')).toContain("archive's ETag");
+  });
+
+  it('labels archive checks as validation rather than a cache baseline', () => {
+    expect(lastValidatedLabel('archive-etag')).toBe('Last Validated');
+    expect(lastValidatedLabel('ttl')).toBe('Cached Since');
   });
 });
 

@@ -187,10 +187,9 @@ under "L0 Decompressed Chunk Cache" below.
   - `none`: `.zattrs` unreachable, no cached hash, no TTL configured —
     cache may be stale indefinitely until manually cleared. The cache tab
     surfaces this as an `unvalidated-external-dataset` badge.
-- `lastValidatedAt: number | null`: wall-clock millis at last
-  successful validation (hash modes), or the fixed known-good baseline
-  under `ttl`/`none` — seeded once and NOT advanced by repeat no-token
-  checks, so the TTL age grows monotonically.
+- `lastValidatedAt: number | null`: wall-clock millis at last successful source
+  validation, or the fixed known-good baseline under `ttl`/`none` — seeded once
+  and NOT advanced by repeat no-token checks, so the TTL age grows monotonically.
 - `unvalidatedExternalDataset: boolean`: convenience flag.
 
 `OPFSStore.getStats()` exposes health counters:

@@ -326,16 +326,17 @@ export function validationModeTooltip(mode: CacheValidationMode | undefined): st
 /**
  * Didactic hover explanation for the "Last Validated" / "Cached Since"
  * timestamp, mode-aware because the timestamp means different things:
- * under the hash modes it is a real confirmation that updates on each
+ * under the source-validation modes it is a real confirmation that updates on each
  * successful online check, while under ttl/none it is a fixed known-good
  * baseline (when the cache was established) that does NOT advance on
  * repeat offline checks.
  */
 export function lastValidatedTooltip(mode: CacheValidationMode | undefined): string {
   const base =
-    'The viewer re-fetches the dataset root metadata from the server at load time. For the ' +
-    'content-hash and .zattrs-hash modes this timestamp updates on each successful check; for ' +
-    'ttl/none it is a fixed baseline that does not advance on repeat checks. ';
+    'At load time the viewer checks the dataset root metadata, or the archive itself for a ' +
+    'zipped store. For the content-hash, .zattrs-hash, and archive-etag modes this timestamp ' +
+    'updates on each successful check; for ttl/none it is a fixed baseline that does not ' +
+    'advance on repeat checks. ';
   switch (mode) {
     case 'content-hash':
       return (
@@ -381,13 +382,13 @@ export function lastValidatedTooltip(mode: CacheValidationMode | undefined): str
 
 /**
  * Row label for the freshness timestamp, mode-aware to match the
- * timestamp's actual meaning: only the hash modes truly VALIDATE the
+ * timestamp's actual meaning: only the source-validation modes truly validate the
  * cache against the server on each check ("Last Validated"). Under
  * ttl/none the timestamp is a fixed baseline marking when the cache was
  * established, not a per-check event, so "Cached Since" is the honest label.
  */
 export function lastValidatedLabel(mode: CacheValidationMode | undefined): string {
-  // Both hash modes genuinely VALIDATE the cache against the server on each
+  // All three validation modes genuinely validate the cache against the server on each
   // successful check; ttl/none record a fixed baseline that does not advance.
   return mode === 'content-hash' || mode === 'zattrs-hash' || mode === 'archive-etag'
     ? 'Last Validated'
