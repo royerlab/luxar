@@ -1331,6 +1331,7 @@ for (const demo of DEMOS) {
     } else {
       console.log(`[${demo.id}] exposure=baked (autoExpose off)`);
     }
+
     // Let the forced-finest LOD stream/commit and a couple of frames render
     // before the still (fine gsplat/point levels load progressively).
     await page.waitForTimeout(2500);
