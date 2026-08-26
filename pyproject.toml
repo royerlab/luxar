@@ -428,7 +428,9 @@ gen-data-manifest = "python scripts/gen_data_manifest.py"
 # Assert the committed demo-data manifest matches the tree.
 check-data-manifest = "python scripts/gen_data_manifest.py --check"
 # Synchronize the four live documentation sites with the demo registry and the
-# focused-example glob. Historical changelog counts are intentionally excluded.
+# focused-example glob. Historical changelog counts are intentionally excluded;
+# concurrent stale branches may still need to rerun this after the first merges.
+# README catalogue section counts remain guarded by the renderer pytest.
 sync-demo-counts = "python scripts/sync_demo_counts.py"
 # Assert those committed counts match their derivation sources.
 check-demo-counts = "python scripts/sync_demo_counts.py --check"
