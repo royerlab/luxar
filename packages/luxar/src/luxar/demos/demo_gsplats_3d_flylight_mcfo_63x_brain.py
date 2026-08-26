@@ -449,6 +449,7 @@ def colour_from_channels(h5j_path: Path, fit_path: Path, out_path: Path) -> None
     channels held together would be ~39 GB.
     """
     from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.save_gsplats import save_gsplats
 
     with asection("Colouring splats from the three signal channels"):
         data = GSplatData.load(str(fit_path))
@@ -483,9 +484,28 @@ def colour_from_channels(h5j_path: Path, fit_path: Path, out_path: Path) -> None
 
         # Demo colours are LINEAR light, not sRGB - the viewer applies the
         # transfer curve itself.
-        data.colors = np.rint(rgb * 255.0).astype(np.uint8)
-        data.save(str(out_path))
-        aprint(f"wrote {out_path}")
+        colours = np.rint(rgb * 255.0).astype(np.uint8)
+
+        # Write through save_gsplats rather than assigning `data.colors`.
+        # `GSplatData.colors` is a DERIVED view -- "cached concatenation of all
+        # LOD colors" -- so assigning it updates a cache that the save path does
+        # not read, and the colours vanish with no error and no warning. The
+        # symptom is has_colors=False on the written archive, which then survives
+        # every downstream stage.
+        save_gsplats(
+            str(out_path),
+            centers=np.asarray(data.centers),
+            amplitudes=np.asarray(data.amplitudes),
+            cholesky_factors=np.asarray(data.cholesky_factors),
+            colors=colours,
+        )
+        written = GSplatData.load(str(out_path))
+        if written.colors is None:
+            raise RuntimeError(
+                f"{out_path.name} came back with no colours; the MCFO hue is the "
+                "point of this demo, so refusing to continue silently."
+            )
+        aprint(f"wrote {out_path} with colours {written.colors.shape}")
 
 
 def levelling_angle_deg(node) -> float:
