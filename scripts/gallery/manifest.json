@@ -492,7 +492,7 @@
     },
     {
       "id": "gsplats_4d_zebrafish_timelapse",
-      "title": "4D Zebrafish Timelapse",
+      "title": "4D Zebrafish Gastrulation (endoderm)",
       "geometry": "mixed",
       "category": "microscopy",
       "script": "demo_gsplats_4d_zebrafish_timelapse.py",

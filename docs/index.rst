@@ -132,6 +132,7 @@ Features
    api/io
    api/encoding
    api/validation
+   api/demos
    api/utils
    api/typing_utils
    api/cli
@@ -154,6 +155,7 @@ Core Packages
 * **luxar.io** - Read/write Zarr files with spatial indexing
 * **luxar.encoding** - Array encoding with semantic types and quantization
 * **luxar.validation** - Data validation with helpful error messages
+* **luxar.demos** - Dataset, download, and runtime helpers for executable demos
 * **luxar.utils** - Utilities and demo data generators
 * **luxar.typing_utils** - Type definitions and constants
 * **luxar.cli** - Command-line interface

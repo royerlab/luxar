@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from luxar.utils.zip_safety import _safe_extract_zip_member, _validate_zip_member_path
+from luxar.demos._support.downloads.zip_safety import (
+    _safe_extract_zip_member,
+    _validate_zip_member_path,
+)
 
 
 class TestSafeZipExtraction:

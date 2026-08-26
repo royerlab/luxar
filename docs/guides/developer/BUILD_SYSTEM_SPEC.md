@@ -869,8 +869,9 @@ classifiers advertise — "declared" and "tested" are kept identical by
 construction, because a claimed-but-never-exercised version is the same species of
 lie as an untested 3.10 claim would be. Finding a break within 24h is the trade
 against spending three legs on every PR, on a box with three self-hosted slots.
-On obsidian, `max-parallel: 2` starts two Python legs while reserving the third
-slot for `typescript-tests`; the final Python leg follows, while the short
+On obsidian, `max-parallel: 2` prevents one run's Python matrix from monopolising
+all three shared slots; repository-wide queue order may still put other work ahead
+of that run's `typescript-tests`. The final Python leg follows, while the short
 `release-readiness` and `wheel-viewer` checks run independently on GitHub-hosted
 runners. (If newer interpreters ever become deliberately unsupported, the honest
 fix is a `requires-python` upper bound, not a quiet single-leg matrix.)

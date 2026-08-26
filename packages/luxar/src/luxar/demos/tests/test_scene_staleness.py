@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 from luxar._zarr_compat import consolidate, open_group
-from luxar.utils.flags import parse_demo_flags
-from luxar.utils.provenance import (
+from luxar.demos._support.runtime.flags import parse_demo_flags
+from luxar.demos._support.runtime.provenance import (
     BUILDER_FINGERPRINT_ATTR,
     demo_source_fingerprint,
     scene_is_current,

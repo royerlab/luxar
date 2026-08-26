@@ -404,7 +404,7 @@ def load_precomputed_crops(
     many minutes and an account they may not have.
 
     ``manifest`` / ``cache_root`` exist for tests, mirroring
-    :func:`~luxar.utils.data_fetch.ensure_dataset`.
+    :func:`~luxar.demos.ensure_dataset`.
     """
     from luxar.demos import DatasetUnavailable, LocalComputeDataset, ensure_dataset
 

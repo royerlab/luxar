@@ -337,7 +337,7 @@ def _parse_content_length(headers: Any) -> int | None:
     """Parse a *positive* Content-Length, else ``None`` (unknown).
 
     Mirrors the ``_parse_len`` closure inside
-    :func:`luxar.utils.download.robust_download`, which is nested and so cannot
+    :func:`luxar.demos.robust_download`, which is nested and so cannot
     be imported: a duplicated header arrives as ``"100, 100"`` and a chunked
     host sends ``0``. Both mean *unknown* and must never be read as a real size.
     """
@@ -688,7 +688,7 @@ def _download_from_google_drive(
 
     Only the confirmation dance below is genuinely custom — Google Drive's
     four-way "are you sure" flow has no equivalent in
-    :mod:`luxar.utils.download`, which is why ``robust_download`` cannot be used
+    :mod:`luxar.demos`, which is why ``robust_download`` cannot be used
     directly. The FINISH, however, now matches ``robust_download``'s contract:
     the body is streamed into a process-private sibling ``.part`` file, verified
     (HTML sniff, absolute floor, declared content-length, expected-size floor),
@@ -737,9 +737,9 @@ def _download_from_google_drive(
     # `requests` advertises `gzip, deflate` by default and `iter_content`
     # DECODES the body, while Content-Length describes the COMPRESSED bytes — a
     # gzipped text/csv would then look truncated and be rejected even though it
-    # arrived intact. `luxar.utils.download._force_identity_encoding` codifies
-    # this precondition, but its "unless the caller already set it" guard would
-    # preserve the Session's own gzip default, so the header is set outright.
+    # arrived intact. `_support.downloads.download._force_identity_encoding`
+    # codifies this precondition, but its "unless the caller already set it"
+    # guard would preserve the Session's own gzip default, so the header is set outright.
     # Setting it on the session makes all four strategies below inherit it.
     session.headers["Accept-Encoding"] = "identity"
 
