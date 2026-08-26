@@ -31,6 +31,7 @@
 import ZipFileStore from '@zarrita/storage/zip';
 import type { AbsolutePath, AsyncReadable } from '@zarrita/storage';
 
+import { ArchiveFaultError } from '../../cache/chunk-source';
 import { normalizeZipEntries } from './entries';
 import { LuxarHttpRangeReader } from './range-reader';
 
@@ -106,7 +107,9 @@ export class LuxarZipStore implements AsyncReadable {
       })
       .catch((error: unknown) => {
         this.#opening = undefined;
-        throw error;
+        if (error instanceof ArchiveFaultError) throw error;
+        const cause = error instanceof Error ? error : new Error(String(error));
+        throw new ArchiveFaultError(cause.message, this.url, { cause });
       });
 
     return this.#opening;

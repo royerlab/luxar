@@ -13,6 +13,7 @@ import type { ArchiveByteReader } from '../../../../cache/chunk-source';
 import { ArchiveFaultError } from '../../../../cache/chunk-source';
 import { ZipChunkSource } from '../../../../cache/chunk-source/zip-chunk-source';
 import { RangeUnsupportedError } from '../../../../data/zip/range-reader';
+import { LuxarZipStore } from '../../../../data/zip/store';
 
 const ARCHIVE_URL = 'https://example.com/scene.luxar.zarr.zip';
 
@@ -133,6 +134,40 @@ describe('ZipChunkSource — outcomes', () => {
     expect(outcome.kind).toBe('fatal');
     if (outcome.kind !== 'fatal') return;
     expect(outcome.cause).toBeInstanceOf(ArchiveFaultError);
+  });
+
+  it('maps a malformed archive open to `fatal` with the parser error as its cause', async () => {
+    const archive = new Uint8Array(4096);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit = {}) => {
+        if (init.method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            headers: { 'content-length': String(archive.length) },
+          });
+        }
+
+        const range = new Headers(init.headers).get('Range') ?? '';
+        const [, start, end] = /bytes=(\d+)-(\d+)/.exec(range) ?? [];
+        const from = Number(start);
+        const to = Number(end);
+        const slice = archive.slice(from, to + 1);
+        return new Response(slice, {
+          status: 206,
+          headers: { 'content-range': `bytes ${from}-${to}/${archive.length}` },
+        });
+      })
+    );
+
+    const source = new ZipChunkSource(ARCHIVE_URL, new LuxarZipStore(ARCHIVE_URL));
+    const outcome = await source.get('/zarr.json');
+
+    expect(outcome.kind).toBe('fatal');
+    if (outcome.kind !== 'fatal') return;
+    expect(outcome.cause).toBeInstanceOf(ArchiveFaultError);
+    expect(outcome.cause.message).toContain('end of central directory');
+    expect(outcome.cause.cause).toBeInstanceOf(Error);
   });
 
   it('keeps a plain member failure as `error`, not `fatal`', async () => {

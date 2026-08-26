@@ -71,9 +71,10 @@ export type ChunkFetchOutcome =
 export class ArchiveFaultError extends Error {
   constructor(
     message: string,
-    readonly url: string
+    readonly url: string,
+    options?: ErrorOptions
   ) {
-    super(message);
+    super(message, options);
     this.name = 'ArchiveFaultError';
   }
 }
