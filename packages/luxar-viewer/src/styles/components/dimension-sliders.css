@@ -151,12 +151,6 @@
   text-decoration: underline dotted;
 }
 
-.luxar-dimension-dropdown__label--with-tooltip {
-  cursor: help;
-  border-bottom: 1px dotted var(--luxar-text-muted);
-  display: inline-block;
-}
-
 .luxar-dimension-slider__value {
   flex: 1 1 auto;
   min-width: 0;
