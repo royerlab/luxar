@@ -64,8 +64,8 @@ concurrency:
   #
   # Fresh runs all have attempt 1, so PR and push runs still coalesce by event
   # and ref exactly as before. Any rerun gets a distinct attempt number, so a
-  # newer fresh run does not cancel it (including superseded PR reruns). A
-  # job-level rerun also does not restart queue-watchdog, so an obsidian-routed
+  # newer fresh run does not cancel it (including superseded PR reruns).
+  # Neither rerun path restarts queue-watchdog, so an obsidian-routed
   # job whose runner disappears can remain queued until GitHub's 24-hour limit.
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.run_attempt }}
   cancel-in-progress: true
