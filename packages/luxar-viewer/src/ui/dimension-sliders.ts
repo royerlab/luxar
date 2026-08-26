@@ -976,7 +976,7 @@ export class DimensionSliders {
 
     const statusContent = parts.join(' · ');
 
-    if (this.statusText) {
+    if (this.statusText && this.statusText.textContent !== statusContent) {
       this.statusText.textContent = statusContent;
       this.statusText.title = statusContent;
     }

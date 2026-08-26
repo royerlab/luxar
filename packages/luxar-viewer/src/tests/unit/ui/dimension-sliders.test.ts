@@ -86,6 +86,25 @@ describe('DimensionSliders - keyboard selection indicator', () => {
     sliders.dispose();
   });
 
+  it('does not rewrite an unchanged live-region status during dimension updates', async () => {
+    const sliders = buildSliders();
+    const status = document.querySelector<HTMLElement>('.luxar-dimension-sliders__status')!;
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(status, {
+      attributes: true,
+      attributeFilter: ['title'],
+      childList: true,
+    });
+
+    sliders.update();
+    await Promise.resolve();
+
+    expect(mutations).toEqual([]);
+    observer.disconnect();
+    sliders.dispose();
+  });
+
   it('shows an unavailable target instead of silently naming another dimension', () => {
     const sliders = buildSliders();
     const status = document.querySelector('.luxar-dimension-sliders__status');
