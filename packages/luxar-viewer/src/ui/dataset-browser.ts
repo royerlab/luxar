@@ -159,7 +159,7 @@ export class DatasetBrowser {
         const pathname = parsed.pathname;
 
         // Find the .zarr part and go to parent directory
-        const zarrIndex = pathname.lastIndexOf('.zarr');
+        const zarrIndex = pathname.toLowerCase().lastIndexOf('.zarr');
         if (zarrIndex > 0) {
           const parentPath = pathname.substring(0, pathname.lastIndexOf('/', zarrIndex - 1));
           baseUrl = parsed.origin + parentPath + '/';

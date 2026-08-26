@@ -156,8 +156,8 @@ describe('DatasetBrowser', () => {
         defaultNavigateResult({
           entries: [
             {
-              name: 'sample.zarr.zip',
-              path: 'sample.zarr.zip',
+              name: 'sample.ZARR.ZIP',
+              path: 'sample.ZARR.ZIP',
               type: 'zarr',
             },
           ],
@@ -168,7 +168,7 @@ describe('DatasetBrowser', () => {
         container,
         onDatasetSelect,
         onClose,
-        currentSrc: 'http://server.test/data/sample.zarr.zip',
+        currentSrc: 'http://server.test/data/sample.ZARR.ZIP',
         origin: 'http://server.test',
       });
 
@@ -177,7 +177,7 @@ describe('DatasetBrowser', () => {
         const current = container.querySelector(
           '.luxar-dataset-browser__file-item--current'
         ) as HTMLElement | null;
-        expect(current?.textContent).toContain('sample.zarr.zip');
+        expect(current?.textContent).toContain('sample.ZARR.ZIP');
         expect(current?.textContent).toContain('LOADED');
       });
     });
