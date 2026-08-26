@@ -3,19 +3,24 @@
   "description": "Measured characteristics of the demo gsplat archives, read from each archive's own fitting/ stamps by scripts/gen_zenodo_records.py --refresh. Committed so the record text does not require holding the archives, which are hosted on Zenodo rather than in this repository. measured_sha256 records WHICH bytes each figure came from; --check reports any that no longer match the manifest pin.",
   "archives": {
     "gsplats_3d_drosophila_gastrulation/droso_gastrulation.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 200023,
       "ndim": null,
       "format_version": null,
       "topology": null,
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
+      "psnr_db": 41.65,
+      "foreground_psnr_db": 37.07,
+      "foreground_fraction": 0.28370979326191875,
+      "source_shape": [
+        108,
+        1352,
+        532
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 155361024,
       "frames": null,
       "measured_from": null,
-      "measured_sha256": null
+      "measured_sha256": null,
+      "quality_note": "REFIT 2026-08-26 from DrosophilaHistone.zarr.zip [data] tp150 \u2014 the 500-TIMEPOINT recording the demo documents. A first attempt used Dme_E1_His2AvRFP_..._corrected (1507 timepoints, same spatial grid), whose tp150 is a post-gastrulation embryo; every automated check passed on it and only visual inspection caught the wrong stage. Source is now asserted by timepoint count before the fit runs. Figures are the ARCHIVE measured with `gsplat compare` (41.65 / 37.07), not the fit-time stamp (41.76 / 37.15) \u2014 they agree to 0.1 dB here because `--preset standard` leaves little to cull (55,977 of 256,000). At the API default of n_iters=1000 the same fit culled 98,349 and the stamp overstated the archive by 9.7 dB, so a stamp is only trustworthy on a trained fit. 200,023 splats against the previously shipped 200,155 indicates the original also ran standard; the demo documents 39.89 dB, so this is marginally better."
     },
     "gsplats_3d_h2afva_decimation/h2afva_full.gsplats.zarr.zip": {
       "n_splats": 1653405,
