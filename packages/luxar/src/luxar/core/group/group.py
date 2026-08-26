@@ -713,6 +713,7 @@ class Group(Node):
         fill_sigma: Optional[Dict[str, float]] = None,
         lod_group: Any = None,
         additive_lod: Any = None,
+        normalize_amplitudes: Any = True,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats from a GSplatData object.
@@ -781,6 +782,21 @@ class Group(Node):
             additive_lod: Additive-axis control, uniform across substitutive
                 levels. Same value vocabulary as ``lod_group``; ``dict(...)``
                 routes to :func:`make_additive_lod`.
+            normalize_amplitudes: Scale amplitudes so a robust upper
+                reference (the 99.9th percentile) lands at 1.0, applied as ONE
+                factor across every substitutive level and additive rung.
+                ``True`` (the default) acts only when that reference exceeds
+                1.0, so data already in range is untouched; ``False`` ships raw
+                units; a number sets an explicit target. The factor used is
+                recorded as ``amplitude_normalization_factor``.
+
+                On by default because raw fitted amplitudes cannot be corrected
+                at display time. A fit stores source units (detector counts),
+                and while the colormap window feeds only the LUT index —
+                clamped to ``[0, 1]``, so it picks a colour — emitted radiance
+                and volumetric optical depth are both LINEAR in the raw stored
+                amplitude and nothing windows them. See
+                :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 this method supplies from ``result``, which are refused; see the
@@ -819,6 +835,7 @@ class Group(Node):
                 fill_sigma=fill_sigma,
                 lod_group=lod_group,
                 additive_lod=additive_lod,
+                normalize_amplitudes=normalize_amplitudes,
                 **attrs,
             ),
         )
@@ -832,6 +849,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
+        normalize_amplitudes: Any = True,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
@@ -869,6 +887,21 @@ class Group(Node):
             dim_order: Map data columns to scene dimensions by name
             fill: Fixed coordinate values for unmapped dimensions
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
+            normalize_amplitudes: Scale amplitudes so a robust upper
+                reference (the 99.9th percentile) lands at 1.0, applied as ONE
+                factor across every substitutive level and additive rung.
+                ``True`` (the default) acts only when that reference exceeds
+                1.0, so data already in range is untouched; ``False`` ships raw
+                units; a number sets an explicit target. The factor used is
+                recorded as ``amplitude_normalization_factor``.
+
+                On by default because raw fitted amplitudes cannot be corrected
+                at display time. A fit stores source units (detector counts),
+                and while the colormap window feeds only the LUT index —
+                clamped to ``[0, 1]``, so it picks a colour — emitted radiance
+                and volumetric optical depth are both LINEAR in the raw stored
+                amplitude and nothing windows them. See
+                :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 the file supplies, which are refused; see the rules above. On a
@@ -894,6 +927,7 @@ class Group(Node):
                 dim_order=dim_order,
                 fill=fill,
                 fill_sigma=fill_sigma,
+                normalize_amplitudes=normalize_amplitudes,
                 **attrs,
             ),
         )
