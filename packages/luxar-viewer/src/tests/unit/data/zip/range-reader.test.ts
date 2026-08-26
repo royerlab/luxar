@@ -154,6 +154,38 @@ describe('LuxarHttpRangeReader.read', () => {
     await expect(reader.read(10, 3)).rejects.toThrow(/luxar serve/);
   });
 
+  it('THROWS when a partial response body is shorter than the requested window', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response(new Uint8Array([7, 8]), {
+          status: 206,
+          headers: { 'content-range': 'bytes 10-12/100' },
+        })
+      )
+    );
+
+    await expect(new LuxarHttpRangeReader(URL_).read(10, 3)).rejects.toThrow(
+      /requested window was 3 bytes.*returned 2/i
+    );
+  });
+
+  it('THROWS when Content-Range starts at a different offset', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response(new Uint8Array([7, 8, 9]), {
+          status: 206,
+          headers: { 'content-range': 'bytes 0-2/100' },
+        })
+      )
+    );
+
+    await expect(new LuxarHttpRangeReader(URL_).read(10, 3)).rejects.toThrow(
+      /requested window started at byte 10.*started at byte 0/i
+    );
+  });
+
   it('reports a missing archive without Range advice', async () => {
     vi.stubGlobal(
       'fetch',
@@ -323,6 +355,30 @@ describe('LuxarHttpRangeReader — retained ranges', () => {
     expect(Array.from(stitched)).toEqual(Array.from({ length: 30 }, (_, i) => 50 + i));
     // One request, and only for the 10 missing bytes.
     expect(asked).toEqual(['bytes=50-59']);
+  });
+
+  it('rejects a short stitched prefix instead of zero-filling the gap', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response(new Uint8Array(40), {
+          status: 206,
+          headers: { 'content-range': 'bytes 60-99/100' },
+        })
+      )
+      .mockResolvedValueOnce(
+        response(new Uint8Array(1), {
+          status: 206,
+          headers: { 'content-range': 'bytes 50-59/100' },
+        })
+      );
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const reader = new LuxarHttpRangeReader(URL_);
+    reader.retainReads(true);
+    await reader.read(60, 40);
+
+    await expect(reader.read(50, 30)).rejects.toThrow(/requested window was 10 bytes.*returned 1/i);
   });
 
   it('stops retaining once the cap is reached, rather than growing without bound', async () => {

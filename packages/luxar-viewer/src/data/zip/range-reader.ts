@@ -15,10 +15,11 @@
  * uses) has no `Range` support at all. Serve the directory containing an
  * archive with `luxar serve <dir>` instead.
  *
- * So every ranged read here REQUIRES `206 Partial Content` and cross-checks the
- * `Content-Range` total against the length learned up front. Range-protocol
- * failures raise {@link RangeUnsupportedError}; missing and access-controlled
- * archives retain status-specific errors instead of suggesting the wrong fix.
+ * So every ranged read here REQUIRES `206 Partial Content`, verifies the
+ * returned window, and cross-checks the `Content-Range` total against the
+ * length learned up front. Range-protocol failures raise
+ * {@link RangeUnsupportedError}; missing and access-controlled archives retain
+ * status-specific errors instead of suggesting the wrong fix.
  *
  * @module data/zarr/zip-range-reader
  */
@@ -423,7 +424,21 @@ export class LuxarHttpRangeReader {
         );
       }
 
-      const total = parseContentRangeTotal(response.headers.get('content-range'));
+      const contentRange = response.headers.get('content-range');
+      if (contentRange !== null) {
+        const match = /^\s*bytes\s+(\d+)-\d+\/(?:\d+|\*)\s*$/i.exec(contentRange);
+        const start = match ? Number(match[1]) : null;
+        if (start === null || start !== offset) {
+          throw new RangeUnsupportedError(
+            this.url,
+            start === null
+              ? `the server returned an unusable Content-Range (${contentRange})`
+              : `the requested window started at byte ${offset}, but Content-Range started at byte ${start}`
+          );
+        }
+      }
+
+      const total = parseContentRangeTotal(contentRange);
       if (total !== null && this.#length !== undefined && total !== this.#length) {
         // The archive changed under us mid-read; offsets from the central
         // directory we already parsed no longer describe this file.
@@ -434,7 +449,14 @@ export class LuxarHttpRangeReader {
       }
 
       const buffer = await response.arrayBuffer();
-      return new Uint8Array(buffer);
+      const bytes = new Uint8Array(buffer);
+      if (bytes.length !== size) {
+        throw new RangeUnsupportedError(
+          this.url,
+          `the requested window was ${size} bytes, but the server returned ${bytes.length}`
+        );
+      }
+      return bytes;
     } finally {
       scope.dispose();
     }
