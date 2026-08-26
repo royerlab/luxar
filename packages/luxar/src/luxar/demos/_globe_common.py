@@ -890,6 +890,17 @@ def add_textured_globe(
     lon_per_tile = 360.0 / tiles
     relief_grid = np.asarray(relief, dtype=np.float32)
 
+    # Displaced terrain needs TRUE surface normals, and they must be computed on
+    # the WHOLE sphere before it is sliced. Computing them per band would leave
+    # each band's edge vertices averaging only their own faces, so the shading
+    # would step at every tile boundary — a lit seam running pole to pole, which
+    # is far more visible than the texture seam the overlap column fixes.
+    global_normals: Optional[np.ndarray] = None
+    if relief_grid.ndim == 2:
+        whole_v, whole_f, _uv, _n = uv_sphere(n_lon, n_lat, radius, relief=relief_grid)
+        global_normals = surface_vertex_normals(whole_v, whole_f)
+        del whole_v, whole_f
+
     # With more than one tile the nodes go inside a PARTITION GROUP, and the group
     # is what carries `layer=True`. Without it the Layers panel lists "Earth_0"
     # and "Earth_1" as separate entries — an implementation detail of how the
@@ -927,7 +938,19 @@ def add_textured_globe(
             relief_grid,
             tiles,
             t,
+            tile_src_w,
         )
+        if global_normals is not None:
+            # Slice the whole-sphere normals to this band's columns, sharing the
+            # boundary column with the neighbour exactly as the vertices do.
+            cols_all = n_lon + 1
+            band_cols = n_lon // tiles
+            c0 = t * band_cols
+            idx = (
+                np.arange(n_lat + 1)[:, None] * cols_all
+                + (c0 + np.arange(band_cols + 1))[None, :]
+            ).ravel()
+            normals = global_normals[idx]
         # One column of overlap on the right, wrapping at the dateline, so the
         # shared vertex column samples the same colour from both sides.
         c0 = t * tile_src_w
@@ -973,6 +996,7 @@ def _uv_sphere_band(
     relief: np.ndarray,
     tiles: int,
     tile_index: int,
+    tile_src_w: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """One longitude band of a UV sphere, with UVs spanning its own sub-texture.
 
@@ -1000,11 +1024,25 @@ def _uv_sphere_band(
     vertices = lonlat_to_xyz(lon_grid.ravel(), lat_grid.ravel(), relief_values, radius)
     normals = lonlat_to_xyz(lon_grid.ravel(), lat_grid.ravel(), 0.0, 1.0)
 
-    # u spans the band. With `tiles == 1` the slice is the whole image and u is
-    # the plain 0..1; with more, the slice has one overlap column so the useful
-    # range stops one column short of 1.
-    span = 1.0 if tiles == 1 else n_lon / (n_lon + 1.0)
-    u = (lon_grid.ravel() - lon_start) / (lon_end - lon_start) * span
+    # u is derived from TEXELS, not from the vertex count, and getting that wrong
+    # was a visible bug: the first version scaled by `n_lon / (n_lon + 1)`, which
+    # silently assumed the slice had one texel per vertex. It does not — a band of
+    # 256 quads carries an 8193-texel slice — so the mapping drifted by a factor of
+    # `(n_lon + 1) / n_lon` and accumulated ~32 texels of misregistration by the
+    # seam. On screen: the coastline jumped where two tiles met.
+    #
+    # The right statement is in source columns. The slice spans columns
+    # `[0, tile_src_w]` inclusive (`tile_src_w + 1` of them, the last being the
+    # neighbour's first), vertex `j` sits at fractional column
+    # `j * tile_src_w / n_lon`, and the half-texel offset puts a vertex on a texel
+    # CENTRE rather than on the boundary between two — which is what stops linear
+    # filtering blending across the seam.
+    frac = (lon_grid.ravel() - lon_start) / (lon_end - lon_start)
+    if tiles == 1:
+        u = frac
+    else:
+        columns = frac * tile_src_w
+        u = (columns + 0.5) / (tile_src_w + 1.0)
     v = (90.0 - lat_grid.ravel()) / 180.0
     uvs = np.column_stack([u, v]).astype(np.float32)
 
@@ -1054,3 +1092,57 @@ def _open_any_image(image: Any) -> Any:
     if arr.ndim != 3 or arr.shape[2] not in (3, 4):
         raise ValueError(f"Expected an (h, w, 3|4) texture, got {arr.shape}")
     return Image.fromarray(arr, mode="RGBA" if arr.shape[2] == 4 else "RGB")
+
+
+def surface_vertex_normals(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """Area-weighted per-vertex normals of an actual triangle surface.
+
+    For a relief-displaced globe this is what :func:`uv_sphere`'s radial normals
+    are not: the TRUE surface normal, which tilts with the terrain. The difference
+    decides whether the mesh looks like a planet or like a low-poly model.
+
+    Neither of the two obvious alternatives works on displaced terrain:
+
+    * radial normals (the sphere's) ignore the slope entirely, so the relief casts
+      no light and a mountain range renders as a flat colour band;
+    * ``shading="flat"`` derives a per-fragment normal from screen-space
+      derivatives, which is geometrically correct but CONSTANT ACROSS EACH
+      TRIANGLE — so every triangle shades as one facet and the tessellation
+      becomes the dominant visual feature. That was the visible faceting.
+
+    Averaging the adjacent face normals at each vertex gives a normal that varies
+    continuously, so the interpolated shading follows the terrain instead of the
+    mesh. Weighted by the un-normalized cross product, whose magnitude is twice
+    the triangle area — so a large triangle contributes proportionally, which is
+    what keeps a pole row's slivers from dominating their vertex.
+
+    Args:
+        vertices: ``(V, 3)`` positions.
+        faces: ``(F, 3)`` vertex indices.
+
+    Returns:
+        ``(V, 3)`` float32 unit normals, outward for CCW-from-outside winding.
+    """
+    v = np.asarray(vertices, dtype=np.float64)
+    f = np.asarray(faces, dtype=np.int64)
+    tri = v[f]
+    # NOT normalized: |cross| = 2 * area, which is exactly the weight wanted.
+    face_normals = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+
+    out = np.zeros_like(v)
+    for corner in range(3):
+        np.add.at(out, f[:, corner], face_normals)
+
+    lengths = np.linalg.norm(out, axis=1, keepdims=True)
+    # A degenerate vertex (the pole rows, whose quads collapse) gets no usable
+    # normal from its faces. Fall back to the radial direction there rather than
+    # dividing by zero — at a pole the two agree anyway.
+    degenerate = lengths[:, 0] < 1e-12
+    if degenerate.any():
+        radial = v[degenerate]
+        radial_len = np.linalg.norm(radial, axis=1, keepdims=True)
+        out[degenerate] = np.divide(
+            radial, radial_len, out=np.zeros_like(radial), where=radial_len > 0
+        )
+        lengths[degenerate] = 1.0
+    return (out / lengths).astype(np.float32)

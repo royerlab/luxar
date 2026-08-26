@@ -142,23 +142,47 @@ def test_terrain_is_a_relief_displaced_textured_mesh() -> None:
     """
     source = _DEMO_PATH.read_text()
     assert "scene.add_points(" not in source, "the terrain should no longer be points"
-    mesh_call = source.split('scene.add_mesh(\n                "terrain"')[1].split(
-        "add_cloud_shell("
-    )[0]
-    for token in (
-        "uvs=guvs",
-        "texture=terrain_texture",
-        'texture_encoding="png"',
-        'shading="flat"',
-        "double_sided=False",
-    ):
-        assert token in mesh_call, f"missing {token}"
+    globe_call = source.split("add_textured_globe(")[1].split("scene.add_mesh(")[0]
+    for token in ("basemap=basemap", "relief=relief", "tiles=tiles"):
+        assert token in globe_call, f"missing {token}"
     # The absences: both were scale workarounds for the point cloud.
-    assert "partition=" not in mesh_call
-    assert "additive_lod=" not in mesh_call
-    # Relief reaches uv_sphere, and is area-averaged rather than point-sampled.
-    assert "relief=relief_grid / R_EARTH * EXAGG" in source
+    assert "partition=" not in globe_call
+    assert "additive_lod=" not in globe_call
+    # Relief reaches the helper, and is area-averaged rather than point-sampled.
+    assert "relief = relief_grid / R_EARTH * EXAGG" in source
     assert "resample_equirect_grid(etopo" in source
+
+    # SMOOTH, not flat. `flat` derives one normal per TRIANGLE, so at this
+    # tessellation every triangle shaded as a facet and the mesh itself became the
+    # dominant visual feature — visibly so. The helper computes true surface
+    # normals from the displaced geometry instead, which is what makes the shading
+    # follow the terrain rather than the tessellation. Radial (sphere) normals are
+    # the other wrong answer: they ignore slope, so relief casts no light at all.
+    assert 'shading="smooth"' in globe_call
+    assert 'shading="flat"' not in globe_call
+
+
+def test_the_sea_surface_sits_at_sea_level_and_is_translucent() -> None:
+    """A semi-transparent water shell, so bathymetry reads as depth.
+
+    Only expressible because the terrain is displaced GEOMETRY: land stands proud
+    of the shell and the trenches sit below it, which is the relationship the real
+    thing has. On a painted sphere there would be nothing for the water to be
+    above or below.
+
+    The tiny lift off ``RADIUS`` is load-bearing rather than fussy — exactly at
+    sea level the two surfaces are coplanar along every coastline, and coplanar
+    geometry z-fights into a shimmering hairline as the camera moves.
+    """
+    source = _DEMO_PATH.read_text()
+    water_call = source.split('scene.add_mesh(\n                "sea level"')[1]
+    assert "RADIUS * (1.0 + 2e-4)" in source
+    assert 'blending_mode="normal"' in water_call
+    assert "opacity=0.55" in water_call
+    # A uniform colour: no texture, no UVs — the water carries no spatial
+    # information of its own, so both would be dead weight.
+    assert "uvs=" not in water_call.split(")")[0]
+    assert "texture=" not in water_call.split(")")[0]
 
 
 def test_the_cloud_shell_clears_the_exaggerated_relief() -> None:

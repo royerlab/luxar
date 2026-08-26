@@ -91,7 +91,8 @@ from luxar.demos import (
 )
 from luxar.demos._globe_common import (
     add_cloud_shell,
-    encode_globe_texture_png,
+    add_textured_globe,
+    blue_marble_basemap,
     resample_equirect_grid,
     uv_sphere,
 )
@@ -121,16 +122,29 @@ ETOPO_URL = (
 # hypsometric colouring moves to a texture, which decouples colour resolution
 # from geometry resolution — the point version could not do that, since each
 # point carried exactly one colour.
-GLOBE_LON = 1024
-GLOBE_LAT = 512
-TERRAIN_TEXTURE_WIDTH = 4096
+# 2048x1024 quads — 2.1M vertices, 4.2M triangles, split across four tiles so
+# each node carries ~526k vertices and a 4096-wide texture slice and stays well
+# inside the per-node decode budget.
+#
+# Raised from 1024x512 because the geometry and the texture have to be in the same
+# league: with a 16384-wide basemap over a 1024-column mesh each triangle covered
+# 16 texels, so the silhouette was polygonal against a photographic surface.
+GLOBE_LON = 2048
+GLOBE_LAT = 1024
+GLOBE_TEXTURE_WIDTH = 16384
+GLOBE_TILES = 4
 # A 4096-class GPU can commit at most 5,591,040 Points from one node. Keep the
 # 8M-point globe in parts below that floor, each with its own stream ladder.
 MAX_GLOBE_POINTS_PER_NODE = 4_000_000
 MIN_ORDER = 3  # keep HydroRIVERS reaches with Strahler order >= this
 DECIMATE_DEG = 0.06  # drop river vertices closer than this (~2-3x line width)
 RADIUS = 100.0  # globe radius (scene units)
-EXAGG = 45.0  # vertical exaggeration of elevation relief
+# 15x, down from 45x. At 45x Everest stood 6.2% of Earth's radius off the sphere
+# — taller, proportionally, than anything a planet does, and it read as a spiky
+# artefact rather than as terrain. 15x puts it at 2.1%: still legible at a glance,
+# still enough for the Andes and the mid-ocean ridges to catch light, but the globe
+# stays a globe.
+EXAGG = 15.0  # vertical exaggeration of elevation relief
 POINT_RADII = 0.09  # terrain point size (8M points form a dense shell)
 EARTH_OPACITY = 1.0  # solid globe: an OPAQUE shell the rivers are occluded BY
 RIVER_LIFT = 0.004  # lift rivers barely above the terrain surface
@@ -363,37 +377,36 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         # land on it, so the same mountain range appears and disappears with the
         # target resolution.
         relief_grid = resample_equirect_grid(etopo, GLOBE_LON + 1, GLOBE_LAT + 1)
-        gverts, gfaces, guvs, _gnormals = uv_sphere(
-            GLOBE_LON, GLOBE_LAT, RADIUS, relief=relief_grid / R_EARTH * EXAGG
-        )
+        relief = relief_grid / R_EARTH * EXAGG
 
-        # The hypsometric palette becomes a TEXTURE, at four times the geometry's
-        # resolution on each axis. That is the point of moving off points: a point
-        # carried exactly one colour, so colour detail and geometry detail were the
-        # same budget. Now the coastline is resolved by the texture while the
-        # mountains are resolved by the vertices, and each gets what it needs.
-        terrain_tex_w = TERRAIN_TEXTURE_WIDTH
-        terrain_tex_h = terrain_tex_w // 2
-        tex_elev = resample_equirect_grid(etopo, terrain_tex_w, terrain_tex_h)
-        tex_scal = hypsometric_scalars(tex_elev.ravel()).reshape(tex_elev.shape)
-        terrain_rgb = EARTH_LUT[np.clip((tex_scal * 255).astype(np.int64), 0, 255)]
-        # PNG, not JPEG: the palette JUMPS at sea level (blue -> green), and a
-        # lossy codec rings across that discontinuity — a halo of green in the
-        # shallows and blue on the shore, i.e. a fake coastline. Lossless costs
-        # more bytes and keeps the break exactly where the data puts it.
-        terrain_texture = encode_globe_texture_png(
-            np.dstack(
-                [terrain_rgb, np.full(terrain_rgb.shape[:2], 255, dtype=np.uint8)]
+        # The BASEMAP is now real Blue Marble imagery, not the hypsometric ramp.
+        # The ramp existed to encode elevation as colour, and the relief now
+        # expresses elevation GEOMETRICALLY — so the two were saying the same thing
+        # twice, and the photograph says everything the ramp could not: vegetation,
+        # desert, ice, bathymetry. The palette survives as `EARTH_LUT` for the
+        # rivers' own colouring.
+        try:
+            basemap, basemap_w, basemap_h = blue_marble_basemap(
+                "global_rivers_earth", width=GLOBE_TEXTURE_WIDTH
             )
-        )
-        # Clear the tallest displaced peak with headroom, so the shell is above
-        # the terrain rather than through it.
+            tiles = GLOBE_TILES
+        except Exception as error:
+            aprint(f"⚠️  Basemap unavailable ({error}); falling back to hypsometric")
+            tex_h = 2048
+            tex_elev = resample_equirect_grid(etopo, tex_h * 2, tex_h)
+            tex_scal = hypsometric_scalars(tex_elev.ravel()).reshape(tex_elev.shape)
+            basemap = EARTH_LUT[np.clip((tex_scal * 255).astype(np.int64), 0, 255)]
+            basemap_h, basemap_w = basemap.shape[:2]
+            tiles = 1
+
+        # Clear the tallest displaced peak with headroom, so the cloud shell is
+        # above the terrain rather than through it.
         peak_relief = float(np.max(relief_grid)) / R_EARTH * EXAGG
         cloud_altitude = max(0.012, peak_relief * 1.35)
         aprint(
-            f"terrain: {len(gverts):,} vertices, {len(gfaces):,} triangles, "
-            f"{terrain_tex_w}x{terrain_tex_h} palette "
-            f"({terrain_texture.nbytes / 1e6:.1f} MB PNG)"
+            f"terrain: {GLOBE_LON}x{GLOBE_LAT} quads across {tiles} tiles, "
+            f"{basemap_w}x{basemap_h} basemap, relief x{EXAGG:g} "
+            f"(peak {peak_relief * 100:.2f}% of radius)"
         )
 
     with asection(f"Building rivers (order >= {MIN_ORDER})"):
@@ -470,50 +483,69 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
             scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
-            scene.add_mesh(
+            add_textured_globe(
+                scene,
                 "terrain",
-                vertices=gverts,
-                faces=gfaces,
-                uvs=guvs,
-                texture=terrain_texture,
-                texture_encoding="png",
-                texture_width=terrain_tex_w,
-                texture_height=terrain_tex_h,
-                texture_channels=4,
-                # FLAT shading — derived per fragment from the displaced surface,
-                # so the 45x-exaggerated relief actually casts light and shade.
-                # This is the one globe of the four where shading SHOWS the data
-                # rather than modulating it: relief is the subject here, and a
-                # hypsometric ramp alone renders a mountain range as a colour band
-                # with no form.
+                basemap=basemap,
+                radius=RADIUS,
+                n_lon=GLOBE_LON,
+                n_lat=GLOBE_LAT,
+                tiles=tiles,
+                relief=relief,
+                fmt="webp",
+                quality=90,
+                # SMOOTH, from normals the helper computes off the DISPLACED
+                # surface — not the sphere's radial ones and not `flat`.
                 #
-                # `flat`, not `smooth`: stored normals would have to be radial (a
-                # sphere's), which ignore the terrain slope entirely and light the
-                # globe as if it were smooth. The derivative normal is the real
-                # surface normal of the displaced mesh.
-                shading="flat",
+                # This is the one globe of the four where shading shows the data:
+                # relief is the subject, and a basemap alone renders a mountain
+                # range as a colour band with no form. But `flat` derives one
+                # normal per TRIANGLE, so at this tessellation every triangle
+                # shaded as a facet and the mesh itself became the dominant
+                # feature. Averaging face normals at each vertex makes the shading
+                # follow the terrain instead of the tessellation.
+                shading="smooth",
                 # OPAQUE, not `normal`: this is the backdrop, and opaque is the
                 # only mode that leaves the viewer's sorted-transparent set and
                 # unconditionally writes depth — which is what gives the
-                # `luminous` rivers below a surface to be occluded by, so the
-                # far-side network is hidden instead of showing through.
+                # `luminous` rivers a surface to be occluded by, so the far-side
+                # network is hidden instead of showing through.
                 blending_mode="opaque",
                 opacity=EARTH_OPACITY,
                 layer=True,
-                # Single-sided: closed surface, wound CCW-from-outside.
+            )
+
+            # A semi-transparent water surface AT SEA LEVEL, so the bathymetry
+            # under it reads as depth rather than as colour. Land stands proud of
+            # it (Everest is 2.1% of the radius above, the shell 0.02%) while the
+            # trenches sit well below, which is exactly the relationship the real
+            # thing has — and it is only expressible because the terrain is
+            # displaced geometry rather than a painted sphere.
+            #
+            # Lifted by a hair off r = RADIUS: coincident with the terrain exactly
+            # at the coastline, and two coplanar surfaces z-fight into a shimmering
+            # hairline as the camera moves.
+            water_v, water_f, _wuv, water_n = uv_sphere(
+                GLOBE_LON // 4, GLOBE_LAT // 4, RADIUS * (1.0 + 2e-4)
+            )
+            scene.add_mesh(
+                "sea level",
+                vertices=water_v,
+                faces=water_f,
+                normals=water_n,
+                normal_dims=[0, 1, 2],
+                # A uniform colour, so no texture and no UVs: the water carries no
+                # spatial information of its own.
+                colors=(0.10, 0.34, 0.62, 1.0),
+                # `normal` so it composites OVER the sea floor it is meant to
+                # veil; `smooth` for a faint specular sheen off the sphere's own
+                # normals, which is what makes it read as a surface rather than a
+                # tinted shell.
+                blending_mode="normal",
+                shading="smooth",
+                opacity=0.55,
                 double_sided=False,
-                # No `additive_lod` and no `partition`. Both were there to manage
-                # an 8M-point cloud — the element-texture cap, and a `stream:`
-                # ladder to stop 99.98% of the globe landing in one final commit.
-                # A 526k-vertex mesh loads whole in one request and needs neither.
-                #
-                # This also retires the long note that used to live here about the
-                # terrain appearing late: the payload was 92 MB across ten
-                # partitioned ladder levels, and the last two carried 68% of it,
-                # so the shell was incomplete until the final commits arrived
-                # while the rivers were visible from their first chunk. The mesh
-                # is a single ~10 MB load, so the race is gone rather than
-                # mitigated.
+                layer=True,
             )
 
             # A thin cloud deck — and its altitude is NOT the 0.012 the other
