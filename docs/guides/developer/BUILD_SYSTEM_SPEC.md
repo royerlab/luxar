@@ -906,14 +906,17 @@ three shared slots; repository-wide queue order may still put other work ahead o
 that run's `typescript-tests`. The final Python leg follows. Every scheduled window
 also runs the short `release-readiness` and `wheel-viewer` checks on GitHub-hosted
 runners, and `pick-runner` routes the long Python/TypeScript legs to hosted runners
-when obsidian has neither fresh capacity nor work in flight. Five of the twelve most
-recent daily scheduled runs (2026-08-14 to 2026-08-25) took that billed path. Every
+when obsidian has neither fresh capacity nor work in flight, or when five obsidian
+jobs are already queued. That one-fleet-width cap keeps self-hosted work preferred
+without letting a saturated box accumulate an unbounded backlog; simultaneous router
+snapshots may overshoot it by one run. Five of the twelve most recent daily scheduled
+runs (2026-08-14 to 2026-08-25) took the billed path before the cap existed. Every
 added window therefore consumes hosted minutes for short jobs, while routing adds
-either obsidian queue depth or the long legs to the hosted bill. Those routed long
-legs alone expose roughly 200–240 hosted minutes/day at that observed rate; one daily
-pair of extra Python legs is small beside that baseline. (If newer interpreters ever
-become deliberately unsupported, the honest fix is a `requires-python` upper bound,
-not a quiet single-leg matrix.)
+either bounded obsidian queue depth or the long legs to the hosted bill. Those routed
+long legs alone exposed roughly 200–240 hosted minutes/day at that observed rate; one
+daily pair of extra Python legs is small beside that baseline. (If newer interpreters
+ever become deliberately unsupported, the honest fix is a `requires-python` upper
+bound, not a quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the

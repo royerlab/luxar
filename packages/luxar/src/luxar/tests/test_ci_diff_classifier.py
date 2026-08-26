@@ -962,6 +962,8 @@ def _run_pick_runner(
     heartbeat: str = "0",
     force_hosted: str = "0",
     other_run_active: bool = False,
+    first_run_queued_obsidian_jobs: int = 0,
+    queued_obsidian_jobs: int = 0,
     api_error: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     """Run the real inline router against deterministic repository activity."""
@@ -983,8 +985,16 @@ if os.environ["ROUTER_API_ERROR"] == "jobs" and "/runs/" in endpoint and "/jobs?
 if "/actions/runs?" in endpoint:
     run_ids = [2038, 9999] if os.environ["ROUTER_OTHER_ACTIVE"] == "1" else [2038]
     print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
-elif "/runs/9999/jobs?" in endpoint:
-    print(json.dumps({"jobs": [{"status": "in_progress", "labels": ["obsidian"]}]}))
+elif "/runs/" in endpoint and "/jobs?" in endpoint:
+    queued = (
+        os.environ["ROUTER_QUEUED_OBSIDIAN_JOBS"]
+        if "/runs/9999/jobs?" in endpoint
+        else os.environ["ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS"]
+    )
+    jobs = [{"status": "queued", "labels": ["obsidian"]}] * int(queued)
+    if "/runs/9999/jobs?" in endpoint and os.environ["ROUTER_OTHER_ACTIVE"] == "1":
+        jobs.append({"status": "in_progress", "labels": ["obsidian"]})
+    print(json.dumps({"jobs": jobs}))
 else:
     print(json.dumps({"jobs": []}))
 """,
@@ -1003,7 +1013,9 @@ else:
         "FORCE_HOSTED": force_hosted,
         "HEARTBEAT": heartbeat,
         "ROUTER_API_ERROR": api_error,
+        "ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS": str(first_run_queued_obsidian_jobs),
         "ROUTER_OTHER_ACTIVE": "1" if other_run_active else "0",
+        "ROUTER_QUEUED_OBSIDIAN_JOBS": str(queued_obsidian_jobs),
     }
     result = subprocess.run(
         ["bash", "-e", "-c", router],
@@ -1066,6 +1078,36 @@ def test_pick_runner_routes_busy_box_to_obsidian(workflow: str, tmp_path: Path) 
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == "obsidian"
+
+
+@pytest.mark.parametrize(
+    ("heartbeat", "queued_obsidian_jobs", "expected"),
+    [
+        ("0", 4, "obsidian"),
+        ("0", 5, "ubuntu-latest"),
+        ("950", 4, "obsidian"),
+        ("950", 5, "ubuntu-latest"),
+    ],
+)
+def test_pick_runner_caps_busy_box_backlog_at_one_fleet_width(
+    workflow: str,
+    tmp_path: Path,
+    heartbeat: str,
+    queued_obsidian_jobs: int,
+    expected: str,
+) -> None:
+    """Five queued jobs consume one fleet-width, so new work bursts hosted."""
+    result, label = _run_pick_runner(
+        workflow,
+        tmp_path,
+        heartbeat=heartbeat,
+        other_run_active=True,
+        first_run_queued_obsidian_jobs=2,
+        queued_obsidian_jobs=queued_obsidian_jobs - 2,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == expected
 
 
 @pytest.mark.parametrize(
