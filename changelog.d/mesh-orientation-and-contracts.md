@@ -47,8 +47,8 @@ when the material culls, or when the stored-normal variant is active — while
 `side` still follows the node's own request and the undecidable-frame notice
 stays gated on it, so a double-sided node gains no new log line.
 
-This is latent rather than user-visible: `displayDims` is built ascending at both
-construction sites and nothing reorders it at runtime, so the reversal branch is
+This is latent rather than user-visible: every site that builds `displayDims`
+pushes ascending and nothing reorders it at runtime, so the reversal branch is
 currently unreachable. It is fixed because the machinery is a defense against a
 reordering the viewer does not yet produce, and one arm of that defense was
 wired backwards — in the default configuration — so it would have failed on
