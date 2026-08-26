@@ -517,7 +517,11 @@ class Group(Node):
             extend_to_all: Dimension name(s) across which this mesh stays visible.
             dim_order: Names of the dimensions the ``vertices`` columns are in,
                 for remapping onto the scene's dimension order. ``faces`` is index
-                data addressing vertex rows and is never reordered.
+                data addressing vertex rows and is never reordered. An
+                orientation-reversing order flips face handedness relative to the
+                scene frame; the writer warns but does not repair it. Reverse the
+                corner order with ``faces[:, [0, 2, 1]]`` when needed; see the mesh
+                spec §3.7.
             fill: Fill values for scene dimensions absent from ``dim_order``.
             substitutive_lod: ``True`` / ``{...}`` to write a ``kind=lod`` group of
                 progressively DECIMATED copies of the surface (see above).
