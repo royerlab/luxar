@@ -1027,8 +1027,9 @@ def add_textured_globe(
             shading=shading,
             # Clamped, not repeated: a tile covers a longitude BAND, so wrapping
             # its u would fetch the far edge of its own slice — the opposite side
-            # of the world — at the seam.
-            texture_wrap="clamp" if tiles > 1 else "repeat",
+            # of the world — at the seam. A whole globe leaves this absent so the
+            # viewer keeps its equirectangular repeat-u / clamp-v default.
+            **({"texture_wrap": "clamp"} if tiles > 1 else {}),
             double_sided=False,
             layer=child_layer,
             **mesh_kwargs,

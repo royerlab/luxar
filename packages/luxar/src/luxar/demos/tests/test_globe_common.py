@@ -17,6 +17,7 @@ import pytest
 
 from luxar.demos import _globe_common
 from luxar.demos._globe_common import (
+    add_textured_globe,
     encode_globe_texture,
     resample_equirect_grid,
     uv_sphere,
@@ -184,6 +185,56 @@ def test_encoded_texture_round_trips_through_the_codec() -> None:
     # the bytes, so a mislabelled payload fails in the browser, not here.
     assert blob[0] == 0xFF and blob[1] == 0xD8
     assert blob.size < tex.nbytes, "the encoded form should be smaller than raw"
+
+
+@pytest.mark.parametrize(
+    ("tiles", "expected_wrap"),
+    [(1, None), (2, "clamp")],
+)
+def test_globe_wrap_only_overrides_the_tiled_case(
+    monkeypatch: pytest.MonkeyPatch, tiles: int, expected_wrap: str | None
+) -> None:
+    """A whole globe keeps repeat-u/clamp-v; longitude bands clamp both axes."""
+
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_group(self, _name: str, **_kwargs: object) -> "Target":
+            return self
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    monkeypatch.setattr(
+        _globe_common,
+        "encode_texture",
+        lambda image, **_kwargs: (
+            np.array([1], dtype=np.uint8),
+            "jpeg",
+            image.shape[1],
+            image.shape[0],
+            image.shape[2],
+        ),
+    )
+    target = Target()
+
+    add_textured_globe(
+        target,
+        "earth",
+        basemap=np.zeros((4, 8, 3), dtype=np.uint8),
+        radius=1.0,
+        n_lon=8,
+        n_lat=4,
+        tiles=tiles,
+    )
+
+    assert len(target.meshes) == tiles
+    for mesh_kwargs in target.meshes:
+        if expected_wrap is None:
+            assert "texture_wrap" not in mesh_kwargs
+        else:
+            assert mesh_kwargs["texture_wrap"] == expected_wrap
 
 
 def test_non_integral_relief_resampling_area_averages_at_demo_resolution() -> None:
