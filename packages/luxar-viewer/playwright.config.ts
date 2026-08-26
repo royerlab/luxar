@@ -28,8 +28,21 @@ const projectRoot = path.resolve(__dirname, '../..');
 const viewerPort = process.env.LUXAR_E2E_VIEWER_PORT ?? '5173';
 const viewerBaseURL = `http://127.0.0.1:${viewerPort}`;
 const dataBaseURL = 'http://127.0.0.1:9000';
+// A SECOND data origin, for the one thing the port-9000 server structurally
+// cannot do: answer a `Range` request. Python's `http.server` ignores `Range`
+// entirely and replies 200 with the whole body, which is harmless for a
+// directory-backed store (every chunk is its own file) and fatal for a zipped
+// one — the reader asks for a byte window inside the archive and would receive
+// the entire archive in its place. Rather than replace the server the other 19
+// fixture-reading specs depend on, the zipped-store spec gets its own.
+// Same document root, so a fixture has the same path on both origins.
+const rangeDataBaseURL = 'http://127.0.0.1:9001';
 const checkoutIdentity = ensureCheckoutIdentity(projectRoot, __dirname);
 const serverMetadata = createE2EServerMetadata(checkoutIdentity, viewerBaseURL, dataBaseURL);
+// The same checkout marker the port-9000 probe uses, on the range origin: a
+// sibling worktree's server holding 9001 serves a different marker path and is
+// therefore not reused.
+const rangeIdentityURL = new URL(checkoutIdentity.dataPath, rangeDataBaseURL).toString();
 
 // Parallelism is decided once, here (see the `workers:` comment below). This module stays
 // side-effect-free: the run's parallelism line is printed by the E2E global setup, which — unlike
@@ -235,6 +248,21 @@ export default defineConfig({
       timeout: 15000, // Increased timeout for reliability
       stdout: 'ignore', // Reduce noise in test output
       stderr: 'pipe', // Still capture errors
+    },
+    {
+      // Range-capable static server for the zipped-store spec (#1716).
+      // `tools/range-http-server.py` speaks exactly as much of RFC 9110 §14 as
+      // a zip reader needs — one `bytes=` range answered 206 with
+      // `Content-Range`, 416 when unsatisfiable — and exposes `ETag` /
+      // `Last-Modified` / `Accept-Ranges` cross-origin so the archive identity
+      // probe works from the viewer's origin.
+      command: `python3 packages/luxar-viewer/tools/range-http-server.py 9001 --bind 127.0.0.1 --directory ${projectRoot}`,
+      url: rangeIdentityURL,
+      cwd: projectRoot,
+      reuseExistingServer: !process.env.CI,
+      timeout: 15000,
+      stdout: 'ignore',
+      stderr: 'pipe',
     },
   ],
 

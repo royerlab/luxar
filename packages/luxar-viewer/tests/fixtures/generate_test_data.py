@@ -21,6 +21,7 @@ Run the generators from project root:
 
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -124,6 +125,7 @@ FIXTURE_NAMES: list[str] = [
     "test_sharpness_range.luxar.zarr",
     "test_standalone_gsplats.gsplats.zarr",
     "test_uint16_quantization.luxar.zarr",
+    "test_zipped_archive.luxar.zarr",
 ]
 
 
@@ -4567,6 +4569,80 @@ def generate_labelled_partitioned_points_test() -> None:
         aprint(f"  hover target at the origin, labelled {MARKER_LABEL!r}")
 
 
+#: Stem shared by the zipped fixture and its directory twin.
+#:
+#: Declared once because three places must agree on it: the generator below, the
+#: manifest entry above (the DIRECTORY only — see the note in
+#: `tools/fixture-manifest.ts` on why the parser matches `.zarr` and not
+#: `.zarr.zip`), and the Playwright preflight that refuses to run the zipped E2E
+#: against a missing archive.
+ZIPPED_FIXTURE_STEM = "test_zipped_archive.luxar.zarr"
+
+
+def generate_zipped_archive_test() -> None:
+    """One scene packaged BOTH ways: a directory store and a flat ``.zarr.zip``.
+
+    The archive is what the viewer's zipped-store path reads over HTTP range
+    requests (#1716); the directory twin is the CONTROL. The E2E loads both and
+    asserts equal point counts, because "the zip rendered something" is not
+    evidence: the zipped benchmark once reported a spectacular 273 ms / 4-request
+    result that turned out to be a stale dev server timing an EMPTY scene. Only
+    an equivalence assertion catches that class of false pass.
+
+    Several small nodes rather than one large one, because the archive's central
+    directory — the part of the zip path that caching cannot absorb — scales with
+    MEMBER count, not with point count. A single-node fixture would not exercise
+    it at all.
+
+    Members are keyed STORE-RELATIVE and stored uncompressed, mirroring
+    ``luxar.io.optimise._package``, which is the writer every real
+    ``.luxar.zarr.zip`` comes from. Uncompressed also matches the rest of this
+    file, which disables compression for the Node decoder.
+    """
+    with asection("Generating Zipped Archive Test"):
+        output = FIXTURES_DIR / ZIPPED_FIXTURE_STEM
+        archive = FIXTURES_DIR / f"{ZIPPED_FIXTURE_STEM}.zip"
+
+        rng = np.random.default_rng(1716)
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        points_per_node = 64
+        node_count = 4
+        with LuxarZarrCompiler(
+            output,
+            compressor=COMPRESSOR_DISABLED,
+            float16_allowed=FLOAT16_ALLOWED,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            for index in range(node_count):
+                positions = (
+                    rng.standard_normal((points_per_node, 3)).astype(np.float32) * 5.0
+                )
+                colors = rng.random((points_per_node, 3)).astype(np.float32)
+                scene.add_points(f"cloud_{index:02d}", positions, colors=colors)
+
+        # AFTER the compiler's context closes, so `finalize()` has written the
+        # consolidated metadata. The viewer builds its whole scene graph from
+        # that index and has no directory-walk fallback, so an archive packaged
+        # mid-write would load as an empty scene.
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
+            for member in sorted(output.rglob("*")):
+                if member.is_file():
+                    zf.write(member, member.relative_to(output).as_posix())
+
+        total_points = points_per_node * node_count
+        with zipfile.ZipFile(archive) as zf:
+            member_count = len(zf.namelist())
+        aprint(f"  Created {output} ({total_points} points, {node_count} nodes)")
+        aprint(f"  Created {archive} ({member_count} members, ZIP_STORED)")
+
+
 def main() -> None:
     """Generate all test datasets."""
     aprint("=" * 70)
@@ -4625,6 +4701,9 @@ def main() -> None:
         aprint("")
 
         generate_delta_filter_test()
+        aprint("")
+
+        generate_zipped_archive_test()
         aprint("")
 
         generate_nd_transforms_test()
@@ -4740,6 +4819,19 @@ def main() -> None:
                 f"FIXTURE_NAMES declares {len(missing)} fixture(s) that "
                 f"no generate_*() function produced: {missing}. "
                 "Update FIXTURE_NAMES or add the missing generator."
+            )
+
+        # The zipped archive is NOT in FIXTURE_NAMES (that manifest is read by a
+        # parser matching `.zarr`-terminated names, and its completeness probe
+        # looks inside a DIRECTORY for consolidated metadata). Checked here
+        # instead, so a silently unpackaged archive fails the generator rather
+        # than the E2E that reads it.
+        archive = FIXTURES_DIR / f"{ZIPPED_FIXTURE_STEM}.zip"
+        if not archive.is_file():
+            raise RuntimeError(
+                f"{archive.name} was not produced. generate_zipped_archive_test() "
+                "packages it from its directory twin; without it the zipped-store "
+                "E2E has nothing to read."
             )
 
     except Exception as e:
