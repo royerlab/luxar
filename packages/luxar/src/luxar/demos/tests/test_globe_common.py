@@ -16,7 +16,11 @@ import numpy as np
 import pytest
 
 from luxar.demos import _globe_common
-from luxar.demos._globe_common import encode_globe_texture, uv_sphere
+from luxar.demos._globe_common import (
+    encode_globe_texture,
+    resample_equirect_grid,
+    uv_sphere,
+)
 
 
 def _to_lonlat(v: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -180,6 +184,20 @@ def test_encoded_texture_round_trips_through_the_codec() -> None:
     # the bytes, so a mislabelled payload fails in the browser, not here.
     assert blob[0] == 0xFF and blob[1] == 0xD8
     assert blob.size < tex.nbytes, "the encoded form should be smaller than raw"
+
+
+def test_non_integral_relief_resampling_area_averages_at_demo_resolution() -> None:
+    """A source-cell spike is diluted, not selected whole or dropped."""
+    target_width, target_height = 2049, 1025
+    src = np.zeros((2 * target_height + 1, 2 * target_width + 1), dtype=np.float32)
+    src[1, 1] = 8848.0
+
+    sampled = resample_equirect_grid(src, target_width, target_height)
+
+    assert sampled.dtype == np.float32
+    assert sampled.shape == (target_height, target_width)
+    assert sampled[0, 0] == pytest.approx(2212.0)
+    assert sampled.max() < src.max()
 
 
 @pytest.mark.parametrize(

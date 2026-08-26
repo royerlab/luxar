@@ -680,9 +680,8 @@ def resample_equirect_grid(src: np.ndarray, width: int, height: int) -> np.ndarr
     disappears as the target resolution changes. An area average keeps the
     hypsometric distribution honest at every scale.
 
-    Falls back to bilinear-ish index sampling when the ratio is not integral,
-    which is the uninteresting case here (both ETOPO and Blue Marble are powers
-    of two times the targets these demos ask for).
+    Non-integral ratios use variable-width bins whose edges cover every source
+    cell exactly once, so the ETOPO-to-mesh path remains an area average too.
 
     Args:
         src: ``(h, w)`` or ``(h, w, c)`` source grid, row 0 at +90 latitude.
@@ -701,6 +700,14 @@ def resample_equirect_grid(src: np.ndarray, width: int, height: int) -> np.ndarr
         tail = arr.shape[2:]
         blocks = arr.reshape((height, fy, width, fx) + tail)
         return blocks.mean(axis=(1, 3), dtype=np.float32)
+    if height <= sh and width <= sw:
+        row_edges = np.linspace(0, sh, height + 1, dtype=np.int64)
+        col_edges = np.linspace(0, sw, width + 1, dtype=np.int64)
+        row_sums = np.add.reduceat(arr, row_edges[:-1], axis=0)
+        sums = np.add.reduceat(row_sums, col_edges[:-1], axis=1)
+        counts = np.outer(np.diff(row_edges), np.diff(col_edges)).astype(np.float32)
+        counts = counts.reshape(counts.shape + (1,) * (arr.ndim - 2))
+        return sums / counts
     rows = np.clip((np.arange(height) + 0.5) * sh / height, 0, sh - 1).astype(np.int64)
     cols = np.clip((np.arange(width) + 0.5) * sw / width, 0, sw - 1).astype(np.int64)
     return arr[np.ix_(rows, cols)]
