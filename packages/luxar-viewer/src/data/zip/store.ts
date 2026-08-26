@@ -64,8 +64,14 @@ export class LuxarZipStore implements AsyncReadable {
    * costs also seeds the length `ZipFileStore` would otherwise ask for
    * separately.
    */
-  probeIdentity(signal?: AbortSignal): Promise<string | null> {
-    return this.#reader.probeIdentity(signal);
+  probeIdentity(signal?: AbortSignal, timeoutMs?: number): Promise<string | null> {
+    // BOTH arguments, deliberately. Declaring only `signal` still satisfies the
+    // port structurally — an optional two-arg method accepts a one-arg
+    // implementation — so dropping the budget here was invisible to the type
+    // checker AND to tests that drove the reader or a full-arity fake. The
+    // budget is what keeps an unresponsive host from hanging the first paint,
+    // since this probe runs inside `init()` → `validateCache`.
+    return this.#reader.probeIdentity(signal, timeoutMs);
   }
 
   /**

@@ -132,6 +132,55 @@ describe('LuxarZipStore', () => {
     expect(fetchMock.mock.calls.length).toBe(before);
   });
 
+  it('FORWARDS the identity-probe timeout budget to the reader', async () => {
+    // The budget was dropped here for a whole round: the adapter declared
+    // `probeIdentity(signal?)`, which structurally satisfies the port's
+    // two-arg optional method, so neither the type checker nor tests that drove
+    // the reader directly could see it. Without the budget an unresponsive host
+    // hangs the first paint, since this probe runs inside `init()` →
+    // `validateCache`.
+    const seen: (number | undefined)[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit = {}) => {
+        // Record the deadline indirectly: a budget means a signal is attached.
+        if (init.method === 'HEAD') seen.push(init.signal ? 1 : undefined);
+        return {
+          ok: true,
+          status: 200,
+          statusText: '',
+          headers: new Headers({ etag: '"x"', 'content-length': '10' }),
+          body: null,
+          arrayBuffer: async () => new ArrayBuffer(0),
+        } as unknown as Response;
+      })
+    );
+
+    const store = new LuxarZipStore(URL_);
+    expect(await store.probeIdentity(undefined, 5000)).toBe('etag:"x"');
+    // A budget was in force, i.e. an abort signal reached `fetch`.
+    expect(seen[0]).toBe(1);
+  });
+
+  it('gives up on an unresponsive host once the budget expires', async () => {
+    // The property that actually matters: bounded, not merely wired.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit = {}) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError'))
+            );
+          })
+      )
+    );
+
+    const store = new LuxarZipStore(URL_);
+    // "cannot tell", not a hang and not a false change verdict.
+    expect(await store.probeIdentity(undefined, 40)).toBeNull();
+  });
+
   it('refuses to re-open after dispose', async () => {
     vi.stubGlobal('fetch', serveArchive());
     const store = new LuxarZipStore(URL_);

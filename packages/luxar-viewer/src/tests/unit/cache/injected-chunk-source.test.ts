@@ -17,6 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { ChunkFetchOutcome, ChunkSource } from '../../../cache/chunk-source';
+import { hashUrl } from '../../../cache/multi-level-caching-store/fetch-retry';
 import type { RemoteValidationToken } from '../../../cache/multi-level-caching-store/validation-queue';
 
 /** A source that records what the store asked of it. */
@@ -87,22 +88,59 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     expect(calls.disposed).toBe(1);
   });
 
-  it('asks the source for the validation token rather than fetching one itself', async () => {
+  it('asks the SOURCE for the validation token during init, not the network', async () => {
+    // Previously this called `source.probeIdentityToken` itself and counted its
+    // own call — `noOpfs` returns from init before validation ever runs, so the
+    // store was not involved at all. Give it a fake OPFS so init proceeds.
+    const dir = {
+      getFileHandle: vi.fn(async () => {
+        throw new DOMException('not found', 'NotFoundError');
+      }),
+      getDirectoryHandle: vi.fn(async () => dir),
+      removeEntry: vi.fn(async () => undefined),
+      keys: async function* () {},
+    };
+    vi.stubGlobal('navigator', { storage: { getDirectory: async () => dir } });
+
     const { source, calls } = fakeSource();
-    const store = new MultiLevelCachingStore(source, { noOpfs: true });
+    const store = new MultiLevelCachingStore(source, {});
+    await store.init();
 
-    // `noOpfs` short-circuits init before validation, so drive the probe the
-    // way validation does — through the source, not through `fetch`.
-    await source.probeIdentityToken({});
-
+    // Exactly one: ValidationQueue serializes per dataset, and `>= 1` would
+    // sail past a regression that probed twice.
     expect(calls.probes).toBe(1);
+
+    // The OPFS bucket must come from `identity`, never `describe` — the two
+    // differ for a container whose identity is not its label, and nothing else
+    // in the repo would notice the swap.
+    expect(dir.getDirectoryHandle).toHaveBeenCalledWith(await hashUrl('fake://identity'), {
+      create: true,
+    });
+    expect(dir.getDirectoryHandle).not.toHaveBeenCalledWith(await hashUrl('fake://describe'), {
+      create: true,
+    });
     await store.dispose();
   });
 
   it('still accepts a bare URL string, building an HTTP source internally', async () => {
     // The back-compatibility that kept ~101 existing store tests untouched.
+    // Asserting the instance type would pass for an argument that was thrown
+    // away — what "built an HTTP source" means is that the key is fetched
+    // under the base URL.
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      statusText: '',
+      headers: new Headers(),
+      body: null,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    }));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
     const store = new MultiLevelCachingStore('https://example.com/data.zarr', { noOpfs: true });
-    expect(store).toBeInstanceOf(MultiLevelCachingStore);
+    await store.get('c/0/0');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.com/data.zarr/c/0/0');
     await store.dispose();
   });
 
@@ -123,7 +161,23 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     await store.dispose();
   });
 
-  it('surfaces a source error as a miss rather than throwing', async () => {
+  it('REJECTS on an aborted outcome, so an invalidated read cannot become fill values', async () => {
+    // The other half of the asymmetry, and the whole safety property: an
+    // `error` degrades to `undefined` (zarrita fills the chunk), while an
+    // `aborted` must reject — an invalidation fired precisely because those
+    // bytes must not be trusted.
+    const { source } = fakeSource({
+      async get(): Promise<ChunkFetchOutcome> {
+        return { kind: 'aborted' };
+      },
+    });
+    const store = new MultiLevelCachingStore(source, { noOpfs: true });
+
+    await expect(store.get('points/c/0/0')).rejects.toThrow(/aborted during invalidation/);
+    await store.dispose();
+  });
+
+  it('surfaces a source error as `undefined` rather than throwing', async () => {
     const { source } = fakeSource({
       async get(): Promise<ChunkFetchOutcome> {
         return { kind: 'error', cause: new Error('boom') };

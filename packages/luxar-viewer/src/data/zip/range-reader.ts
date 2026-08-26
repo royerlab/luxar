@@ -305,6 +305,19 @@ export class LuxarHttpRangeReader {
     const probe = await fetch(this.url, {
       headers: { Range: 'bytes=0-0' },
     });
+    // Released on EVERY exit below — this is the worse of the two probe sites:
+    // on a host that ignores `Range`, the 200 body is the whole archive and each
+    // of these branches throws without reading a byte of it.
+    try {
+      this.#length = this.#lengthFromProbe(probe);
+      return this.#length;
+    } finally {
+      releaseProbeBody(probe);
+    }
+  }
+
+  /** Extract the archive length from a one-byte ranged probe response. */
+  #lengthFromProbe(probe: Response): number {
     if (!probe.ok) {
       throw archiveHttpError(this.url, probe);
     }
@@ -322,7 +335,6 @@ export class LuxarHttpRangeReader {
           '`Content-Range` in `Access-Control-Expose-Headers`'
       );
     }
-    this.#length = total;
     return total;
   }
 
@@ -383,8 +395,17 @@ export class LuxarHttpRangeReader {
       // `luxar serve` about a transient 5xx. `#retaining` is true exactly for
       // the directory phase, which makes it the discriminator.
       const detail = `the request for bytes ${offset}-${end} exhausted its retries`;
+      // Fatal during the directory read, because without the index nothing in
+      // the archive is readable — but NOT a `RangeUnsupportedError`: the server
+      // answered 206s and then started failing, so telling the user to serve it
+      // differently or unpack it is advice for a problem they do not have.
       throw this.#retaining
-        ? new RangeUnsupportedError(this.url, detail)
+        ? new ArchiveFaultError(
+            `Cannot read the zipped store at ${this.url}: ${detail} while reading the ` +
+              'archive index, so no part of it can be read. This looks transient — retry, ' +
+              'or check the server.',
+            this.url
+          )
         : new Error(`Cannot read the zipped store at ${this.url}: ${detail}`);
     }
     const { response } = scope;

@@ -65,7 +65,7 @@ export interface MultiLevelCachingStoreOptions {
  * Multi-level caching store that implements zarrita's AsyncReadable
  * interface. Orchestrates three tiers — L0 (decompressed in-memory chunk
  * cache, owned by the zarrita layer), L1 (memory, in-process), L2
- * (OPFS, cross-tab) — plus an HTTP fallback for zarr chunks.
+ * (OPFS, cross-tab) — over a {@link ChunkSource} that supplies the bytes.
  */
 export class MultiLevelCachingStore implements AsyncReadable {
   private l1Cache: SegmentedLRUCache;
@@ -627,7 +627,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       this.bandwidth.record(outcome.bytesOverWire);
 
       // CRIT-5: if validateCache aborted this in-flight get between the
-      // arrayBuffer() resolve and now (content-hash mismatch raced an
+      // source returning and now (content-hash mismatch raced an
       // in-flight fetch), do NOT write stale bytes back into a
       // just-cleared L1/L2 — that would silently undo the invalidation.
       if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
@@ -954,13 +954,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.disposed = true;
     this.dataAbort.abort();
 
-    // Release whatever the byte source holds open. `ChunkSource.dispose` is
-    // documented as "called from the store's dispose", and until now nothing
-    // called it — harmless while the only source was HTTP with a no-op
-    // dispose, and a real leak for a source holding an archive's central
-    // directory across a dataset switch.
-    this.source.dispose();
-
     // Tear down the prefetcher: clears queues/seen/parsed/bounds and
     // sets its own isDisposed flag so the in-flight `.finally()` path
     // cannot re-enter processQueue with new fetches.
@@ -973,6 +966,26 @@ export class MultiLevelCachingStore implements AsyncReadable {
     if (this.validationEntry !== null) {
       ValidationQueue.cancel(this.validationEntry);
       this.validationEntry = null;
+    }
+
+    // Release whatever the byte source holds open. `ChunkSource.dispose` is
+    // documented as "called from the store's dispose", and until now nothing
+    // called it — harmless while the only source was HTTP with a no-op
+    // dispose, and a real leak for a source holding an archive's central
+    // directory across a dataset switch.
+    //
+    // AFTER the validation cancel above, deliberately. `probeIdentityToken`
+    // runs on the validation queue entry's own controller, which `dataAbort`
+    // does not reach — so disposing the source first would hand teardown the
+    // chance to close a reader out from under a live identity probe. Still
+    // ahead of the awaits below, and still guarded: an implementor that throws
+    // must not skip the L2 drain and the L1 clear, the way
+    // `scene-loader/lifecycle/dispose.ts` guards third-party dispose.
+    try {
+      this.source.dispose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warning(Modules.CACHE, `Chunk source dispose failed: ${message}`);
     }
 
     // Drop not-yet-started background L2 writes (best-effort tier; keeps

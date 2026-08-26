@@ -418,7 +418,7 @@ Main class implementing zarrita's `AsyncReadable` interface.
 #### Constructor
 
 ```typescript
-new MultiLevelCachingStore(baseUrl: string, options?: {
+new MultiLevelCachingStore(source: string | ChunkSource, options?: {
   l1MaxSize?: number;             // L1 size in bytes (default: 100MB)
   l2MaxSize?: number;             // L2 size in bytes (default: 2GB)
   debug?: boolean;                // Enable debug logging (default: false)
@@ -869,9 +869,8 @@ await window.__luxarDebug.cache.clearAll();
 ## File Layout
 
 - `chunk-source.ts` — the byte-source port the caching store reads through
-  (`ChunkSource`), plus `ArchiveByteReader` for container-backed sources.
-  Declared here, below `src/data`, so the cache layer never reaches up for a
-  concrete store.
+  (`ChunkSource`). Declared in this layer, not in `src/data`, so the cache never
+  has to import a concrete store to read through it.
 - `chunk-source/http-chunk-source.ts` — the directory-store source: one
   retrying HTTP request per chunk, owning the response lifetime.
 - `chunk-source/zip-chunk-source.ts` — the zipped-store source: members read out
