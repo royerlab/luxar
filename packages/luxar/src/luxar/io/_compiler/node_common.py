@@ -229,6 +229,13 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # Viewer-consumed LOD quality stamps injected by additive ladders.
         "level_stats",
         "lod_stats",
+        # Provenance for the insertion-time amplitude normalisation (see
+        # ``core/group/gsplats_pipeline/amplitude_norm.py``). Records the single
+        # factor the whole structure was scaled by, so an authored window, an
+        # ``amplitude_mass`` stamp or a later refit can be reconciled with the
+        # values actually stored. Not a render attr — the viewer does not read
+        # it — hence here rather than in ``KNOWN_RENDER_ATTRS``.
+        "amplitude_normalization_factor",
         # Structural keys injected by node construction / specialized-group
         # builders (add_lod_group / add_partition_group) / LOD wrappers.
         "type",

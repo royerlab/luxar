@@ -12,6 +12,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 import numpy as np
 
 from ..compositing import reject_mesh_only_appearance, strip_absent_attr_kwargs
+from .amplitude_norm import (
+    normalize_node_in_place,
+)
+from .amplitude_norm import (
+    stamp_factor as stamp_amplitude_factor,
+)
 from .from_data import (
     ABSENT_WHEN_NONE_ATTRS,
     GRAFT_REMEDY,
@@ -666,7 +672,9 @@ def graft_gsplat_node(
     node: Any,  # luxar.gsplats.tree.GSplatNode
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
+    normalize_amplitudes: Any = True,
     _under_partition: Optional[bool] = None,
+    _normalized: bool = False,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     """Graft a pre-built ``GSplatNode`` subtree into the scene, node-for-node.
@@ -712,13 +720,19 @@ def graft_gsplat_node(
     so that known failures keep the caller-facing node name.
     """
     if _under_partition is None:
+        # Entry call: re-dispatch through the writer transaction, which comes
+        # back into this function with a concrete ``_under_partition``. The
+        # transaction forwards only ``attrs``, so ``normalize_amplitudes`` has to
+        # ride in there or the caller's choice is silently replaced by the
+        # default on the second frame — measured: an explicit
+        # ``normalize_amplitudes=False`` normalised anyway.
         return _graft_gsplat_node_transaction(
             group,
             name=name,
             node=node,
             parent=parent,
             extend_to_all=extend_to_all,
-            attrs=attrs,
+            attrs={**attrs, "normalize_amplitudes": normalize_amplitudes},
         )
 
     from luxar.gsplats.gsplat_data import GSplatData
@@ -756,6 +770,24 @@ def graft_gsplat_node(
     _reject_a_bad_partition_spec_on_a_graft(name, node, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)
 
+    # Normalise ONCE, over the WHOLE subtree, at the entry call — then thread
+    # ``_normalized`` down so no descendant repeats it. This is the one place a
+    # partition / nested tree can be normalised at all: it never becomes a
+    # ``GSplatData``, so it never reaches the data path's own normalisation.
+    #
+    # Doing it per node would be actively wrong, not merely redundant. Each part
+    # of a tiling has its own amplitude distribution — the tile holding the
+    # brightest region has a higher p99.9 than its neighbours — so a per-part
+    # factor would scale adjacent tiles differently and reintroduce exactly the
+    # cross-seam exposure mismatch ``finalize/amplitude_window.py`` exists to
+    # prevent. Idempotence does not save us here: after a tree-wide scale a hot
+    # tile's OWN p99.9 can still exceed 1.0, so ``auto`` would fire again on it
+    # alone.
+    if not _normalized:
+        factor = normalize_node_in_place(node, normalize_amplitudes)
+        stamp_amplitude_factor(attrs, factor)
+        _normalized = True
+
     if isinstance(node, GSplatLeaf):
         # Matrix-shaped → the normal data path. A graft preserves the file's own
         # coordinates, so no scene-embed transforms are applied here.
@@ -765,6 +797,9 @@ def graft_gsplat_node(
             result=GSplatData.from_tree(node),
             parent=parent,
             extend_to_all=extend_to_all,
+            # Already normalised above, tree-wide. Re-running it on this leaf's
+            # own distribution is the per-part hazard described there.
+            normalize_amplitudes=False,
             **attrs,
         )
 
@@ -875,6 +910,7 @@ def graft_gsplat_node(
                 node=child,
                 extend_to_all=extend_to_all,
                 coverage_fraction=cov,
+                _normalized=True,
                 # A nested ladder inside a partition-bound one is still inside the
                 # same tile, so the binding propagates down.
                 _under_partition=partition_bound,
@@ -932,6 +968,7 @@ def graft_gsplat_node(
                 node=child,
                 extend_to_all=extend_to_all,
                 _under_partition=child_under_partition,
+                _normalized=True,
                 **child_attrs,
             )
         return wrapper

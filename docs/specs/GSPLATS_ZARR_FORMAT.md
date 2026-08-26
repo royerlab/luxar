@@ -537,6 +537,28 @@ display-range controls. Each writer first derives it per node as
 window would map ~99% of splats to near-black), and then **finalize HARMONIZES
 it across each gsplat structure**.
 
+> **`amplitude_data_range` is a colormap window, NOT a render divisor.** The
+> viewer feeds it to `uScalarMin`/`uScalarScale`, which the shader uses only as
+> `t = clamp((A - min) * scale, 0, 1)` — a LUT index, clamped to `[0, 1]`. It
+> selects a *colour*. It cannot scale brightness, and nothing downstream divides
+> the amplitude by it. Emitted radiance and, under `volumetric`, optical depth
+> (`tau = absorption * opacity * intensity`, `intensity ∝ A`) are both **linear
+> in the raw stored amplitude** and are not windowed by anything.
+>
+> **Consequence — amplitudes must be normalised at scene insertion.** Fitted
+> archives store amplitudes in raw source units: the fitter multiplies its
+> `[0,1]` working copy back out by the volume's intensity range, so a fit from a
+> uint16 detector stack carries detector counts. An amplitude of 800 emits 1000x
+> the radiance of 0.8 and saturates `1 - exp(-tau)` into an opaque shell, and no
+> viewer control can compensate — the only remaining lever is `opacity`, which
+> would have to carry a ~1/500 factor on a `[0,1]` control. `add_gsplats_from_data`,
+> `add_gsplats_from_file` and the graft path therefore normalise by default
+> (robust p99.9 -> 1.0, **one factor for the whole structure**), recording it as
+> `amplitude_normalization_factor`; pass `normalize_amplitudes=False` to opt out.
+> The factor must be shared across every substitutive level and additive rung —
+> a per-level factor scales the levels against each other and the brightness pops
+> at every LOD switch. See `core/group/gsplats_pipeline/amplitude_norm.py`.
+
 **Window harmonization (#1691)**. A per-node window is right for one flat leaf
 and wrong for a multi-node structure: on a `kind=lod` ladder a coarse level's
 merged representatives carry the same mass in far fewer splats, so its p99.9

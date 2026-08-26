@@ -601,11 +601,20 @@ Controls:
             # all twelve never changed their relative position. Framing is
             # unaffected too (the viewer targets the bounding-box centre, not
             # the origin), and `unit="um"` now reads as true slide coordinates.
-            # The old per-channel `scale_intensity(0.1)` is gone with it: a
-            # colormapped gsplat layer is windowed by the node's own
-            # `amplitude_data_range`, so a global amplitude scale cancels and
-            # the render is identical either way. Both were transforms on a
-            # loose GSplatData, which the graft below no longer has in hand.
+            # The old per-channel `scale_intensity(0.1)` is gone with it. The
+            # comment that used to sit here claimed a global amplitude scale
+            # "cancels" because a colormapped layer is windowed by its own
+            # `amplitude_data_range`. That is WRONG, and it is worth stating so
+            # rather than quietly deleting: the window only feeds the colormap
+            # LUT index (`t = clamp((A-min)*scale, 0, 1)`, clamped, so it picks
+            # a colour), while emitted radiance and volumetric optical depth are
+            # both LINEAR in the raw stored amplitude and nothing windows them.
+            # A global scale therefore does not cancel at all. What makes it
+            # safe to drop here is that `add_gsplats_from_file` now normalises
+            # amplitudes on insertion by default (robust p99.9 -> 1.0, one factor
+            # per structure) — see core/group/gsplats_pipeline/amplitude_norm.py.
+            # Both were transforms on a loose GSplatData, which the graft
+            # below no longer has in hand.
 
             # Add each channel as a layer-enabled gsplats node
             for i, (cache_path, ch_config) in enumerate(zip(cache_paths, CHANNELS)):
