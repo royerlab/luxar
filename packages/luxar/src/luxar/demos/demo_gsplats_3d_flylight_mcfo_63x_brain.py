@@ -184,7 +184,6 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
-    require_module,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._h5j import (
@@ -349,36 +348,36 @@ def _luxar(*args: str) -> None:
 
 
 def fetch_h5j() -> Path:
-    """Download Janelia's stitched H5J, or reuse a verified cached copy."""
-    import hashlib
+    """Download Janelia's stitched H5J, or reuse a verified cached copy.
+
+    Goes through ``robust_download`` rather than streaming the response here:
+    it retries with backoff and RESUMES a partial transfer against a validated
+    ETag, which matters for a single multi-gigabyte object fetched over a link
+    that may drop. ``requests`` is a core dependency, so nothing here is gated
+    on an optional extra.
+
+    The digest is checked on every path, cache hit included. A cached copy is
+    not evidence of a correct copy -- it may be a truncated earlier attempt, or
+    a different sample someone dropped at this name -- and the whole point of
+    pinning the hash is that this demo describes ONE specimen.
+    """
+    from luxar.utils.download import robust_download, verify_file_checksum
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     target = CACHE_DIR / H5J_NAME
-    if target.is_file():
-        aprint(f"H5J cached: {target} ({target.stat().st_size:,} bytes)")
-        return target
 
-    requests = require_module("requests")
-    with asection(f"Fetching {H5J_NAME}"):
-        partial = target.with_name(target.name + ".part")
-        digest = hashlib.sha256()
-        done = 0
-        with requests.get(H5J_URL, stream=True, timeout=120) as r:
-            r.raise_for_status()
-            with open(partial, "wb") as fh:
-                for chunk in r.iter_content(chunk_size=1 << 22):
-                    fh.write(chunk)
-                    digest.update(chunk)
-                    done += len(chunk)
-        got = digest.hexdigest()
-        aprint(f"  {done:,} bytes, sha256 {got[:16]}…")
-        if got != H5J_SHA256:
-            partial.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"{H5J_NAME} hash mismatch: got {got}, expected {H5J_SHA256}. "
-                "Refusing a source that is not the sample this demo describes."
-            )
-        partial.rename(target)
+    if not target.is_file():
+        with asection(f"Fetching {H5J_NAME}"):
+            aprint(f"from {H5J_URL}")
+            robust_download(H5J_URL, target)
+
+    aprint(f"H5J: {target} ({target.stat().st_size:,} bytes)")
+    if not verify_file_checksum(target, expected_sha256=H5J_SHA256):
+        raise RuntimeError(
+            f"{H5J_NAME} does not match the pinned sha256 {H5J_SHA256}. "
+            "Refusing a source that is not the sample this demo describes -- "
+            f"delete {target} to re-fetch."
+        )
     return target
 
 
