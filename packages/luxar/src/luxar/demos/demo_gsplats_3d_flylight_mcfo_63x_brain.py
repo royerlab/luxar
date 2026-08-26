@@ -237,6 +237,20 @@ VOXEL_UM = (0.19, 0.19, 0.38)
 #     gain on radiance rather than as a display window over a LUT. Any change
 #     that rescales amplitudes at scene-insertion time therefore shifts the
 #     effective exposure here, and this constant does not compensate.
+#
+# Measured across the 2026-08-26 refit (1000 -> 5000 iterations), and recorded
+# because the two numbers point opposite ways:
+#
+#     median/max    0.0398 -> 0.0392    (shape, 1.5% move)
+#     absolute max  188.81 -> 173.64    (8% lower)
+#
+# Which one governs depends on whether raw amplitude units reach the shader on
+# THIS path. If the viewer normalises by the stored maximum, only the shape
+# matters and 2.723 still holds; if raw units reach it -- which is what the
+# demo's opt-out from insertion-time normalisation implies -- the 8% governs and
+# the refit dims the scene by roughly that much. That has NOT been settled, and
+# it cannot be settled from these numbers: it needs the new build in front of a
+# render. Treat the constant as suspect after any refit, not as validated.
 DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
 
 # Opacity is the exposure lever and wants to be tiny; scaling the amplitudes
