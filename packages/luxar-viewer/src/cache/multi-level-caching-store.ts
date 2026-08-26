@@ -427,6 +427,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *   error or 5xx after retries exhausted. Caller may back off.
    * - `err({ kind: 'Aborted' })` — caller signal, cache invalidation, or
    *   store disposal aborted the read.
+   * - `err({ kind: 'Fatal', cause })` — the whole container is unreadable, not
+   *   just this key. {@link MultiLevelCachingStore.get} rethrows `cause` rather
+   *   than reporting a miss, so the failure reaches the user instead of
+   *   rendering an empty scene.
    */
   async getResult(
     key: string,

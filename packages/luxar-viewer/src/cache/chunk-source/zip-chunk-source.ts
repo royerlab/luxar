@@ -91,7 +91,10 @@ export class ZipChunkSource implements ChunkSource {
     signal?: AbortSignal;
     timeoutMsOverride?: number;
   }): Promise<RemoteValidationToken | null> {
-    const hash = await this.reader.probeIdentity?.(options.signal);
+    // The budget matters: this probe runs inside `init()` → `validateCache`,
+    // in front of the first paint, and a hanging server would otherwise
+    // block the load with no fail-fast at all.
+    const hash = await this.reader.probeIdentity?.(options.signal, options.timeoutMsOverride);
     return hash ? { hash, mode: 'archive-etag' } : null;
   }
 

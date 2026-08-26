@@ -10,7 +10,9 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ArchiveByteReader } from '../../../../cache/chunk-source';
+import { ArchiveFaultError } from '../../../../cache/chunk-source';
 import { ZipChunkSource } from '../../../../cache/chunk-source/zip-chunk-source';
+import { RangeUnsupportedError } from '../../../../data/zip/range-reader';
 
 const ARCHIVE_URL = 'https://example.com/scene.luxar.zarr.zip';
 
@@ -115,6 +117,35 @@ describe('ZipChunkSource — outcomes', () => {
     const reader = emptyReader();
     new ZipChunkSource(ARCHIVE_URL, reader).dispose();
     expect(reader.disposed).toBe(true);
+  });
+
+  it('maps an ARCHIVE FAULT to `fatal`, so the store rethrows it', async () => {
+    // This PR's headline fix, and it was untested: disabling the branch left the
+    // whole zip + cache corpus green. The reader tests pin which errors are
+    // thrown and the store tests pin what it does with `fatal`; nothing joined
+    // the two, which is where the behaviour actually lives.
+    const reader = fakeReader(async () => {
+      throw new RangeUnsupportedError('https://example.com/s.zip', 'no 206');
+    });
+
+    const outcome = await new ZipChunkSource(ARCHIVE_URL, reader).get('/zarr.json');
+
+    expect(outcome.kind).toBe('fatal');
+    if (outcome.kind !== 'fatal') return;
+    expect(outcome.cause).toBeInstanceOf(ArchiveFaultError);
+  });
+
+  it('keeps a plain member failure as `error`, not `fatal`', async () => {
+    // One flaky chunk must stay recoverable: `fatal` fails the whole load and
+    // attaches remedy text about Range support, which is the wrong advice for a
+    // transient 5xx.
+    const reader = fakeReader(async () => {
+      throw new Error('Cannot read the zipped store at …: exhausted its retries');
+    });
+
+    const outcome = await new ZipChunkSource(ARCHIVE_URL, reader).get('/points/c/0');
+
+    expect(outcome.kind).toBe('error');
   });
 
   it('surfaces a broken archive as `error`, not as a throw', async () => {

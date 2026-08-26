@@ -241,7 +241,11 @@ class TestServeIntegration:
             header.strip()
             for header in response.headers["Access-Control-Expose-Headers"].split(",")
         }
-        assert exposed == {"Content-Range", "Content-Length", "Accept-Ranges"}
+        assert exposed == {"Content-Range", "Content-Length", "Accept-Ranges", "ETag"}
+        # ETag matters specifically: it is not CORS-safelisted, so without it a
+        # cross-origin viewer (the documented split-port layout) cannot read it and
+        # a zipped store's "archive-etag" identity silently degrades to the
+        # one-second granularity of Last-Modified.
 
     def test_no_cache_header_on_data_responses(self, test_server):
         """Every mutable data response must require browser revalidation."""

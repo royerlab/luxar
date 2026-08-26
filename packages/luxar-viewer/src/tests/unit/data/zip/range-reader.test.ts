@@ -325,6 +325,30 @@ describe('LuxarHttpRangeReader — retained ranges', () => {
     expect(asked).toEqual(['bytes=50-59']);
   });
 
+  it('stops retaining once the cap is reached, rather than growing without bound', async () => {
+    // The only thing between a pathological central directory and the heap.
+    const big = LuxarHttpRangeReader.MAX_RETAINED_BYTES + 1;
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit = {}) => {
+      const header = (init.headers as Record<string, string> | undefined)?.Range ?? '';
+      const [, start, end] = /bytes=(\d+)-(\d+)/.exec(header) ?? [];
+      const from = Number(start);
+      const to = Number(end);
+      return response(new Uint8Array(to - from + 1), {
+        status: 206,
+        headers: { 'content-range': `bytes ${from}-${to}/${big + 10}` },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const reader = new LuxarHttpRangeReader(URL_);
+    reader.retainReads(true);
+    await reader.read(0, big); // over the cap — must not be retained
+    const afterFirst = fetchMock.mock.calls.length;
+
+    await reader.read(10, 5); // fully inside it, but nothing was kept
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(afterFirst);
+  });
+
   it('does NOT retain once the directory phase is over', async () => {
     const fetchMock = vi.fn(async (_url: string, init: RequestInit = {}) => {
       const header = (init.headers as Record<string, string> | undefined)?.Range ?? '';

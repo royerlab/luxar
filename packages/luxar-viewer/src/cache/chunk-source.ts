@@ -88,8 +88,15 @@ export class ArchiveFaultError extends Error {
  */
 export interface ArchiveByteReader {
   /**
-   * Read one member. `signal` must actually cancel the underlying request —
-   * relabelling the outcome while the bytes keep arriving is not cancellation.
+   * Read one member.
+   *
+   * `signal` is ADVISORY. A container whose reader has no per-call channel — a
+   * zip, whose `unzipit` reader is `read(offset, size)` — cannot cancel an
+   * individual member read, and an ambient "current signal" would be raced by
+   * concurrent gets. Such an implementation scopes real cancellation to its own
+   * lifetime instead, aborting in flight reads from `dispose()`, and uses this
+   * signal only to stop early and to label the outcome. Do not read a passed
+   * signal as a guarantee that the bytes stopped arriving.
    */
   get(key: string, signal?: AbortSignal): Promise<Uint8Array | undefined>;
   /**
@@ -101,7 +108,7 @@ export interface ArchiveByteReader {
    * against the same URL the container already reads: doing it here lets one
    * `HEAD` serve both identity and the archive length.
    */
-  probeIdentity?(signal?: AbortSignal): Promise<string | null>;
+  probeIdentity?(signal?: AbortSignal, timeoutMs?: number): Promise<string | null>;
   dispose(): void;
 }
 

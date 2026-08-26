@@ -170,9 +170,12 @@ under "L0 Decompressed Chunk Cache" below.
 
 `MultiLevelCachingStore.getStats()` returns a `health` field with:
 
-- `validationMode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none'`
+- `validationMode: 'content-hash' | 'zattrs-hash' | 'archive-etag' | 'ttl' | 'none'`
   - `content-hash`: Luxar dataset with `content_hash` attr — strongest
     invalidation guarantee.
+  - `archive-etag`: a zipped store, identified by a probe on the archive itself
+    (its root attrs live inside it, so no document can be re-fetched alone).
+    Covers the whole store at once rather than one document.
   - `zattrs-hash`: dataset without `content_hash`; the SHA-256 of the raw
     root `.zattrs` bytes serves as an implicit validation token. Luxar
     writers re-stamp a per-save `timestamp` attr, so a dataset regenerated
@@ -482,7 +485,7 @@ data-loading monitor, debug overlay, and cache E2E suite:
     networkRequests: number   // User-demand network requests
   },
   health: {
-    validationMode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none',
+    validationMode: 'content-hash' | 'zattrs-hash' | 'archive-etag' | 'ttl' | 'none',
     lastValidatedAt: number | null,
     unvalidatedExternalDataset: boolean,
     opfsAvailable: boolean
@@ -871,6 +874,9 @@ await window.__luxarDebug.cache.clearAll();
   concrete store.
 - `chunk-source/http-chunk-source.ts` — the directory-store source: one
   retrying HTTP request per chunk, owning the response lifetime.
+- `chunk-source/zip-chunk-source.ts` — the zipped-store source: members read out
+  of one archive, identity from a probe on the archive, and archive-level faults
+  reported as `fatal` so the store rethrows instead of rendering an empty scene.
 - `multi-level-caching-store.ts` — L1+L2 facade implementing zarrita's
   `AsyncReadable` with validation, prefetcher hookup, and disposal.
 - `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.

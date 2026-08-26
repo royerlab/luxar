@@ -150,7 +150,7 @@ def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
         allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["Content-Range", "Content-Length", "Accept-Ranges"],
+        expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "ETag"],
     )
 
 

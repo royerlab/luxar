@@ -148,6 +148,35 @@ describe('DirectoryNavigator', () => {
     // HTML. This exercises the real DOMParser-backed happy path: an
     // nginx-style `<pre><a href="...">` listing. jsdom provides DOMParser,
     // so the source's `doc.querySelectorAll('pre a')` branch runs for real.
+    it('classifies a .zarr.zip as a dataset and a plain .zip as a file', async () => {
+      // The split the narrow discovery predicate exists to draw. Getting it
+      // wrong in this direction is the visible one: every `results.zip` in a
+      // listing would render with a ZARR badge and then die on click with
+      // "does not contain a zarr store".
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'text/html' },
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          `<html><body><pre>
+<a href="../">../</a>
+<a href="scene.luxar.zarr.zip">scene.luxar.zarr.zip</a>   01-Jan-2024 12:00   5000
+<a href="results.zip">results.zip</a>                     01-Jan-2024 12:00   5000
+</pre></body></html>`,
+      });
+
+      const result = await navigator.navigate('listing');
+      const byName = Object.fromEntries(result.entries.map((e) => [e.name, e]));
+
+      expect(byName['scene.luxar.zarr.zip'].type).toBe('zarr');
+      expect(byName['results.zip'].type).toBe('file');
+    });
+
     it('should parse an nginx-style <pre><a href> HTML directory listing', async () => {
       // Zarr check fails. TWO responses: the probe checks both root documents
       // (`zarr.json` for format 3, `.zgroup` for format 2) and a directory that

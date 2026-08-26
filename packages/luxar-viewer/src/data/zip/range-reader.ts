@@ -58,6 +58,28 @@ function archiveHttpError(url: string, response: Response, context = ''): Error 
   return new RangeUnsupportedError(url, `${status}${context}`);
 }
 
+/** Merge a caller signal with a probe-timeout signal, without a dependency. */
+function mergeProbeSignals(a: AbortSignal | undefined, b: AbortSignal): AbortSignal {
+  if (!a) return b;
+  const controller = new AbortController();
+  const forward = (): void => controller.abort();
+  if (a.aborted || b.aborted) controller.abort();
+  else {
+    a.addEventListener('abort', forward, { once: true });
+    b.addEventListener('abort', forward, { once: true });
+  }
+  return controller.signal;
+}
+
+/** Cancel a probe body we never read; otherwise the server keeps streaming it. */
+function releaseProbeBody(response: Response | undefined): void {
+  const body = response?.body;
+  if (!body || body.locked) return;
+  void body.cancel().catch(() => {
+    /* already torn down */
+  });
+}
+
 /**
  * Parse the total resource size out of a `Content-Range: bytes a-b/total`
  * header. Returns `null` for a missing header or an unknown (`*`) total.
@@ -189,8 +211,13 @@ export class LuxarHttpRangeReader {
    * Lives here rather than in the caller because it is a `HEAD` on this exact
    * URL: doing it here lets the length it reports seed {@link getLength}.
    */
-  async probeIdentity(signal?: AbortSignal): Promise<string | null> {
-    const fromHead = await this.#probeVia({ method: 'HEAD' }, signal);
+  async probeIdentity(signal?: AbortSignal, timeoutMs?: number): Promise<string | null> {
+    // Split the caller's budget across both attempts. `doValidateCache` passes
+    // `validationTimeoutMs` precisely so a hanging server cannot block the first
+    // paint — this probe sits in front of it, via `init()` → `validateCache`.
+    const perAttempt = timeoutMs === undefined ? undefined : Math.max(1, Math.ceil(timeoutMs / 2));
+
+    const fromHead = await this.#probeVia({ method: 'HEAD' }, false, signal, perAttempt);
     if (fromHead) return fromHead;
 
     // Fall back to a one-byte ranged GET, for the same reason `getLength` does:
@@ -199,32 +226,53 @@ export class LuxarHttpRangeReader {
     // branch → validation mode `none` → the archive is never re-checked and a
     // replaced one keeps serving stale chunks. A 206 carries `ETag` /
     // `Last-Modified` just as a HEAD does.
-    return this.#probeVia({ headers: { Range: 'bytes=0-0' } }, signal);
+    return this.#probeVia({ headers: { Range: 'bytes=0-0' } }, true, signal, perAttempt);
   }
 
-  /** One identity probe, cache-bypassing; `null` means "cannot tell". */
-  async #probeVia(init: RequestInit, signal?: AbortSignal): Promise<string | null> {
+  /**
+   * One identity probe, cache-bypassing; `null` means "cannot tell".
+   *
+   * `ranged` matters for correctness, not tidiness: on a 206 `Content-Length` is
+   * the length of the RANGE (one byte here), so trusting it would overwrite a
+   * correct archive length with 1 — after which every read fails the
+   * size-change cross-check and blames the server for a change it never made.
+   * A total may only come from `Content-Range`, which is not CORS-safelisted and
+   * so is often absent; absent means "unknown", not "one".
+   */
+  async #probeVia(
+    init: RequestInit,
+    ranged: boolean,
+    signal?: AbortSignal,
+    timeoutMs?: number
+  ): Promise<string | null> {
+    const timeout = timeoutMs === undefined ? undefined : new AbortController();
+    const timer = timeout === undefined ? undefined : setTimeout(() => timeout.abort(), timeoutMs);
+    const merged = timeout === undefined ? signal : mergeProbeSignals(signal, timeout.signal);
+    let response: Response | undefined;
     try {
-      const response = await fetch(this.url, { ...init, cache: 'no-store', signal });
+      response = await fetch(this.url, { ...init, cache: 'no-store', signal: merged });
       if (!response.ok) return null;
 
-      // A 206 reports the RANGE length in Content-Length, so take the total
-      // from Content-Range; a HEAD reports the whole thing.
-      const total =
-        parseContentRangeTotal(response.headers.get('content-range')) ??
-        Number(response.headers.get('content-length'));
-      if (Number.isFinite(total) && total > 0) this.seedLength(total);
+      const total = ranged
+        ? parseContentRangeTotal(response.headers.get('content-range'))
+        : Number(response.headers.get('content-length'));
+      if (total !== null && Number.isFinite(total) && total > 0) this.seedLength(total);
 
       const etag = response.headers.get('etag');
       if (etag) return `etag:${etag}`;
 
       const modified = response.headers.get('last-modified');
-      if (modified && Number.isFinite(total) && total > 0) {
+      if (modified && total !== null && Number.isFinite(total) && total > 0) {
         return `mtime:${modified}:${total}`;
       }
       return null;
     } catch {
       return null;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      // On a host that ignores `Range`, this body is the WHOLE archive and we
+      // read none of it. Left alone, the server keeps streaming it.
+      releaseProbeBody(response);
     }
   }
 
@@ -323,11 +371,21 @@ export class LuxarHttpRangeReader {
       headers: { Range: `bytes=${offset}-${end}` },
     });
     if (!scope) {
-      if (signal?.aborted) throw new DOMException('Archive read aborted', 'AbortError');
-      throw new RangeUnsupportedError(
-        this.url,
-        `the request for bytes ${offset}-${end} exhausted its retries`
-      );
+      // The live signal is the lifetime one unless a caller supplied its own —
+      // and none do today, so testing `signal` alone never fired.
+      if ((signal ?? this.lifetime)?.aborted) {
+        throw new DOMException('Archive read aborted', 'AbortError');
+      }
+      // Retry exhaustion during the DIRECTORY read really is a container fault:
+      // without the index nothing in the archive is readable. Exhaustion on a
+      // member read is not — it is one flaky chunk, and reporting it as an
+      // archive fault would fail the whole load and tell the user to run
+      // `luxar serve` about a transient 5xx. `#retaining` is true exactly for
+      // the directory phase, which makes it the discriminator.
+      const detail = `the request for bytes ${offset}-${end} exhausted its retries`;
+      throw this.#retaining
+        ? new RangeUnsupportedError(this.url, detail)
+        : new Error(`Cannot read the zipped store at ${this.url}: ${detail}`);
     }
     const { response } = scope;
     try {
