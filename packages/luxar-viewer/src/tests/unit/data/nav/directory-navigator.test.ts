@@ -333,10 +333,7 @@ describe('DirectoryNavigator', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          entries: [
-            { name: 'scene.luxar.zarr.zip' },
-            { name: 'results.zip' },
-          ],
+          entries: [{ name: 'scene.luxar.zarr.zip' }, { name: 'results.zip' }],
         }),
       });
 
