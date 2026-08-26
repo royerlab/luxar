@@ -51,15 +51,9 @@ luxar profiles  # List the network-simulation profiles usable via --profile
 
 ## `luxar serve`
 
-Serve a scene directory directly, or serve a directory of scenes and choose one
-from the viewer's dataset browser:
-
-```bash
-luxar serve --viewer
-```
-
-Pass either a scene directory such as `scene.luxar.zarr` or a containing
-directory such as `/path/to/scenes` as the command's path argument.
+Serve a scene directory directly with `luxar serve scene.luxar.zarr --viewer`,
+or serve a containing directory with `luxar serve /path/to/scenes --viewer`
+and choose a scene from the viewer's dataset browser.
 
 For a `.luxar.zarr.zip`, serve its containing directory rather than passing the
 archive itself. The server advertises and honours the HTTP byte ranges the
