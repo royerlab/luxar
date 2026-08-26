@@ -251,7 +251,7 @@ def test_partition_graft_recovers_missing_bsp_tree_from_disjoint_parts(
 
     from luxar import Dimensions, LuxarZarrCompiler
     from luxar.core.group.partition import serialized_bsp_tree_separates
-    from luxar.gsplats.tree import GSplatLodGroup, center_bounds
+    from luxar.gsplats.tree import GSplatLodGroup
 
     partitioned = _clustered(40).to_spatial_partition(max_elements=40)
     if nested:
@@ -278,11 +278,11 @@ def test_partition_graft_recovers_missing_bsp_tree_from_disjoint_parts(
 
         grafted = zarr.open_group(str(scene_path), mode="r")["g"]
         recovered = dict(grafted.attrs["bsp_tree"])
-        boxes = [center_bounds(child) for child in legacy.children]
-        assert all(box is not None for box in boxes)
-        assert serialized_bsp_tree_separates(
-            recovered, [box for box in boxes if box is not None]
-        )
+        boxes = []
+        for part_index in range(len(legacy.children)):
+            bounds = grafted[f"part_{part_index}"].attrs["position_bounds"]
+            boxes.append((np.asarray(bounds["min"]), np.asarray(bounds["max"])))
+        assert serialized_bsp_tree_separates(recovered, boxes)
         assert (
             f"Recovered BSP split planes for {len(legacy.children)} parts"
             in capsys.readouterr().out
@@ -321,7 +321,7 @@ def test_partition_graft_leaves_overlapping_parts_without_bsp_tree(
 def test_single_part_graft_does_not_report_recovered_split_planes(
     capsys: pytest.CaptureFixture[str],
 ):
-    """A one-part wrapper needs no split plane or recovery message."""
+    """A one-part wrapper gets the canonical leaf tree without recovery noise."""
     from luxar import Dimensions, LuxarZarrCompiler
 
     single_part = GSplatPartition(children=[_clustered(5).tree])
@@ -336,7 +336,7 @@ def test_single_part_graft_does_not_report_recovered_split_planes(
             scene.add_gsplats_from_file(name="g", path=part)
 
         grafted = zarr.open_group(str(scene_path), mode="r")["g"]
-        assert "bsp_tree" not in grafted.attrs
+        assert dict(grafted.attrs["bsp_tree"]) == {"part": 0}
         assert "Recovered BSP split planes" not in capsys.readouterr().out
 
 

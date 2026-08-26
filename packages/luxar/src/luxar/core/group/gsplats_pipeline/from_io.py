@@ -42,8 +42,6 @@ def _grafted_partition_bsp_tree(
     """Return stored or exactly recoverable planes and report recovery."""
     if node.bsp_tree is not None:
         return node.bsp_tree
-    if len(node.children) < 2:
-        return None
 
     from arbol import aprint
 
@@ -60,7 +58,8 @@ def _grafted_partition_bsp_tree(
     boxes = [bounds for bounds in child_bounds if bounds is not None]
     recovered = reconstruct_serialized_bsp_tree(boxes)
     if serialized_bsp_tree_separates(recovered, boxes):
-        aprint(f"  🧭 Recovered BSP split planes for {len(node.children)} parts")
+        if recovered is not None and "part" not in recovered:
+            aprint(f"  🧭 Recovered BSP split planes for {len(node.children)} parts")
         return recovered
     aprint("  🧭 No exact BSP split planes recovered; using centroid part ordering")
     return None
