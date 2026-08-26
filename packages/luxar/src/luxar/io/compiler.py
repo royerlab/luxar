@@ -106,8 +106,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     enabling processing of datasets larger than available RAM.
 
     Args:
-        store_path: Path where the Zarr store will be created. A ``.zarr.zip``
-            path publishes a single-file archive after finalization.
+        store_path: Path where the Zarr store will be created. A ``.zip`` path
+            normalizes the inner store name and publishes a single-file archive
+            after finalization.
         compressor: Compression configuration for datasets
         version: Luxar format version
         enable_spatial_index: Whether to build spatial indices for points
@@ -164,8 +165,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         Args:
             store_path: Path for the Zarr store, or None for temporary. A
-                ``.zarr.zip`` path publishes a single-file archive after
-                finalization.
+                ``.zip`` path normalizes the inner store name and publishes a
+                single-file archive after finalization.
             compressor: Compressor for datasets
             version: Luxar format version
             enable_spatial_index: Whether to use spatial ordering for points/gsplats (default: True)

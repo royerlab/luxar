@@ -68,6 +68,7 @@ class TestSceneExtensionNormalization:
 
         assert compiler.store_path == str(requested)
         assert requested.is_file()
+        assert sorted(path.name for path in tmp_path.iterdir()) == [requested.name]
         assert not (tmp_path / "scene.luxar.zarr.zip.luxar.zarr").exists()
         with zipfile.ZipFile(requested) as archive:
             names = archive.namelist()
@@ -227,6 +228,16 @@ class TestSceneExtensionNormalization:
         output = capsys.readouterr().out
         assert f"Packaging scene archive at {requested}" in output
 
+    def test_archive_finalize_without_context_cleans_staging(self, tmp_path):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+        compiler = LuxarZarrCompiler(requested)
+        _write_minimal_scene(compiler)
+
+        compiler.finalize()
+
+        assert compiler.store_path == str(requested)
+        assert sorted(path.name for path in tmp_path.iterdir()) == [requested.name]
+
     def test_existing_zarr_zip_is_replaced_without_stale_members(self, tmp_path):
         requested = tmp_path / "scene.luxar.zarr.zip"
         with LuxarZarrCompiler(requested) as compiler:
@@ -302,6 +313,28 @@ class TestSceneExtensionNormalization:
         assert scene.get_points("pts")["positions"].shape == (1, 3)
         with pytest.raises(KeyError):
             scene.get_points("replacement")
+
+    def test_scene_to_zarr_after_archive_failure_hides_staging_path(
+        self, tmp_path, monkeypatch
+    ):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+
+        def fail_packaging(staging, artifact):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(optimise_mod, "_package", fail_packaging)
+        with LuxarZarrCompiler(requested) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points("pts", np.zeros((1, 3), dtype=np.float32))
+            with pytest.raises(ValueError, match="disk full"):
+                compiler.finalize()
+
+            with pytest.raises(
+                ValueError, match="previous finalization failure"
+            ) as exc:
+                scene.to_zarr(requested)
+
+        assert ".compile-" not in str(exc.value)
 
     def test_body_failure_does_not_publish_or_leave_staging(self, tmp_path, capsys):
         requested = tmp_path / "scene.luxar.zarr.zip"

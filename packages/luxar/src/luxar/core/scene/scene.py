@@ -647,8 +647,8 @@ class Scene(Group):
                 the selected archive path, which is replaced if it exists.
 
         Raises:
-            FileExistsError: If ``path`` already exists and is not the current
-                backing store.
+            FileExistsError: If a directory destination already exists and is
+                not the current backing store.
             ValueError: If the destination is inside the source store, the
                 source store is unavailable, or an archive-backed writer is
                 asked to publish anywhere except its selected archive path.
@@ -661,9 +661,6 @@ class Scene(Group):
         final_source = Path(writer.final_store_path).resolve()
         destination = Path(path).expanduser().resolve()
 
-        if not source.exists():
-            raise ValueError(f"Scene backing store does not exist: {source}")
-
         # The final destination may differ from the live staging directory.
         # Matching it is still an explicit finalize operation, including when
         # an older archive already exists there and will be replaced.
@@ -672,6 +669,9 @@ class Scene(Group):
             writer.finalize()
             aprint(f"Finalized scene at {final_source}")
             return
+
+        if not source.exists():
+            raise ValueError(f"Scene backing store does not exist: {final_source}")
 
         if source != final_source or not source.is_dir():
             raise ValueError(
