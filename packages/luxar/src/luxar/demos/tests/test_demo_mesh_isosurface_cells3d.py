@@ -28,9 +28,11 @@ pytest.importorskip("skimage.measure", reason="mesh isosurface demo needs scikit
 pytest.importorskip("scipy.ndimage", reason="mesh isosurface demo needs scipy")
 
 from luxar.demos.demo_mesh_isosurface_cells3d import (  # noqa: E402
+    CHANNELS,
     ISOLEVEL_FRACTION,
     SMOOTH_SIGMA,
     VOXEL_SIZE_ZYX,
+    _occluded_albedo,
     extract_isosurface,
 )
 
@@ -64,6 +66,20 @@ def test_extracts_a_non_trivial_closed_surface(ball_surface) -> None:
     # Every index in range — the writer checks this too, and a violation here
     # would mean the demo reordered one array and not the other.
     assert faces.max() < len(vertices)
+
+
+def test_occluded_albedo_varies_without_changing_hue(ball_surface) -> None:
+    vertices, _faces, normals = ball_surface
+    base = np.asarray(CHANNELS[0]["color"], dtype=np.float32)
+
+    albedo = _occluded_albedo(CHANNELS[0], vertices, normals)
+    scale = albedo / base[None, :]
+
+    assert albedo.dtype == np.float32
+    assert float(scale[:, 0].max()) == pytest.approx(1.0, abs=1e-6)
+    assert float(scale[:, 0].min()) < 0.95
+    np.testing.assert_allclose(scale[:, 1], scale[:, 0], atol=1e-6)
+    np.testing.assert_allclose(scale[:, 2], scale[:, 0], atol=1e-6)
 
 
 def test_vertices_are_in_physical_units_not_voxel_indices(ball_surface) -> None:

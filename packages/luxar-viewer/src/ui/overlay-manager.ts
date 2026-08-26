@@ -641,6 +641,7 @@ export class OverlayManager {
           Modules.UI,
           `Image overlay "${config.name}" is not supported on a zipped store (.zarr.zip) — skipping`
         );
+        return;
       } else {
         const imageUrl = `${this.baseUrl}overlays/${config.name}/${config.image_file}`;
         img.src = imageUrl;
