@@ -76,6 +76,52 @@ def test_sync_updates_only_live_sites_and_absorbs_delta(
     assert "(2 focused examples)" in skill.read_text()
 
 
+@pytest.mark.parametrize(
+    ("quick_start", "match_count"),
+    [
+        ("luxar demo              # Browse all 2 bundled demos\n", 0),
+        (
+            "luxar demo              # Browse the 2 bundled demos\n"
+            "luxar demo              # Browse the 2 bundled demos\n",
+            2,
+        ),
+    ],
+)
+def test_sync_rejects_missing_or_duplicate_live_site(
+    sync_module: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    quick_start: str,
+    match_count: int,
+) -> None:
+    readme, claude, skill, examples = _checkout(tmp_path)
+    readme.write_text(
+        readme.read_text().replace(
+            "luxar demo              # Browse the 2 bundled demos\n",
+            quick_start,
+        )
+    )
+    before = {path: path.read_bytes() for path in (readme, claude, skill)}
+
+    assert (
+        sync_module.synchronize(
+            3,
+            sync_module._example_count(examples),
+            check=False,
+            repo=tmp_path,
+            readme=readme,
+            claude=claude,
+            visualization_skill=skill,
+        )
+        == 2
+    )
+
+    assert {path: path.read_bytes() for path in before} == before
+    assert (
+        f"README quick-start count: expected exactly one match, found {match_count}"
+    ) in capsys.readouterr().err
+
+
 def test_check_reports_drift_without_writing(
     sync_module: ModuleType,
     tmp_path: Path,
