@@ -774,6 +774,7 @@ def mesh_decoded_value_count(
     normals: Any = None,
     colors: Any = None,
     scalars: Any = None,
+    uvs: Any = None,
 ) -> int:
     """Total LOGICAL values a mesh's arrays decode to.
 
@@ -804,6 +805,8 @@ def mesh_decoded_value_count(
         values += n_vertices * components
     if scalars is not None:
         values += n_vertices
+    if uvs is not None:
+        values += n_vertices * 2
     return values
 
 
@@ -878,6 +881,8 @@ def validate_mesh_decode_budget(
     normals: Any = None,
     colors: Any = None,
     scalars: Any = None,
+    uvs: Any = None,
+    texture_decoded_bytes: int = 0,
     context: str = "mesh",
 ) -> None:
     """Refuse a mesh whose declared footprint provably exceeds the viewer's ceiling.
@@ -900,10 +905,11 @@ def validate_mesh_decode_budget(
 
     * **Charged:** every array's DECODED size — its logical value count times
       4 bytes, since every decoder-routed array materializes as float32 in the
-      viewer. This is dtype-independent, so no encoder behaviour has to be
-      predicted. Note a broadcast colour or a scalar ``scalars`` is charged at its
-      logical ``n_vertices`` expansion, not its one stored row: that expansion is
-      real, and it is what the loader charges.
+      viewer — plus the texture's exactly-known decoded footprint. This is
+      dtype-independent, so no encoder behaviour has to be predicted. Note a
+      broadcast colour or a scalar ``scalars`` is charged at its logical
+      ``n_vertices`` expansion, not its one stored row: that expansion is real,
+      and it is what the loader charges.
     * **Not charged:** the STORED bytes (the encoder's dtype narrowing, LUT and
       ``array_ref`` dedup choices would all have to be replicated here, coupling
       this validator to encoder internals for the sake of a term the loader adds
@@ -935,6 +941,8 @@ def validate_mesh_decode_budget(
         normals: The normals array, or ``None``. Only presence is read.
         colors: The colors array or broadcast colour, or ``None``.
         scalars: The scalars array or broadcast scalar, or ``None``.
+        uvs: The UV array, or ``None``. Only presence is read.
+        texture_decoded_bytes: Exact decoded texture footprint, or zero.
         context: Context for the error message.
 
     Raises:
@@ -947,9 +955,16 @@ def validate_mesh_decode_budget(
 
     declared = (
         mesh_decoded_value_count(
-            n_vertices, n_dims, n_faces, normals=normals, colors=colors, scalars=scalars
+            n_vertices,
+            n_dims,
+            n_faces,
+            normals=normals,
+            colors=colors,
+            scalars=scalars,
+            uvs=uvs,
         )
         * MESH_DECODED_BYTES_PER_VALUE
+        + texture_decoded_bytes
     )
     if declared > MESH_DECODE_BUDGET_BYTES:
         mib = declared / (1024 * 1024)
@@ -1241,7 +1256,9 @@ MAX_MESH_TEXTURE_SIZE = 16384
 #: is under 16384 on both axes and still decodes to 1.02 GB — twice the ceiling —
 #: so without this a perfectly legal-looking authoring call produces a store that
 #: every viewer rejects at load, and the author finds out from a user.
-MESH_TEXTURE_DECODE_BUDGET_BYTES = 512 * 1024 * 1024
+from ..typing_utils.constants import (  # noqa: E402
+    MESH_DECODE_BUDGET_BYTES as MESH_TEXTURE_DECODE_BUDGET_BYTES,
+)
 
 
 def validate_uvs_for_writing(uvs: Any, n_vertices: int, context: str = "uvs") -> None:

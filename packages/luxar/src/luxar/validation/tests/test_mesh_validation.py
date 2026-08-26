@@ -25,6 +25,7 @@ from luxar.typing_utils.constants import (
 )
 from luxar.validation import ValidationError
 from luxar.validation.base import (
+    MESH_TEXTURE_DECODE_BUDGET_BYTES,
     validate_faces_for_writing,
     validate_mesh_decode_budget,
     validate_normal_dims_for_writing,
@@ -617,9 +618,7 @@ def test_uv_acceptances(uvs, test_id) -> None:
             "declared_encoded_texture_over_the_decode_budget",
         ),
         (
-            lambda: validate_texture_for_writing(
-                np.zeros((0, 4, 3), np.uint8), "raw"
-            ),
+            lambda: validate_texture_for_writing(np.zeros((0, 4, 3), np.uint8), "raw"),
             "Dimensions must be positive",
             "zero_height",
         ),
@@ -705,6 +704,23 @@ def test_decode_budget_accepts_the_largest_mesh_that_fits() -> None:
     validate_mesh_decode_budget(
         n_vertices, n_dims, _largest_fitting_face_count(n_vertices, n_dims)
     )
+
+
+def test_texture_budget_uses_the_shared_mesh_ceiling() -> None:
+    assert MESH_TEXTURE_DECODE_BUDGET_BYTES == MESH_DECODE_BUDGET_BYTES
+
+
+def test_decode_budget_charges_uvs_and_texture_together() -> None:
+    geometry_bytes = (4 * 3 + 4 * 3 + 4 * 2) * MESH_DECODED_BYTES_PER_VALUE
+    texture_bytes = MESH_DECODE_BUDGET_BYTES - geometry_bytes + 1
+    with pytest.raises(ValidationError, match="over the viewer"):
+        validate_mesh_decode_budget(
+            4,
+            3,
+            4,
+            uvs=np.zeros((4, 2), dtype=np.float32),
+            texture_decoded_bytes=texture_bytes,
+        )
 
 
 @pytest.mark.parametrize(

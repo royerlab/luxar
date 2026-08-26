@@ -217,6 +217,12 @@ def validate_mesh_arrays(
     colors: Any = None,
     scalars: Any = None,
     uvs: Any = None,
+    texture: Any = None,
+    texture_encoding: str = "raw",
+    texture_width: Optional[int] = None,
+    texture_height: Optional[int] = None,
+    texture_channels: Optional[int] = None,
+    texture_color_space: str = "srgb",
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Any = None,
@@ -266,6 +272,7 @@ def validate_mesh_arrays(
         validate_labels_for_writing,
         validate_mesh_decode_budget,
         validate_positions_for_writing,
+        validate_texture_for_writing,
         validate_uvs_for_writing,
         validate_vertices_for_writing,
     )
@@ -304,6 +311,21 @@ def validate_mesh_arrays(
     # Last, because it needs every channel's presence and the validated shapes.
     # A store over the viewer's per-node ceiling does not render at all, so it is
     # refused here rather than in a browser (#2145).
+    texture_decoded_bytes = 0
+    if texture is not None:
+        texture_height, texture_width, texture_channels = validate_texture_for_writing(
+            texture,
+            texture_encoding,
+            texture_width,
+            texture_height,
+            texture_channels,
+            texture_color_space,
+        )
+        texture_decoded_bytes = (
+            texture_width
+            * texture_height
+            * (4 if texture_encoding != "raw" else texture_channels * 4)
+        )
     validate_mesh_decode_budget(
         n_vertices,
         n_dims,
@@ -311,6 +333,8 @@ def validate_mesh_arrays(
         normals=normals,
         colors=colors,
         scalars=scalars,
+        uvs=uvs,
+        texture_decoded_bytes=texture_decoded_bytes,
     )
     return n_vertices, n_dims
 
@@ -383,6 +407,12 @@ def write_mesh(
         colors=colors,
         scalars=scalars,
         uvs=uvs,
+        texture=texture,
+        texture_encoding=texture_encoding,
+        texture_width=texture_width,
+        texture_height=texture_height,
+        texture_channels=texture_channels,
+        texture_color_space=texture_color_space,
         shading=shading,
         double_sided=double_sided,
         labels=labels,

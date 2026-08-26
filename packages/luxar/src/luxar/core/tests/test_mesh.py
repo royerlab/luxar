@@ -1271,6 +1271,31 @@ def test_face_index_width_escalates_past_uint16(tmp_path) -> None:
     )
 
 
+def test_add_mesh_rejects_geometry_and_texture_over_the_combined_budget(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two individually admissible terms must not author an unloadable node."""
+    monkeypatch.setattr(
+        "luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES", 1_000, raising=True
+    )
+    store = tmp_path / "combined-budget.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match="over the viewer"):
+            scene.add_mesh(
+                "m",
+                _V,
+                _F,
+                uvs=np.zeros((len(_V), 2), dtype=np.float32),
+                texture=np.zeros(69, dtype=np.uint8),
+                texture_encoding="png",
+                texture_width=16,
+                texture_height=16,
+                texture_channels=3,
+            )
+        assert "m" not in zarr.open_group(store, mode="r")
+
+
 def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_accepted(
     tmp_path,
 ) -> None:
