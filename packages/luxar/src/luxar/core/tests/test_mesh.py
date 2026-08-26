@@ -8,6 +8,8 @@ must be refused from. The pure validators live in
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 import zarr
@@ -739,6 +741,410 @@ def test_dim_order_permutes_vertex_columns_without_breaking_faces(tmp_path) -> N
         assert np.array_equal(
             authored[triangle][:, ::-1], mesh.vertices[mesh.faces[face_index]]
         ), f"face {face_index} no longer names its authored vertices"
+
+
+# --- dim_order and face winding (#2141) -------------------------------------
+#
+# `dim_order` renumbers the vertex COLUMNS. `normals` needs no companion transform
+# — `normal_dims` names SCENE dimension indices, so the components are already
+# expressed in the destination frame (the docstring's own example, "for a
+# (t, x, y, z) mesh those are (t, x, y)", is about the stored layout, and
+# `demo_lsystem_forest` says so inline: "The three scene dims the normals
+# describe"). This differs from gsplats, whose Cholesky factors ARE authored in
+# the source frame and so must be carried through the map.
+#
+# Face winding is the part `dim_order` can invalidate, and the part Luxar
+# deliberately does NOT repair: `cross(Ra, Rb) = det(R)·R·cross(a, b)`, so an
+# orientation-reversing permutation negates a triangle's geometric normal while
+# its corner order is untouched. Whether that is WRONG depends on which frame the
+# caller wound in, which only they know — so the writer reports and leaves the
+# data alone. These tests pin the report and, just as importantly, pin that
+# nothing is silently rewritten.
+
+_XYZ = ("x", "y", "z")
+
+
+def _xyz_dims():
+    """A plain 3D (x, y, z) scene — the frame every case below maps ONTO."""
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    return Dimensions(
+        [
+            Dimension(name=n, unit="um", range=(0, 30), step=1.0, display=True)
+            for n in _XYZ
+        ]
+    )
+
+
+_TRI_V = np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 4.0, 0.0]], dtype=np.float32)
+_TRI_F = np.array([[0, 1, 2]], dtype=np.uint32)
+_TRI_N = np.tile(np.array([[0.0, 0.0, 1.0]], dtype=np.float32), (3, 1))
+
+
+def _write_tri(tmp_path, name, **kwargs):
+    store = tmp_path / f"{name}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=_xyz_dims())
+        scene.add_mesh(name, _TRI_V, _TRI_F, **kwargs)
+    return LuxarScene.load(store).get_mesh(name)
+
+
+@pytest.mark.parametrize(
+    "dim_order,test_id",
+    [
+        (["x", "y", "z"], "identity"),
+        (["y", "z", "x"], "even_cycle"),
+        (["z", "y", "x"], "odd_reversal"),
+        (["y", "x", "z"], "odd_swap"),
+    ],
+)
+def test_dim_order_never_rewrites_faces_or_normals(
+    tmp_path, dim_order, test_id
+) -> None:
+    """`dim_order` touches vertex columns and NOTHING else.
+
+    The guard against a well-meant "fix". Repairing winding automatically looks
+    right until you notice `normal_dims` names SCENE dimensions: a caller who
+    followed that contract wound against the scene frame and is already correct,
+    so flipping their faces would corrupt working data. Same for permuting normal
+    components — they are already in the destination frame.
+
+    So the invariant is the strong one: faces and normals come out byte-identical
+    to what went in, for every permutation including the reversing ones.
+    """
+    mesh = _write_tri(
+        tmp_path, "m", normals=_TRI_N, normal_dims=[0, 1, 2], dim_order=dim_order
+    )
+    assert np.array_equal(mesh.faces, _TRI_F), f"{test_id}: faces were rewritten"
+    assert np.array_equal(mesh.normals, _TRI_N), f"{test_id}: normals were rewritten"
+    assert mesh.normal_dims == [0, 1, 2], f"{test_id}: normal_dims was rewritten"
+
+
+@pytest.mark.parametrize(
+    "dim_order,expect_warning,test_id",
+    [
+        (["x", "y", "z"], False, "identity_is_orientation_preserving"),
+        (["y", "z", "x"], False, "even_cycle_is_orientation_preserving"),
+        (["z", "y", "x"], True, "reversal_flips_handedness"),
+        (["y", "x", "z"], True, "single_swap_flips_handedness"),
+    ],
+)
+def test_dim_order_warns_exactly_when_handedness_reverses(
+    tmp_path, capsys, dim_order, expect_warning, test_id
+) -> None:
+    """The lint fires on the reversing permutations and only those.
+
+    The even cases are not padding: a lint that fired on any non-identity
+    `dim_order` would pass every reversing case and fail these, and it would cry
+    wolf on the shipped `demo_lsystem_forest`, whose `dim_order` is
+    orientation-PRESERVING.
+    """
+    _write_tri(
+        tmp_path,
+        f"m_{test_id}",
+        normals=_TRI_N,
+        normal_dims=[0, 1, 2],
+        dim_order=dim_order,
+        double_sided=False,
+    )
+    warned = "reverses handedness" in capsys.readouterr().out
+    assert warned is expect_warning, test_id
+
+
+def test_dim_order_winding_warning_includes_a_double_sided_mesh(
+    tmp_path, capsys
+) -> None:
+    """Stored-normal shading keeps winding observable when both sides draw.
+
+    ``gl_FrontFacing`` still chooses the stored normal's sign on a double-sided
+    material, so reversed winding flips the shading gradient even though coverage
+    is unchanged. ``double_sided`` defaults true, making this the common case.
+    """
+    _write_tri(
+        tmp_path,
+        "m",
+        normals=_TRI_N,
+        normal_dims=[0, 1, 2],
+        dim_order=["z", "y", "x"],
+        double_sided=True,
+    )
+    assert "reverses handedness" in capsys.readouterr().out
+
+
+def test_dim_order_winding_warning_is_silent_without_a_winding_frame(
+    tmp_path, capsys
+) -> None:
+    """No normals means no declared frame, so handedness is undecidable.
+
+    Spec §3.2: `sorted(normal_dims)` is the ONLY signal for which three axes the
+    author wound against. Warning on a guess would be noise, and the viewer
+    already renders such a mesh `DoubleSide` regardless of `double_sided`.
+    """
+    _write_tri(tmp_path, "m", dim_order=["z", "y", "x"], double_sided=False)
+    assert "reverses handedness" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "normal_dims,expected",
+    [
+        (
+            ["a", "b", "c"],
+            "normal_dims: Entry 0 must be an integer dimension index, got 'a' (str)",
+        ),
+        (
+            3,
+            "normal_dims: Expected a sequence of 3 dimension indices, got int",
+        ),
+    ],
+)
+def test_dim_order_winding_lint_defers_malformed_normal_dims_to_validator(
+    tmp_path, normal_dims, expected
+) -> None:
+    """The advisory lint must not replace the writer's actionable refusal."""
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        _write_tri(
+            tmp_path,
+            "m",
+            normals=_TRI_N,
+            normal_dims=normal_dims,
+            dim_order=["z", "y", "x"],
+        )
+
+
+def test_reveal_ladder_budget_is_charged_as_a_sum(tmp_path, monkeypatch) -> None:
+    """A ladder is charged on its levels' SUM, not on the flat surface.
+
+    The one place the flat write-time check is *multiplicatively* short rather
+    than merely incomplete: the viewer concatenates `additive_<i>` levels into one
+    node's buffers and keeps all of them resident, so it charges the total. A
+    shell ladder duplicates every boundary vertex, so the total exceeds the flat
+    mesh by a factor that grows with the level count — meaning an under-budget
+    surface could still write a ladder the viewer refuses.
+
+    The ceiling is shrunk rather than the fixture grown, and to a value the FLAT
+    surface fits inside so the assertion can only be satisfied by the sum: a build
+    that checked levels individually, or only the authored mesh, admits this.
+    """
+    from luxar.validation.base import mesh_decoded_value_count
+
+    flat_values = mesh_decoded_value_count(
+        _V.shape[0], _V.shape[1], int(_F.size // 3), normals=_N
+    )
+    # Between one flat surface and the ladder's duplicated total.
+    monkeypatch.setattr(
+        "luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES",
+        int(flat_values * 4 * 1.5),
+        raising=True,
+    )
+    with pytest.raises(ValueError, match="levels decode to"):
+        store = tmp_path / "ladder.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "m",
+                _V,
+                _F,
+                normals=_N,
+                normal_dims=[0, 1, 2],
+                additive_lod={"n_lods": 2},
+            )
+    root = zarr.open_group(str(store), mode="r")
+    assert list(root.groups()) == [], "the refused ladder was partly written"
+
+
+def test_dim_order_winding_warning_is_silent_when_frame_has_no_preimage(
+    tmp_path, capsys
+) -> None:
+    """A constant-filled frame axis is undecidable, not an authoring failure."""
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            Dimension(
+                name="t",
+                unit="s",
+                range=(0, 0),
+                step=1.0,
+                display=False,
+                discrete=True,
+            ),
+            Dimension(name="x", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="z", unit="um", range=(0, 30), step=1.0, display=True),
+        ]
+    )
+    store = tmp_path / "filled_frame.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_mesh(
+            "m",
+            _TRI_V,
+            _TRI_F,
+            normals=_TRI_N,
+            normal_dims=[0, 1, 2],
+            dim_order=["x", "y", "z"],
+            fill={"t": 0.0},
+            double_sided=False,
+        )
+    assert LuxarScene.load(store).get_mesh("m").normal_dims == [0, 1, 2]
+    assert "reverses handedness" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "route_kwargs,test_id",
+    [
+        ({}, "flat_leaf"),
+        ({"partition": {"max_elements": 2}}, "partition"),
+        ({"substitutive_lod": {"levels": 2}}, "substitutive_lod"),
+        ({"additive_lod": {"n_lods": 2}}, "additive_lod"),
+    ],
+)
+def test_dim_order_winding_lint_reaches_every_structural_route(
+    tmp_path, capsys, route_kwargs, test_id
+) -> None:
+    """One call site serves all four routes — this is what proves it.
+
+    `add_mesh_impl` runs the lint once, above the structural branches, and relies
+    on every recursive re-entry passing `dim_order=None` so it fires exactly once.
+    That is an argument, not a guarantee: a regression that moved the call below a
+    branch would leave `partition=`, `substitutive_lod=` and `additive_lod=`
+    authoring in silence while the flat leaf stayed green — a lint that is absent
+    on three quarters of the API and looks fine in every other test.
+
+    Uses the closed tetrahedron rather than the single triangle: `partition=`
+    needs enough faces to split and the LOD routes need something to coarsen.
+    """
+    store = tmp_path / f"{test_id}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(
+            "m",
+            _V,
+            _F,
+            normals=_N,
+            normal_dims=[0, 1, 2],
+            dim_order=["z", "y", "x"],
+            **route_kwargs,
+        )
+    assert "reverses handedness" in capsys.readouterr().out, (
+        f"{test_id}: the winding lint did not fire on this route"
+    )
+
+
+def test_dim_order_scene_semantics_hold_for_normal_dims(tmp_path) -> None:
+    """`normal_dims` indexes the SCENE dimensions, so it may exceed the authored width.
+
+    Pins the contract my own first reading of this code got backwards, and that
+    `demo_lsystem_forest` depends on: it authors 4 columns
+    (`dim_order=["season", "x", "y", "z"]`) and passes `normal_dims=[2, 3, 4]` —
+    scene indices, one of which is larger than any authored column index. A build
+    that treated `normal_dims` as authored columns rejects that demo outright.
+    """
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            Dimension(name="t", unit="s", range=(0, 3), step=1.0, display=False),
+            Dimension(name="x", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="z", unit="um", range=(0, 30), step=1.0, display=True),
+        ]
+    )
+    store = tmp_path / "scene_dims.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        # Three authored columns; normal_dims names scene 1..3, above that width.
+        scene.add_mesh(
+            "m",
+            _TRI_V,
+            _TRI_F,
+            normals=_TRI_N,
+            normal_dims=[1, 2, 3],
+            dim_order=["x", "y", "z"],
+            fill={"t": 0.0},
+        )
+    assert LuxarScene.load(store).get_mesh("m").normal_dims == [1, 2, 3]
+
+
+def test_add_mesh_refuses_a_mesh_over_the_viewers_decode_budget(
+    tmp_path, monkeypatch
+) -> None:
+    """The budget gate is WIRED into `add_mesh`, not merely defined.
+
+    The arithmetic is unit-tested in `test_mesh_validation.py`; what cannot be
+    checked there is whether anything calls it. Authoring a genuinely over-budget
+    mesh would mean allocating half a gigabyte of test fixture, so the ceiling is
+    shrunk instead — the validator reads the constant at call time, so a tiny
+    budget makes a four-vertex tetrahedron over-budget and proves the path runs.
+
+    Asserts on the store as well as the exception: a fail-fast gate that raises
+    AFTER writing arrays would leave a half-built node behind, which is the
+    failure mode `validate_mesh_arrays` exists to prevent. Checked on disk rather
+    than through `LuxarScene.load`, which refuses the whole store as incomplete
+    (the writer exited before finalizing) and so cannot tell a node that was
+    never created from one that was half-written.
+    """
+    monkeypatch.setattr(
+        "luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES", 16, raising=True
+    )
+    store = tmp_path / "over.luxar.zarr"
+    with pytest.raises(ValueError, match="over the viewer"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F)
+    root = zarr.open_group(str(store), mode="r")
+    assert "m" not in dict(root.groups()), "the refused node was partly written"
+
+
+def test_slab_tolerance_round_trips_under_exactly_that_key(tmp_path) -> None:
+    """`slab_tolerance` reaches zarr spelled the way the viewer reads it.
+
+    The viewer's `MeshMetadata` is a closed TypeScript interface, so its read
+    site is compile-checked — but nothing checks that the key Python WRITES is
+    the key TypeScript declares. `check-contract` does not model node appearance
+    attrs at all, and no fixture authors one, so the two spellings agree by
+    review alone. This pins the Python half against a rename, and names its twin
+    so a future rename has somewhere to look.
+
+    TWIN: `slab_tolerance` in `packages/luxar-viewer/src/types/mesh.ts`
+    (`MeshMetadata`), consumed at
+    `data/scene-loader/process/data-processor-mesh.ts` as the
+    `meshSlabTolerance` tolerance option.
+    """
+    store = _write(tmp_path, slab_tolerance=2.5)
+    node = zarr.open_group(str(store), mode="r")["m"]
+    assert node.attrs["slab_tolerance"] == 2.5
+
+
+@pytest.mark.parametrize(
+    "value,test_id",
+    [(0.0, "zero_would_render_nothing"), (-1.0, "negative"), (float("nan"), "nan")],
+)
+def test_slab_tolerance_rejects_a_non_positive_value(tmp_path, value, test_id) -> None:
+    """Zero is the one that matters, and it is refused for a concrete reason.
+
+    A zero slab reduces mesh's whole-triangle membership test to exact float
+    equality with the slice plane, so the node renders NOTHING — the same trap
+    that stops mesh reusing the Lines tolerance arm (spec §5.2.1). Accepting it
+    would hand the user a silent blank node.
+    """
+    with pytest.raises(ValueError, match="Slab tolerance"):
+        _write(tmp_path, name=f"m_{test_id}", slab_tolerance=value)
+
+
+def test_slab_tolerance_is_refused_on_the_other_geometry_types(tmp_path) -> None:
+    """Mesh-only, and enforced by the same guard as the shading controls.
+
+    It is a loading knob rather than an appearance one, so it rides in the set
+    named `MESH_ONLY_APPEARANCE_ATTRS` on a technicality. This pins the
+    behaviour that name is a technicality ABOUT: a points node must still refuse
+    it, or a user would silently author a no-op.
+    """
+    store = tmp_path / "pts.luxar.zarr"
+    with pytest.raises(ValueError, match="slab_tolerance"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("p", _V, slab_tolerance=2.0)
 
 
 @pytest.mark.filterwarnings("ignore:Dimension 't' has range")

@@ -59,7 +59,7 @@ from ..compositing import (
     sync_custom_colormap_attr,
     unnest_add_error,
 )
-from ..dim_order import apply_dim_order_positions
+from ..dim_order import apply_dim_order_positions, warn_if_dim_order_reverses_winding
 from ..partition import is_requested, reject_mismatched_partition_parent
 
 if TYPE_CHECKING:
@@ -798,6 +798,17 @@ def add_mesh_multi_lod_wrapper_impl(
             }
         )
 
+    # The ladder's levels concatenate into ONE node's buffers on the viewer side
+    # and all stay resident, so the loader charges their SUM against a single
+    # budget (`mesh-progressive-loader.ts`). The flat check only ever sees one
+    # level, and a shell ladder duplicates every boundary vertex — so an
+    # under-budget surface can still write a ladder the viewer refuses. This is
+    # the one gap in that accounting that is multiplicative rather than a bounded
+    # constant, which is why it is closed here rather than documented (#2145).
+    from ....validation.base import validate_mesh_ladder_decode_budget
+
+    validate_mesh_ladder_decode_budget(levels, context=f"mesh '{name}' reveal ladder")
+
     with asection(f"Additive-LOD mesh '{name}'"):
         aprint(
             f"📐 {len(parts)} reveal levels (method={method!r}, "
@@ -921,6 +932,15 @@ def add_mesh_impl(
             faces if isinstance(faces, np.ndarray) else np.asarray(faces)
         )
         n_faces = int(faces_arr.size // 3)
+
+        # `dim_order` renumbers the vertex COLUMNS, and an orientation-reversing
+        # permutation reflects space — so a triangle wound counter-clockwise in the
+        # caller's own column order is clockwise in the scene's. Warn rather than
+        # repair: `normal_dims` names SCENE dimensions, so a caller who followed the
+        # contract literally wound against the scene frame and is already correct,
+        # and flipping their faces would BREAK them. Only the caller knows which
+        # frame they used. See `dim_order_reverses_winding` (#2141).
+        warn_if_dim_order_reverses_winding(name, normal_dims, scene, dim_order)
 
         aprint(
             f"Adding mesh node '{name}' with {n_vertices:,} vertices and "
