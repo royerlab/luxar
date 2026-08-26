@@ -37,6 +37,7 @@ def _checkout(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     examples.mkdir()
     (examples / "one_example.py").touch()
     (examples / "two_example.py").touch()
+    (examples / "directory_example.py").mkdir()
     (examples / "helper.py").touch()
     return readme, claude, skill, examples
 

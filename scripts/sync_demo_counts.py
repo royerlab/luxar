@@ -3,8 +3,8 @@
 
 Usage::
 
-    python scripts/sync_demo_counts.py
-    python scripts/sync_demo_counts.py --check
+    hatch run sync-demo-counts
+    hatch run check-demo-counts
 
 The script rewrites only the four current count sites. Historical changelog
 counts are intentionally outside its scope. ``--check`` renders in memory and
@@ -138,7 +138,8 @@ def _render_outputs(demo_count: int, example_count: int) -> dict[Path, str]:
 
 
 def _counts() -> tuple[int, int]:
-    return len(iter_demos(refresh=True)), len(list(EXAMPLES_DIR.glob("*_example.py")))
+    example_count = sum(path.is_file() for path in EXAMPLES_DIR.glob("*_example.py"))
+    return len(iter_demos(refresh=True)), example_count
 
 
 def _diff(path: Path, expected: str) -> str:
