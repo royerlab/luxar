@@ -65,7 +65,7 @@ export function extractPath(url: string): string {
     const parsed = new URL(url);
     const pathname = parsed.pathname;
 
-    if (pathname.includes('.zarr')) {
+    if (pathname.toLowerCase().includes('.zarr')) {
       const parts = pathname.split('/').filter(Boolean);
       const zarrIndex = parts.findIndex(
         (part) => part.endsWith('.zarr') || isZippedZarrStoreUrl(part)

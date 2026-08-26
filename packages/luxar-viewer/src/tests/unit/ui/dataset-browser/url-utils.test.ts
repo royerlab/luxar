@@ -52,6 +52,7 @@ describe('extractPath', () => {
     expect(extractPath('http://x.test/data/foo.zarr')).toBe('data/foo.zarr');
     expect(extractPath('http://x.test/a/b/foo.zarr')).toBe('a/b/foo.zarr');
     expect(extractPath('http://x.test/data/foo.zarr.zip')).toBe('data/foo.zarr.zip');
+    expect(extractPath('http://x.test/data/foo.ZARR.ZIP')).toBe('data/foo.ZARR.ZIP');
   });
 
   it('truncates path components after the .zarr (zarr-internal paths)', () => {
