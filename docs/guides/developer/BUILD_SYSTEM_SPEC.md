@@ -826,8 +826,23 @@ reads that same `CLAUDE.md` and skill page, and adds
 `.agents/skills/luxar-gsplat-pipeline/SKILL.md` and
 `docs/specs/GSPLATS_DIMENSION_MAPPING.md` to the Python-owned set.
 Consequently, every `CLAUDE.md` edit runs the Python matrix.
-`dom_ts` explicitly owns the root `README.md` and gallery manifest because the
-gallery-selection unit test resolves and validates the README capture set from them.
+Two workflow files and `.gitattributes` are `dom_py` for the same reason:
+`test_docs_workflow.py` reads `docs.yml` and `.gitattributes`, and
+`test_run_external_reference_audits.py` asserts the schedule, permissions and
+token wiring of `external-reference-audits.yml`. A workflow file matches no
+other domain on its own, so each has to be named or its guard never runs.
+A narrow set of viewer TypeScript files is also `dom_py`: Python contract tests
+parse the live camera and rendering defaults, blending modes, element-texture
+capacity, LOD and spatial-query constants, gallery exposure thresholds, and
+fixture-staleness exit code from those sources. The classifier names only those
+consumed files rather than broad `src/config/`, `src/rendering/`, or `tools/`
+prefixes, so unrelated viewer changes remain TypeScript-only and do not pull in
+the Python matrix. The docs gate has no corresponding hole: it already owns every
+viewer TypeScript source under `src/`, while `tools/example-fixture-freshness.ts`
+is outside both the documentation checker's viewer scan and TypeDoc's entry
+points. `dom_ts` explicitly owns the root `README.md` and gallery manifest
+because the gallery-selection unit test resolves and validates the README capture
+set from them.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
