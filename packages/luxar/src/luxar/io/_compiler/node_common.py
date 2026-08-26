@@ -751,7 +751,7 @@ def validate_render_attrs(
 
 
 def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
-    """Validate five appearance controls plus slab tolerance in the shared gate."""
+    """Validate seven appearance controls plus slab tolerance in the shared gate."""
     for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
         if key in attrs:
             validator(attrs[key], label)
