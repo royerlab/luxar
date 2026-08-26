@@ -472,14 +472,17 @@ class TestScannedModuleSet:
 
     A gate that moves out of a ``demo_*.py`` into a shared helper must stay
     covered, so the set is a denylist over ``demos/*.py`` and
-    ``demos/_support/*.py`` rather than an opt-in filename pattern.
+    ``demos/_support/**/*.py`` rather than an opt-in filename pattern.
     """
 
     def test_shared_helpers_are_scanned(self) -> None:
-        names = {p.name for p in scanned_demo_modules()}
-        assert REQUIRED_SHARED_HELPERS <= names, (
+        demos_dir = Path(__file__).resolve().parents[1]
+        relative_paths = {
+            path.relative_to(demos_dir).as_posix() for path in scanned_demo_modules()
+        }
+        assert REQUIRED_SHARED_HELPERS <= relative_paths, (
             "shared helper modules escaped the guarded set: "
-            f"{sorted(REQUIRED_SHARED_HELPERS - names)}"
+            f"{sorted(REQUIRED_SHARED_HELPERS - relative_paths)}"
         )
 
     def test_the_set_is_a_denylist_over_every_module(self) -> None:
@@ -490,7 +493,7 @@ class TestScannedModuleSet:
             *(p for p in demos_dir.glob("*.py") if p.name not in EXCLUDED),
             *(
                 p
-                for p in (demos_dir / "_support").glob("*.py")
+                for p in (demos_dir / "_support").rglob("*.py")
                 if p.name != "__init__.py"
             ),
         }

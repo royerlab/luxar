@@ -171,3 +171,26 @@ describe('shouldShowBrowser', () => {
     });
   });
 });
+
+describe('shouldShowBrowser — zipped stores', () => {
+  it('loads a .zarr.zip directly without probing for children', async () => {
+    // The child probes are meaningless for an archive: `archive.zip/zarr.json`
+    // 404s for EVERY archive, so probing would divert a perfectly loadable
+    // dataset into the browser — which cannot list it either.
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(shouldShowBrowser('https://example.com/scene.luxar.zarr.zip')).resolves.toBe(
+      false
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('still probes a directory store whose name merely contains .zip', async () => {
+    const fetchSpy = vi.fn(async () => ({ ok: false }) as Response);
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await shouldShowBrowser('https://example.com/archive.zip.luxar.zarr');
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+});

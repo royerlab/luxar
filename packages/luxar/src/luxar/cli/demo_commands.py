@@ -21,9 +21,8 @@ import typer
 from arbol import aprint
 
 from .._process import can_kill_process_groups, run_child_process
-from ..demos import registry
+from ..demos import LOCAL_FIT_DIRNAME, registry
 from ..demos.registry import DemoInfo
-from ..utils.data_fetch import LOCAL_FIT_DIRNAME
 from . import demo_runs
 from .demo_render import (
     STATUS_BUILT,

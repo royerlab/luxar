@@ -143,7 +143,7 @@ ORBITALS = [
 #: in a way that alters the cached splats but leaves every tuning constant
 #: below untouched — a value digest cannot see that, so this is the manual half
 #: of the cache key. Mirrors the ``version=`` parameter of
-#: :func:`luxar.utils.cache.cache_computed`.
+#: :func:`luxar.demos.cache_computed`.
 FIT_RECIPE_VERSION = 1
 
 #: Fraction of the radial probability each generation box must contain.
@@ -285,7 +285,7 @@ def cache_path(grid_size: int, seeds: int, iters: int) -> Path:
     which covers the orbital table, the tuning constants that are baked into
     the cached splats, and :data:`FIT_RECIPE_VERSION` for logic changes a value
     digest cannot see. A run with new values must never silently load an old
-    one — the convention :func:`luxar.utils.cache.cache_computed` documents.
+    one — the convention :func:`luxar.demos.cache_computed` documents.
     Each parameter set keeps its own cache, so switching back and forth stays
     instant.
 
@@ -487,7 +487,7 @@ def fit_orbitals(grid_size: int, seeds: int, iters: int) -> GSplatData:
     if iters < 1:
         raise ValueError(f"--iters must be at least 1, got {iters}")
 
-    # Deliberately NOT calling utils.device.warn_if_no_cuda_gpu() here, though
+    # Deliberately NOT calling luxar.demos.warn_if_no_cuda_gpu() here, though
     # the heavyweight gsplat demos all do: its banner warns that fitting "can
     # take hours instead of minutes" and points at "shipped precomputed data".
     # Neither applies — these eight 96³ fits measure ~2 min total on MPS and
@@ -540,7 +540,7 @@ def fit_orbitals(grid_size: int, seeds: int, iters: int) -> GSplatData:
 def load_or_build_orbitals() -> GSplatData:
     """Return the fitted 4D orbital stack, fitting and caching it on first run.
 
-    Follows the cache contract :func:`luxar.utils.cache.cache_computed`
+    Follows the cache contract :func:`luxar.demos.cache_computed`
     establishes: an unreadable cache is quarantined (``.corrupt``) and refitted
     rather than crashing, and the write is atomic so an interrupted run never
     leaves a truncated file behind. Without the first half, a Ctrl-C during the

@@ -74,6 +74,8 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "test:perf": "vitest --run --config vitest.perf.config.ts",
+    "bench:zip:fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tools/make-zip-bench-fixtures.py \"${LUXAR_BENCH_FIXTURES:-packages/luxar-viewer/bench-fixtures}\"",
+    "bench:zip": "playwright test --config playwright.zipbench.config.ts",
     "test:perf:e2e": "LUXAR_E2E_NO_FIXTURES=1 playwright test --config playwright.perf.config.ts",
     "perf:diff": "node scripts/perf-diff.mjs",
     "test:watch": "vitest --watch",
@@ -109,6 +111,7 @@
     "ci:release": "pnpm run build:lib && pnpm run build:lib:check"
   },
   "dependencies": {
+    "@zarrita/storage": "^0.2.0",
     "comlink": "^4.4.2",
     "fflate": "^0.8.3",
     "mediabunny": "^1.55.1",
@@ -123,7 +126,6 @@
     "@typescript-eslint/parser": "^8.67.0",
     "@vitest/coverage-v8": "~4.1.10",
     "@vitest/ui": "~4.1.10",
-    "@zarrita/storage": "^0.2.0",
     "dependency-cruiser": "^18.2.0",
     "eslint": "^10.8.1",
     "fast-check": "^4.9.0",

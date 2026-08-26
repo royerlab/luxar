@@ -21,6 +21,7 @@ import {
   deviceClassPoolBytes,
   type CacheBudgets,
 } from '../../../cache/heap-budget';
+import { isZippedStoreUrl } from '../../zip/entries';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import type { CacheTelemetryState } from '../../../types/data-monitor-types';
@@ -106,7 +107,14 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   // tier doesn't reserve pool it can't use.
   const sliceEnabled = appConfig.cache.sliceCacheEnabled && !noCache && !noSliceCache;
   const l0Enabled = appConfig.cache.l0Enabled && !noCache;
-  const l1Enabled = appConfig.cache.enabled && !noCache;
+  // A zipped store cannot go through MultiLevelCachingStore yet: that class
+  // holds a base URL and builds its own chunk URLs, so it has no way to ask a
+  // zip archive for a member. Until it takes an injectable byte source, a
+  // `.zarr.zip` reads uncached rather than silently 404ing every chunk against
+  // `archive.zip/<key>`. Deliberately narrow: it costs zipped datasets their
+  // L1/L2 tiers and changes nothing for directory stores.
+  const zipped = isZippedStoreUrl(url);
+  const l1Enabled = appConfig.cache.enabled && !noCache && !zipped;
   // Device-class fallback pool (mobile/laptop/desktop) for WebKit without an
   // override — where the heap can't be measured. undefined in non-browser envs.
   const budgets = computeCacheBudgets(undefined, poolOverrideBytes, deviceClassPoolBytes(), {
@@ -208,7 +216,13 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
     rawStore = cachingStore;
   } else {
-    rawStore = zarr.createFetchStore(url);
+    if (zipped && appConfig.cache.enabled && !noCache) {
+      log.info(
+        Modules.SCENE_LOADER,
+        'Zipped store (.zarr.zip): reading uncached — the L1/L2 chunk cache does not support archives yet'
+      );
+    }
+    rawStore = zarr.createStoreForUrl(url);
   }
 
   // Resolve the telemetry state. URL flag wins (most user-visible);

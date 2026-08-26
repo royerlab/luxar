@@ -341,11 +341,12 @@ dependencies = [
 # with `sys` alone going 0.8 s -> 38.1 s -> 0.7 s. At whole-suite scale the
 # unpinned serial run spent 2334 s user against 3342 s sys.
 #
-# CI has set these since the self-hosted runner landed and measured the suite
-# going from 45.5/44.0/47.5 min to 15.8/16.6/16.9 (combined with `-n 4`, and its
-# note is explicit that neither works without the other) for the SAME 6261
-# passed / 288 skipped and the same 86.44% coverage. None of it reached
-# `hatch run test`, which is the documented pre-push gate, until now.
+# CI has set these since the self-hosted runner landed. Its original `-n 4`
+# benchmark took the suite from 45.5/44.0/47.5 min to 15.8/16.6/16.9 for the
+# SAME 6261 passed / 288 skipped and 86.44% coverage; CI now uses `-n 2` to fit
+# the runner's 12 GiB memory cap. Neither thread pinning nor process parallelism
+# buys the same result alone. The thread pin did not reach `hatch run test`, the
+# documented pre-push gate, until now.
 #
 # Set here rather than in conftest.py so the pin also reaches the subprocesses
 # some tests spawn (`luxar gsplat fit --tile`, the `-j 2` worker pools), and so
@@ -390,8 +391,8 @@ NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 # above — ci.yml's note is explicit that neither works without the other.
 test = "pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # NOT parallelised here: this is the script CI runs, and ci.yml already injects
-# `-n 4` via PYTEST_ADDOPTS on the 16-core self-hosted box while deliberately
-# keeping the 2-core hosted runners serial (four workers each importing
+# `-n 2 --dist loadfile` via PYTEST_ADDOPTS on the 16-core self-hosted box while
+# deliberately keeping the 2-core hosted runners serial (four workers importing
 # torch/napari/scipy OOM-killed the runner agent there). Hardcoding `-n` would
 # override that per-machine choice from the wrong place. Set PYTEST_ADDOPTS
 # yourself for a fast local coverage run.
@@ -738,19 +739,12 @@ source = ["packages/luxar/src/luxar"]
 omit = [
     "*/tests/*",                              # test code, not shipped logic
     "*/__init__.py",                          # re-export shims
-    "*/demos/*",                              # demo scripts (import-smoke-tested; main() bodies aren't a coverage target)
-    "*/luxar/utils/bundles.py",               # demo support helpers split from the former demos.py
-    "*/luxar/utils/cache.py",
+    "*/luxar/demos/*.py",                     # *.py is load-bearing: root demos omitted, nested _support measured
+    "*/luxar/demos/_support/_umap_utils.py",  # optional umap-extra paths are not available in core CI
+    "*/luxar/demos/_support/runtime/device.py", # hardware-gated CUDA/MPS detection branches
     "*/luxar/utils/colors.py",
-    "*/luxar/utils/device.py",
-    "*/luxar/utils/flags.py",
-    "*/luxar/utils/lfs.py",
-    "*/luxar/utils/payload_agreement.py",
-    "*/luxar/utils/provenance.py",
     "*/luxar/utils/scenes.py",
-    "*/luxar/utils/viewer.py",
-    "*/luxar/utils/zip_safety.py",
-    "*/gsplats/demos/*",                      # research demos (run-on-import; compile-smoke-tested only)
+    "*/gsplats/**/demos/*",                   # research demos (run-on-import; compile-smoke-tested only)
     "*/gsplats/models/gsplats/cuda/*",        # hardware-gated CUDA extension
     "*/gsplats/models/gsplats/metal/*",       # hardware-gated Metal extension
 ]
@@ -788,6 +782,7 @@ source_modules = [
     "luxar.core",
     "luxar.encoding",
     "luxar.mesh",
+    "luxar.shading",
 ]
 forbidden_modules = ["luxar.cli"]
 # CLI-behaviour tests colocated under domain packages legitimately import the
@@ -805,14 +800,10 @@ forbidden_modules = ["luxar.gsplats", "luxar.demos", "luxar.cli"]
 # Direct edges only: utils legitimately reaches gsplats through luxar.io and
 # luxar.typing_utils, which is the layering working rather than a back-edge.
 allow_indirect_imports = true
-# The device, bundles, and data_fetch exceptions can go when those dependencies
-# move. The scenes edge is permanent: the public scene helpers stay in utils.
+# The scenes edge is permanent: the public scene helpers stay in utils.
 ignore_imports = [
     "luxar.utils.tests.** -> luxar.**",
-    "luxar.utils.device -> luxar.gsplats.utils.device",
-    "luxar.utils.bundles -> luxar.gsplats.gsplat_data",
     "luxar.utils.scenes -> luxar.demos.demo_lorenz",
-    "luxar.utils.data_fetch -> luxar.gsplats.gsplat_data",
 ]
 
 [tool.bandit]

@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -352,7 +353,7 @@ def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> Non
 def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     workflow: str,
 ) -> None:
-    """Obsidian reserves a TypeScript slot without delaying required checks."""
+    """Obsidian limits per-run slot use and preserves Python memory headroom."""
     jobs = yaml.safe_load(workflow)["jobs"]
     max_parallel = re.sub(r"\s+", "", jobs["python-tests"]["strategy"]["max-parallel"])
     branches = re.fullmatch(
@@ -364,7 +365,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     )
     obsidian_cap, hosted_cap = map(int, branches.groups())
     assert obsidian_cap == 2, (
-        "python-tests must leave one of obsidian's three slots for TypeScript"
+        "one run's Python matrix must not monopolise obsidian's three slots"
     )
 
     matrix_expression = jobs["python-tests"]["strategy"]["matrix"]["python-version"]
@@ -373,6 +374,35 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     largest_matrix_size = max(len(json.loads(matrix)) for matrix in matrix_lists)
     assert hosted_cap >= largest_matrix_size, (
         "the hosted max-parallel branch must not throttle the off-PR Python matrix"
+    )
+
+    pytest_addopts = jobs["python-tests"]["env"]["PYTEST_ADDOPTS"]
+    worker_branches = re.fullmatch(
+        r"\$\{\{\s*needs\.pick-runner\.outputs\.label\s*==\s*'obsidian'\s*"
+        r"&&\s*'([^']*)'\s*\|\|\s*'([^']*)'\s*\}\}",
+        pytest_addopts,
+    )
+    assert worker_branches is not None, (
+        "python-tests must enable xdist only on pick-runner's obsidian label"
+    )
+    obsidian_args = shlex.split(worker_branches.group(1))
+    hosted_args = shlex.split(worker_branches.group(2))
+    assert hosted_args == [], "GitHub-hosted Python coverage must stay serial"
+    worker_flags = [
+        obsidian_args[index + 1]
+        for index, arg in enumerate(obsidian_args[:-1])
+        if arg == "-n"
+    ]
+    assert worker_flags == ["2"], (
+        "python-tests must leave memory headroom in obsidian's 12 GiB runner slot"
+    )
+    dist_flags = [
+        obsidian_args[index + 1]
+        for index, arg in enumerate(obsidian_args[:-1])
+        if arg == "--dist"
+    ]
+    assert dist_flags == ["loadfile"], (
+        "parallel coverage must keep each file's shared fixtures on one worker"
     )
 
     for hosted_job in ("release-readiness", "wheel-viewer"):

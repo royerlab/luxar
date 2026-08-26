@@ -103,3 +103,29 @@ describe('normalizeURL — trailing-slash contract (HIGH-6)', () => {
     }
   });
 });
+
+describe('normalizeURL — zipped stores (.zarr.zip)', () => {
+  // A zipped store is a FILE. The trailing slash exists to make directory
+  // children concatenable; appending it here yields `…zip/`, a different
+  // resource that 404s.
+  it('does NOT append a trailing slash to an absolute archive URL', () => {
+    expect(normalizeURL('https://cdn.example.com/scene.luxar.zarr.zip', ORIGIN)).toBe(
+      'https://cdn.example.com/scene.luxar.zarr.zip'
+    );
+  });
+
+  it('absolutizes a relative archive path without adding a slash', () => {
+    expect(normalizeURL('/data/scene.luxar.zarr.zip', ORIGIN)).toBe(
+      `${ORIGIN}/data/scene.luxar.zarr.zip`
+    );
+    expect(normalizeURL('data/scene.luxar.zarr.zip', ORIGIN)).toBe(
+      `${ORIGIN}/data/scene.luxar.zarr.zip`
+    );
+  });
+
+  it('still slash-terminates a directory store whose name merely contains .zip', () => {
+    expect(normalizeURL('/data/archive.zip.luxar.zarr', ORIGIN)).toBe(
+      `${ORIGIN}/data/archive.zip.luxar.zarr/`
+    );
+  });
+});
