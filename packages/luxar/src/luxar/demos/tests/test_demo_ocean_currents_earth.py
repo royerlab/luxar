@@ -648,6 +648,7 @@ def test_globe_writer_builds_partition_of_lod(tmp_path: Path) -> None:
         part = wrapper[name]
         assert part.attrs["kind"] == "lod"
         assert part.attrs["selector"] == "screen-area"
+        assert part.attrs["default_level"] == 0
         children = sorted(k for k in part.keys() if k.startswith("child_"))
         assert len(children) >= 2  # a ladder, not a lone leaf
         covers = [part[c].attrs["coverage_fraction"] for c in children]
@@ -722,6 +723,7 @@ def test_currents_writer_keeps_ribbons_atomic_and_widens_linearly(
     for name in (k for k in wrapper.keys() if k.startswith("part_")):
         part = wrapper[name]
         assert part.attrs["kind"] == "lod"
+        assert part.attrs["default_level"] == 0
         children = sorted(k for k in part.keys() if k.startswith("child_"))
         finest = part[children[-1]]
         n_v_finest = _payload_count(finest, "vertices")
