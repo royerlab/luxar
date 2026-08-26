@@ -874,9 +874,8 @@ the required 3.12 leg. On obsidian, `max-parallel: 2` prevents one run's Python
 matrix from monopolising all three shared slots; repository-wide queue order may
 still put other work ahead of that run's `typescript-tests`. The final Python leg
 follows. Every scheduled window also runs short checks on GitHub-hosted runners,
-and `pick-runner`
-routes the long Python/TypeScript legs to hosted runners when obsidian has neither
-fresh capacity nor work in flight. Five of the twelve scheduled runs measured on
+and `pick-runner` routes the long Python/TypeScript legs to hosted runners when
+obsidian has neither fresh capacity nor work in flight. Five of the twelve scheduled runs measured on
 2026-08-25 took that billed path, so the added cadence costs obsidian queue depth or
 hosted minutes according to routing; one daily pair of extra Python legs is small
 beside the seven new windows' roughly 250–280 hosted minutes/day at that observed
@@ -897,17 +896,20 @@ Scheduled runs sit in their own `concurrency` group: they share
 landing mid-schedule killed the scheduled run; a cron firing over an in-flight merge
 killed that merge's push run, which is the only place the new `dev` commit gets
 the full matrix at all. Scheduled runs still share a group with each other, so a
-window that remains in flight three hours later is cancelled by its successor. A
-floor-only window — one Python leg beside `typescript-tests` — runs about 83–91
-minutes unloaded on obsidian and fits with room to spare. The 09:17 full-matrix
-window is three legs at `max-parallel: 2`, so two waves, roughly 166–182 minutes
-unloaded against 180 minutes of spacing: on the obsidian path that window is
-best-effort rather than deterministic, since legs there have stretched 2.4–3.3x
-under contention and the successor cron can then cancel it. Promotion supply does
-not depend on it — the seven floor-only windows are unaffected — but the 3.13/3.14
-coverage it carries may wait for the next day. The cron fires the whole workflow rather than `python-tests`
-alone — a schedule event has no PR base, so change detection selects the full suite
-and the documentation gate as well.
+window that remains in flight three hours later is cancelled by its successor —
+which is itself a promotion window, so a lost window costs three hours rather than
+the cadence. *Unloaded*, a floor-only window is one Python leg beside
+`typescript-tests`, about 83–91 minutes against the 180 minutes of spacing; the
+09:17 full-matrix window is three legs at `max-parallel: 2`, so two waves, roughly
+166–182 minutes plus the hosted `changes`/`pick-runner` preamble — at the spacing
+rather than under it. Both are unloaded figures on a deliberately `SCHED_IDLE` box,
+so neither window is guaranteed to finish. The full-matrix one is simply the first
+to lose, and the 3.13/3.14 coverage it carries then waits for the next day.
+Sustained contention thins the supply of green windows rather than removing it,
+since a floor-only window carries about twice the margin of a full-matrix one. The
+cron fires the whole workflow rather than `python-tests` alone — a schedule event
+has no PR base, so change detection selects the full suite and the documentation
+gate as well.
 
 ## Architecture Notes
 

@@ -21,15 +21,18 @@ on:
     # every three hours to supply deliberate green windows for promotion.
     #
     # Scheduled runs still share a group with EACH OTHER, so a window still in
-    # flight three hours later is cancelled by its successor. A floor-only window
-    # is one Python leg beside `typescript-tests` -- ~83-91 min unloaded on
-    # obsidian (see the `timeout-minutes` note on `python-tests`) -- and fits with
-    # room to spare. The 09:17 full-matrix window is three legs at
-    # `max-parallel: 2`, i.e. two waves, ~166-182 min unloaded against 180 min of
-    # spacing: on the obsidian path that window is BEST-EFFORT, not deterministic.
-    # Legs there have stretched 2.4-3.3x under contention, so the successor cron
-    # can cancel it and 3.13/3.14 coverage then waits for the next day. Promotion
-    # supply does not depend on it -- the seven floor-only windows are unaffected.
+    # flight three hours later is cancelled by its successor -- which is itself a
+    # promotion window, so a lost window costs three hours, not the cadence.
+    # UNLOADED, a floor-only window is one Python leg beside `typescript-tests`,
+    # ~83-91 min against the 180 min of spacing (see the `timeout-minutes` note on
+    # `python-tests`); the 09:17 full-matrix window is three legs at
+    # `max-parallel: 2`, so two waves, ~166-182 min plus the hosted `changes` /
+    # `pick-runner` preamble -- AT the spacing rather than under it. Both figures
+    # are unloaded, and obsidian is deliberately SCHED_IDLE, so neither window is
+    # guaranteed to finish: the full-matrix one is simply the first to lose, and
+    # its 3.13/3.14 coverage then waits for the next day. Sustained contention
+    # thins the supply of green windows rather than removing it, since a
+    # floor-only window carries about twice the margin of a full-matrix one.
     #
     # Scheduled runs select the whole suite because they have no PR base. Keep the
     # 09:17 UTC window on the full supported Python matrix so 3.13/3.14 have one
