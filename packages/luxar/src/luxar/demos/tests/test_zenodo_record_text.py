@@ -1064,3 +1064,108 @@ class TestCheckExplainsAnAbsentFigure:
         )
 
         assert not any("not the pinned artifact" in p for p in problems)
+
+
+# ---------------------------------------------------------------------------
+# Who wrote the sidecar entry decides whether the archive is consulted.
+#
+# Both arms of this matter, and they pull in opposite directions:
+#   * a refresh entry's nulls are a VERDICT -- the local bytes are not the
+#     pinned artifact -- so reading that copy would publish figures for a
+#     generation the record does not serve;
+#   * a hand-written note is prose, not a verdict, so it must not delete the
+#     figures the bytes can still supply.
+# Keying on "any null" conflates them, and I shipped that conflation for long
+# enough to watch six tests catch it.
+# ---------------------------------------------------------------------------
+
+
+class TestWhoWroteTheEntryDecides:
+    def _row(
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sidecar: dict[str, Any],
+    ) -> dict[str, Any]:
+        archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
+        archive.parent.mkdir(exist_ok=True)
+        _write_bundle(archive, [{"n_splats": 10}, {"n_splats": 20}], tmp_path)
+        # `_locate` searches DATA_DIR and the user cache, never tmp_path, so
+        # without this the archive is unreadable and EVERY figure comes back
+        # absent -- which makes an "absent" assertion pass no matter what the
+        # code under test does.
+        monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+        manifest = _fake_manifest(
+            [_entry("movie.gsplats.zarr.zip", gen._sha256_of(archive))]
+        )
+        chars = {gen._char_key("ds", "", "movie.gsplats.zarr.zip"): sidecar}
+        (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], chars)
+        return row
+
+    def test_the_archive_is_reachable_in_this_fixture(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard the guard: with no sidecar entry the read must supply the count.
+
+        Every other assertion here is about absence, and absence is exactly what
+        a broken fixture produces. This is the control that says the fixture can
+        deliver a figure at all.
+        """
+        archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
+        archive.parent.mkdir(exist_ok=True)
+        _write_bundle(archive, [{"n_splats": 10}, {"n_splats": 20}], tmp_path)
+        monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+        manifest = _fake_manifest(
+            [_entry("movie.gsplats.zarr.zip", gen._sha256_of(archive))]
+        )
+
+        (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], {})
+
+        assert row["splats"] == "30"
+
+    def test_a_note_does_not_delete_the_readable_figures(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explaining one gap must not open others.
+
+        Otherwise the only way to document why a PSNR is absent is to lose the
+        splat count too, and a record that says nothing looks the same as one
+        with nothing to say.
+        """
+        row = self._row(
+            gen, tmp_path, monkeypatch, {"quality_note": "PSNR not recoverable here"}
+        )
+
+        assert row["splats"] == "30"
+
+    def test_a_refresh_verdict_is_respected_including_its_nulls(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The unpinned-copy verdict must survive the note-merging path."""
+        row = self._row(
+            gen,
+            tmp_path,
+            monkeypatch,
+            {
+                "n_splats": None,
+                "psnr_db": None,
+                "measured_from": None,
+                "measured_sha256": None,
+            },
+        )
+
+        assert row["splats"] == gen._ABSENT, (
+            "an all-null refresh entry means the local bytes are not the pinned "
+            "artifact; measuring them would describe the wrong generation"
+        )
+
+    def test_a_committed_measurement_still_outranks_the_local_copy(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A record describes what it SERVES, so the sidecar wins where it speaks."""
+        row = self._row(
+            gen, tmp_path, monkeypatch, {"n_splats": 99999, "measured_sha256": "a" * 64}
+        )
+
+        assert row["splats"] == "99,999"

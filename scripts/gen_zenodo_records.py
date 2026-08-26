@@ -606,7 +606,21 @@ def _dataset_rows(
     rows = []
     for variant, spec in _files_of(entry):
         info = chars.get(_char_key(dataset, variant, spec["name"]))
-        if info is None:
+        # An entry that `refresh` wrote is authoritative INCLUDING its nulls: an
+        # all-null one is its verdict that the local copy's bytes are not the
+        # pinned artifact, so reading that copy would publish figures describing
+        # a generation the record does not serve. Such an entry always carries
+        # `measured_sha256`, which is what distinguishes it from a hand-written
+        # note. A note is prose about an archive, not a finding about its bytes,
+        # so the archive still supplies whatever the note does not state --
+        # otherwise documenting why one figure is missing silently deletes the
+        # rest, and the only way to explain a gap is to widen it.
+        if info is not None and "measured_sha256" not in info:
+            path = next(_locate(dataset, entry, variant, spec["name"]), None)
+            read = _read_archive(path) if path else None
+            if read is not None:
+                info = {**read, **{k: v for k, v in info.items() if v is not None}}
+        elif info is None:
             path = next(_locate(dataset, entry, variant, spec["name"]), None)
             info = _read_archive(path) if path else None
         stored = hosted_size(spec)
