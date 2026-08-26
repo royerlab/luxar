@@ -187,6 +187,26 @@ class TestSceneExtensionNormalization:
         assert requested.is_file()
         assert not copy.exists()
 
+    def test_scene_to_zarr_rejects_archive_destination_for_directory_writer(
+        self, tmp_path
+    ):
+        source = tmp_path / "source.luxar.zarr"
+        destination = tmp_path / "copy.luxar.zarr.zip"
+
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points("pts", np.zeros((1, 3), dtype=np.float32))
+            with pytest.raises(
+                ValueError, match=r"cannot copy a directory store to an archive path"
+            ) as exc:
+                scene.to_zarr(destination)
+            compiler.write_points("after", np.ones((1, 3), dtype=np.float32))
+
+        assert str(destination) in str(exc.value)
+        assert "LuxarZarrCompiler" in str(exc.value)
+        assert not destination.exists()
+        assert LuxarScene.load(source).get_points("after")["positions"].shape == (1, 3)
+
     def test_scene_to_zarr_uses_writer_path_normalization_consistently(
         self, tmp_path, monkeypatch
     ):

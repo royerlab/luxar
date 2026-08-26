@@ -645,13 +645,16 @@ class Scene(Group):
                 must not already exist unless it is the current backing store.
                 For an archive-backed scene, the only supported destination is
                 the selected archive path, which is replaced if it exists.
+                To create an archive from a directory-backed scene, use
+                ``LuxarZarrCompiler`` or ``luxar optimise`` instead.
 
         Raises:
             FileExistsError: If a directory destination already exists and is
                 not the current backing store.
             ValueError: If the destination is inside the source store, the
                 source store is unavailable, or an archive-backed writer is
-                asked to publish anywhere except its selected archive path.
+                asked to publish anywhere except its selected archive path, or
+                a directory-backed writer is asked to copy to an archive path.
         """
         writer = self._writer
         if writer is None:
@@ -674,6 +677,13 @@ class Scene(Group):
             raise ValueError(
                 "Scene backing writer only supports its final destination: "
                 f"{final_source}"
+            )
+
+        if destination.name.endswith(".zip"):
+            raise ValueError(
+                "Scene.to_zarr() cannot copy a directory store to an archive path: "
+                f"{destination}. Create the scene with LuxarZarrCompiler({path!r}) "
+                "or run luxar optimise."
             )
 
         if destination.exists():

@@ -190,7 +190,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # extension; the path is normalized so callers that pass a bare name or
         # a plain ``.zarr`` still produce a canonically-named scene. Callers
         # should read back the final path via the ``store_path`` property. A
-        # ``.zarr.zip`` request writes to a hidden directory while active and
+        # ``.zip`` request writes to a hidden directory while active and
         # publishes the archive only after finalization succeeds.
         # Local import to avoid a module-load cycle
         # (luxar.utils.__init__ → demos → io.compiler).
