@@ -26,7 +26,9 @@ old image with no way to tell.
 
 An encoded payload is already compressed by its own codec. Running blosc over a
 JPEG buys nothing measurable and costs decode time on every load, so the encoded
-branch passes ``compressor=None`` and ``SemanticType.RAW_BYTES``. This mirrors
+branch passes ``compressor=None`` and writes through :func:`create_array`
+directly, bypassing the encoder — there is no semantic type for an opaque blob,
+since the encoder's types all describe *numbers* it may requantize. This mirrors
 ``image_labels``, whose module docstring records the same reasoning.
 """
 

@@ -535,6 +535,20 @@ def _reject_texture_conflicts(texture: Any, uvs: Any, colors: Any, attrs: Any) -
             "into an image; with no image they cost a per-vertex array and "
             "affect nothing."
         )
+    # The sampling attrs are refused on a mesh with no texture for the same
+    # reason `reject_mesh_only_appearance` refuses them on a POINTS node: there
+    # is nothing to sample, so the setting persists to the store, reads back
+    # exactly as authored, and changes no pixel. A silent no-op that survives a
+    # round trip is the hardest kind of mistake to notice.
+    if texture is None:
+        orphaned = sorted(k for k in ("texture_filter", "texture_wrap") if k in attrs)
+        if orphaned:
+            raise ValueError(
+                f"{', '.join(repr(k) for k in orphaned)} "
+                f"{'require' if len(orphaned) > 1 else 'requires'} 'texture'. "
+                "Sampling attrs configure how a texture is read; with no texture "
+                "they affect nothing."
+            )
 
 
 def _reject_texture_with_structural_routes(

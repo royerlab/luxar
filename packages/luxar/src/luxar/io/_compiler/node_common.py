@@ -34,6 +34,8 @@ from ...typing_utils.constants import (
 from ...validation.types import (
     validate_appearance_fraction,
     validate_positive_finite,
+    validate_texture_filter,
+    validate_texture_wrap,
 )
 
 # Writer-authoritative attrs each geometry writer stamps unconditionally.
@@ -199,6 +201,10 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "shade_exponent",
         "shininess",
         "specular",
+        # Mesh-only texture sampling. Same reasoning again: authorable knobs, so
+        # a typo should see them in the hint.
+        "texture_filter",
+        "texture_wrap",
         "visible",
     }
 )
@@ -209,6 +215,11 @@ _MESH_APPEARANCE_VALIDATORS = {
     "alpha_cutoff": (validate_appearance_fraction, "Alpha cutoff"),
     "shade_exponent": (validate_positive_finite, "Shade exponent"),
     "shininess": (validate_positive_finite, "Shininess"),
+    # Texture sampling. Mesh-only for the same reason the five above are: only a
+    # mesh has a texture to sample, so on any other node these are a silent
+    # no-op that reads like a working setting.
+    "texture_filter": (validate_texture_filter, "Texture filter"),
+    "texture_wrap": (validate_texture_wrap, "Texture wrap"),
 }
 
 # Non-appearance keys that legitimately reach :func:`validate_render_attrs` and

@@ -265,8 +265,8 @@ def validate_mesh_arrays(
     _validate_normal_pair(normals, normal_dims, n_vertices, n_dims)
     # Shading is metadata the viewer acts on, so a typo must not reach zarr: an
     # unrecognised value would silently take the stored-normal path.
-    if shading is not None and shading not in ("smooth", "flat"):
-        raise ValueError(f"shading must be 'smooth' or 'flat', got {shading!r}")
+    if shading is not None and shading not in ("smooth", "flat", "none"):
+        raise ValueError(f"shading must be 'smooth', 'flat' or 'none', got {shading!r}")
     if not isinstance(double_sided, bool):
         raise ValueError(
             f"double_sided must be a bool, got {type(double_sided).__name__}"
@@ -382,6 +382,12 @@ def write_mesh(
     # explicit "smooth" with no stored normals is honoured by the viewer falling
     # back to a derived flat normal at render time, and an explicit "flat" gives a
     # faceted surface even when normals are present.
+    #
+    # "none" is never a DEFAULT, only ever explicit. It suppresses the diffuse and
+    # specular terms entirely, so the base colour reaches the screen unmodulated —
+    # what a data basemap wants (a textured globe whose colours must stay faithful),
+    # and what every other Luxar geometry type does, since the other three are
+    # purely emissive. Defaulting to it would silently un-light every existing mesh.
     resolved_shading = (
         shading
         if shading is not None

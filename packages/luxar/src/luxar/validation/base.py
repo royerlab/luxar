@@ -1008,6 +1008,23 @@ TEXTURE_ENCODINGS: dict = {
 #: Channel counts a texture may carry: grey, RGB, RGBA.
 _TEXTURE_CHANNELS = (1, 3, 4)
 
+#: Per-axis pixel ceiling for a mesh texture.
+#:
+#: A texture larger than the GPU's ``MAX_TEXTURE_SIZE`` on either axis is
+#: silently clamped at upload, so the mesh renders with the wrong image and
+#: nothing says why. Refused at authoring time under the same policy as the
+#: decode budget: we should not be able to write a scene that provably breaks.
+#:
+#: This is the shape the *byte* budget cannot see — a ``100000 x 2`` texture is
+#: 800 KB and passes every accounting, then fails to upload. 16384 is the limit
+#: on current desktop hardware, and is deliberately a fixed number rather than a
+#: probe: an authoring-time check has no GPU in scope, and a device-dependent
+#: ceiling would make a store load on one machine and fail on another.
+#:
+#: MIRROR: ``MAX_MESH_TEXTURE_SIZE`` in
+#: ``packages/luxar-viewer/src/data/mesh/preflight.ts``.
+MAX_MESH_TEXTURE_SIZE = 16384
+
 
 def validate_uvs_for_writing(uvs: Any, n_vertices: int, context: str = "uvs") -> None:
     """Validate per-vertex texture coordinates before any zarr write.
@@ -1181,6 +1198,13 @@ def validate_texture_for_writing(
         raise ValidationError(
             f"{context}: Dimensions must be positive, got {res_w}x{res_h}",
             "Supply the real pixel dimensions of the texture",
+        )
+    if max(res_h, res_w) > MAX_MESH_TEXTURE_SIZE:
+        raise ValidationError(
+            f"{context}: {res_w}x{res_h} exceeds the {MAX_MESH_TEXTURE_SIZE} "
+            "per-axis limit",
+            "Resample the texture — a larger axis is silently clamped by the "
+            "GPU at upload, so the mesh would render the wrong image",
         )
     # A disagreement is refused rather than silently preferring one source: the
     # viewer spends the DECLARED numbers, so a mismatch is exactly the case where

@@ -12,7 +12,7 @@ users writing data.
 from __future__ import annotations
 
 import math
-from typing import Any, List, Optional, Union, cast
+from typing import Any, List, Optional, Tuple, Union, cast
 
 import numpy as np
 
@@ -349,6 +349,36 @@ def validate_positive_finite(value: Any, name: str) -> float:
     if not math.isfinite(result) or result <= 0.0:
         raise ValueError(f"{name} must be finite and greater than 0, got {result}")
     return result
+
+
+#: The texture magnification/minification filters the viewer implements.
+#:
+#: ``linear`` also enables mipmaps + anisotropy at upload; ``nearest`` is the
+#: right choice for a categorical or index-like texture, where interpolating
+#: between two class ids invents a third that means nothing.
+TEXTURE_FILTERS: Tuple[str, ...] = ("linear", "nearest")
+
+#: The texture wrap modes. Applied per-axis by the viewer, which defaults to
+#: repeat-in-u / clamp-in-v so an equirectangular basemap tiles across the
+#: dateline seam without bleeding the north pole into the south.
+TEXTURE_WRAPS: Tuple[str, ...] = ("repeat", "clamp")
+
+
+def _validate_texture_choice(value: Any, name: str, allowed: Tuple[str, ...]) -> str:
+    """Validate a texture sampling attr against a closed vocabulary."""
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError(f"{name} must be one of {', '.join(allowed)}, got {value!r}")
+    return value
+
+
+def validate_texture_filter(value: Any, name: str) -> str:
+    """Validate a mesh ``texture_filter`` attr."""
+    return _validate_texture_choice(value, name, TEXTURE_FILTERS)
+
+
+def validate_texture_wrap(value: Any, name: str) -> str:
+    """Validate a mesh ``texture_wrap`` attr."""
+    return _validate_texture_choice(value, name, TEXTURE_WRAPS)
 
 
 def validate_absorption(absorption: Any) -> float:

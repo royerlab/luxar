@@ -52,7 +52,7 @@ Exposed:
   points / lines / gsplats leaves and on Groups, where they do not compose. The
   second door into the same attrs (a post-hoc ``node.attrs[...] = ...``) is guarded
   by ``core/node/node.py::_WriteThroughAttrs._reject_mesh_only_on_non_mesh``.
-* :data:`MESH_ONLY_APPEARANCE_ATTRS` — the five mesh-only appearance keys
+* :data:`MESH_ONLY_APPEARANCE_ATTRS` — the mesh-only appearance keys
   refused on every non-mesh node by those two guards.
 * :func:`unnest_add_error` — strip a SAME-geometry inner adder's own ``Could
   not add <geometry> '<child>': …`` prefix from a caught exception's message,
@@ -81,7 +81,15 @@ _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
 #: The five mesh-only appearance keys refused on every non-mesh node by the
 #: adder/group and write-through guards.
 MESH_ONLY_APPEARANCE_ATTRS = frozenset(
-    {"alpha_cutoff", "ambient", "shade_exponent", "shininess", "specular"}
+    {
+        "alpha_cutoff",
+        "ambient",
+        "shade_exponent",
+        "shininess",
+        "specular",
+        "texture_filter",
+        "texture_wrap",
+    }
 )
 
 #: Matches the prefix an adder's own funnel produces, e.g.
