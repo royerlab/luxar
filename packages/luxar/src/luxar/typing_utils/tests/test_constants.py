@@ -9,7 +9,7 @@ fails directly.
 import math
 from pathlib import Path
 
-from luxar.conftest import find_repo_relative_file, read_ts_string_union
+from luxar.conftest import find_repo_relative_file, read_ts_string_literals
 from luxar.typing_utils.constants import (
     DEFAULT_POINT_RADIUS,
     DEFAULT_TRUNCATION_RADIUS,
@@ -31,15 +31,14 @@ def _viewer_type_source(filename: str) -> str:
 
 def test_line_join_styles_match_the_viewer_union() -> None:
     """Writer validation and viewer parsing accept exactly the same spellings."""
-    viewer_styles = read_ts_string_union(
-        _viewer_type_source("line-join.ts"), "LineJoinStyle"
-    )
-    assert viewer_styles == LINE_JOIN_STYLES
+    source = _viewer_type_source("line-join.ts")
+    assert read_ts_string_literals(source, "LineJoinStyle") == LINE_JOIN_STYLES
+    assert read_ts_string_literals(source, "LINE_JOIN_STYLES") == LINE_JOIN_STYLES
 
 
 def test_lod_selectors_match_the_viewer_metadata_union() -> None:
     """Authored selector units stay valid on both sides of the file format."""
-    viewer_selectors = read_ts_string_union(
+    viewer_selectors = read_ts_string_literals(
         _viewer_type_source("lod-group.ts"), "selector"
     )
     assert viewer_selectors == LOD_SELECTORS

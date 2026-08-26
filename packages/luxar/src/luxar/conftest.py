@@ -11,7 +11,7 @@ session (see ``_zarr_format_follows_luxar``), and holds a few small shared test
 helpers: ``confine_temp_dirs`` isolates in-process temporary files,
 ``array_compressor`` reads an array's compressor without the caller knowing
 which zarr format wrote it, and ``find_repo_relative_file`` /
-``read_ts_number_const`` / ``read_ts_string_union`` let the handful of
+``read_ts_number_const`` / ``read_ts_string_literals`` let the handful of
 cross-language constant-lock tests read values straight out of a TypeScript
 source rather than trust a prose comment to stay in sync.
 """
@@ -206,28 +206,36 @@ def read_ts_number_const(source: str, name: str) -> float:
     return float(m.group(1))
 
 
-def read_ts_string_union(source: str, name: str) -> frozenset[str]:
-    """Parse a literal-string union from a TypeScript type or property.
+def read_ts_string_literals(source: str, name: str) -> frozenset[str]:
+    """Parse a string vocabulary from a TypeScript type, property, or array.
 
     Accepts either ``type NAME = 'a' | 'b';`` (optionally exported) or an
-    interface property spelled ``NAME: 'a' | 'b';``. Raises ``AssertionError``
-    when the declaration is missing, computed, multiline, or repeats a member:
-    source-lock tests should fail loudly when the TypeScript shape changes rather
-    than silently compare an incomplete vocabulary.
+    interface property spelled ``NAME: 'a' | 'b';``, plus a literal const array
+    such as ``const NAME: readonly T[] = ['a', 'b'];``. Raises ``AssertionError``
+    when the declaration is missing, ambiguous, computed, multiline, or repeats
+    a member: source-lock tests should fail loudly when the TypeScript shape
+    changes rather than silently compare an incomplete vocabulary.
     """
     escaped_name = re.escape(name)
-    match = re.search(
+    union_match = re.search(
         rf"^\s*(?:(?:export\s+)?type\s+{escaped_name}\s*=|{escaped_name}\s*:)\s*"
         r"((?:'[^'\r\n]+'\s*\|\s*)*'[^'\r\n]+')\s*;",
         source,
         re.MULTILINE,
     )
-    assert match is not None, (
-        f"no literal-string union named {name!r} found in the given source. "
-        "If it was renamed, computed, or split across lines, update the caller "
-        "or this parser — do NOT delete the cross-language lock."
+    array_match = re.search(
+        rf"^\s*(?:export\s+)?const\s+{escaped_name}(?:\s*:[^=]+)?=\s*\[\s*"
+        r"((?:'[^'\r\n]+'\s*,\s*)*'[^'\r\n]+'\s*,?)\s*\]\s*;",
+        source,
+        re.MULTILINE,
     )
-    members = re.findall(r"'([^']+)'", match.group(1))
+    matches = [match for match in (union_match, array_match) if match is not None]
+    assert len(matches) == 1, (
+        f"expected exactly one literal string declaration named {name!r}, found "
+        f"{len(matches)}. If it was renamed, computed, or split across lines, "
+        "update the caller or this parser — do NOT delete the cross-language lock."
+    )
+    members = re.findall(r"'([^']+)'", matches[0].group(1))
     assert len(members) == len(set(members)), (
         f"literal-string union {name!r} repeats a member: {members!r}"
     )
