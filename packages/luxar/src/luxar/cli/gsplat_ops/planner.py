@@ -65,7 +65,7 @@ def _require_plan_volume_shape(volume: Any, fitplan: Any) -> None:
 
 
 def _fill_source_dtype(fit_config: dict, source_dtype: Optional[str]) -> None:
-    """Use the loader-observed dtype unless the user declared one in config."""
+    """Use the loader dtype unless configured; mirrors fit._stamp_source_dtype."""
     if not fit_config.get("source_dtype") and source_dtype:
         fit_config["source_dtype"] = source_dtype
 
@@ -75,10 +75,14 @@ def _stamp_content_box_output(
     volume: Any,
     box: "PlanBox",
     device: Optional[str],
+    *,
+    verbose: bool,
 ) -> None:
     """Describe a standalone content box after its halo splats were removed."""
-    from luxar.gsplats.fit_basis import fit_image_min
-    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.fit_basis import fit_image_min, reference_on_fit_basis
+    from luxar.gsplats.fitting.results import _occupied_fraction
+    from luxar.gsplats.fitting.validation import _resolve_source_dtype
+    from luxar.gsplats.gsplat_data import GSplatData, stamp_region_scoped_stats
     from luxar.gsplats.merged_quality import stamp_merged_quality
 
     z0, z1, y0, y1, x0, x1 = box.box
@@ -98,27 +102,24 @@ def _stamp_content_box_output(
         volume_shape=shape,
         grid_scale=None,
         device=device,
-        verbose=False,
+        verbose=verbose,
         image_min=fit_image_min(result.stats),
         stats=result.stats,
     )
 
-    voxels = int(np.prod(shape))
-    result.stats.update(
-        {
-            "source_shape": list(shape),
-            "source_voxels": voxels,
-            "fitted_shape": list(shape),
-            "fitted_voxels": voxels,
-            "voxels_per_splat": float(voxels / result.n_splats),
-        }
-    )
     source_dtype = result.stats.get("source_dtype")
-    if source_dtype:
-        try:
-            result.stats["source_bytes"] = voxels * int(np.dtype(source_dtype).itemsize)
-        except TypeError:
-            pass
+    _, source_itemsize = _resolve_source_dtype(core, source_dtype)
+    intensity_range = float(result.stats.get("intensity_range", 1.0))
+    normalized = reference_on_fit_basis(core, fit_image_min(result.stats))
+    normalized = normalized / intensity_range
+    stamp_region_scoped_stats(
+        result.stats,
+        source_shape=shape,
+        fitted_shape=shape,
+        n_splats=result.n_splats,
+        occupancy=_occupied_fraction(normalized, int(np.prod(shape))),
+        source_itemsize=source_itemsize,
+    )
 
 
 def _save_fit_result(
@@ -348,7 +349,13 @@ def run_content_fit(
             # Save the fitted dataset AS IS: rebuilding it from bare arrays
             # dropped the fit's truncation_radius and per-box stats (#1637),
             # and suppressing fitting info here discarded those stats on disk.
-            _stamp_content_box_output(box_result, vol, fitplan.boxes[plan_box], device)
+            _stamp_content_box_output(
+                box_result,
+                vol,
+                fitplan.boxes[plan_box],
+                device,
+                verbose=verbose,
+            )
             box_result.save(output)
         return
 

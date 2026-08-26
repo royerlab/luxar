@@ -24,6 +24,15 @@ from luxar.gsplats._data.filtering import (
     drop_content_scoped_stats as drop_content_scoped_stats,
 )
 from luxar.gsplats._data.filtering import (
+    scrub_measured_stats as scrub_measured_stats,
+)
+from luxar.gsplats._data.filtering import (
+    scrub_region_scoped_stats as scrub_region_scoped_stats,
+)
+from luxar.gsplats._data.filtering import (
+    stamp_region_scoped_stats as stamp_region_scoped_stats,
+)
+from luxar.gsplats._data.filtering import (
     stats_after_structure_change as stats_after_structure_change,
 )
 from luxar.gsplats._data.intensity import IntensityMixin

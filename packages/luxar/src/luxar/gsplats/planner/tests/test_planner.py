@@ -416,6 +416,9 @@ def _fake_box_builder(
             GSplatData(centers=centers, amplitudes=amps,
                        cholesky_factors=chol{radius},
                        stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r},
+                              "psnr_db": 42.0,
+                              "source_shape": [16, 16, 16],
+                              "source_voxels": 4096,
                               "floor": {image_min!r}, "image_min": {image_min!r},
                               "image_max": {image_min + 1.0!r},
                               "intensity_range": 1.0}},
@@ -1909,7 +1912,11 @@ class TestPlannedFitTruncationRadius:
         plan.to_json(plan_json)
         cfg = tmp_path / "fit.yaml"
         cfg.write_text("truncate: 3.5\nn_iters: 5\nearly_stop_patience: 5\n")
-        box_idx = next(i for i, b in enumerate(plan.boxes) if b.budget > 0)
+        box_idx = next(
+            i
+            for i, box in enumerate(plan.boxes)
+            if box.budget > 0 and any(box.box[axis] > 0 for axis in (0, 2, 4))
+        )
         out = tmp_path / "box.gsplats.zarr"
 
         result = CliRunner().invoke(
@@ -1936,11 +1943,20 @@ class TestPlannedFitTruncationRadius:
         assert out.exists(), result.output
         assert GSplatData.load(out).truncation_radius == pytest.approx(3.5)
         fitting = read_node_attrs(out / "fitting")
-        assert fitting["psnr_db"] > 0
-        assert np.isfinite(fitting["foreground_psnr_db"])
+        assert fitting["psnr_db"] > 30
+        assert fitting["foreground_psnr_db"] > 10
         assert fitting["source_shape"] == plan.boxes[box_idx].dims
         assert fitting["source_dtype"] == "uint16"
         assert fitting["source_bytes"] == int(np.prod(plan.boxes[box_idx].dims)) * 2
+        pipeline = read_node_attrs(out / "pipeline")
+        z0, z1, y0, y1, x0, x1 = plan.boxes[box_idx].box
+        core = stored[z0:z1, y0:y1, x0:x1].astype(np.float32)
+        normalized = np.clip(
+            (core - pipeline["image_min"]) / pipeline["intensity_range"], 0.0, None
+        )
+        assert fitting["occupancy"] == pytest.approx(
+            np.count_nonzero(normalized > 0.01) / normalized.size
+        )
 
     def test_content_source_dtype_keeps_an_explicit_config_value(self):
         from luxar.cli.gsplat_ops.planner import _fill_source_dtype
@@ -2021,13 +2037,16 @@ class TestPlannedFitTruncationRadius:
 
         assert captured == [500.0, 500.0]
 
-    def test_parallel_partition_parts_keep_the_box_stats_and_radius(self, tmp_path):
-        """``fit -j N`` (the default partition): each part carries its own box.
+    def test_parallel_partition_parts_scrub_box_scoped_stats(self, tmp_path):
+        """``fit -j N`` matches sequential part provenance.
 
         The radius and the per-box fit stats reach a part by a different route
         than the sequential path's in-memory hand-off — through the box store: the
         leaf writer stamps a box's stats as its `lod_stats`, and the reload asks
-        for top-level `stats` while also restoring them onto the sub-LOD.
+        for top-level `stats` while also restoring them onto the sub-LOD. The
+        standalone worker's remeasured score and source grid describe its box
+        store, not the merged partition part, so the reload must scrub them just
+        as `_fit_one_box` does before the sequential hand-off.
         """
         node = fit_planned_parallel(
             _toy_plan(n_boxes=2),
@@ -2043,6 +2062,9 @@ class TestPlannedFitTruncationRadius:
             sub = leaf.additive_sublods[0]
             assert sub.truncation_radius == pytest.approx(3.5)
             assert sub.stats["time_seconds"] == pytest.approx(_FAKE_BOX_TIME_SECONDS)
+            assert "psnr_db" not in sub.stats
+            assert "source_shape" not in sub.stats
+            assert "source_voxels" not in sub.stats
 
 
 class TestMaxPaddedBoxVoxels:

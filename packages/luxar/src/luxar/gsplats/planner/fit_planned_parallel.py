@@ -32,6 +32,7 @@ from arbol import aprint, asection
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_basis import fit_image_min
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
+from luxar.gsplats.gsplat_data import scrub_measured_stats, scrub_region_scoped_stats
 
 from .fit_planned import (
     _padded_bounds,
@@ -289,6 +290,8 @@ def fit_planned_parallel(
                 corrupt.append((i, repr(exc)))
                 continue
             if gd.n_splats > 0:
+                scrub_measured_stats(gd)
+                scrub_region_scoped_stats(gd)
                 regions.append(gd)
                 region_boxes.append(i)
             n_boxes_fit += 1
