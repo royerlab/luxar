@@ -243,6 +243,30 @@ class TestGeneratorDeterminism:
 
 
 class TestAmbientOcclusionInputs:
+    def test_generator_derives_normals_before_surface_extraction(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def solid_rule(iw, ix, iy, iz, grid_size):
+            del iw
+            keep = (
+                (ix >= 1)
+                & (ix < grid_size - 1)
+                & (iy >= 1)
+                & (iy < grid_size - 1)
+                & (iz >= 1)
+                & (iz < grid_size - 1)
+            )
+            return keep, np.ones(keep.shape, dtype=np.float32)
+
+        monkeypatch.setattr(
+            _demo, "_fractal_rule", lambda fractal_type, rng: ("solid", solid_rule)
+        )
+
+        _, _, normals = generate_4d_fractal(0, grid_size=5)
+
+        assert len(normals) == 26
+        assert np.all(np.linalg.norm(normals, axis=1) > 0.0)
+
     def test_surface_normals_point_outward_from_the_solid(self) -> None:
         solid = np.zeros((5, 5, 5), dtype=bool)
         solid[1:4, 1:4, 1:4] = True
