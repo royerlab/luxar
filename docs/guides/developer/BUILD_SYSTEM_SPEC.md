@@ -868,19 +868,21 @@ explicitly prefers them, and a developer's `hatch env` picks the newest interpre
 on the box. Every merge push and the daily 09:17 UTC schedule therefore run exactly
 the versions the wheel's classifiers advertise — "declared" and "tested" are kept
 identical by construction, because a claimed-but-never-exercised version is the
-same species of lie as an untested 3.10 claim would be. The other seven scheduled
-runs supply a green commit for `dev` -> `main` promotion every three hours with only
-the required 3.12 leg. On obsidian, `max-parallel: 2` prevents one run's Python
-matrix from monopolising all three shared slots; repository-wide queue order may
-still put other work ahead of that run's `typescript-tests`. The final Python leg
-follows. Every scheduled window also runs short checks on GitHub-hosted runners,
-and `pick-runner` routes the long Python/TypeScript legs to hosted runners when
-obsidian has neither fresh capacity nor work in flight. Five of the twelve scheduled runs measured on
-2026-08-25 took that billed path, so the added cadence costs obsidian queue depth or
-hosted minutes according to routing; one daily pair of extra Python legs is small
-beside the seven new windows' roughly 250–280 hosted minutes/day at that observed
-rate. (If newer interpreters ever become deliberately unsupported, the honest fix
-is a `requires-python` upper bound, not a quiet single-leg matrix.)
+same species of lie as an untested 3.10 claim would be. All eight scheduled windows
+land every three hours; the seven other than 09:17 carry only the required 3.12 leg.
+On obsidian, `max-parallel: 2` prevents one run's Python matrix from monopolising all
+three shared slots; repository-wide queue order may still put other work ahead of
+that run's `typescript-tests`. The final Python leg follows. Every scheduled window
+also runs the short `release-readiness` and `wheel-viewer` checks on GitHub-hosted
+runners, and `pick-runner` routes the long Python/TypeScript legs to hosted runners
+when obsidian has neither fresh capacity nor work in flight. Five of the twelve
+scheduled runs measured on 2026-08-25 took that billed path. Every added window
+therefore consumes hosted minutes for short jobs, while routing adds either obsidian
+queue depth or the long legs to the hosted bill. Those routed long legs alone expose
+roughly 250–280 hosted minutes/day at that observed rate; one daily pair of extra
+Python legs is small beside that baseline. (If newer interpreters ever become
+deliberately unsupported, the honest fix is a `requires-python` upper bound, not a
+quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
@@ -904,12 +906,12 @@ the cadence. *Unloaded*, a floor-only window is one Python leg beside
 166–182 minutes plus the hosted `changes`/`pick-runner` preamble — at the spacing
 rather than under it. Both are unloaded figures on a deliberately `SCHED_IDLE` box,
 so neither window is guaranteed to finish. The full-matrix one is simply the first
-to lose, and the 3.13/3.14 coverage it carries then waits for the next day.
-Sustained contention thins the supply of green windows rather than removing it,
-since a floor-only window carries about twice the margin of a full-matrix one. The
-cron fires the whole workflow rather than `python-tests` alone — a schedule event
-has no PR base, so change detection selects the full suite and the documentation
-gate as well.
+to lose, and the 3.13/3.14 coverage it carries then waits for the next day. A
+floor-only window needs about half as much quiet and is therefore the last to be
+lost; sustained contention at the documented 2.4–3.3x stretch can cancel both until
+the box quiets. The cron fires the whole workflow rather than `python-tests` alone —
+a schedule event has no PR base, so change detection selects the full suite and the
+documentation gate as well.
 
 ## Architecture Notes
 

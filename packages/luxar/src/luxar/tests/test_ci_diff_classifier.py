@@ -373,7 +373,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert matrix_lists, "python-tests must declare its event-specific version matrices"
     largest_matrix_size = max(len(json.loads(matrix)) for matrix in matrix_lists)
     assert hosted_cap >= largest_matrix_size, (
-        "the hosted max-parallel branch must not throttle the off-PR Python matrix"
+        "the hosted max-parallel branch must not throttle the full Python matrix"
     )
 
     pytest_addopts = jobs["python-tests"]["env"]["PYTEST_ADDOPTS"]

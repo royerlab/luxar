@@ -23,10 +23,9 @@ context), while push-to-dev and one daily scheduled run exercise 3.12, 3.13 and
 `install-hatch` prefers them, and a developer's Hatch environment picks the newest
 interpreter on the box — so the version most people actually run is exercised
 within 24 h rather than on every PR. The full-matrix set is exactly what the
-published classifiers advertise (3.12–3.14), so "declared" and
-"tested" cannot drift apart; the `test` Hatch matrix carries the same three legs.
-The `tomli` backport is dropped from the dev extra now that `tomllib` is always
-stdlib.
+published classifiers advertise (3.12–3.14), so "declared" and "tested" cannot
+drift apart; the `test` Hatch matrix carries the same three legs. The `tomli`
+backport is dropped from the dev extra now that `tomllib` is always stdlib.
 
 `make setup-dev` now says so when it cannot find a supported interpreter. Both it
 and `install-hatch` scan newest-first for 3.12+, but the pipx branch is tried first
