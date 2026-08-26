@@ -517,7 +517,11 @@ class Group(Node):
             extend_to_all: Dimension name(s) across which this mesh stays visible.
             dim_order: Names of the dimensions the ``vertices`` columns are in,
                 for remapping onto the scene's dimension order. ``faces`` is index
-                data addressing vertex rows and is never reordered.
+                data addressing vertex rows and is never reordered. An
+                orientation-reversing order flips face handedness relative to the
+                scene frame; the writer warns but does not repair it. Reverse the
+                corner order with ``faces[:, [0, 2, 1]]`` when needed; see the mesh
+                spec §3.7.
             fill: Fill values for scene dimensions absent from ``dim_order``.
             substitutive_lod: ``True`` / ``{...}`` to write a ``kind=lod`` group of
                 progressively DECIMATED copies of the surface (see above).
@@ -533,7 +537,18 @@ class Group(Node):
                 ``transform``, ``nd_transform``, ``blending_mode``, and the
                 mesh-only appearance controls ``ambient``, ``specular``,
                 ``alpha_cutoff`` (each in ``[0, 1]``), ``shade_exponent``, and
-                ``shininess`` (both strictly positive and finite). Note
+                ``shininess`` (both strictly positive and finite). Also mesh-only,
+                and a LOADING knob rather than an appearance one:
+                ``slab_tolerance`` (strictly positive and finite, default ``1.0``)
+                — the half-width, IN CELLS, of the nD membership slab a
+                *continuous* hidden dimension is culled against: a vertex is
+                inside when it is within ``slab_tolerance`` cells of the slice.
+                A mesh renders a triangle only when all three of its vertices
+                fall inside that slab, so on a continuous hidden axis it shows
+                "the surface near this slice" rather than a planar cut, and this
+                is the only control over how thick "near" is. It has no effect
+                on a discrete hidden axis (time, channel), which uses a half-cell
+                membership rule instead. Note
                 ``volumetric`` blending is rejected — it has no meaning for an
                 opaque surface. An explicit ``None`` for ``colormap`` or
                 ``coverage_fraction`` means "absent" — identical to omitting the

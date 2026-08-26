@@ -358,6 +358,13 @@ describe('ZipSequenceCapture', () => {
     // The signal flips between the rAF wait and the close/download
     // commit. finalize() should detect the abort at its mid-finalize
     // checkpoint and route to abort cleanup.
+    let runFrame: (() => void) | undefined;
+    const requestFrame = vi
+      .spyOn(globalThis, 'requestAnimationFrame')
+      .mockImplementation((callback: FrameRequestCallback) => {
+        runFrame = () => callback(performance.now());
+        return 1;
+      });
     const env = makeWritable();
     const showToast = vi.fn();
     const downloadBlob = vi.fn();
@@ -373,28 +380,31 @@ describe('ZipSequenceCapture', () => {
     z.addFrame(new Uint8Array([1, 2, 3]), 'png');
 
     const ac = new AbortController();
-    const finalizeP = z.finalize({
-      capturedFrames: 1,
-      frameExt: 'png',
-      label: 'PNG',
-      totalBytes: z.getTotalBytes(),
-      ffmpegScript: 'ffmpeg ...',
-      fallbackDownloadName: 'cap.zip',
-      showToast,
-      downloadBlob,
-      signal: ac.signal,
-    });
+    try {
+      const finalizeP = z.finalize({
+        capturedFrames: 1,
+        frameExt: 'png',
+        label: 'PNG',
+        totalBytes: z.getTotalBytes(),
+        ffmpegScript: 'ffmpeg ...',
+        fallbackDownloadName: 'cap.zip',
+        showToast,
+        downloadBlob,
+        signal: ac.signal,
+      });
 
-    // Yield once so finalize advances past the early-abort branch and
-    // reaches the rAF wait, then trip the signal.
-    await new Promise((r) => setTimeout(r, 0));
-    ac.abort('disposed');
+      expect(runFrame).toBeTypeOf('function');
+      ac.abort('disposed');
+      runFrame?.();
 
-    await finalizeP;
+      await finalizeP;
 
-    expect(env.close).not.toHaveBeenCalled();
-    expect(showToast).not.toHaveBeenCalled();
-    expect(downloadBlob).not.toHaveBeenCalled();
+      expect(env.close).not.toHaveBeenCalled();
+      expect(showToast).not.toHaveBeenCalled();
+      expect(downloadBlob).not.toHaveBeenCalled();
+    } finally {
+      requestFrame.mockRestore();
+    }
   });
 
   it('late write rejection is observed via diskFailed and toasts truncation warning', async () => {
