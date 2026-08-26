@@ -10,7 +10,7 @@ Also pins zarr's ambient default format to whatever Luxar writes for the whole
 session (see ``_zarr_format_follows_luxar``), and holds a few small shared test
 helpers: ``confine_temp_dirs`` isolates in-process temporary files,
 ``array_compressor`` reads an array's compressor without the caller knowing
-which zarr format wrote it, and ``find_repo_relative_file`` /
+which zarr format wrote it, and ``find_repo_relative_file`` / ``viewer_source`` /
 ``read_ts_number_const`` let the handful of cross-language constant-lock tests
 read a number straight out of a TypeScript source rather than trust a prose
 comment to stay in sync.
@@ -181,6 +181,28 @@ def find_repo_relative_file(rel_path: Path, start: Path) -> Path | None:
     until it finds the file or runs out of ancestors.
     """
     return next((p / rel_path for p in start.parents if (p / rel_path).is_file()), None)
+
+
+def viewer_source(rel_path: str) -> Path:
+    """Return one viewer file, relative to ``packages/luxar-viewer``.
+
+    Calls must pass a literal string: ``test_ci_diff_classifier.py`` scans them
+    statically and checks that every consumed viewer source selects ``dom_py``.
+    Keeping resolution here makes a new cross-language reader register its CI
+    ownership at the same line that names the file.
+    """
+    relative = Path(rel_path)
+    assert (
+        relative.parts and not relative.is_absolute() and ".." not in relative.parts
+    ), f"viewer_source() requires a path below packages/luxar-viewer, got {rel_path!r}"
+    source = find_repo_relative_file(
+        Path("packages/luxar-viewer") / relative, Path(__file__).resolve()
+    )
+    assert source is not None, (
+        f"cannot locate packages/luxar-viewer/{rel_path}; if the viewer file moved, "
+        "update the contract test"
+    )
+    return source
 
 
 def read_ts_number_const(source: str, name: str) -> float:

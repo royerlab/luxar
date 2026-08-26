@@ -158,13 +158,14 @@ jobs:
             # CLAUDE.md and visualization-skill projections checked by
             # sync_demo_counts.py. The Cholesky documentation guard reads that same
             # CLAUDE.md, all three skill pages and GSPLATS_DIMENSION_MAPPING.md.
-            # #2170 tracks deriving this hand-maintained input inventory. Markdown
-            # alone runs only docs-quality, so these need explicit Python ownership.
+            # GATE_INPUTS in test_ci_diff_classifier.py is the declaration checked
+            # against this ERE. Markdown alone runs only docs-quality, so these need
+            # explicit Python ownership.
             # Python contract tests also parse a narrow set of viewer TypeScript
-            # sources for FOV/blending defaults, texture and LOD limits, query and
-            # exposure thresholds, and the shared fixture-staleness exit code.
-            # Name those files, not whole viewer subtrees: unrelated viewer edits
-            # should remain TypeScript-only and avoid the Python matrix.
+            # sources through viewer_source(); that same classifier test scans the
+            # literal calls and requires a GATE_INPUTS row for each. Name those files,
+            # not whole viewer subtrees: unrelated viewer edits should remain
+            # TypeScript-only and avoid the Python matrix.
             # test_docs_workflow.py also parses docs.yml and derives the published
             # LFS candidate set from .gitattributes, so both are Python gate inputs.
             # external-reference-audits.yml is one too: its schedule, permissions
