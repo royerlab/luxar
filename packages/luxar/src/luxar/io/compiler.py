@@ -299,7 +299,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         return self
 
     def _check_not_finalized(self, op: str) -> None:
-        """Refuse mutating operations after finalize() has run.
+        """Refuse mutations after finalization or archive staging discard.
 
         CL-2: ``finalize()`` writes the consolidated zarr metadata; any
         subsequent ``write_*`` / ``create_*`` call would silently produce a
@@ -327,7 +327,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         If an exception is propagating out of the ``with`` block (a write
         error, or Ctrl-C / KeyboardInterrupt) and the store was NOT already
         finalized, the store is left UNfinalized and a root ``incomplete``
-        marker is stamped so the half-written artifact is detectable.
+        marker is stamped so a directory artifact is detectable; archive
+        staging is discarded instead and the compiler becomes unusable.
         Finalizing here would seal a partial store as a valid, hash-stamped
         scene (the root ``type='scene'`` attr is written up front), silently
         corrupting downstream consumers. The marker is stamped only when the

@@ -350,9 +350,7 @@ class TestSceneExtensionNormalization:
             with pytest.raises(ValueError, match="disk full"):
                 compiler.finalize()
 
-            with pytest.raises(
-                ValueError, match="staging was discarded"
-            ) as exc:
+            with pytest.raises(ValueError, match="staging was discarded") as exc:
                 scene.to_zarr(requested)
             with pytest.raises(
                 ValueError, match="only supports its final destination"
@@ -373,9 +371,7 @@ class TestSceneExtensionNormalization:
         with pytest.raises(RuntimeError, match="authoring failed"):
             with LuxarZarrCompiler(requested) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-                compiler.write_points(
-                    "replacement", np.ones((1, 3), dtype=np.float32)
-                )
+                compiler.write_points("replacement", np.ones((1, 3), dtype=np.float32))
                 raise RuntimeError("authoring failed")
 
         output = capsys.readouterr().out
