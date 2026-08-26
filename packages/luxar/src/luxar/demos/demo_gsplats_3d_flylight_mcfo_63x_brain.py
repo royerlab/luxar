@@ -215,9 +215,27 @@ VOXEL_UM = (0.19, 0.19, 0.38)
 # so a 0-2.723 window is intensity 0.367, NOT 2.723. Passing the max directly
 # stores a window ~7x too narrow and the scene renders blown out.
 #
-# The window is in STORED-AMPLITUDE units, so it is only meaningful for this
-# exact store — any refit or rescale moves it. Re-tune in the panel and copy the
-# numbers back here if the data is ever rebuilt.
+# The window is in VIEWER units, downstream of the viewer's normalise-by-stored-
+# maximum, so it is only meaningful for this exact store — any refit or rescale
+# moves it. Re-tune in the panel and copy the numbers back here if the data is
+# ever rebuilt.
+#
+# It is NOT a percentile of the stored amplitudes, and it is worth knowing that
+# before trying to derive it. Measured on the shipped store (653,759 splats):
+#
+#     min 0.0048   median 7.51   mean 10.52   p99.9 79.16   max 188.81
+#
+# 2.723 is below the MEDIAN, so no percentile rule lands anywhere near it — the
+# number is a judgement made in the panel against the rendered image, not a
+# statistic, and it has to be re-made by eye rather than recomputed.
+#
+# Two consequences worth flagging together, because they compound:
+#   * A REFIT changes the stored distribution, so this constant is stale the
+#     moment the archive is rebuilt, independently of any viewer change.
+#   * This node carries direct colour and no colormap, so `intensity` acts as a
+#     gain on radiance rather than as a display window over a LUT. Any change
+#     that rescales amplitudes at scene-insertion time therefore shifts the
+#     effective exposure here, and this constant does not compensate.
 DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
 
 # Opacity is the exposure lever and wants to be tiny; scaling the amplitudes
