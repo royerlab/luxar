@@ -377,12 +377,14 @@ export function meshWebGPUFactory(
       ? rawDerivative.z.lessThan(0.0).select(rawDerivative.negate(), rawDerivative).toVar()
       : null;
 
+    // Stays null under `unlit`, and that is the point rather than a default: no
+    // normal is computed at all — not a normal computed and then multiplied by zero.
+    // The `normal` attribute stays out of the vertex layout and the derivative pair
+    // is never evaluated.
     let N: TSLNode | null = null;
     if (unlit) {
-      // Unlit: no normal is computed at all — not a normal that is computed and
-      // then multiplied by zero. The `normal` attribute stays out of the vertex
-      // layout, and so does the derivative pair.
-      N = null;
+      // Nothing to do — see above. Kept as an explicit arm so the three shading
+      // modes read as three branches here, matching `MeshShadingMode`.
     } else if (!vNormal || !derivativeNormal) {
       N = derivativeNormal;
     } else {

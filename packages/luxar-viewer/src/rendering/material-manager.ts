@@ -222,6 +222,24 @@ export class MaterialManager {
   }
 
   /**
+   * The two capabilities a mesh texture upload depends on.
+   *
+   * Exposed as a narrow accessor rather than the whole `RendererCapabilities`
+   * because the texture upload is the only consumer outside this class, and it
+   * needs exactly these two. Returns the conservative answer when caps have not
+   * been set (unit tests, pre-renderer): `filterableFloatTextures: false` selects a
+   * HalfFloat upload, which filters correctly on every backend — degrading HDR
+   * precision is recoverable, whereas a float32 texture the device cannot filter
+   * silently samples blocky.
+   */
+  getTextureCapabilities(): { filterableFloatTextures: boolean; maxAnisotropy: number } {
+    return {
+      filterableFloatTextures: this.caps?.hdr.filterableFloatTextures ?? false,
+      maxAnisotropy: 8,
+    };
+  }
+
+  /**
    * Create a point material — PER NODE, no LRU cache.
    *
    * Point data lives in a per-node texture (`uPointTex`), so two nodes

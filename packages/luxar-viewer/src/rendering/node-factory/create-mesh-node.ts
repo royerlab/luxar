@@ -41,6 +41,8 @@ import { scheduleBlendModeProgramWarmupForObject } from '../webgl-blend-warmup';
 import { log, Modules } from '../../utils/log';
 import type { MeshSide } from '../../data/mesh/projection';
 import type { MeshShadingMode } from '../materials/mesh/appearance';
+import { createMeshTexture } from '../mesh-texture';
+import type { MeshTextureData } from '../../types/mesh';
 import type { MeshDataLoader, MeshMetadata, MeshUserData } from '../../types/mesh';
 
 /**
@@ -122,6 +124,67 @@ export function applyMeshShading(
   if (typeof material.updateShading !== 'function') return;
   material.updateShading(resolveMeshShading(attrs, storedNormalsUsable));
   scheduleBlendModeProgramWarmupForObject(object);
+}
+
+/**
+ * Upload the decoded texture into the material, once the data has arrived.
+ *
+ * Separate from node creation because a texture is DATA: `createEmptyMeshNode` runs
+ * before any fetch, so the material is built with a blank placeholder and the real
+ * image is installed here, on the commit that carries it.
+ *
+ * What is decided at CREATION and never here is the shader VARIANT — the define and
+ * the `uv` attribute both key off `attrs.has_texture`, a per-node constant. That
+ * split is the point: the variant is fixed from birth (WebGPU bakes the attribute
+ * set into the pipeline at first draw), and only the texture's IDENTITY changes,
+ * which on GLSL is a plain uniform write with no recompile.
+ *
+ * Idempotent, so the steady state after the first commit costs nothing: the setter
+ * compares the incoming texture against the bound one and only rebuilds the TSL
+ * graph when they differ. That comparison is load-bearing on the TSL backend, where
+ * `texture()` captures its Texture at construction — a slice move that re-installed
+ * the same image would otherwise rebuild the graph on every frame of a scrub.
+ */
+export function applyMeshTexture(
+  object: THREE.Mesh,
+  attrs: MeshMetadata,
+  data: MeshTextureData
+): void {
+  const material = object.material as LuxarMeshMaterial;
+  if (typeof material.updateBaseColorTexture !== 'function') return;
+
+  // Uploaded ONCE per node and cached on the object, keyed by the payload's
+  // identity. The loader caches the decoded mesh for its whole life and hands back
+  // the same `data.texture` on every `updateView`, so identity is a sound key — and
+  // re-uploading a 2048x1024 basemap on every slice move is the regression this
+  // avoids. Cached on the node rather than in a module map so it is collected with
+  // the node and cannot outlive a dataset switch.
+  const cache = object.userData as { meshTextureSource?: MeshTextureData; meshTexture?: THREE.Texture };
+  let texture = cache.meshTexture ?? null;
+  if (cache.meshTextureSource !== data || !texture) {
+    cache.meshTexture?.dispose();
+    texture = createMeshTexture(data, attrs, materialManager.getTextureCapabilities(), object.name);
+    cache.meshTextureSource = data;
+    cache.meshTexture = texture;
+  }
+
+  const luminance = attrs.texture_channels === 1;
+  material.updateBaseColorTexture(texture, luminance);
+
+  // The pick pass samples the same texture, for its alpha: texture alpha multiplies
+  // coverage, so an RGBA basemap's holes are real holes on screen and must not stay
+  // pickable or depth-occluding.
+  //
+  // Through the METHOD, not the uniform, and the difference is backend-visible: on
+  // GLSL the uniform IS the binding, but the TSL twin's `texture()` node captured
+  // its Texture at construction, so a uniform write there would leave the pick pass
+  // sampling the blank placeholder — alpha 0 everywhere, making the whole mesh
+  // unpickable. Both wrappers expose the same method name so there is no branch.
+  const pickMaterial = (object.userData.pickNode as THREE.Mesh | undefined)?.material;
+  if (pickMaterial && !Array.isArray(pickMaterial)) {
+    const pick = pickMaterial as { updateBaseColorTexture?: (t: THREE.Texture | null) => void };
+    pick.updateBaseColorTexture?.(texture);
+  }
 }
 
 /**
@@ -213,6 +276,17 @@ export function createMeshMaterial(
     offset: composedOffset,
     blendingMode: requestedMode,
     shading,
+    // A BLANK placeholder, not the real image — which has not been fetched yet.
+    // Seeding it here rather than at the first commit is what fixes the shader
+    // VARIANT from birth: `has_texture` is a per-node constant, so the define never
+    // flips and (on GLSL) the arriving image is a uniform write with no recompile.
+    // Nothing draws in the meantime — the placeholder geometry has zero faces.
+    ...(attrs.has_texture
+      ? {
+          baseColorTexture: new THREE.Texture(),
+          baseColorTextureLuminance: attrs.texture_channels === 1,
+        }
+      : {}),
   });
 
   const colormapName = attrs.colormap;
@@ -341,6 +415,10 @@ export function createEmptyMeshNode(
       nodeId: pickId,
       opacity: attrs.opacity ?? 1.0,
       alphaCutoff: attrs.alpha_cutoff,
+      // Same placeholder-at-creation rule as the visual material above: this
+      // decides whether the pick program declares a sampler, and `has_texture` is a
+      // per-node constant. `applyMeshTexture` installs the real image at commit.
+      baseColorTexture: attrs.has_texture ? new THREE.Texture() : null,
     });
     materialManager.register(pickMaterial);
     // Share the same indexed BufferGeometry — only the material differs. The

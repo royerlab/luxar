@@ -42,6 +42,20 @@ export interface MeshPickingMaterialConfig {
   opacity?: number;
   /** `opaque`-mode cutout threshold. Defaults to {@link MESH_DEFAULTS}. */
   alphaCutoff?: number;
+  /**
+   * The visual material's base-colour texture, when it has one.
+   *
+   * Supplied so the pick pass can multiply the texture's ALPHA into coverage —
+   * the visual shader does, so an RGBA basemap's cutout holes exist on screen, and
+   * a pick pass that ignored the texture would leave them pickable and
+   * depth-occluding. The exact visual/pick divergence `syncMeshPickAppearance`
+   * exists to prevent.
+   *
+   * Build-time, not a runtime setter, because it decides whether the program
+   * declares a sampler and reads `uv` at all — and `has_texture` is a per-node
+   * constant, unlike the blending mode.
+   */
+  baseColorTexture?: THREE.Texture | null;
 }
 
 export class MeshPickingMaterial
@@ -65,9 +79,13 @@ export class MeshPickingMaterial
         uSurfaceDepth: { value: 1 },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
+        ...(config.baseColorTexture
+          ? { uBaseColorTex: { value: config.baseColorTexture } }
+          : {}),
       },
       vertexShader: MESH_PICK_GLSL.vertex,
       fragmentShader: MESH_PICK_GLSL.fragment,
+      defines: config.baseColorTexture ? { LUXAR_MESH_PICK_BASE_COLOR_TEX: '' } : {},
       glslVersion: THREE.GLSL3,
       transparent: false,
       depthTest: true,
@@ -101,6 +119,21 @@ export class MeshPickingMaterial
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }
+  }
+
+  /**
+   * Install the real base-colour texture once the data has arrived.
+   *
+   * A plain uniform write here, unlike the TSL twin: the sampler is declared by the
+   * constructor's define, so only the bound image changes and no recompile is
+   * needed. Present under the same NAME as the TSL method so `applyMeshTexture` has
+   * one call site rather than a backend branch.
+   *
+   * A no-op when the node has no texture — the uniform only exists in that variant.
+   */
+  updateBaseColorTexture(tex: THREE.Texture | null): void {
+    if (!this.uniforms.uBaseColorTex || !tex) return;
+    this.uniforms.uBaseColorTex.value = tex;
   }
 
   /**
@@ -157,6 +190,11 @@ export class MeshPickingMaterial
       nodeId: this.uniforms.uNodeId.value as number,
       opacity: this.uniforms.uOpacity.value as number,
       alphaCutoff: this.uniforms.uAlphaCutoff.value as number,
+      // Must go through the CONSTRUCTOR, not a post-hoc uniform write: the texture
+      // decides whether the program declares a sampler, so a clone that copied only
+      // the uniform would build the untextured variant and silently make every
+      // cutout hole pickable again.
+      baseColorTexture: (this.uniforms.uBaseColorTex?.value as THREE.Texture | null) ?? null,
     });
     cloned.uniforms.uAlphaCutout.value = this.uniforms.uAlphaCutout.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
