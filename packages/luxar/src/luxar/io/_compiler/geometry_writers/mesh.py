@@ -204,6 +204,7 @@ def validate_mesh_arrays(
     normal_dims: Any = None,
     colors: Any = None,
     scalars: Any = None,
+    uvs: Any = None,
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Any = None,
@@ -252,6 +253,7 @@ def validate_mesh_arrays(
         validate_faces_for_writing,
         validate_labels_for_writing,
         validate_positions_for_writing,
+        validate_uvs_for_writing,
         validate_vertices_for_writing,
     )
 
@@ -264,6 +266,8 @@ def validate_mesh_arrays(
     # writer's uint32 cast, which is what makes the bounds check meaningful.
     validate_faces_for_writing(faces, n_vertices)
     _validate_normal_pair(normals, normal_dims, n_vertices, n_dims)
+    if uvs is not None:
+        validate_uvs_for_writing(uvs, n_vertices)
     # Shading is metadata the viewer acts on, so a typo must not reach zarr: an
     # unrecognised value would silently take the stored-normal path.
     if shading is not None and shading not in ("smooth", "flat", "none"):
@@ -361,6 +365,7 @@ def write_mesh(
         normal_dims=normal_dims,
         colors=colors,
         scalars=scalars,
+        uvs=uvs,
         shading=shading,
         double_sided=double_sided,
         labels=labels,

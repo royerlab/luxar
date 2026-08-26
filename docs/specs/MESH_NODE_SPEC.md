@@ -276,6 +276,8 @@ convention (fail-fast, before any zarr group is created):
   (reject float, which `.astype(np.uint32)` would silently truncate); `min >= 0`; `max < n_vertices`;
   `F >= 1`. Mirrors the `line_type='indexed'` index gate at `geometry_writers/lines.py:134-170`, which
   is the closest precedent and already encodes each of these traps.
+- `validate_uvs_for_writing(uvs, n_vertices)` — shape `(V, 2)`, exactly one finite `(u, v)` pair per
+  vertex. Values outside `[0, 1]` remain legal because `texture_wrap="repeat"` intentionally tiles them.
 - `validate_normals_for_writing(normals, n_vertices)` — shape `(V, 3)`, finite. Zero-length normals are
   **warned**, not rejected (degenerate triangles legitimately produce them). Render-time handling is
   **pointwise, not per-face**: on a shared-vertex indexed mesh the interpolated normal blends toward the
@@ -435,6 +437,9 @@ scene.add_mesh(
     uvs: NDArray[np.float32] | None = None,
     texture: NDArray | None = None,
     texture_encoding: Literal["raw", "png", "webp", "jpeg"] = "raw",
+    texture_width: int | None = None,
+    texture_height: int | None = None,
+    texture_channels: int | None = None,
     texture_color_space: Literal["srgb", "linear"] = "srgb",
     shading: Literal["smooth", "flat", "none"] | None = None,
     double_sided: bool = True,

@@ -15,6 +15,7 @@ import warnings
 
 import numpy as np
 import pytest
+import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.typing_utils.constants import MAX_MESH_VERTICES
@@ -446,36 +447,42 @@ def test_broadcast_color_and_scalar_accepted(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
-    "factory,error_pattern,test_id",
+    "uvs,error_pattern,test_id",
     [
         (
-            lambda: validate_uvs_for_writing(np.zeros((4, 3), np.float32), 4),
+            np.zeros((4, 3), np.float32),
             "Expected shape",
             "three_components_is_not_a_uv",
         ),
         (
-            lambda: validate_uvs_for_writing(np.zeros(8, np.float32), 4),
+            np.zeros(8, np.float32),
             "Expected shape",
             "flat_array_rejected",
         ),
         (
-            lambda: validate_uvs_for_writing(np.zeros((3, 2), np.float32), 4),
+            np.zeros((3, 2), np.float32),
             "3 rows but the mesh has 4",
             "count_mismatch",
         ),
         (
-            lambda: validate_uvs_for_writing(
-                np.array([[0.0, 0.0], [np.nan, 0.0]], np.float32), 2
+            np.array(
+                [[0.0, 0.0], [np.nan, 0.0], [0.0, 0.0], [0.0, 0.0]],
+                np.float32,
             ),
             "non-finite",
             "nan_samples_an_undefined_texel",
         ),
     ],
 )
-def test_uv_rejections(factory, error_pattern, test_id) -> None:
+def test_uv_rejections(tmp_path, uvs, error_pattern, test_id) -> None:
     """Each malformed UV array is refused before anything reaches disk."""
-    with pytest.raises(ValidationError, match=error_pattern):
-        factory()
+    texture = np.zeros((2, 2, 3), dtype=np.uint8)
+    store = tmp_path / f"{test_id}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match=error_pattern):
+            scene.add_mesh("m", _TETRA_V, _TETRA_F, uvs=uvs, texture=texture)
+    assert "m" not in zarr.open_group(store, mode="r")
 
 
 @pytest.mark.parametrize(
