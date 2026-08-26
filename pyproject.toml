@@ -516,7 +516,8 @@ MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
 NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 [[tool.hatch.envs.test.matrix]]
-# Every version the classifiers advertise, mirroring the CI matrix's non-PR set:
+# Every version the classifiers advertise, mirroring the CI matrix's full set
+# (dev pushes and the daily 09:17 schedule):
 # `requires-python = ">=3.12"` has no ceiling, so the version most developers
 # actually run (their newest interpreter) has to be testable too —
 # `hatch run test.py3.14:cov`.
