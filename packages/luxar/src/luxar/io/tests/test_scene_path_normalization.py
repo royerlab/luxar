@@ -104,6 +104,10 @@ class TestSceneExtensionNormalization:
         assert (tmp_path / "scene.luxar.zarr.zip").is_file()
         assert not requested.exists()
 
+    def test_zip_without_archive_name_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="must include a name before .zip"):
+            LuxarZarrCompiler(tmp_path / ".zip")
+
     def test_archive_destination_symlink_is_refused_before_authoring(self, tmp_path):
         target = tmp_path / "target.zip"
         target.write_bytes(b"previous archive")
@@ -181,6 +185,23 @@ class TestSceneExtensionNormalization:
 
         assert requested.is_file()
         assert not copy.exists()
+
+    def test_scene_to_zarr_uses_writer_path_normalization_consistently(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        destination = tmp_path / "copy.luxar.zarr"
+
+        with LuxarZarrCompiler("~/scene.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points("pts", np.zeros((1, 3), dtype=np.float32))
+            scene.to_zarr(destination)
+
+        assert destination.is_dir()
+        assert LuxarScene.load(destination).get_points("pts")["positions"].shape == (
+            1,
+            3,
+        )
 
     def test_scene_to_zarr_archive_log_uses_public_path(self, tmp_path, capsys):
         requested = tmp_path / "scene.luxar.zarr.zip"

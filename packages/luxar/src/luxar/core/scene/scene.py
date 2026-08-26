@@ -242,7 +242,9 @@ class Scene(Group):
         """Get the path to the backing Zarr store.
 
         Returns:
-            Path to the Zarr store backing this scene
+            Path to the Zarr store backing this scene. Archive-backed writers
+            return their staging directory before finalization and the archive
+            path afterward.
         """
         if self._writer:
             return self._writer.store_path
@@ -639,10 +641,10 @@ class Scene(Group):
         ``LuxarZarrCompiler`` if additional writes are needed.
 
         Args:
-            path: Destination path for the copied Zarr store. The destination
+            path: Destination path for the Zarr store. A directory destination
                 must not already exist unless it is the current backing store.
                 For an archive-backed scene, the only supported destination is
-                the archive path selected when the writer was created.
+                the selected archive path, which is replaced if it exists.
 
         Raises:
             FileExistsError: If ``path`` already exists and is not the current
@@ -656,7 +658,7 @@ class Scene(Group):
             raise ValueError("Scene has no backing writer; cannot export to Zarr")
 
         source = Path(self.get_store_path()).resolve()
-        final_source = Path(writer.final_store_path).expanduser().resolve()
+        final_source = Path(writer.final_store_path).resolve()
         destination = Path(path).expanduser().resolve()
 
         if not source.exists():
