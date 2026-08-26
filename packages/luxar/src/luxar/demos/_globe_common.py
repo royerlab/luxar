@@ -1190,26 +1190,37 @@ class SeaLevel:
     specular: float = 0.65
     shininess: float = 48.0
     ambient: float = 0.55
-    #: Lift as a fraction of radius. NOT zero — exactly at sea level the water and
-    #: the terrain are coplanar along every coastline, and coplanar geometry
-    #: z-fights into a shimmering hairline as the camera moves — but it has to be
-    #: read in EXAGGERATED units, which is what the first value got wrong.
+    #: Radial offset as a fraction of radius. **NEGATIVE** — the water sits
+    #: slightly BELOW datum — and the sign is the whole point.
     #:
-    #: A fraction of the radius is not a small number when the relief is scaled.
-    #: ``2e-4`` under a 15x exaggeration is ``2e-4 * 6371 km / 15`` = **85 real
-    #: metres** of sea-level rise, which floods every delta and coastal lowland —
-    #: and it did, visibly. ``2e-5`` is ~8.5 m, small enough to be sub-texel on a
-    #: 4096-wide basemap (one texel is ~10 km) while still clearing the depth
-    #: buffer.
-    lift: float = 2e-5
+    #: Two things pushed this, and only the second is subtle.
+    #:
+    #: A positive lift floods. A fraction of the radius is not a small number once
+    #: relief is exaggerated: ``+2e-4`` under 15x is ``2e-4 * 6371 km / 15`` =
+    #: **85 real metres** of sea-level rise, which drowned every delta.
+    #:
+    #: But taking it to zero still floods, and that is a DATA-RESOLUTION limit
+    #: rather than a tuning one. The relief grid is area-averaged from ETOPO onto
+    #: the mesh's own lon/lat grid, so at 2048 columns each cell spans ~20 km.
+    #: South Florida, the Everglades, the Nile delta — anywhere genuinely 1-3 m
+    #: above the sea over tens of kilometres — averages to at or below zero in a
+    #: 20 km cell, so a surface at exactly datum submerges it. The giveaway is the
+    #: SHAPE of the flooding: the shoreline follows large square steps, because it
+    #: is tracing grid cells rather than the 16384-wide basemap's coastline.
+    #:
+    #: Dropping the water ~8 m below datum keeps that low-lying coast dry. The cost
+    #: is a shoreline that has retreated by 8 m of elevation, which on a basemap
+    #: whose texel is ~10 km is far below one pixel. It also removes the
+    #: coplanarity outright — nothing is left to z-fight — which the original
+    #: positive lift existed to avoid in the first place.
+    lift: float = -2e-5
     #: Grid divisions, as a fraction of the terrain's.
     #:
-    #: 2 rather than 4, and it is tied to ``lift`` above. A UV sphere puts its
-    #: VERTICES on the sphere, so its flat facets dip below it by the sagitta —
-    #: ``R(1 - cos(pi/n))``, which at 512 divisions is 1.9e-5 of the radius, i.e.
-    #: the same order as the lift itself. Halving the divisor drops that to 4.7e-6
-    #: so the facet mid-points stay above sea level rather than dipping under the
-    #: terrain and cutting notches in the coastline.
+    #: A UV sphere puts its VERTICES on the sphere, so its flat facets dip below it
+    #: by the sagitta, ``R(1 - cos(pi/n))`` — 1.9e-5 of the radius at 512
+    #: divisions, which was the same order as the old positive lift and cut notches
+    #: in the coastline. With the offset now negative and an order larger than the
+    #: sagitta at this divisor (4.7e-6), the facets no longer reach the terrain.
     grid_divisor: int = 2
 
 

@@ -188,9 +188,17 @@ def test_the_sea_surface_sits_at_sea_level_and_is_translucent() -> None:
     # invisible (both are the same colour), while a sun-glint is a highlight the
     # basemap has nowhere. Found by toggling the node, not by reasoning.
     assert SeaLevel().specular > 0.5
-    # NOT zero: exactly at sea level the water and the terrain are coplanar along
-    # every coastline, and coplanar geometry z-fights into a shimmering hairline.
-    assert SeaLevel().lift > 0.0
+    # NEGATIVE, and the sign is the point. Taking the offset to zero still floods,
+    # because the relief grid is area-averaged onto ~20 km cells: anywhere genuinely
+    # 1-3 m above the sea over tens of kilometres (south Florida, the Everglades,
+    # the Nile delta) averages to at or below zero, so a surface at exactly datum
+    # submerges it. The giveaway was the SHAPE — the shoreline traced square grid
+    # steps rather than the 16384-wide basemap's coastline.
+    #
+    # Dropping the water ~8 m below datum keeps that coast dry for a shoreline
+    # retreat far under one basemap texel (~10 km), and removes the coplanarity
+    # that a positive lift existed to avoid in the first place.
+    assert SeaLevel().lift < 0.0
 
 
 def test_the_cloud_shell_clears_the_exaggerated_relief() -> None:

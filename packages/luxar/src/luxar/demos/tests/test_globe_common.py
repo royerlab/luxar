@@ -177,3 +177,58 @@ def test_encoded_texture_round_trips_through_the_codec() -> None:
     # the bytes, so a mislabelled payload fails in the browser, not here.
     assert blob[0] == 0xFF and blob[1] == 0xD8
     assert blob.size < tex.nbytes, "the encoded form should be smaller than raw"
+
+
+@pytest.mark.parametrize(
+    "place,lon,lat,should_be_dry",
+    [
+        # Low-lying coast: genuinely 1-6 m above the sea over tens of kilometres,
+        # which is exactly what a ~20 km relief cell averages toward zero. These
+        # are the places a sea surface at datum drowns.
+        ("S Florida / Everglades", -80.9, 25.9, True),
+        ("Nile delta", 31.0, 31.2, True),
+        ("Bangladesh delta", 90.4, 22.8, True),
+        ("Amazon mouth", -50.0, -0.5, True),
+        # Real ocean, kilometres deep. If these came out dry the surface would be
+        # below the sea floor and the layer would be pointless.
+        ("Gulf of Mexico", -90.0, 25.0, False),
+        ("mid-Atlantic", -40.0, 30.0, False),
+    ],
+)
+def test_sea_level_leaves_low_coast_dry_and_ocean_wet(
+    place: str, lon: float, lat: float, should_be_dry: bool
+) -> None:
+    """The water surface must sit below low-lying land and above the sea floor.
+
+    This is the assertion a screenshot cannot make reliably and that two rounds of
+    tuning got wrong. A positive offset of 2e-4 was 85 real metres under a 15x
+    exaggeration and drowned every delta; taking it to zero still drowned them,
+    because the relief is area-averaged onto ~20 km cells and anywhere 1-3 m above
+    the sea averages to at or below datum there.
+
+    Checked against ETOPO's own values at named places rather than against the
+    render, so the answer is a number and not an impression. Skips when the ETOPO
+    cache is absent, since this is a data-dependent property of the real grid.
+    """
+    from pathlib import Path
+
+    cache = Path.home() / ".cache/luxar/global_rivers_earth/etopo_2022_60s.tif"
+    if not cache.exists():
+        pytest.skip("ETOPO cache not present")
+    tifffile = pytest.importorskip("tifffile")
+
+    from luxar.demos import demo_global_rivers_earth as demo
+    from luxar.demos._globe_common import SeaLevel, resample_equirect_grid
+
+    etopo = tifffile.imread(cache)
+    grid = resample_equirect_grid(etopo, demo.GLOBE_LON + 1, demo.GLOBE_LAT + 1)
+    relief = grid / demo.R_EARTH * demo.EXAGG
+    water = SeaLevel().lift
+
+    row = int(round((90.0 - lat) / 180.0 * demo.GLOBE_LAT))
+    col = int(round((lon + 180.0) / 360.0 * demo.GLOBE_LON))
+    is_dry = bool(relief[row, col] > water)
+    assert is_dry is should_be_dry, (
+        f"{place}: terrain {grid[row, col]:.1f} m ({relief[row, col]:+.2e}) vs "
+        f"water {water:+.2e} — expected {'dry' if should_be_dry else 'submerged'}"
+    )
