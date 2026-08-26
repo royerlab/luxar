@@ -9,11 +9,10 @@ fails directly. The numeric convention is the same one used for ``ALPHA_CLAMP``
 """
 
 import math
-from pathlib import Path
 
 import pytest
 
-from luxar.conftest import find_repo_relative_file, read_ts_string_literals
+from luxar.conftest import read_ts_string_literals, viewer_source
 from luxar.typing_utils.constants import (
     DEFAULT_POINT_RADIUS,
     DEFAULT_TRUNCATION_RADIUS,
@@ -26,20 +25,9 @@ from luxar.typing_utils.geometry_capabilities import (
 )
 
 
-def _viewer_type_source(filename: str) -> str:
-    rel = Path("packages/luxar-viewer/src/types") / filename
-    start = Path(__file__).resolve()
-    source_path = find_repo_relative_file(rel, start)
-    assert source_path is not None, (
-        f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
-        "update this test — do NOT delete the cross-language lock."
-    )
-    return source_path.read_text(encoding="utf-8")
-
-
 def test_line_join_styles_match_the_viewer_union() -> None:
     """Writer validation and viewer parsing accept exactly the same spellings."""
-    source = _viewer_type_source("line-join.ts")
+    source = viewer_source("src/types/line-join.ts").read_text(encoding="utf-8")
     assert read_ts_string_literals(source, "LineJoinStyle") == LINE_JOIN_STYLES
     assert read_ts_string_literals(source, "LINE_JOIN_STYLES") == LINE_JOIN_STYLES
 
@@ -47,7 +35,8 @@ def test_line_join_styles_match_the_viewer_union() -> None:
 def test_lod_selectors_match_the_viewer_metadata_union() -> None:
     """Authored selector units stay valid on both sides of the file format."""
     viewer_selectors = read_ts_string_literals(
-        _viewer_type_source("lod-group.ts"), "selector"
+        viewer_source("src/types/lod-group.ts").read_text(encoding="utf-8"),
+        "selector",
     )
     assert viewer_selectors == LOD_SELECTORS
 
@@ -55,7 +44,8 @@ def test_lod_selectors_match_the_viewer_metadata_union() -> None:
 def test_lod_display_types_match_the_capability_table() -> None:
     """The viewer's metadata union names exactly the LOD-capable geometries."""
     viewer_display_types = read_ts_string_literals(
-        _viewer_type_source("lod-group.ts"), "display_type"
+        viewer_source("src/types/lod-group.ts").read_text(encoding="utf-8"),
+        "display_type",
     )
     assert viewer_display_types == set(lod_capable_types())
 
@@ -63,7 +53,8 @@ def test_lod_display_types_match_the_capability_table() -> None:
 def test_partition_display_types_match_the_capability_table() -> None:
     """The viewer's metadata union names exactly partition-capable geometries."""
     viewer_display_types = read_ts_string_literals(
-        _viewer_type_source("partition-group.ts"), "display_type"
+        viewer_source("src/types/partition-group.ts").read_text(encoding="utf-8"),
+        "display_type",
     )
     assert viewer_display_types == set(partition_capable_types())
 
@@ -71,7 +62,8 @@ def test_partition_display_types_match_the_capability_table() -> None:
 def test_monitor_display_types_match_specialized_group_metadata() -> None:
     """Monitor display types cover the union of specialized group geometries."""
     viewer_display_types = read_ts_string_literals(
-        _viewer_type_source("data-monitor-types.ts"), "displayType"
+        viewer_source("src/types/data-monitor-types.ts").read_text(encoding="utf-8"),
+        "displayType",
     )
     assert viewer_display_types == set(lod_capable_types()) | set(
         partition_capable_types()

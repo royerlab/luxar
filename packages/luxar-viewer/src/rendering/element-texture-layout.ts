@@ -158,7 +158,15 @@ export function applyElementTextureWidthDefine(
 }
 
 let configuredMaxTextureSize: number | null = null;
-const warnedCapacityClamp = new Set<ElementTextureLayout>();
+/**
+ * Keyed by `${layout.label}:${requested}`, NOT by the layout object. A clamp is
+ * silent DATA LOSS, and a per-layout flag reports only the FIRST offender: a
+ * scene with two oversized Lines nodes announced one of them and dropped the
+ * other's tail without a word. Keying on the requested count reports each
+ * distinct clamped size once, while still collapsing per-frame repeats. Nodes
+ * with the same label and requested size intentionally fold into one line.
+ */
+const warnedCapacityClamp = new Set<string>();
 
 /**
  * Configure the layout from the live renderer capabilities. Called
@@ -212,21 +220,44 @@ export function getMaxElementCapacityPerNode(layout: ElementTextureLayout): numb
 
 /**
  * Clamp a requested element capacity to the per-node texture bound,
- * warning once per session and layout on the first clamp (data loss —
- * the tail of the node's elements will never render; the layout's
- * `clampHint` names the fix).
+ * reporting each distinct clamped size once (data loss — the tail of the
+ * node's elements will never render; the layout's `clampHint` names the
+ * fix). Identically sized offenders of one geometry type share that report.
+ *
+ * Reported at ERROR level, not warning. A clamp means part of the scene the
+ * author asked for is not on screen and never will be, and because elements
+ * are written in spatial (Hilbert / BSP) order the dropped tail is one
+ * COMPACT REGION rather than a thin scatter — it reads as a hole in the data,
+ * not as degraded quality. That is indistinguishable from a broken dataset
+ * unless the message stands out from the couple of hundred ordinary log lines
+ * a scene load emits (#1957, where an ocean-currents node lost the North
+ * Atlantic and the one `console.warn` saying so went unnoticed).
+ *
+ * The Python writers warn about the same overflow at AUTHORING time
+ * (`io/_compiler/node_common.py::warn_if_over_element_cap`, #1957), but only
+ * against the 4096-class floor and only for scenes Luxar authored. This is the
+ * load-time backstop: it knows the REAL device bound and fires for any store,
+ * however it was produced.
  */
-export function clampElementCapacity(requested: number, layout: ElementTextureLayout): number {
+export function clampElementCapacity(
+  requested: number,
+  layout: ElementTextureLayout,
+  reportLoss = true
+): number {
   const max = getMaxElementCapacityPerNode(layout);
   if (requested <= max) return requested;
-  if (!warnedCapacityClamp.has(layout)) {
-    warnedCapacityClamp.add(layout);
+  const key = `${layout.label}:${requested}`;
+  if (reportLoss && !warnedCapacityClamp.has(key)) {
+    warnedCapacityClamp.add(key);
     const noun = layout.label.charAt(0).toUpperCase() + layout.label.slice(1);
-    log.warning(
+    log.error(
       Modules.GPU_BUFFER_POOL,
       `${noun} capacity ${requested.toLocaleString()} exceeds the per-node texture bound ` +
         `${max.toLocaleString()} (width ${getElementTextureWidth(layout)} × maxTextureSize ` +
-        `${effectiveMaxTextureSize()}); clamping. ${layout.clampHint}`
+        `${effectiveMaxTextureSize()}); clamping — the last ` +
+        `${(requested - max).toLocaleString()} ${layout.label}s of this node will NEVER ` +
+        'render, and being spatially ordered they are one contiguous region of the scene. ' +
+        `${layout.clampHint}`
     );
   }
   return max;
@@ -290,8 +321,8 @@ export const SPLAT_TEXTURE_LAYOUT: ElementTextureLayout = {
 export const SPLAT_FLOATS_PER_SPLAT = SPLAT_TEXTURE_LAYOUT.floatsPerElement;
 
 /** Clamp a requested splat capacity (see {@link clampElementCapacity}). */
-export function clampSplatCapacity(requested: number): number {
-  return clampElementCapacity(requested, SPLAT_TEXTURE_LAYOUT);
+export function clampSplatCapacity(requested: number, reportLoss = true): number {
+  return clampElementCapacity(requested, SPLAT_TEXTURE_LAYOUT, reportLoss);
 }
 
 // ---------------------------------------------------------------------------
@@ -312,8 +343,8 @@ export const POINT_TEXTURE_LAYOUT: ElementTextureLayout = {
 export const POINT_FLOATS_PER_POINT = POINT_TEXTURE_LAYOUT.floatsPerElement;
 
 /** Clamp a requested point capacity (see {@link clampElementCapacity}). */
-export function clampPointCapacity(requested: number): number {
-  return clampElementCapacity(requested, POINT_TEXTURE_LAYOUT);
+export function clampPointCapacity(requested: number, reportLoss = true): number {
+  return clampElementCapacity(requested, POINT_TEXTURE_LAYOUT, reportLoss);
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +365,6 @@ export const LINE_TEXTURE_LAYOUT: ElementTextureLayout = {
 export const LINE_FLOATS_PER_SEGMENT = LINE_TEXTURE_LAYOUT.floatsPerElement;
 
 /** Clamp a requested segment capacity (see {@link clampElementCapacity}). */
-export function clampLineCapacity(requested: number): number {
-  return clampElementCapacity(requested, LINE_TEXTURE_LAYOUT);
+export function clampLineCapacity(requested: number, reportLoss = true): number {
+  return clampElementCapacity(requested, LINE_TEXTURE_LAYOUT, reportLoss);
 }

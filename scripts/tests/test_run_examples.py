@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from luxar.conftest import viewer_source
+
 _MOD_PATH = Path(__file__).resolve().parents[1] / "run_examples.py"
 _spec = importlib.util.spec_from_file_location("run_examples", _MOD_PATH)
 assert _spec is not None and _spec.loader is not None
@@ -328,9 +330,6 @@ def test_make_e2e_targets_require_fresh_example_fixtures() -> None:
 
 
 def test_typescript_checker_uses_python_stale_exit_code() -> None:
-    checker = (
-        _MOD_PATH.parent.parent
-        / "packages/luxar-viewer/tools/example-fixture-freshness.ts"
-    ).read_text()
+    checker = viewer_source("tools/example-fixture-freshness.ts").read_text()
 
     assert f"STALE_EXIT_CODE = {run_examples.STALE_EXIT_CODE}" in checker

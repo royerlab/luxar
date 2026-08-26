@@ -24,13 +24,12 @@ parallel to the Points/Lines coarsen suites in ``test_substitutive_*.py``.
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
 import zarr
 
-from luxar.conftest import find_repo_relative_file, read_ts_number_const
+from luxar.conftest import read_ts_number_const, viewer_source
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group import Group
 from luxar.core.group.lod.group import (
@@ -1045,19 +1044,7 @@ def test_max_coverage_fraction_matches_the_viewer_fill_factor() -> None:
     build-time link, so this test IS the link: it parses the TypeScript
     source. Prose comments on both sides are not enough.
     """
-    from luxar.core.group.lod import group as lod_group_module
-
-    # Walk up from luxar/core/group/lod/group.py to the repo root (the ancestor
-    # holding packages/luxar-viewer) rather than hard-coding a parent depth, which
-    # a package move would silently break.
-    rel = Path("packages") / "luxar-viewer" / "src" / "scene" / "lod-group-registry.ts"
-    start = Path(lod_group_module.__file__).resolve()
-    registry = find_repo_relative_file(rel, start)
-    assert registry is not None, (
-        f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
-        "update this test — do NOT delete it: it is the only link keeping "
-        "MAX_COVERAGE_FRACTION and the viewer's FILL_FACTOR relation."
-    )
+    registry = viewer_source("src/scene/lod-group-registry.ts")
     source = registry.read_text(encoding="utf-8")
 
     fill_factor = read_ts_number_const(source, "FILL_FACTOR")

@@ -9,11 +9,10 @@ path that cannot represent it — the defect class this module exists to prevent
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
-from luxar.conftest import find_repo_relative_file
+from luxar.conftest import viewer_source
 from luxar.typing_utils._format_contract import (
     GEOMETRY_TYPES,
     LOADER_TYPES,
@@ -76,14 +75,9 @@ def test_capability_table_matches_the_viewer() -> None:
     cross-language contract is the exhaustive row set plus the shared ``lod`` and
     ``partition`` columns.
     """
-    rel = Path("packages/luxar-viewer/src/types/geometry-capabilities.ts")
-    start = Path(__file__).resolve()
-    source_path = find_repo_relative_file(rel, start)
-    assert source_path is not None, (
-        f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
-        "update this test — do NOT delete the cross-language lock."
+    source = viewer_source("src/types/geometry-capabilities.ts").read_text(
+        encoding="utf-8"
     )
-    source = source_path.read_text(encoding="utf-8")
     viewer_capabilities = _read_viewer_capabilities(source)
     python_capabilities = {
         name: (capabilities.lod, capabilities.partition)

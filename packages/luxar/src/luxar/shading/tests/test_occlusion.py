@@ -7,6 +7,8 @@ be measuring the calibration instead of the geometry. Where the calibration
 itself is under test it is named as such.
 """
 
+import tracemalloc
+
 import numpy as np
 import pytest
 
@@ -33,6 +35,16 @@ def _truncated_ball(n: int, seed: int = 0) -> np.ndarray:
     """A ball with a flat face cut off, so its occlusion is not radially symmetric."""
     pts = _ball(n * 2, seed=seed)
     return pts[pts[:, 0] < 0.5][:n]
+
+
+def _golden_inputs():
+    rng = np.random.default_rng(2189)
+    positions = rng.normal(size=(16, 3))
+    positions /= np.linalg.norm(positions, axis=1, keepdims=True)
+    positions *= rng.uniform(0.15, 1.0, size=(16, 1))
+    mass = rng.uniform(0.25, 1.75, size=16)
+    normals = rng.normal(size=(16, 3))
+    return positions, mass, normals
 
 
 def _grid_plane(x_range, y_range, step, z=0.0):
@@ -76,6 +88,258 @@ def _sheet_and_trench(step: float = 0.025):
 # ---------------------------------------------------------------------------
 # The discriminating property: geometry, not local count
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "occluder, use_normals, expected",
+    [
+        (
+            "density",
+            False,
+            [
+                0.4772594,
+                0.8658054,
+                0.52359486,
+                0.8584347,
+                0.7205625,
+                0.78561676,
+                0.3946743,
+                1.0,
+                0.6091558,
+                0.65593886,
+                0.8584526,
+                0.59058166,
+                0.735902,
+                0.59123194,
+                0.74920523,
+                0.8712187,
+            ],
+        ),
+        (
+            "density",
+            True,
+            [
+                0.26036423,
+                0.7944937,
+                0.52302706,
+                1.0,
+                0.3638128,
+                1.0,
+                0.7787249,
+                1.0,
+                0.6810605,
+                0.4389521,
+                1.0,
+                0.3851334,
+                0.86871606,
+                0.20319045,
+                0.31647933,
+                0.68358916,
+            ],
+        ),
+        (
+            "opaque",
+            False,
+            [
+                0.4709193,
+                0.85833335,
+                0.528831,
+                0.85833335,
+                0.7166667,
+                0.7831265,
+                0.41334534,
+                1.0,
+                0.5815767,
+                0.6709464,
+                0.85833335,
+                0.60642946,
+                0.7166667,
+                0.575,
+                0.7455794,
+                0.85833335,
+            ],
+        ),
+        (
+            "opaque",
+            True,
+            [
+                0.2575248,
+                0.7855057,
+                0.5391116,
+                1.0,
+                0.35610747,
+                1.0,
+                0.7800412,
+                1.0,
+                0.66421187,
+                0.4349221,
+                1.0,
+                0.3874846,
+                0.86749125,
+                0.168073,
+                0.3089602,
+                0.6577838,
+            ],
+        ),
+    ],
+)
+def test_bake_matches_fixed_seed_golden_values(occluder, use_normals, expected):
+    positions, mass, normals = _golden_inputs()
+    got = bake_ambient_occlusion(
+        positions,
+        mass=mass,
+        normals=normals if use_normals else None,
+        occluder=occluder,
+        radius=0.9,
+        n_directions=6,
+        grid_cells=8,
+        strength=0.85,
+        floor=0.1,
+    )
+    np.testing.assert_allclose(
+        got, np.asarray(expected, dtype=np.float32), rtol=0.0, atol=1e-6
+    )
+
+
+def test_shading_processes_columns_in_bounded_row_slabs(monkeypatch):
+    rows = 5
+    columns = np.full((rows, 2), 0.5, dtype=np.float32)
+    weights = np.full((rows, 2), 0.75, dtype=np.float32)
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_BYTES", 4 * columns.shape[1] * 4)
+    seen_rows = []
+    real_transmittance = occlusion_module._transmittance
+
+    def recording_transmittance(depth, occluder):
+        seen_rows.append(len(depth))
+        return real_transmittance(depth, occluder)
+
+    monkeypatch.setattr(occlusion_module, "_transmittance", recording_transmittance)
+    occlusion_module._shade_columns(
+        columns,
+        weights,
+        occluder="density",
+        extinction=0.8,
+        strength=0.7,
+        floor=0.0,
+    )
+
+    assert seen_rows == [4, 1]
+    np.testing.assert_array_equal(columns, np.full_like(columns, 0.5))
+
+
+def test_slabbed_helpers_are_bit_identical_across_boundaries(monkeypatch):
+    rng = np.random.default_rng(36)
+    columns = rng.uniform(0.0, 3.0, size=(9, 6)).astype(np.float32)
+    weights = rng.uniform(0.01, 1.0, size=(9, 6)).astype(np.float32)
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_BYTES", 4 * columns.shape[1] * 4)
+
+    for occluder in ("density", "opaque"):
+        for active_weights in (None, weights):
+            mapped = columns.copy()
+            mapped *= 0.73
+            occlusion_module._transmittance(mapped, occluder)
+            if active_weights is None:
+                transmittance = mapped.mean(axis=1)
+            else:
+                transmittance = (mapped * active_weights).sum(
+                    axis=1
+                ) / active_weights.sum(axis=1)
+            expected = np.clip(1.0 - 0.81 * (1.0 - transmittance), 0.13, 1.0).astype(
+                np.float32
+            )
+
+            got = occlusion_module._shade_columns(
+                columns,
+                active_weights,
+                occluder=occluder,
+                extinction=0.73,
+                strength=0.81,
+                floor=0.13,
+            )
+            np.testing.assert_array_equal(got, expected)
+
+    expected = (columns * weights).sum(axis=1) / weights.sum(axis=1)
+    np.testing.assert_array_equal(occlusion_module._combine(columns, weights), expected)
+
+
+@pytest.mark.parametrize("occluder", ["density", "opaque"])
+@pytest.mark.parametrize("use_normals", [False, True])
+@pytest.mark.parametrize("use_groups", [False, True])
+def test_public_bake_is_bit_identical_across_slab_boundaries(
+    monkeypatch, occluder, use_normals, use_groups
+):
+    positions, mass, normals = _golden_inputs()
+    group_by = np.arange(len(positions)) % 2 if use_groups else None
+    kwargs = dict(
+        mass=mass,
+        normals=normals if use_normals else None,
+        group_by=group_by,
+        occluder=occluder,
+        radius=0.9,
+        n_directions=6,
+        grid_cells=8,
+        strength=0.85,
+        floor=0.1,
+    )
+
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_BYTES", len(positions) * 6 * 4)
+    expected = bake_ambient_occlusion(positions, **kwargs)
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_BYTES", 3 * 6 * 4)
+    got = bake_ambient_occlusion(positions, **kwargs)
+
+    np.testing.assert_array_equal(got, expected)
+
+
+def test_weighted_combine_does_not_materialize_a_full_product(monkeypatch):
+    per_direction = np.full((100_000, 8), 0.5, dtype=np.float32)
+    weights = np.full_like(per_direction, 0.75)
+    monkeypatch.setattr(
+        occlusion_module, "_ROW_SLAB_BYTES", 1_024 * per_direction.shape[1] * 4
+    )
+
+    tracemalloc.start()
+    try:
+        got = occlusion_module._combine(per_direction, weights)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    np.testing.assert_array_equal(got, np.full(len(per_direction), 0.5, np.float32))
+    assert peak < per_direction.nbytes // 2
+
+
+def test_ungrouped_bake_reuses_group_columns_result(monkeypatch):
+    positions = _ball(8, seed=35)
+    sentinel = np.zeros((len(positions), 2), dtype=np.float32)
+    seen = []
+
+    monkeypatch.setattr(occlusion_module, "sphere_directions", lambda _: np.eye(2, 3))
+    monkeypatch.setattr(occlusion_module, "_group_columns", lambda *a, **k: sentinel)
+    monkeypatch.setattr(
+        occlusion_module,
+        "_resolve_extinction",
+        lambda extinction, columns, weights, occluder: seen.append(columns) or 0.0,
+    )
+
+    bake_ambient_occlusion(positions, n_directions=2, grid_cells=4)
+
+    assert len(seen) == 1
+    assert seen[0] is sentinel
+
+
+def test_direction_weight_clipping_reuses_matmul_result(monkeypatch):
+    real_clip = np.clip
+    clip_calls = []
+
+    def recording_clip(values, lower, upper, **kwargs):
+        clip_calls.append((values, kwargs.get("out")))
+        return real_clip(values, lower, upper, **kwargs)
+
+    monkeypatch.setattr(occlusion_module.np, "clip", recording_clip)
+    occlusion_module._direction_weights(np.eye(3), np.eye(3))
+
+    assert len(clip_calls) == 1
+    assert clip_calls[0][1] is clip_calls[0][0]
 
 
 def test_trench_is_darker_than_flat_sheet():
