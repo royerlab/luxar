@@ -201,7 +201,10 @@ def test_thresholds_match_the_capture_harness() -> None:
     rather than in a comment. Change a threshold in ``exposure-policy.ts`` and
     this test names the Python constant that needs the same edit.
     """
-    policy_ts = viewer_source("src/tests/screenshots/exposure-policy.ts")
+    try:
+        policy_ts = viewer_source("src/tests/screenshots/exposure-policy.ts")
+    except AssertionError as error:
+        pytest.skip(f"viewer sources not present: {error}")
     if not policy_ts.exists():
         pytest.skip(f"viewer sources not present: {policy_ts}")
     ts_values = {
