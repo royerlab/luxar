@@ -864,6 +864,10 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = RESOLUTION) ->
                     np.float32
                 )
 
+                # AO scales the incident-light emission term; volumetric blending
+                # supplies the separate outgoing attenuation term.
+                # Keep compositor identities explicit so the Layers panel shows
+                # the complete authored appearance rather than inherited values.
                 scene.add_points(
                     FAMILY_NAMES[family],
                     nd,
