@@ -2829,7 +2829,7 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # view-anchored key would make the same region read differently from
                 # different camera angles.
                 shading="none",
-                clouds=Clouds(strength=0.22, gamma=2.2),
+                clouds=Clouds(strength=0.45, gamma=2.0, intensity=1.6),
                 blending_mode=GLOBE_BLENDING,
                 # GLOBE_DIM * GLOBE_INTENSITY, and the product is the point. The
                 # point version applied these separately — DIM baked into the

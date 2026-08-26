@@ -512,7 +512,7 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 # Altitude DERIVED from the relief's own peak rather than copied:
                 # under a 15x exaggeration Everest is 2.1% of the radius, so the
                 # 1.2% the flat globes use would sit below the Himalaya.
-                clouds=Clouds(strength=0.22, gamma=2.2),
+                clouds=Clouds(strength=0.45, gamma=2.0, intensity=1.6),
                 # OPAQUE, not `normal`: this is the backdrop, and opaque is the only
                 # mode that leaves the viewer's sorted-transparent set and
                 # unconditionally writes depth — which is what gives the `luminous`

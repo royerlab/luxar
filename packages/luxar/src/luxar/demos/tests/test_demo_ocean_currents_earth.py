@@ -499,7 +499,15 @@ def test_layer_appearance_matches_the_authored_intent() -> None:
     globe_call = source.split("build_earth(")[1].split("scene.add_lines(")[0]
     lines_call = source.split("scene.add_lines(")[1].split("scene.add_text(")[0]
     assert 'blending_mode="opaque"' in globe_call
-    assert 'blending_mode="normal"' in lines_call
+    # `luminous`, not `normal`. The distinction that matters is between
+    # `luminous` and plain `additive`, not between additive and `normal` — which
+    # is how this was originally reasoned. `luminous` is additive AND depth-tested,
+    # so it keeps what `normal` was protecting (the far-side network stays hidden
+    # behind the opaque globe) and gains two things: overlapping ribbons ACCUMULATE
+    # (informative — a boundary current concentrates flow, so it brightens), and
+    # the composition is commutative, so nothing depends on getting depth order
+    # right across 11M segments and a cloud shell.
+    assert 'blending_mode="luminous"' in lines_call
     assert LINE_OPACITY == pytest.approx(0.77)
 
 

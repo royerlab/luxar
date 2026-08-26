@@ -536,6 +536,7 @@ def add_cloud_shell(
     n_lon: int = 192,
     n_lat: int = 96,
     opacity: float = 1.0,
+    intensity: float = 1.0,
     layer: bool = True,
     **extra: Any,
 ) -> None:
@@ -548,10 +549,24 @@ def add_cloud_shell(
     is ~76 km, which is above the troposphere and still small enough that the
     parallax at the limb looks like atmosphere rather than a detached bubble.
 
-    ``normal`` blending, not ``additive``: clouds OCCLUDE the surface under them,
-    and an additive layer would brighten it instead — a bright ocean showing
-    through a cloud bank. Depth-tested against the opaque globe, so the far-side
-    clouds are hidden rather than showing through the planet.
+    ``luminous`` blending, and the reasoning here was wrong the first time round.
+    The shell was ``normal`` on the argument that "clouds OCCLUDE the surface, and
+    an additive layer would brighten it instead" — which conflates ``luminous``
+    with ``additive``. They are different modes for exactly this reason:
+    ``luminous`` is additive *and* ``depthTest: true``, so the far-side deck is
+    still hidden by the opaque globe. Nothing is given up.
+
+    And additive is the better physical model. A thin cloud at planetary scale does
+    not replace the surface beneath it — it SCATTERS sunlight toward the viewer, so
+    it adds light on top of whatever is there. Subtracting the surface is what a
+    thick, opaque overcast does, which is not this layer.
+
+    The decisive practical difference is order. ``normal`` puts the shell in the
+    viewer's sorted transparent set, so its appearance depends on getting depth
+    order right against every other translucent thing in the scene (the current
+    ribbons, another shell). ``luminous`` is commutative — the result is
+    independent of draw order — so an entire class of sorting artefact simply does
+    not arise.
 
     Args:
         scene: The scene (or group) to add the node to.
@@ -565,6 +580,9 @@ def add_cloud_shell(
         n_lon: Longitude divisions of the shell mesh.
         n_lat: Latitude divisions of the shell mesh.
         opacity: Node opacity, multiplying the texture's alpha.
+        intensity: Linear brightness multiplier. Under `luminous` this is the
+            knob that decides whether the deck reads at all — see
+            :class:`Clouds`.
         layer: Expose in the Layers panel.
         **extra: Forwarded verbatim to ``add_mesh``. The reason this exists is
             ``dim_order`` / ``fill``: in an nD scene the shell has to be present
@@ -633,8 +651,9 @@ def add_cloud_shell(
         # Unlit: a cloud deck lit by a view-anchored key would slide its terminator
         # independently of the globe's underneath, which reads as two planets.
         shading="none",
-        blending_mode="normal",
+        blending_mode="luminous",
         opacity=opacity,
+        intensity=intensity,
         layer=layer,
         # Single-sided. Without it the shell's far interior draws over the near
         # clouds, doubling their density at the limb exactly where it is already
@@ -1171,22 +1190,48 @@ class SeaLevel:
     specular: float = 0.65
     shininess: float = 48.0
     ambient: float = 0.55
-    #: Lift as a fraction of radius. NOT zero: exactly at sea level the water and
+    #: Lift as a fraction of radius. NOT zero — exactly at sea level the water and
     #: the terrain are coplanar along every coastline, and coplanar geometry
-    #: z-fights into a shimmering hairline as the camera moves.
-    lift: float = 2e-4
-    #: Grid divisions, as a fraction of the terrain's. Water is a smooth sphere,
-    #: so it needs a fraction of the terrain's tessellation.
-    grid_divisor: int = 4
+    #: z-fights into a shimmering hairline as the camera moves — but it has to be
+    #: read in EXAGGERATED units, which is what the first value got wrong.
+    #:
+    #: A fraction of the radius is not a small number when the relief is scaled.
+    #: ``2e-4`` under a 15x exaggeration is ``2e-4 * 6371 km / 15`` = **85 real
+    #: metres** of sea-level rise, which floods every delta and coastal lowland —
+    #: and it did, visibly. ``2e-5`` is ~8.5 m, small enough to be sub-texel on a
+    #: 4096-wide basemap (one texel is ~10 km) while still clearing the depth
+    #: buffer.
+    lift: float = 2e-5
+    #: Grid divisions, as a fraction of the terrain's.
+    #:
+    #: 2 rather than 4, and it is tied to ``lift`` above. A UV sphere puts its
+    #: VERTICES on the sphere, so its flat facets dip below it by the sagitta —
+    #: ``R(1 - cos(pi/n))``, which at 512 divisions is 1.9e-5 of the radius, i.e.
+    #: the same order as the lift itself. Halving the divisor drops that to 4.7e-6
+    #: so the facet mid-points stay above sea level rather than dipping under the
+    #: terrain and cutting notches in the coastline.
+    grid_divisor: int = 2
 
 
 @dataclass(frozen=True)
 class Clouds:
     """A Blue Marble cloud deck above a globe. See :func:`add_cloud_shell`."""
 
-    #: Peak alpha of a fully cloudy texel. The earthquakes globe uses the full
-    #: deck; the data demos keep it thin so it stays subordinate to their overlays.
+    #: Peak alpha of a fully cloudy texel.
+    #:
+    #: Read this together with `luminous` blending, because the two interact and
+    #: getting it wrong made the deck invisible. Under alpha-over, strength is a
+    #: LERP toward white — 0.22 gets you 22% of the way there whatever is behind.
+    #: Under additive it is an ADDITION of 0.22, which ACES then compresses along
+    #: with everything else in the highlights, so on a mid-bright basemap it
+    #: almost vanishes. Additive needs more amplitude than alpha-over for the same
+    #: apparent density.
     strength: float = 0.55
+    #: Node intensity, multiplying the deck's brightness independently of its
+    #: alpha. The tuning knob to reach for first: it changes how BRIGHT the cloud
+    #: is without changing which texels are cloud, and it stays live in the Layers
+    #: panel where `strength` is baked into the texture.
+    intensity: float = 1.0
     #: >1 thins the source's low-luminance haze floor.
     gamma: float = 1.8
     #: Shell height as a fraction of radius. ``None`` derives it from the relief's
@@ -1315,7 +1360,17 @@ def build_earth(
             # A uniform colour: the water carries no spatial information of its
             # own, so a texture and UVs would both be dead weight.
             colors=sea_level.color,
-            blending_mode="normal",
+            # `luminous` — additive and depth-tested, the same rule the cloud deck
+            # follows. Water SCATTERS light toward the viewer rather than replacing
+            # what is beneath it, which is what additive composition means; the
+            # depth test still hides the far hemisphere behind the opaque globe;
+            # and the specular glint becomes an additive highlight, which is how a
+            # sun-glint actually behaves.
+            #
+            # Order-independence is the practical win, as it is for the clouds:
+            # `normal` would put the water in the sorted transparent set alongside
+            # the cloud shell and every river ribbon.
+            blending_mode="luminous",
             shading="smooth",
             specular=sea_level.specular,
             shininess=sea_level.shininess,
@@ -1345,6 +1400,7 @@ def build_earth(
             width=clouds.width,
             n_lon=clouds.n_lon,
             n_lat=clouds.n_lat,
+            intensity=clouds.intensity,
             **nd_kwargs,
         )
 

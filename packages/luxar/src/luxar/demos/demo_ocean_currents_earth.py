@@ -29,9 +29,27 @@ on-screen length and hands the speed information to *colour* instead — this is
 what produces the legible "Van Gogh" texture. Speed is sampled along the path and
 carried separately for that purpose.
 
-RENDERING NOTE — WHY `normal` AND NOT `additive`
-------------------------------------------------
-The lines use ``blending_mode="normal"``. Additive blending does not respect the
+RENDERING NOTE — WHY `luminous`
+-------------------------------
+The lines use ``blending_mode="luminous"``, and the distinction that matters is
+between ``luminous`` and plain ``additive`` — not between additive and
+``normal``, which is how this note originally read.
+
+``luminous`` is additive **and** depth-tested. So it keeps what the old ``normal``
+choice was protecting (the far-side network stays hidden behind the opaque globe)
+while gaining two things ``normal`` cannot give:
+
+* overlapping ribbons ACCUMULATE, which is informative rather than incidental — a
+  boundary current concentrates flow, so it gets brighter;
+* the result is order-INDEPENDENT. ``normal`` puts every ribbon in the viewer's
+  sorted transparent set, so what you see depends on getting depth order right
+  across 11M segments and the cloud shell; additive composition is commutative, so
+  that whole class of sorting artefact does not arise.
+
+The original note below is kept because its warning is still true of plain
+``additive``, which is a different mode:
+
+Additive blending does not respect the
 depth buffer, so with an additive line layer the currents on the **far side** of
 the globe show straight through the near side and appear painted across the
 continents. It looks exactly like a broken land mask and is not one.
@@ -632,7 +650,7 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 # FLOW_LIFT (0.0015) while the shell sits at 0.012 — in front of
                 # them. At this strength it reads as atmosphere over the map rather
                 # than as an occluder of the currents.
-                clouds=Clouds(strength=0.22, gamma=2.2),
+                clouds=Clouds(strength=0.45, gamma=2.0, intensity=1.6),
                 # `opaque` is the mesh default and the right one here: the globe is
                 # the BACKDROP. It is the only mode that leaves the viewer's sorted
                 # transparent set and the only one that unconditionally depth-writes,
@@ -649,9 +667,11 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 colors=colors,
                 indices=indices,
                 line_type="indexed",
-                # `normal`, NOT `additive` — see the module docstring: additive
-                # ignores depth, so far-side currents bleed across the continents.
-                blending_mode="normal",
+                # `luminous` — see the module docstring. Additive-and-depth-tested:
+                # overlapping ribbons accumulate (which is informative — a boundary
+                # current concentrates flow and gets brighter), while the far-side
+                # network stays hidden behind the opaque globe.
+                blending_mode="luminous",
                 opacity=LINE_OPACITY,
                 intensity=LINE_INTENSITY,
                 layer=True,
