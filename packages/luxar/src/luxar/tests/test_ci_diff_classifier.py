@@ -534,19 +534,14 @@ def test_viewer_source_scan_rejects_aliased_imports(tmp_path: Path) -> None:
     assert errors == ["shared_helper.py:1"]
 
 
-def test_viewer_source_readers_are_statically_owned_by_the_python_gate() -> None:
-    """Every shared viewer-source reader must have one checked classifier row."""
-    paths, non_literal_calls = _viewer_source_calls()
-    assert not non_literal_calls, (
-        "viewer_source() must be called by that name with one string-literal path "
-        "so classifier ownership is statically discoverable; invalid uses: "
-        f"{non_literal_calls}"
-    )
-    assert paths, (
-        "no viewer_source() calls found; the ownership guard would pass vacuously"
+def _assert_viewer_source_paths_are_owned(paths: set[str]) -> None:
+    python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
+    negative_readers = sorted(paths & set(NON_PYTHON_DOMAIN_PATHS))
+    assert not negative_readers, (
+        "NON_PYTHON_DOMAIN_PATHS contains viewer sources now read by Python tests; "
+        f"move them into GATE_INPUTS: {negative_readers}"
     )
 
-    python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
     missing = sorted(paths - python_gate_inputs)
     assert not missing, (
         "viewer sources read by Python tests must have dom_py GATE_INPUTS rows: "
@@ -573,11 +568,26 @@ def test_viewer_source_readers_are_statically_owned_by_the_python_gate() -> None
         f"non-scanned exception table: {scanned_exceptions}"
     )
 
-    negative_readers = sorted(paths & set(NON_PYTHON_DOMAIN_PATHS))
-    assert not negative_readers, (
-        "NON_PYTHON_DOMAIN_PATHS contains viewer sources now read by Python tests; "
-        f"move them into GATE_INPUTS: {negative_readers}"
+
+def test_negative_viewer_source_reader_reports_negative_control() -> None:
+    with pytest.raises(AssertionError, match="NON_PYTHON_DOMAIN_PATHS contains"):
+        _assert_viewer_source_paths_are_owned(
+            {"packages/luxar-viewer/src/rendering/display-range.ts"}
+        )
+
+
+def test_viewer_source_readers_are_statically_owned_by_the_python_gate() -> None:
+    """Every shared viewer-source reader must have one checked classifier row."""
+    paths, non_literal_calls = _viewer_source_calls()
+    assert not non_literal_calls, (
+        "viewer_source() must be called by that name with one string-literal path "
+        "so classifier ownership is statically discoverable; invalid uses: "
+        f"{non_literal_calls}"
     )
+    assert paths, (
+        "no viewer_source() calls found; the ownership guard would pass vacuously"
+    )
+    _assert_viewer_source_paths_are_owned(paths)
 
 
 @pytest.mark.parametrize("path", NON_DOCS_PATHS)
