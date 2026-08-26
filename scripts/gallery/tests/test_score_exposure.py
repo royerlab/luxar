@@ -203,8 +203,6 @@ def test_thresholds_match_the_capture_harness() -> None:
     rather than in a comment. Change a threshold in ``exposure-policy.ts`` and
     this test names the Python constant that needs the same edit.
     """
-    if not POLICY_TS.exists():
-        pytest.skip(f"viewer sources not present: {POLICY_TS}")
     ts_values = {
         name: float(value) for name, value in _TS_CONST.findall(POLICY_TS.read_text())
     }

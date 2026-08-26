@@ -434,6 +434,13 @@ def _viewer_source_calls() -> tuple[set[str], list[str]]:
     non_literal_calls: list[str] = []
     for source_root in _PYTHON_SOURCE_ROOTS:
         for source_path in source_root.rglob("*.py"):
+            relative = source_path.relative_to(REPO)
+            if not (
+                source_path.name == "conftest.py"
+                or source_path.name.startswith("test_")
+                or "tests" in relative.parts
+            ):
+                continue
             tree = ast.parse(
                 source_path.read_text(encoding="utf-8"), filename=str(source_path)
             )
@@ -454,7 +461,6 @@ def _viewer_source_calls() -> tuple[set[str], list[str]]:
                     or not isinstance(node.args[0], ast.Constant)
                     or not isinstance(node.args[0].value, str)
                 ):
-                    relative = source_path.relative_to(REPO)
                     non_literal_calls.append(f"{relative}:{node.lineno}")
                     continue
                 paths.add(f"packages/luxar-viewer/{node.args[0].value}")
