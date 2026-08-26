@@ -33,7 +33,7 @@ def convert_to_scene(
     scale_intensity: Optional[float] = typer.Option(
         None,
         "--scale-intensity",
-        help="Scale amplitudes by factor and skip automatic amplitude normalization",
+        help="Scale matrix-shaped amplitudes by factor; replaces automatic normalization",
     ),
     opacity: float = typer.Option(1.0, "--opacity", help="Opacity (0.0-1.0)"),
     absorption: float = typer.Option(
