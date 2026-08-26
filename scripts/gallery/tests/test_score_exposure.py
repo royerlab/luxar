@@ -205,8 +205,6 @@ def test_thresholds_match_the_capture_harness() -> None:
         policy_ts = viewer_source("src/tests/screenshots/exposure-policy.ts")
     except AssertionError as error:
         pytest.skip(f"viewer sources not present: {error}")
-    if not policy_ts.exists():
-        pytest.skip(f"viewer sources not present: {policy_ts}")
     ts_values = {
         name: float(value) for name, value in _TS_CONST.findall(policy_ts.read_text())
     }
