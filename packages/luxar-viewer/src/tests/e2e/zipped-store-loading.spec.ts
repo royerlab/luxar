@@ -28,8 +28,8 @@ const fixturePath = path.join(viewerRoot, 'tests/fixtures', fixtureName);
 const dataBaseURL = 'http://127.0.0.1:9000';
 
 const archiveFormats = [
-  { name: 'STORED', level: 0 },
-  { name: 'DEFLATE', level: 6 },
+  { name: 'STORED', level: 0, compressionMethod: 0 },
+  { name: 'DEFLATE', level: 6, compressionMethod: 8 },
 ] as const;
 
 function collectArchiveEntries(root: string): Record<string, Uint8Array> {
@@ -80,10 +80,14 @@ for (const format of archiveFormats) {
       `test-extend-to-all-4d-${format.name.toLowerCase()}.luxar.zarr.zip`
     );
     fs.mkdirSync(path.dirname(archivePath), { recursive: true });
-    fs.writeFileSync(
-      archivePath,
-      zipSync(collectArchiveEntries(fixturePath), { level: format.level })
+    const archiveBytes = zipSync(collectArchiveEntries(fixturePath), { level: format.level });
+    const archiveView = new DataView(
+      archiveBytes.buffer,
+      archiveBytes.byteOffset,
+      archiveBytes.byteLength
     );
+    expect(archiveView.getUint16(8, true)).toBe(format.compressionMethod);
+    fs.writeFileSync(archivePath, archiveBytes);
 
     const directoryCounts = await loadElementCounts(page, fixtureURL(fixturePath));
     const archiveCounts = await loadElementCounts(page, fixtureURL(archivePath));
