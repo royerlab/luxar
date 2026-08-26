@@ -197,7 +197,10 @@ time-FIRST, so comparing both whole silently misaligns them. One archive measure
 17.57 dB foreground whole versus 50.26 dB per timepoint. There is currently no
 CLI route to recover that per-timepoint score from the stacked store:
 `compare --timepoint` slices only the reference, and `gsplat slice` preserves the
-archive rank. Do not present either as an archive slicer.
+archive rank. Newly built stacks may carry `fitting/part_provenance`; use its
+per-coordinate stamps, but quote dB only when every `fit_reference.kind` is
+`acquisition`. Missing, `preprocessed`, and `synthetic` references are deliberately
+not quotable. Do not present either CLI command as an archive slicer.
 
 **2. Keep the input archive's column order separate from the compiled scene's.**
 In an `add_gsplats`/`add_points` authoring call, `dim_order[i]` names input data
