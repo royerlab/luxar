@@ -178,7 +178,12 @@ def test_the_sea_surface_sits_at_sea_level_and_is_translucent() -> None:
     water_call = source.split('scene.add_mesh(\n                "sea level"')[1]
     assert "RADIUS * (1.0 + 2e-4)" in source
     assert 'blending_mode="normal"' in water_call
-    assert "opacity=0.55" in water_call
+    assert "opacity=0.5," in water_call
+    # The SPECULAR is what makes it read as water rather than as a colour shift:
+    # a translucent blue tint over Blue Marble's own dark-navy ocean is nearly
+    # invisible (both are the same colour), while a sun-glint is a highlight the
+    # basemap has nowhere. Found by toggling the node, not by reasoning.
+    assert "specular=0.65" in water_call
     # A uniform colour: no texture, no UVs — the water carries no spatial
     # information of its own, so both would be dead weight.
     assert "uvs=" not in water_call.split(")")[0]

@@ -2829,10 +2829,21 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # from different camera angles.
                 shading="none",
                 blending_mode=GLOBE_BLENDING,
-                # The dimming that used to be baked into the point colours. Now a
-                # live node multiplier, so the Layers panel can restore full
-                # brightness instead of clipping past 1.0 to get there.
-                intensity=GLOBE_DIM,
+                # GLOBE_DIM * GLOBE_INTENSITY, and the product is the point.
+                #
+                # The point version applied these SEPARATELY: `GLOBE_DIM` was baked
+                # into the per-point colours and `GLOBE_INTENSITY` was the node
+                # multiplier, so the net gain was 0.12 * 4.88 = 0.586. Moving the
+                # dimming off the colours (baked dimming is unrecoverable — the
+                # Layers panel could only brighten by clipping past 1.0) meant both
+                # factors now have to reach the one multiplier that survives.
+                #
+                # Passing `GLOBE_DIM` alone made the globe 5x too dark, and against
+                # occurrence points at intensity 100 that read as NO GLOBE AT ALL.
+                # The geometry was loading and drawing the whole time — 66k
+                # vertices and 131k triangles per tile — which is why this looked
+                # like a missing node rather than an exposure bug.
+                intensity=GLOBE_DIM * GLOBE_INTENSITY,
                 offset=0.0,
                 gamma=1.0,
                 opacity=1.0,

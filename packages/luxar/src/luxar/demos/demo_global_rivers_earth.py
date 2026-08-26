@@ -536,14 +536,24 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 normal_dims=[0, 1, 2],
                 # A uniform colour, so no texture and no UVs: the water carries no
                 # spatial information of its own.
-                colors=(0.10, 0.34, 0.62, 1.0),
-                # `normal` so it composites OVER the sea floor it is meant to
-                # veil; `smooth` for a faint specular sheen off the sphere's own
-                # normals, which is what makes it read as a surface rather than a
-                # tinted shell.
+                colors=(0.16, 0.42, 0.72, 1.0),
+                # `normal` so it composites OVER the sea floor it is meant to veil.
                 blending_mode="normal",
+                # `smooth`, and the SPECULAR is what actually makes this read as
+                # water. A translucent blue tint alone was nearly invisible against
+                # Blue Marble's own dark-navy ocean — measured by toggling the node,
+                # which is how it was found — because both are the same colour. A
+                # sun-glint is not: it is a bright highlight that the basemap has
+                # nowhere, so the eye reads a SURFACE rather than a colour shift.
+                #
+                # `ambient` is raised well above the mesh default too, so the veil
+                # does not fall to black around the limb — a water layer that
+                # vanishes at the edges reads as a rendering error.
                 shading="smooth",
-                opacity=0.55,
+                specular=0.65,
+                shininess=48.0,
+                ambient=0.55,
+                opacity=0.5,
                 double_sided=False,
                 layer=True,
             )
