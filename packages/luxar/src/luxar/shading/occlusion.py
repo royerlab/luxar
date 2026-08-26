@@ -114,10 +114,12 @@ DEFAULT_RADIUS_FRACTION = 0.05
 DEFAULT_GRID_CELLS = 64
 
 #: Opposed direction pairs used for a full-sphere bake. The cost is linear in
-#: this count. Budget about ``20 * N * D`` bytes for a full-sphere bake or
-#: ``32 * N * D`` with hemisphere weights (measured peak above a populated input
-#: process, including indexing temporaries). Add the rotated grid, whose
-#: worst-case volume is approximately ``(sqrt(3) * grid_cells) ** 3`` cells.
+#: this count. Persistent direction arrays cost ``4 * N * D`` bytes for a
+#: full-sphere bake or ``8 * N * D`` with hemisphere weights. Group assembly
+#: can transiently add ``4 * N_group * D`` bytes, while shading and weighted
+#: combination use bounded row slabs rather than another full array. Add the
+#: ``O(N)`` indexing temporaries and the rotated grid, whose worst-case volume is
+#: approximately ``(sqrt(3) * grid_cells) ** 3`` cells.
 DEFAULT_N_DIRECTIONS = 24
 
 #: Hemisphere weighting converges more slowly than a plain sphere average, so
