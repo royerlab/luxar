@@ -63,8 +63,10 @@ concurrency:
   # every required job pass today?" unanswerable at a glance.
   #
   # Fresh runs all have attempt 1, so PR and push runs still coalesce by event
-  # and ref exactly as before. A rerun gets a distinct attempt number so the
-  # next merge cannot cancel a repaired push attempt back into the same state.
+  # and ref exactly as before. Any rerun gets a distinct attempt number, so a
+  # newer fresh run does not cancel it (including superseded PR reruns). A
+  # job-level rerun also does not restart queue-watchdog, so an obsidian-routed
+  # job whose runner disappears can remain queued until GitHub's 24-hour limit.
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
@@ -1102,7 +1104,7 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/jobs?filter=latest&per_page=100")
           required_json=$(printf '%s\n' "${required[@]}" \
             | jq -Rsc 'split("\n") | map(select(length > 0))')
-          jq -r --argjson required "$required_json" '
+          cancelled_jobs=$(jq -r --argjson required "$required_json" '
             [.[] | .jobs[]]
             | group_by(.name)[]
             | max_by(.id)
@@ -1112,12 +1114,26 @@ jobs:
               )
             | [.id, .name]
             | @tsv
-          ' <<<"$push_jobs" | while IFS=$'\t' read -r job_id job_name; do
-            echo "Rerunning cancelled push job: $job_name ($job_id)"
+          ' <<<"$push_jobs")
+          if [ -z "$cancelled_jobs" ]; then
+            echo "No cancelled required push jobs found"
+            exit 0
+          fi
+
+          cancelled_count=$(wc -l <<<"$cancelled_jobs")
+          if [ "$cancelled_count" -gt 1 ]; then
+            echo "Rerunning unsuccessful push jobs after finding $cancelled_count cancelled required jobs"
             gh api --method POST \
-              "repos/${GITHUB_REPOSITORY}/actions/jobs/$job_id/rerun" >/dev/null \
-              || echo "::warning::rerun rejected for $job_name ($job_id)"
-          done
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/rerun-failed-jobs" >/dev/null \
+              || echo "::warning::rerun rejected for push run $push_run ($cancelled_count cancelled required jobs)"
+            exit 0
+          fi
+
+          IFS=$'\t' read -r job_id job_name <<<"$cancelled_jobs"
+          echo "Rerunning cancelled push job: $job_name ($job_id)"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/jobs/$job_id/rerun" >/dev/null \
+            || echo "::warning::rerun rejected for $job_name ($job_id)"
 
   go-launcher:
     needs: changes

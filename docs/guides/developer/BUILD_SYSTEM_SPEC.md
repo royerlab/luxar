@@ -937,16 +937,22 @@ GitHub branch protection does not necessarily replace a cancelled push check wit
 later successful scheduled check of the same name on the same SHA. After a scheduled
 run has completed the five protected contexts successfully,
 `repair-cancelled-push-checks` inspects the completed push run for that SHA and reruns
-cancelled jobs for any of those five protected contexts. Failed jobs are left failed,
-non-required matrix legs are left alone, and a schedule whose own protected contexts
-are not all green performs no repair. A rejected rerun is reported as a warning without
-preventing the remaining cancelled jobs from being attempted. A failed repaired job is
-terminal for that SHA because only cancelled jobs are selected; recovering it requires
-a manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
-later merge cannot cancel the repaired attempt. The job has only `actions: write`
-permission and runs on GitHub-hosted Linux; recovered long legs use their original
-run's runner-routing decision and therefore repay work that the scheduled run already
-performed, but only on a SHA that can become promotable.
+cancelled jobs for any of those five protected contexts. A single cancelled context uses
+a job-level rerun. Two or more use one failed-jobs rerun because GitHub returns `403`
+once the first job-level rerun has moved the run into a new attempt; the run-level path
+also re-enqueues cancelled or failed non-required matrix legs such as Python 3.13/3.14.
+A schedule whose own protected contexts are not all green performs no repair, and a
+rejected rerun is reported as a warning. A failed repaired job is terminal for that SHA
+unless it is included in the multi-job failed-jobs rerun; otherwise recovery requires a
+manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
+later merge cannot cancel the repaired attempt. That exemption applies to ordinary PR
+reruns too, and job-level reruns do not restart `queue-watchdog`; an obsidian-routed job
+can therefore remain queued until GitHub's 24-hour limit if the runner disappears. The
+repair job has only `actions: write` permission and runs on GitHub-hosted Linux;
+recovered long legs reuse their original runner-routing decision and repay work that the
+scheduled run already performed. When that decision was `ubuntu-latest`, up to eight
+repair windows per day can also add hosted-runner minutes, but only on a SHA that can
+otherwise block promotion.
 
 ## Architecture Notes
 
