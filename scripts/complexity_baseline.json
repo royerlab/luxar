@@ -583,22 +583,22 @@
     "packages/luxar/src/luxar/mesh/interop/_ply_mesh.py::read_ply_mesh": [
       12
     ],
-    "packages/luxar/src/luxar/utils/data_fetch.py::_ensure_one": [
+    "packages/luxar/src/luxar/demos/_support/datasets/data_fetch.py::_ensure_one": [
       15
     ],
-    "packages/luxar/src/luxar/utils/cache.py::cached_download": [
+    "packages/luxar/src/luxar/demos/_support/datasets/cache.py::cached_download": [
       12
     ],
-    "packages/luxar/src/luxar/utils/remote_zip.py::_parse_remote_zip_directory": [
+    "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::_parse_remote_zip_directory": [
       11
     ],
-    "packages/luxar/src/luxar/utils/remote_zip.py::download_zip_member": [
+    "packages/luxar/src/luxar/demos/_support/downloads/remote_zip.py::download_zip_member": [
       24
     ],
-    "packages/luxar/src/luxar/utils/download.py::robust_download": [
+    "packages/luxar/src/luxar/demos/_support/downloads/download.py::robust_download": [
       66
     ],
-    "packages/luxar/src/luxar/utils/download.py::verify_file_checksum": [
+    "packages/luxar/src/luxar/demos/_support/downloads/download.py::verify_file_checksum": [
       14
     ],
     "packages/luxar/src/luxar/validation/base.py::validate_colors_for_writing": [

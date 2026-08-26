@@ -17,6 +17,9 @@ importers:
 
   .:
     dependencies:
+      '@zarrita/storage':
+        specifier: ^0.2.0
+        version: 0.2.0
       comlink:
         specifier: ^4.4.2
         version: 4.4.2
@@ -57,9 +60,6 @@ importers:
       '@vitest/ui':
         specifier: ~4.1.10
         version: 4.1.10(vitest@4.1.10)
-      '@zarrita/storage':
-        specifier: ^0.2.0
-        version: 0.2.0
       dependency-cruiser:
         specifier: ^18.2.0
         version: 18.2.0

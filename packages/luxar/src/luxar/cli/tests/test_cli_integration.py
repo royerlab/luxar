@@ -8,6 +8,7 @@ Following the principle from TESTING_GUIDELINES.md: mock only external dependenc
 import socket
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -236,6 +237,15 @@ class TestServeIntegration:
         response = requests.get(f"{test_server}/health", headers=headers)
         assert "Access-Control-Allow-Origin" in response.headers
         assert response.headers["Access-Control-Allow-Origin"] == origin
+        exposed = {
+            header.strip()
+            for header in response.headers["Access-Control-Expose-Headers"].split(",")
+        }
+        assert exposed == {"Content-Range", "Content-Length", "Accept-Ranges", "ETag"}
+        # ETag matters specifically: it is not CORS-safelisted, so without it a
+        # cross-origin viewer (the documented split-port layout) cannot read it and
+        # a zipped store's "archive-etag" identity silently degrades to the
+        # one-second granularity of Last-Modified.
 
     def test_no_cache_header_on_data_responses(self, test_server):
         """Every mutable data response must require browser revalidation."""
@@ -484,6 +494,54 @@ class TestServeIntegration:
         assert len(entries) > 0
         # Verify structure
         assert any(e["type"] == "zarr" for e in entries)
+
+    def test_directory_listing_marks_zipped_stores_as_datasets(
+        self, test_server, sample_scene
+    ):
+        """A ``.zarr.zip`` is a dataset, not a file to download.
+
+        The viewer reads a zipped store in place over HTTP range requests, so it
+        must appear in the listing as ``type: "zarr"`` — otherwise the dataset
+        browser cannot offer a perfectly loadable scene, and the only way in is
+        to hand-type its URL.
+        """
+        # `test_server` roots at the scene directory itself, so the archive has
+        # to live inside it to appear in the listing at all.
+        served_root = Path(sample_scene)
+        archive = served_root / "zipped_scene.luxar.zarr.zip"
+        plain_zarr = served_root / "plain.zarr"
+        plain_zip = served_root / "results.zip"
+        empty_file = served_root / "empty.txt"
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("zarr.json", '{"zarr_format": 3, "node_type": "group"}')
+        plain_zarr.mkdir()
+        plain_zip.touch()
+        empty_file.touch()
+
+        try:
+            response = requests.get(
+                f"{test_server}/", headers={"Accept": "application/json"}
+            )
+            assert response.status_code == 200
+            entries = {e["name"]: e["type"] for e in response.json()["entries"]}
+            assert entries.get("zipped_scene.luxar.zarr.zip") == "zarr"
+            assert entries.get("plain.zarr") == "zarr"
+            assert entries.get("results.zip") == "file"
+
+            response = requests.get(f"{test_server}/")
+            assert response.status_code == 200
+            expected_link = (
+                '<a href="zipped_scene.luxar.zarr.zip">zipped_scene.luxar.zarr.zip</a>'
+            )
+            assert expected_link in response.text
+            assert '<a href="plain.zarr/">plain.zarr/</a>' in response.text
+            assert '<a href="results.zip">results.zip</a>' in response.text
+            assert '<a href="empty.txt">empty.txt</a>' in response.text
+        finally:
+            archive.unlink(missing_ok=True)
+            plain_zip.unlink(missing_ok=True)
+            empty_file.unlink(missing_ok=True)
+            plain_zarr.rmdir()
 
 
 class TestInfoCommand:

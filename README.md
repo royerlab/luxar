@@ -89,7 +89,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 85 bundled demos
+luxar demo              # Browse the 87 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -103,7 +103,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 85 Luxar demos  ·  74 built  ·  8 cached  ·  3 not generated yet
+🎬 87 Luxar demos  ·  75 built  ·  8 cached  ·  4 not generated yet
 
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
@@ -112,12 +112,13 @@ geometry, what it needs, and whether you have already built it:
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
  ✓ 16  dmri_tractography                       lines         588 MB
- • 25  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
+ • 26  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
 
- SYNTHETIC ──────────────────────────────────────────────────────────── 19 demos
+ SYNTHETIC ──────────────────────────────────────────────────────────── 20 demos
  ✓  9  cloud                                   points
    10  collision                               points
  ...
+ ✓ 19  exotic_surfaces                         points
 
  ✓ built   • inputs cached   (blank) not generated yet
  GPU/GPU? = required/optional     git-lfs kaggle manual = data you supply
@@ -547,8 +548,8 @@ dims = Dimensions([
 Points in nD space are treated as **hyperspheres**. When viewing a 3D slice:
 
 1. Points whose hypersphere intersects the current hyperplane are visible
-2. Larger radius = visible across more dimension slices
-3. Effective radius shrinks with distance from slice: `r_eff = sqrt(r² - d²)`
+2. Larger radius = visible across more slices only for dimensions declared `spatial=True` (non-displayed dimensions default to non-spatial)
+3. For those spatial dimensions, effective radius shrinks with distance from slice: `r_eff = sqrt(r² - d²)`
 
 ### Keyboard Navigation
 

@@ -29,9 +29,40 @@ from .from_data import (
 )
 
 if TYPE_CHECKING:
+    from luxar.gsplats.tree import GSplatPartition
+
     from ...gsplats import GSplats
     from ...node import Node
     from ..group import Group
+
+
+def _grafted_partition_bsp_tree(
+    node: "GSplatPartition",
+) -> Optional[Dict[str, Any]]:
+    """Return stored or exactly recoverable planes and report recovery."""
+    if node.bsp_tree is not None:
+        return node.bsp_tree
+
+    from arbol import aprint
+
+    from luxar.core.group.partition import (
+        reconstruct_serialized_bsp_tree,
+        serialized_bsp_tree_separates,
+    )
+    from luxar.gsplats.tree import center_bounds
+
+    child_bounds = [center_bounds(child) for child in node.children]
+    if any(bounds is None for bounds in child_bounds):
+        aprint("  🧭 No exact BSP split planes recovered; using centroid part ordering")
+        return None
+    boxes = [bounds for bounds in child_bounds if bounds is not None]
+    recovered = reconstruct_serialized_bsp_tree(boxes)
+    if serialized_bsp_tree_separates(recovered, boxes):
+        if recovered is not None and "part" not in recovered:
+            aprint(f"  🧭 Recovered BSP split planes for {len(node.children)} parts")
+        return recovered
+    aprint("  🧭 No exact BSP split planes recovered; using centroid part ordering")
+    return None
 
 
 def add_gsplats_from_file_impl(
@@ -858,10 +889,13 @@ def graft_gsplat_node(
 
         partition_attrs = dict(wrapper_attrs)
         # Carry the BSP split planes into the scene so the viewer keeps its
-        # exact back-to-front part ordering (the standalone file has it; the
-        # graft must not drop it). Absent for non-BSP (streamed) partitions.
-        if node.bsp_tree is not None:
-            partition_attrs["bsp_tree"] = node.bsp_tree
+        # exact back-to-front part ordering. Legacy partitions may predate the
+        # stored tree; recover one only when the child bounds admit an exact
+        # separating BSP. Overlapping/interlocking parts keep the viewer's
+        # centroid fallback rather than receiving an invented ordering.
+        bsp_tree = _grafted_partition_bsp_tree(node)
+        if bsp_tree is not None:
+            partition_attrs["bsp_tree"] = bsp_tree
         # `max_elements` is a per-part CAP, so only a capped splitter sets it
         # (uniform tiling, BSP `--parts`/`--max-elements`). A CONTENT-tiled fit
         # balances its boxes by feature density instead and leaves the field at

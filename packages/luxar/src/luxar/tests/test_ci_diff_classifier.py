@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -42,8 +43,8 @@ import yaml
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
 
-#: One row per gate input that carries NO classified source extension, so the only
-#: thing standing between it and a silent skip is an explicit pattern alternative.
+#: One row per gate input whose required domain is not guaranteed by its ordinary
+#: source extension or package path, so an explicit pattern alternative is required.
 #: ``(path, domain, why)`` — the reason is quoted back in the failure message.
 #:
 #: Not every row is load-bearing to the same degree: some are matched by a broad
@@ -52,6 +53,16 @@ WORKFLOW = REPO / ".github/workflows/ci.yml"
 #: than the single thing keeping their gate alive. Do not read the table as a list
 #: of narrow escapes.
 GATE_INPUTS: list[tuple[str, str, str]] = [
+    (
+        ".gitattributes",
+        "py",
+        "test_docs_workflow.py derives the published LFS candidate set from it",
+    ),
+    (
+        ".github/workflows/docs.yml",
+        "py",
+        "test_docs_workflow.py guards the Pages workflow itself",
+    ),
     (
         "scripts/complexity_baseline.json",
         "py",
@@ -70,6 +81,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_demo_meta.py cross-validates it against the demo registry",
     ),
     (
+        "scripts/gallery/manifest.json",
+        "ts",
+        "gallery-selection.test.ts validates README capture ids against it",
+    ),
+    (
         "docs/guides/user/CLI_REFERENCE.md",
         "py",
         "test_docs_command_coverage.py drift-guards it against the live Typer app; "
@@ -79,6 +95,21 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "README.md",
         "py",
         "test_readme_demo_docs.py drift-guards the root demo documentation",
+    ),
+    (
+        "CLAUDE.md",
+        "py",
+        "check-demo-counts synchronizes its bundled-demo count with the registry",
+    ),
+    (
+        ".agents/skills/luxar-visualization/SKILL.md",
+        "py",
+        "check-demo-counts synchronizes its demo and focused-example counts",
+    ),
+    (
+        "README.md",
+        "ts",
+        "gallery-selection.test.ts derives the README capture set from it",
     ),
     (
         "packages/luxar/src/luxar/demos/README.md",
@@ -119,6 +150,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "packages/luxar-viewer/src/tests/README.md",
         "py",
         "test_fixture_environment.py checks its fixture-generator invocation",
+    ),
+    (
+        "packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts",
+        "py",
+        "test_generate_gallery_datasets.py derives the manifest field contract from it",
     ),
     (
         "packages/luxar-viewer/tests/fixtures/README.md",
@@ -342,7 +378,7 @@ def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> Non
 def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     workflow: str,
 ) -> None:
-    """Obsidian reserves a TypeScript slot without delaying required checks."""
+    """Obsidian limits per-run slot use and preserves Python memory headroom."""
     jobs = yaml.safe_load(workflow)["jobs"]
     max_parallel = re.sub(r"\s+", "", jobs["python-tests"]["strategy"]["max-parallel"])
     branches = re.fullmatch(
@@ -354,7 +390,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     )
     obsidian_cap, hosted_cap = map(int, branches.groups())
     assert obsidian_cap == 2, (
-        "python-tests must leave one of obsidian's three slots for TypeScript"
+        "one run's Python matrix must not monopolise obsidian's three slots"
     )
 
     matrix_expression = jobs["python-tests"]["strategy"]["matrix"]["python-version"]
@@ -362,7 +398,36 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert matrix_lists, "python-tests must declare its event-specific version matrices"
     largest_matrix_size = max(len(json.loads(matrix)) for matrix in matrix_lists)
     assert hosted_cap >= largest_matrix_size, (
-        "the hosted max-parallel branch must not throttle the off-PR Python matrix"
+        "the hosted max-parallel branch must not throttle the full Python matrix"
+    )
+
+    pytest_addopts = jobs["python-tests"]["env"]["PYTEST_ADDOPTS"]
+    worker_branches = re.fullmatch(
+        r"\$\{\{\s*needs\.pick-runner\.outputs\.label\s*==\s*'obsidian'\s*"
+        r"&&\s*'([^']*)'\s*\|\|\s*'([^']*)'\s*\}\}",
+        pytest_addopts,
+    )
+    assert worker_branches is not None, (
+        "python-tests must enable xdist only on pick-runner's obsidian label"
+    )
+    obsidian_args = shlex.split(worker_branches.group(1))
+    hosted_args = shlex.split(worker_branches.group(2))
+    assert hosted_args == [], "GitHub-hosted Python coverage must stay serial"
+    worker_flags = [
+        obsidian_args[index + 1]
+        for index, arg in enumerate(obsidian_args[:-1])
+        if arg == "-n"
+    ]
+    assert worker_flags == ["2"], (
+        "python-tests must leave memory headroom in obsidian's 12 GiB runner slot"
+    )
+    dist_flags = [
+        obsidian_args[index + 1]
+        for index, arg in enumerate(obsidian_args[:-1])
+        if arg == "--dist"
+    ]
+    assert dist_flags == ["loadfile"], (
+        "parallel coverage must keep each file's shared fixtures on one worker"
     )
 
     for hosted_job in ("release-readiness", "wheel-viewer"):
@@ -384,6 +449,33 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert pick_runner["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}", (
         "pick-runner must authenticate gh api with the workflow token"
     )
+
+
+def test_scheduled_ci_supplies_a_green_window_every_three_hours(
+    workflow: str,
+) -> None:
+    """Promotion must not depend on a merge-free hour appearing by chance."""
+    # BaseLoader preserves the YAML 1.1 ``on`` key instead of coercing it to True.
+    parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
+    schedules = [entry["cron"] for entry in parsed["on"]["schedule"]]
+    matrix_line = next(
+        line for line in workflow.splitlines() if "python-version: ${{" in line
+    )
+    match = re.search(r"github\.event\.schedule == '([^']+)'", matrix_line)
+    assert match is not None, "the full Python matrix must name a daily schedule"
+    assert match.group(1) in schedules, (
+        "one scheduled window must retain the full daily Python matrix"
+    )
+
+    scheduled_hours: list[int] = []
+    for schedule in schedules:
+        minute, hour, day, month, weekday = schedule.split()
+        assert (minute, day, month, weekday) == ("17", "*", "*", "*")
+        if hour == "*/3":
+            scheduled_hours.extend(range(0, 24, 3))
+        else:
+            scheduled_hours.extend(int(value) for value in hour.split(","))
+    assert sorted(scheduled_hours) == list(range(0, 24, 3))
 
 
 def _run_pick_runner(

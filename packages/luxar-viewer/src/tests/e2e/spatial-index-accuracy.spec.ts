@@ -415,15 +415,14 @@ test.describe('Spatial Index - Cache Behavior', () => {
 });
 
 test.describe('Spatial Index - Error Handling', () => {
-  test('should handle dataset without spatial index gracefully', async ({ page }) => {
+  test('should load dimension navigation scene', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.nav4D}&debug`);
     await waitForLuxarReady(page);
 
-    // Should work even without index (creates dummy index)
     const state = await getLuxarState(page);
     expect(state.initialized).toBe(true);
     // Should have loaded some points
-    expect(state.totalPoints).toBeGreaterThanOrEqual(0);
+    expect(state.totalPoints).toBeGreaterThan(0);
   });
 
   test('should handle queries outside data bounds gracefully', async ({ page }) => {

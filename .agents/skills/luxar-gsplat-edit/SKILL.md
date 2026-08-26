@@ -47,6 +47,14 @@ PLACE (no `-e`).
 | Upgrade an old-format file | `migrate-format` |
 | Look at stats / quality | `info` / `render` / `compare` / `view` / `napari` |
 
+**There is deliberately no occlusion/shading command here.** If a fit renders as a
+flat glow with no visible shape, the fix is `luxar.shading.bake_ambient_occlusion`
+applied at SCENE-authoring time (pass `mass=amplitudes`) — see the
+`luxar-visualization` skill. A `.gsplats.zarr` is a *reconstruction*; colormaps,
+tone mapping and occlusion are all authored on the way into a scene. Baking a
+per-splat shading sidecar into the store instead would give `reencode`, `lod`,
+`decimate` and every refit one more array to reorder or silently invalidate.
+
 ## Common recipes
 
 ```bash
@@ -131,6 +139,10 @@ luxar gsplat compare fitted.gsplats.zarr original.tiff --output-json metrics.jso
 luxar gsplat view in.gsplats.zarr                      # quick web viewer
 luxar gsplat napari in.gsplats.zarr                    # napari + centers overlay
 ```
+
+Before scoring a stacked or transformed archive, read "Scoring a STACKED or
+TRANSFORMED archive" in the `luxar-gsplat-pipeline` skill; `compare --timepoint`
+slices the reference, not the splat archive.
 
 ### `render --shape` is in the SPLATS' coordinate space, not the volume's
 

@@ -46,17 +46,17 @@ def test_import_luxar_does_not_import_torch() -> None:
 @pytest.mark.parametrize(
     "module",
     [
-        "luxar.utils.bundles",
-        "luxar.utils.cache",
+        "luxar.demos._support.datasets.bundles",
+        "luxar.demos._support.datasets.cache",
         "luxar.utils.colors",
-        "luxar.utils.device",
-        "luxar.utils.flags",
-        "luxar.utils.lfs",
-        "luxar.utils.payload_agreement",
-        "luxar.utils.provenance",
+        "luxar.demos._support.runtime.device",
+        "luxar.demos._support.runtime.flags",
+        "luxar.demos._support.datasets.lfs",
+        "luxar.demos._support.datasets.payload_agreement",
+        "luxar.demos._support.runtime.provenance",
         "luxar.utils.scenes",
-        "luxar.utils.viewer",
-        "luxar.utils.zip_safety",
+        "luxar.demos._support.runtime.viewer",
+        "luxar.demos._support.downloads.zip_safety",
     ],
 )
 def test_demo_utilities_do_not_import_cli_dependencies(module: str) -> None:

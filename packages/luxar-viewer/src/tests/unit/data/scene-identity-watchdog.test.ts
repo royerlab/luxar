@@ -75,6 +75,13 @@ describe('SceneIdentityWatchdog', () => {
     expect(SceneIdentityWatchdog.isWatchable('https://x')).toBe(true);
     expect(SceneIdentityWatchdog.isWatchable('file:///data.zarr')).toBe(false);
     expect(SceneIdentityWatchdog.isWatchable('/relative/data.zarr')).toBe(false);
+    // A zipped store keeps its root attrs inside the archive, so every probe
+    // URL 404s and 404 is a CONCLUSIVE "changed" verdict — watching one would
+    // raise a permanent false "scene changed" banner.
+    expect(SceneIdentityWatchdog.isWatchable('https://x/scene.luxar.zarr.zip')).toBe(false);
+    expect(SceneIdentityWatchdog.isWatchable('https://x/scene.luxar.zarr.zip?token=a')).toBe(false);
+    // A directory store whose name merely contains `.zip` is still watchable.
+    expect(SceneIdentityWatchdog.isWatchable('https://x/archive.zip.luxar.zarr')).toBe(true);
   });
 
   it('probes the trailing-slash-trimmed root document with cache bypass', async () => {
