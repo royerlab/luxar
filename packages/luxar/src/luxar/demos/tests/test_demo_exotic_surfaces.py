@@ -11,6 +11,7 @@ illegible cannot come back.
 import os
 import subprocess
 import sys
+import warnings
 
 import numpy as np
 import pytest
@@ -237,8 +238,13 @@ def test_generated_layers_pin_the_authored_volumetric_appearance(
         lambda points, **_kwargs: np.ones(len(points), dtype=np.float32),
     )
 
+    expected_counts = [len(sample_surface(surface, 8)[0]) for surface in SURFACES]
+    assert all(expected_counts), "every surface must reach the write path"
+
     output = tmp_path / "exotic.luxar.zarr"
-    assert generate_exotic_surfaces(output, resolution=8) > 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        assert generate_exotic_surfaces(output, resolution=8) == sum(expected_counts)
 
     root = zarr.open_group(str(output), mode="r")
     for family_name, display_max in zip(FAMILY_NAMES, (2.177, 2.085), strict=True):
