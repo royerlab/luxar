@@ -225,15 +225,52 @@ def test_shading_processes_columns_in_bounded_row_slabs(monkeypatch):
     np.testing.assert_array_equal(columns, np.full_like(columns, 0.5))
 
 
+def test_slabbed_helpers_are_bit_identical_across_boundaries(monkeypatch):
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_SIZE", 4)
+    rng = np.random.default_rng(36)
+    columns = rng.uniform(0.0, 3.0, size=(9, 6)).astype(np.float32)
+    weights = rng.uniform(0.01, 1.0, size=(9, 6)).astype(np.float32)
+
+    for occluder in ("density", "opaque"):
+        for active_weights in (None, weights):
+            mapped = columns.copy()
+            mapped *= 0.73
+            occlusion_module._transmittance(mapped, occluder)
+            if active_weights is None:
+                transmittance = mapped.mean(axis=1)
+            else:
+                transmittance = (mapped * active_weights).sum(
+                    axis=1
+                ) / active_weights.sum(axis=1)
+            expected = np.clip(1.0 - 0.81 * (1.0 - transmittance), 0.13, 1.0).astype(
+                np.float32
+            )
+
+            got = occlusion_module._shade_columns(
+                columns,
+                active_weights,
+                occluder=occluder,
+                extinction=0.73,
+                strength=0.81,
+                floor=0.13,
+            )
+            np.testing.assert_array_equal(got, expected)
+
+    expected = (columns * weights).sum(axis=1) / weights.sum(axis=1)
+    np.testing.assert_array_equal(occlusion_module._combine(columns, weights), expected)
+
+
 def test_weighted_combine_does_not_materialize_a_full_product(monkeypatch):
-    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_SIZE", 1_024)
+    monkeypatch.setattr(occlusion_module, "_ROW_SLAB_SIZE", 1_024, raising=False)
     per_direction = np.full((100_000, 8), 0.5, dtype=np.float32)
     weights = np.full_like(per_direction, 0.75)
 
     tracemalloc.start()
-    got = occlusion_module._combine(per_direction, weights)
-    _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    try:
+        got = occlusion_module._combine(per_direction, weights)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
 
     np.testing.assert_array_equal(got, np.full(len(per_direction), 0.5, np.float32))
     assert peak < per_direction.nbytes // 2
