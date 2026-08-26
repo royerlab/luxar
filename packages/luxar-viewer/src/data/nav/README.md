@@ -56,7 +56,8 @@ prompt for a path:
    back to HTML scraping of three patterns: nginx `<pre><a>`,
    Apache/IIS `<tr>` rows, generic `<li><a>`. Deduped by name.
 4. **`'index'`** — `GET` for `<url>/.luxar-index.json`. Uses each
-   entry's explicit `type`, else infers from `.zarr` or `isDirectory`.
+   entry's explicit `type`, else infers from `.zarr`, `.zarr.zip`, or
+   `isDirectory`.
 5. **`'manual'`** — fallback. Empty entries.
 
 Each probe is wrapped in a 10-second `AbortController`

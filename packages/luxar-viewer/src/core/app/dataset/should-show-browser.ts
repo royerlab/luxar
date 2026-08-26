@@ -21,9 +21,8 @@ export async function shouldShowBrowser(src: string): Promise<boolean> {
 
   // A `.zarr.zip` is a FILE whose store documents live INSIDE it, so the
   // child probes below are meaningless: `archive.zip/zarr.json` 404s for
-  // every archive, all three probes fail, and a perfectly loadable dataset
-  // gets diverted into the browser — which cannot even list it. Decide from
-  // the suffix and let the loader's zip store do the real work.
+  // every archive. Decide from the suffix and let the loader's zip store do
+  // the real work.
   if (isZippedStoreUrl(src)) return false;
 
   // Check if it's a Zarr dataset by looking for zarr metadata files

@@ -135,6 +135,12 @@ from luxar.utils.paths import get_demos_output_dir
 #: Grid is 3x3 per family.
 GRID = 3
 
+#: Authored sampling resolution. After changing this or the sampling model,
+#: re-measure the minimal family with ``GALLERY_ONLY=exotic_surfaces pnpm gallery``.
+#: The algebraic family has no gallery tile; step the ``family`` axis in the
+#: viewer and read its display window from the Layers panel.
+RESOLUTION = 112
+
 #: Edge length each surface is normalized into, and the spacing between cell
 #: centres. The gap keeps neighbouring surfaces from reading as one object; the
 #: occlusion bake is per surface regardless, so they never shade each other.
@@ -164,10 +170,6 @@ AO_STRENGTH = 1.0
 #: blocks a direction rather than accumulating as an unbounded medium density.
 OCCLUDER = "opaque"
 
-#: Peak additive accumulation to expose for. Additive SUMS along the ray, and a
-#: clipped frame flattens exactly the shading this demo depends on.
-TARGET_PEAK = 0.7
-
 #: Per-family albedo in LINEAR light. One flat colour per family, so every
 #: variation across a surface is the occlusion term.
 FAMILY_COLORS = (
@@ -176,6 +178,9 @@ FAMILY_COLORS = (
 )
 
 FAMILY_NAMES = ("Minimal surfaces", "Algebraic surfaces")
+#: Viewer display-window maxima measured for the two baked-RGB families at the
+#: authored ``RESOLUTION``. With a zero offset, intensity is 1 / max.
+FAMILY_DISPLAY_MAXIMA = (2.177, 2.085)
 
 
 # =============================================================================
@@ -701,26 +706,6 @@ def cell_offset(index: int) -> Tuple[float, float]:
     return origin + column * CELL_PITCH, -(origin + row * CELL_PITCH)
 
 
-def auto_exposure(positions: np.ndarray, radius: float) -> Tuple[float, int]:
-    """Node gain holding the deepest additive sightline under white.
-
-    Derived, not hardcoded: the deepest column grows with ``--resolution``, so a
-    fixed gain either clips at one end of the range or is needlessly dim at the
-    other. Approximate — it counts points per column, where the true per-point
-    contribution also depends on opacity and the sprite profile — hence a
-    :data:`TARGET_PEAK` well below 1.0.
-
-    Returns:
-        ``(intensity, deepest_column)``.
-    """
-    cell = 2.0 * radius
-    keys = np.floor(positions[:, :2] / cell).astype(np.int64)
-    _, counts = np.unique(keys, axis=0, return_counts=True)
-    deepest = max(int(counts.max()), 1)
-    brightest = float(max(c.max() for c in FAMILY_COLORS))
-    return TARGET_PEAK / (deepest * brightest), deepest
-
-
 # =============================================================================
 # Scene
 # =============================================================================
@@ -774,7 +759,7 @@ def _detail_lines(family: int) -> List[str]:
     ]
 
 
-def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
+def generate_exotic_surfaces(output_path: Path, resolution: int = RESOLUTION) -> int:
     """Generate the two-family surface grid.
 
     Args:
@@ -866,7 +851,8 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
                 positions = np.vstack([e[0] for e in entries])
                 occlusion = np.concatenate([e[1] for e in entries])
                 radii = np.concatenate([e[2] for e in entries])
-                intensity, deepest = auto_exposure(positions, float(radii.max()))
+                display_max = FAMILY_DISPLAY_MAXIMA[family]
+                intensity = 1.0 / display_max
 
                 # The hidden axis: every point of a family sits at that family's
                 # coordinate, and nothing extends through the axis, so stepping
@@ -879,20 +865,27 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
                     np.float32
                 )
 
+                # AO scales the incident-light emission term; volumetric blending
+                # supplies the separate outgoing attenuation term.
+                # Keep compositor identities explicit so the Layers panel shows
+                # the complete authored appearance rather than inherited values.
                 scene.add_points(
                     FAMILY_NAMES[family],
                     nd,
                     colors=np.ascontiguousarray(colors),
                     radii=radii,
-                    opacity=0.9,
-                    blending_mode="additive",
+                    opacity=0.60,
+                    absorption=1.0,
+                    gamma=1.0,
+                    blending_mode="volumetric",
                     intensity=intensity,
+                    extend_to_all=[],
                     layer=True,
                 )
                 total += len(nd)
                 aprint(
                     f"✓ {FAMILY_NAMES[family]}: {len(nd):,} points, "
-                    f"deepest column {deepest} -> intensity {intensity:.4f}"
+                    f"display range 0–{display_max:.3f} -> intensity {intensity:.4f}"
                 )
 
             # Fixed title: the demo's identity, constant across both families.
@@ -958,7 +951,7 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
 
 def main() -> None:
     """Main demo entry point."""
-    resolution = 112
+    resolution = RESOLUTION
     for arg in sys.argv[1:]:
         if arg.startswith("--resolution="):
             resolution = int(arg.split("=")[1])

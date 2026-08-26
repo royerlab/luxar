@@ -22,15 +22,16 @@ export const BROWSER_ICONS: Record<string, string>;
 
 `extractBaseUrl` computes the directory to list when the browser opens:
 empty input falls back to `${origin}/`; a URL whose path ends in
-`.zarr` (with or without a trailing slash) is trimmed to its parent
-directory so the listing shows the dataset's siblings; anything else
-returns `origin + pathname` unchanged. Parse failures return the input
-verbatim — callers don't need a try/catch.
+`.zarr` (with or without a trailing slash) or `.zarr.zip` is trimmed to
+its parent directory so the listing shows the dataset's siblings;
+anything else returns `origin + pathname` unchanged. Parse failures
+return the input verbatim — callers don't need a try/catch.
 
 `extractPath` returns the relative dataset path (everything up to and
-including the first `.zarr` segment) so the browser can pre-populate
-its breadcrumb when re-opened on an already-loaded dataset. Returns
-`''` for empty input, parse failures, or URLs with no `.zarr` segment.
+including the first `.zarr` or `.zarr.zip` segment) so the browser can
+pre-populate its breadcrumb when re-opened on an already-loaded
+dataset. Returns `''` for empty input, parse failures, or URLs with no
+recognized dataset segment.
 
 ## Consumers
 

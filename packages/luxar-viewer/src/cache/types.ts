@@ -34,6 +34,9 @@ export interface CacheStats {
  *   re-stamp a per-save `timestamp` attr, so a dataset regenerated in
  *   place at the same URL still invalidates. Weaker than `content-hash`
  *   only for producers that rewrite data without touching root metadata.
+ * - `archive-etag`: a zipped store is identified by the archive's ETag,
+ *   or by its modification time and size when no ETag is available. A
+ *   changed token clears the cache for the whole archive.
  * - `ttl`: root `.zattrs` unreachable (offline / headerless store) AND no
  *   cached content hash to fall back on; we trust the cache for
  *   `cache.externalDatasetTtlMs` and revalidate after. (A dataset that was
@@ -43,7 +46,7 @@ export interface CacheStats {
  *   stale indefinitely until manually cleared. Surfaced in the UI as a
  *   warning badge so the user knows what they're getting.
  */
-export type CacheValidationMode = 'content-hash' | 'zattrs-hash' | 'ttl' | 'none';
+export type CacheValidationMode = 'content-hash' | 'zattrs-hash' | 'archive-etag' | 'ttl' | 'none';
 
 /**
  * Metadata structure persisted to OPFS for L2 cache management.
@@ -74,9 +77,9 @@ export interface OPFSMetadata {
    */
   validationMode?: CacheValidationMode;
   /**
-   * Wall-clock millis at last successful validation (hash modes), or the
-   * first-seen baseline under `ttl`/`none` — seeded once when unset and NOT
-   * advanced by later no-token checks, so the TTL age grows monotonically.
+   * Wall-clock millis at last successful source validation, or the first-seen
+   * baseline under `ttl`/`none` — seeded once when unset and NOT advanced by
+   * later no-token checks, so the TTL age grows monotonically.
    */
   lastValidatedAt?: number;
 }

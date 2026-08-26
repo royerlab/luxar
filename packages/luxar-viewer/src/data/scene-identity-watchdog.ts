@@ -214,8 +214,12 @@ export class SceneIdentityWatchdog {
     // 404 unconditionally. 404 is deliberately not an inconclusive verdict, so
     // watching an archive would report `changed` on the first probe and raise a
     // permanent "scene changed" banner on every zipped scene. Re-probing an
-    // archive's identity means reading a member (or a HEAD/ETag on the archive
-    // itself) — that arrives with the zip byte-source in Phase 2.
+    // archive's identity means a HEAD/ETag on the archive itself. That probe now
+    // exists (`ZipChunkSource.probeIdentityToken`), and it stays where it is: it
+    // runs once at load, inside the cache's own validation, and its verdict
+    // clears cache tiers. This watchdog is a different job — a periodic poll
+    // whose verdict is a user-facing banner — and pointing it at the same probe
+    // would double the request rate for a second opinion on the same fact.
     return !isZippedStoreUrl(datasetUrl);
   }
 
