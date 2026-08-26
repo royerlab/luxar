@@ -737,6 +737,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Union[NDArray[np.float32], List[float], Tuple[float, ...]]
         ] = None,
         scalars: Optional[Union[NDArray[np.float32], float]] = None,
+        uvs: Optional[NDArray[np.float32]] = None,
+        texture: Optional[NDArray[Any]] = None,
+        texture_encoding: str = "raw",
+        texture_width: Optional[int] = None,
+        texture_height: Optional[int] = None,
+        texture_channels: Optional[int] = None,
+        texture_color_space: str = "srgb",
         shading: Optional[str] = None,
         double_sided: bool = True,
         labels: Optional["Sequence[str]"] = None,
@@ -784,25 +791,55 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 Stored as CSR-encoded key_offsets + key_bytes arrays for
                 ``link`` / ``copy`` templates to substitute as
                 ``{hover_key}``. Independent of ``labels``.
+            uvs: Optional ``(V, 2)`` per-vertex texture coordinates. Required
+                with ``texture`` and refused without it. Values outside
+                ``[0, 1]`` are legal and tile under ``texture_wrap="repeat"``.
+            texture: Optional base-colour image. ``(H, W, C)`` array under
+                ``texture_encoding="raw"``, else a 1-D ``uint8`` array of encoded
+                bytes. Mutually exclusive with ``colors`` and ``colormap`` — a
+                mesh has one base-colour source.
+            texture_encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg``. HDR
+                (float) textures require ``raw``: the image codecs are
+                integer-only and no browser decodes float.
+            texture_width: Declared width. Required for encoded payloads, where
+                it cannot be read without decoding; read off the array for
+                ``raw``, and refused if it disagrees.
+            texture_height: Declared height. Same contract as ``texture_width``.
+            texture_channels: Declared channels — 1, 3 or 4. Same contract.
+            texture_color_space: ``srgb`` (default) or ``linear``. An ordinary
+                PNG/JPEG is sRGB-encoded; declaring it wrong gives a subtly
+                over-dark or washed-out surface rather than an obvious failure.
             **attrs: Additional attributes.
 
         Returns:
             Metadata dictionary about the written mesh.
         """
         self._check_not_finalized("write_mesh")
+        # Keyword-forwarded, deliberately. This used to pass positionally, and
+        # inserting a parameter into `_write_mesh_impl`'s signature silently
+        # shifted every argument after it — mypy caught it, but only because the
+        # shifted types happened to disagree. Keywords make the forward
+        # insertion-order-proof.
         metadata = _write_mesh_impl(
             self._make_geometry_ctx(),
             path,
             vertices,
             faces,
-            normals,
-            normal_dims,
-            colors,
-            scalars,
-            shading,
-            double_sided,
-            labels,
-            image_labels,
+            normals=normals,
+            normal_dims=normal_dims,
+            colors=colors,
+            scalars=scalars,
+            uvs=uvs,
+            texture=texture,
+            texture_encoding=texture_encoding,
+            texture_width=texture_width,
+            texture_height=texture_height,
+            texture_channels=texture_channels,
+            texture_color_space=texture_color_space,
+            shading=shading,
+            double_sided=double_sided,
+            labels=labels,
+            image_labels=image_labels,
             keys=keys,
             **attrs,
         )
@@ -1310,7 +1347,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     else {}
                 ),
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
-                **({"extend_to_all": extend_to_all} if extend_to_all else {}),
+                # `Dict[str, Any]`, not the inferred `dict[str, list[str]]`: a
+                # splat is checked against every parameter it could bind to,
+                # and `write_mesh` now has typed optional params (the texture
+                # ones) that a narrowly-typed splat cannot satisfy. The dict
+                # really is heterogeneous attrs — the annotation says so, rather
+                # than widening a signature to suit an inference artefact.
+                **(
+                    cast(Dict[str, Any], {"extend_to_all": extend_to_all})
+                    if extend_to_all
+                    else {}
+                ),
                 _skip_scene_bounds=True,
             )
             level_metas.append(level_meta)
@@ -1360,6 +1407,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "normal_dims",
             "has_colors",
             "has_scalars",
+            # Both always False on this route — `texture=` is refused with
+            # `additive_lod=` (the image would be stored once per reveal shell)
+            # and `uvs=` is refused without a texture. They are carried anyway,
+            # because the ratchet this list exists for compares the parent's key
+            # SET against a flat write's: a descriptive attr the flat path stamps
+            # and the parent omits is exactly the class of bug the viewer's
+            # fixed-attribute-set rule turns from invisible into on-screen.
+            "has_uvs",
+            "has_texture",
             "shading",
             "double_sided",
             "ordering",

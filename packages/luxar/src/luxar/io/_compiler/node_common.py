@@ -128,6 +128,21 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "normal_dims",
         "has_colors",
         "has_scalars",
+        "has_uvs",
+        # Texture stamps: all writer-derived, and the three DIMENSION ones are
+        # reserved for a sharper reason than tidiness. The viewer's admission gate
+        # budgets a node from these numbers before it fetches a chunk, so a
+        # caller-supplied value that disagreed with the payload would make the
+        # budget mean something other than what it says — which is the whole
+        # decompression-bomb surface. They come from the validator, never from
+        # `**attrs`.
+        "has_texture",
+        "texture_encoding",
+        "texture_width",
+        "texture_height",
+        "texture_channels",
+        "texture_color_space",
+        "texture_data_range",
         "has_labels",
         "has_image_labels",
         "has_keys",

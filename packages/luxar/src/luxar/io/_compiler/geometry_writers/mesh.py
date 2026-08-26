@@ -36,6 +36,7 @@ from ..chunking import calculate_intelligent_chunks
 from ..context import GeometryWriteCtx
 from ..dataset_writers.colors import write_colors
 from ..dataset_writers.scalars import write_scalars
+from ..dataset_writers.texture import write_texture
 from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
@@ -128,6 +129,70 @@ def _validate_normal_pair(
             "that a normals array describes, so it has no meaning on its own — "
             "pass normals=..., or drop normal_dims."
         )
+
+
+def _write_mesh_texture_arrays(
+    group: Any,
+    ctx: GeometryWriteCtx,
+    n_vertices: int,
+    uvs: Optional[NDArray[np.float32]],
+    texture: Optional[NDArray[Any]],
+    texture_encoding: str,
+    texture_width: Optional[int],
+    texture_height: Optional[int],
+    texture_channels: Optional[int],
+    texture_color_space: str,
+) -> dict[str, Any]:
+    """Write the UV and texture arrays, and return the attrs they imply.
+
+    Extracted so :func:`write_mesh` gains no branches for them — it sat at the
+    complexity ratchet's limit, and three more `if`s tipped it over. The two
+    arrays travel together because they are a pair the adder already refuses
+    apart, so there is no caller that wants one function and not the other.
+
+    Returns the presence flags always, and the dimension attrs only alongside a
+    texture, so the caller can stamp whatever comes back without deciding again.
+    """
+    meta: dict[str, Any] = {"has_uvs": uvs is not None, "has_texture": False}
+
+    if uvs is not None:
+        # COORDINATE, like `normals`: a per-vertex 2-vector that quantizes over
+        # its own range and must never broadcast. NOT a bounded scalar — a UV is
+        # deliberately allowed outside [0, 1] so `texture_wrap="repeat"` can tile.
+        uvs_f32 = np.asarray(uvs).astype(np.float32, copy=False)
+        ctx.dataset_ctx.encoder.encode(
+            data=uvs_f32,
+            zarr_group=group,
+            name="uvs",
+            semantic_type=SemanticType.COORDINATE,
+            mode=ctx.dataset_ctx.encoding_mode,
+            chunks=calculate_intelligent_chunks((n_vertices, 2), dtype=uvs_f32.dtype),
+            compressor=ctx.dataset_ctx.compressor,
+        )
+        aprint(f"  ✓ Wrote uvs ({n_vertices:,} texture coordinates)")
+
+    if texture is not None:
+        tex_h, tex_w, tex_c = write_texture(
+            group,
+            texture,
+            texture_encoding,
+            texture_width,
+            texture_height,
+            texture_channels,
+            ctx.dataset_ctx,
+        )
+        meta.update(
+            has_texture=True,
+            texture_encoding=texture_encoding,
+            # Stamped unconditionally, including for `raw` where they are
+            # redundant with the array shape: a reader must never have to open the
+            # payload to learn how large it decodes to.
+            texture_height=tex_h,
+            texture_width=tex_w,
+            texture_channels=tex_c,
+            texture_color_space=texture_color_space,
+        )
+    return meta
 
 
 def validate_mesh_arrays(
@@ -237,6 +302,13 @@ def write_mesh(
     normal_dims: Optional[Sequence[int]] = None,
     colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
     scalars: Optional[Union[NDArray[np.float32], float]] = None,
+    uvs: Optional[NDArray[np.float32]] = None,
+    texture: Optional[NDArray[Any]] = None,
+    texture_encoding: str = "raw",
+    texture_width: Optional[int] = None,
+    texture_height: Optional[int] = None,
+    texture_channels: Optional[int] = None,
+    texture_color_space: str = "srgb",
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Optional["Sequence[str]"] = None,
@@ -410,6 +482,20 @@ def write_mesh(
         metadata["normal_dims"] = [int(d) for d in normal_dims]  # type: ignore[union-attr]
         aprint(f"  ✓ Wrote normals (dims {metadata['normal_dims']})")
 
+    texture_attrs = _write_mesh_texture_arrays(
+        group,
+        ctx,
+        n_vertices,
+        uvs,
+        texture,
+        texture_encoding,
+        texture_width,
+        texture_height,
+        texture_channels,
+        texture_color_space,
+    )
+    metadata.update(texture_attrs)
+
     if colors is not None:
         if isinstance(colors, np.ndarray):
             validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
@@ -450,6 +536,14 @@ def write_mesh(
     group.attrs["has_normals"] = metadata["has_normals"]
     group.attrs["has_colors"] = metadata["has_colors"]
     group.attrs["has_scalars"] = metadata["has_scalars"]
+    # Every key the texture helper returned, verbatim — `update`, not a loop with
+    # a membership test, because the helper already decided what applies. It
+    # returns `has_uvs` / `has_texture` always, and the DIMENSION attrs only
+    # alongside a texture, for the same reason `normal_dims` is conditional: a
+    # stray dimension attr with no payload would be handed on as if it described
+    # something, and here it would additionally be CHARGED, since the viewer
+    # budgets a node from these numbers before it fetches anything.
+    group.attrs.update(texture_attrs)
     group.attrs["shading"] = resolved_shading
     group.attrs["double_sided"] = bool(double_sided)
     if metadata["has_normals"]:

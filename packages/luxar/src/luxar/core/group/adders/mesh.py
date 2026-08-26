@@ -493,6 +493,98 @@ def _maybe_add_mesh_substitutive_lod(
     )
 
 
+def _reject_texture_conflicts(texture: Any, uvs: Any, colors: Any, attrs: Any) -> None:
+    """Refuse the texture combinations a single base colour cannot express.
+
+    Mesh admits exactly ONE base-colour source. `colors` and `colormap` were
+    already mutually exclusive (:func:`_reject_colors_colormap_conflict`); a
+    texture is the third arm of the same rule, not an independent channel that
+    modulates the others. Tinting a texture per-vertex is a reasonable thing to
+    want and is deliberately NOT what this does — it would need its own shader
+    variant and its own composition semantics, so it stays a follow-up rather
+    than an accident of leaving the gate open.
+
+    The `uvs`/`texture` pairing is the mesh peer of `normals`/`normal_dims`
+    (§3.4): each is meaningless alone. A texture with no UVs has no mapping and
+    would sample one arbitrary texel across every triangle; UVs with no texture
+    describe a mapping into nothing and cost a per-vertex array to say so. Both
+    are refused rather than warned, because both render *something* — the failure
+    is silent, which is the case §3.4 already argues must be made loud.
+    """
+    if texture is not None and colors is not None:
+        raise ValueError(
+            "Cannot specify both 'texture' and 'colors'. A mesh has one base "
+            "colour source: per-vertex colours, a colormap over scalars, or a "
+            "texture. (Per-vertex tinting OF a texture is not implemented.)"
+        )
+    if texture is not None and attrs.get("colormap") is not None:
+        raise ValueError(
+            "Cannot specify both 'texture' and 'colormap'. A mesh has one base "
+            "colour source: per-vertex colours, a colormap over scalars, or a "
+            "texture."
+        )
+    if texture is not None and uvs is None:
+        raise ValueError(
+            "'texture' requires 'uvs'. Without texture coordinates there is no "
+            "mapping from the surface into the image, so every triangle would "
+            "sample the same arbitrary texel."
+        )
+    if uvs is not None and texture is None:
+        raise ValueError(
+            "'uvs' requires 'texture'. Texture coordinates describe a mapping "
+            "into an image; with no image they cost a per-vertex array and "
+            "affect nothing."
+        )
+
+
+def _reject_texture_with_structural_routes(
+    texture: Any, partition: Any, substitutive_lod: Any, additive_lod: Any
+) -> None:
+    """Refuse a texture on the three structural routes, naming why for each.
+
+    Not "meaningless" — each is a coherent thing to want, and each needs work
+    nothing does yet, which is the distinction the sibling refusals in this module
+    are careful to draw:
+
+    * ``partition=`` — a part is a re-indexing, so its UVs gather through
+      ``vertex_index`` like colours do (easy), but the IMAGE is node-level. Each
+      part would either duplicate the whole texture on disk or need a shared
+      sibling array with a reference from every part, and neither exists.
+    * ``substitutive_lod=`` — a decimated level has its own vertices, so its UVs
+      must be resampled at the collapse targets. ``luxar.mesh.decimate``
+      re-derives normals but carries no UV interpolation.
+    * ``additive_lod=`` — a reveal shell duplicates boundary vertices, so its UVs
+      gather like colours (easy), but the texture would be stored once per shell
+      and charged per level by the viewer's ladder budget.
+
+    Deliberately not blocking for the motivating use case: a UV sphere is ~20k
+    triangles and needs none of the three.
+    """
+    from ..partition import is_requested
+
+    if texture is None:
+        return
+    for value, label, reason in (
+        (partition, "partition", "each part would duplicate the whole image"),
+        (
+            substitutive_lod,
+            "substitutive_lod",
+            "a decimated level needs its UVs resampled at the collapse targets",
+        ),
+        (
+            additive_lod,
+            "additive_lod",
+            "the image would be stored once per reveal shell",
+        ),
+    ):
+        if is_requested(value):
+            raise ValueError(
+                f"'texture' cannot be combined with {label}= yet ({reason}). "
+                "Write the textured surface as a plain mesh leaf; a UV sphere or "
+                "a UV-mapped surface rarely needs either."
+            )
+
+
 def _reject_colors_colormap_conflict(colors: Any, scalars: Any, attrs: Any) -> None:
     """Refuse the two colour/colormap combinations no geometry type accepts.
 
@@ -846,6 +938,13 @@ def add_mesh_impl(
     normal_dims: Optional[Sequence[int]] = None,
     colors: Any = None,
     scalars: Any = None,
+    uvs: Any = None,
+    texture: Any = None,
+    texture_encoding: str = "raw",
+    texture_width: Optional[int] = None,
+    texture_height: Optional[int] = None,
+    texture_channels: Optional[int] = None,
+    texture_color_space: str = "srgb",
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Optional[Union[List[str], Sequence[str]]] = None,
@@ -865,6 +964,9 @@ def add_mesh_impl(
     # "Could not add mesh '<name>': …".
     _reject_partition_with_substitutive_lod(partition, substitutive_lod)
     _reject_additive_lod_compositions(additive_lod, substitutive_lod, partition)
+    _reject_texture_with_structural_routes(
+        texture, partition, substitutive_lod, additive_lod
+    )
     try:
         # "An explicit None means absent" (#1574), applied ONCE here rather than
         # at each consumer: above the refusals below (none of which judges these
@@ -916,6 +1018,7 @@ def add_mesh_impl(
 
         # Colormap / colors mutual exclusivity, matching the sibling adders.
         _reject_colors_colormap_conflict(colors, scalars, attrs)
+        _reject_texture_conflicts(texture, uvs, colors, attrs)
 
         faces_arr: np.ndarray = (
             faces if isinstance(faces, np.ndarray) else np.asarray(faces)
@@ -1116,6 +1219,13 @@ def add_mesh_impl(
             normal_dims=normal_dims,
             colors=cast(Any, colors),
             scalars=scalars,
+            uvs=uvs,
+            texture=texture,
+            texture_encoding=texture_encoding,
+            texture_width=texture_width,
+            texture_height=texture_height,
+            texture_channels=texture_channels,
+            texture_color_space=texture_color_space,
             shading=shading,
             double_sided=double_sided,
             labels=labels,

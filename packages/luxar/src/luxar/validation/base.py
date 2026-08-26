@@ -990,6 +990,215 @@ def validate_normal_dims_for_writing(
         )
 
 
+#: Texture payload encodings and the on-disk dtypes each admits.
+#:
+#: The asymmetry is not a design choice: PNG, JPEG and WebP are integer codecs and
+#: there is no browser-native float codec, so **HDR implies ``raw``**. Within
+#: ``raw`` the accepted set follows the element-COLOR precedent
+#: (:func:`validate_color_dtype`) rather than inventing a second rule — float of
+#: any width is writable because it quantizes, and an integer array must already
+#: be uint8 or uint16.
+TEXTURE_ENCODINGS: dict = {
+    "raw": "uint8, uint16, or any float (HDR)",
+    "png": "uint8 or uint16",
+    "webp": "uint8",
+    "jpeg": "uint8",
+}
+
+#: Channel counts a texture may carry: grey, RGB, RGBA.
+_TEXTURE_CHANNELS = (1, 3, 4)
+
+
+def validate_uvs_for_writing(uvs: Any, n_vertices: int, context: str = "uvs") -> None:
+    """Validate per-vertex texture coordinates before any zarr write.
+
+    Shape ``(V, 2)`` and finite. Values are deliberately **not** clamped to
+    ``[0, 1]``: a UV outside the unit square is meaningful under
+    ``texture_wrap="repeat"`` — tiling a detail texture is the ordinary reason to
+    author one — and clamping here would silently break it. Out-of-range UVs
+    under ``clamp`` wrapping sample the edge texel, which is that wrap mode's
+    documented behaviour rather than an error.
+
+    Non-finite IS refused: a ``NaN`` UV samples an undefined texel, and the
+    artifact (one triangle wearing an arbitrary smear of the texture) is hard to
+    attribute back to the data that caused it.
+
+    Args:
+        uvs: The ``(V, 2)`` texture-coordinate array.
+        n_vertices: Vertex count the array must match.
+        context: Context for error messages.
+
+    Raises:
+        ValidationError: On a wrong shape, a length mismatch, or a non-finite value.
+    """
+    arr = np.asarray(uvs)
+    if arr.ndim != 2 or arr.shape[1] != 2:
+        raise ValidationError(
+            f"{context}: Expected shape (n_vertices, 2), got {arr.shape}. A "
+            "texture coordinate is a (u, v) pair per vertex.",
+            "Reshape to (V, 2) — one (u, v) row per vertex, in the same order as "
+            "`vertices`",
+        )
+    if arr.shape[0] != n_vertices:
+        raise ValidationError(
+            f"{context}: Has {arr.shape[0]:,} rows but the mesh has "
+            f"{n_vertices:,} vertices",
+            "UVs are per-vertex, so supply exactly one row per vertex",
+        )
+    if not np.all(np.isfinite(arr)):
+        raise ValidationError(
+            f"{context}: Contains non-finite values (NaN or +/-Inf). A non-finite "
+            "texture coordinate samples an undefined texel.",
+            "Remove or replace the non-finite entries; values OUTSIDE [0, 1] are "
+            "fine and tile under texture_wrap='repeat'",
+        )
+
+
+def _resolve_raw_texture_dims(arr: Any, context: str) -> Tuple[int, int, int]:
+    """Read and dtype-check an ``(H, W, C)`` raw texture payload."""
+    if arr.ndim != 3:
+        raise ValidationError(
+            f"{context}: Encoding 'raw' expects an (H, W, C) array, got shape "
+            f"{arr.shape}",
+            "Reshape to (height, width, channels); a greyscale texture is "
+            "(H, W, 1), not (H, W)",
+        )
+    # Same rule as element colours: float of any width is writable because it
+    # quantizes; an integer array must already be uint8 or uint16.
+    if np.issubdtype(arr.dtype, np.floating):
+        if not np.all(np.isfinite(arr)):
+            raise ValidationError(
+                f"{context}: Contains non-finite values (NaN or +/-Inf)",
+                "Replace the non-finite texels before writing",
+            )
+    elif arr.dtype not in (np.dtype(np.uint8), np.dtype(np.uint16)):
+        raise ValidationError(
+            f"{context}: Integer textures must be uint8 or uint16, got {arr.dtype}",
+            "Cast to uint8 or uint16, or to a float dtype for an HDR texture",
+        )
+    return int(arr.shape[0]), int(arr.shape[1]), int(arr.shape[2])
+
+
+def _resolve_encoded_texture_dims(
+    arr: Any,
+    encoding: str,
+    width: Optional[int],
+    height: Optional[int],
+    channels: Optional[int],
+    context: str,
+) -> Tuple[int, int, int]:
+    """Check an encoded byte payload and take its dimensions from the caller."""
+    if arr.ndim != 1 or arr.dtype != np.dtype(np.uint8):
+        raise ValidationError(
+            f"{context}: Encoding {encoding!r} expects a 1-D uint8 array of "
+            f"encoded bytes, got shape {arr.shape} dtype {arr.dtype}",
+            f"Pass the raw {encoding.upper()} file bytes as "
+            "np.frombuffer(data, dtype=np.uint8)",
+        )
+    if arr.size == 0:
+        raise ValidationError(
+            f"{context}: Encoded payload is empty",
+            "Supply the encoded image bytes",
+        )
+    if width is None or height is None or channels is None:
+        raise ValidationError(
+            f"{context}: Encoding {encoding!r} requires explicit width, height and "
+            "channels — they cannot be read from encoded bytes without decoding "
+            "them, and the viewer budgets the node before it fetches anything",
+            "Pass texture_width, texture_height and texture_channels from the "
+            "source image",
+        )
+    return int(height), int(width), int(channels)
+
+
+def validate_texture_for_writing(
+    texture: Any,
+    encoding: str,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    channels: Optional[int] = None,
+    context: str = "texture",
+) -> Tuple[int, int, int]:
+    """Validate a mesh texture payload and resolve its declared dimensions.
+
+    Two payload shapes, split into :func:`_resolve_raw_texture_dims` and
+    :func:`_resolve_encoded_texture_dims`, because the *declared* dimensions
+    matter identically to both and are what the viewer's admission gate spends:
+
+    * ``raw`` — an ``(H, W, C)`` array. Dimensions come off the shape, so a
+      caller-supplied ``width``/``height``/``channels`` must agree with it.
+    * ``png`` / ``webp`` / ``jpeg`` — a 1-D ``uint8`` array of encoded bytes, the
+      same shape ``image_label_bytes`` already uses. Dimensions cannot be read
+      from the payload without decoding it, so they are **required**.
+
+    **Why the declared dimensions are load-bearing rather than metadata.** A
+    compressed image is a decompression bomb, and the viewer loads arbitrary
+    ``?src=`` URLs: a 100 KB JPEG can decode to hundreds of megabytes. The
+    viewer's mesh preflight budgets a node *before fetching a chunk*, from the
+    declared numbers — so a store that omits or understates them cannot be
+    admitted safely, and refusing here is part of what makes the read-side gate
+    mean anything. The viewer re-checks the decoded bitmap against these values.
+
+    Args:
+        texture: The payload — an ``(H, W, C)`` array, or 1-D ``uint8`` bytes.
+        encoding: One of :data:`TEXTURE_ENCODINGS`.
+        width: Declared width. Required for encoded payloads.
+        height: Declared height. Required for encoded payloads.
+        channels: Declared channel count. Required for encoded payloads.
+        context: Context for error messages.
+
+    Returns:
+        ``(height, width, channels)``, resolved.
+
+    Raises:
+        ValidationError: On an unknown encoding, a dtype the encoding cannot
+            carry, a bad channel count, missing or disagreeing dimensions, or a
+            non-finite float value.
+    """
+    if encoding not in TEXTURE_ENCODINGS:
+        raise ValidationError(
+            f"{context}: Unknown texture_encoding {encoding!r}. Valid: "
+            f"{', '.join(sorted(TEXTURE_ENCODINGS))}",
+            "Use 'raw' for an (H, W, C) array (the only encoding that carries "
+            "HDR), or 'png'/'webp'/'jpeg' for encoded bytes",
+        )
+
+    arr = np.asarray(texture)
+    res_h, res_w, res_c = (
+        _resolve_raw_texture_dims(arr, context)
+        if encoding == "raw"
+        else _resolve_encoded_texture_dims(
+            arr, encoding, width, height, channels, context
+        )
+    )
+
+    if res_c not in _TEXTURE_CHANNELS:
+        raise ValidationError(
+            f"{context}: Channels must be 1, 3 or 4 (grey, RGB, RGBA), got {res_c}",
+            "Reduce or expand the channel axis to grey, RGB or RGBA",
+        )
+    if min(res_h, res_w) < 1:
+        raise ValidationError(
+            f"{context}: Dimensions must be positive, got {res_w}x{res_h}",
+            "Supply the real pixel dimensions of the texture",
+        )
+    # A disagreement is refused rather than silently preferring one source: the
+    # viewer spends the DECLARED numbers, so a mismatch is exactly the case where
+    # the budget stops meaning what it says.
+    for label, declared, resolved in (
+        ("texture_width", width, res_w),
+        ("texture_height", height, res_h),
+        ("texture_channels", channels, res_c),
+    ):
+        if declared is not None and int(declared) != resolved:
+            raise ValidationError(
+                f"{context}: {label}={int(declared)} disagrees with the payload's "
+                f"own {resolved}",
+                f"Drop {label} and let it be read from the array, or correct it",
+            )
+    return res_h, res_w, res_c
+
+
 def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
     """Validate that all required Zarr attributes are present.
 
