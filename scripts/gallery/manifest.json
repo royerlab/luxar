@@ -375,8 +375,8 @@
       "script": "demo_atp_synthase.py",
       "dataset": "datasets/demos/atp_synthase.luxar.zarr",
       "citation": "Zhou et al. 2015",
-      "distance": 27,
-      "note": "absolute dist reliable vs off-center bbox-fill"
+      "distance": 25,
+      "note": "distance 25: 53% still coverage and 0/4316 border pixels across 10 poses; fillTarget 0.6 reached 58% but cropped 248/4316 at rock -10°, so the absolute distance is retained"
     },
     {
       "id": "ocean",
