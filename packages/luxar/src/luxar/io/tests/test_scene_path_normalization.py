@@ -263,22 +263,20 @@ class TestSceneExtensionNormalization:
         assert requested.read_bytes() == b"previous archive"
         assert sorted(path.name for path in tmp_path.iterdir()) == [requested.name]
 
-    def test_swallowed_packaging_failure_retries_complete_archive(
+    def test_swallowed_packaging_failure_cannot_publish_empty_archive(
         self, tmp_path, monkeypatch
     ):
         requested = tmp_path / "scene.luxar.zarr.zip"
         with LuxarZarrCompiler(requested) as compiler:
             _write_minimal_scene(compiler)
+        previous_archive = requested.read_bytes()
 
-        original_package = optimise_mod._package
         attempts = 0
 
         def fail_once(staging, artifact):
             nonlocal attempts
             attempts += 1
-            if attempts == 1:
-                raise OSError("transient packaging failure")
-            original_package(staging, artifact)
+            raise OSError("transient packaging failure")
 
         monkeypatch.setattr(optimise_mod, "_package", fail_once)
         with LuxarZarrCompiler(requested) as compiler:
@@ -289,12 +287,16 @@ class TestSceneExtensionNormalization:
             )
             with pytest.raises(ValueError, match="transient packaging failure"):
                 compiler.finalize()
+            with pytest.raises(ValueError, match="previous finalization failure"):
+                compiler.finalize()
 
-        assert attempts == 2
+        assert attempts == 1
+        assert requested.read_bytes() == previous_archive
+        assert sorted(path.name for path in tmp_path.iterdir()) == [requested.name]
         scene = LuxarScene.load(requested)
-        assert scene.get_points("replacement")["positions"].shape == (1, 3)
+        assert scene.get_points("pts")["positions"].shape == (1, 3)
         with pytest.raises(KeyError):
-            scene.get_points("pts")
+            scene.get_points("replacement")
 
     def test_body_failure_does_not_publish_or_leave_staging(self, tmp_path, capsys):
         requested = tmp_path / "scene.luxar.zarr.zip"

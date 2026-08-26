@@ -278,6 +278,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self.compressor = compressor
         self._metadata_cache: Dict[str, Any] = {}
         self._is_finalized = False
+        self._archive_finalize_failed = False
         # Transactions are re-entrant, not thread-local: scene authoring through
         # one compiler instance is single-threaded, like the writer itself.
         self._transaction_depth = 0
@@ -351,7 +352,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     # would mask the one already propagating out of the with
                     # block (a second Ctrl-C is a BaseException, not Exception).
                     pass
-            elif not self._is_finalized:
+            elif not self._is_finalized and not self._archive_finalize_failed:
                 # Clean exit: finalize. If finalize() itself fails it leaves a
                 # half-finalized store; mark it incomplete so it is rejected,
                 # then re-raise the original finalize error.
@@ -1778,6 +1779,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Finalize the Zarr store with metadata consolidation."""
         if self._is_finalized:
             return
+        if self._archive_finalize_failed:
+            raise ValueError(
+                "Cannot finalize archive after a previous finalization failure; "
+                "create a new LuxarZarrCompiler"
+            )
 
         try:
             # A prior aborted attempt may have marked the store incomplete; a
@@ -1894,6 +1900,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 pass
             # Preserve the historical wrapping for ordinary Exceptions, but let
             # a KeyboardInterrupt / SystemExit propagate unchanged.
+            if self._archive_path is not None:
+                self._archive_finalize_failed = True
+                self._cleanup_archive_staging()
             if isinstance(e, Exception):
                 raise ValueError(f"Could not finalize Zarr store: {e}") from e
             raise
