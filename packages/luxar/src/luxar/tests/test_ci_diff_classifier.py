@@ -741,6 +741,18 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     )
 
 
+def test_obsidian_jobs_budget_for_queue_time(workflow: str) -> None:
+    """Short required legs need the same practical queue tolerance as Python."""
+    jobs = yaml.safe_load(workflow)["jobs"]
+    assert jobs["python-tests"]["timeout-minutes"] == 180
+    assert jobs["typescript-tests"]["timeout-minutes"] == 120
+
+    watchdog_comment = workflow[workflow.index("  # pick-runner's heartbeat") :]
+    watchdog_comment = watchdog_comment[: watchdog_comment.index("  queue-watchdog:")]
+    assert "timeout-minutes` can be charged while the job is queued" in watchdog_comment
+    assert "only starts counting once a job is running" not in watchdog_comment
+
+
 def test_scheduled_ci_supplies_a_green_window_every_three_hours(
     workflow: str,
 ) -> None:

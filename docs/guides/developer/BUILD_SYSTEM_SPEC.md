@@ -903,7 +903,10 @@ same species of lie as an untested 3.10 claim would be. All eight scheduled wind
 land every three hours; the seven other than 09:17 carry only the required 3.12 leg.
 On obsidian, `max-parallel: 2` prevents one run's Python matrix from monopolising all
 three shared slots; repository-wide queue order may still put other work ahead of
-that run's `typescript-tests`. The final Python leg follows. Every scheduled window
+that run's `typescript-tests`. GitHub can charge a self-hosted job's timeout while it
+is still queued, so the 15.5-minute TypeScript leg carries a 120-minute budget: about
+the same 90-minute queue tolerance as the 83–91-minute Python leg's 180-minute budget.
+The final Python leg follows. Every scheduled window
 also runs the short `release-readiness` and `wheel-viewer` checks on GitHub-hosted
 runners, and `pick-runner` routes the long Python/TypeScript legs to hosted runners
 when obsidian has neither fresh capacity nor work in flight. Five of the twelve most
@@ -958,7 +961,7 @@ unless it is included in the multi-job failed-jobs rerun; otherwise recovery req
 manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
 later merge cannot cancel the repaired attempt. That exemption applies to ordinary PR
 reruns too, and neither rerun path restarts `queue-watchdog`; an obsidian-routed job
-can therefore remain queued until GitHub's 24-hour limit if the runner disappears. The
+can therefore consume its job timeout while queued if the runner disappears. The
 repair job has only `actions: write` permission and runs on GitHub-hosted Linux;
 recovered long legs reuse their original runner-routing decision and repay work that the
 scheduled run already performed. On the multi-job path, up to four obsidian-routed long
