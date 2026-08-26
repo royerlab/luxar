@@ -8,9 +8,12 @@
  */
 
 import * as zarrita from 'zarrita';
+import ZipFileStore from '@zarrita/storage/zip';
 
 import { boundedConcurrencyStore } from '../utils/fetch-concurrency';
 import { LuxarDeltaCodec } from './codecs/luxar-delta';
+import { isZippedStoreUrl, normalizeZipEntries } from './zip/entries';
+import { LuxarHttpRangeReader } from './zip/range-reader';
 import type { AbsolutePath, AsyncReadable, GetOptions, Readable } from '@zarrita/storage';
 
 /** `@zarrita/storage` primitives (path, readable-store, and get-option types) re-exported so callers depend only on this facade. */
@@ -99,6 +102,48 @@ if (typeof codecRegistry?.set === 'function') {
  * {@link withFetchGate} for why. */
 export function createFetchStore(url: string): FetchStore {
   return boundedConcurrencyStore(new zarrita.FetchStore(url));
+}
+
+/** Options shared by HTTP- and Blob-backed zip stores. */
+export function createZipStoreOptions(
+  url: string
+): NonNullable<ConstructorParameters<typeof ZipFileStore>[1]> {
+  return {
+    transformEntries: (entries) => normalizeZipEntries(entries, url),
+  };
+}
+
+/**
+ * Create a store that reads a zipped Zarr archive (`.zarr.zip`) in place, over
+ * HTTP range requests — one ranged GET per chunk, no unpacking.
+ *
+ * `ZipFileStore` comes from `@zarrita/storage` rather than `zarrita`, which
+ * re-exports only `FetchStore`. Note it is flagged `@experimental` upstream;
+ * we lean on that lightly, because only `get()` is ever called here — its
+ * `getRange()` is the method that reaches into `unzipit` internals, and nothing
+ * in the viewer calls `getRange` on a store. Browser builds may warn that
+ * `unzipit` imports Node's `worker_threads`; that import is guarded by its Node
+ * branch, and workers remain disabled in the browser path used here.
+ *
+ * Wrapped in {@link boundedConcurrencyStore} for the same reason the fetch path
+ * is: the ranged GETs are ordinary requests and must share the fetch gate.
+ *
+ * KNOWN COST: the constructor eagerly reads the whole central directory
+ * (~116 bytes per member, measured), so cold open pays a fixed preamble
+ * proportional to chunk count before the first chunk arrives.
+ */
+export function createZipStore(url: string): AsyncReadable {
+  const store = new ZipFileStore(new LuxarHttpRangeReader(url), createZipStoreOptions(url));
+  return boundedConcurrencyStore(store);
+}
+
+/**
+ * Pick the store implementation for a dataset URL: zipped archives get
+ * {@link createZipStore}, everything else the directory-backed
+ * {@link createFetchStore}.
+ */
+export function createStoreForUrl(url: string): AsyncReadable {
+  return isZippedStoreUrl(url) ? createZipStore(url) : createFetchStore(url);
 }
 
 /**
