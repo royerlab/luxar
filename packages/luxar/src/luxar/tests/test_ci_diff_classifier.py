@@ -986,7 +986,19 @@ if os.environ["ROUTER_API_ERROR"] == "jobs-json" and "/runs/" in endpoint and "/
     print("not-json")
     raise SystemExit(0)
 if "/actions/runs?" in endpoint:
-    run_ids = [2038, 9999] if os.environ["ROUTER_OTHER_ACTIVE"] == "1" else [2038]
+    if "status=queued" in endpoint:
+        run_ids = (
+            [2038]
+            if int(os.environ["ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS"]) > 0
+            else []
+        )
+    else:
+        run_ids = (
+            [9999]
+            if os.environ["ROUTER_OTHER_ACTIVE"] == "1"
+            or int(os.environ["ROUTER_QUEUED_OBSIDIAN_JOBS"]) > 0
+            else []
+        )
     print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
 elif "/runs/" in endpoint and "/jobs?" in endpoint:
     queued = (

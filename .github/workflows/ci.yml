@@ -288,37 +288,39 @@ jobs:
           active_obsidian=0
           max_queued_obsidian=5
           queued_obsidian=0
-          runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
-            2>/dev/null) || runs=""
-          if [ -z "$runs" ]; then
-            echo "run liveness unreadable; routing to obsidian to avoid paid overflow"
-            echo "label=obsidian" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          for run_id in $(echo "$runs" | jq -r '.workflow_runs[].id' 2>/dev/null); do
-            jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
-              2>/dev/null) || jobs=""
-            if [ -z "$jobs" ]; then
-              echo "job liveness unreadable; routing to obsidian to avoid paid overflow"
+          for run_status in queued in_progress; do
+            runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=${run_status}&per_page=100" \
+              2>/dev/null) || runs=""
+            if [ -z "$runs" ]; then
+              echo "run activity unreadable; routing to obsidian to avoid paid overflow"
               echo "label=obsidian" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            queued=$(echo "$jobs" | jq '[.jobs[] | select(.status == "queued")
-              | select(.labels | index("obsidian"))] | length' 2>/dev/null) || {
-                echo "job backlog unreadable; routing to obsidian to avoid paid overflow"
+            for run_id in $(echo "$runs" | jq -r '.workflow_runs[].id' 2>/dev/null); do
+              jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
+                2>/dev/null) || jobs=""
+              if [ -z "$jobs" ]; then
+                echo "job activity unreadable; routing to obsidian to avoid paid overflow"
                 echo "label=obsidian" >> "$GITHUB_OUTPUT"
                 exit 0
-              }
-            queued_obsidian=$(( queued_obsidian + queued ))
-            if [ "$queued_obsidian" -ge "$max_queued_obsidian" ]; then
-              echo "$queued_obsidian obsidian jobs are already queued -> routing to ubuntu-latest"
-              echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            if echo "$jobs" | jq -e '.jobs[] | select(.status == "in_progress")
-              | select(.labels | index("obsidian"))' >/dev/null; then
-              active_obsidian=1
-            fi
+              fi
+              queued=$(echo "$jobs" | jq '[.jobs[] | select(.status == "queued")
+                | select(.labels | index("obsidian"))] | length' 2>/dev/null) || {
+                  echo "job backlog unreadable; routing to obsidian to avoid paid overflow"
+                  echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                  exit 0
+                }
+              queued_obsidian=$(( queued_obsidian + queued ))
+              if [ "$queued_obsidian" -ge "$max_queued_obsidian" ]; then
+                echo "$queued_obsidian obsidian jobs are already queued -> routing to ubuntu-latest"
+                echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              if echo "$jobs" | jq -e '.jobs[] | select(.status == "in_progress")
+                | select(.labels | index("obsidian"))' >/dev/null; then
+                active_obsidian=1
+              fi
+            done
           done
           if [ "$capacity_fresh" -eq 1 ]; then
             echo "capacity heartbeat is ${age}s old with $queued_obsidian queued -> routing to obsidian"
