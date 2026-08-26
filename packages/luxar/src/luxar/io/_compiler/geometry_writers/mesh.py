@@ -131,6 +131,18 @@ def _validate_normal_pair(
         )
 
 
+def _validate_mesh_metadata(shading: Optional[str], double_sided: Any) -> None:
+    """Validate mesh metadata that directly controls viewer rendering."""
+    # A typo must not reach zarr: an unrecognised shading value would silently
+    # take the stored-normal path.
+    if shading is not None and shading not in ("smooth", "flat", "none"):
+        raise ValueError(f"shading must be 'smooth', 'flat' or 'none', got {shading!r}")
+    if not isinstance(double_sided, bool):
+        raise ValueError(
+            f"double_sided must be a bool, got {type(double_sided).__name__}"
+        )
+
+
 def _write_mesh_texture_arrays(
     group: Any,
     ctx: GeometryWriteCtx,
@@ -268,14 +280,7 @@ def validate_mesh_arrays(
     _validate_normal_pair(normals, normal_dims, n_vertices, n_dims)
     if uvs is not None:
         validate_uvs_for_writing(uvs, n_vertices)
-    # Shading is metadata the viewer acts on, so a typo must not reach zarr: an
-    # unrecognised value would silently take the stored-normal path.
-    if shading is not None and shading not in ("smooth", "flat", "none"):
-        raise ValueError(f"shading must be 'smooth', 'flat' or 'none', got {shading!r}")
-    if not isinstance(double_sided, bool):
-        raise ValueError(
-            f"double_sided must be a bool, got {type(double_sided).__name__}"
-        )
+    _validate_mesh_metadata(shading, double_sided)
     # Optional per-vertex channels.
     if colors is not None:
         if isinstance(colors, np.ndarray):
