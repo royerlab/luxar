@@ -97,6 +97,16 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_readme_demo_docs.py drift-guards the root demo documentation",
     ),
     (
+        "CLAUDE.md",
+        "py",
+        "check-demo-counts synchronizes its bundled-demo count with the registry",
+    ),
+    (
+        ".agents/skills/luxar-visualization/SKILL.md",
+        "py",
+        "check-demo-counts synchronizes its demo and focused-example counts",
+    ),
+    (
         "README.md",
         "ts",
         "gallery-selection.test.ts derives the README capture set from it",

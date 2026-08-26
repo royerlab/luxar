@@ -816,9 +816,11 @@ the pytest suite itself reads: `scripts/complexity_baseline.json` (the C901
 ratchet's only input that carries no Python extension),
 `scripts/gallery/manifest.json` (cross-validated against the demo registry) and
 `docs/guides/user/CLI_REFERENCE.md` (drift-guarded against the live Typer app),
-plus the root `README.md` and `packages/luxar/src/luxar/demos/README.md` guarded
-against the live demo registry and exported helper inventory, and the gallery
-capture spec whose `DemoEntry` interface defines the manifest field contract.
+plus the root `README.md`, `CLAUDE.md`, and
+`.agents/skills/luxar-visualization/SKILL.md` guarded against the live demo and
+example inventories, `packages/luxar/src/luxar/demos/README.md` guarded against
+the exported helper inventory, and the gallery capture spec whose `DemoEntry`
+interface defines the manifest field contract.
 `dom_ts` explicitly owns the root `README.md` and gallery manifest because the
 gallery-selection unit test resolves and validates the README capture set from them.
 A check whose own inputs are unclassified is a check that skips for exactly the
@@ -827,8 +829,8 @@ domains: it defines how every suite is invoked, so an edit that breaks a command
 or a condition is caught by the run that contains it.
 
 A change that touches no domain at all — most Markdown, `docs/`, and
-`CHANGELOG.md`, except for the pytest inputs noted above — runs no language
-suite. Those jobs still *run* (checkout plus skipped steps),
+`CHANGELOG.md`, except for the explicitly classified gate inputs noted above —
+runs no language suite. Those jobs still *run* (checkout plus skipped steps),
 so their required contexts (`python-tests (3.12)`, `typescript-tests`,
 `release-readiness`, `wheel-viewer`) report an explicit green in seconds
 instead of a grey "skipped", which is what keeps strict branch protection from
