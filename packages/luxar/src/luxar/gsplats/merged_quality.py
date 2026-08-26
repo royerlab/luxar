@@ -40,9 +40,9 @@ _QUALITY_HOST_REFERENCE_VOLUMES = 2
 _QUALITY_DEVICE_PEAK_VOLUMES = 8
 
 #: Local ``batch-fit run`` workers share one CUDA device. Its parent records that
-#: concurrency here so each process admits only its share of the sampled free
-#: VRAM. The single-card ``-j N`` and Slurm fan-outs do not yet set it; their
-#: per-tile scoring work is tracked by #2195.
+#: concurrency here so each process admits only its share of sampled free host
+#: RAM and device VRAM. The single-card ``-j N`` and Slurm fan-outs do not yet
+#: set it; their per-tile scoring work is tracked by #2195.
 QUALITY_WORKERS_PER_DEVICE_ENV = "LUXAR_QUALITY_WORKERS_PER_DEVICE"
 
 
