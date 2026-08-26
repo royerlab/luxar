@@ -36,6 +36,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -287,6 +288,22 @@ _PYTHON_SOURCE_ROOTS = (
     REPO / "stats",
 )
 
+_NON_SCANNED_PYTHON_VIEWER_INPUTS = {
+    "packages/luxar-viewer/package.json": "read by check_version_consistency.py",
+    "packages/luxar-viewer/src/types/format-contract.ts": (
+        "generated and checked by scripts/gen_format_contract.py"
+    ),
+    "packages/luxar-viewer/src/tests/global-setup.ts": (
+        "matched by test_fixture_environment.py through git grep"
+    ),
+    "packages/luxar-viewer/src/tests/README.md": (
+        "matched by test_fixture_environment.py through git grep"
+    ),
+    "packages/luxar-viewer/tests/fixtures/README.md": (
+        "matched by test_fixture_environment.py through git grep"
+    ),
+}
+
 #: The rule that puts the workflow itself in every domain. Extracted as text so a
 #: reword breaks this file rather than silently dropping the only classification
 #: ``.github/workflows/ci.yml`` has (none of the four domain patterns match it).
@@ -429,22 +446,30 @@ def test_inputs_without_python_readers_do_not_claim_the_python_domain(
     )
 
 
-def _viewer_source_calls() -> tuple[set[str], list[str]]:
+def _viewer_source_calls(
+    source_roots: tuple[Path, ...] = _PYTHON_SOURCE_ROOTS,
+    *,
+    repo: Path = REPO,
+) -> tuple[set[str], list[str]]:
     paths: set[str] = set()
     non_literal_calls: list[str] = []
-    for source_root in _PYTHON_SOURCE_ROOTS:
+    for source_root in source_roots:
         for source_path in source_root.rglob("*.py"):
-            relative = source_path.relative_to(REPO)
-            if not (
-                source_path.name == "conftest.py"
-                or source_path.name.startswith("test_")
-                or "tests" in relative.parts
-            ):
+            source = source_path.read_text(encoding="utf-8")
+            if "viewer_source" not in source:
                 continue
-            tree = ast.parse(
-                source_path.read_text(encoding="utf-8"), filename=str(source_path)
-            )
+            relative = source_path.relative_to(repo)
+            tree = ast.parse(source, filename=str(source_path))
             for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    aliased_import = any(
+                        alias.name == "viewer_source"
+                        and alias.asname not in (None, "viewer_source")
+                        for alias in node.names
+                    )
+                    if aliased_import:
+                        non_literal_calls.append(f"{relative}:{node.lineno}")
+                    continue
                 if not isinstance(node, ast.Call):
                     continue
                 function = node.func
@@ -467,12 +492,55 @@ def _viewer_source_calls() -> tuple[set[str], list[str]]:
     return paths, non_literal_calls
 
 
+def test_viewer_source_scan_covers_every_pytest_source_root() -> None:
+    with (REPO / "pyproject.toml").open("rb") as stream:
+        pytest_paths = tomllib.load(stream)["tool"]["pytest"]["ini_options"][
+            "testpaths"
+        ]
+
+    uncovered = [
+        path
+        for path in pytest_paths
+        if not any(
+            (REPO / path) == source_root or (REPO / path).is_relative_to(source_root)
+            for source_root in _PYTHON_SOURCE_ROOTS
+        )
+    ]
+    assert not uncovered, (
+        f"pytest source roots missing from the viewer_source() scan: {uncovered}"
+    )
+
+
+def test_viewer_source_scan_finds_shared_helpers(tmp_path: Path) -> None:
+    helper = tmp_path / "shared_helper.py"
+    helper.write_text('viewer_source("src/shared.ts")\n', encoding="utf-8")
+
+    paths, errors = _viewer_source_calls((tmp_path,), repo=tmp_path)
+
+    assert paths == {"packages/luxar-viewer/src/shared.ts"}
+    assert errors == []
+
+
+def test_viewer_source_scan_rejects_aliased_imports(tmp_path: Path) -> None:
+    helper = tmp_path / "shared_helper.py"
+    helper.write_text(
+        'from luxar.conftest import viewer_source as source\nsource("src/hidden.ts")\n',
+        encoding="utf-8",
+    )
+
+    paths, errors = _viewer_source_calls((tmp_path,), repo=tmp_path)
+
+    assert paths == set()
+    assert errors == ["shared_helper.py:1"]
+
+
 def test_viewer_source_readers_are_statically_owned_by_the_python_gate() -> None:
     """Every shared viewer-source reader must have one checked classifier row."""
     paths, non_literal_calls = _viewer_source_calls()
     assert not non_literal_calls, (
-        "viewer_source() paths must be string literals so classifier ownership is "
-        f"statically discoverable; non-literal calls: {non_literal_calls}"
+        "viewer_source() must be called by that name with one string-literal path "
+        "so classifier ownership is statically discoverable; invalid uses: "
+        f"{non_literal_calls}"
     )
     assert paths, (
         "no viewer_source() calls found; the ownership guard would pass vacuously"
@@ -483,6 +551,26 @@ def test_viewer_source_readers_are_statically_owned_by_the_python_gate() -> None
     assert not missing, (
         "viewer sources read by Python tests must have dom_py GATE_INPUTS rows: "
         f"{missing}"
+    )
+
+    python_viewer_inputs = {
+        path for path in python_gate_inputs if path.startswith("packages/luxar-viewer/")
+    }
+    exceptions = set(_NON_SCANNED_PYTHON_VIEWER_INPUTS)
+    stale_exceptions = sorted(exceptions - python_viewer_inputs)
+    unaccounted_inputs = sorted(python_viewer_inputs - paths - exceptions)
+    scanned_exceptions = sorted(paths & exceptions)
+    assert not stale_exceptions, (
+        "non-scanned viewer input exceptions must name dom_py GATE_INPUTS rows: "
+        f"{stale_exceptions}"
+    )
+    assert not unaccounted_inputs, (
+        "dom_py viewer GATE_INPUTS must be discovered through viewer_source() or "
+        f"documented as non-scannable: {unaccounted_inputs}"
+    )
+    assert not scanned_exceptions, (
+        "viewer inputs now discovered through viewer_source() must leave the "
+        f"non-scanned exception table: {scanned_exceptions}"
     )
 
     negative_readers = sorted(paths & set(NON_PYTHON_DOMAIN_PATHS))

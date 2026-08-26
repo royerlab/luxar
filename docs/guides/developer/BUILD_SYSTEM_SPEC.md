@@ -830,13 +830,18 @@ Viewer TypeScript sources read by Python contract tests are also `dom_py`.
 Those tests resolve files through the shared `viewer_source()` helper, and
 `test_ci_diff_classifier.py` statically scans every literal helper call: each
 must have a Python `GATE_INPUTS` row, while every `NON_PYTHON_DOMAIN_PATHS`
-control must remain unread. `GATE_INPUTS` is therefore the exact declaration;
-the workflow ERE is its checked copy rather than a second unchecked inventory.
-Ownership stays file-narrow so unrelated viewer changes do not pull in the
-Python matrix. The docs gate has no corresponding hole: it already owns every
-viewer TypeScript source under `src/`, while viewer tools outside `src/` are
-outside both the documentation checker's viewer scan and TypeDoc's entry points.
-`dom_ts` explicitly owns the root `README.md` and gallery manifest because the
+control must remain unread. Five viewer inputs are consumed without opening a
+named path in a test: the version and generated-format checks run through their
+scripts, while `test_fixture_environment.py` matches its three fixture files via
+`git grep`. The classifier test keeps those explicit exceptions disjoint from
+the scanned readers and requires every `dom_py` viewer row to be in one set or
+the other. `GATE_INPUTS` is therefore the exact declaration; the workflow ERE is
+its checked copy rather than a second unchecked inventory. Ownership stays
+file-narrow so unrelated viewer changes do not pull in the Python matrix. The
+docs gate has no corresponding hole: it already owns every viewer TypeScript
+source under `src/`, while viewer tools outside `src/` are outside both the
+documentation checker's viewer scan and TypeDoc's entry points. `dom_ts`
+explicitly owns the root `README.md` and gallery manifest because the
 gallery-selection unit test resolves and validates the README capture set from
 them.
 A check whose own inputs are unclassified is a check that skips for exactly the
