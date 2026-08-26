@@ -1940,6 +1940,7 @@ class TestPlannedFitTruncationRadius:
             # fmt: on
         )
         assert result.exit_code == 0, result.output
+        assert "Merged quality: PSNR=" in result.output
         assert out.exists(), result.output
         assert GSplatData.load(out).truncation_radius == pytest.approx(3.5)
         fitting = read_node_attrs(out / "fitting")
