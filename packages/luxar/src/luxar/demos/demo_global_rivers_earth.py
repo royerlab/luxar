@@ -3,13 +3,10 @@
 
 A rotatable 3D globe built from two of Luxar's geometry types at once:
 
-  * **Terrain (Points)** — the Earth's surface sampled on a **Fibonacci
-    spiral-sphere** (uniform, no pole clustering), each point displaced radially
-    by its **ETOPO 2022** elevation and colored by a hypsometric palette (deep
-    abyssal navy -> ocean blue -> coastal cyan -> green lowland -> tan -> snow).
-    Rendered **opaque** as a solid planet, with a geometric additive ladder
-    (most of the payload is in the last two levels — see the note in
-    ``build_scene``).
+  * **Terrain (Mesh)** — a tiled UV sphere displaced radially by **ETOPO 2022**
+    elevation and textured with a hypsometric palette (deep abyssal navy -> ocean
+    blue -> coastal cyan -> green lowland -> tan -> snow). Rendered **opaque** as
+    a solid planet with smooth relief shading.
   * **Rivers (Lines)** — every HydroRIVERS reach (Strahler order >= 3), kept as
     **connected polylines** (so the line material renders seamless joints),
     draped just above the terrain and colored teal->white by Strahler order so
@@ -18,8 +15,8 @@ A rotatable 3D globe built from two of Luxar's geometry types at once:
     by the globe instead of showing through it. The rivers stream via the
     spatial-chunk index.
 
-This exercises two of Luxar's four geometry types (Points + Lines) at global
-scale with level-of-detail, in real geographic 3D.
+This exercises two of Luxar's four geometry types (Mesh + Lines) at global scale
+in real geographic 3D.
 
 ================================================================================
 SELF-CONTAINED / REGENERATING (no LFS asset)
@@ -133,9 +130,6 @@ GLOBE_LON = 2048
 GLOBE_LAT = 1024
 GLOBE_TEXTURE_WIDTH = 16384
 GLOBE_TILES = 4
-# A 4096-class GPU can commit at most 5,591,040 Points from one node. Keep the
-# 8M-point globe in parts below that floor, each with its own stream ladder.
-MAX_GLOBE_POINTS_PER_NODE = 4_000_000
 MIN_ORDER = 3  # keep HydroRIVERS reaches with Strahler order >= this
 DECIMATE_DEG = 0.06  # drop river vertices closer than this (~2-3x line width)
 RADIUS = 100.0  # globe radius (scene units)
@@ -145,7 +139,6 @@ RADIUS = 100.0  # globe radius (scene units)
 # still enough for the Andes and the mid-ocean ridges to catch light, but the globe
 # stays a globe.
 EXAGG = 15.0  # vertical exaggeration of elevation relief
-POINT_RADII = 0.09  # terrain point size (8M points form a dense shell)
 EARTH_OPACITY = 1.0  # solid globe: an OPAQUE shell the rivers are occluded BY
 RIVER_LIFT = 0.004  # lift rivers barely above the terrain surface
 RIVER_WIDTH = 0.015

@@ -132,8 +132,6 @@ from luxar.demos._globe_common import (
     Clouds,
     blue_marble_basemap,
     build_earth,
-    fibonacci_sphere,
-    lonlat_to_xyz,
     sample_equirect,
     uv_sphere,
 )
@@ -231,39 +229,6 @@ MAGNITUDE_SCALE = 0.03  # Height = magnitude × scale
 # Recent earthquakes are hot (red/orange), older ones are cool (blue/purple)
 COLOR_RECENT = np.array([1.0, 0.2, 0.0])  # Bright red-orange
 COLOR_OLD = np.array([0.2, 0.1, 0.6])  # Deep purple
-
-
-# =============================================================================
-# Fibonacci Sphere Generation
-# =============================================================================
-
-
-def generate_fibonacci_sphere(
-    n_points: int, radius: float = 1.0, *, jitter: bool = False
-) -> np.ndarray:
-    """Uniformly distributed points on a sphere, via the golden-angle spiral.
-
-    A regular lat/lon grid clusters points at the poles and spends most of its
-    budget there; the Fibonacci lattice does not.
-
-    Delegates to :mod:`luxar.demos._globe_common`, which is also what
-    ``demo_ocean_currents_earth`` uses. Its vectorized texture sampler replaces
-    the old 90 us-per-point lookup that kept this demo's globe too sparse to
-    render as a surface.
-
-    Args:
-        n_points: Number of points to generate.
-        radius: Sphere radius.
-        jitter: Dither the lattice by ~1 cell. **On for anything textured**: the
-            bare lattice beats against an equirectangular texture into visible
-            moire once the point radius approaches the spacing. Off for the
-            cloud layer, whose own noise threshold already breaks up the grid.
-
-    Returns:
-        Array of shape ``(n_points, 3)`` with (x, y, z) coordinates.
-    """
-    lon, lat = fibonacci_sphere(n_points, jitter=jitter)
-    return lonlat_to_xyz(lon, lat, 0.0, radius)
 
 
 def latlon_to_xyz(lat: float, lon: float, radius: float = 1.0) -> np.ndarray:

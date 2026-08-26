@@ -56,14 +56,9 @@ is small on screen never fetches its fine levels. Whole-globe framing holds
 ~0.2M of its 15M; zooming a tile walks it to the full 1,875,000-point level while
 its neighbours stay coarse.
 
-**The globe deliberately gets none of that.** A textured shell cannot survive
-Gaussian merging: at K=4/levels=2 the coarsest level is 46k merged splats per
-750k-point tile, and those coarse ellipsoids cannot reproduce a continuous
-textured shell — the planet becomes a pile of blobs. Coarse levels are
-meaningful for a diffuse point cloud (they read as *density*, which is exactly
-what the occurrence layer wants) and meaningless for a continuous surface. The
-globe is instead a fixed-resolution backdrop, sized (``N_GLOBE``) so it never
-needs reducing.
+**The globe deliberately gets none of that.** It is a fixed-resolution textured
+mesh backdrop: unlike the diffuse occurrence point cloud, its surface detail
+comes from per-fragment texture sampling rather than an element-density ladder.
 
 **Calibrating the occurrence thresholds** took two measured corrections, both
 worth knowing before reusing the recipe. (Historical note: the default
@@ -115,8 +110,8 @@ removed:
   **gsplat** level intact and no "filtered out during nD->3D processing"
   warnings.
 
-So the globe is now ONE ``extend_to_all`` layer of ``N_GLOBE`` points at a fixed
-resolution, and the replicated context globe is gone.
+So the globe is now one ``extend_to_all`` textured mesh at a fixed resolution,
+and the replicated context globe is gone.
 
 Only the globe is extended. Extending the always-on track layer as well was tried
 and reverted: 105,662 always-visible ribbons buried the selection (7,283 fish
@@ -606,14 +601,6 @@ MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
 #: threshold is therefore the only lever, and it happens to be the natural one:
 #: the copies split cleanly into ~106k parts.
 MAX_TRACK_VERTICES_PER_NODE: Final = 150_000
-# The globe is partitioned for a DIFFERENT reason than the occurrence layer: not
-# the 5.59M texture bound but the ladder's LAST commit. A `stream:20000`
-# geometric ladder doubles, so its final chunk is ~half the layer, and
-# `check_demo_ladders` fails any commit above 1,000,000 (a single commit that
-# large blocks the main thread). At the current N_GLOBE this cap is slack -- the
-# globe stays one part -- and it is the guard that catches a future raise of
-# N_GLOBE rather than letting that land as a main-thread stall.
-MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 
 #: View-dependent LOD for the two big summary layers. A `stream:` ladder alone is
 #: NOT enough: it is *progressive*, so it converges to 100% of the layer no
@@ -2437,44 +2424,13 @@ def _movebank_group(species: str, default: int) -> int:
 
 
 # =============================================================================
-# Globe — a jittered Fibonacci sphere sampled from NASA Blue Marble
+# Globe texture source
 # =============================================================================
 
 BLUE_MARBLE_URL: Final = (
     "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57752/"
     "land_shallow_topo_2048.jpg"
 )
-
-
-def fibonacci_sphere(
-    n: int, *, jitter: bool = True, seed: int = 1234
-) -> Tuple[np.ndarray, np.ndarray]:
-    """``(lon, lat)`` degrees for ``n`` near-uniform points on a sphere.
-
-    The dither is not cosmetic. An undithered Fibonacci lattice is a *lattice*,
-    and once the rendered point radius approaches the point spacing its spiral
-    arms beat against themselves into visible moire "worms" across the whole
-    globe. Displacing each point by up to half a mean cell trades that
-    structure for unstructured noise, which reads as texture rather than as a
-    rendering bug.
-    """
-    if n < 1:
-        raise ValueError(f"n must be >= 1, got {n}")
-    rng = np.random.default_rng(seed)
-    i = np.arange(n)
-    golden = (1.0 + 5.0**0.5) / 2.0
-    y = 1.0 - 2.0 * (i + 0.5) / n
-    r_xy = np.sqrt(np.maximum(0.0, 1.0 - y * y))
-    theta = 2.0 * np.pi * i / golden
-    lat = np.degrees(np.arcsin(np.clip(y, -1.0, 1.0)))
-    lon = np.degrees(np.arctan2(r_xy * np.sin(theta), r_xy * np.cos(theta)))
-    if jitter:
-        cell = np.degrees(np.sqrt(4.0 * np.pi / n))  # mean angular spacing
-        lat = np.clip(lat + rng.uniform(-0.5, 0.5, n) * cell, -89.999, 89.999)
-        lon = lon + rng.uniform(-0.5, 0.5, n) * cell / np.maximum(
-            np.cos(np.radians(lat)), 1e-2
-        )
-    return lon, lat
 
 
 def sample_equirect(

@@ -9,11 +9,10 @@ rather than from any hand-drawn arrows.
 
 Two of Luxar's four geometry types, at global scale:
 
-  * **Earth (Points)** — a **jittered Fibonacci sphere** sampled from the NASA
-    Blue Marble *land_shallow_topo* texture. The jitter matters: a bare Fibonacci
-    lattice is a *lattice*, and at radii ~ point spacing its spiral arms beat
-    against themselves into visible moire "worms" over land and sea alike.
-    Dithering each point by ~1 mean-spacing cell turns that structure into noise.
+  * **Earth (Mesh)** — a tiled UV sphere carrying the NASA Blue Marble
+    *land_shallow_topo* texture at its full 16384-pixel master width. Per-fragment
+    texture sampling keeps coastlines sharp without spending millions of points
+    on the planet backdrop.
   * **Currents (Lines)** — HYCOM surface velocities, RK4-integrated into
     **connected polylines** draped just above the globe, coloured deep-blue ->
     white by current speed with the tail fading out (per-vertex RGBA), so each
