@@ -50,9 +50,9 @@ without guessing at the cause (`--workers=N`, `--ui`, a watch session and
 [🧵] [E2E] parallelism: max 1 worker — 16 cpus, load1 1.9 (capacity sized 3, run with 1)
 ```
 
-Four workers remains the ceiling — the binding resource is the GIL-bound
-`python3 -m http.server 9000` dataset server, not the GPU — and the count is that
-ceiling scaled by the box's free fraction,
+Four workers remains the ceiling — the binding resource is the Python dataset
+server on port 9000, not the GPU — and the count is that ceiling scaled by the
+box's free fraction,
 `clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands are fractions of the
 box, so they hold at any size: 4 while at least 7/8 of it is free, 3 down to 5/8,
 2 down to 3/8, 1 below that. On 16 cores that is 4 up to load 2, 3 up to load 6,

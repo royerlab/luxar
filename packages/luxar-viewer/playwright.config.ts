@@ -86,8 +86,8 @@ export default defineConfig({
   // (software rendering is slower and less stable with concurrency).
   //
   // The CEILING of 4 is NOT the GPU — it is the Python dataset server (see
-  // webServer below) streaming thousands of
-  // small zarr chunks to every worker at once. The evidence is already in the
+  // webServer below) streaming thousands of small zarr chunks to every worker
+  // at once. The evidence is already in the
   // tree: all-examples-smoke-test.spec.ts raised its own timeout to 120 s to
   // "absorb HTTP-server contention when several worker-pool tabs decode
   // mid-size datasets concurrently". Raise it past 4 only together with a

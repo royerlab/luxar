@@ -23,14 +23,14 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const viewerRoot = path.resolve(__dirname, '../../..');
 const projectRoot = path.resolve(viewerRoot, '../..');
-const fixtureName = 'test_mixed.luxar.zarr';
+const fixtureName = 'test_extend_to_all_4d.luxar.zarr';
 const fixturePath = path.join(viewerRoot, 'tests/fixtures', fixtureName);
-const archivePath = path.join(
-  viewerRoot,
-  'test-results/zipped-store-loading',
-  `${fixtureName}.zip`
-);
 const dataBaseURL = 'http://127.0.0.1:9000';
+
+const archiveFormats = [
+  { name: 'STORED', level: 0 },
+  { name: 'DEFLATE', level: 6 },
+] as const;
 
 function collectArchiveEntries(root: string): Record<string, Uint8Array> {
   const entries: Record<string, Uint8Array> = {};
@@ -70,15 +70,27 @@ async function loadElementCounts(page: Page, source: string) {
   };
 }
 
-test('a zipped scene converges on the same element counts as its directory twin', async ({
-  page,
-}) => {
-  fs.mkdirSync(path.dirname(archivePath), { recursive: true });
-  fs.writeFileSync(archivePath, zipSync(collectArchiveEntries(fixturePath), { level: 0 }));
+for (const format of archiveFormats) {
+  test(`a ${format.name} zipped scene converges on the same element counts as its directory twin`, async ({
+    page,
+  }) => {
+    const archivePath = path.join(
+      viewerRoot,
+      'test-results/zipped-store-loading',
+      `test-extend-to-all-4d-${format.name.toLowerCase()}.luxar.zarr.zip`
+    );
+    fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+    fs.writeFileSync(
+      archivePath,
+      zipSync(collectArchiveEntries(fixturePath), { level: format.level })
+    );
 
-  const directoryCounts = await loadElementCounts(page, fixtureURL(fixturePath));
-  const archiveCounts = await loadElementCounts(page, fixtureURL(archivePath));
+    const directoryCounts = await loadElementCounts(page, fixtureURL(fixturePath));
+    const archiveCounts = await loadElementCounts(page, fixtureURL(archivePath));
 
-  expect(directoryCounts.totalElements).toBeGreaterThan(0);
-  expect(archiveCounts).toEqual(directoryCounts);
-});
+    expect(directoryCounts.totalPoints).toBeGreaterThan(0);
+    expect(directoryCounts.totalLines).toBeGreaterThan(0);
+    expect(directoryCounts.totalGSplats).toBeGreaterThan(0);
+    expect(archiveCounts).toEqual(directoryCounts);
+  });
+}

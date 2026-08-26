@@ -50,7 +50,7 @@ def parse_byte_range(header: str, size: int) -> tuple[int, int] | None:
         if not raw_end:
             return None
         suffix = int(raw_end)
-        if suffix == 0:
+        if suffix == 0 or size == 0:
             return None
         return max(0, size - suffix), size - 1
 

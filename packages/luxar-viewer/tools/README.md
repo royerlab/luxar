@@ -31,8 +31,7 @@ servers rooted in another clone/worktree. It derives a deterministic
 identity from the checkout's canonical repository path, writes a small
 gitignored marker under `.luxar-e2e-identities/`, exposes the marker
 through Vite middleware, and validates the exact response during global
-setup. The repository-root `python3 -m http.server` serves the same
-marker directly.
+setup. The repository-root Python data servers serve the same marker directly.
 
 The standard, performance, screenshot, and video Playwright configs use
 the checkout-specific Vite marker as their `webServer.url` readiness
@@ -64,9 +63,9 @@ ceiling that differs from what was sized prints as
 `--workers=N`, `--ui`, a watch session and `playwright.perf.config.ts`'s own
 `workers: 1` all get there.
 
-Four workers is still the ceiling — the binding resource is the GIL-bound
-`python3 -m http.server 9000` dataset server, not the GPU — and the count is
-that ceiling scaled by the box's free fraction,
+Four workers is still the ceiling — the binding resource is the Python dataset
+server on port 9000, not the GPU — and the count is that ceiling scaled by the
+box's free fraction,
 `clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands are fractions of the
 box: 4 while at least 7/8 of it is free, 3 down to 5/8, 2 down to 3/8, 1 below
 that — on 16 cores, 4 up to load 2, 3 up to load 6, 2 up to load 10, then 1. An

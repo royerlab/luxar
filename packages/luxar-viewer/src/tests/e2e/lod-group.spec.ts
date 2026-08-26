@@ -406,7 +406,7 @@ const WARMUP_STRIDE = 4;
  * and a 60 fps machine (~33 ms/pose) landed squarely inside it. Worse, the
  * reasoning was inverted: a FASTER renderer leaves more budget unspent and was
  * therefore MORE likely to be called a product bug, while the real bottleneck —
- * a GIL-bound `python -m http.server` shared by up to 4 workers — is not
+ * the Python dataset server shared by up to 4 workers — is not
  * measured by the render loop at all.
  *
  * Worst case is this plus {@link SWEEP_DEADLINE_MS}, which is why the test
@@ -428,8 +428,8 @@ const WARMUP_BUDGET_MS = 12000;
  * leaving ~115 s. 90 s uses most of that and still keeps ~25 s of margin, and a
  * healthy run spends ~2 s here, so the cap costs nothing when nothing is wrong.
  * (The previous 20 s was BELOW the plausible cost of 61 steps × 2 paced frames
- * on a single-worker software-rendering runner whose dataset server is a
- * GIL-bound `python -m http.server` — i.e. the strict branch risked never being
+ * on a single-worker software-rendering runner whose Python dataset server is
+ * saturated — i.e. the strict branch risked never being
  * exercised in CI while the test stayed green.)
  */
 const SWEEP_DEADLINE_MS = 90000;

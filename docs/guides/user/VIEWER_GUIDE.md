@@ -3,7 +3,7 @@
 The Luxar viewer is a browser-based application for exploring nD scientific scenes
 containing points, lines, Gaussian splats, and triangle meshes. It renders with WebGL
 by default and has an opt-in WebGPU path (see the `renderer` URL parameter below), and
-it loads data from Zarr archives served over HTTP or from local files.
+it loads data from Zarr stores served over HTTP.
 
 ![Luxar viewer interface overview](../../images/docs/viewer-ui-overview.png)
 
@@ -56,8 +56,8 @@ The data server must support HTTP byte ranges and return `206 Partial Content`.
 `luxar serve` provides the required behavior. Archives are read-only: commands
 that update an existing store in place refuse them, so write to a directory or
 new archive instead. Image overlays stored inside an archive are currently
-skipped, and browser drag-and-drop/local-file opening does not yet accept a
-`.zarr.zip`; serve it over HTTP instead.
+skipped. The viewer has no browser local-file or drag-and-drop opening path for
+any scene format; serve the scene over HTTP instead.
 
 ---
 
