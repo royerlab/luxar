@@ -14,30 +14,53 @@ on:
   pull_request:
     branches: [main, dev]
   schedule:
-    # Nightly full-suite run, and still the multi-version Python matrix: per-PR CI
-    # runs the FLOOR (3.12) only, so this is where the newest supported
-    # interpreter (3.14) gets exercised — within 24h rather than on every PR.
+    # A merge reaches dev about every 39 minutes while the required Python and
+    # TypeScript legs take considerably longer, so most push runs are cancelled by
+    # the next merge before they can produce a promotable commit. Schedule events
+    # have their own concurrency group, so dev merges cannot cancel them. Run one
+    # every three hours to supply deliberate green windows for promotion.
     #
-    # It buys a second thing too: a schedule event has no PR base, so the
-    # `changes` job below cannot path-filter anything and selects the WHOLE suite
-    # plus the documentation gate, catching a break in a job every recent PR
-    # happened to skip. Budget it as one whole CI run a day on the self-hosted box.
+    # Scheduled runs still share a group with EACH OTHER, so a window still in
+    # flight three hours later is cancelled by its successor -- which is itself a
+    # promotion window, so a lost window costs three hours, not the cadence.
+    # UNLOADED, a floor-only window is one Python leg beside `typescript-tests`,
+    # ~83-91 min against the 180 min of spacing (see the `timeout-minutes` note on
+    # `python-tests`); the 09:17 full-matrix window is three legs at
+    # `max-parallel: 2`, so two waves, ~166-182 min plus the hosted `changes` /
+    # `pick-runner` preamble -- AT the spacing rather than under it. Both figures
+    # are unloaded, and obsidian is deliberately SCHED_IDLE, so neither window is
+    # guaranteed to finish: the full-matrix one is simply the first to lose, and
+    # its 3.13/3.14 coverage then waits for the next day. A floor-only window
+    # needs about half as much quiet and is therefore the last to be lost;
+    # sustained contention at the documented 2.4-3.3x stretch can cancel both
+    # until the box quiets.
+    #
+    # Scheduled runs select the whole suite because they have no PR base. Keep the
+    # 09:17 UTC window on the full supported Python matrix so 3.13/3.14 have one
+    # dedicated daily window; the other seven use only the required 3.12 context.
+    # Every window consumes hosted minutes for its short jobs. `pick-runner` sends
+    # the long Python/TypeScript legs to obsidian when available and to hosted
+    # runners otherwise; 5 of 12 recent scheduled runs took the billed hosted path.
+    # Thus routing adds either self-hosted queue depth or those long legs to the
+    # hosted bill; the routed long legs alone expose roughly 200-240 hosted
+    # minutes/day at that observed rate.
     - cron: '17 9 * * *'
+    - cron: '17 0,3,6,12,15,18,21 * * *'
 
 concurrency:
-  # `github.event_name` is in the key ONLY to keep the nightly and push-to-dev
+  # `github.event_name` is in the key ONLY to keep scheduled and push-to-dev
   # in separate groups. A scheduled run's ref is `refs/heads/dev`, the same as a
   # merge's, so under one shared group whichever of the two starts SECOND cancels
   # the other -- and they collide constantly: over the 31 days before this was
-  # written a merge landed inside the nightly's ~30min window on 17 days, and
+  # written a merge landed inside the daily cron's ~30min window on 17 days, and
   # inside the half hour before it on 12.
   #
   # The expensive direction is the cron killing a merge's push run: a push run
-  # has no PR base either, so like the nightly it selects the WHOLE suite, and it
-  # is the only place the new `dev` commit gets that treatment. A cron has no
-  # business discarding it. The reverse is milder -- a merge that cancels the
-  # nightly runs the full suite itself -- but it still leaves "did every job pass
-  # today?" unanswerable at a glance.
+  # has no PR base either, so like a scheduled run it selects the WHOLE suite,
+  # and it is the only place the new `dev` commit gets that treatment. A cron has
+  # no business discarding it. The reverse is milder -- a merge that cancels the
+  # scheduled run executes the full suite itself -- but it still leaves "did
+  # every required job pass today?" unanswerable at a glance.
   #
   # Nothing else changes -- PR runs already carry `refs/pull/N/merge` and so
   # were never in the same group as a push, and two runs of the same PR still
@@ -286,12 +309,13 @@ jobs:
   # and re-run ALL jobs to recover ("re-run failed" reuses the previous router
   # output).
   #
-  # On push/nightly, max-parallel deliberately holds one Python leg queued
-  # while two Python legs and TypeScript occupy the three slots. GitHub reports
-  # that held leg as `queued` with the `obsidian` label (observed 2026-08-24).
-  # The current run's active obsidian jobs keep the held leg covered. When this
-  # run is wholly queued, a periodic repository-wide scan looks for work on other
-  # runs. Two scans with no active obsidian work are required before cancellation.
+  # On a push or the daily full-matrix schedule, max-parallel deliberately holds
+  # one Python leg queued while two Python legs and TypeScript occupy the three
+  # slots. GitHub reports that held leg as `queued` with the `obsidian` label
+  # (observed 2026-08-24). The current run's active obsidian jobs keep the held
+  # leg covered. When this run is wholly queued, a periodic repository-wide scan
+  # looks for work on other runs. Two scans with no active obsidian work are
+  # required before cancellation.
   # The watchdog fails plumbing errors toward NOT cancelling.
   queue-watchdog:
     needs: [pick-runner]
@@ -310,10 +334,10 @@ jobs:
         run: |
           # Self-bounded below the job timeout. If jobs are STILL queued when
           # the window closes but obsidian stayed live the whole time, the box is
-          # busy, not dead (3 slots; 4 obsidian-routed test jobs on a push or the
-          # nightly, 2 on a PR — and a merge landing during the nightly now
-          # queues both sets at once, since the two no longer cancel each other
-          # — draining) — leave the run alone.
+          # busy, not dead (a push or daily full-matrix schedule routes 4 test
+          # jobs to obsidian, while a PR or frequent schedule routes 2;
+          # overlapping event groups do not cancel one another, so queued work
+          # can be healthy and draining) — leave the run alone.
           start=$(date +%s)
           end=$(( start + 10 * 60 ))
           materialize_end=$(( start + 3 * 60 ))
@@ -522,12 +546,14 @@ jobs:
       # With the obsidian fleet size documented by queue-watchdog, keep one
       # slot from being monopolised by one run's Python matrix. The shared
       # repository queue may still put other work ahead of this run's
-      # `typescript-tests`; push/nightly runs execute two Python legs, then the
-      # third. PRs have one Python leg and are unaffected. Keep the GitHub-hosted
+      # `typescript-tests`; pushes and the daily full-matrix schedule execute two
+      # Python legs, then the third. PRs and the seven floor-only scheduled
+      # windows have one Python leg and are unaffected. Keep the GitHub-hosted
       # fallback elastic: its matrix legs run on separate VMs.
       max-parallel: ${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}
       matrix:
-        # FLOOR on every PR, floor + NEWEST on push-to-dev and the nightly.
+        # FLOOR on every event, floor + NEWEST on push-to-dev and the daily
+        # 09:17 UTC schedule.
         #
         # 3.12 is the floor (`requires-python = ">=3.12"`, what zarr 3.2+ needs)
         # and is the required status context under branch protection, so it runs
@@ -535,18 +561,22 @@ jobs:
         # `install-hatch` bootstrap explicitly prefers them, and a developer's
         # `hatch env` picks the newest interpreter on the box — so testing only the
         # floor would leave the version most people actually run unexercised.
-        # Hence 3.14 on the events that already run the whole suite.
+        # Hence 3.14 on merge pushes and one dedicated daily schedule, both
+        # of which run the whole suite. The other seven scheduled promotion
+        # windows intentionally carry only the required 3.12 context.
         #
         # If newer interpreters are ever deliberately unsupported, the honest fix
         # is a `requires-python` upper bound, not a quiet single-leg matrix.
         #
-        # The non-PR set is EVERY version the wheel's classifiers advertise, so
+        # The full set is EVERY version the wheel's classifiers advertise, so
         # "declared" and "tested" cannot drift apart: 3.13 was claimed but never
         # exercised, which is the same species of lie as an untested 3.10 claim.
-        # Three legs off-PR is also what this job carried before the floor moved
+        # Three legs on pushes is also what this job carried before the floor moved
         # (3.10/3.11/3.12). `max-parallel` above controls their fan-out without
         # weakening the version coverage.
-        python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.12", "3.13", "3.14"]') }}
+        # Pull requests and the seven frequent schedules are the fallthrough. If
+        # another trigger is added, classify its version coverage explicitly.
+        python-version: ${{ (github.event_name == 'push' || github.event.schedule == '17 9 * * *') && fromJSON('["3.12", "3.13", "3.14"]') || fromJSON('["3.12"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
       # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to
