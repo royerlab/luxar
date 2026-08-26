@@ -907,7 +907,8 @@ def add_textured_globe(
 
     Args:
         scene: Scene or group to add to.
-        name: Node name (tiles get ``name`` + ``_0``, ``_1``, ... when ``tiles > 1``).
+        name: Node name. Multiple tiles create a group named ``name`` containing
+            ``part_0``, ``part_1``, ... .
         basemap: ``(h, w, 3)`` equirectangular RGB, row 0 at +90 latitude.
         radius: Sphere radius in scene units.
         n_lon: Total longitude divisions across the whole globe.
@@ -950,7 +951,7 @@ def add_textured_globe(
         global_normals = surface_vertex_normals(whole_v, whole_f)
         del whole_v, whole_f
 
-    # With more than one tile the nodes go inside a PARTITION GROUP, and the group
+    # With more than one tile the nodes go inside a group, and the group
     # is what carries `layer=True`. Without it the Layers panel lists "Earth_0"
     # and "Earth_1" as separate entries — an implementation detail of how the
     # basemap was split, offered to the user as two independent things to toggle.

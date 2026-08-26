@@ -500,9 +500,9 @@ scene.add_mesh(
     normal_dims: Sequence[int] | None = None,   # required iff normals is given — §3.4/§3.5
     colors: NDArray | Sequence[float] | None = None,
     scalars: NDArray[np.float32] | float | None = None,
-    *,
     uvs: NDArray[np.float32] | None = None,
     texture: NDArray | None = None,
+    *,
     texture_encoding: Literal["raw", "png", "webp", "jpeg"] = "raw",
     texture_width: int | None = None,
     texture_height: int | None = None,
