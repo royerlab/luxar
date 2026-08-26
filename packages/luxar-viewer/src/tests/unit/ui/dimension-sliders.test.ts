@@ -74,12 +74,34 @@ describe('DimensionSliders - keyboard selection indicator', () => {
 
   it('shows the selected navigable key and dimension name in the panel header', () => {
     const sliders = buildSliders();
-    const status = document.querySelector('.luxar-dimension-sliders__status');
+    const status = document.querySelector<HTMLElement>('.luxar-dimension-sliders__status');
 
-    expect(status?.textContent).toContain('[/]: 1 · Frame');
+    expect(status?.textContent).toBe('[/]: 1 · Frame · Display: X, Y, Z');
+    expect(status?.title).toBe(status?.textContent);
+    expect(status?.getAttribute('aria-live')).toBe('polite');
 
     sliders.setSelectedDimension(1);
-    expect(status?.textContent).toContain('[/]: 2 · Channel');
+    expect(status?.textContent).toBe('[/]: 2 · Channel · Display: X, Y, Z');
+    expect(status?.title).toBe(status?.textContent);
+    sliders.dispose();
+  });
+
+  it('does not rewrite an unchanged live-region status during dimension updates', async () => {
+    const sliders = buildSliders();
+    const status = document.querySelector<HTMLElement>('.luxar-dimension-sliders__status')!;
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(status, {
+      attributes: true,
+      attributeFilter: ['title'],
+      childList: true,
+    });
+
+    sliders.update();
+    await Promise.resolve();
+
+    expect(mutations).toEqual([]);
+    observer.disconnect();
     sliders.dispose();
   });
 
@@ -339,6 +361,60 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
     const secondToggle = document.getElementById('luxar-dim-toggle-4')!;
     expect(secondToggle.textContent).toBe('On');
     expect(secondToggle.classList.contains('luxar-dimension-toggle--on')).toBe(true);
+
+    sliders.dispose();
+  });
+
+  it('keeps authored categorical labels unchanged when metadata also has units', () => {
+    const dims: SimpleDims = {
+      ndim: 5,
+      displayed: [0, 1, 2],
+      currentStep: [0, 0, 0, 1, 2],
+      metadata: [
+        { name: 'X', unit: '', scale: 1.0 },
+        { name: 'Y', unit: '', scale: 1.0 },
+        { name: 'Z', unit: '', scale: 1.0 },
+        { name: 'Phase', unit: 's', scale: 1.0, discrete: true, categories: ['0', '1'] },
+        {
+          name: 'Exposure',
+          unit: 'ms',
+          scale: 1.0,
+          discrete: true,
+          categories: ['0', '5', '10'],
+        },
+      ],
+    };
+
+    const sliders = new DimensionSliders({
+      container: document.getElementById('test-container')!,
+      dims,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 1],
+        [0, 2],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'Phase', 'Exposure'],
+      dimensionUnits: ['', '', '', 's', 'ms'],
+    });
+
+    const toggle = document.getElementById('luxar-dim-toggle-3')!;
+    expect(toggle.textContent).toBe('1');
+    expect(toggle.title).toContain('1');
+    expect(toggle.title).not.toContain('1 s');
+
+    const options = Array.from(
+      document.querySelectorAll<HTMLOptionElement>('#luxar-dim-dropdown-4 option')
+    );
+    expect(options.map((option) => option.textContent)).toEqual(['0', '5', '10']);
+    expect(options[2].title).toContain('10');
+    expect(options[2].title).not.toContain('10 ms');
+
+    const labels = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-dimension-dropdown__label')
+    );
+    expect(labels.map((label) => label.title)).toEqual(['Phase', 'Exposure']);
 
     sliders.dispose();
   });
