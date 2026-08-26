@@ -909,7 +909,7 @@ class TestCacheClearClassification:
         stands in for (#1618) — so classifying on the suffix alone swept away
         minutes-to-hours of compute as if it were a re-downloadable file.
         """
-        from luxar.utils.data_fetch import LOCAL_FIT_DIRNAME
+        from luxar.demos._support.datasets.data_fetch import LOCAL_FIT_DIRNAME
 
         monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
         demo = next(d for d in iter_demos() if d.caches)
@@ -944,7 +944,10 @@ class TestCacheClearClassification:
         ``rel.parts[:1]`` instead leaves the whole CLI suite green while
         ``--no-computed`` deletes a variant's refit as if it were a download.
         """
-        from luxar.utils.data_fetch import LOCAL_FIT_DIRNAME, local_fit_path
+        from luxar.demos._support.datasets.data_fetch import (
+            LOCAL_FIT_DIRNAME,
+            local_fit_path,
+        )
 
         monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
         demo = next(d for d in iter_demos() if d.caches)

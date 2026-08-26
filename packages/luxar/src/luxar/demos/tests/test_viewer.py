@@ -7,7 +7,7 @@ class TestDemoPorts:
     """Stable per-dataset ports so demos never contend for 8000/5173."""
 
     def test_deterministic_and_in_range(self) -> None:
-        from luxar.utils.viewer import demo_ports
+        from luxar.demos._support.runtime.viewer import demo_ports
 
         data, viewer = demo_ports("global_rivers_earth.luxar.zarr")
         assert (data, viewer) == demo_ports("global_rivers_earth.luxar.zarr")
@@ -22,13 +22,13 @@ class TestDemoPorts:
         assert data != 8000 and viewer != 5173
 
     def test_different_demos_spread(self) -> None:
-        from luxar.utils.viewer import demo_ports
+        from luxar.demos._support.runtime.viewer import demo_ports
 
         names = [f"demo_{i}.luxar.zarr" for i in range(24)]
         assert len({demo_ports(n) for n in names}) > 20
 
     def test_serve_command_appends_derived_ports(self) -> None:
-        from luxar.utils.viewer import _serve_command, demo_ports
+        from luxar.demos._support.runtime.viewer import _serve_command, demo_ports
 
         data, viewer = demo_ports("x.luxar.zarr")
         cmd = _serve_command("x.luxar.zarr", open_browser=True, serve_args=None)
@@ -37,7 +37,7 @@ class TestDemoPorts:
         assert ["--viewer-port", str(viewer)] == cmd[cmd.index("--viewer-port") :][:2]
 
     def test_serve_command_respects_pinned_ports(self) -> None:
-        from luxar.utils.viewer import _serve_command
+        from luxar.demos._support.runtime.viewer import _serve_command
 
         cmd = _serve_command(
             "x.luxar.zarr",
@@ -73,7 +73,7 @@ class TestDemoPorts:
         output or widen the slot ranges.
         """
         from luxar.demos import registry
-        from luxar.utils.viewer import demo_ports
+        from luxar.demos._support.runtime.viewer import demo_ports
 
         # Resolve names through the registry's own rule (a stem already ending
         # in `.zarr` is used verbatim) so the guard keeps checking the names

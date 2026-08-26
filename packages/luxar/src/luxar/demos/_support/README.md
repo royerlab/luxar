@@ -6,7 +6,9 @@ not belong in the core runtime or shared `luxar.utils` package.
 
 The existing flat `demos/_*.py` helpers remain at the package root. Small
 implementation helpers such as UMAP colour/legend utilities and flow-field
-math belong here.
+math live directly here. Larger support modules are grouped by concern under
+`datasets/`, `downloads/`, and `runtime/`; each folder documents its ownership
+boundary and its stable entry point through the `luxar.demos` barrel.
 
 ## Quick Start
 
@@ -22,5 +24,5 @@ trilinear sampling, normalized flow directions, vectorized RK4 advection, and a
 reference-cube scene helper. The PPI flow-field and zebrahub velocity demos keep
 their own binning, smoothing, caching, and streamline-seeding policies.
 
-Every non-`__init__.py` module in this directory is included in the demo guard
-set defined by `demos/tests/_scanned_modules.py`.
+Every non-`__init__.py` module anywhere below this directory is included in the
+recursive demo guard set defined by `demos/tests/_scanned_modules.py`.

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luxar.utils.lfs import _unshippable_reason
+from luxar.demos._support.datasets.lfs import _unshippable_reason
 
 
 class TestCacheStaleness:
@@ -16,7 +16,7 @@ class TestCacheStaleness:
     def test_cache_is_stale_detects_refresh_conditions(self, tmp_path: Path) -> None:
         import os
 
-        from luxar.utils.cache import _cache_is_stale
+        from luxar.demos._support.datasets.cache import _cache_is_stale
 
         cache = tmp_path / "cache.bin"
         source = tmp_path / "source.bin"
@@ -51,7 +51,7 @@ class TestCacheStaleness:
         """A stale cached copy is replaced by the (changed) packaged source."""
         import os
 
-        import luxar.utils.bundles as bundles
+        import luxar.demos._support.datasets.bundles as bundles
         from luxar.gsplats.gsplat_data import GSplatData
 
         data_root = tmp_path / "data"
@@ -93,7 +93,7 @@ class TestUnshippableData:
     def test_local_compute_dataset_returns_none_instead_of_raising(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        import luxar.utils.bundles as bundles
+        import luxar.demos._support.datasets.bundles as bundles
 
         # Neither an in-repo copy nor a cached one — the post-removal state of
         # every `local-compute` dataset on a fresh clone.
@@ -109,7 +109,7 @@ class TestUnshippableData:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """A `zenodo` dataset that is merely unpulled must NOT be excused."""
-        import luxar.utils.bundles as bundles
+        import luxar.demos._support.datasets.bundles as bundles
 
         monkeypatch.setattr(bundles, "_DEMOS_DATA_DIR", tmp_path / "data")
         monkeypatch.setattr(bundles, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
@@ -121,7 +121,7 @@ class TestUnshippableData:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """No manifest entry → no excuse; the ordinary missing-file error wins."""
-        import luxar.utils.bundles as bundles
+        import luxar.demos._support.datasets.bundles as bundles
 
         monkeypatch.setattr(bundles, "_DEMOS_DATA_DIR", tmp_path / "data")
         monkeypatch.setattr(bundles, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
@@ -167,7 +167,7 @@ class TestExtractBundleAndLoad:
         )
 
     def test_extracts_members_flattened_into_the_cache_dir(self, tmp_path, monkeypatch):
-        from luxar.utils import bundles as du
+        from luxar.demos._support.datasets import bundles as du
 
         self._load_stub(monkeypatch)
         b = tmp_path / "b.zip"
@@ -182,7 +182,7 @@ class TestExtractBundleAndLoad:
         assert not (cache / "inner").exists(), "member was not flattened"
 
     def test_second_call_reuses_the_extraction(self, tmp_path, monkeypatch):
-        from luxar.utils import bundles as du
+        from luxar.demos._support.datasets import bundles as du
 
         self._load_stub(monkeypatch)
         b = tmp_path / "b.zip"
@@ -202,7 +202,7 @@ class TestExtractBundleAndLoad:
         Without it a format re-migration leaves demos loading frames from the old
         bundle, which then fail against the newer reader.
         """
-        from luxar.utils import bundles as du
+        from luxar.demos._support.datasets import bundles as du
 
         self._load_stub(monkeypatch)
         b = tmp_path / "b.zip"
@@ -227,7 +227,7 @@ class TestExtractBundleAndLoad:
         """
         import os
 
-        from luxar.utils import bundles as du
+        from luxar.demos._support.datasets import bundles as du
 
         self._load_stub(monkeypatch)
 
@@ -261,7 +261,7 @@ class TestExtractBundleAndLoad:
         ) == [b"v2"]
 
     def test_a_member_absent_from_the_bundle_raises(self, tmp_path, monkeypatch):
-        from luxar.utils import bundles as du
+        from luxar.demos._support.datasets import bundles as du
 
         self._load_stub(monkeypatch)
         b = tmp_path / "b.zip"
@@ -284,7 +284,7 @@ class TestExtractBundleAndLoad:
         non-default run, or has to widen its catch and start swallowing the
         checksum faults ``DatasetUnavailable`` exists to keep out.
         """
-        from luxar.utils import bundles as du
+        from luxar.demos._support.datasets import bundles as du
 
         self._load_stub(monkeypatch)
         b = tmp_path / "b.zip"
@@ -296,7 +296,7 @@ class TestExtractBundleAndLoad:
         assert issubclass(du.BundleMemberNotFound, FileNotFoundError)
 
     def test_a_traversal_member_name_is_refused(self, tmp_path, monkeypatch):
-        from luxar.utils import bundles as du
+        from luxar.demos._support.datasets import bundles as du
 
         self._load_stub(monkeypatch)
         b = tmp_path / "b.zip"
@@ -316,7 +316,7 @@ class TestExtractBundleAndLoad:
         list first and silently load the wrong frame -- and it passed every other
         test in this class, so it needs its own.
         """
-        from luxar.utils import bundles as du
+        from luxar.demos._support.datasets import bundles as du
 
         self._load_stub(monkeypatch)
         b = tmp_path / "b.zip"
