@@ -318,6 +318,7 @@ class TestSceneExtensionNormalization:
         self, tmp_path, monkeypatch
     ):
         requested = tmp_path / "scene.luxar.zarr.zip"
+        copy = tmp_path / "copy.luxar.zarr"
 
         def fail_packaging(staging, artifact):
             raise OSError("disk full")
@@ -333,8 +334,14 @@ class TestSceneExtensionNormalization:
                 ValueError, match="previous finalization failure"
             ) as exc:
                 scene.to_zarr(requested)
+            with pytest.raises(
+                ValueError, match="backing store does not exist"
+            ) as copy_exc:
+                scene.to_zarr(copy)
 
         assert ".compile-" not in str(exc.value)
+        assert str(requested) in str(copy_exc.value)
+        assert ".compile-" not in str(copy_exc.value)
 
     def test_body_failure_does_not_publish_or_leave_staging(self, tmp_path, capsys):
         requested = tmp_path / "scene.luxar.zarr.zip"
