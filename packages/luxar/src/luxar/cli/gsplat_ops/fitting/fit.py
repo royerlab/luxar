@@ -786,6 +786,7 @@ def run_fit_volume(
                     timepoint=timepoint,
                     array_key=array_key,
                     axes=axes,
+                    source_dtype=source_info.get("source_dtype"),
                     verbose=verbose,
                 )
                 raise typer.Exit(0)

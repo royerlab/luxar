@@ -1894,15 +1894,17 @@ class TestPlannedFitTruncationRadius:
         assert merged.truncation_radius == pytest.approx(3.5)
 
     def test_plan_box_worker_saves_the_configured_radius(self, tmp_path):
-        """`fit --plan-box K --config` — also the content batch-fit array task."""
+        """A content batch-fit tile keeps its radius and fitting stamps."""
         from typer.testing import CliRunner
 
+        from luxar._zarr_compat import read_node_attrs
         from luxar.cli.gsplat_commands import app_gsplat
         from luxar.gsplats.gsplat_data import GSplatData
 
         V, plan = self._tiny_volume_and_plan()
         vol = tmp_path / "vol.npy"
-        np.save(vol, V)
+        stored = np.round(V * np.iinfo(np.uint16).max).astype(np.uint16)
+        np.save(vol, stored)
         plan_json = tmp_path / "plan.json"
         plan.to_json(plan_json)
         cfg = tmp_path / "fit.yaml"
@@ -1933,6 +1935,12 @@ class TestPlannedFitTruncationRadius:
         assert result.exit_code == 0, result.output
         assert out.exists(), result.output
         assert GSplatData.load(out).truncation_radius == pytest.approx(3.5)
+        fitting = read_node_attrs(out / "fitting")
+        assert fitting["psnr_db"] > 0
+        assert np.isfinite(fitting["foreground_psnr_db"])
+        assert fitting["source_shape"] == plan.boxes[box_idx].dims
+        assert fitting["source_dtype"] == "uint16"
+        assert fitting["source_bytes"] == int(np.prod(plan.boxes[box_idx].dims)) * 2
 
     def test_parallel_flat_merge_keeps_the_boxes_radius(self, tmp_path):
         """``fit -j N --flat``: the reloaded boxes' radius survives the merge."""

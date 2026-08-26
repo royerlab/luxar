@@ -62,6 +62,52 @@ def _require_plan_volume_shape(volume: Any, fitplan: Any) -> None:
         )
 
 
+def _stamp_content_box_output(result: Any, volume: Any, box: Any, device: Any) -> None:
+    """Describe a standalone content box after its halo splats were removed."""
+    from luxar.gsplats.fit_basis import fit_image_min
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.merged_quality import stamp_merged_quality
+
+    z0, z1, y0, y1, x0, x1 = box.box
+    shape = (z1 - z0, y1 - y0, x1 - x0)
+    origin = np.asarray((z0, y0, x0), dtype=np.float32)
+    scored = GSplatData(
+        centers=(result.centers - origin).astype(np.float32, copy=False),
+        amplitudes=result.amplitudes,
+        cholesky_factors=result.cholesky_factors,
+        colors=result.colors,
+        truncation_radius=result.truncation_radius,
+    )
+    core = np.asarray(volume[z0:z1, y0:y1, x0:x1], dtype=np.float32)
+    stamp_merged_quality(
+        scored,
+        core,
+        volume_shape=shape,
+        grid_scale=None,
+        device=device,
+        verbose=False,
+        image_min=fit_image_min(result.stats),
+        stats=result.stats,
+    )
+
+    voxels = int(np.prod(shape))
+    result.stats.update(
+        {
+            "source_shape": list(shape),
+            "source_voxels": voxels,
+            "fitted_shape": list(shape),
+            "fitted_voxels": voxels,
+            "voxels_per_splat": float(voxels / result.n_splats),
+        }
+    )
+    source_dtype = result.stats.get("source_dtype")
+    if source_dtype:
+        try:
+            result.stats["source_bytes"] = voxels * int(np.dtype(source_dtype).itemsize)
+        except TypeError:
+            pass
+
+
 def _save_fit_result(
     result: Any,
     output: Path,
@@ -167,6 +213,7 @@ def run_content_fit(
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
+    source_dtype: Optional[str] = None,
     verbose: bool = True,
 ) -> None:
     """Content-aware tiled fit: scan → BSP plan → budgeted fit → save.
@@ -232,6 +279,8 @@ def run_content_fit(
             # cannot disagree about what a preset-less content box is fitted at.
             command_defaults={"cull_retention": CONTENT_CULL_RETENTION},
         )
+        if not fk.get("source_dtype") and source_dtype:
+            fk["source_dtype"] = source_dtype
         fk.pop("seeds", None)
         fk.pop("device", None)
         fk["verbose"] = False
@@ -285,9 +334,10 @@ def run_content_fit(
             Path(str(output) + ".empty").write_text("")  # writer rejects empty stores
         else:
             # Save the fitted dataset AS IS: rebuilding it from bare arrays
-            # dropped the fit's truncation_radius (a `truncate: 3.5` config
-            # stored the 2.75 default) and its per-box stats (#1637).
-            box_result.save(output, include_fitting_info=False)
+            # dropped the fit's truncation_radius and per-box stats (#1637),
+            # and suppressing fitting info here discarded those stats on disk.
+            _stamp_content_box_output(box_result, vol, fitplan.boxes[plan_box], device)
+            box_result.save(output)
         return
 
     # ── resolve density ──

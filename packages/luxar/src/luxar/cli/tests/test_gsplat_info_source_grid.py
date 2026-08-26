@@ -320,5 +320,7 @@ def test_a_single_downscaled_tile_does_not_claim_the_whole_acquisition(
     if not out.exists():
         pytest.skip("tile 0 windowed to empty; nothing was stamped")
     attrs = read_node_attrs(out / "fitting")
+    assert attrs["psnr_db"] > 0
+    assert np.isfinite(attrs["foreground_psnr_db"])
     assert attrs["source_shape"] != [32, 32, 32], attrs
     assert "source_declared" not in attrs, attrs
