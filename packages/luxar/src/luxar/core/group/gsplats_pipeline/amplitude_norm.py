@@ -71,13 +71,13 @@ Design decisions, and why
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import numpy as np
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.tree import GSplatLeaf, GSplatNode
+    from luxar.gsplats.tree import GSplatNode
 
 #: Upper reference percentile mapped to the normalisation target.
 #: Kept equal to the percentile ``amplitude_data_range`` uses for its upper
@@ -112,21 +112,6 @@ def _sample_reference(values: np.ndarray) -> float:
     return float(np.percentile(values, AMPLITUDE_REFERENCE_PERCENTILE))
 
 
-def _iter_reference_leaves(node: "GSplatNode") -> Iterator["GSplatLeaf"]:
-    """Yield every partition part, following only the finest LOD children."""
-    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
-
-    if isinstance(node, GSplatLeaf):
-        yield node
-    elif isinstance(node, GSplatLodGroup):
-        yield from _iter_reference_leaves(node.children[node.default_level])
-    elif isinstance(node, GSplatPartition):
-        for child in node.children:
-            yield from _iter_reference_leaves(child)
-    else:  # pragma: no cover - GSplatNode is a closed union
-        raise TypeError(f"Unknown gsplat node type: {type(node).__name__}")
-
-
 def pooled_amplitudes_from_node(node: "GSplatNode") -> np.ndarray:
     """Reference amplitudes for a node tree, pooled into one array.
 
@@ -137,9 +122,11 @@ def pooled_amplitudes_from_node(node: "GSplatNode") -> np.ndarray:
     :func:`normalize_gsplat_data`. All additive sub-LODs of each selected finest
     leaf participate because they form one prefix-sum representation.
     """
+    from luxar.gsplats.tree import iter_default_leaves
+
     chunks = [
         np.asarray(sub.amplitudes, dtype=np.float64)
-        for leaf in _iter_reference_leaves(node)
+        for leaf in iter_default_leaves(node)
         for sub in leaf.additive_sublods
     ]
     if not chunks:

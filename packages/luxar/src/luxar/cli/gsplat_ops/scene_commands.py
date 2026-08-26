@@ -65,7 +65,10 @@ def convert_to_scene(
         None, "--gamma", help="Display gamma (default 1.0)"
     ),
     intensity: Optional[float] = typer.Option(
-        None, "--intensity", help="Display intensity multiplier (default 1.0)"
+        None,
+        "--intensity",
+        help="Display-window intensity relative to amplitudes as stored "
+        "(automatically normalized unless --scale-intensity is set)",
     ),
     layer: bool = typer.Option(
         True,
