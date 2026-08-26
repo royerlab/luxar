@@ -49,7 +49,7 @@ def _ci_legs(workflow: str) -> tuple[set[str], set[str]]:
         f"matrix must keep the full supported set on dev pushes: {line.strip()}"
     )
     assert f"github.event.schedule == '{FULL_MATRIX_SCHEDULE}'" in line, (
-        f"matrix must keep one deterministic daily full-version run: {line.strip()}"
+        f"matrix must keep one daily full-version run: {line.strip()}"
     )
     lists = re.findall(r"fromJSON\('(\[[^\]]*\])'\)", line)
     assert len(lists) == 2, f"matrix expression lost a branch: {line.strip()}"
