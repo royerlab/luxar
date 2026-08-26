@@ -187,6 +187,49 @@ def test_source_summary_requires_complete_agreement() -> None:
     assert "source_stored_bytes" not in stacked.stats
 
 
+@pytest.mark.parametrize(
+    ("disputed_key", "disputed_value", "unanimous_key", "unanimous_value"),
+    [
+        ("source_dtype", "uint8", "source_declared", True),
+        ("source_declared", False, "source_dtype", "uint16"),
+    ],
+)
+def test_source_summary_omits_only_disputed_source_fields(
+    disputed_key: str,
+    disputed_value: Any,
+    unanimous_key: str,
+    unanimous_value: Any,
+) -> None:
+    source_stats = {
+        "source_shape": [3, 4, 5],
+        "source_declared": True,
+        "source_dtype": "uint16",
+        "source_voxels": 60,
+        "source_bytes": 120,
+        "source_stored_bytes": 80,
+    }
+    second_source_stats = {**source_stats, disputed_key: disputed_value}
+    fits = [_fit(1, **source_stats), _fit(2, **second_source_stats)]
+    provenance = collect_part_provenance(
+        fits,
+        values=[0, 1],
+        fit_reference={"kind": "preprocessed"},
+    )
+
+    stacked = GSplatData.combine_as_new_dimension(
+        fits,
+        values=[0, 1],
+        part_provenance=provenance,
+    )
+
+    assert stacked.stats["source_shape"] == [2, 3, 4, 5]
+    assert disputed_key not in stacked.stats
+    assert stacked.stats[unanimous_key] == unanimous_value
+    assert stacked.stats["source_voxels"] == 120
+    assert stacked.stats["source_bytes"] == 240
+    assert stacked.stats["source_stored_bytes"] == 160
+
+
 def test_part_provenance_survives_lod_and_save_load(tmp_path: Path) -> None:
     fits = [
         _fit(
