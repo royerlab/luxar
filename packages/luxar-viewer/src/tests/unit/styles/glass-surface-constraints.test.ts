@@ -151,6 +151,8 @@ describe('dimension-sliders.css — bounded single-line labels (#2188)', () => {
   });
 
   it('ellipsizes compact categorical labels and toggle values on one line', () => {
+    expect(ruleBody(css, '.luxar-dimension-dropdown')).toMatch(/min-width:\s*0/);
+
     for (const selector of ['.luxar-dimension-dropdown__label', '.luxar-dimension-toggle']) {
       const rule = ruleBody(css, selector);
       expect(rule).toMatch(/white-space:\s*nowrap/);
