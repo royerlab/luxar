@@ -30,16 +30,12 @@ vi.mock('../../../../../cache/chunk-prefetcher', () => ({
   ChunkPrefetcher: vi.fn().mockImplementation(() => ({})),
 }));
 
-vi.mock('zarrita', () => ({
-  registry: {},
-  FetchStore: vi.fn().mockImplementation(() => ({})),
-  // Stubbed for vitest strict-mock compatibility; cache-setup.ts
-  // doesn't open zarr groups itself, but it imports through paths
-  // that may transitively touch the zarr namespace.
-  withMaybeConsolidatedMetadata: undefined,
+vi.mock('../../../../../data/zarr', () => ({
+  createStoreForUrl: vi.fn().mockImplementation(() => ({})),
 }));
 
 import { setupCaches } from '../../../../../data/scene-loader/cache/cache-setup';
+import { createStoreForUrl } from '../../../../../data/zarr';
 import { config as appConfig } from '../../../../../config';
 
 describe('setupCaches — cache telemetry state resolution', () => {
@@ -49,6 +45,7 @@ describe('setupCaches — cache telemetry state resolution', () => {
   let originalL0Enabled: boolean;
 
   beforeEach(() => {
+    vi.mocked(createStoreForUrl).mockClear();
     originalEnabled = appConfig.cache.enabled;
     originalL0Enabled = appConfig.cache.l0Enabled;
   });
@@ -68,6 +65,7 @@ describe('setupCaches — cache telemetry state resolution', () => {
 
     const zipped = await setupCaches('http://example.com/scene.luxar.zarr.zip', {});
     expect(zipped.cachingStore).toBeNull();
+    expect(createStoreForUrl).toHaveBeenCalledWith('http://example.com/scene.luxar.zarr.zip');
     // The in-memory tiers are unaffected — only L1/L2 need a URL per chunk.
     expect(zipped.l0Cache).not.toBeNull();
 
