@@ -347,9 +347,15 @@ luxar info my_scene.luxar.zarr --stats              # inspect a built scene
 - GSplat `cholesky_factors` are the packed lower-triangular factor **L of the
   covariance** (Σ = L·Lᵀ): 3D = `(N,6)` `[L00, L10, L11, L20, L21, L22]`. The
   diagonal is **scale-like** — isotropic std σ -> `[σ,0,σ,0,0,σ]`, NOT `1/σ`.
+  This is the same contract documented by `Group.add_gsplats` and
+  `AdditiveSubLOD.cholesky_factors`.
 - `transforms.compose(t1, t2, t3)` applies `t1` FIRST.
 - 4D/nD scenes can show 0 elements at a given slice — navigate to a populated slice,
   or use `extend_to_all` to broadcast across a non-displayed dim.
+- To hand-author a stacked time/channel axis, use `fill` for its coordinate and a
+  `fill_sigma` that is strictly positive and smaller than the coordinate step;
+  zero is not a valid Cholesky diagonal. Use `extend_to_all` for visibility at
+  every coordinate instead.
 - Match `positions` column order to the `Dimensions` order.
 - **Always pass `n_iters` to `add_gsplats_from_volume` / `fit_gaussian_splats`** (the
   example above uses 5000). The default is 1000 — *below* the CLI's lowest preset —

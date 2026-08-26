@@ -562,6 +562,7 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     #     of the COVARIANCE (Σ = L·Lᵀ); 3D = (N,6):
     #     [L00, L10, L11, L20, L21, L22]. Diagonal is scale-like:
     #     isotropic std σ -> [σ,0,σ,0,0,σ]  (NOT 1/σ)
+    #     This is the Group.add_gsplats / AdditiveSubLOD authoring contract.
     scene.add_gsplats("trio", centers=c, amplitudes=a, cholesky_factors=L, colors=rgb)
 ```
 

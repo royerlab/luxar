@@ -1,7 +1,7 @@
 # Gaussian Splats Dimension Mapping
 
 **Version**: 2.0
-**Last Updated**: 2026-07-13
+**Last Updated**: 2026-08-26
 
 ## Overview
 
@@ -57,6 +57,12 @@ Auto-mapping behavior when `None`:
 **`fill`** — Fixed coordinate values for dimensions not covered by `dim_order`. For example, `fill={"time": 5.0}` places all splats at time=5.0.
 
 **`fill_sigma`** — Standard deviations for unmapped dimensions in the Cholesky embedding (default 1.0). Controls splat extent in filled dimensions.
+
+For a hand-authored stacked time/channel axis, pair `fill={"time": t}` with
+`fill_sigma={"time": sigma_t}`. The filled sigma must be strictly positive and
+smaller than the coordinate step so adjacent slices attenuate instead of
+bleeding together; zero is not a valid Cholesky diagonal. Use `extend_to_all`
+instead when the geometry should remain visible at every coordinate.
 
 ---
 

@@ -66,7 +66,9 @@ class AdditiveSubLOD(_SplatArrayMixin):
     amplitudes : np.ndarray, shape (N,)
         Non-negative splat amplitudes.
     cholesky_factors : np.ndarray, shape (N, d*(d+1)//2)
-        Packed lower-triangular Cholesky factors.
+        Packed lower-triangular factor L of the covariance (Σ = L·Lᵀ). The
+        diagonal is scale-like: isotropic std σ uses [σ, 0, σ, 0, 0, σ], not
+        1/sigma.
     colors : Optional[np.ndarray], shape (N, 3) or (N, 4)
         Optional RGB(A) colors per splat. The optional alpha channel is
         per-splat opacity in [0, 1] (consumed by every blending mode; mapped

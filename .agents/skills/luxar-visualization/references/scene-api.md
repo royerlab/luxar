@@ -98,6 +98,8 @@ scene.add_gsplats_from_volume(name, volume, seeds=None, n_iters=1000,
 `cholesky_factors` is the packed lower-triangular factor **L of the covariance**
 (Σ = L·Lᵀ), so the diagonal is **scale-like**. Isotropic Gaussian of std σ in 3D:
 `cholesky_factors = [σ, 0, σ, 0, 0, σ]` (the diagonal carries σ, not `1/σ`).
+This is the same contract documented by `Group.add_gsplats` and
+`AdditiveSubLOD.cholesky_factors`.
 
 ## Groups & transforms
 
