@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import re
+from inspect import getdoc
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from luxar.gsplats.gsplat_data import GSplatData
+from luxar.core.group.group import Group
+from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
 SIGMA = 0.8
@@ -17,22 +19,17 @@ PACKING_CLAIM_PATHS = (
     ".agents/skills/luxar-visualization/SKILL.md",
     ".agents/skills/luxar-visualization/references/scene-api.md",
     ".agents/skills/luxar-gsplat-pipeline/SKILL.md",
-    "packages/luxar/src/luxar/core/group/group.py",
-    "packages/luxar/src/luxar/gsplats/gsplat_data.py",
 )
 
 ISOTROPIC_PACKING = re.compile(r"\[(?P<items>(?:σ|0)(?:\s*,\s*(?:σ|0)){5})\]")
 
 
-@pytest.mark.parametrize("relative_path", PACKING_CLAIM_PATHS)
-def test_documented_isotropic_packing_recovers_sigma(relative_path: str) -> None:
+def _assert_isotropic_packing_recovers_sigma(text: str, source: str) -> None:
     """Every author-facing packing claim must describe covariance, not precision."""
-    text = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
     match = ISOTROPIC_PACKING.search(text)
 
     assert match is not None, (
-        f"{relative_path} must state the executable isotropic packing "
-        "[σ, 0, σ, 0, 0, σ]"
+        f"{source} must state the executable isotropic packing [σ, 0, σ, 0, 0, σ]"
     )
 
     packed = np.array(
@@ -46,6 +43,30 @@ def test_documented_isotropic_packing_recovers_sigma(relative_path: str) -> None
     )
 
     np.testing.assert_allclose(data.marginal_sigmas()[0], SIGMA, rtol=1e-6)
+
+
+@pytest.mark.parametrize("relative_path", PACKING_CLAIM_PATHS)
+def test_skill_packing_claim_recovers_sigma(relative_path: str) -> None:
+    """Every skill packing claim must execute as the documented covariance."""
+    text = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+
+    _assert_isotropic_packing_recovers_sigma(text, relative_path)
+
+
+@pytest.mark.parametrize(
+    ("source", "docstring"),
+    (
+        ("Group.add_gsplats", getdoc(Group.add_gsplats)),
+        ("AdditiveSubLOD", getdoc(AdditiveSubLOD)),
+    ),
+)
+def test_source_docstring_packing_recovers_sigma(
+    source: str, docstring: str | None
+) -> None:
+    """The public source docstrings must carry the executable convention."""
+    assert docstring is not None
+
+    _assert_isotropic_packing_recovers_sigma(docstring, source)
 
 
 def test_contributor_reference_names_covariance_convention() -> None:

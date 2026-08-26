@@ -348,7 +348,7 @@ luxar info my_scene.luxar.zarr --stats              # inspect a built scene
   covariance** (Σ = L·Lᵀ): 3D = `(N,6)` `[L00, L10, L11, L20, L21, L22]`. The
   diagonal is **scale-like** — isotropic std σ -> `[σ,0,σ,0,0,σ]`, NOT `1/σ`.
   This is the same contract documented by `Group.add_gsplats` and
-  `AdditiveSubLOD.cholesky_factors`.
+  the `AdditiveSubLOD` docstring.
 - `transforms.compose(t1, t2, t3)` applies `t1` FIRST.
 - 4D/nD scenes can show 0 elements at a given slice — navigate to a populated slice,
   or use `extend_to_all` to broadcast across a non-displayed dim.
