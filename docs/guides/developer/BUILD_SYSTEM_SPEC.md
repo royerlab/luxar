@@ -903,13 +903,14 @@ same species of lie as an untested 3.10 claim would be. All eight scheduled wind
 land every three hours; the seven other than 09:17 carry only the required 3.12 leg.
 On obsidian, `max-parallel: 2` prevents one run's Python matrix from monopolising all
 three shared slots; repository-wide queue order may still put other work ahead of that
-run's `typescript-tests`. The final Python leg follows. The measured 15.5-minute
-TypeScript leg stretches to about 51 minutes at the documented 3.3x `SCHED_IDLE`
-extreme, so its former 60-minute timeout had the thinnest starvation margin of any
-obsidian-routed job; it now carries a 120-minute budget. Every scheduled window also
-runs the short `release-readiness` and `wheel-viewer` checks on GitHub-hosted
-runners, and `pick-runner` routes the long Python/TypeScript legs to hosted runners
-when obsidian has neither fresh capacity nor work in flight. Five of the twelve most
+run's `typescript-tests`. The final Python leg follows. A self-hosted job's timeout can
+start at dispatch, before its first step: the observed roughly 20-minute pre-step delay
+plus a conservative 51-minute bound for the measured 15.5-minute TypeScript run at the
+documented 3.3x `SCHED_IDLE` extreme does not fit its former 60-minute budget. It now
+carries 120 minutes to cover both phases. Every scheduled window also runs the short
+`release-readiness` and `wheel-viewer` checks on GitHub-hosted runners, and `pick-runner`
+routes the long Python/TypeScript legs to hosted runners when obsidian has neither fresh
+capacity nor work in flight. Five of the twelve most
 recent daily scheduled runs (2026-08-14 to 2026-08-25) took that billed path. Every
 added window therefore consumes hosted minutes for short jobs, while routing adds
 either obsidian queue depth or the long legs to the hosted bill. Those routed long
@@ -960,12 +961,13 @@ rejected rerun is reported as a warning. A failed repaired job is terminal for t
 unless it is included in the multi-job failed-jobs rerun; otherwise recovery requires a
 manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
 later merge cannot cancel the repaired attempt. That exemption applies to ordinary PR
-reruns too, and neither rerun path restarts `queue-watchdog`; an obsidian-routed job
-whose runner disappears after dispatch can therefore reach its timeout before any step
-starts or runner name is recorded. The repair job has only `actions: write` permission
-and runs on GitHub-hosted Linux;
-recovered long legs reuse their original runner-routing decision and repay work that the
-scheduled run already performed. On the multi-job path, up to four obsidian-routed long
+reruns too, and neither rerun path restarts `queue-watchdog`. An obsidian-routed job left
+undispatched after its runners disappear can therefore remain queued until GitHub's
+24-hour ceiling; one dispatched before its slot recycles can instead reach its timeout
+before any step starts or runner name is recorded. The repair job has only
+`actions: write` permission and runs on GitHub-hosted Linux; recovered long legs reuse
+their original runner-routing decision and repay work that the scheduled run already
+performed. On the multi-job path, up to four obsidian-routed long
 legs can therefore run alongside the next push run, increasing self-hosted contention.
 When the original routing decision was `ubuntu-latest`, up to eight repair windows per
 day can also add hosted-runner minutes, but only on a SHA that can otherwise block
