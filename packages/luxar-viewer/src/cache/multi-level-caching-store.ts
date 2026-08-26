@@ -58,7 +58,7 @@ export interface MultiLevelCachingStoreOptions {
  * Multi-level caching store that implements zarrita's AsyncReadable
  * interface. Orchestrates three tiers — L0 (decompressed in-memory chunk
  * cache, owned by the zarrita layer), L1 (memory, in-process), L2
- * (OPFS, cross-tab) — plus an HTTP fallback for zarr chunks.
+ * (OPFS, cross-tab) — over a {@link ChunkSource} that supplies the bytes.
  */
 export class MultiLevelCachingStore implements AsyncReadable {
   private l1Cache: SegmentedLRUCache;
@@ -605,7 +605,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       this.bandwidth.record(outcome.bytesOverWire);
 
       // CRIT-5: if validateCache aborted this in-flight get between the
-      // arrayBuffer() resolve and now (content-hash mismatch raced an
+      // source returning and now (content-hash mismatch raced an
       // in-flight fetch), do NOT write stale bytes back into a
       // just-cleared L1/L2 — that would silently undo the invalidation.
       if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
@@ -937,7 +937,18 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // called it — harmless while the only source was HTTP with a no-op
     // dispose, and a real leak for a source holding an archive's central
     // directory across a dataset switch.
-    this.source.dispose();
+    //
+    // Guarded because it runs FIRST: an implementor that throws would otherwise
+    // skip the prefetcher teardown, the validation cancel, the L2 write-queue
+    // drain and the L1 clear below, turning a third-party fault into a leak of
+    // everything else. Same treatment third-party dispose gets in
+    // `scene-loader/lifecycle/dispose.ts`.
+    try {
+      this.source.dispose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warning(Modules.CACHE, `Chunk source dispose failed: ${message}`);
+    }
 
     // Tear down the prefetcher: clears queues/seen/parsed/bounds and
     // sets its own isDisposed flag so the in-flight `.finally()` path

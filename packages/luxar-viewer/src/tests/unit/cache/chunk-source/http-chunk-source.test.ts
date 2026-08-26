@@ -128,6 +128,53 @@ describe('HttpChunkSource — outcomes', () => {
     expect(outcome.cause.message).toContain('exhausted retries');
   });
 
+  it('maps an ABORT DURING THE BODY READ to `aborted`, not a throw', async () => {
+    // The branch the fix was written for, and the one the existing
+    // already-aborted case never reaches: the signal fires after the headers
+    // arrive, so `arrayBuffer()` is the thing that rejects. A throw here escapes
+    // as NetworkError → undefined → zarrita fills the chunk. Silently wrong
+    // geometry, which is why this branch has to be pinned.
+    const controller = new AbortController();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const response = bodyResponse(new Uint8Array(4));
+        Object.defineProperty(response, 'arrayBuffer', {
+          value: async () => {
+            controller.abort();
+            throw new DOMException('aborted', 'AbortError');
+          },
+        });
+        return response;
+      })
+    );
+
+    const outcome = await new HttpChunkSource(BASE).get('c/0/0', controller.signal);
+
+    expect(outcome.kind).toBe('aborted');
+  });
+
+  it('maps a non-abort body failure to `error`, carrying the cause', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const response = bodyResponse(new Uint8Array(4));
+        Object.defineProperty(response, 'arrayBuffer', {
+          value: async () => {
+            throw new TypeError('network died mid-body');
+          },
+        });
+        return response;
+      })
+    );
+
+    const outcome = await new HttpChunkSource(BASE).get('c/0/0');
+
+    expect(outcome.kind).toBe('error');
+    if (outcome.kind !== 'error') return;
+    expect(outcome.cause.message).toContain('mid-body');
+  });
+
   it('cancels a body it declines to read', async () => {
     const cancel = vi.fn(async () => undefined);
     vi.stubGlobal(
