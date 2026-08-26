@@ -352,10 +352,11 @@ luxar info my_scene.luxar.zarr --stats              # inspect a built scene
 - `transforms.compose(t1, t2, t3)` applies `t1` FIRST.
 - 4D/nD scenes can show 0 elements at a given slice — navigate to a populated slice,
   or use `extend_to_all` to broadcast across a non-displayed dim.
-- To hand-author a stacked time/channel axis, use `fill` for its coordinate and a
-  `fill_sigma` that is strictly positive and smaller than the coordinate step;
-  zero is not a valid Cholesky diagonal. Use `extend_to_all` for visibility at
-  every coordinate instead.
+- To hand-author a stacked time/channel axis from lower-dimensional splats, use
+  `fill={"time": t}`, `fill_sigma={"time": 0.0}`, and `extend_to_all=[]` (omitting
+  the last argument auto-broadcasts the unmapped axis). Embedding regularizes the
+  semantic zero to `1e-7`. For full scene-dimensional input, use a strictly
+  positive diagonal smaller than the coordinate step; the writer rejects zero.
 - Match `positions` column order to the `Dimensions` order.
 - **Always pass `n_iters` to `add_gsplats_from_volume` / `fit_gaussian_splats`** (the
   example above uses 5000). The default is 1000 — *below* the CLI's lowest preset —

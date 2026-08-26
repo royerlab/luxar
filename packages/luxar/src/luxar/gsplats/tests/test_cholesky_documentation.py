@@ -95,8 +95,8 @@ def test_basic_example_does_not_claim_disjoint_splats_overlap() -> None:
     assert "Additive blending makes overlapping splats brighten." not in text
 
 
-def test_stacked_axis_docs_require_positive_substep_sigma() -> None:
-    """Hand-authored stacked axes need a valid positive covariance diagonal."""
+def test_stacked_axis_docs_distinguish_embedding_from_direct_authoring() -> None:
+    """Stacked-axis docs must distinguish regularized fill from direct input."""
     dimension_mapping = (
         REPO_ROOT / "docs/specs/GSPLATS_DIMENSION_MAPPING.md"
     ).read_text(encoding="utf-8")
@@ -106,5 +106,17 @@ def test_stacked_axis_docs_require_positive_substep_sigma() -> None:
 
     for text in (dimension_mapping, visualization_skill):
         assert "stacked time/channel axis" in text
-        assert "strictly positive" in text
-        assert "smaller than the coordinate step" in text
+        assert 'fill_sigma={"time": 0.0}' in text
+        assert "extend_to_all=[]" in text
+        assert "regularizes" in text
+        assert "1e-7" in text
+        assert "full scene-dimensional" in text
+        assert re.search(r"strictly\s+positive", text)
+        assert re.search(r"smaller\s+than the coordinate step", text)
+
+    contributor_reference = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "stacked sigma=0 time/channel axis" not in contributor_reference
+    assert (
+        "stacked time/channel centers column with near-zero Cholesky extent"
+        in contributor_reference
+    )
