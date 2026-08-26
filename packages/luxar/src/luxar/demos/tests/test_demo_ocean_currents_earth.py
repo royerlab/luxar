@@ -477,9 +477,9 @@ def test_layer_appearance_matches_the_authored_intent() -> None:
 
     `opaque` is the only mode that leaves the viewer's sorted transparent set
     and the only one that unconditionally depth-writes, so it is the only one
-    that reliably composites *under* the ribbons in front of it. The ribbons
-    stay `normal` (additive ignores depth, so far-side currents would bleed
-    across the continents) at the tuned opacity.
+    that reliably composites *under* the ribbons in front of it. The ribbons use
+    `luminous`, which is additive but still depth-tested, so far-side currents
+    stay hidden while overlaps accumulate without sort-order artefacts.
     """
     source = Path(demo_ocean_currents_earth.__file__).read_text()
     globe_call = source.split("build_earth(")[1].split("write_current_parts(")[0]
