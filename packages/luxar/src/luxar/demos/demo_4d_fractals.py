@@ -651,10 +651,15 @@ def generate_4d_fractal_dataset(
     # Combine all fractals
     with asection("Combining all fractals"):
         positions_5d = np.vstack(all_positions)
+        all_positions.clear()
+        normals = np.vstack(all_normals)
+        all_normals.clear()
+        base_colors = np.vstack(all_colors)
+        all_colors.clear()
         colors = apply_fractal_ambient_occlusion(
             positions_5d,
-            np.vstack(all_normals),
-            np.vstack(all_colors),
+            normals,
+            base_colors,
         )
 
         aprint(f"✓ Total points: {len(positions_5d):,}")

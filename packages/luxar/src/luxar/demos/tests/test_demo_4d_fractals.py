@@ -288,19 +288,25 @@ class TestAmbientOcclusionInputs:
         spatial = np.column_stack(np.nonzero(surface)).astype(np.float32) / 8.0 - 1.0
         normals = surface_normals(solid)[surface]
 
-        first = np.column_stack(
+        def block(fractal: float, w: float, x_offset: float) -> np.ndarray:
+            shifted = spatial.copy()
+            shifted[:, 0] += x_offset
+            return np.column_stack(
+                [
+                    np.full(len(spatial), fractal, dtype=np.float32),
+                    np.full(len(spatial), w, dtype=np.float32),
+                    shifted,
+                ]
+            )
+
+        positions = np.vstack(
             [
-                np.zeros(len(spatial), dtype=np.float32),
-                np.full(len(spatial), -0.5, dtype=np.float32),
-                spatial,
+                block(0.0, -0.5, 0.0),
+                block(0.0, 0.5, 0.5),
+                block(1.0, -0.5, 1.0),
             ]
         )
-        second = first.copy()
-        second[:, 0] = 1.0
-        second[:, 1] = 0.5
-        second[:, 2] += 0.5
-        positions = np.vstack([first, second])
-        repeated_normals = np.vstack([normals, normals])
+        repeated_normals = np.vstack([normals, normals, normals])
         base_colors = np.ones((len(positions), 3), dtype=np.float32)
 
         colors = apply_fractal_ambient_occlusion(
@@ -324,15 +330,21 @@ class TestAmbientOcclusionInputs:
             occluder="opaque",
             n_directions=_demo.AO_N_DIRECTIONS,
             spatial_dims=(2, 3, 4),
-            group_by=np.repeat([0, 1], len(spatial)),
+            group_by=np.repeat([0, 1, 2], len(spatial)),
+        )
+        rolled_normal_colors = apply_fractal_ambient_occlusion(
+            positions,
+            np.roll(repeated_normals, 1, axis=1),
+            base_colors,
         )
 
         np.testing.assert_array_equal(colors, scaled_colors)
-        np.testing.assert_allclose(
-            colors[: len(spatial)], colors[len(spatial) :], atol=1e-6
-        )
+        blocks = colors.reshape(3, len(spatial), 3)
+        np.testing.assert_allclose(blocks[0], blocks[1], atol=1e-6)
+        np.testing.assert_allclose(blocks[0], blocks[2], atol=1e-6)
         assert float(np.max(np.abs(colors[:, 0] - merged_shade))) > 0.02
         assert float(np.max(np.abs(colors[:, 0] - no_normal_shade))) > 0.1
+        assert float(np.max(np.abs(colors - rolled_normal_colors))) > 0.05
         assert float(colors.mean()) < 0.98
         assert float(np.ptp(colors[:, 0])) > 0.05
         assert np.all(colors <= base_colors)
