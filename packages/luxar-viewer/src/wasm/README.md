@@ -152,7 +152,7 @@ Run the benchmark suite on the target machine to measure real speedups:
 ```bash
 make benchmark-wasm
 # or, from packages/luxar-viewer/
-pnpm test src/tests/unit/wasm/wasm-performance.test.ts --run
+pnpm bench:wasm
 ```
 
 Benchmark results depend on browser/runtime, CPU, memory bandwidth, array size,
