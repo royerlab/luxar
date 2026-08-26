@@ -743,13 +743,13 @@ export function renderCacheContent(
           ${statusRowHtml}
         </div>
         <div class="luxar-cache-health__row">
-          <span class="luxar-cache-health__label" title="The strategy used to detect a dataset that changed on the server: Content Hash (fingerprint comparison, Luxar-compiled datasets), TTL (cached data expires after a configured age), or None (no change detection — external dataset)">Validation</span>
+          <span class="luxar-cache-health__label" title="The strategy used to detect a dataset that changed on the server: Content Hash, Metadata Hash, Archive ETag, TTL (cached data expires after a configured age), or None (no change detection)">Validation</span>
           <span class="luxar-cache-health__value" data-field="cache-health-mode" title="${escapeHtml(validationModeTooltip(cacheMetrics.health?.validationMode))}">
             ${formatValidationMode(cacheMetrics.health?.validationMode)}
           </span>
         </div>
         <div class="luxar-cache-health__row">
-          <span class="luxar-cache-health__label" data-field="cache-health-validated-label" title="When the cache's freshness was last established — for hash-validated datasets the last successful server check, for TTL/none the known-good baseline; hover the value for details under the current mode">${lastValidatedLabel(cacheMetrics.health?.validationMode)}</span>
+          <span class="luxar-cache-health__label" data-field="cache-health-validated-label" title="When the cache's freshness was last established — for source-validated datasets the last successful server check, for TTL/none the known-good baseline; hover the value for details under the current mode">${lastValidatedLabel(cacheMetrics.health?.validationMode)}</span>
           <span class="luxar-cache-health__value" data-field="cache-health-validated" title="${escapeHtml(lastValidatedTooltip(cacheMetrics.health?.validationMode))}">
             ${formatLastValidated(cacheMetrics.health?.lastValidatedAt)}
           </span>

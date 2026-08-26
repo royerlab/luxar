@@ -149,6 +149,24 @@ describe('archive-etag validation presentation', () => {
     expect(lastValidatedLabel('archive-etag')).toBe('Last Validated');
     expect(lastValidatedLabel('ttl')).toBe('Cached Since');
   });
+
+  it('includes archive validation in the initial cache-health tooltips', () => {
+    const host = document.createElement('div');
+    host.innerHTML = renderCacheContent(
+      makeGlobalStats(),
+      makeCacheMetrics({
+        enabled: true,
+        l0: { size: 0, count: 0, hits: 0, misses: 0, evictions: 0, hitRate: 0 },
+        l1: { size: 0, count: 0, hits: 0, misses: 0, evictions: 0 },
+        l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
+        health: { validationMode: 'archive-etag' },
+      })
+    );
+
+    const labels = host.querySelectorAll('.luxar-cache-health__label');
+    expect(labels[0]?.getAttribute('title')).toContain('Archive ETag');
+    expect(labels[1]?.getAttribute('title')).toContain('source-validated datasets');
+  });
 });
 
 describe('formatLastValidated', () => {
