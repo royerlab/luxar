@@ -48,6 +48,11 @@ README gallery table.
   Coverage is measured from a screenshot using a 3rd–97th-percentile bounding
   box of the lit pixels, so a few stray outliers can't keep the scene tiny.
   Override per demo with `"fillTarget"`, or nudge afterwards with `"zoom"`.
+  Every capture logs `final coverage=NN%` from the settled still it ships,
+  regardless of framing path; record that value in the manifest `"note"`.
+  The fill loop is a pure dolly and cannot re-target an off-centre or
+  translucency-biased subject; use an absolute `"distance"` to bypass it in
+  those cases, and record the tested sweep in the manifest `"note"`.
 - **Auto-exposure:** measures the composited frame (a Playwright screenshot,
   decoded back inside the page — the renderer runs with
   `preserveDrawingBuffer: false`, so an in-page `gl.readPixels` reads an empty

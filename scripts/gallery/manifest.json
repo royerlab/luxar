@@ -375,8 +375,8 @@
       "script": "demo_atp_synthase.py",
       "dataset": "datasets/demos/atp_synthase.luxar.zarr",
       "citation": "Zhou et al. 2015",
-      "distance": 27,
-      "note": "absolute dist reliable vs off-center bbox-fill"
+      "distance": 25,
+      "note": "distance 25: 53–55% still coverage across captures and 0/4316 border pixels across 10 poses; distance 24 reached 3/4316 at rock -10°. Distance 25 was chosen under a stricter zero-border stopping rule than the warn-only harness; fillTarget 0.6 reached 58% but cropped 248/4316 at rock -10°, so the absolute distance is retained. A zoom nudge is the same degree of freedom on the distance path and was covered by the sweep"
     },
     {
       "id": "ocean",
