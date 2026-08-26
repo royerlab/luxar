@@ -4,7 +4,7 @@
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
-.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest \
+.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest sync-demo-counts \
         lint-python lint-typescript type-check-python type-check-typescript security check-complexity \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-smoke test-perf-e2e \
@@ -641,6 +641,10 @@ gen-contract:  ## Regenerate the Python + TS format-contract projections from co
 gen-data-manifest:  ## Regenerate demos/data_manifest.json from the demos/data tree
 	@echo "📄 Regenerating the demo-data manifest..."
 	$(HATCH) run gen-data-manifest
+
+sync-demo-counts:  ## Synchronize live documentation counts with demos and examples
+	@echo "📄 Synchronizing documented demo and example counts..."
+	$(HATCH) run sync-demo-counts
 
 # Code quality checks (using Hatch)
 lint-python:  ## Run ruff linting on Python code
