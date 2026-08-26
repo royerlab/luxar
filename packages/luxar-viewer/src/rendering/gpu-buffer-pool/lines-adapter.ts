@@ -201,7 +201,7 @@ export class LinesBufferAdapter {
     host._lastAcquireRebuilt = true;
     // Growth headroom (1.5×) can itself cross the texture bound; clamp
     // the chosen capacity too (still >= segmentCount, which was clamped).
-    const capacity = clampLineCapacity(chooseCapacity(segmentCount));
+    const capacity = clampLineCapacity(chooseCapacity(segmentCount), false);
     const geometry = createLinesGeometry(capacity);
     // Self-invalidation — see the points adapter's twin comment.
     host.registerPooledGeometryInvalidation(geometry);
