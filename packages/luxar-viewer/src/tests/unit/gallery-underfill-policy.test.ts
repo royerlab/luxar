@@ -27,6 +27,7 @@ describe('gallery under-fill policy', () => {
     expect(lowSpan.underfilled).toBe(true);
     expect(lowSpan.message).toContain('49.9% span');
     expect(lowSpan.message).toContain('minimum 50.0%');
+    expect(lowSpan.message).not.toContain('lit area is below minimum');
 
     const lowArea = evaluateUnderfill({
       demoId: 'demo',
@@ -35,6 +36,7 @@ describe('gallery under-fill policy', () => {
     expect(lowArea.underfilled).toBe(true);
     expect(lowArea.message).toContain('9.9% lit area');
     expect(lowArea.message).toContain('minimum 10.0%');
+    expect(lowArea.message).not.toContain('span is below minimum');
   });
 
   it('uses lit area to catch an elongated subject whose span looks full', () => {
