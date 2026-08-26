@@ -32,6 +32,7 @@ make generate-gallery ONLY=desi_galaxies    # a subset
 
 # Under the hood (from packages/luxar-viewer/):
 GALLERY_ONLY=lorenz pnpm gallery
+GALLERY_ONLY=readme pnpm gallery             # root README media already on disk
 ```
 
 Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
@@ -159,8 +160,7 @@ revolves about; default = the camera's own signed up axis, so set it only to
 override — and note it re-parks the camera and so usually wants a `viewAngle`
 beside it), `dimensionNav`
 (`{key, steps}` for nD), `timelapse` (`{framePoint}` for 4D series), `lodFinest`,
-`readme` (a current top README pick), `note` (free-text human annotation; the
-capture code never reads it).
+`note` (free-text human annotation; the capture code never reads it).
 
 `citation` (optional, not a capture hint): the dataset credit, copied verbatim
 from the demo's `DEMO_META["citation"]["short"]`. It is here so a tile's credit
