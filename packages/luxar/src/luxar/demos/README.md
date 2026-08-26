@@ -379,7 +379,8 @@ Time-animated version of the particle collision demo. Watch particle tracks grow
 #### demo_4d_fractals.py - 4D Geometric Fractal Explorer
 Interactive exploration of 6 different 4D geometric fractals with categorical dimension.
 
-**Run**: `luxar demo run fractals_4d [-- --grid=64]`
+**Run**: `luxar demo run fractals_4d [-- --grid=64]` (default: 147 MB,
+~25 min, ~24 GB peak memory)
 
 **Demonstrates**: 4D spatial navigation (XYZ + W dimension, every W slider stop shows structure), categorical dimension (select between 6 fractal types), large dataset (~44.5M points, up to ~7.5M per fractal), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
 
