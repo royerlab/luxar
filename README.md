@@ -103,7 +103,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 87 Luxar demos  ·  75 built  ·  8 cached  ·  4 not generated yet
+🎬 87 Luxar demos  ·  76 built  ·  8 cached  ·  3 not generated yet
 
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
