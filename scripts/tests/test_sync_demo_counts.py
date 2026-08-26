@@ -42,23 +42,26 @@ def _checkout(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     return readme, claude, skill, examples
 
 
-def _configure(module: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _synchronize(module: ModuleType, tmp_path: Path, *, check: bool):
     readme, claude, skill, examples = _checkout(tmp_path)
-    monkeypatch.setattr(module, "REPO", tmp_path)
-    monkeypatch.setattr(module, "README", readme)
-    monkeypatch.setattr(module, "CLAUDE", claude)
-    monkeypatch.setattr(module, "VISUALIZATION_SKILL", skill)
-    monkeypatch.setattr(module, "EXAMPLES_DIR", examples)
-    monkeypatch.setattr(module, "iter_demos", lambda **_kwargs: [object()] * 3)
-    return readme, claude, skill
+    result = module.synchronize(
+        3,
+        module._example_count(examples),
+        check=check,
+        repo=tmp_path,
+        readme=readme,
+        claude=claude,
+        visualization_skill=skill,
+    )
+    return result, readme, claude, skill
 
 
 def test_sync_updates_only_live_sites_and_absorbs_delta(
-    sync_module: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    sync_module: ModuleType, tmp_path: Path
 ) -> None:
-    readme, claude, skill = _configure(sync_module, tmp_path, monkeypatch)
+    result, readme, claude, skill = _synchronize(sync_module, tmp_path, check=False)
 
-    assert sync_module.main([]) == 0
+    assert result == 0
 
     readme_text = readme.read_text()
     assert "Browse the 3 bundled demos" in readme_text
@@ -75,13 +78,23 @@ def test_sync_updates_only_live_sites_and_absorbs_delta(
 def test_check_reports_drift_without_writing(
     sync_module: ModuleType,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    readme, claude, skill = _configure(sync_module, tmp_path, monkeypatch)
+    readme, claude, skill, examples = _checkout(tmp_path)
     before = {path: path.read_text() for path in (readme, claude, skill)}
 
-    assert sync_module.main(["--check"]) == 1
+    assert (
+        sync_module.synchronize(
+            3,
+            sync_module._example_count(examples),
+            check=True,
+            repo=tmp_path,
+            readme=readme,
+            claude=claude,
+            visualization_skill=skill,
+        )
+        == 1
+    )
 
     assert {path: path.read_text() for path in before} == before
     output = capsys.readouterr().out
@@ -90,22 +103,30 @@ def test_check_reports_drift_without_writing(
     assert "SKILL.md (synchronized)" in output
 
 
-def test_check_passes_after_sync(
-    sync_module: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _configure(sync_module, tmp_path, monkeypatch)
+def test_check_passes_after_sync(sync_module: ModuleType, tmp_path: Path) -> None:
+    result, readme, claude, skill = _synchronize(sync_module, tmp_path, check=False)
 
-    assert sync_module.main([]) == 0
-    assert sync_module.main(["--check"]) == 0
+    assert result == 0
+    assert (
+        sync_module.synchronize(
+            3,
+            2,
+            check=True,
+            repo=tmp_path,
+            readme=readme,
+            claude=claude,
+            visualization_skill=skill,
+        )
+        == 0
+    )
 
 
 def test_invalid_banner_aborts_without_partial_writes(
     sync_module: ModuleType,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    readme, claude, skill = _configure(sync_module, tmp_path, monkeypatch)
+    readme, claude, skill, examples = _checkout(tmp_path)
     readme.write_text(
         readme.read_text().replace(
             "1 built  ·  0 cached  ·  1 not generated yet",
@@ -114,7 +135,18 @@ def test_invalid_banner_aborts_without_partial_writes(
     )
     before = {path: path.read_text() for path in (readme, claude, skill)}
 
-    assert sync_module.main([]) == 2
+    assert (
+        sync_module.synchronize(
+            3,
+            sync_module._example_count(examples),
+            check=False,
+            repo=tmp_path,
+            readme=readme,
+            claude=claude,
+            visualization_skill=skill,
+        )
+        == 2
+    )
 
     assert {path: path.read_text() for path in before} == before
     assert "sum to 1, not 2" in capsys.readouterr().err

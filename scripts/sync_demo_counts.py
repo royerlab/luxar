@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Match, Pattern
 
-from luxar.demos.registry import iter_demos
+from luxar.demos.registry import DemoMetaError, iter_demos
 
 REPO = Path(__file__).resolve().parent.parent
 README = REPO / "README.md"
@@ -127,31 +127,76 @@ def _sync_visualization_skill(text: str, demo_count: int, example_count: int) ->
     )
 
 
-def _render_outputs(demo_count: int, example_count: int) -> dict[Path, str]:
+def _render_outputs(
+    demo_count: int,
+    example_count: int,
+    *,
+    readme: Path,
+    claude: Path,
+    visualization_skill: Path,
+) -> dict[Path, tuple[str, str]]:
+    readme_text = readme.read_text(encoding="utf-8")
+    claude_text = claude.read_text(encoding="utf-8")
+    skill_text = visualization_skill.read_text(encoding="utf-8")
     return {
-        README: _sync_readme(README.read_text(), demo_count),
-        CLAUDE: _sync_claude(CLAUDE.read_text(), demo_count),
-        VISUALIZATION_SKILL: _sync_visualization_skill(
-            VISUALIZATION_SKILL.read_text(), demo_count, example_count
+        readme: (readme_text, _sync_readme(readme_text, demo_count)),
+        claude: (claude_text, _sync_claude(claude_text, demo_count)),
+        visualization_skill: (
+            skill_text,
+            _sync_visualization_skill(skill_text, demo_count, example_count),
         ),
     }
 
 
-def _counts() -> tuple[int, int]:
-    example_count = sum(path.is_file() for path in EXAMPLES_DIR.glob("*_example.py"))
-    return len(iter_demos(refresh=True)), example_count
+def _example_count(examples_dir: Path) -> int:
+    return sum(path.is_file() for path in examples_dir.glob("*_example.py"))
 
 
-def _diff(path: Path, expected: str) -> str:
-    actual = path.read_text()
+def _diff(path: Path, actual: str, expected: str, *, repo: Path) -> str:
     return "".join(
         difflib.unified_diff(
             actual.splitlines(keepends=True),
             expected.splitlines(keepends=True),
-            fromfile=str(path.relative_to(REPO)),
-            tofile=f"{path.relative_to(REPO)} (synchronized)",
+            fromfile=str(path.relative_to(repo)),
+            tofile=f"{path.relative_to(repo)} (synchronized)",
         )
     )
+
+
+def synchronize(
+    demo_count: int,
+    example_count: int,
+    *,
+    check: bool,
+    repo: Path = REPO,
+    readme: Path = README,
+    claude: Path = CLAUDE,
+    visualization_skill: Path = VISUALIZATION_SKILL,
+) -> int:
+    try:
+        outputs = _render_outputs(
+            demo_count,
+            example_count,
+            readme=readme,
+            claude=claude,
+            visualization_skill=visualization_skill,
+        )
+        changed = {
+            path: contents
+            for path, contents in outputs.items()
+            if contents[0] != contents[1]
+        }
+        if check:
+            for path, (actual, expected) in changed.items():
+                print(_diff(path, actual, expected, repo=repo), end="")
+            return 1 if changed else 0
+
+        for path, (_, expected) in changed.items():
+            path.write_text(expected, encoding="utf-8")
+    except (OSError, SyncError) as error:
+        print(f"demo-count sync failed: {error}", file=sys.stderr)
+        return 2
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -164,23 +209,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        demo_count, example_count = _counts()
-        outputs = _render_outputs(demo_count, example_count)
-    except (OSError, SyncError) as error:
+        demo_count = len(iter_demos(refresh=True))
+        example_count = _example_count(EXAMPLES_DIR)
+    except (DemoMetaError, OSError) as error:
         print(f"demo-count sync failed: {error}", file=sys.stderr)
         return 2
-
-    changed = [
-        path for path, expected in outputs.items() if path.read_text() != expected
-    ]
-    if args.check:
-        for path in changed:
-            print(_diff(path, outputs[path]), end="")
-        return 1 if changed else 0
-
-    for path in changed:
-        path.write_text(outputs[path])
-    return 0
+    return synchronize(demo_count, example_count, check=args.check)
 
 
 if __name__ == "__main__":
