@@ -64,6 +64,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_docs_workflow.py guards the Pages workflow itself",
     ),
     (
+        ".github/workflows/external-reference-audits.yml",
+        "py",
+        "test_run_external_reference_audits.py pins its schedule and token wiring",
+    ),
+    (
         "scripts/complexity_baseline.json",
         "py",
         "the C901 ratchet's only non-.py input; test_check_complexity.py is what "
