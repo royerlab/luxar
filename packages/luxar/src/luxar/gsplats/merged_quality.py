@@ -140,12 +140,17 @@ def _quality_memory_guard(
         # are reported by the guarded render attempt, never raised after fitting.
         return None
 
+    workers = _quality_worker_count()
+    has_override = _has_usable_quality_override()
+    # CPU renders and MPS unified device memory both consume host RAM at peak.
     peak_gb = (
         _QUALITY_HOST_REFERENCE_VOLUMES
         if resolved.type == "cuda"
         else _QUALITY_DEVICE_PEAK_VOLUMES
     ) * voxel_gb
     host_budget_gb = _quality_budget_gb()
+    if not has_override:
+        host_budget_gb /= workers
     if peak_gb > host_budget_gb:
         return (
             f"needs ~{peak_gb:.1f} GiB of host memory, over the "
@@ -156,8 +161,7 @@ def _quality_memory_guard(
         from luxar.gsplats.metrics import _gpu_free_memory
 
         free_bytes = _gpu_free_memory(resolved)
-        workers = _quality_worker_count()
-        if _has_usable_quality_override():
+        if has_override:
             device_budget_gb = host_budget_gb
             budget_description = (
                 f"{device_budget_gb:g} GiB LUXAR_TILED_QUALITY_MAX_GB cap"

@@ -341,6 +341,30 @@ def test_cuda_quality_budget_rejects_a_small_shared_card(
     assert "4 worker(s)" in reason
 
 
+def test_cuda_quality_budget_rejects_shared_workers_on_a_small_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each concurrent worker receives only its share of free host RAM."""
+    import torch
+
+    from luxar.gsplats import metrics
+    from luxar.gsplats.utils import device as device_utils
+
+    monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.3)
+    monkeypatch.setattr(
+        device_utils, "resolve_torch_device", lambda _device: torch.device("cuda:0")
+    )
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda _device: 95 * 1024**3)
+
+    assert _quality_memory_guard((512, 512, 512), "cuda") is None
+
+    monkeypatch.setenv(merged_quality.QUALITY_WORKERS_PER_DEVICE_ENV, "4")
+    reason = _quality_memory_guard((512, 512, 512), "cuda")
+    assert reason is not None
+    assert "needs ~1.0 GiB of host memory" in reason
+
+
 def test_cuda_quality_budget_honors_a_low_explicit_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -375,7 +399,7 @@ def test_cuda_quality_budget_falls_back_when_free_vram_is_unavailable(
 
     monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
     monkeypatch.setenv(merged_quality.QUALITY_WORKERS_PER_DEVICE_ENV, "4")
-    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.3)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 16.0)
     monkeypatch.setattr(
         device_utils, "resolve_torch_device", lambda _device: torch.device("cuda:0")
     )
@@ -384,9 +408,9 @@ def test_cuda_quality_budget_falls_back_when_free_vram_is_unavailable(
     assert _quality_memory_guard((512, 512, 512), "cuda") is None
 
     monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 512.0)
-    reason = _quality_memory_guard((1024, 1024, 1024), "cuda")
+    reason = _quality_memory_guard((768, 768, 768), "cuda")
     assert reason is not None
-    assert "needs ~32.0 GiB of cuda:0 memory" in reason
+    assert "needs ~13.5 GiB of cuda:0 memory" in reason
     assert "6 GiB per-worker budget (4 worker(s) sharing the device)" in reason
 
 
