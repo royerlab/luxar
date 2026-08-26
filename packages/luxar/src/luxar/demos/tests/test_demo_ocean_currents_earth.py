@@ -586,6 +586,20 @@ def test_current_writer_builds_partition_of_lod_with_atomic_ribbons(
     assert total_finest == 400
 
 
+def test_current_writer_specializes_streaming_for_coarser_siblings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stored ladders start near their coarser sibling, not one shared base."""
+    monkeypatch.setattr(demo_ocean_currents_earth, "LOD_STREAM_CHUNK", 100)
+    output = _write_currents(tmp_path, tile_size=400)
+    part = open_group(output, mode="r")["currents"]["part_0"]
+    children = sorted(name for name in part.keys() if name.startswith("child_"))
+    first_chunks = [
+        int(part[child]["additive_0"].attrs["n_vertices"]) for child in children
+    ]
+    assert first_chunks == [102, 300, 600]
+
+
 # --------------------------------------------------------------------- seeding
 
 
