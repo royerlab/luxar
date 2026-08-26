@@ -460,19 +460,54 @@ def colour_from_channels(h5j_path: Path, fit_path: Path, out_path: Path) -> None
         signal = signal_channel_indices(h5j_path)
         rgb = np.zeros((n, len(signal)), dtype=np.float32)
         idx = np.rint(centres).astype(np.int64)
+        tops: list[float] = []
         for slot, ch in enumerate(signal):
             vol = decode_h5j_channel(h5j_path, ch)
             sel = idx.copy()
             for ax in range(3):
                 np.clip(sel[:, ax], 0, vol.shape[ax] - 1, out=sel[:, ax])
             rgb[:, slot] = vol[sel[:, 0], sel[:, 1], sel[:, 2]]
+            # Take the balance percentile from the VOLUME while it is in hand.
+            # A channel gain describes the CHANNEL, not the splat sample: taking
+            # it from the sampled values instead re-weights the hue balance by
+            # where the splats happen to sit, which measurably tilted the colour
+            # means to [118, 146, 117] against the shipped [141, 136, 145].
+            tops.append(float(np.percentile(vol, BALANCE_PERCENTILE)))
             del vol
 
-        for slot in range(rgb.shape[1]):
-            top = float(np.percentile(rgb[:, slot], BALANCE_PERCENTILE))
+        # Balance the channels against each other first, so a neuron labelled in
+        # a globally dimmer channel is not systematically darker in hue. The
+        # gains come from the volume percentiles measured above, against a shared
+        # ceiling, which is how the shipped run derived them.
+        ceiling = max(tops)
+        aprint(
+            f"p{BALANCE_PERCENTILE} per channel {[round(t, 1) for t in tops]} "
+            f"-> gains {[round(ceiling / t, 4) if t > 0 else 1.0 for t in tops]}"
+        )
+        # Each channel becomes a fraction of its OWN robust maximum. The shipped
+        # run expressed the same thing as gains against a shared ceiling; the two
+        # differ only by one global factor, which the per-splat normalisation
+        # below removes, so the resulting hue is identical.
+        for slot, top in enumerate(tops):
             if top > 0:
                 rgb[:, slot] /= top
         np.clip(rgb, 0.0, 1.0, out=rgb)
+
+        # Then normalise each splat to FULL BRIGHTNESS, so colour carries HUE ONLY
+        # and every scrap of magnitude lives in the amplitude.
+        #
+        # This is not cosmetic. The shader multiplies emission by the colour, so
+        # leaving the sampled magnitude in the colour applies intensity TWICE and
+        # throws away most of the light: measured against the previously shipped
+        # archive, keeping raw magnitudes gave a mean peak channel of 36/255
+        # against its 255/255, and 5.1x less total emitted light. Loic saw it
+        # immediately as "dimmer, and the hues less saturated, more grayish" --
+        # the greyness being a CONSEQUENCE of the dimness, since ACES desaturates
+        # the dark end. Per-splat saturation was in fact already slightly higher
+        # (0.862 vs 0.785); it simply had no brightness to show it at.
+        peak = rgb.max(axis=1)
+        lit = peak > 0
+        rgb[lit] /= peak[lit, None]
 
         uncoloured = int(np.count_nonzero(rgb.max(axis=1) == 0))
         share = rgb.sum(axis=0)
