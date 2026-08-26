@@ -622,6 +622,11 @@ function rejectMesh(path: string, message: string): never {
 // MIRROR: MESH_DECODED_BYTES_PER_VALUE in
 // packages/luxar/src/luxar/typing_utils/constants.py must hold this value.
 // If you change one, change the other; tests pin both sides.
+// Broadcast expansion and decoder routing can make the logical allocation much
+// larger than the stored data. Every routed value materializes at no more than
+// four bytes (`Float32Array`, or `Uint32Array` for faces), so this width also
+// bounds hostile declarations with an enormous `ndim`. Native-dtype colours can
+// cost less, making four bytes conservative rather than an underestimate.
 export const DECODED_BYTES_PER_VALUE = 4;
 
 /**
@@ -687,20 +692,11 @@ export async function preflightMesh(
   //   * `faces` is widened to u32 regardless of the narrow dtype the INDEX encoder
   //     chose, so a `uint8` faces array also costs 4x on decode.
   //
-  // So the logical term is charged at 4 bytes per value — the width of the widest
-  // thing any of these paths materializes (`Float32Array`, or `Uint32Array` for
-  // faces). Colours kept in their native dtype cost less than that, which makes this
-  // an over-estimate for them and never an under-estimate.
-  //
-  // Charging the logical term is also what bounds `ndim`, which has no cap of its
-  // own: `n_vertices: 4, ndim: 2^25` passes every count check, and its stored
-  // footprint can be tiny, but `vertices` decodes to 4 x 2^25 floats. The budget is
-  // the only thing standing between that declaration and a 512 MB allocation.
-  //
   // The DECLARED dtype drives the stored term (never a canonical one): `faces` is
   // logically uint32 but the INDEX encoder narrows it to the smallest unsigned dtype
   // that fits, while an external int64 store costs 8 bytes per index — so a
   // canonical 4 would be wrong in both directions.
+
   // The running sum over arrays, WITHOUT the max-chunk term — that term is folded
   // in once, below, to produce `peakBytes` (the quantity actually compared against
   // the budget and returned as `accountedBytes`). Named distinctly from the
