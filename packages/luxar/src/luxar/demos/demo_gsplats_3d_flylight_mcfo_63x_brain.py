@@ -181,6 +181,7 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     add_demo_caption,
+    download_with_checksum,
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
@@ -368,34 +369,23 @@ def _luxar(*args: str) -> None:
 def fetch_h5j() -> Path:
     """Download Janelia's stitched H5J, or reuse a verified cached copy.
 
-    Goes through ``robust_download`` rather than streaming the response here:
-    it retries with backoff and RESUMES a partial transfer against a validated
-    ETag, which matters for a single multi-gigabyte object fetched over a link
-    that may drop. ``requests`` is a core dependency, so nothing here is gated
-    on an optional extra.
+    ``download_with_checksum`` retries with backoff and RESUMES a partial
+    transfer against a validated ETag, which matters for a single
+    multi-gigabyte object over a link that may drop, and it verifies the digest
+    on every path -- cache hit included -- deleting the file if it does not
+    match.
 
-    The digest is checked on every path, cache hit included. A cached copy is
-    not evidence of a correct copy -- it may be a truncated earlier attempt, or
-    a different sample someone dropped at this name -- and the whole point of
-    pinning the hash is that this demo describes ONE specimen.
+    Checking a cached copy is the point, not an extra: a file at this name is
+    not evidence of the right file. It may be a truncated earlier attempt or a
+    different sample someone left there, and the pinned hash exists because
+    this demo describes ONE specimen.
     """
-    from luxar.utils.download import robust_download, verify_file_checksum
-
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     target = CACHE_DIR / H5J_NAME
-
-    if not target.is_file():
-        with asection(f"Fetching {H5J_NAME}"):
-            aprint(f"from {H5J_URL}")
-            robust_download(H5J_URL, target)
-
+    with asection(f"Fetching {H5J_NAME}"):
+        aprint(f"from {H5J_URL}")
+        download_with_checksum(H5J_URL, target, expected_sha256=H5J_SHA256)
     aprint(f"H5J: {target} ({target.stat().st_size:,} bytes)")
-    if not verify_file_checksum(target, expected_sha256=H5J_SHA256):
-        raise RuntimeError(
-            f"{H5J_NAME} does not match the pinned sha256 {H5J_SHA256}. "
-            "Refusing a source that is not the sample this demo describes -- "
-            f"delete {target} to re-fetch."
-        )
     return target
 
 
