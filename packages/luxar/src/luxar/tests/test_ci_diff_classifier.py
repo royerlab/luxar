@@ -233,7 +233,17 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
     (
         "packages/luxar-viewer/src/types/lod-group.ts",
         "py",
-        "test_constants.py compares the LOD selector vocabulary",
+        "test_constants.py compares the LOD selector and display-type vocabularies",
+    ),
+    (
+        "packages/luxar-viewer/src/types/partition-group.ts",
+        "py",
+        "test_constants.py compares the partition display-type vocabulary",
+    ),
+    (
+        "packages/luxar-viewer/src/types/data-monitor-types.ts",
+        "py",
+        "test_constants.py compares the monitor display-type vocabulary",
     ),
     (
         "packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts",

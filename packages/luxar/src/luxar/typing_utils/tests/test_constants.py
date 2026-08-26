@@ -20,7 +20,10 @@ from luxar.typing_utils.constants import (
     LINE_JOIN_STYLES,
     LOD_SELECTORS,
 )
-from luxar.typing_utils.geometry_capabilities import lod_capable_types
+from luxar.typing_utils.geometry_capabilities import (
+    lod_capable_types,
+    partition_capable_types,
+)
 
 
 def _viewer_type_source(filename: str) -> str:
@@ -55,6 +58,24 @@ def test_lod_display_types_match_the_capability_table() -> None:
         _viewer_type_source("lod-group.ts"), "display_type"
     )
     assert viewer_display_types == set(lod_capable_types())
+
+
+def test_partition_display_types_match_the_capability_table() -> None:
+    """The viewer's metadata union names exactly partition-capable geometries."""
+    viewer_display_types = read_ts_string_literals(
+        _viewer_type_source("partition-group.ts"), "display_type"
+    )
+    assert viewer_display_types == set(partition_capable_types())
+
+
+def test_monitor_display_types_match_specialized_group_metadata() -> None:
+    """Monitor display types cover the union of specialized group geometries."""
+    viewer_display_types = read_ts_string_literals(
+        _viewer_type_source("data-monitor-types.ts"), "displayType"
+    )
+    assert viewer_display_types == set(lod_capable_types()) | set(
+        partition_capable_types()
+    )
 
 
 def test_string_literal_parser_ignores_block_comments() -> None:
