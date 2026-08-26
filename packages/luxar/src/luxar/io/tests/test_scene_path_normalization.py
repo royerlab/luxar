@@ -335,7 +335,7 @@ class TestSceneExtensionNormalization:
             ) as exc:
                 scene.to_zarr(requested)
             with pytest.raises(
-                ValueError, match="backing store does not exist"
+                ValueError, match="only supports its final destination"
             ) as copy_exc:
                 scene.to_zarr(copy)
 

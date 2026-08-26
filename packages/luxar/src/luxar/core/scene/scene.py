@@ -670,9 +670,6 @@ class Scene(Group):
             aprint(f"Finalized scene at {final_source}")
             return
 
-        if not source.exists():
-            raise ValueError(f"Scene backing store does not exist: {final_source}")
-
         if source != final_source or not source.is_dir():
             raise ValueError(
                 "Scene backing writer only supports its final destination: "
