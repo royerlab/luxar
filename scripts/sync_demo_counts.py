@@ -214,7 +214,15 @@ def main(argv: list[str] | None = None) -> int:
     except (DemoMetaError, OSError) as error:
         print(f"demo-count sync failed: {error}", file=sys.stderr)
         return 2
-    return synchronize(demo_count, example_count, check=args.check)
+    return synchronize(
+        demo_count,
+        example_count,
+        check=args.check,
+        repo=REPO,
+        readme=README,
+        claude=CLAUDE,
+        visualization_skill=VISUALIZATION_SKILL,
+    )
 
 
 if __name__ == "__main__":

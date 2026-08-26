@@ -103,6 +103,32 @@ def test_check_reports_drift_without_writing(
     assert "SKILL.md (synchronized)" in output
 
 
+def test_main_check_uses_current_document_paths(
+    sync_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    readme, claude, skill, examples = _checkout(tmp_path)
+    demo_count = len(sync_module.iter_demos(refresh=True))
+    example_count = sync_module._example_count(sync_module.EXAMPLES_DIR)
+    for index in range(2, example_count):
+        (examples / f"extra_{index}_example.py").touch()
+    before = {path: path.read_bytes() for path in (readme, claude, skill)}
+    monkeypatch.setattr(sync_module, "REPO", tmp_path)
+    monkeypatch.setattr(sync_module, "README", readme)
+    monkeypatch.setattr(sync_module, "CLAUDE", claude)
+    monkeypatch.setattr(sync_module, "VISUALIZATION_SKILL", skill)
+    monkeypatch.setattr(sync_module, "EXAMPLES_DIR", examples)
+    monkeypatch.setattr(
+        sync_module,
+        "iter_demos",
+        lambda *, refresh: [None] * demo_count,
+    )
+
+    assert sync_module.main(["--check"]) == 1
+    assert {path: path.read_bytes() for path in before} == before
+
+
 def test_check_passes_after_sync(sync_module: ModuleType, tmp_path: Path) -> None:
     result, readme, claude, skill = _synchronize(sync_module, tmp_path, check=False)
 
