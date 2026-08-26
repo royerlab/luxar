@@ -149,6 +149,39 @@ describe('element-texture-layout — texel address math', () => {
     expect(clampSplatCapacity(max + 1)).toBe(max);
   });
 
+  it('reports every distinct clamp at error level, once each', () => {
+    configureElementTextureLayout(2048);
+    const max = getMaxElementCapacityPerNode(SPLAT_TEXTURE_LAYOUT);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // At or under the budget there is nothing to say.
+      clampSplatCapacity(max);
+      expect(errors).not.toHaveBeenCalled();
+
+      // The first offender reports, at ERROR (not warning), and says how
+      // much is lost — 100 elements, never rendered.
+      clampSplatCapacity(max + 100);
+      expect(errors).toHaveBeenCalledTimes(1);
+      const message = String(errors.mock.calls[0][0]);
+      expect(message).toContain('100');
+      expect(message).toContain('NEVER');
+
+      // The same node re-committing the same count stays quiet: a clamp is
+      // re-evaluated on every commit and must not spam the console.
+      clampSplatCapacity(max + 100);
+      expect(errors).toHaveBeenCalledTimes(1);
+
+      // ...but a SECOND, differently-sized oversized node is its own data
+      // loss and must not be swallowed by the first one's flag. This is the
+      // case a per-layout flag silently dropped.
+      clampSplatCapacity(max + 7);
+      expect(errors).toHaveBeenCalledTimes(2);
+      expect(String(errors.mock.calls[1][0])).toContain('7');
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it('exposes a single shared placeholder texture', () => {
     expect(getPlaceholderElementTexture()).toBe(getPlaceholderElementTexture());
   });

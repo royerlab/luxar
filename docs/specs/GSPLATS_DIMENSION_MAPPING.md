@@ -1,7 +1,7 @@
 # Gaussian Splats Dimension Mapping
 
 **Version**: 2.0
-**Last Updated**: 2026-07-13
+**Last Updated**: 2026-08-26
 
 ## Overview
 
@@ -43,6 +43,10 @@ def add_gsplats(
 ) -> Union[GSplats, Group]:
 ```
 
+`cholesky_factors` packs the lower-triangular factor L of the covariance
+(Σ = L·Lᵀ) in row-major order. Its diagonal is scale-like: isotropic std σ in
+3D uses `[σ, 0, σ, 0, 0, σ]`, not `1/σ`.
+
 **`dim_order`** — Maps data columns to scene dimensions by name. Also reorders and embeds Cholesky factors automatically. For example, `dim_order=["z", "y", "x"]` declares that the first column of `centers` corresponds to the scene's "z" dimension, etc.
 
 When `dim_order` is specified and the data has fewer dimensions than the scene, the `fill` and `fill_sigma` parameters provide fixed coordinates and covariance widths for the unmapped dimensions. The method automatically expands the centers and Cholesky factors to scene dimensionality.
@@ -57,6 +61,17 @@ Auto-mapping behavior when `None`:
 **`fill`** — Fixed coordinate values for dimensions not covered by `dim_order`. For example, `fill={"time": 5.0}` places all splats at time=5.0.
 
 **`fill_sigma`** — Standard deviations for unmapped dimensions in the Cholesky embedding (default 1.0). Controls splat extent in filled dimensions.
+
+For a hand-authored stacked time/channel axis from lower-dimensional splats,
+use `dim_order=["x", "y", "z"]`, pair `fill={"time": t}` with
+`fill_sigma={"time": 0.0}`, and pass `extend_to_all=[]` (omitting it
+auto-broadcasts every unmapped dimension). The embedding treats zero as semantic
+no-extent and regularizes that semantic zero to `1e-7` before Cholesky
+decomposition. If the input already has full scene-dimensional centers and
+factors without `dim_order` embedding, author a strictly positive diagonal
+smaller than the coordinate step, because the public writer rejects a literal
+zero. Use `extend_to_all` instead when the geometry should remain visible at every
+coordinate.
 
 ---
 
@@ -178,6 +193,7 @@ The number of specified dimensions must match the splat data dimensionality.
 cholesky_factors.shape[1] == splat_ndim * (splat_ndim + 1) // 2
 ```
 Cholesky factors must match splat dimensionality, not scene dimensionality.
+Their values follow the covariance-factor packing described above.
 
 ### Rule 3: Mutual Exclusivity
 ```

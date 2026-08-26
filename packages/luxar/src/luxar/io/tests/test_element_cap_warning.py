@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.conftest import find_repo_relative_file
+from luxar.conftest import viewer_source
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.io._compiler.node_common import warn_if_over_element_cap
 from luxar.typing_utils.constants import (
@@ -46,15 +46,8 @@ def test_caps_match_the_viewer_element_texture_layout() -> None:
 
 
 def test_cap_inputs_match_the_viewer_source() -> None:
-    viewer_source = find_repo_relative_file(
-        Path("packages/luxar-viewer/src/rendering/element-texture-layout.ts"),
-        Path(__file__).resolve(),
-    )
-    assert viewer_source is not None, (
-        "cannot locate element-texture-layout.ts; if the viewer file moved, "
-        "update this contract test"
-    )
-    source = viewer_source.read_text(encoding="utf-8")
+    source_path = viewer_source("src/rendering/element-texture-layout.ts")
+    source = source_path.read_text(encoding="utf-8")
     width_match = re.search(r"ELEMENT_TEXTURE_MAX_WIDTH\s*=\s*(\d+)", source)
     assert width_match is not None
     assert int(width_match.group(1)) == ELEMENT_TEXTURE_MAX_WIDTH

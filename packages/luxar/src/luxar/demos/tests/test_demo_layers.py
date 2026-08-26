@@ -173,6 +173,15 @@ EXEMPT: dict[str, Exemption] = {
         "BSP tiles of a kind=partition wrapper that is itself layer=True — the "
         "wrapper is where the compositing attrs live (see the comment there).",
     ),
+    "demo_ocean_currents_earth.py": Exemption(
+        frozenset({"f'child_{level}'"}),
+        frozenset({"'earth'", "'currents'"}),
+        "LOD levels of the per-tile kind=lod ladders under the `earth` / "
+        "`currents` kind=partition wrappers, which are the layer=True nodes. "
+        "Only one level of a ladder is ever visible, so a level is not a layer; "
+        "the wrapper is where the compositing attrs live and what the Layers "
+        "panel shows.",
+    ),
     "demo_gsplats_lod_embryo_line.py": Exemption(
         frozenset({"'lod'"}),
         frozenset({"'embryo_line'"}),

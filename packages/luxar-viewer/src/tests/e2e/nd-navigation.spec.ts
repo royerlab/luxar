@@ -60,6 +60,39 @@ test.describe('nD Navigation - Dimension Selection', () => {
     await expect(status).toContainText('[/]: 2 · Channel');
   });
 
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 800, height: 600 },
+  ]) {
+    test(`keeps the dimension header on one line at ${viewport.width}x${viewport.height}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
+      await waitForLuxarReady(page);
+
+      const geometry = await page.locator('.luxar-dimension-sliders__header').evaluate((header) => {
+        const lineCount = (selector: string): number => {
+          const element = header.querySelector(selector);
+          if (!element) return 0;
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          return new Set(Array.from(range.getClientRects(), (rect) => Math.round(rect.top))).size;
+        };
+
+        return {
+          headerHeight: header.getBoundingClientRect().height,
+          titleLines: lineCount('.luxar-dimension-sliders__title'),
+          statusLines: lineCount('.luxar-dimension-sliders__status'),
+        };
+      });
+
+      expect(geometry.titleLines).toBe(1);
+      expect(geometry.statusLines).toBe(1);
+      expect(geometry.headerHeight).toBeLessThanOrEqual(32);
+    });
+  }
+
   test('should navigate forward with ] key', async ({ page }) => {
     const consoleLogs: string[] = [];
     page.on('console', (msg) => {
