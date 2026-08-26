@@ -587,6 +587,7 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
         "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-"
         "${{ github.run_attempt }}"
     )
+    assert parsed["concurrency"]["cancel-in-progress"] is True
 
     jobs = parsed["jobs"]
     repair = jobs["repair-cancelled-push-checks"]
