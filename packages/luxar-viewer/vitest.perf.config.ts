@@ -16,6 +16,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    disableConsoleIntercept: true,
     // Deliberately still 'jsdom', matching the environment in which these
     // thresholds were established. Switching environments would change the
     // measurement substrate, so treat that as a separate benchmark-policy change.
