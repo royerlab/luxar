@@ -124,7 +124,7 @@ export async function hashUrl(url: string): Promise<string> {
  */
 export async function fetchWithRetry(
   url: string,
-  options?: { timeoutMsOverride?: number; signal?: AbortSignal }
+  options?: { timeoutMsOverride?: number; signal?: AbortSignal; headers?: HeadersInit }
 ): Promise<FetchResponseScope | undefined> {
   const maxAttempts = Math.max(1, config.dataLoading.network.retryAttempts + 1);
   const totalTimeoutMs = options?.timeoutMsOverride ?? config.dataLoading.network.timeoutMs;
@@ -154,7 +154,10 @@ export async function fetchWithRetry(
         const timeoutId = setTimeout(() => timeoutController.abort(), timeoutPerAttemptMs);
         const abortScope = mergeAbortSignals(timeoutController.signal, options?.signal);
         try {
-          const response = await fetch(url, { signal: abortScope.signal });
+          const response = await fetch(url, {
+            signal: abortScope.signal,
+            ...(options?.headers ? { headers: options.headers } : {}),
+          });
           return {
             response,
             dispose: (): void => {

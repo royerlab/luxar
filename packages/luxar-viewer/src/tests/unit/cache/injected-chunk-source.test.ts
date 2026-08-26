@@ -144,10 +144,28 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     await store.dispose();
   });
 
+  it('RETHROWS a fatal outcome instead of degrading it to a miss', async () => {
+    // The distinction that matters: `error` means one chunk failed and a
+    // fill-valued read is acceptable; `fatal` means the whole container is
+    // unreadable. Reporting the second as a miss renders an empty scene and
+    // swallows the diagnosis the error was written to deliver.
+    const boom = new Error('archive is not range-readable');
+    const { source } = fakeSource({
+      async get(): Promise<ChunkFetchOutcome> {
+        return { kind: 'fatal', cause: boom };
+      },
+    });
+    const store = new MultiLevelCachingStore(source, { noOpfs: true });
+
+    await expect(store.get('points/c/0/0')).rejects.toBe(boom);
+    await store.dispose();
+  });
+
   it('REJECTS on an aborted outcome, so an invalidated read cannot become fill values', async () => {
-    // The asymmetry is the whole safety property: an `error` degrades to
-    // `undefined` (zarrita fills the chunk), while an `aborted` must reject —
-    // an invalidation fired precisely because those bytes must not be trusted.
+    // The other half of the asymmetry, and the whole safety property: an
+    // `error` degrades to `undefined` (zarrita fills the chunk), while an
+    // `aborted` must reject — an invalidation fired precisely because those
+    // bytes must not be trusted.
     const { source } = fakeSource({
       async get(): Promise<ChunkFetchOutcome> {
         return { kind: 'aborted' };
