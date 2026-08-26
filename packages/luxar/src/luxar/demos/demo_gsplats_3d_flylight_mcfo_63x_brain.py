@@ -10,7 +10,7 @@ come up in distinguishable colours against an almost entirely empty volume.
 This is the **sparse-and-huge** shape. The source is 2573 x 2707 x 463 voxels —
 3.22 Gvoxel per channel, 12.9 Gvoxel over the four channels — of which only
 **0.014%** rises above 1% of the peak intensity (the volume's own 99th
-percentile sits at 0.05% of peak). Fitted to **653,759 Gaussian splats** that is
+percentile sits at 0.05% of peak). Fitted to **660,035 Gaussian splats** that is
 about **4,900:1** against the source voxels, which is the regime splats are for:
 the empty 99.99% costs nothing.
 
@@ -90,7 +90,7 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
        EXCLUDED — at 10-19% occupancy it is not sparse and would dominate.
     4. ``gsplat cal --auto-region --feature-metric edges --k-star-metric gain``
        -> a region-scoped density (K* 128,000, confidence 13.35 dB).
-    5. ``gsplat fit --tiling content --cal … --flat --floor auto`` -> 653,759
+    5. ``gsplat fit --tiling content --cal … --flat --floor auto`` -> 660,035
        splats over 75 content-balanced boxes.
     6. Colour each splat by sampling the three channels at its own centre.
     7. ``gsplat lod --recipe stream --target-ms 200`` -> progressive ladder.
@@ -222,7 +222,8 @@ VOXEL_UM = (0.19, 0.19, 0.38)
 # ever rebuilt.
 #
 # It is NOT a percentile of the stored amplitudes, and it is worth knowing that
-# before trying to derive it. Measured on the shipped store (653,759 splats):
+# before trying to derive it. Measured on the 1000-iteration build (653,759
+# splats), which this one replaces:
 #
 #     min 0.0048   median 7.51   mean 10.52   p99.9 79.16   max 188.81
 #
@@ -238,20 +239,38 @@ VOXEL_UM = (0.19, 0.19, 0.38)
 #     that rescales amplitudes at scene-insertion time therefore shifts the
 #     effective exposure here, and this constant does not compensate.
 #
-# Measured across the 2026-08-26 refit (1000 -> 5000 iterations), and recorded
-# because the two numbers point opposite ways:
+# SETTLED by rendering both builds at a fixed camera through this demo's own
+# scene builder (2026-08-26). Raw amplitude units DO reach the shader here: had
+# the viewer normalised by the stamped maximum, the two renders would have been
+# near-identical, and they are not.
 #
-#     median/max    0.0398 -> 0.0392    (shape, 1.5% move)
-#     absolute max  188.81 -> 173.64    (8% lower)
+# But neither the max nor the median governs exposure -- the amplitude SUM does,
+# because total emitted radiance is a sum over splats:
 #
-# Which one governs depends on whether raw amplitude units reach the shader on
-# THIS path. If the viewer normalises by the stored maximum, only the shape
-# matters and 2.723 still holds; if raw units reach it -- which is what the
-# demo's opt-out from insertion-time normalisation implies -- the 8% governs and
-# the refit dims the scene by roughly that much. That has NOT been settled, and
-# it cannot be settled from these numbers: it needs the new build in front of a
-# render. Treat the constant as suspect after any refit, not as validated.
+#     amplitudes   median -9.4%   p99.9 +0.6%   max -8.0%   SUM -1.4%
+#     rendered     total light -2.1%   mean fg -1.4%   p99 -0.7%
+#                  median lit pixel -7.5%
+#
+# So overall exposure moved ~1.4-2.1%, tracking the sum, and the bright arbors
+# are unchanged (p99 -0.7%). The -7.5% sits in the median lit pixel, i.e. the
+# faint neuropil, tracking the amplitude median. Nothing clips either way
+# (p99 ~= 0.66). 2.723 therefore stands for this build, and the earlier guess
+# that the 8% max drop would dim the scene by 8% was simply the wrong statistic.
+#
+# Keep the constant suspect after a refit that moves the SUM materially; a refit
+# that moves only the max is not a reason to touch it.
 DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
+
+# Splat count of the archive this demo ships, stated in the docstring, the
+# pipeline provenance line, the scene description and the ON-SCREEN caption.
+# It lived as four separate literals until a refit changed the archive and the
+# caption kept telling viewers the old number; every gate passed, because they
+# all checked the archive and none compared it against the prose. One constant
+# now feeds the three runtime strings, and
+# test_the_shipped_splat_count_matches_the_measured_archive holds it to the
+# measurements sidecar so the next refit fails instead of shipping a wrong
+# number. The docstring literal cannot interpolate -- update it by hand.
+N_SPLATS = 660_035
 
 # Opacity is the exposure lever and wants to be tiny; scaling the amplitudes
 # instead does nothing, because the viewer normalises by the stored maximum.
@@ -884,8 +903,8 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 "A whole female Drosophila central brain and optic lobes labelled by "
                 "MultiColor FlpOut, so individually-resolved neurons carry distinct "
                 "hues. Janelia's stitched 63x confocal stack — 2573x2707x463, with "
-                "99.99% of it below 1% of peak — fitted as 653,759 Gaussian splats, "
-                "roughly 4,900:1. "
+                "99.99% of it below 1% of peak — fitted as "
+                f"{N_SPLATS:,} Gaussian splats, roughly 4,900:1. "
                 "Colour is sampled per-splat from the three MCFO channels. Press L "
                 "for the Layers panel."
             )
@@ -943,7 +962,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
             )
             add_demo_caption(
                 scene,
-                "Janelia FlyLight • 63x confocal • VT019012 • 653,759 splats",
+                f"Janelia FlyLight • 63x confocal • VT019012 • {N_SPLATS:,} splats",
                 DEMO_META.get("citation"),
             )
 

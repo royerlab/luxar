@@ -13,6 +13,7 @@ in the tree covers a demo's serve call site.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from unittest import mock
@@ -321,3 +322,72 @@ def test_levelling_angle_recovers_the_tilt_and_actually_levels(
     # rotating onto it can shave a hair off the axis-aligned extent.)
     assert _inplane_ratio(rotated) > 4.0
     assert _inplane_ratio(rotated) >= 0.99 * _inplane_ratio(centers)
+
+
+# ---------------------------------------------------------------------------
+# The count the demo TELLS people must match the archive it ships.
+#
+# It was hardcoded in four places, one of them the on-screen caption, and the
+# 5000-iteration refit changed the archive from 653,759 to 660,035 splats. Every
+# gate stayed green -- they all checked the archive, and none compared it against
+# the prose describing it. A peer session caught it by rendering the scene and
+# reading the caption.
+# ---------------------------------------------------------------------------
+
+
+def test_the_shipped_splat_count_matches_the_measured_archive() -> None:
+    """N_SPLATS must equal the sidecar's measurement for this archive.
+
+    The sidecar is written by `gen_zenodo_records.py --refresh` from the
+    archive's own stamps, so this ties the demo's user-visible strings to the
+    bytes. A refit that updates one and not the other fails here instead of
+    shipping a caption that misinforms viewers.
+    """
+    # Walk up to the sidecar rather than hardcoding a parent depth: this test
+    # runs from a worktree as often as from the main checkout, and a fixed
+    # `parents[N]` silently resolves to a different tree in one of them.
+    here = Path(__file__).resolve()
+    sidecar = next(
+        (
+            candidate
+            for parent in here.parents
+            if (
+                candidate := parent / "scripts" / "demo_archive_characteristics.json"
+            ).is_file()
+        ),
+        None,
+    )
+    assert sidecar is not None, f"no measurements sidecar found above {here}"
+    chars = json.loads(sidecar.read_text())
+    key = "gsplats_flylight_mcfo_63x/flylight_mcfo_63x.gsplats.zarr.zip"
+    measured = chars["archives"][key]["n_splats"]
+
+    assert measured is not None, (
+        "the sidecar has no splat count for this archive, so this test cannot "
+        "protect the caption -- re-run gen_zenodo_records.py --refresh"
+    )
+    assert _demo.N_SPLATS == measured, (
+        f"the demo states {_demo.N_SPLATS:,} splats but the archive measures "
+        f"{measured:,}. The count reaches the ON-SCREEN caption, so a mismatch "
+        f"ships a wrong number to viewers."
+    )
+
+
+def test_no_stale_splat_count_literal_survives_in_a_user_visible_string() -> None:
+    """The superseded count may appear only as labelled history.
+
+    Four literals is how the desync happened, so a second literal creeping back
+    into a caption or description is the regression worth blocking. The one
+    permitted mention is the amplitude measurement recorded against the
+    1000-iteration build.
+    """
+    source = Path(_demo.__file__).read_text()
+    stale = [
+        line.strip()
+        for line in source.splitlines()
+        if "653,759" in line
+        and "1000-iteration build" not in line
+        and "which this one replaces" not in line
+    ]
+
+    assert not stale, f"stale splat count outside its historical note: {stale}"
