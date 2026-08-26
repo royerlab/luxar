@@ -40,7 +40,7 @@
       "frames": null,
       "measured_from": null,
       "measured_sha256": null,
-      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp SOURCE VERIFIED 2026-08-26: orig_tp234.npy is BYTE-EXACT timepoint 234 of fused.deconv.zarr.zip [h2afva/fused] (253, 407, 2048, 2048) -- confirmed by exact block match, with the [mezzo/fused] sibling (329 tp) ruled out. Note the file is fused.deconv.zarr.zip, NOT the fused.deconv.new.zarr.zip variant on the same box, whose dynamic range differs ~19x (max ~900 against 17,209); checking the wrong one raised a false alarm."
     },
     "gsplats_3d_h2afva_decimation/h2afva_quarter.gsplats.zarr.zip": {
       "n_splats": 411180,
@@ -60,7 +60,7 @@
       "frames": null,
       "measured_from": null,
       "measured_sha256": null,
-      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp SOURCE VERIFIED 2026-08-26: orig_tp234.npy is BYTE-EXACT timepoint 234 of fused.deconv.zarr.zip [h2afva/fused] (253, 407, 2048, 2048) -- confirmed by exact block match, with the [mezzo/fused] sibling (329 tp) ruled out. Note the file is fused.deconv.zarr.zip, NOT the fused.deconv.new.zarr.zip variant on the same box, whose dynamic range differs ~19x (max ~900 against 17,209); checking the wrong one raised a false alarm."
     },
     "gsplats_3d_h2afva_decimation/h2afva_tenth.gsplats.zarr.zip": {
       "n_splats": 165276,
@@ -80,7 +80,7 @@
       "frames": null,
       "measured_from": null,
       "measured_sha256": null,
-      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp SOURCE VERIFIED 2026-08-26: orig_tp234.npy is BYTE-EXACT timepoint 234 of fused.deconv.zarr.zip [h2afva/fused] (253, 407, 2048, 2048) -- confirmed by exact block match, with the [mezzo/fused] sibling (329 tp) ruled out. Note the file is fused.deconv.zarr.zip, NOT the fused.deconv.new.zarr.zip variant on the same box, whose dynamic range differs ~19x (max ~900 against 17,209); checking the wrong one raised a false alarm."
     },
     "gsplats_3d_h2afva_decimation/h2afva_twentieth.gsplats.zarr.zip": {
       "n_splats": 82660,
@@ -100,7 +100,7 @@
       "frames": null,
       "measured_from": null,
       "measured_sha256": null,
-      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp SOURCE VERIFIED 2026-08-26: orig_tp234.npy is BYTE-EXACT timepoint 234 of fused.deconv.zarr.zip [h2afva/fused] (253, 407, 2048, 2048) -- confirmed by exact block match, with the [mezzo/fused] sibling (329 tp) ruled out. Note the file is fused.deconv.zarr.zip, NOT the fused.deconv.new.zarr.zip variant on the same box, whose dynamic range differs ~19x (max ~900 against 17,209); checking the wrong one raised a false alarm."
     },
     "gsplats_3d_h2afva_stack/h2afva_tp234.gsplats.zarr.zip": {
       "n_splats": 1653405,
@@ -120,7 +120,7 @@
       "frames": null,
       "measured_from": null,
       "measured_sha256": null,
-      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp"
+      "quality_note": "measured 2026-08-25 against the fit's own source volume (tp234, 407x2048x2048 uint16, Otsu 596.85, foreground 2.21%); recovered from the contemporaneous sweep that produced the shipped decimation ladder, not a fit-time stamp SOURCE VERIFIED 2026-08-26: orig_tp234.npy is BYTE-EXACT timepoint 234 of fused.deconv.zarr.zip [h2afva/fused] (253, 407, 2048, 2048) -- confirmed by exact block match, with the [mezzo/fused] sibling (329 tp) ruled out. Note the file is fused.deconv.zarr.zip, NOT the fused.deconv.new.zarr.zip variant on the same box, whose dynamic range differs ~19x (max ~900 against 17,209); checking the wrong one raised a false alarm."
     },
     "gsplats_4d_neuromast_2ch/neuromast_membranes.gsplats.zarr.zip": {
       "n_splats": 5864440,
