@@ -17,7 +17,7 @@ import { tryLoadWasmArtifact, wasmArtifactExists } from '../../helpers/wasm-arti
 
 // Increase timeout for all benchmarks in this file - coverage instrumentation
 // adds significant overhead to the tight loops used by performance benchmarks.
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 
 // Check if WASM files exist. Benchmarks are skipped when artifacts are absent
 // unless LUXAR_REQUIRE_WASM_TESTS=1 is set, in which case a smoke test fails.
