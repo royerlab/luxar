@@ -242,6 +242,39 @@ class TestSceneExtensionNormalization:
         assert requested.read_bytes() == b"previous archive"
         assert sorted(path.name for path in tmp_path.iterdir()) == [requested.name]
 
+    def test_swallowed_packaging_failure_retries_complete_archive(
+        self, tmp_path, monkeypatch
+    ):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+        with LuxarZarrCompiler(requested) as compiler:
+            _write_minimal_scene(compiler)
+
+        original_package = optimise_mod._package
+        attempts = 0
+
+        def fail_once(staging, artifact):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("transient packaging failure")
+            original_package(staging, artifact)
+
+        monkeypatch.setattr(optimise_mod, "_package", fail_once)
+        with LuxarZarrCompiler(requested) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points(
+                "replacement",
+                np.array([[4.0, 5.0, 6.0]], dtype=np.float32),
+            )
+            with pytest.raises(ValueError, match="transient packaging failure"):
+                compiler.finalize()
+
+        assert attempts == 2
+        scene = LuxarScene.load(requested)
+        assert scene.get_points("replacement")["positions"].shape == (1, 3)
+        with pytest.raises(KeyError):
+            scene.get_points("pts")
+
     def test_body_failure_does_not_publish_or_leave_staging(self, tmp_path, capsys):
         requested = tmp_path / "scene.luxar.zarr.zip"
 

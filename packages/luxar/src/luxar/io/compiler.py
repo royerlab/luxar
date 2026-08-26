@@ -1895,9 +1895,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Preserve the historical wrapping for ordinary Exceptions, but let
             # a KeyboardInterrupt / SystemExit propagate unchanged.
             if isinstance(e, Exception):
-                self._cleanup_archive_staging()
                 raise ValueError(f"Could not finalize Zarr store: {e}") from e
-            self._cleanup_archive_staging()
             raise
 
         # Finalization is complete. The flag flips OUTSIDE the failure
