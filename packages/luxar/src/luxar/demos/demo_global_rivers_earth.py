@@ -90,11 +90,11 @@ from luxar.demos import (
     scene_is_current,
 )
 from luxar.demos._globe_common import (
-    add_cloud_shell,
-    add_textured_globe,
+    Clouds,
+    SeaLevel,
     blue_marble_basemap,
+    build_earth,
     resample_equirect_grid,
-    uv_sphere,
 )
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
@@ -399,10 +399,9 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
             basemap_h, basemap_w = basemap.shape[:2]
             tiles = 1
 
-        # Clear the tallest displaced peak with headroom, so the cloud shell is
-        # above the terrain rather than through it.
+        # Reported, not used: `build_earth` derives the cloud altitude from the
+        # relief it is handed, so the number cannot fall out of step with EXAGG.
         peak_relief = float(np.max(relief_grid)) / R_EARTH * EXAGG
-        cloud_altitude = max(0.012, peak_relief * 1.35)
         aprint(
             f"terrain: {GLOBE_LON}x{GLOBE_LAT} quads across {tiles} tiles, "
             f"{basemap_w}x{basemap_h} basemap, relief x{EXAGG:g} "
@@ -483,96 +482,45 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
             scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
-            add_textured_globe(
+            # ONE call: relief-displaced basemap tiles, the sea-level water
+            # surface, and the cloud deck. The whole recipe is shared with the
+            # other three Earth demos.
+            build_earth(
                 scene,
                 "terrain",
-                basemap=basemap,
+                demo_name="global_rivers_earth",
                 radius=RADIUS,
                 n_lon=GLOBE_LON,
                 n_lat=GLOBE_LAT,
+                texture_width=GLOBE_TEXTURE_WIDTH,
                 tiles=tiles,
+                basemap=basemap,
                 relief=relief,
-                fmt="webp",
-                quality=90,
-                # SMOOTH, from normals the helper computes off the DISPLACED
-                # surface — not the sphere's radial ones and not `flat`.
+                # SMOOTH, from normals computed off the DISPLACED surface — not the
+                # sphere's radial ones and not `flat`.
                 #
                 # This is the one globe of the four where shading shows the data:
                 # relief is the subject, and a basemap alone renders a mountain
-                # range as a colour band with no form. But `flat` derives one
-                # normal per TRIANGLE, so at this tessellation every triangle
-                # shaded as a facet and the mesh itself became the dominant
-                # feature. Averaging face normals at each vertex makes the shading
-                # follow the terrain instead of the tessellation.
+                # range as a colour band with no form. But `flat` derives one normal
+                # per TRIANGLE, so at this tessellation every triangle shaded as a
+                # facet and the mesh itself became the dominant feature.
                 shading="smooth",
-                # OPAQUE, not `normal`: this is the backdrop, and opaque is the
-                # only mode that leaves the viewer's sorted-transparent set and
-                # unconditionally writes depth — which is what gives the
-                # `luminous` rivers a surface to be occluded by, so the far-side
-                # network is hidden instead of showing through.
+                # Water at sea level, so bathymetry reads as depth. Only expressible
+                # because the terrain is displaced GEOMETRY: land stands proud of it
+                # and the trenches sit below, which is what the real thing does.
+                sea_level=SeaLevel(),
+                # Altitude DERIVED from the relief's own peak rather than copied:
+                # under a 15x exaggeration Everest is 2.1% of the radius, so the
+                # 1.2% the flat globes use would sit below the Himalaya.
+                clouds=Clouds(strength=0.22, gamma=2.2),
+                # OPAQUE, not `normal`: this is the backdrop, and opaque is the only
+                # mode that leaves the viewer's sorted-transparent set and
+                # unconditionally writes depth — which is what gives the `luminous`
+                # rivers a surface to be occluded by, so the far-side network is
+                # hidden instead of showing through.
                 blending_mode="opaque",
                 opacity=EARTH_OPACITY,
                 layer=True,
-            )
-
-            # A semi-transparent water surface AT SEA LEVEL, so the bathymetry
-            # under it reads as depth rather than as colour. Land stands proud of
-            # it (Everest is 2.1% of the radius above, the shell 0.02%) while the
-            # trenches sit well below, which is exactly the relationship the real
-            # thing has — and it is only expressible because the terrain is
-            # displaced geometry rather than a painted sphere.
-            #
-            # Lifted by a hair off r = RADIUS: coincident with the terrain exactly
-            # at the coastline, and two coplanar surfaces z-fight into a shimmering
-            # hairline as the camera moves.
-            water_v, water_f, _wuv, water_n = uv_sphere(
-                GLOBE_LON // 4, GLOBE_LAT // 4, RADIUS * (1.0 + 2e-4)
-            )
-            scene.add_mesh(
-                "sea level",
-                vertices=water_v,
-                faces=water_f,
-                normals=water_n,
-                normal_dims=[0, 1, 2],
-                # A uniform colour, so no texture and no UVs: the water carries no
-                # spatial information of its own.
-                colors=(0.16, 0.42, 0.72, 1.0),
-                # `normal` so it composites OVER the sea floor it is meant to veil.
-                blending_mode="normal",
-                # `smooth`, and the SPECULAR is what actually makes this read as
-                # water. A translucent blue tint alone was nearly invisible against
-                # Blue Marble's own dark-navy ocean — measured by toggling the node,
-                # which is how it was found — because both are the same colour. A
-                # sun-glint is not: it is a bright highlight that the basemap has
-                # nowhere, so the eye reads a SURFACE rather than a colour shift.
-                #
-                # `ambient` is raised well above the mesh default too, so the veil
-                # does not fall to black around the limb — a water layer that
-                # vanishes at the edges reads as a rendering error.
-                shading="smooth",
-                specular=0.65,
-                shininess=48.0,
-                ambient=0.55,
-                opacity=0.5,
-                double_sided=False,
-                layer=True,
-            )
-
-            # A thin cloud deck — and its altitude is NOT the 0.012 the other
-            # globes use, which is the one number here that has to be computed
-            # rather than copied. This terrain is displaced by EXAGG (45x), so
-            # Everest stands at 45 * 8848 / 6371000 = 6.2% of the radius: a 1.2%
-            # shell would be BELOW the entire Himalaya and the mountains would
-            # spear through the atmosphere. `cloud_altitude` is derived from the
-            # relief grid's own maximum, so it stays correct if EXAGG changes.
-            add_cloud_shell(
-                scene,
-                "clouds",
-                demo_name="global_rivers_earth",
-                radius=RADIUS,
-                altitude=cloud_altitude,
-                strength=0.22,
-                gamma=2.2,
             )
             # Connected polylines (indexed) so the material renders seamless
             # joints. No additive-LOD here: LOD-ing connected lines requires an

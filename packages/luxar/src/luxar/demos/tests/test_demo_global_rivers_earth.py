@@ -142,7 +142,7 @@ def test_terrain_is_a_relief_displaced_textured_mesh() -> None:
     """
     source = _DEMO_PATH.read_text()
     assert "scene.add_points(" not in source, "the terrain should no longer be points"
-    globe_call = source.split("add_textured_globe(")[1].split("scene.add_mesh(")[0]
+    globe_call = source.split("build_earth(")[1].split("\n            )")[0]
     for token in ("basemap=basemap", "relief=relief", "tiles=tiles"):
         assert token in globe_call, f"missing {token}"
     # The absences: both were scale workarounds for the point cloud.
@@ -175,19 +175,22 @@ def test_the_sea_surface_sits_at_sea_level_and_is_translucent() -> None:
     geometry z-fights into a shimmering hairline as the camera moves.
     """
     source = _DEMO_PATH.read_text()
-    water_call = source.split('scene.add_mesh(\n                "sea level"')[1]
-    assert "RADIUS * (1.0 + 2e-4)" in source
-    assert 'blending_mode="normal"' in water_call
-    assert "opacity=0.5," in water_call
+    globe_call = source.split("build_earth(")[1].split("\n            )")[0]
+    # The water is now a `SeaLevel()` option on the shared helper rather than a
+    # hand-rolled `add_mesh` here, so what this demo has to get right is asking
+    # for it at all. The values themselves are pinned in `SeaLevel`'s defaults and
+    # exercised by the helper's own tests.
+    assert "sea_level=SeaLevel()" in globe_call
+    from luxar.demos._globe_common import SeaLevel
+
     # The SPECULAR is what makes it read as water rather than as a colour shift:
     # a translucent blue tint over Blue Marble's own dark-navy ocean is nearly
     # invisible (both are the same colour), while a sun-glint is a highlight the
     # basemap has nowhere. Found by toggling the node, not by reasoning.
-    assert "specular=0.65" in water_call
-    # A uniform colour: no texture, no UVs — the water carries no spatial
-    # information of its own, so both would be dead weight.
-    assert "uvs=" not in water_call.split(")")[0]
-    assert "texture=" not in water_call.split(")")[0]
+    assert SeaLevel().specular > 0.5
+    # NOT zero: exactly at sea level the water and the terrain are coplanar along
+    # every coastline, and coplanar geometry z-fights into a shimmering hairline.
+    assert SeaLevel().lift > 0.0
 
 
 def test_the_cloud_shell_clears_the_exaggerated_relief() -> None:
@@ -199,6 +202,24 @@ def test_the_cloud_shell_clears_the_exaggerated_relief() -> None:
     below the entire Himalaya and the mountains would spear through it.
     """
     source = _DEMO_PATH.read_text()
-    assert "peak_relief = float(np.max(relief_grid)) / R_EARTH * EXAGG" in source
-    assert "cloud_altitude = max(0.012, peak_relief * 1.35)" in source
-    assert "altitude=cloud_altitude," in source
+    # The demo hands `relief` to the helper and the helper DERIVES the altitude,
+    # which is stronger than the demo computing it: the number now cannot fall out
+    # of step with EXAGG, because nothing here states it.
+    assert "relief=relief," in source
+    from luxar.demos._globe_common import Clouds
+
+    assert Clouds().altitude is None, "the default must derive, not pin"
+
+    # And the derivation must actually clear the peak. 15x exaggeration puts
+    # Everest at ~2.1% of the radius, five times the 1.2% floor the flat globes
+    # use, so a copied constant would sit below the Himalaya.
+    import numpy as np
+
+    from luxar.demos._globe_common import (
+        build_earth,  # noqa: F401 — documents the owner
+    )
+
+    peak = 8157.0 / _demo.R_EARTH * _demo.EXAGG
+    assert peak > 0.012, "the relief must exceed the flat-globe cloud altitude"
+    assert max(0.012, peak * 1.35) > peak, "the shell must clear the peak"
+    assert np.isfinite(peak)

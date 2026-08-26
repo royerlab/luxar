@@ -364,9 +364,9 @@ from luxar.demos import (
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._globe_common import (
-    add_cloud_shell,
-    add_textured_globe,
+    Clouds,
     blue_marble_basemap,
+    build_earth,
 )
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
@@ -2811,66 +2811,38 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             # Before royerlab/luxar#1157 was fixed a fully-extended node was never
             # queried at all, and this demo carried a 25k globe replicated into
             # all 139 slots as a workaround; the fix made that unnecessary.
-            add_textured_globe(
+            # ONE call: basemap tiles + the thin cloud deck, with the nD
+            # placement forwarded to BOTH so the atmosphere is present in every
+            # taxon/period slot rather than appearing in one and blinking out.
+            build_earth(
                 scene,
                 "Earth",
-                basemap=globe_basemap,
+                demo_name=DEMO_NAME,
                 radius=1.0,
                 n_lon=GLOBE_LON,
                 n_lat=GLOBE_LAT,
-                # One tile unless the hi-res master was available: the fallback
-                # image is 2048 wide and splitting it would only add a seam.
-                tiles=GLOBE_TILES if globe_basemap.shape[1] > 4096 else 1,
-                fmt="webp",
-                quality=90,
+                texture_width=GLOBE_TEXTURE_WIDTH,
+                tiles=GLOBE_TILES,
+                basemap=globe_basemap,
                 # UNLIT, like the ocean-currents basemap: this globe is the
-                # geographic REFERENCE the occurrence colours are read against, so
-                # a view-anchored key would make the same region read differently
-                # from different camera angles.
+                # geographic REFERENCE the occurrence colours are read against, so a
+                # view-anchored key would make the same region read differently from
+                # different camera angles.
                 shading="none",
+                clouds=Clouds(strength=0.22, gamma=2.2),
                 blending_mode=GLOBE_BLENDING,
-                # GLOBE_DIM * GLOBE_INTENSITY, and the product is the point.
-                #
-                # The point version applied these SEPARATELY: `GLOBE_DIM` was baked
-                # into the per-point colours and `GLOBE_INTENSITY` was the node
-                # multiplier, so the net gain was 0.12 * 4.88 = 0.586. Moving the
-                # dimming off the colours (baked dimming is unrecoverable — the
-                # Layers panel could only brighten by clipping past 1.0) meant both
-                # factors now have to reach the one multiplier that survives.
-                #
-                # Passing `GLOBE_DIM` alone made the globe 5x too dark, and against
-                # occurrence points at intensity 100 that read as NO GLOBE AT ALL.
-                # The geometry was loading and drawing the whole time — 66k
-                # vertices and 131k triangles per tile — which is why this looked
-                # like a missing node rather than an exposure bug.
+                # GLOBE_DIM * GLOBE_INTENSITY, and the product is the point. The
+                # point version applied these separately — DIM baked into the
+                # colours, INTENSITY as the node multiplier — for a net 0.586.
+                # Moving the dimming off the colours (baked dimming is
+                # unrecoverable) means both factors have to reach the one multiplier
+                # that survives; passing DIM alone made the globe 5x too dark, which
+                # against occurrence points at intensity 100 read as NO GLOBE.
                 intensity=GLOBE_DIM * GLOBE_INTENSITY,
                 offset=0.0,
                 gamma=1.0,
                 opacity=1.0,
                 layer=True,
-                dim_order=["x", "y", "z"],
-                fill={
-                    "taxon": float(ALL_LIFE_SLOT),
-                    "period": float(PERIOD_ALL_SLOT),
-                },
-            )
-
-            # A thin cloud deck, at the same weight as the ocean demo's and for
-            # the same reason: the occurrence points are the data, so the
-            # atmosphere has to stay subordinate to them. `fill` matches the
-            # globe's so the shell is present in every taxon/period slot rather
-            # than appearing only on one.
-            add_cloud_shell(
-                scene,
-                "clouds",
-                demo_name=DEMO_NAME,
-                radius=1.0,
-                altitude=0.012,
-                strength=0.22,
-                gamma=2.2,
-                # Same nD placement as the globe: without these the shell would
-                # exist in one taxon/period slot and the atmosphere would blink
-                # out as soon as the user changed either.
                 dim_order=["x", "y", "z"],
                 fill={
                     "taxon": float(ALL_LIFE_SLOT),

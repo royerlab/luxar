@@ -119,9 +119,9 @@ from luxar.demos import (
 )
 from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._globe_common import (
-    add_cloud_shell,
-    add_textured_globe,
+    Clouds,
     blue_marble_basemap,
+    build_earth,
 )
 from luxar.demos._globe_common import lonlat_to_xyz as _lonlat_to_xyz
 from luxar.encoding import EncodingMode
@@ -607,25 +607,32 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
             )
             scene.attrs["title"] = "Ocean Currents of Earth — HYCOM surface circulation"
             scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
-            add_textured_globe(
+            # ONE call: basemap tiles + the thin cloud deck. Shared with the
+            # other three Earth demos so they cannot drift apart.
+            build_earth(
                 scene,
                 "earth",
-                basemap=basemap,
+                demo_name="ocean_currents_earth",
                 radius=RADIUS,
                 n_lon=GLOBE_LON,
                 n_lat=GLOBE_LAT,
-                tiles=tiles,
-                fmt="webp",
-                quality=90,
+                texture_width=GLOBE_TEXTURE_WIDTH,
+                tiles=GLOBE_TILES,
+                basemap=basemap,
                 # UNLIT, unlike the earthquakes globe, and the difference is the
                 # point of the arm existing. This basemap is a REFERENCE for the
                 # current speeds drawn over it: a view-anchored diffuse key would
                 # darken the limb as the camera moved, so the same ocean would read
                 # as a different colour depending on where you were looking from.
-                # `tone_mapping="None"` is pinned for the same reason (see
+                # tone_mapping="None" is pinned for the same reason (see
                 # tests/test_demos_tone_mapping_policy.py) — the two only work as a
                 # pair.
                 shading="none",
+                # THIN, because the ribbons are the data and they are drawn at
+                # FLOW_LIFT (0.0015) while the shell sits at 0.012 — in front of
+                # them. At this strength it reads as atmosphere over the map rather
+                # than as an occluder of the currents.
+                clouds=Clouds(strength=0.22, gamma=2.2),
                 # `opaque` is the mesh default and the right one here: the globe is
                 # the BACKDROP. It is the only mode that leaves the viewer's sorted
                 # transparent set and the only one that unconditionally depth-writes,
@@ -634,20 +641,6 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 blending_mode="opaque",
                 opacity=1.0,
                 layer=True,
-            )
-            # A THIN cloud deck above the basemap. Deliberately much weaker than
-            # the earthquakes demo's: the ribbons are the DATA here, and they are
-            # drawn at FLOW_LIFT (0.0015) while the shell sits at 0.012, so the
-            # clouds are in front of them. At this strength they read as
-            # atmosphere over the map rather than as an occluder of the currents.
-            add_cloud_shell(
-                scene,
-                "clouds",
-                demo_name="ocean_currents_earth",
-                radius=RADIUS,
-                altitude=0.012,
-                strength=0.22,
-                gamma=2.2,
             )
             scene.add_lines(
                 "currents",

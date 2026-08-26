@@ -129,9 +129,9 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.demos._globe_common import (
-    add_cloud_shell,
-    add_textured_globe,
+    Clouds,
     blue_marble_basemap,
+    build_earth,
     fibonacci_sphere,
     lonlat_to_xyz,
     sample_equirect,
@@ -205,6 +205,7 @@ CLOUD_GAMMA = 1.7  # >1 thins the source's low-luminance haze floor
 # texture is 2048 wide, so extra vertices buy nothing.
 CLOUD_LON = 192
 CLOUD_LAT = 96
+CLOUD_TEXTURE_WIDTH = 4096
 
 # NASA Blue Marble image URL (2048x1024 equirectangular projection). The former
 # neo.gsfc.nasa.gov/archive URL 404s; this eoimages.gsfc.nasa.gov Blue Marble
@@ -1247,24 +1248,38 @@ def generate_earthquake_scene(
             # rather than merely sharper. (A data basemap whose colours carry
             # meaning wants `shading="none"` instead — see the ocean demo.)
             if use_texture and globe_basemap is not None:
-                # One call builds the geometry, slices the basemap across tiles,
-                # transcodes each slice, and writes one mesh node per band.
-                n_tiles = add_textured_globe(
+                # ONE call: basemap tiles, transcode, and the cloud deck. The four
+                # Earth demos share this so they cannot drift apart — which they
+                # did, once, when a helper gained an argument and only three call
+                # sites got it.
+                n_tiles = build_earth(
                     scene,
                     "Earth",
-                    basemap=globe_basemap,
+                    demo_name="earthquakes",
                     radius=EARTH_RADIUS,
                     n_lon=GLOBE_LON,
                     n_lat=GLOBE_LAT,
+                    texture_width=GLOBE_TEXTURE_WIDTH,
                     tiles=GLOBE_TILES,
                     fmt=GLOBE_TEXTURE_FORMAT,
                     quality=GLOBE_TEXTURE_QUALITY,
+                    basemap=globe_basemap,
                     # A PLANET, so a lit surface with a terminator reads correctly
                     # and is what makes the mesh version look better than the flat
                     # point cloud rather than merely sharper. (A data basemap whose
-                    # colours carry meaning wants `shading="none"` — see the ocean
-                    # demo.)
+                    # colours carry meaning wants shading="none" — see ocean.)
                     shading="smooth",
+                    # The FULL cloud deck, unlike the data demos' thin veil: here
+                    # the weather is part of the subject rather than something the
+                    # overlay has to stay legible through.
+                    clouds=Clouds(
+                        strength=CLOUD_STRENGTH,
+                        gamma=CLOUD_GAMMA,
+                        altitude=CLOUD_ALTITUDE,
+                        width=CLOUD_TEXTURE_WIDTH,
+                        n_lon=CLOUD_LON,
+                        n_lat=CLOUD_LAT,
+                    ),
                     # `opaque` is the mesh default and what a solid planet needs:
                     # it writes depth, so the globe occludes the earthquake rays on
                     # its far side.
@@ -1288,44 +1303,6 @@ def generate_earthquake_scene(
                     double_sided=False,
                     opacity=1.0,
                     layer=True,
-                )
-
-            # Real weather: NASA's Blue Marble cloud composite as a translucent
-            # shell at altitude, replacing 60k procedural luminous points.
-            #
-            # `luminous` was the right mode for those points and is the WRONG one
-            # for this: luminous ADDS, so a cloud brightened the ocean under it.
-            # A cloud deck occludes what is beneath it, which is `normal` — and it
-            # only reads correctly because the texture's alpha is the cloud
-            # fraction, so clear sky composites as nothing rather than as black.
-            if use_texture:
-                add_cloud_shell(
-                    scene,
-                    "Clouds",
-                    demo_name="earthquakes",
-                    radius=EARTH_RADIUS,
-                    altitude=CLOUD_ALTITUDE,
-                    strength=CLOUD_STRENGTH,
-                    gamma=CLOUD_GAMMA,
-                    n_lon=CLOUD_LON,
-                    n_lat=CLOUD_LAT,
-                    # 4096 — the measured balance point, not a round number.
-                    #
-                    # Two things pull in opposite directions. Going UP fixes
-                    # bilinear magnification facets: the source is 2048, so over a
-                    # 16384-wide basemap the shell is magnified 8x and its texel
-                    # lattice becomes visible. Going up also COSTS, because the
-                    # Lanczos upsample has to be dithered before it is quantized
-                    # to 8 bits (otherwise the interpolated values land on shared
-                    # bytes and plateau) and a dithered field barely compresses.
-                    #
-                    # Measured, lossless alpha:  2048 -> 1.07 MB (8x magnified,
-                    # facets visible) | 4096 -> 2.41 MB | 8192 -> 8.40 MB.
-                    #
-                    # 4096 puts magnification at 4x, where the lattice stops
-                    # reading, for a third of what 8192 costs. Clouds are a
-                    # diffuse layer; there is no detail up there to resolve.
-                    width=4096,
                 )
 
             # Add earthquake lines with luminous blending - glowing additive effect

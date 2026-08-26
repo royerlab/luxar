@@ -463,8 +463,8 @@ def test_the_globe_is_a_textured_mesh_not_a_point_cloud() -> None:
     # and has to be split across nodes. The helper owns geometry, slicing,
     # transcoding and the `uvs`/`normal_dims`/`double_sided` wiring, so what this
     # test pins is that the demo REACHES it with the arguments that matter.
-    globe_call = source.split("add_textured_globe(")[1].split("add_cloud_shell(")[0]
-    for token in ("basemap=basemap", "tiles=tiles", 'fmt="webp"', "radius=RADIUS"):
+    globe_call = source.split("build_earth(")[1].split("scene.add_lines(")[0]
+    for token in ("basemap=basemap", "tiles=GLOBE_TILES", "radius=RADIUS"):
         assert token in globe_call, f"missing {token}"
     assert "partition=" not in globe_call
     assert "additive_lod=" not in globe_call
@@ -482,7 +482,7 @@ def test_the_globe_is_unlit_so_its_colours_stay_comparable() -> None:
     still reshaded, and a lit surface with an exact passthrough is still lit.
     """
     source = Path(demo_ocean_currents_earth.__file__).read_text()
-    globe_call = source.split("add_textured_globe(")[1].split("add_cloud_shell(")[0]
+    globe_call = source.split("build_earth(")[1].split("scene.add_lines(")[0]
     assert 'shading="none"' in globe_call
 
 
@@ -496,7 +496,7 @@ def test_layer_appearance_matches_the_authored_intent() -> None:
     across the continents) at the tuned opacity.
     """
     source = Path(demo_ocean_currents_earth.__file__).read_text()
-    globe_call = source.split("add_textured_globe(")[1].split("add_cloud_shell(")[0]
+    globe_call = source.split("build_earth(")[1].split("scene.add_lines(")[0]
     lines_call = source.split("scene.add_lines(")[1].split("scene.add_text(")[0]
     assert 'blending_mode="opaque"' in globe_call
     assert 'blending_mode="normal"' in lines_call

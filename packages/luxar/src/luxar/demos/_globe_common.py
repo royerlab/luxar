@@ -38,6 +38,7 @@ The four primitives, and why each is shaped the way it is:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
 import numpy as np
@@ -1146,3 +1147,205 @@ def surface_vertex_normals(vertices: np.ndarray, faces: np.ndarray) -> np.ndarra
         )
         lengths[degenerate] = 1.0
     return (out / lengths).astype(np.float32)
+
+
+@dataclass(frozen=True)
+class SeaLevel:
+    """A translucent water surface at sea level, for a relief-displaced globe.
+
+    Only meaningful with ``relief``: on a smooth sphere there is nothing for the
+    water to be above or below, so :func:`build_earth` refuses the combination
+    rather than drawing an inert shell.
+
+    The ``specular`` default is not cosmetic. A translucent blue tint over Blue
+    Marble's own dark-navy ocean is two of the same colour composited together and
+    is nearly invisible; a sun-glint is a highlight the basemap has nowhere, so the
+    eye reads a SURFACE. ``ambient`` is likewise well above the mesh default, so
+    the veil does not fall to black around the limb.
+    """
+
+    #: RGBA. Alpha stays 1.0 — translucency is the node's ``opacity``, which the
+    #: Layers panel can then recover, where a baked alpha could not be.
+    color: Tuple[float, float, float, float] = (0.16, 0.42, 0.72, 1.0)
+    opacity: float = 0.5
+    specular: float = 0.65
+    shininess: float = 48.0
+    ambient: float = 0.55
+    #: Lift as a fraction of radius. NOT zero: exactly at sea level the water and
+    #: the terrain are coplanar along every coastline, and coplanar geometry
+    #: z-fights into a shimmering hairline as the camera moves.
+    lift: float = 2e-4
+    #: Grid divisions, as a fraction of the terrain's. Water is a smooth sphere,
+    #: so it needs a fraction of the terrain's tessellation.
+    grid_divisor: int = 4
+
+
+@dataclass(frozen=True)
+class Clouds:
+    """A Blue Marble cloud deck above a globe. See :func:`add_cloud_shell`."""
+
+    #: Peak alpha of a fully cloudy texel. The earthquakes globe uses the full
+    #: deck; the data demos keep it thin so it stays subordinate to their overlays.
+    strength: float = 0.55
+    #: >1 thins the source's low-luminance haze floor.
+    gamma: float = 1.8
+    #: Shell height as a fraction of radius. ``None`` derives it from the relief's
+    #: own peak — which is the only correct choice on an exaggerated globe, where a
+    #: copied constant can sit below the mountains.
+    altitude: Optional[float] = None
+    #: Texture width. 4096 is the measured balance point: the source has 2048 of
+    #: real detail, and past 4096 the bytes buy interpolation the GPU does anyway.
+    width: int = 4096
+    n_lon: int = 192
+    n_lat: int = 96
+
+
+def build_earth(
+    scene: Any,
+    name: str = "Earth",
+    *,
+    demo_name: str,
+    radius: float = 1.0,
+    n_lon: int = 512,
+    n_lat: int = 256,
+    texture_width: int = 16384,
+    tiles: int = 2,
+    fmt: str = "webp",
+    quality: int = 90,
+    shading: str = "smooth",
+    relief: Any = 0.0,
+    basemap: Optional[np.ndarray] = None,
+    clouds: Optional[Clouds] = None,
+    sea_level: Optional[SeaLevel] = None,
+    **mesh_kwargs: Any,
+) -> int:
+    """Build a complete textured Earth: basemap tiles, clouds, and water.
+
+    The ONE entry point the Earth demos share, and the reason it exists is a bug
+    rather than tidiness. Each demo used to assemble its own globe from the same
+    pieces, and when the pieces gained an argument one demo missed it — the
+    biodiversity globe shipped without ``texture_channels`` and failed at write
+    time. Four copies of a twelve-line recipe is four chances to drift.
+
+    Everything that genuinely differs between the four is an argument here:
+
+    ==================  =========================================================
+    demo                what it asks for
+    ==================  =========================================================
+    earthquakes         lit globe, full-strength clouds
+    ocean currents      UNLIT (the basemap is a reference for the speed ramp, so a
+                        view-anchored key would make the same ocean read
+                        differently from different angles), thin clouds
+    global rivers       relief, lit, sea level, thin clouds, derived altitude
+    biodiversity        unlit, thin clouds, nD ``fill`` passthrough
+    ==================  =========================================================
+
+    Args:
+        scene: Scene or group to add to.
+        name: Node/group name for the globe.
+        demo_name: Cache namespace for downloads.
+        radius: Sphere radius in scene units.
+        n_lon: Longitude divisions across the whole globe.
+        n_lat: Latitude divisions.
+        texture_width: Basemap width to fetch; halved per axis into ``tiles``.
+        tiles: Longitude bands, each its own node. See :func:`add_textured_globe`.
+        fmt: Basemap codec.
+        quality: Basemap codec quality.
+        shading: ``smooth`` | ``flat`` | ``none``.
+        relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
+        basemap: Supply the RGB array directly instead of fetching it — for a demo
+            that has already loaded one, or for a test.
+        clouds: A :class:`Clouds` to add a deck; ``None`` for none.
+        sea_level: A :class:`SeaLevel` to add water; requires ``relief``.
+        **mesh_kwargs: Forwarded to the globe's ``add_mesh`` (blending_mode,
+            opacity, intensity, layer, dim_order, fill, ...).
+
+    Returns:
+        The number of globe tiles written.
+    """
+    relief_arr = np.asarray(relief, dtype=np.float32)
+    if sea_level is not None and relief_arr.ndim == 0:
+        raise ValueError(
+            "sea_level needs `relief`: on a smooth sphere the water surface is "
+            "coincident with the terrain everywhere, so there is nothing for it "
+            "to be above or below"
+        )
+
+    if basemap is None:
+        basemap, basemap_w, basemap_h = blue_marble_basemap(
+            demo_name, width=texture_width
+        )
+    else:
+        basemap = np.asarray(basemap)
+        basemap_h, basemap_w = basemap.shape[:2]
+    # A small fallback image should not be split: the tiles would only add a seam.
+    resolved_tiles = tiles if basemap_w > 4096 else 1
+
+    n_written = add_textured_globe(
+        scene,
+        name,
+        basemap=basemap,
+        radius=radius,
+        n_lon=n_lon,
+        n_lat=n_lat,
+        tiles=resolved_tiles,
+        fmt=fmt,
+        quality=quality,
+        shading=shading,
+        relief=relief_arr,
+        **mesh_kwargs,
+    )
+
+    # nD placement has to reach the shells too, or the atmosphere and the sea
+    # would appear in one slice and vanish from the rest.
+    nd_kwargs = {k: mesh_kwargs[k] for k in ("dim_order", "fill") if k in mesh_kwargs}
+
+    if sea_level is not None:
+        water_v, water_f, _uv, water_n = uv_sphere(
+            max(3, n_lon // sea_level.grid_divisor),
+            max(2, n_lat // sea_level.grid_divisor),
+            radius * (1.0 + sea_level.lift),
+        )
+        scene.add_mesh(
+            f"{name} sea level",
+            vertices=water_v,
+            faces=water_f,
+            normals=water_n,
+            normal_dims=[0, 1, 2],
+            # A uniform colour: the water carries no spatial information of its
+            # own, so a texture and UVs would both be dead weight.
+            colors=sea_level.color,
+            blending_mode="normal",
+            shading="smooth",
+            specular=sea_level.specular,
+            shininess=sea_level.shininess,
+            ambient=sea_level.ambient,
+            opacity=sea_level.opacity,
+            double_sided=False,
+            layer=True,
+            **nd_kwargs,
+        )
+
+    if clouds is not None:
+        altitude = clouds.altitude
+        if altitude is None:
+            # Derived from the relief's own peak. On the rivers globe Everest sits
+            # at 2.1% of the radius under a 15x exaggeration, so the 1.2% the flat
+            # globes use would put the atmosphere below the Himalaya.
+            peak = float(np.max(relief_arr)) if relief_arr.size else 0.0
+            altitude = max(0.012, peak * 1.35)
+        add_cloud_shell(
+            scene,
+            f"{name} clouds",
+            demo_name=demo_name,
+            radius=radius,
+            altitude=altitude,
+            strength=clouds.strength,
+            gamma=clouds.gamma,
+            width=clouds.width,
+            n_lon=clouds.n_lon,
+            n_lat=clouds.n_lat,
+            **nd_kwargs,
+        )
+
+    return n_written
