@@ -27,7 +27,8 @@ Mathematical Background:
     - Diamond Fractal: thin concentric L1-distance (taxicab) shells
 
 Performance:
-    - Per-w-plane vectorized NumPy generation bounds peak memory at grid^3
+    - Per-w-plane generation bounds the lattice workspace at grid^3; the grouped
+      normal-aware AO pass is output-sized (23.7 GB peak RSS at the default grid)
     - All 6 fractals, grouped AO, and writing take about 25 minutes at the default grid
 
 Usage:
@@ -83,7 +84,7 @@ W_STRIDE = 4
 #: SPARSER — the opposite of the intended effect. 150k covers about half the
 #: surface voxels of the densest fractal at grid 200; at 80k the flat faces
 #: still read as stippled. The store compresses well (lattice coordinates), so
-#: the measured default output is about 89 MB on disk.
+#: the measured AO-shaded default output is about 147 MB on disk.
 TARGET_MAX_POINTS_PER_PLANE = 150_000
 #: Direction budget for the grouped surface AO bake. Twenty-four is the
 #: library's full-sphere default and keeps the all-fractals nD bake bounded;

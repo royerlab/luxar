@@ -269,6 +269,7 @@ class TestAmbientOcclusionInputs:
         second = first.copy()
         second[:, 0] = 1.0
         second[:, 1] = 0.5
+        second[:, 2] += 0.5
         positions = np.vstack([first, second])
         repeated_normals = np.vstack([normals, normals])
         base_colors = np.ones((len(positions), 3), dtype=np.float32)
@@ -276,10 +277,18 @@ class TestAmbientOcclusionInputs:
         colors = apply_fractal_ambient_occlusion(
             positions, repeated_normals, base_colors
         )
+        merged_shade = _demo.bake_ambient_occlusion(
+            positions,
+            normals=repeated_normals,
+            occluder="opaque",
+            n_directions=_demo.AO_N_DIRECTIONS,
+            spatial_dims=(2, 3, 4),
+        )
 
         np.testing.assert_allclose(
             colors[: len(spatial)], colors[len(spatial) :], atol=1e-6
         )
+        assert float(np.max(np.abs(colors[:, 0] - merged_shade))) > 0.02
         assert float(colors.mean()) < 0.98
         assert float(np.ptp(colors[:, 0])) > 0.05
         assert np.all(colors <= base_colors)
