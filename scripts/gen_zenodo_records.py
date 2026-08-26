@@ -189,6 +189,30 @@ def _span(frames: list[dict[str, Any]], key: str) -> Optional[tuple[float, float
     return (min(values), max(values))  # type: ignore[type-var]
 
 
+def _read_part_provenance(value: Any) -> Optional[dict[str, Any]]:
+    """Aggregate a stacked store's component fits without inventing a mean."""
+    if not isinstance(value, list) or not value:
+        return None
+    fittings: list[dict[str, Any]] = []
+    quotable = True
+    for part in value:
+        if not isinstance(part, dict) or not isinstance(part.get("fitting"), dict):
+            return None
+        fittings.append(part["fitting"])
+        reference = part.get("fit_reference")
+        quotable &= (
+            isinstance(reference, dict) and reference.get("kind") == "acquisition"
+        )
+    return {
+        "frames": len(value),
+        "source_bytes": _total(fittings, "source_bytes"),
+        "psnr_db": _span(fittings, "psnr_db") if quotable else None,
+        "foreground_psnr_db": (
+            _span(fittings, "foreground_psnr_db") if quotable else None
+        ),
+    }
+
+
 def _immediate_children(groups: set[str], path: str) -> list[str]:
     """Group paths exactly one level below *path* (``""`` for the root)."""
     depth = 0 if not path else path.count("/") + 1
@@ -259,6 +283,7 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     ):
         return None
     fit = _attrs(zf, root, "fitting/")
+    part_info = _read_part_provenance(fit.get("part_provenance"))
     n_splats = _as_int(root_attrs.get("n_splats"))
     groups = {
         n[len(root) :].rsplit("/", 1)[0]
@@ -274,13 +299,19 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
         "ndim": root_attrs.get("ndim"),
         "format_version": root_attrs.get("format_version"),
         "topology": _describe_topology(root_attrs, groups),
-        "psnr_db": fit.get("psnr_db"),
-        "foreground_psnr_db": fit.get("foreground_psnr_db"),
+        "psnr_db": fit.get("psnr_db")
+        if fit.get("psnr_db") is not None
+        else (part_info or {}).get("psnr_db"),
+        "foreground_psnr_db": fit.get("foreground_psnr_db")
+        if fit.get("foreground_psnr_db") is not None
+        else (part_info or {}).get("foreground_psnr_db"),
         "foreground_fraction": fit.get("foreground_fraction"),
         "source_shape": fit.get("source_shape"),
         "source_dtype": fit.get("source_dtype"),
-        "source_bytes": fit.get("source_bytes"),
-        "frames": None,
+        "source_bytes": fit.get("source_bytes")
+        if fit.get("source_bytes") is not None
+        else (part_info or {}).get("source_bytes"),
+        "frames": (part_info or {}).get("frames"),
     }
 
 

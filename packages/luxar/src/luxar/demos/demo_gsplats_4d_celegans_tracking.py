@@ -130,6 +130,7 @@ from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.clahe import apply_clahe
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.merged_quality import collect_part_provenance
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1567,10 +1568,20 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
                 aprint(f"  {n_after:,} splats ready")
 
         # Combine into a single 4D dataset: time is the new dimension (sigma=0)
+        values = [float(t) for t in range(n_timepoints)]
+        part_provenance = collect_part_provenance(
+            gsplats_list,
+            values=values,
+            fit_reference={
+                "kind": "preprocessed",
+                "note": "Noise2Self-calibrated NLM denoise and CLAHE",
+            },
+        )
         combined = GSplatData.combine_as_new_dimension(
             processed,
-            values=[float(t) for t in range(n_timepoints)],
+            values=values,
             sigma=0.0,
+            part_provenance=part_provenance,
         )
         aprint(
             f"Combined: {combined.n_splats:,} splats, "

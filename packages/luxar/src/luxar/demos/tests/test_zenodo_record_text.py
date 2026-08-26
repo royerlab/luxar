@@ -53,9 +53,10 @@ def _write_frame(
     path: Path,
     *,
     n_splats: int = 100,
-    psnr: float = 40.0,
-    source_bytes: int = 1_000_000,
+    psnr: float | None = 40.0,
+    source_bytes: int | None = 1_000_000,
     gsplats: bool = True,
+    part_provenance: list[dict[str, Any]] | None = None,
 ) -> None:
     """One single-store `.gsplats.zarr.zip`, as a bundle's frames are."""
     root = f"{path.name.split('.')[0]}.gsplats.zarr"
@@ -71,10 +72,14 @@ def _write_frame(
             ),
         )
         zf.writestr(f"{root}/fitting/.zgroup", json.dumps({"zarr_format": 2}))
-        zf.writestr(
-            f"{root}/fitting/.zattrs",
-            json.dumps({"psnr_db": psnr, "source_bytes": source_bytes}),
-        )
+        fitting = {}
+        if psnr is not None:
+            fitting["psnr_db"] = psnr
+        if source_bytes is not None:
+            fitting["source_bytes"] = source_bytes
+        if part_provenance is not None:
+            fitting["part_provenance"] = part_provenance
+        zf.writestr(f"{root}/fitting/.zattrs", json.dumps(fitting))
 
 
 def _write_bundle(path: Path, frames: list[dict[str, Any]], tmp_path: Path) -> None:
@@ -281,6 +286,62 @@ class TestABundleIsDescribedWhole:
         assert info["frames"] == 3
         assert info["n_splats"] is None
         assert info["psnr_db"] is None
+
+
+class TestAStackedStoreIsDescribedFromItsPartProvenance:
+    @staticmethod
+    def _parts(kind: str | None) -> list[dict[str, Any]]:
+        parts = []
+        for coordinate, psnr in ((0.0, 31.2), (5.0, 54.9), (10.0, 40.0)):
+            part: dict[str, Any] = {
+                "coordinate": coordinate,
+                "fitting": {
+                    "psnr_db": psnr,
+                    "foreground_psnr_db": psnr - 10.0,
+                    "source_bytes": 1000,
+                },
+            }
+            if kind is not None:
+                part["fit_reference"] = {"kind": kind}
+            parts.append(part)
+        return parts
+
+    def test_acquisition_referenced_parts_publish_a_range(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "movie.gsplats.zarr.zip"
+        _write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            part_provenance=self._parts("acquisition"),
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] == 3
+        assert info["source_bytes"] == 3000
+        assert gen._db(info["psnr_db"]) == "31.2–54.9"
+        assert gen._db(info["foreground_psnr_db"]) == "21.2–44.9"
+
+    @pytest.mark.parametrize("kind", [None, "preprocessed", "synthetic"])
+    def test_non_acquisition_parts_are_not_quoted(
+        self, gen: Any, tmp_path: Path, kind: str | None
+    ) -> None:
+        path = tmp_path / f"movie-{kind}.gsplats.zarr.zip"
+        _write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            part_provenance=self._parts(kind),
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] == 3
+        assert info["source_bytes"] == 3000
+        assert info["psnr_db"] is None
+        assert info["foreground_psnr_db"] is None
 
 
 class TestFiguresAreAbsentRatherThanInvented:

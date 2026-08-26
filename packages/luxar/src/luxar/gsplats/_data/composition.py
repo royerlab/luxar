@@ -8,6 +8,7 @@ color merge), promoting one into a higher-dimensional space, and assembling
 from __future__ import annotations
 
 import warnings
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, cast
 
 import numpy as np
@@ -17,6 +18,35 @@ from .base import _concat_additive_levels, _GSplatDataOps
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
     from luxar.gsplats.tree import GSplatNode, GSplatPartition
+
+
+def _aggregate_part_source_stats(
+    part_provenance: Sequence[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Source fields that describe the whole stack without averaging quality."""
+    fittings = [part["fitting"] for part in part_provenance]
+    aggregate: Dict[str, Any] = {}
+
+    shapes = [fit.get("source_shape") for fit in fittings]
+    if shapes and all(
+        shape == shapes[0] and isinstance(shape, list) for shape in shapes
+    ):
+        aggregate["source_shape"] = [len(shapes), *shapes[0]]
+
+    dtypes = [fit.get("source_dtype") for fit in fittings]
+    if (
+        dtypes
+        and isinstance(dtypes[0], str)
+        and all(dtype == dtypes[0] for dtype in dtypes)
+    ):
+        aggregate["source_dtype"] = dtypes[0]
+
+    source_bytes = [fit.get("source_bytes") for fit in fittings]
+    if source_bytes and all(
+        isinstance(value, int) and not isinstance(value, bool) for value in source_bytes
+    ):
+        aggregate["source_bytes"] = sum(source_bytes)
+    return aggregate
 
 
 class CompositionMixin(_GSplatDataOps):
@@ -85,10 +115,7 @@ class CompositionMixin(_GSplatDataOps):
         if len(non_empty) == 0:
             # All empty: return a fresh empty instance (never alias an input,
             # per the immutability contract).
-            from luxar.gsplats.io.save_gsplats import (
-                NORMALIZATION_STATS_KEYS,
-                agreed_normalization_stats,
-            )
+            from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
             from luxar.gsplats.utils.trils import tril_size
 
             d0 = datasets[0]
@@ -97,8 +124,9 @@ class CompositionMixin(_GSplatDataOps):
             # the non-empty path below (#1175): copying d0's stats wholesale
             # would promote the FIRST input's pedestal onto a merge whose other
             # inputs may have removed a different one.
-            empty_stats = {
-                k: v for k, v in d0.stats.items() if k not in NORMALIZATION_STATS_KEYS
+            empty_stats: Dict[str, Any] = {
+                "concatenated_from": len(datasets),
+                "splats_per_source": [0 for _ in datasets],
             }
             empty_stats.update(agreed_normalization_stats([x.stats for x in datasets]))
             return make(
@@ -203,6 +231,8 @@ class CompositionMixin(_GSplatDataOps):
         datasets: "list[GSplatData]",
         values: "np.ndarray | Sequence[float | np.ndarray] | None" = None,
         sigma: float = 0.0,
+        *,
+        part_provenance: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> "GSplatData":
         """Combine datasets by embedding each into a new dimension, then concatenating.
 
@@ -225,6 +255,9 @@ class CompositionMixin(_GSplatDataOps):
                 splats should not extend across the new axis.
                 Use a positive value for continuous dimensions where splats
                 should have Gaussian extent.
+            part_provenance: Optional caller-supplied component-fit records, one
+                entry per dataset in the same order as ``values``. This requires
+                one scalar coordinate per dataset.
 
         Returns:
             Single GSplatData with ndim+1 dimensions containing all splats.
@@ -258,10 +291,35 @@ class CompositionMixin(_GSplatDataOps):
                 f"number of datasets ({len(datasets)})"
             )
 
+        safe_part_provenance: Optional[list[Dict[str, Any]]] = None
+        if part_provenance is not None:
+            if len(part_provenance) != len(datasets):
+                raise ValueError(
+                    f"part_provenance has {len(part_provenance)} entries for "
+                    f"{len(datasets)} datasets"
+                )
+            safe_part_provenance = deepcopy(list(part_provenance))
+            for index, (record, value) in enumerate(zip(safe_part_provenance, values)):
+                if not isinstance(record, dict):
+                    raise TypeError(f"part_provenance[{index}] must be a dict")
+                if isinstance(value, np.ndarray) or record.get("coordinate") != value:
+                    raise ValueError(
+                        f"part_provenance[{index}].coordinate must equal the scalar "
+                        f"values[{index}]"
+                    )
+                if not isinstance(record.get("fitting"), dict):
+                    raise ValueError(
+                        f"part_provenance[{index}].fitting must be a dictionary"
+                    )
+
         embedded = [
             ds.embed_dimension(val, sigma=sigma) for ds, val in zip(datasets, values)
         ]
-        return cls.concatenate(embedded)
+        combined = cls.concatenate(embedded)
+        if safe_part_provenance is not None:
+            combined.stats["part_provenance"] = safe_part_provenance
+            combined.stats.update(_aggregate_part_source_stats(safe_part_provenance))
+        return combined
 
     def to_spatial_partition(
         self,

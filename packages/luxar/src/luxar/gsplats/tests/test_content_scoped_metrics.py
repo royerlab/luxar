@@ -431,8 +431,9 @@ _VIEW_CASES: List[
 #: a decision on the record rather than a gap.
 _UNAFFECTED = {
     "concatenate": "builds merged_stats from scratch (no metric keys)",
-    "combine_as_new_dimension": "goes through concatenate; fresh stats",
-    "merge_with_channel_colors": "goes through concatenate; fresh stats",
+    "combine_as_new_dimension": "goes through concatenate; fresh stats, then may "
+    "attach caller-supplied per-part provenance",
+    "merge_with_channel_colors": "builds its own merged_stats from scratch",
     "embed_dimension": "widens the center columns; dataset-level source-volume "
     "metrics survive, while promoted-dimensional count/energy stamps are "
     "recomputed and stale quality/refine measurements are removed",
@@ -1285,3 +1286,23 @@ def test_every_rewrite_method_is_classified() -> None:
     assert any(ch for _c, _m, _o, ch in _CASES)
     assert any(not ch for _c, _m, _o, ch in _CASES)
     assert _DROPS_SUBLOD_STATS <= set(ids), "a stats-free exemption names no case"
+
+
+def test_concatenate_never_inherits_content_scoped_metrics() -> None:
+    """Fresh merged stats are the contract on both non-empty and empty inputs."""
+    for n_splats in (0, 2):
+        inputs = []
+        for seed in (1, 2):
+            inputs.append(
+                GSplatData(
+                    centers=np.zeros((n_splats, 3), dtype=np.float32),
+                    amplitudes=np.ones(n_splats, dtype=np.float32),
+                    cholesky_factors=np.tile(
+                        np.array([1, 0, 1, 0, 0, 1], dtype=np.float32),
+                        (n_splats, 1),
+                    ),
+                    stats={**_METRICS, "seed": seed},
+                )
+            )
+        merged = GSplatData.concatenate(inputs)
+        assert not _CONTENT_SCOPED_STATS_KEYS & merged.stats.keys()
