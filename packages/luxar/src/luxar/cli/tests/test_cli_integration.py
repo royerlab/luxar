@@ -509,8 +509,14 @@ class TestServeIntegration:
         # to live inside it to appear in the listing at all.
         served_root = Path(sample_scene)
         archive = served_root / "zipped_scene.luxar.zarr.zip"
+        plain_zarr = served_root / "plain.zarr"
+        plain_zip = served_root / "results.zip"
+        empty_file = served_root / "empty.txt"
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zf:
             zf.writestr("zarr.json", '{"zarr_format": 3, "node_type": "group"}')
+        plain_zarr.mkdir()
+        plain_zip.touch()
+        empty_file.touch()
 
         try:
             response = requests.get(
@@ -527,8 +533,14 @@ class TestServeIntegration:
                 "zipped_scene.luxar.zarr.zip</a>"
             )
             assert expected_link in response.text
+            assert '<a href="plain.zarr/">plain.zarr/</a>' in response.text
+            assert '<a href="results.zip">results.zip</a>' in response.text
+            assert '<a href="empty.txt">empty.txt</a>' in response.text
         finally:
             archive.unlink(missing_ok=True)
+            plain_zip.unlink(missing_ok=True)
+            empty_file.unlink(missing_ok=True)
+            plain_zarr.rmdir()
 
 
 class TestInfoCommand:
