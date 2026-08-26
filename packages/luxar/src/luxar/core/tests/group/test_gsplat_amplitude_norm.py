@@ -350,11 +350,24 @@ def test_hand_built_partition_volume_fits_keep_shared_raw_exposure(tmp_path):
                 device="cpu",
                 verbose=False,
             )
+        scene.add_gsplats_from_volume(
+            "raw_opt_out",
+            volume * 800.0,
+            seeds=30,
+            n_iters=10,
+            device="cpu",
+            normalize_amplitudes=False,
+            verbose=False,
+        )
 
     for child_name in ("child_0", "child_1"):
         attrs = read_node_attrs(out / "g" / child_name)
         assert NORMALIZATION_FACTOR_ATTR not in attrs
         assert attrs["amplitude_data_range"][1] > 10.0
+
+    raw_attrs = read_node_attrs(out / "raw_opt_out")
+    assert NORMALIZATION_FACTOR_ATTR not in raw_attrs
+    assert raw_attrs["amplitude_data_range"][1] > 10.0
 
 
 def test_hand_built_structure_can_explicitly_normalise_a_child(tmp_path):
