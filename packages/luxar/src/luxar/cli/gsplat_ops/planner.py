@@ -83,7 +83,9 @@ def _stamp_content_box_output(
 
     The score measures the box in isolation. Neighbour contributions inside the
     core are absent, so the boundary shell is a lower bound and the result is not
-    comparable to a whole-fit score.
+    comparable to a whole-fit score. An internal marker from the parallel parent
+    suppresses this whole block for disposable box outputs whose stamps would be
+    scrubbed during merge.
     """
     from luxar.gsplats.planner.fit_planned_parallel import (
         _SKIP_CONTENT_BOX_STAMP_ENV,

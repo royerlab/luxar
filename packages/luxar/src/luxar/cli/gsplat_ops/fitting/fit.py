@@ -260,7 +260,8 @@ def run_fit_volume(
         "--keep-tiles",
         help="With --tiling --jobs>1: keep the per-tile/box temporary .gsplats.zarr "
         "outputs (and any .empty markers for skipped tiles) instead of "
-        "deleting them after the merge.",
+        "deleting them after the merge; retained content-box workers also render "
+        "and stamp their own quality/source-grid block.",
         rich_help_panel="Tiling",
     ),
     allow_empty_tile: bool = typer.Option(

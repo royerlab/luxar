@@ -49,6 +49,20 @@ WorkerCmdBuilder = Callable[[int, Path], "list[str]"]
 _SKIP_CONTENT_BOX_STAMP_ENV = "LUXAR_INTERNAL_SKIP_CONTENT_BOX_STAMP"
 
 
+def _worker_env(keep_boxes: bool) -> "dict[str, str]":
+    """Build the internal parent-to-child environment for box scoring.
+
+    Disposable boxes skip stamps that the merge scrubs anyway; ``--keep-boxes``
+    opts retained box artifacts back into scoring.
+    """
+    env = os.environ.copy()
+    if keep_boxes:
+        env.pop(_SKIP_CONTENT_BOX_STAMP_ENV, None)
+    else:
+        env[_SKIP_CONTENT_BOX_STAMP_ENV] = "1"
+    return env
+
+
 def _default_worker_cmd_builder(
     input_path: str | Path,
     plan_json_path: str | Path,
@@ -187,7 +201,8 @@ def fit_planned_parallel(
         Device used to render the merged reconstruction for scoring. ``None``
         auto-detects, matching :func:`render_to_volume_tensor`.
     keep_boxes : bool, default False
-        Keep the per-box temp outputs after a successful merge.
+        Keep the per-box temp outputs after a successful merge and let each
+        retained worker score and stamp its own box output.
     verbose : bool, default True
         Emit the section header and per-box progress lines. ``False``
         (``fit --quiet``) suppresses progress output; failures still raise.
@@ -220,11 +235,7 @@ def fit_planned_parallel(
     budgeted = [i for i, b in enumerate(plan.boxes) if b.budget > 0]
     box_paths = {i: tmp_dir / f"box_{i}.gsplats.zarr" for i in budgeted}
     stop = threading.Event()
-    worker_env = os.environ.copy()
-    if keep_boxes:
-        worker_env.pop(_SKIP_CONTENT_BOX_STAMP_ENV, None)
-    else:
-        worker_env[_SKIP_CONTENT_BOX_STAMP_ENV] = "1"
+    worker_env = _worker_env(keep_boxes)
 
     def _run(i: int) -> tuple[int, int, str]:
         # A worker that dequeued this box after a Ctrl-C must not spawn a new
