@@ -48,8 +48,9 @@ README gallery table.
   Coverage is measured from a screenshot using a 3rd–97th-percentile bounding
   box of the lit pixels, so a few stray outliers can't keep the scene tiny.
   Override per demo with `"fillTarget"`, or nudge afterwards with `"zoom"`.
-  Every capture logs `final coverage=NN%` from the settled still it ships,
-  regardless of framing path; record that value in the manifest `"note"`.
+  Every capture logs `final coverage=NN.N% final lit=NN.N%` from the settled
+  still it ships, regardless of framing path; record those values in the
+  manifest `"note"`.
   The fill loop is a pure dolly and cannot re-target an off-centre or
   translucency-biased subject; use an absolute `"distance"` to bypass it in
   those cases, and record the tested sweep in the manifest `"note"`.
@@ -78,7 +79,7 @@ README gallery table.
   subject, so the harness warns when either signal falls below its measured
   floor: 50% span or 10% lit area. The snapshot basis is frame 0 of the 29
   committed 340 px animated WebP tiles, a mixed-vintage set rendered from
-  2026-07-15 through 2026-08-25, whose minima were 51.0% and 12.7%. The runtime
+  2026-07-15 through 2026-08-26, whose minima were 51.0% and 12.7%. The runtime
   check instead reads the settled PNG. WebP and PNG agree closely for the same
   current render, but an older committed tile can drift enough to warn; that is
   the staleness signal working, not a reason to hide it. Re-derive the floors

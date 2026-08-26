@@ -76,7 +76,7 @@ export const BORDER_LIT_MAX = 0;
 /**
  * Warn-only under-fill floors. The snapshot measured frame 0 of the 29 committed
  * 340 px animated WebP tiles, a mixed-vintage set rendered from 2026-07-15 through
- * 2026-08-25; its minima were 51.0% span and 12.7% lit area. The runtime check
+ * 2026-08-26; its minima were 51.0% span and 12.7% lit area. The runtime check
  * instead reads the settled PNG. WebP and PNG agree closely for the same current
  * render, but an older committed tile can drift enough to warn; that warning is
  * the intended staleness signal, not a reason to suppress it. Re-derive these
