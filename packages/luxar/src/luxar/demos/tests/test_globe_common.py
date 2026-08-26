@@ -10,9 +10,12 @@ why the mapping is asserted numerically here rather than reviewed by eye.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+from luxar.demos import _globe_common
 from luxar.demos._globe_common import encode_globe_texture, uv_sphere
 
 
@@ -232,3 +235,51 @@ def test_sea_level_leaves_low_coast_dry_and_ocean_wet(
         f"{place}: terrain {grid[row, col]:.1f} m ({relief[row, col]:+.2e}) vs "
         f"water {water:+.2e} — expected {'dry' if should_be_dry else 'submerged'}"
     )
+
+
+def test_the_shared_globe_imagery_is_cached_once_per_machine() -> None:
+    """The NASA masters must be keyed on the SOURCE, not on a demo or a width.
+
+    Both halves of this were wrong in the first cut, and the comment above the URL
+    already *claimed* the fixed behaviour ("the download is paid once per machine
+    and every demo shares it") while the code did neither — so nothing but a
+    measurement could catch it. On this machine the identical 28.5 MB master had
+    accumulated five times: once per demo namespace, plus a leftover from raising
+    one demo's texture width, since the width was part of the filename.
+
+    Two invariants, because they fail independently:
+
+    * the cache namespace is shared, so four demos are one download; and
+    * no filename is passed, so ``cached_download`` derives it from the URL and a
+      target-size change cannot invalidate the cache. The bytes on disk are the
+      MASTER — the downscale happens in memory per build — so a size in the name
+      describes something the file is not.
+
+    Every globe demo must also declare the shared namespace in its ``caches``, or
+    ``luxar demo cache list`` reports it as an orphan and ``clear --orphans``
+    deletes a 28.5 MB download that takes ~5 minutes to replace.
+    """
+    source = Path(_globe_common.__file__).read_text()
+
+    assert 'GLOBE_ASSET_CACHE = "blue_marble"' in source
+    # Neither fetch may name a file: the URL basename is the width-independent key.
+    for url_const in ("BLUE_MARBLE_HIRES_URL", "BLUE_MARBLE_CLOUDS_URL"):
+        call = source.split(f"cached_download({url_const}")[1].split(")")[0]
+        assert "GLOBE_ASSET_CACHE" in call, f"{url_const} must use the shared cache"
+        assert '"' not in call and "f'" not in call, (
+            f"{url_const} must not pass a filename — a width in the name re-downloads"
+        )
+    # Deliberately NOT a whole-file search for the old `blue_marble_{width}x{height}`
+    # shape: the comment above GLOBE_ASSET_CACHE documents that shape on purpose, so
+    # a text search matches the explanation and not the defect. The per-call check
+    # above is stronger anyway — it forbids passing ANY filename, not one spelling.
+
+    for module in (
+        "demo_earthquakes_3d",
+        "demo_ocean_currents_earth",
+        "demo_global_rivers_earth",
+        "demo_biodiversity_planetary_scale",
+    ):
+        demo_src = (Path(_globe_common.__file__).parent / f"{module}.py").read_text()
+        caches = demo_src.split('"caches":')[1].split("]")[0]
+        assert "blue_marble" in caches, f"{module} must claim the shared cache dir"

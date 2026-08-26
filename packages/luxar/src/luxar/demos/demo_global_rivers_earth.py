@@ -65,7 +65,7 @@ DEMO_META = {
         "gpu": "none",
         "local_data": None,
     },
-    "caches": ["global_rivers_earth"],
+    "caches": ["global_rivers_earth", "blue_marble"],
     "outputs": ["global_rivers_earth"],
     "citation": {
         "short": "ETOPO 2022 / HydroSHEDS",
@@ -387,7 +387,7 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         # rivers' own colouring.
         try:
             basemap, basemap_w, basemap_h = blue_marble_basemap(
-                "global_rivers_earth", width=GLOBE_TEXTURE_WIDTH
+                width=GLOBE_TEXTURE_WIDTH
             )
             tiles = GLOBE_TILES
         except Exception as error:
@@ -488,7 +488,6 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
             build_earth(
                 scene,
                 "terrain",
-                demo_name="global_rivers_earth",
                 radius=RADIUS,
                 n_lon=GLOBE_LON,
                 n_lat=GLOBE_LAT,

@@ -106,7 +106,7 @@ DEMO_META = {
         "gpu": "none",
         "local_data": None,
     },
-    "caches": ["earthquakes"],
+    "caches": ["earthquakes", "blue_marble"],
     "outputs": ["earthquakes"],
     "citation": {
         "short": "USGS ANSS Comprehensive Catalog",
@@ -1177,7 +1177,7 @@ def generate_earthquake_scene(
         globe_basemap = None
         try:
             globe_basemap, basemap_w, basemap_h = blue_marble_basemap(
-                "earthquakes", width=GLOBE_TEXTURE_WIDTH
+                width=GLOBE_TEXTURE_WIDTH
             )
             use_texture = True
             aprint(
@@ -1255,7 +1255,6 @@ def generate_earthquake_scene(
                 n_tiles = build_earth(
                     scene,
                     "Earth",
-                    demo_name="earthquakes",
                     radius=EARTH_RADIUS,
                     n_lon=GLOBE_LON,
                     n_lat=GLOBE_LAT,

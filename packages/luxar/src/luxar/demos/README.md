@@ -642,7 +642,7 @@ HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) dr
 
 **Run**: `luxar demo run ocean_currents_earth`
 
-**Requires**: Internet access on first run (~72 MB: HYCOM GLBy0.08 surface u/v + Blue Marble texture; cached under `~/.cache/luxar/ocean_currents_earth/`).
+**Requires**: Internet access on first run (HYCOM GLBy0.08 surface u/v under `~/.cache/luxar/ocean_currents_earth/`, plus the shared NASA Blue Marble imagery under `~/.cache/luxar/blue_marble/` — ~28 MB, downloaded once and reused by all four Earth demos).
 
 **Demonstrates**: Mixed Mesh+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, and tiled globe textures.
 

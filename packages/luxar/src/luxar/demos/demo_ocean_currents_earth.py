@@ -108,7 +108,7 @@ DEMO_META = {
         "gpu": "none",
         "local_data": None,
     },
-    "caches": ["ocean_currents_earth"],
+    "caches": ["ocean_currents_earth", "blue_marble"],
     "outputs": ["ocean_currents_earth"],
     "citation": {
         "short": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble",
@@ -553,7 +553,7 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
         # unavailable.
         try:
             basemap, basemap_w, basemap_h = blue_marble_basemap(
-                "ocean_currents_earth", width=GLOBE_TEXTURE_WIDTH
+                width=GLOBE_TEXTURE_WIDTH
             )
             tiles = GLOBE_TILES
         except Exception as error:
@@ -630,7 +630,6 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
             build_earth(
                 scene,
                 "earth",
-                demo_name="ocean_currents_earth",
                 radius=RADIUS,
                 n_lon=GLOBE_LON,
                 n_lat=GLOBE_LAT,

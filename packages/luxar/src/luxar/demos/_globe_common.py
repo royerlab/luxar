@@ -327,8 +327,25 @@ def encode_globe_texture(tex: np.ndarray, *, quality: int = 92) -> np.ndarray:
 
 #: NASA Blue Marble Next Generation, topography + bathymetry, December 2004.
 #:
-#: The 21600x10800 master (30 MB). Downscaled once on first use and cached, so
-#: the download is paid once per machine and every demo shares it.
+#: Cache namespace for the shared NASA globe imagery.
+#:
+#: SHARED across the four Earth demos rather than per-demo, and named after the
+#: SOURCE rather than the target size, because these bytes depend on neither. The
+#: first cut got both wrong: it cached under
+#: ``<demo>/blue_marble_{width}x{height}.jpg``, so the identical 28.5 MB master was
+#: fetched once per demo (4 copies on disk, ~20 minutes on a fresh machine) and
+#: raising one demo's texture width re-downloaded the same file under a new name.
+#: Measured, not reasoned: five copies of md5 ``0fb66aee...`` across four
+#: namespaces.
+#:
+#: ``inventory_caches`` maps one directory to a LIST of claiming demos, so all
+#: four declare this in their ``caches`` and it is not reported as an orphan.
+GLOBE_ASSET_CACHE = "blue_marble"
+
+#: The 21600x10800 master (30 MB). Downloaded once per machine into
+#: :data:`GLOBE_ASSET_CACHE` and shared by every globe demo; the downscale to each
+#: demo's texture width happens in memory on every build, since it is cheap next
+#: to the transfer.
 BLUE_MARBLE_HIRES_URL = (
     "https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73909/"
     "world.topo.bathy.200412.3x21600x10800.jpg"
@@ -348,9 +365,7 @@ BLUE_MARBLE_CLOUDS_URL = (
 MAX_GLOBE_TEXTURE_WIDTH = 16384
 
 
-def blue_marble_basemap(
-    demo_name: str, *, width: int = 8192
-) -> Tuple[np.ndarray, int, int]:
+def blue_marble_basemap(*, width: int = 8192) -> Tuple[np.ndarray, int, int]:
     """Fetch the Blue Marble basemap, downscaled to ``width`` pixels across.
 
     Defaults to 8192x4096 — **16x the pixels** of the 2048x1024 image these demos
@@ -366,7 +381,6 @@ def blue_marble_basemap(
     RAM for nothing.
 
     Args:
-        demo_name: Cache namespace (``~/.cache/luxar/<demo_name>/``).
         width: Target width; height follows the 2:1 equirectangular ratio.
             Clamped to :data:`MAX_GLOBE_TEXTURE_WIDTH`.
 
@@ -379,9 +393,10 @@ def blue_marble_basemap(
 
     width = min(int(width), MAX_GLOBE_TEXTURE_WIDTH)
     height = width // 2
-    path = cached_download(
-        BLUE_MARBLE_HIRES_URL, demo_name, f"blue_marble_{width}x{height}.jpg"
-    )
+    # No filename: `cached_download` derives it from the URL, which is exactly the
+    # width-independent name we want -- the cached bytes are the master, not the
+    # resized result, so encoding a target size in the name only forces re-fetches.
+    path = cached_download(BLUE_MARBLE_HIRES_URL, GLOBE_ASSET_CACHE)
     # PIL refuses anything over ~179 megapixels as a possible decompression bomb,
     # and the 21600x10800 master is 233. The guard is right in general and wrong
     # here: this is a pinned NASA URL with a known size, not user input. Raised
@@ -404,7 +419,6 @@ def blue_marble_basemap(
 
 
 def blue_marble_clouds(
-    demo_name: str,
     *,
     strength: float = 0.55,
     gamma: float = 1.8,
@@ -429,7 +443,6 @@ def blue_marble_clouds(
     are constant.
 
     Args:
-        demo_name: Cache namespace.
         strength: Peak alpha for a fully cloudy texel, in ``[0, 1]``.
         gamma: Exponent applied to the normalized luminance before scaling.
         width: Target width; height follows the 2:1 ratio.
@@ -442,9 +455,7 @@ def blue_marble_clouds(
     from . import cached_download
 
     height = width // 2
-    path = cached_download(
-        BLUE_MARBLE_CLOUDS_URL, demo_name, "blue_marble_clouds_2048.jpg"
-    )
+    path = cached_download(BLUE_MARBLE_CLOUDS_URL, GLOBE_ASSET_CACHE)
     with Image.open(path) as img:
         img = img.convert("L")
         # De-block BEFORE anything else. The source is a JPEG, so it carries 8x8
@@ -527,7 +538,6 @@ def add_cloud_shell(
     scene: Any,
     name: str,
     *,
-    demo_name: str,
     radius: float,
     altitude: float = 0.012,
     strength: float = 0.55,
@@ -571,7 +581,6 @@ def add_cloud_shell(
     Args:
         scene: The scene (or group) to add the node to.
         name: Node name.
-        demo_name: Cache namespace for the download.
         radius: The globe's radius in scene units.
         altitude: Shell height as a fraction of ``radius``.
         strength: Peak cloud alpha.
@@ -589,9 +598,7 @@ def add_cloud_shell(
             in every non-displayed slot, exactly as the globe under it is, or the
             atmosphere would appear on one slice and vanish on the rest.
     """
-    rgba, tex_w, tex_h = blue_marble_clouds(
-        demo_name, strength=strength, gamma=gamma, width=width
-    )
+    rgba, tex_w, tex_h = blue_marble_clouds(strength=strength, gamma=gamma, width=width)
     # WebP, not PNG, and this is where the codec choice pays most. The payload is
     # a smooth alpha field over three constant colour channels: PNG stores it
     # losslessly at several MB, while lossy WebP reaches a visually identical
@@ -1260,7 +1267,6 @@ def build_earth(
     scene: Any,
     name: str = "Earth",
     *,
-    demo_name: str,
     radius: float = 1.0,
     n_lon: int = 512,
     n_lat: int = 256,
@@ -1299,7 +1305,6 @@ def build_earth(
     Args:
         scene: Scene or group to add to.
         name: Node/group name for the globe.
-        demo_name: Cache namespace for downloads.
         radius: Sphere radius in scene units.
         n_lon: Longitude divisions across the whole globe.
         n_lat: Latitude divisions.
@@ -1328,9 +1333,7 @@ def build_earth(
         )
 
     if basemap is None:
-        basemap, basemap_w, basemap_h = blue_marble_basemap(
-            demo_name, width=texture_width
-        )
+        basemap, basemap_w, basemap_h = blue_marble_basemap(width=texture_width)
     else:
         basemap = np.asarray(basemap)
         basemap_h, basemap_w = basemap.shape[:2]
@@ -1403,7 +1406,6 @@ def build_earth(
         add_cloud_shell(
             scene,
             f"{name} clouds",
-            demo_name=demo_name,
             radius=radius,
             altitude=altitude,
             strength=clouds.strength,

@@ -324,7 +324,7 @@ DEMO_META = {
         "gpu": "optional",
         "local_data": None,
     },
-    "caches": ["biodiversity_planetary_scale"],
+    "caches": ["biodiversity_planetary_scale", "blue_marble"],
     "outputs": ["biodiversity_planetary_scale"],
     "citation": {
         "short": "GBIF occurrence snapshot; Movebank: humpback whales (Andrews-Goff et al. 2023), turkey vultures (Bildstein et al. 2014), white storks (Berthold et al. 2022), blue whales (Mate B.); NASA Blue Marble",
@@ -2521,7 +2521,7 @@ def build_globe() -> np.ndarray:
         url="https://visibleearth.nasa.gov/",
     )
     try:
-        basemap, _w, _h = blue_marble_basemap(DEMO_NAME, width=GLOBE_TEXTURE_WIDTH)
+        basemap, _w, _h = blue_marble_basemap(width=GLOBE_TEXTURE_WIDTH)
         return basemap
     except Exception as error:
         # The 2048 image this demo already downloads, as the offline fallback.
@@ -2885,7 +2885,6 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             build_earth(
                 scene,
                 "Earth",
-                demo_name=DEMO_NAME,
                 # RADIUS, not 1.0. This demo's world is at radius 100 — every
                 # occurrence goes through its own `lonlat_to_xyz`, which multiplies
                 # by RADIUS — so a unit-radius globe is a marble at the centre of a
