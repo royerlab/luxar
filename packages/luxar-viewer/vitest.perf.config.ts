@@ -7,9 +7,10 @@
  * — gating every PR on them produced false-positive failures and
  * pushed contributors toward `--retries`.
  *
- * This config picks ONLY the perf-budget suite. Run via
- * `pnpm test:perf` locally or as a scheduled / nightly CI job
- * after a fresh WASM rebuild.
+ * This config picks only the opt-in WASM performance suites. Run via
+ * `pnpm test:perf` locally after a fresh WASM rebuild. Absolute floors are
+ * report-only unless `pnpm test:perf:strict` explicitly enforces them on a
+ * quiet host.
  */
 import { defineConfig } from 'vitest/config';
 

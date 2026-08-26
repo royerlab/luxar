@@ -28,6 +28,10 @@ Compare two:
   identical code across the runs (e.g. the `default` arm, or a backend fallback arm).
   If the control moved more than a few percent, the box was loaded — discard the run.
   Shared machines can wake background work mid-run.
+- **Absolute WASM floors**: `pnpm test:perf` reports misses without failing because
+  wall-clock throughput follows host load. On a controlled quiet host, run
+  `pnpm test:perf:strict` (equivalent to `LUXAR_PERF_QUIET_HOST=1 pnpm test:perf`) to
+  enforce them.
 - **Subset runs**: `LUXAR_PERF_SCENARIO_FILTER=<id,id>` restricts scenarios (ids are
   validated); `LUXAR_PERF_LINE_PRIMITIVES=default,<primitive>` crosses the primitive
   axis. One scenario × one primitive ≈ minutes, the full matrix ≈ tens of minutes.

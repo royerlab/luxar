@@ -11,10 +11,10 @@
  * boundary-copy optimizations show up here even when the raw kernel
  * number is unchanged.
  *
- * RECORD-ONLY: the numbers are console.log'd for manual before/after
- * comparison; the only assertion is an extremely generous floor
- * (≥ 10 M splats/s) so the test never flakes. It is NOT a regression
- * gate — that's perf-budget's job for the raw kernel.
+ * RECORD-ONLY by default: the numbers are logged for manual before/after
+ * comparison, and a floor breach is reported without failing. Explicit
+ * quiet-host runs can enforce the generous ≥ 10 M splats/s floor with
+ * `LUXAR_PERF_QUIET_HOST=1`.
  *
  * Runs in the opt-in perf suite (`pnpm test:perf`, vitest.perf.config.ts)
  * and skips cleanly when `public/wasm/luxar_wasm_bg.wasm` is absent.
