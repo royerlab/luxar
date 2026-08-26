@@ -636,7 +636,9 @@ class Group(Node):
             name: Name of the gsplats node
             centers: Array of shape (N, D) for splat centers
             amplitudes: (N,) array or scalar for intensities
-            cholesky_factors: (N, k) packed Cholesky factors, k=D*(D+1)/2
+            cholesky_factors: (N, k) packed lower-triangular factor L of the
+                covariance (Σ = L·Lᵀ), k=D*(D+1)/2. The diagonal is scale-like:
+                isotropic std σ uses [σ, 0, σ, 0, 0, σ], not 1/sigma.
             colors: Optional (N, 3) RGB or (N, 4) RGBA array (the alpha
                 column is per-splat opacity in [0, 1]), RGB tuple, or None
             labels: Optional list of strings, one per splat. Used for hover tooltips.

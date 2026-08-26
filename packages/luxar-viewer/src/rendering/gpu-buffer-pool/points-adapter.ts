@@ -234,7 +234,7 @@ export class PointsBufferAdapter {
     host._lastAcquireRebuilt = true;
     // Growth headroom (1.5×) can itself cross the texture bound; clamp
     // the chosen capacity too (still >= pointCount, which was clamped).
-    const capacity = clampPointCapacity(chooseCapacity(pointCount));
+    const capacity = clampPointCapacity(chooseCapacity(pointCount), false);
     const geometry = createPointsGeometry(capacity);
     // Self-invalidation: if this pool-owned geometry is disposed
     // out-of-band (scene-graph teardown calls geometry.dispose() directly),

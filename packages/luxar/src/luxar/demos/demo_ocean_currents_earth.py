@@ -53,6 +53,15 @@ depth buffer, so with an additive line layer the currents on the **far side** of
 the globe show straight through the near side and appear painted across the
 continents. It looks exactly like a broken land mask and is not one.
 
+RESIDENCY NOTE — WHY THE CURRENTS ARE PARTITION-OF-LOD
+------------------------------------------------------
+`partition=` bounds node size but not residency: every visible part is fetched
+and drawn, and at the opening whole-globe pose every current tile is in view.
+The current layer is therefore a `kind=partition` of per-tile `kind=lod`
+ladders. Each coarse level keeps fewer **whole ribbons** and widens them
+linearly, preserving the field's apparent ink without replacing the curves
+with synthetic geometry.
+
 KNOWN LIMITATION — NO RIBBONS POLEWARD OF 80 DEG
 ------------------------------------------------
 The requested HYCOM subset spans 80S..80N, so there are no streamlines over the
@@ -123,6 +132,13 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.core.group.compositing import position_bounds_from_array
+from luxar.core.group.lod.group import (
+    coverage_fractions,
+    level_additive_lod,
+    partitioned_coverage_fractions,
+)
+from luxar.core.group.partition import bsp_leaf_parts, spatial_bsp_tree
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     BUILDER_FINGERPRINT_ATTR,
@@ -142,6 +158,7 @@ from luxar.demos._globe_common import (
 )
 from luxar.demos._globe_common import lonlat_to_xyz as _lonlat_to_xyz
 from luxar.encoding import EncodingMode
+from luxar.typing_utils.constants import MAX_SEGMENTS_PER_LINES_NODE
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -184,7 +201,7 @@ N_SEEDS: Final = 220_000  # streamlines
 N_STEPS: Final = 52  # advection steps per streamline (-> N_STEPS + 1 vertices)
 STEP_KM: Final = 14.0  # arc-length step -> ~730 km ribbons
 FIELD_STRIDE: Final = 2  # subsample the 1/12 deg grid for advection
-FLOW_LIFT: Final = 0.0015  # lift ribbons just clear of the globe shell
+FLOW_LIFT: Final = 0.0015  # lift ribbons just clear of the textured globe
 LINE_WIDTH: Final = 0.026
 LINE_OPACITY: Final = 0.77
 LINE_INTENSITY: Final = 1.0
@@ -193,15 +210,13 @@ MIN_SEED_SPEED: Final = 0.04  # skip near-still water when seeding
 STALL_SPEED: Final = 0.02  # freeze a ribbon that runs out of current
 LAT_LIMIT: Final = 79.9  # HYCOM's grid stops at +/-80
 
-# A single Lines node holds at most MAX_SEGMENTS_PER_LINES_NODE (2,793,472)
-# segments on a 4096-class GPU. Exceeding it silently clamps the tail, and
-# because segments are stored in Hilbert order the lost tail is one contiguous
-# spatial lobe — that is exactly how #1957's missing North Atlantic wedge was
-# produced. So we partition the ribbons across nodes and keep each part's
-# vertex count below the bound. `partition=` caps VERTICES per part; segments
-# (V-1 per chain) are always fewer, so this stays under the segment cap with
-# margin.
-MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
+# Per-tile substitutive ladders bound opening-view residency while preserving
+# whole ribbons. A compression of 2 keeps the coarse field visually continuous;
+# larger values save more memory but make the opening globe visibly sparse.
+LOD_LEVELS: Final = 3
+LOD_COMPRESSION: Final = 2
+LOD_STREAM_CHUNK: Final = 20_000
+CURRENT_TILE_RIBBONS: Final = 13_750
 
 
 FLAGS = parse_demo_flags()
@@ -426,6 +441,42 @@ def polyline_segment_indices(n_paths: int, n_vertices: int) -> np.ndarray:
     return np.stack([starts, starts + 1], axis=-1).reshape(-1).astype(np.uint32)
 
 
+def lod_counts(
+    n: int, levels: int = LOD_LEVELS, compression: int = LOD_COMPRESSION
+) -> list:
+    """Return de-duplicated coarse-to-fine element counts ending at ``n``."""
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
+    if levels < 1:
+        raise ValueError(f"levels must be >= 1, got {levels}")
+    if compression < 2:
+        raise ValueError(f"compression must be >= 2, got {compression}")
+    return sorted({max(1, n // compression**level) for level in range(levels)})
+
+
+def level_subset(n: int, count: int, seed: int) -> np.ndarray:
+    """Return a deterministic sorted random subset of ``count`` elements."""
+    if count >= n:
+        return np.arange(n, dtype=np.int64)
+    rng = np.random.default_rng(seed)
+    return np.sort(rng.choice(n, size=count, replace=False))
+
+
+def level_seed(layer: int, tile: int, level: int) -> int:
+    """Return a collision-free seed for one layer/tile/level subset."""
+    return 1_000_003 * layer + 1_009 * tile + level
+
+
+def check_tile_budget(geometry: str, largest_tile: int, cap: int) -> None:
+    """Reject a tile whose finest level would exceed the element-texture cap."""
+    if largest_tile > cap:
+        raise ValueError(
+            f"largest {geometry} tile holds {largest_tile:,} elements, over the "
+            f"{cap:,} a single node can render on a 4096-class GPU — the tail "
+            f"would be silently clamped. Lower the tile size constant."
+        )
+
+
 def seed_ocean_points(
     field: LonLatField, n: int, *, seed: int = 0, min_speed: float = MIN_SEED_SPEED
 ) -> tuple:
@@ -535,6 +586,69 @@ def download_sources() -> tuple:
 # =============================================================================
 
 
+def tile_coverage(counts: list, n_tiles: int) -> list:
+    """Return LOD coverage thresholds for a tiled or whole-object anchor."""
+    if n_tiles < 2:
+        return coverage_fractions(counts)
+    return partitioned_coverage_fractions(counts)
+
+
+def write_current_parts(
+    scene,
+    vertices: np.ndarray,
+    colors: np.ndarray,
+    n_paths: int,
+    n_vertices: int,
+    tile_size: int = CURRENT_TILE_RIBBONS,
+) -> tuple:
+    """Write ribbons as a partition of per-tile substitutive LOD ladders."""
+    blocks = vertices.reshape(n_paths, n_vertices, 3)
+    centroids = blocks.mean(axis=1)
+    tree = spatial_bsp_tree(centroids, tile_size, rule="median")
+    parts = bsp_leaf_parts(tree)
+    check_tile_budget(
+        "lines",
+        max(int(part.size) for part in parts) * (n_vertices - 1),
+        MAX_SEGMENTS_PER_LINES_NODE,
+    )
+    wrapper = scene.add_partition_group(
+        "currents",
+        display_type="lines",
+        max_elements=tile_size * (n_vertices - 1),
+        blending_mode="luminous",
+        opacity=LINE_OPACITY,
+        intensity=LINE_INTENSITY,
+        layer=True,
+        position_bounds=position_bounds_from_array(vertices),
+        bsp_tree=tree.to_serializable(),
+    )
+    coarsest = 0
+    for tile, idx in enumerate(parts):
+        counts = lod_counts(int(idx.size))
+        lod = wrapper.add_lod_group(f"part_{tile}", selector="screen-area")
+        coverage = tile_coverage(counts, len(parts))
+        coarsest += counts[0] * (n_vertices - 1)
+        for level, (count, cover) in enumerate(zip(counts, coverage)):
+            sub = idx[level_subset(int(idx.size), count, level_seed(1, tile, level))]
+            keep = (sub[:, None] * n_vertices + np.arange(n_vertices)[None, :]).ravel()
+            lod.add_lines(
+                f"child_{level}",
+                vertices=vertices[keep],
+                widths=LINE_WIDTH * (idx.size / count),
+                colors=colors[keep],
+                indices=polyline_segment_indices(int(sub.size), n_vertices),
+                line_type="indexed",
+                coverage_fraction=float(cover),
+                additive_lod=level_additive_lod(
+                    dict(counts=f"stream:{LOD_STREAM_CHUNK}", method="random", seed=0),
+                    level_n=int(sub.size) * n_vertices,
+                    compression_factor=LOD_COMPRESSION,
+                    is_coarsest=(level == 0),
+                ),
+            )
+    return len(parts), coarsest
+
+
 def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
     """Build the globe + current-streamline scene and write it to ``output_path``."""
     image_module = require_module("PIL.Image")
@@ -587,9 +701,9 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
         taper = np.linspace(0.15, 1.0, n_vertices, dtype=np.float32) ** 1.5
         alpha = np.tile(taper, (n_paths, 1)).ravel()
         colors = np.column_stack([rgb, alpha]).astype(np.float32)
-        indices = polyline_segment_indices(n_paths, n_vertices)
         aprint(
-            f"{n_paths:,} ribbons, {len(indices) // 2:,} segments, {total:,} vertices"
+            f"{n_paths:,} ribbons, {n_paths * (n_vertices - 1):,} segments, "
+            f"{total:,} vertices"
         )
 
     with asection("Writing scene"):
@@ -665,28 +779,13 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 opacity=1.0,
                 layer=True,
             )
-            scene.add_lines(
-                "currents",
-                vertices=vertices,
-                widths=LINE_WIDTH,
-                colors=colors,
-                indices=indices,
-                line_type="indexed",
-                # `luminous` — see the module docstring. Additive-and-depth-tested:
-                # overlapping ribbons accumulate (which is informative — a boundary
-                # current concentrates flow and gets brighter), while the far-side
-                # network stays hidden behind the opaque globe.
-                blending_mode="luminous",
-                opacity=LINE_OPACITY,
-                intensity=LINE_INTENSITY,
-                layer=True,
-                # 11.66M vertices / 11.44M segments blow past a single Lines
-                # node's element-texture cap (682 * maxTextureSize segments;
-                # 2,793,472 on a 4096-class GPU), which clamps the tail silently.
-                # Auto-partition the ribbons (polyline-centroid BSP, each ribbon
-                # atomic) so every part stays under the bound; the wrapper is one
-                # `kind=partition` "currents" node in the Layers panel.
-                partition=dict(max_elements=MAX_LINE_VERTICES_PER_NODE),
+            n_current_tiles, current_coarsest = write_current_parts(
+                scene, vertices, colors, n_paths, n_vertices
+            )
+            aprint(
+                f"currents: {n_current_tiles} tiles x {LOD_LEVELS} levels; "
+                f"{current_coarsest:,} segments resident at the coarsest levels, "
+                f"down from {n_paths * (n_vertices - 1):,}"
             )
             scene.add_text(
                 "Ocean Currents of Earth",

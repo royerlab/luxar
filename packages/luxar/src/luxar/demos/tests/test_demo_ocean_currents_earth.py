@@ -27,18 +27,26 @@ from luxar.demos._globe_common import (
     surface_point_radius,
 )
 from luxar.demos.demo_ocean_currents_earth import (
+    CURRENT_TILE_RIBBONS,
+    FLOW_LIFT,
     LINE_OPACITY,
-    MAX_LINE_VERTICES_PER_NODE,
+    LOD_LEVELS,
     N_SEEDS,
     N_STEPS,
     RADIUS,
     LonLatField,
     advect_streamlines,
     build_lut,
+    check_tile_budget,
     globe_camera,
+    level_seed,
+    level_subset,
+    lod_counts,
     lonlat_to_xyz,
     polyline_segment_indices,
     seed_ocean_points,
+    tile_coverage,
+    write_current_parts,
 )
 from luxar.typing_utils.constants import (
     MAX_POINTS_PER_POINTS_NODE,
@@ -409,36 +417,14 @@ def test_segment_indices_reject_degenerate_paths() -> None:
         polyline_segment_indices(4, 1)
 
 
-def test_per_node_budget_stays_under_the_segment_texture_bound() -> None:
-    """The per-part vertex budget must stay under one Lines node's segment cap.
-
-    The viewer packs per-segment line data into an element texture at 6 texels
-    per segment, with the texture width capped at ELEMENT_TEXTURE_MAX_WIDTH=4096
-    texels (floor(4096/6)*6 = 4092 usable), so a single Lines node holds at most
-    floor(4092 * maxTextureSize / 6) = 682 * maxTextureSize segments — 2,793,472
-    on the conservative 4096-class GPU. Exceeding it clamps the tail silently, so
-    the per-part budget (measured in VERTICES; segments = V-1 per chain are always
-    fewer) must sit under that floor. And the demo's total vertex count has to
-    exceed the budget, or partitioning would never engage.
-    """
-    assert MAX_LINE_VERTICES_PER_NODE <= MAX_SEGMENTS_PER_LINES_NODE  # 2,793,472
+def test_current_tile_budget_stays_under_the_segment_texture_bound() -> None:
+    """Each finest current tile stays below the conservative Lines cap."""
+    assert CURRENT_TILE_RIBBONS * N_STEPS <= MAX_SEGMENTS_PER_LINES_NODE
     assert MAX_SEGMENTS_PER_LINES_NODE == 682 * 4096  # the derivation above
-    assert N_SEEDS * (N_STEPS + 1) > MAX_LINE_VERTICES_PER_NODE  # partitioning engages
+    assert N_SEEDS > CURRENT_TILE_RIBBONS
 
 
-def test_per_node_globe_budget_stays_under_the_point_texture_bound() -> None:
-    """The ribbons' per-part budget must stay under one Lines node's cap.
-
-    The GLOBE half of this test is gone with the point cloud, and that is the
-    substance of the change rather than a deletion: an 8M-point globe exceeded a
-    single Points node's element-texture cap (1365 * maxTextureSize = 5,591,040
-    on a 4096-class GPU) and had to be partitioned to avoid a silently clamped
-    southern cap. A 33k-vertex mesh is three orders of magnitude under any cap,
-    so the whole class of failure is designed out rather than budgeted around.
-
-    The ribbons still overflow, so their budget is still load-bearing.
-    """
-    assert MAX_LINE_VERTICES_PER_NODE <= MAX_POINTS_PER_POINTS_NODE
+def test_textured_globe_no_longer_needs_the_point_texture_budget() -> None:
     assert MAX_POINTS_PER_POINTS_NODE == 1365 * 4096  # the derivation above
 
 
@@ -463,7 +449,7 @@ def test_the_globe_is_a_textured_mesh_not_a_point_cloud() -> None:
     # and has to be split across nodes. The helper owns geometry, slicing,
     # transcoding and the `uvs`/`normal_dims`/`double_sided` wiring, so what this
     # test pins is that the demo REACHES it with the arguments that matter.
-    globe_call = source.split("build_earth(")[1].split("scene.add_lines(")[0]
+    globe_call = source.split("build_earth(")[1].split("write_current_parts(")[0]
     for token in ("basemap=basemap", "tiles=GLOBE_TILES", "radius=RADIUS"):
         assert token in globe_call, f"missing {token}"
     assert "partition=" not in globe_call
@@ -482,7 +468,7 @@ def test_the_globe_is_unlit_so_its_colours_stay_comparable() -> None:
     still reshaded, and a lit surface with an exact passthrough is still lit.
     """
     source = Path(demo_ocean_currents_earth.__file__).read_text()
-    globe_call = source.split("build_earth(")[1].split("scene.add_lines(")[0]
+    globe_call = source.split("build_earth(")[1].split("write_current_parts(")[0]
     assert 'shading="none"' in globe_call
 
 
@@ -496,8 +482,10 @@ def test_layer_appearance_matches_the_authored_intent() -> None:
     across the continents) at the tuned opacity.
     """
     source = Path(demo_ocean_currents_earth.__file__).read_text()
-    globe_call = source.split("build_earth(")[1].split("scene.add_lines(")[0]
-    lines_call = source.split("scene.add_lines(")[1].split("scene.add_text(")[0]
+    globe_call = source.split("build_earth(")[1].split("write_current_parts(")[0]
+    lines_call = source.split("def write_current_parts(")[1].split("def build_scene(")[
+        0
+    ]
     assert 'blending_mode="opaque"' in globe_call
     # `luminous`, not `normal`. The distinction that matters is between
     # `luminous` and plain `additive`, not between additive and `normal` — which
@@ -509,6 +497,93 @@ def test_layer_appearance_matches_the_authored_intent() -> None:
     # right across 11M segments and a cloud shell.
     assert 'blending_mode="luminous"' in lines_call
     assert LINE_OPACITY == pytest.approx(0.77)
+
+
+def test_current_lod_helpers_preserve_the_ladder_contract() -> None:
+    assert lod_counts(1600) == [400, 800, 1600]
+    assert lod_counts(2, levels=4) == [1, 2]
+    assert tile_coverage([100, 400, 1600], 1)[-1] == pytest.approx(0.5)
+    assert tile_coverage([100, 400, 1600], 2)[-1] == pytest.approx(1.0)
+    subset = level_subset(2000, 200, seed=7)
+    assert np.array_equal(subset, level_subset(2000, 200, seed=7))
+    assert np.array_equal(subset, np.sort(subset))
+    seeds = {
+        level_seed(1, tile, level) for tile in range(32) for level in range(LOD_LEVELS)
+    }
+    assert len(seeds) == 32 * LOD_LEVELS
+    with pytest.raises(ValueError):
+        check_tile_budget("lines", 11, 10)
+
+
+def _tiny_ribbons(n_paths: int = 400, n_vertices: int = 6) -> tuple:
+    rng = np.random.default_rng(0)
+    lon = rng.uniform(-180, 180, n_paths)[:, None] + np.arange(n_vertices)[None, :]
+    lat = rng.uniform(-60, 60, n_paths)[:, None] + np.zeros(n_vertices)[None, :]
+    vertices = lonlat_to_xyz(lon.ravel(), lat.ravel(), np.full(lon.size, FLOW_LIFT))
+    colors = np.tile(np.float32([0.5, 0.7, 1.0, 1.0]), (lon.size, 1))
+    return vertices, colors, n_paths, n_vertices
+
+
+def _write_currents(tmp_path: Path, tile_size: int = 50) -> Path:
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+    vertices, colors, n_paths, n_vertices = _tiny_ribbons()
+    output = tmp_path / "currents.luxar.zarr"
+    dims = Dimensions([Dimension(axis, unit="", display=True) for axis in "xyz"])
+    with LuxarZarrCompiler(output) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        write_current_parts(
+            scene, vertices, colors, n_paths, n_vertices, tile_size=tile_size
+        )
+    return output
+
+
+def _payload_groups(level) -> list:
+    additive = sorted(name for name in level.keys() if name.startswith("additive_"))
+    return [level[name] for name in additive] if additive else [level]
+
+
+def _payload_count(level, array_name: str) -> int:
+    return sum(int(group[array_name].shape[0]) for group in _payload_groups(level))
+
+
+def _payload_scalar(level, array_name: str) -> float:
+    values = {
+        float(np.asarray(group[array_name]).ravel()[0])
+        for group in _payload_groups(level)
+    }
+    assert len(values) == 1
+    return values.pop()
+
+
+def test_current_writer_builds_partition_of_lod_with_atomic_ribbons(
+    tmp_path: Path,
+) -> None:
+    output = _write_currents(tmp_path)
+    wrapper = open_group(output, mode="r")["currents"]
+    assert wrapper.attrs["kind"] == "partition"
+    assert wrapper.attrs["blending_mode"] == "luminous"
+    total_finest = 0
+    n_vertices = 6
+    for part_name in (name for name in wrapper.keys() if name.startswith("part_")):
+        part = wrapper[part_name]
+        assert part.attrs["kind"] == "lod"
+        children = sorted(name for name in part.keys() if name.startswith("child_"))
+        assert len(children) == LOD_LEVELS
+        finest = part[children[-1]]
+        finest_count = _payload_count(finest, "vertices")
+        assert finest_count % n_vertices == 0
+        total_finest += finest_count // n_vertices
+        finest_width = _payload_scalar(finest, "widths")
+        for child_name in children[:-1]:
+            child = part[child_name]
+            child_count = _payload_count(child, "vertices")
+            assert child_count % n_vertices == 0
+            child_width = _payload_scalar(child, "widths")
+            assert child_width == pytest.approx(
+                finest_width * finest_count / child_count, rel=1e-5
+            )
+    assert total_finest == 400
 
 
 # --------------------------------------------------------------------- seeding

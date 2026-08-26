@@ -302,12 +302,13 @@ is derived from the step now.
 The budget is also per-plane rather than global. The old global cap divided a
 fixed total across every plane, so raising the grid made each individual slice
 *sparser* — exactly backwards. At 150k per plane the flat faces read as
-continuous surfaces; at 80k they were still stippled. 44.5M points, 89 MB on
-disk (lattice coordinates compress well).
+continuous surfaces; at 80k they were still stippled. 44.5M points, 147 MB on
+disk after ambient-occlusion shading (lattice coordinates compress well).
 
 Appearance comes from a live Layers-panel session: `volumetric` blending with
 absorption 1.23 and opacity 0.43, gamma 1.0, and an authored display window of
-`[0, 1.971]` rather than the `[0, 16]` the old `intensity=0.0625` was stating.
+`[0, 1.123]` after ambient-occlusion compensation rather than the `[0, 16]` the
+old `intensity=0.0625` was stating.
 
 #### Smaller things
 

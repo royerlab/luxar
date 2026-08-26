@@ -644,7 +644,7 @@ HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) dr
 
 **Requires**: Internet access on first run (HYCOM GLBy0.08 surface u/v under `~/.cache/luxar/ocean_currents_earth/`, plus the shared NASA Blue Marble imagery under `~/.cache/luxar/blue_marble/` — ~28 MB, downloaded once and reused by all four Earth demos).
 
-**Demonstrates**: Mixed Mesh+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, and tiled globe textures.
+**Demonstrates**: Mixed Mesh+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, tiled globe textures, and a **partition-of-LOD current layer** — 16 per-tile `kind=lod` ladders keep the opening whole-globe view from retaining every ribbon. Coarse levels preserve whole streamlines and widen them linearly so the field's apparent ink stays stable across switches; `LOD_COMPRESSION` / `LOD_LEVELS` tune the residency-versus-disk trade.
 
 ---
 
