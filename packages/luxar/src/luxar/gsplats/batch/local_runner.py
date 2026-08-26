@@ -266,6 +266,20 @@ def run_batch_local(
         out = _out_path(job_by_id[task_id])
         return resume and (out.exists() or Path(str(out) + ".empty").exists())
 
+    active_workers = {
+        gpu: max(
+            1,
+            min(
+                count,
+                sum(
+                    not _skip(task_id) and assignment.get(task_id, -1) == gpu
+                    for task_id in task_ids
+                ),
+            ),
+        )
+        for gpu, count in workers.items()
+    }
+
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]
         out = _out_path(job)
@@ -284,7 +298,7 @@ def run_batch_local(
 
     def _env(task_id: int) -> dict[str, str]:
         gpu = assignment.get(task_id, -1)
-        return _worker_env(gpu, workers)
+        return _worker_env(gpu, active_workers)
 
     n_run = sum(0 if _skip(t) else 1 for t in task_ids)
     dev_desc = "CPU" if not gpu_indices else f"GPU(s) {gpu_indices}"

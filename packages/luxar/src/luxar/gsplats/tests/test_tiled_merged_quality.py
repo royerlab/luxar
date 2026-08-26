@@ -360,6 +360,18 @@ def test_cpu_quality_budget_still_uses_the_full_host_peak(
     assert "host memory needs ~4.0 GiB" in reason
 
 
+def test_budget_probe_leaves_invalid_device_reporting_to_the_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from luxar.gsplats.utils import device as device_utils
+
+    def _invalid(_device: str) -> None:
+        raise RuntimeError("invalid device")
+
+    monkeypatch.setattr(device_utils, "resolve_torch_device", _invalid)
+    assert _quality_memory_guard((32, 32, 32), "not-a-device") is None
+
+
 def test_split_peak_counts_keep_host_and_device_allocations_explicit() -> None:
     assert _QUALITY_HOST_REFERENCE_VOLUMES == 2
     assert _QUALITY_DEVICE_PEAK_VOLUMES == 8

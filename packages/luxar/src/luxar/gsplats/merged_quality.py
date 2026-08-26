@@ -133,7 +133,12 @@ def _quality_memory_guard(
 
     from luxar.gsplats.utils.device import resolve_torch_device
 
-    resolved = resolve_torch_device(device)
+    try:
+        resolved = resolve_torch_device(device)
+    except Exception:
+        # Preserve the scoring path's existing failure contract: device errors
+        # are reported by the guarded render attempt, never raised after fitting.
+        return None
     if resolved.type != "cuda":
         host_peak_gb = _QUALITY_DEVICE_PEAK_VOLUMES * voxel_gb
     host_budget_gb = _quality_budget_gb()
