@@ -2897,3 +2897,114 @@ def test_uvs_outside_the_unit_square_survive_the_round_trip(tmp_path) -> None:
     )
     mesh = _write_textured(tmp_path, uvs=tiling, texture=_TEX_RGB)
     assert float(mesh.uvs.max()) == pytest.approx(4.0)
+
+
+def test_texture_sampling_attrs_round_trip(tmp_path) -> None:
+    """`texture_filter` / `texture_wrap` reach the store as authored.
+
+    Authorable because the right answer is data-dependent and the viewer cannot
+    infer it: `nearest` is correct for a categorical or index-like texture, where
+    interpolating two class ids invents a third that means nothing, and `clamp`
+    is correct for a texture that is not meant to tile.
+    """
+    mesh = _write_textured(
+        tmp_path, texture=_TEX_RGB, texture_filter="nearest", texture_wrap="clamp"
+    )
+    assert mesh.metadata["texture_filter"] == "nearest"
+    assert mesh.metadata["texture_wrap"] == "clamp"
+
+
+def test_texture_sampling_attrs_are_absent_by_default(tmp_path) -> None:
+    """Unset means unset — the viewer owns the default, not the writer.
+
+    The negative twin of the round trip above. Stamping a default here would make
+    a store indistinguishable from one that authored the same value on purpose,
+    which is the distinction `shading` deliberately preserves by only ever
+    stamping what it resolved.
+    """
+    mesh = _write_textured(tmp_path, texture=_TEX_RGB)
+    assert "texture_filter" not in mesh.metadata
+    assert "texture_wrap" not in mesh.metadata
+
+
+@pytest.mark.parametrize(
+    "attrs,error_pattern,test_id",
+    [
+        (
+            dict(texture_filter="nearest"),
+            "'texture_filter' requires 'texture'",
+            "filter_without_texture",
+        ),
+        (
+            dict(texture_wrap="clamp"),
+            "'texture_wrap' requires 'texture'",
+            "wrap_without_texture",
+        ),
+        (
+            dict(texture_filter="nearest", texture_wrap="clamp"),
+            "require 'texture'",
+            "both_without_texture",
+        ),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_sampling_attrs_are_refused_without_a_texture(
+    tmp_path, attrs, error_pattern, test_id
+) -> None:
+    """A sampling attr on an untextured mesh is a silent no-op, so it is refused.
+
+    It would validate, persist, and read back exactly as authored while changing
+    no pixel — the same failure `reject_mesh_only_appearance` prevents when these
+    are set on a points node, reached from the other direction.
+    """
+    store = tmp_path / f"{test_id}.luxar.zarr"
+    with pytest.raises(ValueError, match=error_pattern):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F, **attrs)
+
+
+@pytest.mark.parametrize("filt", ["bilinear", "LINEAR", 3, None])
+def test_bad_texture_filter_is_refused(tmp_path, filt) -> None:
+    """The sampling vocabularies are closed, so a typo fails loudly."""
+    store = tmp_path / "bad_filter.luxar.zarr"
+    with pytest.raises(ValueError, match="Texture filter must be one of"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "m", _V, _F, uvs=_TEX_UV, texture=_TEX_RGB, texture_filter=filt
+            )
+
+
+def test_shading_none_is_stamped_as_authored(tmp_path) -> None:
+    """`shading='none'` is the unlit arm, and only ever explicit.
+
+    An unlit mesh is what a data basemap needs — a textured globe whose colours
+    carry meaning must not be reshaded by a view-anchored key — and it is what the
+    other three geometry types always do, being purely emissive.
+    """
+    mesh = _write_textured(tmp_path, texture=_TEX_RGB, shading="none")
+    assert mesh.metadata["shading"] == "none"
+
+
+def test_shading_none_is_never_a_default(tmp_path) -> None:
+    """Nothing resolves TO 'none'; defaulting to it would un-light every mesh.
+
+    Both default arms are checked, because "never a default" is a claim about the
+    whole resolution rather than about one branch of it.
+    """
+    with_normals = _write_textured(
+        tmp_path, name="lit", texture=_TEX_RGB, normals=_N, normal_dims=[0, 1, 2]
+    )
+    assert with_normals.metadata["shading"] == "smooth"
+    without = _write_textured(tmp_path, name="unlit", texture=_TEX_RGB)
+    assert without.metadata["shading"] == "flat"
+
+
+def test_unknown_shading_still_names_every_arm(tmp_path) -> None:
+    """A typo'd `shading` must advertise the new third arm, not just the old two."""
+    store = tmp_path / "bad_shading.luxar.zarr"
+    with pytest.raises(ValueError, match="'smooth', 'flat' or 'none'"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F, shading="phong")

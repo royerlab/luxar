@@ -556,6 +556,34 @@ def test_uv_acceptances(uvs, test_id) -> None:
             "texture_width=99 disagrees",
             "declared_width_disagrees_with_payload",
         ),
+        (
+            # The shape the DECODE BUDGET cannot see. A 20000x2 texture is 120 KB
+            # and passes every byte accounting on both sides, then exceeds
+            # MAX_TEXTURE_SIZE on one axis and is silently clamped by the GPU at
+            # upload — so the mesh renders the wrong image with no diagnostic.
+            lambda: validate_texture_for_writing(
+                np.zeros((2, 20_000, 3), np.uint8), "raw"
+            ),
+            "per-axis limit",
+            "width_over_the_gpu_axis_limit",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros((20_000, 2, 3), np.uint8), "raw"
+            ),
+            "per-axis limit",
+            "height_over_the_gpu_axis_limit",
+        ),
+        (
+            # An ENCODED payload declares its dimensions rather than carrying
+            # them, so the same ceiling has to hold on a declaration it cannot
+            # cross-check against the bytes.
+            lambda: validate_texture_for_writing(
+                np.zeros(64, np.uint8), "png", 20_000, 2, 3
+            ),
+            "per-axis limit",
+            "declared_encoded_width_over_the_axis_limit",
+        ),
     ],
 )
 def test_texture_rejections(factory, error_pattern, test_id) -> None:

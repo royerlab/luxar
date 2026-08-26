@@ -893,3 +893,207 @@ describe('preflightMesh — accountedBytes', () => {
     );
   });
 });
+
+/**
+ * Texture and UV admission.
+ *
+ * The declared texture dimensions are the only bound on an encoded texture's
+ * decode, which makes them the one place in this file where a check that merely
+ * *runs* is not enough — it has to run BEFORE the arithmetic. Several of these
+ * cases exist specifically to pin that ordering: a `NaN` or negative dimension
+ * must be reported as a bad declaration, never silently multiplied into a
+ * comparison that passes.
+ */
+describe('preflightMesh — textures and UVs', () => {
+  /** Attrs for a textured mesh, defaulting to a small valid encoded declaration. */
+  const texAttrs = (o: Partial<MeshMetadata> = {}): MeshMetadata =>
+    tetAttrs({
+      has_uvs: true,
+      has_texture: true,
+      texture_encoding: 'jpeg',
+      texture_width: 64,
+      texture_height: 32,
+      texture_channels: 3,
+      texture_color_space: 'srgb',
+      ...o,
+    });
+
+  /** Handles for a textured mesh: per-vertex UVs plus an encoded byte blob. */
+  const texHandles = (o: Partial<MeshArrayHandles> = {}): MeshArrayHandles =>
+    tetHandles({
+      uvs: fakeArray([4, 2], '<f4'),
+      texture: fakeArray([2048], '|u1'),
+      ...o,
+    });
+
+  const reject = async (attrs: MeshMetadata, handles: MeshArrayHandles) =>
+    await expect(preflightMesh(PATH, attrs, handles)).rejects.toThrow(LoaderError);
+
+  const message = async (attrs: MeshMetadata, handles: MeshArrayHandles): Promise<string> => {
+    try {
+      await preflightMesh(PATH, attrs, handles);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error('expected a rejection');
+  };
+
+  it('admits a textured mesh and returns the validated declaration', async () => {
+    const result = await preflightMesh(PATH, texAttrs(), texHandles());
+    // Returned, not just checked: the loader allocates from THIS, so that a
+    // second unvalidated copy of the numbers never reaches the decode.
+    expect(result.texture).toEqual({
+      encoding: 'jpeg',
+      width: 64,
+      height: 32,
+      channels: 3,
+      decode: 'codec',
+    });
+  });
+
+  it('admits a raw texture whose array matches its declared surface', async () => {
+    const result = await preflightMesh(
+      PATH,
+      texAttrs({ texture_encoding: 'raw', texture_channels: 4 }),
+      texHandles({ texture: fakeArray([32, 64, 4], '|u1') })
+    );
+    expect(result.texture?.decode).toBe('raw');
+  });
+
+  it('admits an HDR raw texture stored as quantized codes', async () => {
+    // The realistic HDR-on-disk case: AUTO encoding sends a float texture
+    // through `geolog_perchannel_u16`, so the stored dtype is u16 and the
+    // logical shape lives in `original_shape`. Checking the STORED shape would
+    // reject this, which is writer output.
+    const result = await preflightMesh(
+      PATH,
+      texAttrs({ texture_encoding: 'raw', texture_channels: 3 }),
+      texHandles({
+        texture: fakeArray([6144], '<u2', [6144], {
+          encoding: {
+            name: 'geolog_perchannel_u16',
+            original_dtype: 'float32',
+            original_shape: [32, 64, 3],
+          },
+        }),
+      })
+    );
+    expect(result.texture?.decode).toBe('raw');
+  });
+
+  it.each([
+    ['a missing encoding', { texture_encoding: undefined }, /texture_encoding/],
+    ['an unknown encoding', { texture_encoding: 'avif' as never }, /texture_encoding/],
+    ['a zero width', { texture_width: 0 }, /texture_width/],
+    ['a negative height', { texture_height: -32 }, /texture_height/],
+    ['a NaN width', { texture_width: Number.NaN }, /texture_width/],
+    ['a fractional width', { texture_width: 64.5 }, /texture_width/],
+    ['a non-numeric width', { texture_width: '64' as never }, /texture_width/],
+    ['a zero channel count', { texture_channels: 0 }, /texture_channels/],
+    ['a 2-channel texture', { texture_channels: 2 }, /texture_channels/],
+  ])('refuses %s', async (_label, override, pattern) => {
+    await expect(preflightMesh(PATH, texAttrs(override), texHandles())).rejects.toThrow(pattern);
+  });
+
+  it('refuses a dimension over the per-axis GPU limit', async () => {
+    // 100000 x 2 is the case the BYTE budget cannot catch: 800 KB accounted,
+    // comfortably admitted, then silently clamped at upload.
+    const msg = await message(
+      texAttrs({ texture_width: 100_000, texture_height: 2 }),
+      texHandles()
+    );
+    expect(msg).toMatch(/per-axis limit/);
+  });
+
+  it('refuses a codec texture whose declared surface blows the byte budget', async () => {
+    // The decompression bomb: a small stored payload declaring a huge surface.
+    // 12000 x 12000 x 4 = 576 MiB, from 2 KB of stored bytes. Deliberately kept
+    // UNDER the per-axis cap so this exercises the byte budget rather than the
+    // dimension check — a 30000-wide texture is refused one gate earlier and
+    // would make this test pass without the budget ever running.
+    const msg = await message(
+      texAttrs({ texture_width: 12_000, texture_height: 12_000 }),
+      texHandles()
+    );
+    expect(msg).toMatch(/per-node budget/);
+  });
+
+  it('charges the codec surface at 4 bytes per pixel regardless of channels', async () => {
+    // A 1-channel declaration must be charged the same as a 4-channel one: an
+    // ImageBitmap is always RGBA8. Reading `texture_channels` here would
+    // under-charge by 4x and admit a bomb four times the ceiling.
+    const bomb = { texture_width: 16_000, texture_height: 16_000 };
+    for (const channels of [1, 3, 4]) {
+      await expect(
+        preflightMesh(PATH, texAttrs({ ...bomb, texture_channels: channels }), texHandles())
+      ).rejects.toThrow(/per-node budget/);
+    }
+  });
+
+  it('admits a large codec texture just inside the budget', async () => {
+    // The other side of the boundary above: without this, "rejects everything
+    // big" would pass the bomb tests just as well.
+    const result = await preflightMesh(
+      PATH,
+      texAttrs({ texture_width: 4096, texture_height: 4096 }),
+      texHandles()
+    );
+    expect(result.texture?.width).toBe(4096);
+    // 4096^2 * 4 = 64 MiB of surface, plus the small vertex arrays.
+    expect(result.accountedBytes).toBeGreaterThan(64 * 1024 * 1024);
+    expect(result.accountedBytes).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
+  });
+
+  it('does NOT double-charge a raw texture', async () => {
+    // The raw surface is already charged by the generic per-array loop, so the
+    // dedicated term must skip it. A raw 4096x4096x4 uint8 texture accounts for
+    // 64 MiB stored + 256 MiB decoded = 320 MiB; adding the codec term as well
+    // would push it past the 512 MiB ceiling and falsely reject writer output.
+    const result = await preflightMesh(
+      PATH,
+      texAttrs({ texture_encoding: 'raw', texture_width: 4096, texture_height: 4096, texture_channels: 4 }),
+      texHandles({ texture: fakeArray([4096, 4096, 4], '|u1', [512, 4096, 4]) })
+    );
+    expect(result.accountedBytes).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
+    expect(result.accountedBytes).toBeGreaterThan(320 * 1024 * 1024);
+  });
+
+  it('refuses a raw texture whose array disagrees with its declaration', async () => {
+    const msg = await message(
+      texAttrs({ texture_encoding: 'raw', texture_channels: 3 }),
+      texHandles({ texture: fakeArray([16, 16, 3], '|u1') })
+    );
+    expect(msg).toMatch(/but its array describes/);
+  });
+
+  it.each([
+    ['has_uvs with no uvs array', { uvs: undefined }, /has_uvs is set/],
+    ['has_texture with no texture array', { texture: undefined }, /has_texture is set/],
+  ])('refuses %s', async (_label, override, pattern) => {
+    await expect(
+      preflightMesh(PATH, texAttrs(), texHandles(override as Partial<MeshArrayHandles>))
+    ).rejects.toThrow(pattern);
+  });
+
+  it.each([
+    ['uvs without a texture', { has_texture: false }],
+    ['a texture without uvs', { has_uvs: false }],
+  ])('refuses %s', async (_label, override) => {
+    // Each half alone renders SOMETHING wrong rather than failing, which is why
+    // it is refused at load rather than left to the material.
+    const attrs = texAttrs(override);
+    const handles = texHandles(
+      'has_texture' in override ? { texture: undefined } : { uvs: undefined }
+    );
+    const msg = await message(attrs, handles);
+    expect(msg).toMatch(/only\s+meaningful together|is set but/);
+  });
+
+  it.each([
+    ['3 components', [4, 3]],
+    ['1 component', [4, 1]],
+    ['the wrong row count', [8, 2]],
+  ])('refuses uvs with %s', async (_label, shape) => {
+    await reject(texAttrs(), texHandles({ uvs: fakeArray(shape, '<f4') }));
+  });
+});

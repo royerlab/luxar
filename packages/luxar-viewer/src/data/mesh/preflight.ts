@@ -680,6 +680,13 @@ export interface TextureDeclaration {
  * {@link parseDtype}'s docstring calls "a budget that admits everything", reached
  * by a different route. Every field is therefore checked to be a positive
  * integer here, and the caller may only do arithmetic on what this returns.
+ *
+ * That last clause is enforced by DATA FLOW, not by convention, which is worth
+ * stating because it is the part that survives future edits: the budget's texture
+ * term reads {@link TextureDeclaration}, and the only way to obtain one is to call
+ * this. Moving the call after the accounting does not produce a subtly weaker
+ * check, it produces a compile error. A comment asking the next author to
+ * preserve an ordering would not.
  */
 function resolveTextureDeclaration(path: string, attrs: MeshMetadata): TextureDeclaration | null {
   if (!attrs.has_texture) return null;
