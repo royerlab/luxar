@@ -131,7 +131,10 @@ def test_source_summary_requires_complete_agreement() -> None:
             2,
             source_shape=[6, 4, 5],
             source_declared=True,
-            source_dtype="uint8",
+            source_dtype="uint16",
+            source_voxels=120,
+            source_bytes=240,
+            source_stored_bytes=160,
         ),
     ]
     provenance = collect_part_provenance(
@@ -148,7 +151,7 @@ def test_source_summary_requires_complete_agreement() -> None:
 
     assert "source_shape" not in stacked.stats
     assert "source_declared" not in stacked.stats
-    assert "source_dtype" not in stacked.stats
+    assert stacked.stats["source_dtype"] == "uint16"
     assert "source_voxels" not in stacked.stats
     assert "source_bytes" not in stacked.stats
     assert "source_stored_bytes" not in stacked.stats

@@ -50,12 +50,14 @@ def _aggregate_part_source_stats(
     ):
         aggregate["source_declared"] = declared[0]
 
-    for key in ("source_voxels", "source_bytes", "source_stored_bytes"):
-        values = [fit.get(key) for fit in fittings]
-        if values and all(
-            isinstance(value, int) and not isinstance(value, bool) for value in values
-        ):
-            aggregate[key] = sum(values)
+    if "source_shape" in aggregate:
+        for key in ("source_voxels", "source_bytes", "source_stored_bytes"):
+            values = [fit.get(key) for fit in fittings]
+            if values and all(
+                isinstance(value, int) and not isinstance(value, bool)
+                for value in values
+            ):
+                aggregate[key] = sum(values)
     return aggregate
 
 
