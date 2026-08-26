@@ -30,6 +30,8 @@ import { GEOMETRY_TYPES } from '../../../../types/format-contract';
 import { LINE_JOIN_UNIFORM, type LineJoinStyle } from '../../../../types/line-join';
 import { DEFAULT_LINE_PRIMITIVE } from '../../../../types/line-primitive';
 import type { PickingSystem } from '../../../../rendering/picking/picking-system';
+import { applyMeshTexture } from '../../../../rendering/node-factory/create-mesh-node';
+import type { MeshDataLoader, MeshMetadata, MeshTextureData } from '../../../../types/mesh';
 
 /** Minimal PickingSystem stand-in: the three members the pass touches. */
 function stubPickingSystem() {
@@ -161,21 +163,46 @@ describe('registerExistingSceneNodes', () => {
 
   it('builds a textured mesh pick material from the live visual texture', () => {
     const { stub, registered } = stubPickingSystem();
-    factory.setPickingSystem(stub);
     const root = new THREE.Group();
-    const node = makeNode('mesh', '/surface');
-    const texture = new THREE.Texture();
-    node.userData.attrs = { has_texture: true };
-    (node.material as unknown as { uniforms: Record<string, { value: unknown }> }).uniforms = {
-      uBaseColorTex: { value: texture },
+    const attrs: MeshMetadata = {
+      type: 'mesh',
+      n_vertices: 3,
+      n_faces: 1,
+      ndim: 3,
+      has_normals: false,
+      has_colors: false,
+      has_scalars: false,
+      has_uvs: true,
+      has_texture: true,
+      texture_encoding: 'raw',
+      texture_width: 1,
+      texture_height: 1,
+      texture_channels: 4,
+      texture_color_space: 'srgb',
+      shading: 'flat',
+      double_sided: true,
+      ordering: 'none',
     };
+    const node = factory.createEmptyMeshNode('/surface', attrs, {} as MeshDataLoader);
+    const data: MeshTextureData = {
+      kind: 'raw',
+      pixels: new Uint8Array([255, 255, 255, 64]),
+      width: 1,
+      height: 1,
+      channels: 4,
+    };
+    applyMeshTexture(node, attrs, data);
     root.add(node);
 
+    factory.setPickingSystem(stub);
     factory.registerExistingSceneNodes(root);
 
+    const visualTexture = (
+      node.material as unknown as { uniforms: { uBaseColorTex: { value: THREE.Texture } } }
+    ).uniforms.uBaseColorTex.value;
     const pick = registered[0].pick.material as MeshPickingMaterial;
     expect(pick.defines.LUXAR_MESH_PICK_BASE_COLOR_TEX).toBe('');
-    expect(pick.uniforms.uBaseColorTex.value).toBe(texture);
+    expect(pick.uniforms.uBaseColorTex.value).toBe(visualTexture);
   });
 
   it('prefers the visual material LIVE state over the node attrs', () => {
