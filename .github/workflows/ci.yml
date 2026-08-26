@@ -1052,6 +1052,70 @@ jobs:
             || { echo "::error::viewer dist missing the depth-sort worker"; exit 1; }
           echo "Wheel viewer application and critical assets are present."
 
+  # A scheduled run can put fresh successful checks on the same SHA as an older
+  # cancelled push run, but branch protection's rollup can retain the cancelled
+  # duplicate for each required context. Once this run has proved the five
+  # protected contexts green, rerun only the cancelled long jobs from that push
+  # so the push suite itself converges to the verdict branch protection reads.
+  repair-cancelled-push-checks:
+    needs:
+      [python-tests, typescript-tests, release-readiness, wheel-viewer, docs-quality]
+    if: ${{ github.event_name == 'schedule' && always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: Rerun cancelled required push jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          required=(
+            "python-tests (3.12)"
+            "typescript-tests"
+            "release-readiness"
+            "wheel-viewer"
+            "docs-quality"
+          )
+          current_jobs=$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100")
+          for context in "${required[@]}"; do
+            conclusion=$(jq -r --arg context "$context" \
+              '[.[] | .jobs[] | select(.name == $context)] | max_by(.id).conclusion // "absent"' \
+              <<<"$current_jobs")
+            if [ "$conclusion" != "success" ]; then
+              echo "Required scheduled context is not green: $context=$conclusion"
+              exit 0
+            fi
+          done
+
+          push_run=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&event=push&status=completed&per_page=100" \
+            --jq '[.workflow_runs[] | select(.name == "CI")] | max_by(.id).id // empty')
+          if [ -z "$push_run" ]; then
+            echo "No push CI run found for ${GITHUB_SHA}"
+            exit 0
+          fi
+
+          push_jobs=$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/jobs?filter=latest&per_page=100")
+          jq -r '
+            [.[] | .jobs[]]
+            | group_by(.name)[]
+            | max_by(.id)
+            | select(
+                .conclusion == "cancelled"
+                and (.name == "python-tests (3.12)" or .name == "typescript-tests")
+              )
+            | [.id, .name]
+            | @tsv
+          ' <<<"$push_jobs" | while IFS=$'\t' read -r job_id job_name; do
+            echo "Rerunning cancelled push job: $job_name ($job_id)"
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/jobs/$job_id/rerun" >/dev/null
+          done
+
   go-launcher:
     needs: changes
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
