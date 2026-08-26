@@ -124,6 +124,10 @@ DEFAULT_N_DIRECTIONS = 24
 #: surface bakes use the measured 48-direction floor unless explicitly overridden.
 DEFAULT_NORMAL_N_DIRECTIONS = 48
 
+#: Bound temporary ``(N, n_directions)`` work arrays while preserving each
+#: row's existing reduction order exactly.
+_ROW_SLAB_SIZE = 262_144
+
 #: ``extinction="auto"`` solves for the scale that puts the *median* element at
 #: this transmittance, so the population lands in a useful range whatever the
 #: mass units and however densely the object was sampled.
@@ -540,10 +544,8 @@ def bake_ambient_occlusion(
     local_all = _spatial_positions(pos, spatial_dims)
     cell = _cell_size(local_all, grid_cells)
     window = _window_cells(local_all, radius, cell)
-    columns = np.empty((n_elements, len(directions)), dtype=np.float32)
-
     if group_by is None:
-        columns[:] = _group_columns(
+        columns = _group_columns(
             local_all,
             mass_arr,
             directions=directions,
@@ -551,6 +553,7 @@ def bake_ambient_occlusion(
             window=window,
         )
     else:
+        columns = np.empty((n_elements, len(directions)), dtype=np.float32)
         groups = np.asarray(group_by)
         if groups.shape != (n_elements,):
             raise ValueError(
@@ -632,11 +635,21 @@ def _shade_columns(
     strength: float,
     floor: float,
 ) -> np.ndarray:
-    mapped = columns.copy()
-    mapped *= extinction
-    transmittance = _combine(_transmittance(mapped, occluder), weights)
-    return np.clip(1.0 - strength * (1.0 - transmittance), floor, 1.0).astype(
-        np.float32
+    transmittance = np.empty(len(columns), dtype=np.float32)
+    for start in range(0, len(columns), _ROW_SLAB_SIZE):
+        stop = min(start + _ROW_SLAB_SIZE, len(columns))
+        mapped = columns[start:stop].copy()
+        mapped *= extinction
+        _transmittance(mapped, occluder)
+        slab_weights = None if weights is None else weights[start:stop]
+        if slab_weights is None:
+            transmittance[start:stop] = mapped.mean(axis=1)
+        else:
+            mapped *= slab_weights
+            transmittance[start:stop] = mapped.sum(axis=1) / slab_weights.sum(axis=1)
+    return np.asarray(
+        np.clip(1.0 - strength * (1.0 - transmittance), floor, 1.0),
+        dtype=np.float32,
     )
 
 
@@ -726,7 +739,8 @@ def _direction_weights(
 
     normals32 = normals.astype(np.float32, copy=False)
     directions32 = directions.astype(np.float32, copy=False)
-    weights = np.asarray(np.clip(normals32 @ directions32.T, 0.0, None))
+    weights = np.asarray(normals32 @ directions32.T)
+    np.clip(weights, 0.0, None, out=weights)
     total = weights.sum(axis=1)
     degenerate = total <= 1e-12
     if np.any(degenerate):
@@ -738,7 +752,14 @@ def _combine(per_direction: np.ndarray, weights: Optional[np.ndarray]) -> np.nda
     """Weighted (or plain) mean of a per-element, per-direction quantity."""
     if weights is None:
         return np.asarray(per_direction.mean(axis=1))
-    return np.asarray((per_direction * weights).sum(axis=1) / weights.sum(axis=1))
+    combined = np.empty(len(per_direction), dtype=per_direction.dtype)
+    for start in range(0, len(per_direction), _ROW_SLAB_SIZE):
+        stop = min(start + _ROW_SLAB_SIZE, len(per_direction))
+        slab_weights = weights[start:stop]
+        combined[start:stop] = (per_direction[start:stop] * slab_weights).sum(
+            axis=1
+        ) / slab_weights.sum(axis=1)
+    return combined
 
 
 def _auto_extinction(
