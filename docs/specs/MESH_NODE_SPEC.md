@@ -580,11 +580,12 @@ Mesh therefore adds a fourth arm to `computeHiddenDimTolerance`:
   about visibility, and drop on-grid geometry. **This is the dominant real case** —
   a mesh's hidden dimensions are almost always time or channel.
 - **Continuous hidden spatial dims** → `step × meshSlabTolerance`, default `1.0` (one cell). This is
-  **authored**, not viewer-internal: it is the mesh-only `slab_tolerance` node attr, measured in cells
-  of the hidden dimension's own `step`, strictly positive (zero would reduce membership to exact float
-  equality with the slice plane and render nothing), and rejected on every non-mesh node. The viewer
-  reads it off `MeshMetadata` and forwards it as `ToleranceOptions.meshSlabTolerance`; see the format
-  guide's *nD slicing: whole-triangle cull* for the user-facing account.
+  a half-width: the slab spans `slice ± step × slab_tolerance`. It is **authored**, not viewer-internal:
+  the mesh-only `slab_tolerance` node attr is measured in cells of the hidden dimension's own `step`,
+  strictly positive (zero would reduce membership to exact float equality with the slice plane and
+  render nothing), and rejected on every non-mesh node. The viewer reads it off `MeshMetadata` and
+  forwards it as `ToleranceOptions.meshSlabTolerance`; see the format guide's *nD slicing:
+  whole-triangle cull* for the user-facing account.
   Mesh is the only type with a *tunable* continuous arm: a mesh has no
   per-element extent, so the slab thickness is invented rather than measured. GSplats exposes no
   equivalent slab knob — its chunk bounds already carry the real `truncation_radius · σ` extent, so

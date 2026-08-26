@@ -171,8 +171,9 @@ export interface MeshMetadata {
   alpha_cutoff?: number;
 
   /**
-   * Thickness, IN CELLS, of the nD membership slab a CONTINUOUS hidden dimension
-   * is culled against (§5.2.1). Strictly positive; defaults to one cell.
+   * Half-width, IN CELLS, of the nD membership slab a CONTINUOUS hidden dimension
+   * is culled against (§5.2.1): a vertex is inside when it is within
+   * `slab_tolerance` cells of the slice. Strictly positive; defaults to one cell.
    *
    * The only authored control mesh has over its nD approximation, and the only
    * per-node input to `computeTolerance('mesh', …)`. Mesh culls whole triangles

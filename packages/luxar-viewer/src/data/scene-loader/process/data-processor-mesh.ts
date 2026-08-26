@@ -57,7 +57,7 @@ const noticedWinding = new Set<string>();
  * @param attrs - The node's metadata; `normal_dims` supplies the winding frame,
  *   `double_sided` the authored side, `extend_to_all` the extended (slice-invariant)
  *   dimensions whose membership slab is infinite, and `slab_tolerance` the authored
- *   continuous-dimension slab thickness in cells.
+ *   continuous-dimension slab half-width in cells.
  */
 export async function processMeshData(
   path: string,
@@ -74,11 +74,12 @@ export async function processMeshData(
   // as `processLinesData` does for the lines clipping slab. `computeTolerance('mesh', …)`
   // always uses the membership role — mesh has no query path.
   //
-  // `slab_tolerance` is the node's authored thickness for the CONTINUOUS arm, in
-  // cells (§5.2.1) — the only per-node input this call takes, and mesh's only
-  // control over the thick-slab approximation (§5.3). Undefined is the common
-  // case and `computeMeshHiddenTolerance` defaults it to one cell; the discrete
-  // arm ignores it entirely.
+  // `slab_tolerance` is the node's authored half-width for the CONTINUOUS arm, in
+  // cells (§5.2.1): membership spans slice ± step × slab_tolerance. It is the only
+  // per-node input this call takes, and mesh's only control over the thick-slab
+  // approximation (§5.3). Undefined is the common case and
+  // `computeMeshHiddenTolerance` defaults it to one cell; the discrete arm ignores
+  // it entirely.
   let tolerance = computeTolerance('mesh', viewState.displayDims, data.ndim, viewState.dimensions, {
     meshSlabTolerance: attrs.slab_tolerance,
   });

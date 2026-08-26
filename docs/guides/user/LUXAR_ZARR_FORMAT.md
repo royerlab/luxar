@@ -1103,14 +1103,14 @@ node, by name, in an `info` log line.
 scene.add_mesh(
     "surface", vertices, faces,
     normals=normals, normal_dims=[0, 1, 2],
-    slab_tolerance=2.5,   # slab is 2.5 CELLS thick; default 1.0
+    slab_tolerance=2.5,   # vertices within ±2.5 cells (a 5-cell slab); default 1.0
 )
 ```
 
-It is measured in cells of the hidden dimension's own `step`, must be strictly
-positive, and defaults to one cell. Raising it thickens the slab (more surface
-shown, more of it away from the slice); lowering it thins the slab toward the
-degenerate case above. It applies **only** to *continuous* hidden dimensions — a
+It is a half-width measured in cells of the hidden dimension's own `step`, must
+be strictly positive, and defaults to one cell. Raising it thickens the slab
+(more surface shown, more of it away from the slice); lowering it thins the slab
+toward the degenerate case above. It applies **only** to *continuous* hidden dimensions — a
 *discrete* one (time, channel, or any axis with `categories`) uses a half-cell
 membership rule instead and ignores the attr. Discrete hidden dimensions are the
 dominant real case for a mesh, and they have none of the problems in this section:
