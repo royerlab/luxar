@@ -320,7 +320,7 @@ class DirectoryListingStaticFiles(StaticFiles):
                 html_content += '<li><a href="../">../</a></li>'
             for entry in entries:
                 name = str(entry["name"])
-                if entry["type"] in ("directory", "zarr"):
+                if entry["size"] is None:
                     name += "/"
                 safe_name = html.escape(name)
                 safe_href = quote(name, safe="/")

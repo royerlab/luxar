@@ -519,6 +519,14 @@ class TestServeIntegration:
             assert response.status_code == 200
             entries = {e["name"]: e["type"] for e in response.json()["entries"]}
             assert entries.get("zipped_scene.luxar.zarr.zip") == "zarr"
+
+            response = requests.get(f"{test_server}/")
+            assert response.status_code == 200
+            expected_link = (
+                '<a href="zipped_scene.luxar.zarr.zip">'
+                "zipped_scene.luxar.zarr.zip</a>"
+            )
+            assert expected_link in response.text
         finally:
             archive.unlink(missing_ok=True)
 
