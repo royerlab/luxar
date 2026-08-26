@@ -46,7 +46,11 @@ function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-/** Build a ZIP64 archive whose entry count crosses the classic 65,535 limit. */
+/**
+ * Build a ZIP64 archive whose entry count crosses the classic 65,535 limit.
+ * fflate.zipSync does not emit ZIP64 records, so using it here would wrap the
+ * entry count and test the reader against a corrupt archive.
+ */
 function zip64Archive(entryCount = 65_536): Uint8Array {
   const encoder = new TextEncoder();
   const payload = encoder.encode('{"zarr_format":3,"node_type":"group"}');

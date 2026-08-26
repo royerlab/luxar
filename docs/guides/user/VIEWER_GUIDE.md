@@ -42,6 +42,24 @@ trailing slash as the canonical spelling used in examples and logs.
 The viewer can open a `.luxar.zarr.zip` scene without extracting it. Serve the
 directory containing the archive, then select the archive in the dataset browser:
 
+Produce an archive directly by naming it as the compiler output:
+
+```python
+from luxar import LuxarZarrCompiler
+
+with LuxarZarrCompiler("scene.luxar.zarr.zip") as compiler:
+    ...
+```
+
+You can also package an existing store by giving `luxar optimise` a `.zip`
+destination:
+
+```bash
+luxar optimise scene.luxar.zarr scene.luxar.zarr.zip
+```
+
+Serve the directory containing the archive, then select it in the dataset browser:
+
 ```bash
 luxar serve /path/to/scenes --viewer
 ```
@@ -58,6 +76,13 @@ that update an existing store in place refuse them, so write to a directory or
 new archive instead. Image overlays stored inside an archive are currently
 skipped. The viewer has no browser local-file or drag-and-drop opening path for
 any scene format; serve the scene over HTTP instead.
+
+Choose an archive for distribution, not speed: it turns a scene with potentially
+hundreds of thousands of hosted objects into one artifact to upload, download, or
+attach to a paper. On the benchmark fixture, a first archive load used about 39%
+more requests and 48–60% more bytes than the directory form, adding 1–7% to time
+to first render. A warm revisit needed only 4 requests and about 88 kB, so the
+extra cost is concentrated in the cold load.
 
 ---
 

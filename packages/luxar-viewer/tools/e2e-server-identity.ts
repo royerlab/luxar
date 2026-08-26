@@ -43,9 +43,8 @@ function relativeURLPath(projectRoot: string, file: string): string {
 /**
  * Create the deterministic marker used to distinguish sibling clones/worktrees.
  *
- * The marker is ignored by git and persists for the checkout's lifetime. A raw
- * `python3 -m http.server` rooted at the repository can therefore prove its
- * identity without requiring a custom server implementation.
+ * The marker is ignored by git and persists for the checkout's lifetime. Any
+ * static server rooted at the repository can therefore prove its identity.
  */
 export function ensureCheckoutIdentity(projectRoot: string, viewerRoot: string): CheckoutIdentity {
   const canonicalProjectRoot = canonicalPath(projectRoot);
