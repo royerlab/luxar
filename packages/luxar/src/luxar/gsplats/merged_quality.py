@@ -39,8 +39,10 @@ _QUALITY_HOST_REFERENCE_VOLUMES = 2
 #: a device-side render/metric allowance rather than a host-memory proxy.
 _QUALITY_DEVICE_PEAK_VOLUMES = 8
 
-#: Local batch workers share one CUDA device. The parent records that concurrency
-#: here so each process admits only its share of the sampled free VRAM.
+#: Local ``batch-fit run`` workers share one CUDA device. Its parent records that
+#: concurrency here so each process admits only its share of the sampled free
+#: VRAM. The single-card ``-j N`` and Slurm fan-outs do not yet set it; their
+#: per-tile scoring work is tracked by #2195.
 QUALITY_WORKERS_PER_DEVICE_ENV = "LUXAR_QUALITY_WORKERS_PER_DEVICE"
 
 
@@ -155,19 +157,31 @@ def _quality_memory_guard(
 
         free_bytes = _gpu_free_memory(resolved)
         workers = _quality_worker_count()
-        if _has_usable_quality_override() or free_bytes is None:
+        if _has_usable_quality_override():
             device_budget_gb = host_budget_gb
+            budget_description = (
+                f"{device_budget_gb:g} GiB LUXAR_TILED_QUALITY_MAX_GB cap"
+            )
+        elif free_bytes is None:
+            device_budget_gb = _QUALITY_BUDGET_GB / workers
+            budget_description = (
+                f"{device_budget_gb:g} GiB per-worker budget "
+                f"({workers} worker(s) sharing the device)"
+            )
         else:
             device_budget_gb = min(
                 _QUALITY_BUDGET_GB,
                 _QUALITY_BUDGET_MEM_FRACTION * free_bytes / workers / 1024**3,
             )
+            budget_description = (
+                f"{device_budget_gb:g} GiB per-worker budget "
+                f"({workers} worker(s) sharing the device)"
+            )
         device_peak_gb = _QUALITY_DEVICE_PEAK_VOLUMES * voxel_gb
         if device_peak_gb > device_budget_gb:
             return (
                 f"needs ~{device_peak_gb:.1f} GiB of {resolved} memory, over "
-                f"the {device_budget_gb:g} GiB per-worker budget "
-                f"({workers} worker(s) sharing the device)"
+                f"the {budget_description}"
             )
     return None
 

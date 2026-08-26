@@ -360,7 +360,8 @@ def test_cuda_quality_budget_honors_a_low_explicit_override(
     reason = _quality_memory_guard((256, 256, 256), "cuda")
     assert reason is not None
     assert "needs ~0.5 GiB of cuda:0 memory" in reason
-    assert "0.25 GiB per-worker budget" in reason
+    assert "0.25 GiB LUXAR_TILED_QUALITY_MAX_GB cap" in reason
+    assert "worker(s)" not in reason
 
 
 def test_cuda_quality_budget_falls_back_when_free_vram_is_unavailable(
@@ -373,16 +374,20 @@ def test_cuda_quality_budget_falls_back_when_free_vram_is_unavailable(
     from luxar.gsplats.utils import device as device_utils
 
     monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
-    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 512.0)
+    monkeypatch.setenv(merged_quality.QUALITY_WORKERS_PER_DEVICE_ENV, "4")
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.3)
     monkeypatch.setattr(
         device_utils, "resolve_torch_device", lambda _device: torch.device("cuda:0")
     )
     monkeypatch.setattr(metrics, "_gpu_free_memory", lambda _device: None)
 
+    assert _quality_memory_guard((512, 512, 512), "cuda") is None
+
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 512.0)
     reason = _quality_memory_guard((1024, 1024, 1024), "cuda")
     assert reason is not None
     assert "needs ~32.0 GiB of cuda:0 memory" in reason
-    assert "24 GiB per-worker budget" in reason
+    assert "6 GiB per-worker budget (4 worker(s) sharing the device)" in reason
 
 
 def test_cpu_quality_budget_still_uses_the_full_host_peak(
