@@ -785,10 +785,11 @@ class Group(Node):
             normalize_amplitudes: Scale amplitudes so a robust upper
                 reference (the 99.9th percentile) lands at 1.0, applied as ONE
                 factor across every substitutive level and additive rung.
-                ``True`` (the default) acts only when that reference exceeds
-                1.0, so data already in range is untouched; ``False`` ships raw
-                units; a number sets an explicit target. The factor used is
-                recorded as ``amplitude_normalization_factor``.
+                ``True`` / ``"auto"`` (the default) acts only when that
+                reference exceeds 1.0, so data already in range is untouched;
+                ``False`` ships raw units; a positive number sets an explicit
+                target. The factor used is recorded as
+                ``amplitude_normalization_factor``.
 
                 On by default because raw fitted amplitudes cannot be corrected
                 at display time. A fit stores source units (detector counts),
@@ -890,10 +891,11 @@ class Group(Node):
             normalize_amplitudes: Scale amplitudes so a robust upper
                 reference (the 99.9th percentile) lands at 1.0, applied as ONE
                 factor across every substitutive level and additive rung.
-                ``True`` (the default) acts only when that reference exceeds
-                1.0, so data already in range is untouched; ``False`` ships raw
-                units; a number sets an explicit target. The factor used is
-                recorded as ``amplitude_normalization_factor``.
+                ``True`` / ``"auto"`` (the default) acts only when that
+                reference exceeds 1.0, so data already in range is untouched;
+                ``False`` ships raw units; a positive number sets an explicit
+                target. The factor used is recorded as
+                ``amplitude_normalization_factor``.
 
                 On by default because raw fitted amplitudes cannot be corrected
                 at display time. A fit stores source units (detector counts),

@@ -25,7 +25,7 @@ amplitude, walks from the brightest down, and keeps the prefix that carries a
 fraction ``R`` of the fit's TOTAL amplitude. Everything below that line is
 discarded. So ``retention=0.99`` does not mean "keep 99% of the splats" — it
 means "keep whatever number of splats accounts for 99% of the light", which
-here is 72% of them.
+here is 93% of them.
 
 That asymmetry IS the finding. Amplitude in a fitted stack is heavy-tailed: a
 minority of splats sit on nuclei and carry most of the signal, while a long tail
@@ -33,7 +33,7 @@ of dim, diffuse splats models background and out-of-focus haze. Cumulative
 culling removes the tail first, in amplitude order — which is very nearly the
 same order as "least visible first".
 
-MEASURED ON THIS FIT (the table the overlay reprints):
+MEASURED ON THIS FIT (an excerpt of the table the overlay reprints):
 
     retention    splats   % kept     size   vs the raw stack
       1.000     200,155    100.0%   1.97 MB       75:1
@@ -48,7 +48,7 @@ concentrated anywhere you are looking.
 One caveat this fit itself illustrates. The shipped archive has ALREADY been
 culled once — the fitter's own post-fit pass took it from 256,000 seeds to
 200,155 — so its dim tail is partly gone before this study starts, and each
-retention here keeps more than it would on a raw fit. On an uncalled fit of the
+retention here keeps more than it would on a raw fit. On an unculled fit of the
 same specimen, ``retention=0.999`` alone removes 23% of the splats for one
 thousandth of the light. So the numbers above are a *lower* bound on what
 culling can recover, not an upper one, and a fit that has never been culled has
@@ -174,6 +174,9 @@ RAW_BYTES = int(np.prod(RAW_SHAPE)) * RAW_ITEMSIZE  # 155,361,024
 # `add_gsplats_from_data` (one factor for the whole stacked node), which is what
 # makes these opacity/absorption values portable numbers rather than magic
 # constants. See core/group/gsplats_pipeline/amplitude_norm.py.
+# The carried 5 / 512 / 798 values are the sibling demo's measured archive
+# minimum / p99.9 reference / maximum detector counts; this pure-scale transfer
+# is approximate because that demo's earlier manual normalization subtracts 5.
 GSPLAT_OPACITY = 0.41 * (512.0 - 5.0) / (798.0 - 5.0)
 GSPLAT_ABSORPTION = 0.57
 DISPLAY_WINDOW_TOP = 0.737 * (798.0 - 5.0) / (512.0 - 5.0)
