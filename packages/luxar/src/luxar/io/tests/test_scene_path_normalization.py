@@ -289,6 +289,11 @@ class TestSceneExtensionNormalization:
                 compiler.finalize()
             with pytest.raises(ValueError, match="previous finalization failure"):
                 compiler.finalize()
+            with pytest.raises(RuntimeError, match="archive finalization failed"):
+                compiler.write_points(
+                    "late",
+                    np.array([[7.0, 8.0, 9.0]], dtype=np.float32),
+                )
 
         assert attempts == 1
         assert requested.read_bytes() == previous_archive

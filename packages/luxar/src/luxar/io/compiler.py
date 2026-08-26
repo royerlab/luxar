@@ -314,6 +314,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 "LuxarZarrCompiler context, before context exit or before "
                 "Scene.to_zarr() finalizes the store."
             )
+        if self._archive_finalize_failed:
+            raise RuntimeError(
+                f"Cannot {op} after archive finalization failed and staging was "
+                "discarded. Create a new LuxarZarrCompiler."
+            )
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit context manager, finalizing only on a clean exit.
