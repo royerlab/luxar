@@ -368,7 +368,7 @@ export class MaterialManager {
    * Per node for a different reason than its three siblings: they carry the node's
    * own element texture, so sharing would rebind one node's data onto another's
    * mesh. A mesh material holds no per-node texture at all — but it does hold two
-   * pieces of per-node state that make sharing wrong anyway: the `flatNormal`
+   * pieces of per-node state that make sharing wrong anyway: the `shading`
    * compile-time variant (a function of that node's `shading` and its normals'
    * validity for the active view) and `side` (re-applied per epoch by
    * `applyMeshSide`). Sharing would let one node's shading model and face-sidedness
@@ -396,7 +396,9 @@ export class MaterialManager {
       intensity: props.intensity,
       offset: props.offset,
       blendingMode: props.blendingMode,
-      flatNormal: props.flatNormal,
+      shading: props.shading,
+      baseColorTexture: props.baseColorTexture,
+      baseColorTextureLuminance: props.baseColorTextureLuminance,
       ambient: props.ambient,
       shadeExponent: props.shadeExponent,
       specular: props.specular,

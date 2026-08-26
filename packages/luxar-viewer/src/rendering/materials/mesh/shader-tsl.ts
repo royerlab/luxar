@@ -67,6 +67,7 @@ import {
   MESH_NORMAL_EPS_SQ,
   resolveMeshBlendingMode,
   resolveMeshOutput,
+  type MeshShadingMode,
 } from './appearance';
 
 // Type-erased constructor aliases — same rationale as the point/gsplat TSL
@@ -103,14 +104,34 @@ export interface MeshTSLConfig {
    */
   readonly noGOG?: boolean;
   /**
-   * Shade from screen-space derivatives instead of the stored `normal` attribute.
-   * Mirrors `LUXAR_MESH_FLAT_NORMAL`, and like it this is a BUILD-time choice, not a
-   * runtime branch: a declared-but-unbound `normal` reads `(0, 0, 0, 1)` rather than
-   * "absent", so there is no runtime value meaning "no normals". `createMeshNode`
-   * computes it once per node from `shading` + the stored normals' validity for the
-   * active `displayDims`, and hands the same answer to both backends (§6.2).
+   * How normals are obtained: stored (`'smooth'`), screen-space derivatives
+   * (`'flat'`), or not at all (`'none'`, unlit).
+   *
+   * Mirrors `LUXAR_MESH_FLAT_NORMAL` / `LUXAR_MESH_NO_SHADING`, and like them this
+   * is a BUILD-time choice, not a runtime branch: a declared-but-unbound `normal`
+   * reads `(0, 0, 0, 1)` rather than "absent", so there is no runtime value meaning
+   * "no normals". `createMeshNode` computes it once per node from the authored
+   * `shading` plus the stored normals' validity for the active `displayDims`, and
+   * hands the same answer to both backends (§6.2).
+   *
+   * ONE enum rather than two booleans, because `flatNormal && noShading` has no
+   * meaning and an enum keeps it from existing.
    */
-  readonly flatNormal?: boolean;
+  readonly shading?: MeshShadingMode;
+  /**
+   * Sample the base colour from `uBaseColorTex` through the `uv` attribute.
+   * Mirrors `LUXAR_MESH_BASE_COLOR_TEX`.
+   *
+   * Build-time for the same reason `useColormap` is: it decides whether the `uv`
+   * attribute and the `vUv` varying exist in the vertex layout at all. WebGPU bakes
+   * attribute identity into the pipeline, so this cannot become a runtime branch.
+   */
+  readonly useBaseColorTexture?: boolean;
+  /**
+   * Whether the base-colour texture is single-channel, so red is replicated to RGB.
+   * Mirrors `LUXAR_MESH_TEX_LUMINANCE`.
+   */
+  readonly baseColorTextureLuminance?: boolean;
   /**
    * Luxar blending mode. Drives the fragment's emission shape (cutout /
    * premultiplied / alpha-weighted) and the THREE framebuffer state. Defaults to
@@ -158,6 +179,8 @@ export interface MeshTSLNodes {
   readonly uIsOrtho: TSLNode;
   /** Near-fade start distance, world units (scene-relative; see the fragment). */
   readonly uNearCull: TSLNode;
+  /** Set only when `config.useBaseColorTexture` is active. */
+  readonly uBaseColorTex?: TSLNode;
   /** Set only when colormap mode is active. */
   readonly uColormapTex?: TSLNode;
   readonly uScalarMin?: TSLNode;
@@ -195,6 +218,12 @@ export function meshWebGPUFactory(
       );
     }
   }
+  if (config.useBaseColorTexture && !nodes.uBaseColorTex) {
+    throw new Error(
+      'meshWebGPUFactory: config.useBaseColorTexture=true but nodes.uBaseColorTex is not bound.'
+    );
+  }
+  const uBaseColorTex = config.useBaseColorTexture ? nodes.uBaseColorTex! : null;
   const uColormapTex = config.useColormap ? nodes.uColormapTex! : null;
   const uScalarMin = config.useColormap ? nodes.uScalarMin! : null;
   const uScalarScale = config.useColormap ? nodes.uScalarScale! : null;
@@ -203,6 +232,8 @@ export function meshWebGPUFactory(
   // The emission shape is a BUILD-time branch (a JS conditional, as in the gsplat
   // factory — TSL `.select()` is avoided for structural branches). The wrapper
   // rebuilds the graph on any mode change that crosses one of these boundaries.
+  const shading: MeshShadingMode = config.shading ?? 'smooth';
+  const unlit = shading === 'none';
   const output = resolveMeshOutput(blendingMode);
   const premultiplyRGB = config.useMaxRGBContribution ?? output === 'rgb-contribution';
   const alphaCutout = output === 'opaque';
@@ -216,6 +247,14 @@ export function meshWebGPUFactory(
   const aScalar: TSLNode | null = config.useColormap
     ? attribute<'float'>('aScalar', 'float')
     : null;
+  // Only referenced on the textured build, so on every other build `uv` stays out
+  // of the vertex layout entirely — which matters more here than it would in GLSL:
+  // WebGPU bakes the attribute set into the pipeline, so an unused-but-declared
+  // attribute is a real difference between variants, not dead code the compiler
+  // drops.
+  const aUv: TSLNode | null = config.useBaseColorTexture
+    ? attribute<'vec2'>('uv', 'vec2')
+    : null;
 
   // ---- Varyings ----
   // Declared up front and `.assign()`ed inside the vertex body — the TSL pattern
@@ -227,9 +266,9 @@ export function meshWebGPUFactory(
   const vViewPos: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   // Only declared for the stored-normal build. Under `flatNormal` the `normal`
   // attribute is never referenced, so it stays out of the vertex layout entirely.
-  const vNormal: TSLNode | null = config.flatNormal
-    ? null
-    : varying(vec3(float(0.0), float(0.0), float(0.0)));
+  const vNormal: TSLNode | null =
+    shading === 'smooth' ? varying(vec3(float(0.0), float(0.0), float(0.0))) : null;
+  const vUv: TSLNode | null = aUv ? varying(vec2(float(0.0), float(0.0))) : null;
 
   const vertexBody = Fn(() => {
     // View space first: the shade term's every other input is view-space, and the
@@ -243,11 +282,19 @@ export function meshWebGPUFactory(
       const t0: TSLNode = clamp(aScalar.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
       const t: TSLNode = config.gammaOne ? t0 : t0.pow(uInvGamma);
       perVertexColor = uColormapTex.sample(vec2(t, 0.5)).rgb;
+    } else if (config.useBaseColorTexture) {
+      // White: the base colour is a PER-FRAGMENT texture fetch, so there is nothing
+      // per-vertex to carry. Not skipped altogether because the fragment multiplies
+      // by `vColor` unconditionally — keeping the GOG/gamma tail identical across
+      // all three colour sources rather than forking it three ways, and white is
+      // the multiplicative identity. GLSL twin does the same.
+      perVertexColor = vec3(1.0, 1.0, 1.0);
     } else {
       perVertexColor = aColor.rgb;
     }
 
     vColor.assign(perVertexColor);
+    if (vUv && aUv) vUv.assign(aUv);
     // Read unconditionally, including under colormap mode: the scalar replaces the
     // colour, not the opacity. Sanitized like the GLSL twin — for a mesh this alpha
     // is the WHOLE coverage term, and a NaN would survive into the cutout
@@ -288,7 +335,31 @@ export function meshWebGPUFactory(
     // control flow — where derivatives are undefined, since normal validity can
     // differ between fragments of the same 2x2 quad. Orientation comes from the
     // rasterized fragment rather than the winding, so this always faces the viewer.
-    const rawDerivative: TSLNode = normalize(cross(dFdx(vViewPos), dFdy(vViewPos))).toVar();
+    // Base colour first, so the unlit path below can skip every normal term. The
+    // texture is sampled PER FRAGMENT, unlike the colormap LUT, which is a
+    // vertex-stage lookup: a LUT maps one scalar per vertex, so interpolating the
+    // resulting colour approximates interpolating the scalar, whereas an image has
+    // structure BETWEEN vertices and a per-vertex fetch would resolve exactly one
+    // texel per vertex — reproducing the point-cloud limitation this feature exists
+    // to remove.
+    let baseColor: TSLNode = vColor;
+    let texAlpha: TSLNode | null = null;
+    if (uBaseColorTex && vUv) {
+      const texel: TSLNode = uBaseColorTex.sample(vUv).toVar();
+      // A single-channel texture uploads as RedFormat and samples as (r, 0, 0, 1),
+      // so without this swizzle a greyscale basemap renders pure red.
+      baseColor = vColor.mul(
+        config.baseColorTextureLuminance ? vec3(texel.r, texel.r, texel.r) : texel.rgb
+      );
+      // Texture alpha MULTIPLIES coverage, so an RGBA basemap gets real cutout holes
+      // under `opaque`. A 3-channel texture is expanded to RGBA with alpha 1 at
+      // upload and a 1-channel one samples alpha 1, so this is a free no-op for both.
+      texAlpha = texel.a;
+    }
+
+    const rawDerivative: TSLNode | null = unlit
+      ? null
+      : normalize(cross(dFdx(vViewPos), dFdy(vViewPos))).toVar();
     // Forced viewer-facing, not assumed so, which makes the fallback
     // convention-INDEPENDENT. `cross(dFdx, dFdy)` carries the sign of the
     // fragment-space y axis, and the specs differ: WGSL's `dpdy` is TOP-DOWN where
@@ -302,13 +373,17 @@ export function meshWebGPUFactory(
     // conventions coincide there and the flip is inert on that platform. Kept anyway —
     // one instruction, correct under either convention, and neither spec promises they
     // agree. Insurance, not a fix for an observed bug. GLSL twin: shader-glsl.ts.
-    const derivativeNormal: TSLNode = rawDerivative.z
-      .lessThan(0.0)
-      .select(rawDerivative.negate(), rawDerivative)
-      .toVar();
+    const derivativeNormal: TSLNode | null = rawDerivative
+      ? rawDerivative.z.lessThan(0.0).select(rawDerivative.negate(), rawDerivative).toVar()
+      : null;
 
-    let N: TSLNode;
-    if (config.flatNormal || !vNormal) {
+    let N: TSLNode | null = null;
+    if (unlit) {
+      // Unlit: no normal is computed at all — not a normal that is computed and
+      // then multiplied by zero. The `normal` attribute stays out of the vertex
+      // layout, and so does the derivative pair.
+      N = null;
+    } else if (!vNormal || !derivativeNormal) {
       N = derivativeNormal;
     } else {
       const nn: TSLNode = dot(vNormal, vNormal).toVar();
@@ -341,17 +416,21 @@ export function meshWebGPUFactory(
 
     // View-anchored lighting: L is offset above-left, while V remains the fixed
     // view-space axis (0, 0, 1), making the Blinn-Phong half-vector constant.
-    const lightDirection: TSLNode = normalize(
-      vec3(MESH_LIGHT_DIRECTION[0], MESH_LIGHT_DIRECTION[1], MESH_LIGHT_DIRECTION[2])
-    );
-    const halfVector: TSLNode = normalize(lightDirection.add(vec3(0.0, 0.0, 1.0)));
-    const wrap: TSLNode = clamp(dot(N, lightDirection).mul(0.5).add(0.5), 0.0, 1.0);
-    const shade: TSLNode = mix(uAmbient, float(1.0), wrap.pow(uShadeExponent)).toVar();
-    const spec: TSLNode = uSpecular.mul(max(dot(N, halfVector), float(0.0)).pow(uShininess));
+    let shade: TSLNode | null = null;
+    let spec: TSLNode | null = null;
+    if (N) {
+      const lightDirection: TSLNode = normalize(
+        vec3(MESH_LIGHT_DIRECTION[0], MESH_LIGHT_DIRECTION[1], MESH_LIGHT_DIRECTION[2])
+      );
+      const halfVector: TSLNode = normalize(lightDirection.add(vec3(0.0, 0.0, 1.0)));
+      const wrap: TSLNode = clamp(dot(N, lightDirection).mul(0.5).add(0.5), 0.0, 1.0);
+      shade = mix(uAmbient, float(1.0), wrap.pow(uShadeExponent)).toVar();
+      spec = uSpecular.mul(max(dot(N, halfVector), float(0.0)).pow(uShininess));
+    }
 
     const adjusted: TSLNode = config.noGOG
-      ? vColor
-      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0)).toVar();
+      ? baseColor
+      : max(baseColor.mul(uIntensity).add(uOffset), vec3(0.0)).toVar();
 
     // Colormap mode applied gamma pre-LUT; gammaOne means pow(x, 1) == x.
     const finalColor: TSLNode =
@@ -359,11 +438,18 @@ export function meshWebGPUFactory(
 
     // The shade factor is a LIGHTING term: RGB only, never the coverage — or a
     // silhouette fragment would also turn transparent (and dissolve under cutout).
-    const shadedColor: TSLNode = finalColor.mul(shade).add(vec3(spec)).toVar();
+    // Unlit means the base colour reaches the screen unmodulated — what every other
+    // Luxar geometry type does (the other three are purely emissive) and what a data
+    // basemap needs, since a view-anchored key would make a colour-coded surface
+    // read differently as the camera moved.
+    const shadedColor: TSLNode =
+      shade && spec ? finalColor.mul(shade).add(vec3(spec)).toVar() : finalColor.toVar();
 
     // Mesh has no per-element intensity/amplitude/falloff scalar (§2.2), so
     // coverage is just per-vertex alpha times node opacity.
-    const a: TSLNode = vAlpha.mul(uOpacity).toVar();
+    const a: TSLNode = (
+      texAlpha ? vAlpha.mul(uOpacity).mul(texAlpha) : vAlpha.mul(uOpacity)
+    ).toVar();
 
     // Perspective near fade, PER FRAGMENT — a triangle spans depth, so a
     // per-vertex value would interpolate the RAMP across the face and smear the
@@ -464,13 +550,28 @@ export function buildMeshTSLNodesFromUniforms(
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
   };
-  if (!config.useColormap) return base;
+  // Both optional groups are added independently, because the two colour sources
+  // are mutually exclusive at the DEFINE level and this function must not encode a
+  // second, weaker version of that rule. An early `return base` before the texture
+  // group is how the codegen harness would silently build the untextured variant
+  // while asking for the textured one.
   return {
     ...base,
-    uColormapTex: texture(
-      (uniforms.uColormapTex?.value as THREE.Texture | null) ?? new THREE.Texture()
-    ),
-    uScalarMin: uniform((uniforms.uScalarMin?.value as number) ?? 0.0),
-    uScalarScale: uniform((uniforms.uScalarScale?.value as number) ?? 1.0),
+    ...(config.useBaseColorTexture
+      ? {
+          uBaseColorTex: texture(
+            (uniforms.uBaseColorTex?.value as THREE.Texture | null) ?? new THREE.Texture()
+          ),
+        }
+      : {}),
+    ...(config.useColormap
+      ? {
+          uColormapTex: texture(
+            (uniforms.uColormapTex?.value as THREE.Texture | null) ?? new THREE.Texture()
+          ),
+          uScalarMin: uniform((uniforms.uScalarMin?.value as number) ?? 0.0),
+          uScalarScale: uniform((uniforms.uScalarScale?.value as number) ?? 1.0),
+        }
+      : {}),
   };
 }

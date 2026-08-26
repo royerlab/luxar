@@ -287,7 +287,7 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
       LUXAR_MESH_ALPHA_CUTOUT: '',
       LUXAR_MESH_FLAT_NORMAL: '',
     }),
-    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', flatNormal: true }),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', shading: 'flat' }),
     buildMesh: buildMeshObject(),
   },
   // A size-3 `float32` colour attribute — the RGB layout, where the opaque

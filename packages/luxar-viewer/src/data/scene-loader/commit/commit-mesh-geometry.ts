@@ -102,6 +102,10 @@ export function commitMeshGeometry(
     // instead of re-deriving them), and scalars are view-independent by nature.
     normals: data.normals,
     scalars: data.scalars,
+    // Uploaded once for the same reason: a UV is authored per vertex against the
+    // texture, so it is view-independent — unlike `position`, which is re-extracted
+    // whenever `displayDims` changes.
+    uvs: data.uvs,
     vertexCount: data.vertexCount,
     // The node's TOTAL faces, which sizes the index buffer's capacity — not the
     // visible count, which changes every slice move and would reallocate (and leak)

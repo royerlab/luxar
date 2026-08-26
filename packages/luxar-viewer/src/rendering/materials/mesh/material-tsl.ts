@@ -36,8 +36,12 @@ import {
   clampShadeExponent,
   clampShininess,
   resolveMeshBlendingMode,
+  resolveMeshColorSource,
   resolveMeshOutput,
+  syncMeshColorSourceDefines,
   syncMeshEmissionDefines,
+  syncMeshShadingDefines,
+  type MeshShadingMode,
 } from './appearance';
 import type { MeshMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
@@ -73,6 +77,7 @@ interface MeshMaterialTSLNodeTable {
   uAlphaCutoff: TSLNode;
   uIsOrtho: TSLNode;
   uNearCull: TSLNode;
+  uBaseColorTex?: TSLNode;
   uColormapTex?: TSLNode;
   uScalarMin?: TSLNode;
   uScalarScale?: TSLNode;
@@ -149,21 +154,33 @@ export class MeshTSLMaterial
       this.uniforms.uScalarScale = { value: sr.scalarScale };
     }
 
+    if (materialConfig.baseColorTexture) {
+      this.uniforms.uBaseColorTex = { value: materialConfig.baseColorTexture };
+    }
+
     // The defines record is the shared source of truth for which graph variant is
     // built — the same flags the GLSL twin hands to the preprocessor drive the
     // factory's JS-side conditionals here, so the two backends can never build
     // different variants from the same config.
-    this.defines = materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {};
+    this.defines = {};
     if (isGammaOne(gammaValue)) this.defines.LUXAR_GAMMA_ONE = '';
     if (isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)) {
       this.defines.LUXAR_NO_GOG = '';
     }
-    if (materialConfig.flatNormal) this.defines.LUXAR_MESH_FLAT_NORMAL = '';
+    if (materialConfig.baseColorTexture && materialConfig.baseColorTextureLuminance) {
+      this.defines.LUXAR_MESH_TEX_LUMINANCE = '';
+    }
+    // Both through the shared helpers, so USE_COLORMAP is set by the SAME code that
+    // maintains the at-most-one-colour-source invariant rather than inline — see
+    // `syncMeshColorSourceDefines`.
+    syncMeshColorSourceDefines(this.defines, resolveMeshColorSource(materialConfig));
+    syncMeshShadingDefines(this.defines, materialConfig.shading ?? 'smooth');
     this.toneMapped = false;
 
     this.userData.gamma = gammaValue;
     this.userData.scalarRange = materialConfig.scalarRange;
-    this.userData.flatNormal = materialConfig.flatNormal === true;
+    this.userData.shading = materialConfig.shading ?? 'smooth';
+    this.userData.baseColorTextureLuminance = materialConfig.baseColorTextureLuminance === true;
 
     // Stamp the resolved mode BEFORE the first rebuild so the factory reads the
     // right branch on its first build (mirrors the sibling TSL constructors).
@@ -209,6 +226,28 @@ export class MeshTSLMaterial
   }
 
   /**
+   * (Re)create the base-colour texture node, mirroring {@link rebuildColormapNodes}.
+   *
+   * A fresh node is required rather than a value write, and that is the whole
+   * reason this method exists: `texture()` CAPTURES its `THREE.Texture` at
+   * construction, so mutating `uniforms.uBaseColorTex.value` afterwards changes
+   * nothing the graph reads. A swap that only wrote the uniform would leave the
+   * mesh sampling the previous image — and on a dataset switch, an image belonging
+   * to a node that no longer exists.
+   */
+  private rebuildBaseColorTextureNode(useBaseColorTexture: boolean): void {
+    if (useBaseColorTexture) {
+      const tex =
+        (this.uniforms.uBaseColorTex?.value as THREE.Texture | null | undefined) ??
+        new THREE.Texture();
+      this.tslNodes.uBaseColorTex = texture(tex);
+      this.uniforms.uBaseColorTex = { value: tex };
+    } else {
+      this.tslNodes.uBaseColorTex = undefined;
+    }
+  }
+
+  /**
    * Re-run the TSL factory and attach the resulting `vertexNode` / `colorNode` +
    * blending state to ourselves. Every variant flag is read back out of `defines`,
    * the same source of truth the GLSL twin's preprocessor consumes.
@@ -216,14 +255,25 @@ export class MeshTSLMaterial
   private rebuildGraph(): void {
     const has = (flag: string): boolean => !!this.defines && flag in this.defines;
     const useColormap = has('USE_COLORMAP');
+    const useBaseColorTexture = has('LUXAR_MESH_BASE_COLOR_TEX');
     this.rebuildColormapNodes(useColormap);
+    this.rebuildBaseColorTextureNode(useBaseColorTexture);
     meshWebGPUFactory(
       this.tslNodes as MeshTSLNodes,
       {
         useColormap,
+        useBaseColorTexture,
+        baseColorTextureLuminance: has('LUXAR_MESH_TEX_LUMINANCE'),
         gammaOne: has('LUXAR_GAMMA_ONE'),
         noGOG: has('LUXAR_NO_GOG'),
-        flatNormal: has('LUXAR_MESH_FLAT_NORMAL'),
+        // Read back OUT of the defines rather than from `userData.shading`, so the
+        // define record stays the single source of truth for which variant is built
+        // — the same record the GLSL twin hands to the preprocessor.
+        shading: has('LUXAR_MESH_NO_SHADING')
+          ? 'none'
+          : has('LUXAR_MESH_FLAT_NORMAL')
+            ? 'flat'
+            : 'smooth',
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'opaque',
       },
       this
@@ -334,17 +384,49 @@ export class MeshTSLMaterial
 
   /**
    * Switch between the stored-normal and derivative-normal graph variants — the
-   * twin of `MeshMaterial.updateFlatNormal`. Idempotent and guarded: a flip rebuilds
+   * twin of `MeshMaterial.updateShading`. Idempotent and guarded: a change rebuilds
    * the graph, which must not happen on a slice move that changed nothing.
    */
-  updateFlatNormal(flatNormal: boolean): void {
+  updateShading(mode: MeshShadingMode): void {
     if (!this.defines) this.defines = {};
-    const had = 'LUXAR_MESH_FLAT_NORMAL' in this.defines;
-    if (flatNormal === had) return;
-    if (flatNormal) this.defines.LUXAR_MESH_FLAT_NORMAL = '';
-    else delete this.defines.LUXAR_MESH_FLAT_NORMAL;
-    this.userData.flatNormal = flatNormal;
-    this.rebuildGraph();
+    const changed = syncMeshShadingDefines(this.defines, mode);
+    this.userData.shading = mode;
+    if (changed) this.rebuildGraph();
+  }
+
+  /**
+   * Swap the base-colour texture. The TSL twin of
+   * `MeshMaterial.updateBaseColorTexture`, and it rebuilds on a texture-identity
+   * swap as well as an on/off flip — `texture()` captures the Texture at
+   * factory-call time, so writing the uniform alone would leave the graph sampling
+   * the old image.
+   *
+   * Routed through the shared colour-source resolver rather than toggling its own
+   * define, so dropping a texture from a node that also has a colormap LUT
+   * re-enables `USE_COLORMAP` instead of leaving the mesh with no colour source.
+   */
+  updateBaseColorTexture(texture: THREE.Texture | null, luminance = false): void {
+    if (!this.defines) this.defines = {};
+    const previous = this.uniforms.uBaseColorTex?.value as THREE.Texture | null | undefined;
+    if (texture) this.uniforms.uBaseColorTex = { value: texture };
+    else if (this.uniforms.uBaseColorTex) this.uniforms.uBaseColorTex.value = null;
+
+    const wantLuminance = !!texture && luminance;
+    const hadLuminance = 'LUXAR_MESH_TEX_LUMINANCE' in this.defines;
+    if (wantLuminance && !hadLuminance) this.defines.LUXAR_MESH_TEX_LUMINANCE = '';
+    else if (!wantLuminance && hadLuminance) delete this.defines.LUXAR_MESH_TEX_LUMINANCE;
+    this.userData.baseColorTextureLuminance = wantLuminance;
+
+    const sourceChanged = syncMeshColorSourceDefines(
+      this.defines,
+      resolveMeshColorSource({
+        baseColorTexture: texture ?? undefined,
+        colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
+      })
+    );
+    if (sourceChanged || wantLuminance !== hadLuminance || previous !== texture) {
+      this.rebuildGraph();
+    }
   }
 
   /**
@@ -404,7 +486,9 @@ export class MeshTSLMaterial
       shininess: this.uniforms.uShininess.value,
       alphaCutoff: this.uniforms.uAlphaCutoff.value,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'opaque',
-      flatNormal: this.userData.flatNormal === true,
+      shading: (this.userData.shading as MeshShadingMode | undefined) ?? 'smooth',
+      baseColorTexture: (this.uniforms.uBaseColorTex?.value as THREE.Texture | null) ?? undefined,
+      baseColorTextureLuminance: this.userData.baseColorTextureLuminance === true,
       depthTest: this.userData.depthTest ?? true,
       transparent: this.transparent,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
