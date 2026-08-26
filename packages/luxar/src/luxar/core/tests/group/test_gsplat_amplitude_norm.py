@@ -20,9 +20,11 @@ from luxar._zarr_compat import read_node_attrs
 from luxar.core.group.gsplats_pipeline.amplitude_norm import (
     AMPLITUDE_REFERENCE_PERCENTILE,
     NORMALIZATION_FACTOR_ATTR,
+    normalize_node_in_place,
     resolve_factor,
 )
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
 
 DIMS = Dimensions([Dimension(n, display=True, range=(0.0, 120.0)) for n in "XYZ"])
 
@@ -237,9 +239,12 @@ def test_partition_gets_one_tree_wide_factor(tmp_path):
         )
 
     # Deliberately uneven: part 1 is 4x hotter than part 0.
-    node = GSplatData.partition_from_regions(
-        [part(200.0, 0.0), part(800.0, 40.0), part(300.0, 80.0)]
+    parts = [part(200.0, 0.0), part(800.0, 40.0), part(300.0, 80.0)]
+    pooled_reference = np.percentile(
+        np.concatenate([item.amplitudes for item in parts]),
+        AMPLITUDE_REFERENCE_PERCENTILE,
     )
+    node = GSplatData.partition_from_regions(parts)
 
     out = tmp_path / "p.luxar.zarr"
     with LuxarZarrCompiler(out) as compiler:
@@ -254,6 +259,28 @@ def test_partition_gets_one_tree_wide_factor(tmp_path):
     assert len(set(round(f, 12) for f in factors)) == 1, (
         f"parts were scaled by DIFFERENT factors, which steps at every seam: {factors}"
     )
+    assert factors[0] == pytest.approx(1.0 / pooled_reference, rel=1e-3)
+
+
+def test_graft_reference_uses_only_the_finest_lod_level():
+    """Coarse merged representatives must not darken the default finest view."""
+
+    def leaf(peak: float, seed: int) -> GSplatLeaf:
+        return GSplatLeaf(
+            additive_sublods=list(_data(peak=peak, seed=seed).additive_sublods)
+        )
+
+    coarse = leaf(160.0, 1)
+    finest = leaf(10.0, 2)
+    node = GSplatLodGroup(children=[coarse, finest])
+
+    factor = normalize_node_in_place(node, True)
+
+    assert factor is not None
+    finest_reference = np.percentile(
+        finest.additive_sublods[0].amplitudes, AMPLITUDE_REFERENCE_PERCENTILE
+    )
+    assert finest_reference == pytest.approx(1.0, abs=0.02)
 
 
 def test_partition_opt_out(tmp_path):
@@ -305,9 +332,10 @@ def test_resolve_factor(spec, reference, expected):
 
 
 @pytest.mark.parametrize("bad", ["yes", -1.0, 0.0, float("inf")])
-def test_resolve_factor_rejects_nonsense(bad):
+@pytest.mark.parametrize("reference", [800.0, 0.0])
+def test_resolve_factor_rejects_nonsense(bad, reference):
     with pytest.raises(ValueError):
-        resolve_factor(bad, 800.0)
+        resolve_factor(bad, reference)
 
 
 def test_all_zero_amplitudes_are_not_touched(tmp_path):

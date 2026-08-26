@@ -59,6 +59,9 @@ Design decisions, and why
   would rescale the rungs against each other, so each streaming prefix and each
   LOD level would render at a different exposure — the same failure
   ``io/_compiler/finalize/amplitude_window.py`` exists to prevent for windows.
+  The reference pools every spatial partition part, but follows only the finest
+  child through each substitutive LOD group: coarse merged representatives carry
+  combined mass and must not darken the finest view users inspect up close.
 
 * **``auto`` is a no-op on data that is already in range.** Many datasets are
   fitted from volumes already normalised to ``[0, 1]`` and then dimmed by a
@@ -68,13 +71,13 @@ Design decisions, and why
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterable, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Iterator, Optional, Tuple, Union
 
 import numpy as np
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.tree import GSplatNode
+    from luxar.gsplats.tree import GSplatLeaf, GSplatNode
 
 #: Upper reference percentile mapped to the normalisation target.
 #: Kept equal to the percentile ``amplitude_data_range`` uses for its upper
@@ -109,18 +112,34 @@ def _sample_reference(values: np.ndarray) -> float:
     return float(np.percentile(values, AMPLITUDE_REFERENCE_PERCENTILE))
 
 
+def _iter_reference_leaves(node: "GSplatNode") -> Iterator["GSplatLeaf"]:
+    """Yield every partition part, following only the finest LOD children."""
+    from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+    if isinstance(node, GSplatLeaf):
+        yield node
+    elif isinstance(node, GSplatLodGroup):
+        yield from _iter_reference_leaves(node.children[node.default_level])
+    elif isinstance(node, GSplatPartition):
+        for child in node.children:
+            yield from _iter_reference_leaves(child)
+    else:  # pragma: no cover - GSplatNode is a closed union
+        raise TypeError(f"Unknown gsplat node type: {type(node).__name__}")
+
+
 def pooled_amplitudes_from_node(node: "GSplatNode") -> np.ndarray:
-    """Every amplitude in a node tree, pooled into one array.
+    """Reference amplitudes for a node tree, pooled into one array.
 
-    Walks all leaves and all additive sub-LODs, so the reference is computed
-    over the WHOLE structure — the single factor this module promises cannot be
-    derived from one level.
+    Pools every partition part so adjacent tiles share one exposure, but follows
+    only the finest child of each substitutive LOD group. Coarse levels contain
+    merged representatives with systematically larger amplitudes; including them
+    would under-expose the finest/default view and make this path disagree with
+    :func:`normalize_gsplat_data`. All additive sub-LODs of each selected finest
+    leaf participate because they form one prefix-sum representation.
     """
-    from luxar.gsplats.tree import iter_leaves
-
     chunks = [
         np.asarray(sub.amplitudes, dtype=np.float64)
-        for leaf in iter_leaves(node)
+        for leaf in _iter_reference_leaves(node)
         for sub in leaf.additive_sublods
     ]
     if not chunks:
@@ -137,29 +156,32 @@ def resolve_factor(spec: NormalizeSpec, reference: float) -> Optional[float]:
     """
     if spec is None or spec is False:
         return None
+
+    if spec is True or (isinstance(spec, str) and spec.lower() == "auto"):
+        target = 1.0
+        automatic = True
+    else:
+        if isinstance(spec, bool):  # pragma: no cover - False handled above
+            return None
+        if isinstance(spec, str):
+            raise ValueError(
+                "normalize_amplitudes must be True/False/'auto' or a number, "
+                f"got {spec!r}"
+            )
+        target = float(spec)
+        if not np.isfinite(target) or target <= 0.0:
+            raise ValueError(
+                "normalize_amplitudes target must be a positive finite number, "
+                f"got {target!r}"
+            )
+        automatic = False
+
     if not (reference > 0.0) or not np.isfinite(reference):
         # All-zero or degenerate amplitudes: any factor is meaningless, and
         # scaling by one would only invalidate the fit's measured stamps.
         return None
-
-    if spec is True or (isinstance(spec, str) and spec.lower() == "auto"):
-        if reference <= 1.0 + IN_RANGE_TOLERANCE:
-            return None  # already in range — see module docstring
-        return 1.0 / reference
-
-    if isinstance(spec, bool):  # pragma: no cover - covered by the branch above
-        return None
-    if isinstance(spec, str):
-        raise ValueError(
-            f"normalize_amplitudes must be True/False/'auto' or a number, got {spec!r}"
-        )
-
-    target = float(spec)
-    if not np.isfinite(target) or target <= 0.0:
-        raise ValueError(
-            f"normalize_amplitudes target must be a positive finite number, "
-            f"got {target!r}"
-        )
+    if automatic and reference <= 1.0 + IN_RANGE_TOLERANCE:
+        return None  # already in range — see module docstring
     return target / reference
 
 
@@ -211,25 +233,7 @@ def normalize_node_in_place(node: "GSplatNode", spec: NormalizeSpec) -> Optional
     return factor
 
 
-def describe(factor: Optional[float], reference: float) -> str:
-    """One-line report for the console, or an empty string when inactive."""
-    if factor is None:
-        return ""
-    return (
-        f"amplitudes normalised: p{AMPLITUDE_REFERENCE_PERCENTILE:g} "
-        f"{reference:.4g} -> {reference * factor:.4g} (x{factor:.6g})"
-    )
-
-
 def stamp_factor(attrs: dict, factor: Optional[float]) -> None:
     """Record the applied factor on the node attrs, when there was one."""
     if factor is not None:
         attrs[NORMALIZATION_FACTOR_ATTR] = float(factor)
-
-
-def pooled_reference_of(values: Iterable[Any]) -> float:
-    """Robust reference over an arbitrary iterable of amplitude arrays."""
-    chunks = [np.asarray(v, dtype=np.float64).ravel() for v in values]
-    if not chunks:
-        return 0.0
-    return _sample_reference(np.concatenate(chunks))

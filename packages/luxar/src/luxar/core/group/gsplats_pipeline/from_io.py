@@ -13,6 +13,7 @@ import numpy as np
 
 from ..compositing import reject_mesh_only_appearance, strip_absent_attr_kwargs
 from .amplitude_norm import (
+    NormalizeSpec,
     normalize_node_in_place,
 )
 from .amplitude_norm import (
@@ -672,7 +673,7 @@ def graft_gsplat_node(
     node: Any,  # luxar.gsplats.tree.GSplatNode
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
-    normalize_amplitudes: Any = True,
+    normalize_amplitudes: NormalizeSpec = True,
     _under_partition: Optional[bool] = None,
     _normalized: bool = False,
     **attrs: Any,

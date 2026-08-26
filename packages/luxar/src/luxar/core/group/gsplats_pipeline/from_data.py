@@ -21,6 +21,7 @@ from ..compositing import (
     strip_absent_attr_kwargs,
 )
 from .amplitude_norm import (
+    NormalizeSpec,
     normalize_gsplat_data,
 )
 from .amplitude_norm import (
@@ -738,7 +739,7 @@ def add_gsplats_from_data_impl(
     fill_sigma: Optional[Dict[str, float]] = None,
     lod_group: Any = None,
     additive_lod: Any = None,
-    normalize_amplitudes: Any = True,
+    normalize_amplitudes: NormalizeSpec = True,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     from luxar.gsplats.gsplat_data import GSplatData
