@@ -548,8 +548,8 @@ dims = Dimensions([
 Points in nD space are treated as **hyperspheres**. When viewing a 3D slice:
 
 1. Points whose hypersphere intersects the current hyperplane are visible
-2. Larger radius = visible across more dimension slices
-3. Effective radius shrinks with distance from slice: `r_eff = sqrt(r² - d²)`
+2. Larger radius = visible across more slices only for dimensions declared `spatial=True` (non-displayed dimensions default to non-spatial)
+3. For those spatial dimensions, effective radius shrinks with distance from slice: `r_eff = sqrt(r² - d²)`
 
 ### Keyboard Navigation
 

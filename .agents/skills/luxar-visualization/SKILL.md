@@ -105,8 +105,7 @@ scene.add_text("Embryo, t=0", position=(0.02, 0.02), font_size=0.05, anchor="top
 ## Demo helpers (for scripts that fit/serve)
 
 From `luxar.demos` (the barrel that re-exports these — the single spelling; never
-import the owning `luxar.utils` modules or `luxar.utils.data_fetch` directly from
-a demo):
+import the owning `luxar.demos._support.*` modules directly from a demo):
 - `launch_viewer(output_path, open_browser=True)` — serve via the CLI viewer.
 - `parse_demo_flags()` — standard `--recompute` / `--no-serve` / `--serve-only` flags.
 - `load_precomputed_gsplats(demo_name, file_names, recompute=...)` — load cached

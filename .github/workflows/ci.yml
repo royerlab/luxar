@@ -128,7 +128,8 @@ jobs:
             # checking the baseline still MATCHES the tree, #1678), the Makefile
             # (test_python_version_declarations.py, test_demo_commands.py),
             # scripts/gallery/manifest.json (test_demo_meta.py cross-validates it
-            # against the demo registry), docs/guides/user/CLI_REFERENCE.md
+            # against the demo registry), generate-gallery.spec.ts (the gallery
+            # manifest field contract is parsed from it), docs/guides/user/CLI_REFERENCE.md
             # (test_docs_command_coverage.py), and the root and demos README files
             # (test_readme_demo_docs.py, test_demo_import_spelling.py). Markdown
             # alone runs only docs-quality, so these need explicit Python ownership.
@@ -139,9 +140,10 @@ jobs:
             # should remain TypeScript-only and avoid the Python matrix.
             # test_docs_workflow.py also parses docs.yml and derives the published
             # LFS candidate set from .gitattributes, so both are Python gate inputs.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/guides/user/CLI_REFERENCE\.md$|^format-contract/|^\.github/workflows/docs\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$)|types/format-contract\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
-            # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config
-            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/guides/user/CLI_REFERENCE\.md$|^format-contract/|^\.github/workflows/docs\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/format-contract\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
+            # The gallery-selection unit test also reads the root README and gallery manifest.
+            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^README\.md$|^scripts/gallery/manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
             printf '%s\n' "$changed" | grep -qE '(\.go$|^packages/luxar/src/luxar/cli/_launchers/|(^|/)go\.(mod|sum)$)' && dom_go=true || true
             # This workflow DEFINES how every suite is invoked, so it belongs to all
@@ -502,28 +504,32 @@ jobs:
     # The suite runs under pytest-xdist ON THE SELF-HOSTED BOX ONLY (see
     # PYTEST_ADDOPTS below; hosted runners stay serial). The old note
     # here said xdist "doesn't help on the 1-core runner" — true of a 2-core
-    # GitHub VM, and false on the 16-core self-hosted box, where it cut each leg
-    # from ~45 min to ~16. Combined with the thread pinning below; neither works
-    # without the other.
+    # GitHub VM, and false on the 16-core self-hosted box, where the original
+    # `-n 4` benchmark cut each leg from ~45 min to ~16. Combined with the thread
+    # pinning below; neither works without the other. The memory-safe `-n 2`
+    # runner-equivalent coverage runs took 1:16:49-1:25:17 under the runner's
+    # CPU and memory limits.
     #
-    # 120, not 60, because the self-hosted runners are deliberately SCHED_IDLE
+    # 180, not 60, because the self-hosted runners are deliberately SCHED_IDLE
     # (see luxar-ci-slot@.service): CI only gets CPU nobody else on that box
     # wants, so a sustained burst from the other workloads there can stretch a
     # leg arbitrarily. That is starvation, not a hang, and the heartbeat cannot
     # detect it — an idle-priority job is perfectly healthy, just slow. A
-    # timeout here would be a self-inflicted red. Measured: 16.9 min under xdist,
-    # 47.5 min in the pre-xdist serial worst case.
-    timeout-minutes: 120
+    # timeout here would be a self-inflicted red. Including the ~5.5 min outside
+    # the coverage step, the capped runs imply ~83-91 min jobs before contention;
+    # completed obsidian legs have stretched 2.4-3.3x over their unloaded time.
+    timeout-minutes: 180
     strategy:
       # Report every interpreter's verdict in one run: fail-fast would cancel the
       # siblings on the first red leg, losing precisely the per-version information
       # you need when the legs genuinely differ.
       fail-fast: false
       # With the obsidian fleet size documented by queue-watchdog, keep one
-      # slot available so `typescript-tests` starts immediately rather than
-      # queueing behind the third Python leg. PRs have one Python leg and are
-      # unaffected; push/nightly runs execute two legs, then the third. Keep the
-      # GitHub-hosted fallback elastic: its matrix legs run on separate VMs.
+      # slot from being monopolised by one run's Python matrix. The shared
+      # repository queue may still put other work ahead of this run's
+      # `typescript-tests`; push/nightly runs execute two Python legs, then the
+      # third. PRs have one Python leg and are unaffected. Keep the GitHub-hosted
+      # fallback elastic: its matrix legs run on separate VMs.
       max-parallel: ${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}
       matrix:
         # FLOOR on every PR, floor + NEWEST on push-to-dev and the nightly.
@@ -553,12 +559,12 @@ jobs:
       # every leg ~1.9x SLOWER than the same leg on a GitHub VM (which never
       # contends, because each matrix leg gets its own machine).
       #
-      # Pinning frees ~13 of 16 cores, which `-n 4` (pytest-xdist, see
-      # PYTEST_ADDOPTS below) then spends on real parallelism: 45.5/44.0/47.5 min ->
-      # 15.8/16.6/16.9, i.e. faster than the 21.3/23.8/23.4 GitHub baseline.
-      # Same 6261 passed / 288 skipped and the same 86.44% coverage either way.
+      # Pinning frees ~13 of 16 cores, which pytest-xdist (see PYTEST_ADDOPTS
+      # below) spends on real parallelism. The original `-n 4` benchmark cut
+      # 45.5/44.0/47.5 min to 15.8/16.6/16.9 with the same 6261 passed / 288
+      # skipped and 86.44% coverage, but CPU quota is not the only bound.
       #
-      # Do NOT "improve" `-n 4` to `-n auto`. xdist's auto reads os.cpu_count(),
+      # Do NOT "improve" `-n 2` to `-n auto`. xdist's auto reads os.cpu_count(),
       # which inside the runner container reports the HOST's 16 -- not the 4-CPU
       # cgroup quota (sched_getaffinity says 16 too; only /sys/fs/cgroup/cpu.max
       # tells the truth). `auto` would start 16 workers per leg against 4 CPUs.
@@ -570,18 +576,26 @@ jobs:
       OPENBLAS_NUM_THREADS: '1'
       MKL_NUM_THREADS: '1'
       NUMEXPR_NUM_THREADS: '1'
-      # Worker count must match the MACHINE, not be uniform across machines.
+      # Worker count must fit both the MACHINE and the runner cgroup. Four
+      # coverage-traced workers plus the controller repeatedly reached the
+      # obsidian slot's exact 12 GiB memory.max. Three workers still reached
+      # 12.59 GB in a matching capped run (9.60 GB anonymous RSS), leaving under
+      # 300 MB. Two workers completed at a 10.28 GB peak with zero cgroup max,
+      # OOM, or OOM-kill events, retaining parallelism without the hard limit.
+      # `--dist loadfile` also keeps each file's shared fixtures on one worker,
+      # matching the repository's parallel test contract instead of rebuilding
+      # them as xdist's default load scheduler moves individual tests around.
+      #
       # `-n 4` on a GitHub-hosted VM killed all three legs at 97-98% complete
       # with exit 143 + "the runner has received a shutdown signal" -- four
       # workers each importing torch/napari/scipy exhaust a 2-core hosted VM and
       # the OOM killer takes the runner agent with them. That would have broken
       # the fallback path, i.e. exactly the safety net obsidian relies on.
       #
-      # Both endpoints here are empirically green: serial on hosted
-      # (21.3/23.8/23.4 min) and -n 4 on the 16-core box (15.8/16.6/16.9).
+      # Hosted stays serial (about 1h17m in recent fallback runs).
       # PYTEST_ADDOPTS is read by pytest itself, so the shared `test-cov` script
       # stays machine-agnostic for local use.
-      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 4' || '' }}
+      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2 --dist loadfile' || '' }}
     steps:
       - name: Free disk space (hosted-runner fallback)
         # The full suite exhausts the ~14 GB GitHub-hosted runner and fails with
