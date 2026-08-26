@@ -23,8 +23,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import score_exposure as se  # noqa: E402
 
-POLICY_TS = viewer_source("src/tests/screenshots/exposure-policy.ts")
-
 # Thresholds the scorer mirrors from the capture harness, as
 # {name in exposure-policy.ts: name in score_exposure.py}. Deliberately NOT
 # listed: FLAT_MID_MIN (a scorer-only margin, see its comment) and the harness's
@@ -203,12 +201,15 @@ def test_thresholds_match_the_capture_harness() -> None:
     rather than in a comment. Change a threshold in ``exposure-policy.ts`` and
     this test names the Python constant that needs the same edit.
     """
+    policy_ts = viewer_source("src/tests/screenshots/exposure-policy.ts")
+    if not policy_ts.exists():
+        pytest.skip(f"viewer sources not present: {policy_ts}")
     ts_values = {
-        name: float(value) for name, value in _TS_CONST.findall(POLICY_TS.read_text())
+        name: float(value) for name, value in _TS_CONST.findall(policy_ts.read_text())
     }
     missing = sorted(set(MIRRORED_THRESHOLDS) - set(ts_values))
     assert not missing, (
-        f"not found in {POLICY_TS.name} (renamed or removed?): {missing}"
+        f"not found in {policy_ts.name} (renamed or removed?): {missing}"
     )
     mismatched = {
         ts_name: (ts_values[ts_name], getattr(se, py_name))

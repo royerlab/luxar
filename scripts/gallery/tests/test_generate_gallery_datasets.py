@@ -33,6 +33,8 @@ from typing import Any, Optional
 
 import pytest
 
+from luxar.conftest import viewer_source
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import generate_gallery_datasets as gen  # noqa: E402
@@ -482,10 +484,7 @@ def test_capture_only_entries_have_no_runnable_demo_on_disk() -> None:
 
 def test_manifest_carries_no_undeclared_fields() -> None:
     """Keep manifest metadata within the capture harness's DemoEntry contract."""
-    capture_spec = (
-        gen.REPO_ROOT
-        / "packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts"
-    )
+    capture_spec = viewer_source("src/tests/screenshots/generate-gallery.spec.ts")
     source = capture_spec.read_text(encoding="utf-8")
     interface_match = re.search(
         r"^interface DemoEntry\s*\{(?P<body>.*?)^\}",
