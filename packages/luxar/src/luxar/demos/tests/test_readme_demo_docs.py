@@ -161,12 +161,10 @@ def test_demo_count_matches_registry() -> None:
     text = _readme_text()
     n = len(iter_demos())
     assert f"🎬 {n} Luxar demos" in text, (
-        "README sample banner demo count is stale — run "
-        "`hatch run sync-demo-counts`"
+        "README sample banner demo count is stale — run `hatch run sync-demo-counts`"
     )
     assert f"{n} bundled demos" in text, (
-        "README quick-start demo count is stale — run "
-        "`hatch run sync-demo-counts`"
+        "README quick-start demo count is stale — run `hatch run sync-demo-counts`"
     )
 
 

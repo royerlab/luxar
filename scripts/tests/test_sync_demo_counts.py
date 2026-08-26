@@ -149,7 +149,9 @@ def test_check_passes_after_sync(sync_module: ModuleType, tmp_path: Path) -> Non
 
 
 def test_example_count_matches_smoke_test_discovery(sync_module: ModuleType) -> None:
-    spec = importlib.util.spec_from_file_location("test_examples_smoke", EXAMPLE_SMOKE_TEST)
+    spec = importlib.util.spec_from_file_location(
+        "test_examples_smoke", EXAMPLE_SMOKE_TEST
+    )
     assert spec is not None and spec.loader is not None
     smoke_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(smoke_module)
