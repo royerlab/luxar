@@ -17,20 +17,13 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from luxar.conftest import viewer_source
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import score_exposure as se  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-POLICY_TS = (
-    REPO_ROOT
-    / "packages"
-    / "luxar-viewer"
-    / "src"
-    / "tests"
-    / "screenshots"
-    / "exposure-policy.ts"
-)
+POLICY_TS = viewer_source("src/tests/screenshots/exposure-policy.ts")
 
 # Thresholds the scorer mirrors from the capture harness, as
 # {name in exposure-policy.ts: name in score_exposure.py}. Deliberately NOT

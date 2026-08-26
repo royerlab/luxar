@@ -29,6 +29,7 @@ workflow still skipped.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -46,6 +47,8 @@ WORKFLOW = REPO / ".github/workflows/ci.yml"
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
 #: ``(path, domain, why)`` — the reason is quoted back in the failure message.
+#: Viewer-source readers name their paths through ``viewer_source()``; the static
+#: scan below checks those literal calls against this declaration.
 #:
 #: Not every row is load-bearing to the same degree: some are matched by a broad
 #: alternative that could not plausibly be removed (``Cargo.lock`` via the whole
@@ -277,6 +280,12 @@ NON_DOCS_PATHS: list[str] = [
     "packages/luxar-viewer/src/wasm/rust/src/lib.rs",
 ]
 
+_PYTHON_SOURCE_ROOTS = (
+    REPO / "packages/luxar/src/luxar",
+    REPO / "scripts",
+    REPO / "stats",
+)
+
 #: The rule that puts the workflow itself in every domain. Extracted as text so a
 #: reword breaks this file rather than silently dropping the only classification
 #: ``.github/workflows/ci.yml`` has (none of the four domain patterns match it).
@@ -416,6 +425,63 @@ def test_inputs_without_python_readers_do_not_claim_the_python_domain(
     assert not _classifies(_domain_patterns(workflow)["py"], path), (
         f"{path} sets dom_py even though no Python gate reads it; narrow the "
         "cross-language viewer pattern"
+    )
+
+
+def _viewer_source_calls() -> tuple[set[str], list[str]]:
+    paths: set[str] = set()
+    non_literal_calls: list[str] = []
+    for source_root in _PYTHON_SOURCE_ROOTS:
+        for source_path in source_root.rglob("*.py"):
+            tree = ast.parse(
+                source_path.read_text(encoding="utf-8"), filename=str(source_path)
+            )
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                function = node.func
+                is_viewer_source = (
+                    isinstance(function, ast.Name) and function.id == "viewer_source"
+                ) or (
+                    isinstance(function, ast.Attribute)
+                    and function.attr == "viewer_source"
+                )
+                if not is_viewer_source:
+                    continue
+                if (
+                    len(node.args) != 1
+                    or not isinstance(node.args[0], ast.Constant)
+                    or not isinstance(node.args[0].value, str)
+                ):
+                    relative = source_path.relative_to(REPO)
+                    non_literal_calls.append(f"{relative}:{node.lineno}")
+                    continue
+                paths.add(f"packages/luxar-viewer/{node.args[0].value}")
+    return paths, non_literal_calls
+
+
+def test_viewer_source_readers_are_statically_owned_by_the_python_gate() -> None:
+    """Every shared viewer-source reader must have one checked classifier row."""
+    paths, non_literal_calls = _viewer_source_calls()
+    assert not non_literal_calls, (
+        "viewer_source() paths must be string literals so classifier ownership is "
+        f"statically discoverable; non-literal calls: {non_literal_calls}"
+    )
+    assert paths, (
+        "no viewer_source() calls found; the ownership guard would pass vacuously"
+    )
+
+    python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
+    missing = sorted(paths - python_gate_inputs)
+    assert not missing, (
+        "viewer sources read by Python tests must have dom_py GATE_INPUTS rows: "
+        f"{missing}"
+    )
+
+    negative_readers = sorted(paths & set(NON_PYTHON_DOMAIN_PATHS))
+    assert not negative_readers, (
+        "NON_PYTHON_DOMAIN_PATHS contains viewer sources now read by Python tests; "
+        f"move them into GATE_INPUTS: {negative_readers}"
     )
 
 

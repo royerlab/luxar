@@ -10,7 +10,7 @@ import pytest
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.conftest import find_repo_relative_file
+from luxar.conftest import viewer_source
 from luxar.io._compiler.bounds import WorldBoundsLeaf
 from luxar.io._compiler.finalize.blending_warnings import (
     _MESH_SUPPORTED_BLENDING_MODES,
@@ -70,28 +70,32 @@ def _warning_output(output: str) -> str:
 def test_viewer_default_modes_match_python_contract() -> None:
     assert set(DEFAULT_BLENDING_MODE_BY_GEOMETRY) == set(GEOMETRY_TYPES)
     files = {
-        "points": ("create-points-node.ts", r"blendingMode:.*\?\? '([^']+)'"),
-        "lines": ("create-lines-node.ts", r"blendingMode:.*\?\? '([^']+)'"),
-        "gsplats": ("create-gsplats-node.ts", r"blendingMode:.*\?\? '([^']+)'"),
-        "mesh": ("create-mesh-node.ts", r"return .*\?\? '([^']+)'"),
+        "points": (
+            viewer_source("src/rendering/node-factory/create-points-node.ts"),
+            r"blendingMode:.*\?\? '([^']+)'",
+        ),
+        "lines": (
+            viewer_source("src/rendering/node-factory/create-lines-node.ts"),
+            r"blendingMode:.*\?\? '([^']+)'",
+        ),
+        "gsplats": (
+            viewer_source("src/rendering/node-factory/create-gsplats-node.ts"),
+            r"blendingMode:.*\?\? '([^']+)'",
+        ),
+        "mesh": (
+            viewer_source("src/rendering/node-factory/create-mesh-node.ts"),
+            r"return .*\?\? '([^']+)'",
+        ),
     }
-    for geometry_type, (filename, pattern) in files.items():
-        source_path = find_repo_relative_file(
-            Path(f"packages/luxar-viewer/src/rendering/node-factory/{filename}"),
-            Path(__file__).resolve(),
-        )
-        assert source_path is not None, f"cannot locate viewer factory {filename}"
+    for geometry_type, (source_path, pattern) in files.items():
+        filename = source_path.name
         match = re.search(pattern, source_path.read_text(encoding="utf-8"))
         assert match is not None, f"cannot locate the default mode in {filename}"
         assert match.group(1) == DEFAULT_BLENDING_MODE_BY_GEOMETRY[geometry_type]
 
 
 def test_viewer_normal_depth_write_contract_matches_warning_logic() -> None:
-    source_path = find_repo_relative_file(
-        Path("packages/luxar-viewer/src/rendering/blending-state.ts"),
-        Path(__file__).resolve(),
-    )
-    assert source_path is not None, "cannot locate viewer blending-state.ts"
+    source_path = viewer_source("src/rendering/blending-state.ts")
     source = source_path.read_text(encoding="utf-8")
 
     threshold = re.search(
@@ -126,16 +130,8 @@ def test_viewer_normal_depth_write_contract_matches_warning_logic() -> None:
 
 
 def test_viewer_scene_root_and_mesh_mode_contracts_match_warning_logic() -> None:
-    attrs_source = find_repo_relative_file(
-        Path("packages/luxar-viewer/src/data/attrs-composer.ts"),
-        Path(__file__).resolve(),
-    )
-    mesh_source = find_repo_relative_file(
-        Path("packages/luxar-viewer/src/rendering/materials/mesh/appearance.ts"),
-        Path(__file__).resolve(),
-    )
-    assert attrs_source is not None, "cannot locate viewer attrs-composer.ts"
-    assert mesh_source is not None, "cannot locate viewer mesh appearance.ts"
+    attrs_source = viewer_source("src/data/attrs-composer.ts")
+    mesh_source = viewer_source("src/rendering/materials/mesh/appearance.ts")
     assert "if (root.type !== 'scene') chain.push(root);" in attrs_source.read_text(
         encoding="utf-8"
     )
