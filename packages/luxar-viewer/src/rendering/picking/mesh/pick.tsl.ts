@@ -40,6 +40,7 @@
 import * as THREE from 'three';
 import {
   Fn,
+  texture,
   uniform,
   attribute,
   varying,
@@ -338,5 +339,13 @@ export function buildMeshPickTSLNodesFromUniforms(
     // with (overridden per scene by updateCameraParams).
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    // PRESENCE-keyed, not defaulted: an absent uniform means the node has no
+    // texture, and binding a blank one would build the sampling variant for a node
+    // whose geometry has no `uv` attribute — a bound-but-unfilled attribute reads as
+    // (0, 0, 0, 1) rather than "absent", so every fragment would sample texel 0 and
+    // the whole mesh could vanish under the cutout.
+    ...(uniforms.uBaseColorTex?.value
+      ? { uBaseColorTex: texture(uniforms.uBaseColorTex.value as THREE.Texture) }
+      : {}),
   };
 }

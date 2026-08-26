@@ -1,0 +1,131 @@
+#version 300 es
+
+// Three.js r185 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+
+
+
+
+// uniforms
+
+layout( std140 ) uniform render {
+	float cameraNear;
+	float cameraFar;
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrix;
+	mat4 cameraProjectionMatrixInverse;
+};
+
+layout( std140 ) uniform object {
+	float nodeUniform0;
+	mat3 nodeUniform2;
+	uint nodeUniform3;
+	float nodeUniform4;
+	float nodeUniform5;
+	float nodeUniform6;
+	float nodeUniform7;
+	mat4 nodeUniform10;
+	float nodeUniform14;
+	float nodeUniform15;
+	float nodeUniform16;
+};
+
+
+// varyings
+out float nodeVarying0;
+out vec2 nodeVarying1;
+out float nodeVarying2;
+out vec4 v_clipSpace;
+flat  out float nodeVarying4;
+flat  out vec2 nodeVarying5;
+
+
+// attributes
+layout( location = 0 ) in vec4 color;
+layout( location = 1 ) in vec2 uv;
+layout( location = 2 ) in vec3 position;
+
+
+// vars
+vec2 nodeVar0;
+float nodeVar11;
+mat4 modelViewMatrix;
+vec4 nodeVar12;
+vec4 nodeVar13;
+int nodeVar15;
+vec2 nodeVar16;
+
+// codes
+
+
+void main() {
+
+	// transforms
+
+
+	// flow
+	// code
+
+	nodeVarying0 = 1.0;
+	nodeVar0 = vec2( 0.0, 0.0 );
+	nodeVarying1 = nodeVar0;
+	nodeVarying2 = 0.0;
+
+	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
+
+		nodeVar11 = min( max( color.w, 0.0 ), 1.0 );
+
+	} else {
+
+		nodeVar11 = 1.0;
+
+	}
+
+	nodeVarying0 = nodeVar11;
+	nodeVarying1 = uv;
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform10 );
+	nodeVar12 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	nodeVarying2 = nodeVar12.z;
+	nodeVar13 = ( cameraProjectionMatrix * nodeVar12 );
+	v_clipSpace = nodeVar13;
+	nodeVarying4 = nodeUniform15;
+	nodeVar15 = ( int( uint( gl_VertexID ) ) / 65536 );
+	nodeVar16 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar15 * 65536 ) ) ), float( nodeVar15 ) );
+	nodeVarying5 = nodeVar16;
+
+	// result
+	gl_Position = nodeVar13;
+
+	gl_PointSize = 1.0;
+
+}
