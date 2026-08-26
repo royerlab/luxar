@@ -917,9 +917,9 @@ def test_reveal_ladder_budget_is_charged_as_a_sum(tmp_path, monkeypatch) -> None
     The one place the flat write-time check is *multiplicatively* short rather
     than merely incomplete: the viewer concatenates `additive_<i>` levels into one
     node's buffers and keeps all of them resident, so it charges the total. A
-    shell ladder duplicates every boundary vertex, so the total runs several times
-    the flat mesh — meaning an under-budget surface could still write a ladder the
-    viewer refuses.
+    shell ladder duplicates every boundary vertex, so the total exceeds the flat
+    mesh by a factor that grows with the level count — meaning an under-budget
+    surface could still write a ladder the viewer refuses.
 
     The ceiling is shrunk rather than the fixture grown, and to a value the FLAT
     surface fits inside so the assertion can only be satisfied by the sum: a build
