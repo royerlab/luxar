@@ -94,6 +94,32 @@ class TestSceneExtensionNormalization:
         assert (tmp_path / "scene.luxar.zarr.zip").is_file()
         assert not requested.exists()
 
+    def test_bare_zip_gets_canonical_inner_suffix(self, tmp_path):
+        requested = tmp_path / "scene.zip"
+
+        with LuxarZarrCompiler(requested) as compiler:
+            _write_minimal_scene(compiler)
+
+        assert compiler.store_path == str(tmp_path / "scene.luxar.zarr.zip")
+        assert (tmp_path / "scene.luxar.zarr.zip").is_file()
+        assert not requested.exists()
+
+    def test_archive_destination_symlink_is_refused_before_authoring(self, tmp_path):
+        target = tmp_path / "target.zip"
+        target.write_bytes(b"previous archive")
+        requested = tmp_path / "scene.luxar.zarr.zip"
+        requested.symlink_to(target)
+
+        with pytest.raises(ValueError, match="refuses to write.*symlink"):
+            LuxarZarrCompiler(requested)
+
+        assert requested.is_symlink()
+        assert target.read_bytes() == b"previous archive"
+        assert sorted(path.name for path in tmp_path.iterdir()) == [
+            requested.name,
+            target.name,
+        ]
+
     def test_scene_to_zarr_can_explicitly_finalize_requested_archive(self, tmp_path):
         requested = tmp_path / "scene.luxar.zarr.zip"
 
@@ -169,6 +195,16 @@ class TestSceneExtensionNormalization:
         assert f"Finalized scene at {requested}" in output
         assert "Exporting scene from" not in output
         assert ".compile-" not in output
+
+    def test_archive_packaging_reports_progress(self, tmp_path, capsys):
+        requested = tmp_path / "scene.luxar.zarr.zip"
+
+        with LuxarZarrCompiler(requested) as compiler:
+            _write_minimal_scene(compiler)
+            capsys.readouterr()
+
+        output = capsys.readouterr().out
+        assert f"Packaging scene archive at {requested}" in output
 
     def test_existing_zarr_zip_is_replaced_without_stale_members(self, tmp_path):
         requested = tmp_path / "scene.luxar.zarr.zip"

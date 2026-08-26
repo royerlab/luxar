@@ -204,10 +204,23 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             aprint(f"📁 Using temporary directory: {self._store_path}")
         else:
             requested = Path(store_path)
-            if requested.name.endswith(".zarr.zip"):
-                inner_path = requested.with_name(requested.name[:-4])
+            if requested.name.endswith(".zip"):
+                inner_name = requested.name[:-4]
+                if not inner_name:
+                    raise ValueError(
+                        "Archive output path must include a name before .zip"
+                    )
+                inner_path = requested.with_name(inner_name)
                 normalized = normalize_zarr_path(inner_path, ".luxar.zarr")
                 self._archive_path = Path(f"{normalized}.zip")
+                if self._archive_path.is_symlink():
+                    raise ValueError(
+                        f"LuxarZarrCompiler refuses to write to {self._archive_path}: "
+                        f"it is a symlink (→ {os.readlink(self._archive_path)}). The "
+                        "archive is renamed into place, which would replace the link "
+                        "rather than what it points at. Give the link's target as the "
+                        "output path, or remove the link first."
+                    )
                 self._archive_path.parent.mkdir(parents=True, exist_ok=True)
                 self._store_path = self._archive_path.parent / (
                     f".{self._archive_path.name}.compile-"
@@ -373,6 +386,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         from .optimise import _package
 
         try:
+            aprint(f"📦 Packaging scene archive at {self._archive_path}")
             _package(self._store_path, self._archive_artifact_path)
             os.replace(self._archive_artifact_path, self._archive_path)
         finally:
