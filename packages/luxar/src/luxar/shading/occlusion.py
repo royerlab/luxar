@@ -119,9 +119,9 @@ DEFAULT_GRID_CELLS = 64
 #: ``O(N)`` indexing and grid temporaries add approximately 145 bytes per
 #: element, and group assembly can transiently add ``4 * N_group * D`` bytes.
 #: Shading and weighted combination limit each work array to 32 MiB rather than
-#: another full array; at ``D=24`` the measured transient peak is 0.915x one
-#: full direction array. The rotated grid's worst-case volume is approximately
-#: ``(sqrt(3) * grid_cells) ** 3`` cells.
+#: another full array; at ``N=600k, D=24`` the measured weighted-shading peak is
+#: 1.255x one full direction array. The rotated grid's worst-case volume is
+#: approximately ``(sqrt(3) * grid_cells) ** 3`` cells.
 DEFAULT_N_DIRECTIONS = 24
 
 #: Hemisphere weighting converges more slowly than a plain sphere average, so
