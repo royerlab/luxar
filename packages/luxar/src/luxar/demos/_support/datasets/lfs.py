@@ -7,7 +7,7 @@ from typing import Optional, Union
 
 # Directory containing precomputed data shipped with the package (via Git LFS)
 # Package-internal: imported by bundles and data_fetch.
-_DEMOS_DATA_DIR = Path(__file__).resolve().parent.parent / "demos" / "data"
+_DEMOS_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 
 def is_lfs_pointer(path: Path) -> bool:

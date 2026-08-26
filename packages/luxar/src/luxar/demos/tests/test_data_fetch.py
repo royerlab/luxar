@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from luxar.utils import data_fetch
-from luxar.utils.data_fetch import (
+from luxar.demos._support.datasets import data_fetch
+from luxar.demos._support.datasets.data_fetch import (
     LOCAL_FIT_DIRNAME,
     MANIFEST_PATH,
     DatasetNotFound,
@@ -34,7 +34,10 @@ from luxar.utils.data_fetch import (
     load_manifest,
     local_fit_path,
 )
-from luxar.utils.download import QUARANTINE_SUFFIX, find_quarantined_files
+from luxar.demos._support.downloads.download import (
+    QUARANTINE_SUFFIX,
+    find_quarantined_files,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
 DATA_DIR = Path(data_fetch._DEMOS_DATA_DIR)
@@ -686,7 +689,7 @@ def test_a_bad_in_repo_copy_is_a_fault_not_an_absence(fake_repo):
     Every demo that falls back to a multi-minute refit when its manifest fetch
     comes up empty catches this narrowly — eleven of them ``except
     DatasetUnavailable``, and ``nexrad_supercell`` that plus
-    :class:`~luxar.utils.bundles.BundleMemberNotFound`, the bundle-side routable
+    :class:`~luxar.demos._support.datasets.bundles.BundleMemberNotFound`, the bundle-side routable
     absence (its per-frame member names carry ``--dbz-floor`` and friends, so a
     non-default run legitimately asks the shipped bundle for frames it cannot
     hold). This must not be one of the things any of them swallow: it would
@@ -898,7 +901,9 @@ def test_zenodo_leg_is_never_handed_a_preexisting_file(fake_repo, monkeypatch):
         Path(output_path).write_bytes(b"toy-splat-bytes")
         return Path(output_path)
 
-    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _fake_download)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.download_with_checksum", _fake_download
+    )
 
     (path,) = ensure_dataset(
         "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
@@ -1327,7 +1332,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     unit that is actually downloaded -- gets verified. Members are covered by
     verifying the container, so they are not pinned individually.
     """
-    from luxar.utils import bundles
+    from luxar.demos._support.datasets import bundles
 
     inner = {
         "frame0.gsplats.zarr.zip": b"PK-not-really",
@@ -1395,8 +1400,8 @@ def test_load_dataset_bundle_refreshes_frames_after_superseded_bundle_is_replace
     tmp_path, monkeypatch
 ):
     """A superseded extraction must not inherit the current bundle's stamp."""
+    from luxar.demos._support.datasets import bundles
     from luxar.gsplats import gsplat_data
-    from luxar.utils import bundles
 
     monkeypatch.setattr(
         gsplat_data.GSplatData,
@@ -1466,7 +1471,7 @@ def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
     tmp_path, monkeypatch
 ):
     """Naming a bundle the manifest does not list must raise, not fetch something else."""
-    from luxar.utils import bundles
+    from luxar.demos._support.datasets import bundles
 
     lfs_dir = tmp_path / "repo" / "bundle_ds"
     lfs_dir.mkdir(parents=True)
@@ -1505,7 +1510,7 @@ def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
 
 def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
     """A non-hosted dataset hands control back so the demo builds it itself."""
-    from luxar.utils import bundles
+    from luxar.demos._support.datasets import bundles
 
     manifest = {
         "schema_version": 1,
@@ -1528,7 +1533,7 @@ def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
 
 
 def test_load_dataset_bundle_honours_recompute():
-    from luxar.utils import bundles
+    from luxar.demos._support.datasets import bundles
 
     assert (
         bundles.load_dataset_bundle(
@@ -1755,7 +1760,9 @@ def test_the_download_leg_is_strict_on_the_hosted_digest(fake_repo, monkeypatch)
         Path(output_path).write_bytes(b"hosted-bytes")
         return Path(output_path)
 
-    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _fake_download)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.download_with_checksum", _fake_download
+    )
     ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=False)
 
     assert seen["expected"] == entry["hosted_sha256"], (
@@ -2138,7 +2145,9 @@ def test_a_superseded_cache_is_replaced_when_zenodo_is_reachable(
         Path(output_path).write_bytes(b"NEWER-generation")
         return Path(output_path)
 
-    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _fake_download)
+    monkeypatch.setattr(
+        "luxar.demos._support.downloads.download.download_with_checksum", _fake_download
+    )
 
     (path,) = ensure_dataset(
         "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False

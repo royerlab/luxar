@@ -5,7 +5,8 @@
 ``luxar serve``. Ctrl-C teardown is deterministic — but a demo the user simply
 *forgot* in another terminal never receives a signal, and keeps its ports, its
 memory and its GPU. Re-running that demo then shifts to a neighbouring port
-(a demo's derived port pair is stable, see :func:`luxar.utils.viewer.demo_ports`)
+(a demo's derived port pair is stable, see
+:func:`luxar.demos._support.runtime.viewer.demo_ports`)
 while the old tab keeps serving the stale scene. ``luxar demo stop`` fixes
 that; this module is its discovery + kill engine, with two complementary
 sources:

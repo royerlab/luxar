@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from luxar.utils.download import verify_file_checksum
+from luxar.demos._support.downloads.download import verify_file_checksum
 
 _PAYLOAD = b"luxar checksum test payload"
 _SHA256 = hashlib.sha256(_PAYLOAD).hexdigest()

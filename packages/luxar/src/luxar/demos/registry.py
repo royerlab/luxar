@@ -24,9 +24,9 @@ from ..core.citation import validate_citation
 
 _DEMOS_DIR = Path(__file__).parent
 
-# Mirror of luxar.utils.cache._DEFAULT_CACHE_ROOT, duplicated to keep this
-# lightweight registry off the luxar.utils import chain. A unit test pins the
-# two constants equal.
+# Mirror of luxar.demos._support.datasets.cache._DEFAULT_CACHE_ROOT, duplicated
+# to keep this lightweight registry from importing the demo support graph. A
+# unit test pins the two constants equal.
 DEMO_CACHE_ROOT = Path.home() / ".cache" / "luxar"
 
 # Sub-directories of the cache root that are NOT caches. `luxar demo stop`'s

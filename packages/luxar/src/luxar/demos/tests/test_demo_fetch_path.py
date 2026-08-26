@@ -4,7 +4,7 @@ Two ways exist to load a precomputed gsplat dataset, and only one of them
 consults the manifest:
 
   ``load_dataset_gsplats`` / ``load_dataset_bundle``
-      resolve through :func:`~luxar.utils.data_fetch.ensure_dataset`: the file is
+      resolve through :func:`~luxar.demos._support.datasets.data_fetch.ensure_dataset`: the file is
       checksum-verified against the manifest and the resolution order is cache ->
       in-repo git-LFS -> Zenodo.
 
@@ -846,7 +846,7 @@ def test_a_local_artifact_never_squats_a_manifest_pinned_path(path: Path) -> Non
         + "; ".join(violations)
         + ". A locally computed stand-in can never match the manifest sha256, so "
         "the next fetch quarantines it and the demo recomputes on EVERY launch "
-        "(#1618). Write it to luxar.utils.data_fetch.local_fit_path(<dataset>, "
+        "(#1618). Write it to luxar.demos._support.datasets.data_fetch.local_fit_path(<dataset>, "
         "<file>) instead. If the call really only READS the fetched file, add "
         "its name to _MANIFEST_PATH_READERS with a reason."
     )
@@ -1265,7 +1265,7 @@ def test_no_shipped_variant_is_named_local() -> None:
     namespace that exists to be out of its reach. ``local_fit_path`` refuses that
     variant at the call site; this holds the shipped manifest to it too.
     """
-    from luxar.utils.data_fetch import LOCAL_FIT_DIRNAME
+    from luxar.demos._support.datasets.data_fetch import LOCAL_FIT_DIRNAME
 
     for name, spec in _manifest().items():
         assert LOCAL_FIT_DIRNAME not in (spec.get("variants") or {}), (
