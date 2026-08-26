@@ -53,9 +53,10 @@ export class LuxarZipStore implements AsyncReadable {
   #opening: Promise<ZipFileStore> | undefined;
   #disposed = false;
   readonly #reader: LuxarHttpRangeReader;
+  readonly #abort = new AbortController();
 
   constructor(private readonly url: string) {
-    this.#reader = new LuxarHttpRangeReader(url);
+    this.#reader = new LuxarHttpRangeReader(url, this.#abort.signal);
   }
 
   /**
@@ -120,6 +121,9 @@ export class LuxarZipStore implements AsyncReadable {
    */
   dispose(): void {
     this.#disposed = true;
+    // Actually cancel what is in flight. Relabelling an outcome while the bytes
+    // keep arriving is not cancellation.
+    this.#abort.abort();
     this.#store = undefined;
     this.#opening = undefined;
   }

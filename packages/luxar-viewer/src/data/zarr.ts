@@ -115,8 +115,10 @@ export function createFetchStore(url: string): FetchStore {
  * `unzipit` imports Node's `worker_threads`; that import is guarded by its Node
  * branch, and workers remain disabled in the browser path used here.
  *
- * Wrapped in {@link boundedConcurrencyStore} for the same reason the fetch path
- * is: the ranged GETs are ordinary requests and must share the fetch gate.
+ * NOT wrapped in {@link boundedConcurrencyStore}: the ranged GETs are gated one
+ * level down, inside `fetchWithRetry`, which also gives them the retry budget.
+ * Gating at both levels would let a gated `get` await a gated `read` and
+ * deadlock the pool.
  *
  * KNOWN COST: reading an archive pays a fixed preamble before the first chunk —
  * `unzipit` reads a 65,557-byte tail to find the end-of-central-directory
@@ -126,7 +128,7 @@ export function createFetchStore(url: string): FetchStore {
  * than paying it at construction.
  */
 export function createZipStore(url: string): AsyncReadable {
-  return boundedConcurrencyStore(new LuxarZipStore(url));
+  return new LuxarZipStore(url);
 }
 
 /**

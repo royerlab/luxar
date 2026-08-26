@@ -44,7 +44,39 @@ export type ChunkFetchOutcome =
   /** A caller signal, a store disposal, or an invalidation cancelled the read. */
   | { kind: 'aborted' }
   /** Transient failure after the source exhausted its own retries. */
-  | { kind: 'error'; cause: Error };
+  | { kind: 'error'; cause: Error }
+  /**
+   * The CONTAINER is unreadable — not this one key.
+   *
+   * Distinct from `error` because the store's handling of the two must differ:
+   * a failed chunk degrades to a fill-valued read, which is right for one
+   * chunk and catastrophic for the whole store (a misconfigured server would
+   * render an empty scene instead of saying what is wrong). The store rethrows
+   * this so the loader surfaces `cause`.
+   */
+  | { kind: 'fatal'; cause: Error };
+
+/**
+ * A fault with the CONTAINER itself, as opposed to one missing member.
+ *
+ * Lives in the cache layer, not next to the reader that raises it, for the same
+ * reason {@link ArchiveByteReader} does: `src/cache` sits below `src/data`, so
+ * the source cannot import a concrete reader to recognise its errors. `data`
+ * imports this downward instead.
+ *
+ * The distinction is load-bearing. A missing chunk is a normal `undefined` that
+ * zarrita fills; an unreadable container must surface, or a misconfigured
+ * server renders an empty scene and the crafted remedy never reaches anyone.
+ */
+export class ArchiveFaultError extends Error {
+  constructor(
+    message: string,
+    readonly url: string
+  ) {
+    super(message);
+    this.name = 'ArchiveFaultError';
+  }
+}
 
 /**
  * The minimum a byte-container has to offer for {@link ChunkSource} to read it.
@@ -55,7 +87,11 @@ export type ChunkFetchOutcome =
  * adapter. It also keeps this module ignorant of zip specifics entirely.
  */
 export interface ArchiveByteReader {
-  get(key: string): Promise<Uint8Array | undefined>;
+  /**
+   * Read one member. `signal` must actually cancel the underlying request —
+   * relabelling the outcome while the bytes keep arriving is not cancellation.
+   */
+  get(key: string, signal?: AbortSignal): Promise<Uint8Array | undefined>;
   /**
    * Fresh identity of the container, bypassing caches — an opaque token, so
    * this layer needs to know nothing about ETags or HTTP. `null` means "cannot

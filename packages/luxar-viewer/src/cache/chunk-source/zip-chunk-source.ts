@@ -17,6 +17,7 @@
  * @module cache/chunk-source/zip-chunk-source
  */
 
+import { ArchiveFaultError } from '../chunk-source';
 import type { ArchiveByteReader, ChunkFetchOutcome, ChunkSource } from '../chunk-source';
 import type { RemoteValidationToken } from '../multi-level-caching-store/validation-queue';
 
@@ -51,7 +52,7 @@ export class ZipChunkSource implements ChunkSource {
   async get(key: string, signal?: AbortSignal): Promise<ChunkFetchOutcome> {
     if (signal?.aborted) return { kind: 'aborted' };
     try {
-      const data = await this.reader.get(key);
+      const data = await this.reader.get(key, signal);
       if (signal?.aborted) return { kind: 'aborted' };
       // A key absent from the central directory is a plain miss — and, unlike
       // the directory store's 404, it costs no request at all.
@@ -63,7 +64,12 @@ export class ZipChunkSource implements ChunkSource {
       return { kind: 'ok', data, bytesOverWire: data.byteLength };
     } catch (error) {
       if (signal?.aborted) return { kind: 'aborted' };
-      return { kind: 'error', cause: error instanceof Error ? error : new Error(String(error)) };
+      const cause = error instanceof Error ? error : new Error(String(error));
+      // An archive-level fault (no Range support, archive missing, access
+      // denied) is not a per-key miss: report it as fatal so the store rethrows
+      // and the crafted remedy reaches the user instead of an empty scene.
+      if (cause instanceof ArchiveFaultError) return { kind: 'fatal', cause };
+      return { kind: 'error', cause };
     }
   }
 

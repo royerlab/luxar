@@ -24,16 +24,17 @@
  */
 
 /** Thrown when the server cannot (or will not) serve HTTP range requests. */
-export class RangeUnsupportedError extends Error {
-  constructor(
-    readonly url: string,
-    detail: string
-  ) {
+import { ArchiveFaultError } from '../../cache/chunk-source';
+import { fetchWithRetry } from '../../cache/multi-level-caching-store/fetch-retry';
+
+export class RangeUnsupportedError extends ArchiveFaultError {
+  constructor(url: string, detail: string) {
     super(
       `Cannot read the zipped store at ${url}: ${detail}. ` +
         'Reading a .zarr.zip requires a server that honours HTTP Range requests ' +
         '(responding 206 Partial Content). Serve the directory containing it with ' +
-        '`luxar serve <dir>`, which does, or unpack the archive into a .zarr directory.'
+        '`luxar serve <dir>`, which does, or unpack the archive into a .zarr directory.',
+      url
     );
     this.name = 'RangeUnsupportedError';
   }
@@ -42,13 +43,16 @@ export class RangeUnsupportedError extends Error {
 function archiveHttpError(url: string, response: Response, context = ''): Error {
   const status = `HTTP ${response.status} ${response.statusText}`.trimEnd();
   if (response.status === 404 || response.status === 410) {
-    return new Error(
-      `Cannot read the zipped store at ${url}: the archive was not found (${status})`
+    return new ArchiveFaultError(
+      `Cannot read the zipped store at ${url}: the archive was not found (${status}). ` +
+        'Check the `?src=` path.',
+      url
     );
   }
   if (response.status === 401 || response.status === 403) {
-    return new Error(
-      `Cannot read the zipped store at ${url}: access to the archive was denied (${status})`
+    return new ArchiveFaultError(
+      `Cannot read the zipped store at ${url}: access to the archive was denied (${status}).`,
+      url
     );
   }
   return new RangeUnsupportedError(url, `${status}${context}`);
@@ -100,7 +104,11 @@ export class LuxarHttpRangeReader {
    */
   static readonly MAX_RETAINED_BYTES = 4 * 1024 * 1024;
 
-  constructor(private readonly url: string) {}
+  constructor(
+    private readonly url: string,
+    /** Aborted when the owning store is disposed; cancels reads in flight. */
+    private readonly lifetime?: AbortSignal
+  ) {}
 
   /**
    * Arm or disarm retention of fetched ranges.
@@ -182,19 +190,37 @@ export class LuxarHttpRangeReader {
    * URL: doing it here lets the length it reports seed {@link getLength}.
    */
   async probeIdentity(signal?: AbortSignal): Promise<string | null> {
+    const fromHead = await this.#probeVia({ method: 'HEAD' }, signal);
+    if (fromHead) return fromHead;
+
+    // Fall back to a one-byte ranged GET, for the same reason `getLength` does:
+    // some static hosts and signed-URL schemes allow only `GET`. Without this a
+    // HEAD-hostile host yields no token at all, which lands in the no-token
+    // branch → validation mode `none` → the archive is never re-checked and a
+    // replaced one keeps serving stale chunks. A 206 carries `ETag` /
+    // `Last-Modified` just as a HEAD does.
+    return this.#probeVia({ headers: { Range: 'bytes=0-0' } }, signal);
+  }
+
+  /** One identity probe, cache-bypassing; `null` means "cannot tell". */
+  async #probeVia(init: RequestInit, signal?: AbortSignal): Promise<string | null> {
     try {
-      const response = await fetch(this.url, { method: 'HEAD', cache: 'no-store', signal });
+      const response = await fetch(this.url, { ...init, cache: 'no-store', signal });
       if (!response.ok) return null;
 
-      const length = Number(response.headers.get('content-length'));
-      if (Number.isFinite(length) && length > 0) this.seedLength(length);
+      // A 206 reports the RANGE length in Content-Length, so take the total
+      // from Content-Range; a HEAD reports the whole thing.
+      const total =
+        parseContentRangeTotal(response.headers.get('content-range')) ??
+        Number(response.headers.get('content-length'));
+      if (Number.isFinite(total) && total > 0) this.seedLength(total);
 
       const etag = response.headers.get('etag');
       if (etag) return `etag:${etag}`;
 
       const modified = response.headers.get('last-modified');
-      if (modified && Number.isFinite(length) && length > 0) {
-        return `mtime:${modified}:${length}`;
+      if (modified && Number.isFinite(total) && total > 0) {
+        return `mtime:${modified}:${total}`;
       }
       return null;
     } catch {
@@ -253,7 +279,7 @@ export class LuxarHttpRangeReader {
   }
 
   /** Read `size` bytes at `offset`, insisting on a real partial response. */
-  async read(offset: number, size: number): Promise<Uint8Array<ArrayBuffer>> {
+  async read(offset: number, size: number, signal?: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
     if (size === 0) return new Uint8Array(0);
 
     const retained = this.#fromRetained(offset, size);
@@ -262,7 +288,7 @@ export class LuxarHttpRangeReader {
     const stitch = this.#retainedSuffix(offset, size);
     if (stitch) {
       // Fetch only the part we are missing and splice the retained tail on.
-      const prefix = await this.#fetchRange(offset, stitch.prefixLength);
+      const prefix = await this.#fetchRange(offset, stitch.prefixLength, signal);
       const joined = new Uint8Array(size);
       joined.set(prefix, 0);
       joined.set(stitch.suffix, stitch.prefixLength);
@@ -270,42 +296,68 @@ export class LuxarHttpRangeReader {
       return joined as Uint8Array<ArrayBuffer>;
     }
 
-    const bytes = await this.#fetchRange(offset, size);
+    const bytes = await this.#fetchRange(offset, size, signal);
     this.#retain(offset, bytes);
     return bytes;
   }
 
-  /** One ranged GET, validated as a real partial response. */
-  async #fetchRange(offset: number, size: number): Promise<Uint8Array<ArrayBuffer>> {
+  /**
+   * One ranged GET, validated as a real partial response.
+   *
+   * Routed through `fetchWithRetry` rather than bare `fetch` for two reasons
+   * that were both review findings: it applies the SAME retry budget the
+   * directory path gets (without it, one transient 5xx on a range GET became a
+   * fill-valued chunk), and it holds the bounded-concurrency gate. That gate is
+   * the reason nothing wraps a zipped store in `boundedConcurrencyStore` any
+   * more — gating at two levels would let a gated outer `get` await a gated
+   * inner `read` and deadlock the pool.
+   */
+  async #fetchRange(
+    offset: number,
+    size: number,
+    signal?: AbortSignal
+  ): Promise<Uint8Array<ArrayBuffer>> {
     const end = offset + size - 1;
-    const response = await fetch(this.url, {
+    const scope = await fetchWithRetry(this.url, {
+      signal: signal ?? this.lifetime,
       headers: { Range: `bytes=${offset}-${end}` },
     });
-
-    if (!response.ok) {
-      throw archiveHttpError(this.url, response, ` for bytes ${offset}-${end}`);
-    }
-    if (response.status !== 206) {
-      // The decisive check. 200 here means the body is the whole archive, not
-      // the requested window, and every downstream offset would be wrong.
+    if (!scope) {
+      if (signal?.aborted) throw new DOMException('Archive read aborted', 'AbortError');
       throw new RangeUnsupportedError(
         this.url,
-        `the server answered a Range request with ${response.status} instead of 206, ` +
-          'so the response body is the whole file rather than the requested bytes'
+        `the request for bytes ${offset}-${end} exhausted its retries`
       );
     }
+    const { response } = scope;
+    try {
+      if (!response.ok) {
+        throw archiveHttpError(this.url, response, ` for bytes ${offset}-${end}`);
+      }
+      if (response.status !== 206) {
+        // The decisive check. 200 here means the body is the whole archive, not
+        // the requested window, and every downstream offset would be wrong.
+        throw new RangeUnsupportedError(
+          this.url,
+          `the server answered a Range request with ${response.status} instead of 206, ` +
+            'so the response body is the whole file rather than the requested bytes'
+        );
+      }
 
-    const total = parseContentRangeTotal(response.headers.get('content-range'));
-    if (total !== null && this.#length !== undefined && total !== this.#length) {
-      // The archive changed under us mid-read; offsets from the central
-      // directory we already parsed no longer describe this file.
-      throw new RangeUnsupportedError(
-        this.url,
-        `the archive changed size during the read (${this.#length} → ${total} bytes)`
-      );
+      const total = parseContentRangeTotal(response.headers.get('content-range'));
+      if (total !== null && this.#length !== undefined && total !== this.#length) {
+        // The archive changed under us mid-read; offsets from the central
+        // directory we already parsed no longer describe this file.
+        throw new RangeUnsupportedError(
+          this.url,
+          `the archive changed size during the read (${this.#length} → ${total} bytes)`
+        );
+      }
+
+      const buffer = await response.arrayBuffer();
+      return new Uint8Array(buffer);
+    } finally {
+      scope.dispose();
     }
-
-    const buffer = await response.arrayBuffer();
-    return new Uint8Array(buffer);
   }
 }

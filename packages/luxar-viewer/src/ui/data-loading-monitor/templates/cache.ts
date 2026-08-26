@@ -389,7 +389,9 @@ export function lastValidatedTooltip(mode: CacheValidationMode | undefined): str
 export function lastValidatedLabel(mode: CacheValidationMode | undefined): string {
   // Both hash modes genuinely VALIDATE the cache against the server on each
   // successful check; ttl/none record a fixed baseline that does not advance.
-  return mode === 'content-hash' || mode === 'zattrs-hash' ? 'Last Validated' : 'Cached Since';
+  return mode === 'content-hash' || mode === 'zattrs-hash' || mode === 'archive-etag'
+    ? 'Last Validated'
+    : 'Cached Since';
 }
 
 /**

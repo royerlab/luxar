@@ -8,7 +8,7 @@
  * for interactive states.
  */
 
-import { isZippedStoreUrl } from '../data/zip/entries';
+import { isZippedZarrStoreUrl } from '../data/zip/entries';
 import { DirectoryNavigator, type DirectoryEntry } from '../data';
 import { escapeHtml } from '../utils/escape-html';
 import { extractBaseUrl, extractPath } from './dataset-browser/url-utils';
@@ -627,7 +627,7 @@ export class DatasetBrowser {
     // A zipped store is a dataset too: the viewer reads it in place over range
     // requests. Selecting it is right; navigating INTO it would be meaningless
     // (an archive has no listable children).
-    const endsWithZarr = trimmed.endsWith('.zarr') || isZippedStoreUrl(trimmed);
+    const endsWithZarr = trimmed.endsWith('.zarr') || isZippedZarrStoreUrl(trimmed);
     if (isFullUrl || endsWithZarr) {
       const fullUrl = isFullUrl ? path : this.navigator.getFullUrl(path);
       if (safeFireSelect(this.onDatasetSelect, fullUrl)) this.close();

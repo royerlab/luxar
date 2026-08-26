@@ -213,6 +213,25 @@ describe('LuxarHttpRangeReader.probeIdentity', () => {
     );
   });
 
+  it('falls back to a ranged GET when HEAD is refused, and still seeds the length', async () => {
+    // A HEAD-hostile host would otherwise yield no token at all → validation
+    // mode `none` → the archive is never re-checked and a replaced one keeps
+    // serving stale chunks.
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit = {}) => {
+      if (init.method === 'HEAD') return response(new Uint8Array(0), { status: 405 });
+      return response(new Uint8Array([0]), {
+        status: 206,
+        headers: { etag: '"from-get"', 'content-range': 'bytes 0-0/7777' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const reader = new LuxarHttpRangeReader(URL_);
+    expect(await reader.probeIdentity()).toBe('etag:"from-get"');
+    // Content-Range carries the TOTAL; Content-Length on a 206 is the range.
+    expect(await reader.getLength()).toBe(7777);
+  });
+
   it('returns null rather than a false verdict when it cannot tell', async () => {
     vi.stubGlobal(
       'fetch',

@@ -106,6 +106,23 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     await store.dispose();
   });
 
+  it('RETHROWS a fatal outcome instead of degrading it to a miss', async () => {
+    // The distinction that matters: `error` means one chunk failed and a
+    // fill-valued read is acceptable; `fatal` means the whole container is
+    // unreadable. Reporting the second as a miss renders an empty scene and
+    // swallows the diagnosis the error was written to deliver.
+    const boom = new Error('archive is not range-readable');
+    const { source } = fakeSource({
+      async get(): Promise<ChunkFetchOutcome> {
+        return { kind: 'fatal', cause: boom };
+      },
+    });
+    const store = new MultiLevelCachingStore(source, { noOpfs: true });
+
+    await expect(store.get('points/c/0/0')).rejects.toBe(boom);
+    await store.dispose();
+  });
+
   it('surfaces a source error as a miss rather than throwing', async () => {
     const { source } = fakeSource({
       async get(): Promise<ChunkFetchOutcome> {
