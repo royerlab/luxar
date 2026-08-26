@@ -74,6 +74,50 @@
 export const BORDER_LIT_MAX = 0;
 
 /**
+ * Warn-only under-fill floors, measured from the 29 committed README tiles.
+ * Their smallest observed values were 51.0% span and 12.7% lit area, so these
+ * rounded-down floors flag a real regression without requiring an opt-out for
+ * any current tile. The two signals are deliberately independent: coverage is
+ * the wider percentile-bbox axis, while lit fraction catches a long, thin
+ * subject whose span can look full despite occupying little screen area.
+ */
+export const COVERAGE_MIN = 0.5;
+export const LIT_FRACTION_MIN = 0.1;
+
+export interface CoverageMeasurement {
+  coverage: number;
+  litFraction: number;
+}
+
+export interface UnderfillVerdict {
+  underfilled: boolean;
+  message: string | null;
+}
+
+/** Decide whether the final still looks under-filled. This verdict never fails a capture. */
+export function evaluateUnderfill(args: {
+  demoId: string;
+  measurement: CoverageMeasurement;
+}): UnderfillVerdict {
+  const { demoId, measurement } = args;
+  const lowSpan = measurement.coverage < COVERAGE_MIN;
+  const lowArea = measurement.litFraction < LIT_FRACTION_MIN;
+  if (!lowSpan && !lowArea) return { underfilled: false, message: null };
+
+  const span = `${(measurement.coverage * 100).toFixed(1)}% span`;
+  const area = `${(measurement.litFraction * 100).toFixed(1)}% lit area`;
+  const failures: string[] = [];
+  if (lowSpan) failures.push(`span is below minimum ${(COVERAGE_MIN * 100).toFixed(1)}%`);
+  if (lowArea) failures.push(`lit area is below minimum ${(LIT_FRACTION_MIN * 100).toFixed(1)}%`);
+  return {
+    underfilled: true,
+    message:
+      `[${demoId}] under-filled? ${span}, ${area}; ${failures.join('; ')}. ` +
+      'This is a warning only: inspect the tile before changing its framing.',
+  };
+}
+
+/**
  * How much lower a `fillTarget` to suggest when a crop is detected. The ladder
  * above took ~0.15 of fill target to undo its crop, so one 0.1 step is a starting
  * point, not a solution — and deliberately not the full 0.15, since overshooting
