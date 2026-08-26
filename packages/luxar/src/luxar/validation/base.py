@@ -1025,6 +1025,23 @@ _TEXTURE_CHANNELS = (1, 3, 4)
 #: ``packages/luxar-viewer/src/data/mesh/preflight.ts``.
 MAX_MESH_TEXTURE_SIZE = 16384
 
+#: Per-node decoded-byte ceiling the viewer admits a mesh under.
+#:
+#: MIRROR: ``MESH_DECODE_BUDGET_BYTES`` in
+#: ``packages/luxar-viewer/src/config/constants.ts``.
+#:
+#: Checked here against the TEXTURE ALONE, which is deliberately weaker than the
+#: viewer's check (that one sums the texture with every vertex array). Weaker in
+#: the safe direction: a texture that exceeds the whole budget by itself provably
+#: cannot load anywhere, so refusing it can never be a false rejection, while
+#: guessing at the geometry's share could refuse a scene that would have worked.
+#:
+#: It exists because the per-axis limit above does NOT imply this one. 16000x16000
+#: is under 16384 on both axes and still decodes to 1.02 GB — twice the ceiling —
+#: so without this a perfectly legal-looking authoring call produces a store that
+#: every viewer rejects at load, and the author finds out from a user.
+MESH_TEXTURE_DECODE_BUDGET_BYTES = 512 * 1024 * 1024
+
 
 def validate_uvs_for_writing(uvs: Any, n_vertices: int, context: str = "uvs") -> None:
     """Validate per-vertex texture coordinates before any zarr write.
@@ -1204,7 +1221,26 @@ def validate_texture_for_writing(
             f"{context}: {res_w}x{res_h} exceeds the {MAX_MESH_TEXTURE_SIZE} "
             "per-axis limit",
             "Resample the texture — a larger axis is silently clamped by the "
-            "GPU at upload, so the mesh would render the wrong image",
+            "GPU at upload, so the mesh would render the wrong image. To go "
+            "beyond this, split the surface across several mesh NODES, each "
+            "with its own texture (a partition cannot carry one: a part "
+            "re-indexes vertices, but the image is node-level)",
+        )
+    # A texture can sit inside the per-axis limit and still be unloadable. An
+    # encoded payload decodes to a 4-channel bitmap regardless of what it stored,
+    # so the charge is w * h * 4; a raw one decodes to its own value count at
+    # 4 bytes each.
+    decoded_bytes = res_w * res_h * (4 if encoding != "raw" else max(res_c, 1) * 4)
+    if decoded_bytes > MESH_TEXTURE_DECODE_BUDGET_BYTES:
+        budget_mib = MESH_TEXTURE_DECODE_BUDGET_BYTES // (1024 * 1024)
+        raise ValidationError(
+            f"{context}: {res_w}x{res_h}x{res_c} decodes to "
+            f"{decoded_bytes / (1024 * 1024):.0f} MiB, over the {budget_mib} MiB "
+            "per-node budget every viewer admits a mesh under",
+            "Resample the texture, or split the surface across several mesh "
+            "nodes — each node gets its own budget. Note an ENCODED texture is "
+            "charged at 4 bytes per pixel whatever it stored, because a decoded "
+            "bitmap is always 4-channel",
         )
     # A disagreement is refused rather than silently preferring one source: the
     # viewer spends the DECLARED numbers, so a mismatch is exactly the case where

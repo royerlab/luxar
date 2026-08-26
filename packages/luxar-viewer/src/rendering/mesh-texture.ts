@@ -29,7 +29,27 @@
  * filterable in core WebGL2 and carries ~11 bits of mantissa, which is ample for
  * an image; float32 is used only where the capability probe confirms it.
  *
- * **3. sRGB is decoded HERE for float textures, and by the sampler for 8-bit
+ * **3. `v = 0` is the FIRST row of the image, on both arms.** `texture.flipY` is
+ * set to `false` explicitly rather than left at its default, because the two
+ * defaults disagree AND one of them is a lie:
+ *
+ * - `DataTexture` defaults `flipY = false`;
+ * - a `Texture` over an `ImageBitmap` defaults `flipY = true`, and WebGL
+ *   **silently ignores it** — `UNPACK_FLIP_Y_WEBGL` has no effect on an
+ *   `ImageBitmap` upload, so the flag reads `true` while nothing is flipped.
+ *
+ * Left alone, that made `texture_encoding` change the MEANING of a UV: the same
+ * coordinates over the same pixels rendered upside down as raw vs as JPEG. Since
+ * the raw path takes an `(h, w, c)` array, the convention that matches it —
+ * `v = 0` is `arr[0]` — is the one an author can predict, and it is also what
+ * `sample_equirect` uses (row 0 is +90 latitude). So `flipY` is pinned off and
+ * the authored `v` runs top-down.
+ *
+ * Found by eye, not by the numeric check: a UV-vs-position residual test passed
+ * because it MODELLED the shader's sampling from `texture.flipY`, and the flag it
+ * trusted was the thing that was wrong.
+ *
+ * **4. sRGB is decoded HERE for float textures, and by the sampler for 8-bit
  * ones.** THREE's `SRGBColorSpace` maps to the hardware `SRGB8_ALPHA8` sampler,
  * which is exact and free — but only exists for 8-bit textures. Rather than
  * depend on what THREE does with `colorSpace` on a float texture (which has
@@ -221,6 +241,10 @@ export function createMeshTexture(
     }
   }
 
+  // Decision (3): pinned off on BOTH arms, so `texture_encoding` cannot change
+  // what a UV means. Not left to the defaults — they differ by arm, and the
+  // ImageBitmap one is silently ignored by WebGL.
+  texture.flipY = false;
   texture.magFilter = magFilter;
   texture.minFilter = minFilter;
   texture.wrapS = wrapS;

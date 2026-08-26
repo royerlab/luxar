@@ -313,7 +313,8 @@ DEMO_META = {
         "Marble globe, sliceable by taxon and period."
     ),
     "category": "geoscience",
-    "geometry": "points+lines",
+    # "mixed": a textured-Mesh globe with Points occurrences over it.
+    "geometry": "mixed",
     "requirements": {
         "download_mb": 330,
         "compute": "heavy",
@@ -362,6 +363,11 @@ from luxar.demos import (
     substitutive_lod_or_flat,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._globe_common import (
+    add_cloud_shell,
+    encode_globe_texture,
+    uv_sphere,
+)
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -441,7 +447,12 @@ SAMPLE_SEED: Final = 20260803
 #: fast first paint, and no view-dependent reduction at all. 700k keeps it always
 #: resident inside the ~1M whole-globe budget (700k + ~210k occurrences + ~106k
 #: tracks) while still giving 0.24-degree spacing -- about 27 km at Earth scale.
-N_GLOBE: Final = 700_000
+# The globe is a textured MESH; it was 700k points at a fixed resolution chosen
+# so the shell would seal. A UV sphere samples the basemap per fragment, so the
+# resolution question disappears: 256x128 quads read as round and the texture
+# carries the detail.
+GLOBE_LON: Final = 256
+GLOBE_LAT: Final = 128
 #: ~0.78x the mean point spacing, the ratio that seals the shell without
 #: over-drawing (0.29 spacing at 700k points on a radius-100 globe).
 GLOBE_RADII: Final = 0.23
@@ -2478,8 +2489,17 @@ def sample_equirect(
     return (top * (1.0 - fy) + bottom * fy).astype(np.float32)
 
 
-def build_globe() -> Tuple[np.ndarray, np.ndarray]:
-    """``(positions, colors)`` for the Blue Marble shell."""
+def build_globe() -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, int]:
+    """The Blue Marble shell as a textured mesh.
+
+    Returns ``(vertices, faces, uvs, jpeg_bytes, width, height)``.
+
+    The dimming that used to be baked into the per-point colours is now the
+    node's ``intensity``, and that is a real improvement rather than a
+    relocation: baked-in dimming is unrecoverable, so the Layers panel could
+    brighten the globe only by pushing past 1.0 and clipping. As a node
+    multiplier it is a live control with the full range still available.
+    """
     image_module = require_module("PIL.Image")
     print_data_provenance(
         title="NASA Blue Marble: Next Generation (land_shallow_topo)",
@@ -2489,12 +2509,15 @@ def build_globe() -> Tuple[np.ndarray, np.ndarray]:
     )
     path = cached_download(BLUE_MARBLE_URL, DEMO_NAME, filename="blue_marble.jpg")
     texture = np.asarray(image_module.open(path).convert("RGB"))
-    lon, lat = fibonacci_sphere(N_GLOBE)
-    positions = lonlat_to_xyz(lon, lat, np.zeros(N_GLOBE))
-    # Dim the shell so the occurrence colours read as data on top of it rather
-    # than competing with the continents.
-    colors = sample_equirect(texture, lon, lat) * GLOBE_DIM
-    return positions, colors
+    vertices, faces, uvs, _normals = uv_sphere(GLOBE_LON, GLOBE_LAT, 1.0)
+    return (
+        vertices,
+        faces,
+        uvs,
+        encode_globe_texture(texture),
+        int(texture.shape[1]),
+        int(texture.shape[0]),
+    )
 
 
 # =============================================================================
@@ -2661,8 +2684,8 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
         )
         aprint(f"scrubbable layer: {taxon_pos.shape[0]:,} elements")
 
-    with asection(f"Building globe ({N_GLOBE:,} points)"):
-        globe_xyz, globe_colors = build_globe()
+    with asection(f"Building globe mesh ({GLOBE_LON}x{GLOBE_LAT} quads)"):
+        globe_v, globe_f, globe_uv, globe_tex, globe_tw, globe_th = build_globe()
 
     with asection("Assembling migration ribbons"):
         indices = chain_segment_indices(tracks.lengths)
@@ -2726,6 +2749,13 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 dimensions=dims,
                 viewer_config=ViewerConfig(
                     cinematic_mode=True,
+                    # Turntable about the SOUTH-NORTH axis. Orbit auto-rotation
+                    # spins azimuthally about the controls' up vector, so pinning
+                    # up to +y is what makes this a planetary rotation rather than
+                    # a tumble: `lonlat_to_xyz` puts the north pole on +y, which is
+                    # also the viewer's default up — stated so the two cannot drift.
+                    auto_rotate=True,
+                    auto_rotate_speed=0.35,
                     # Radius-dependent channel shifts/noise would corrupt the
                     # categorical taxon hue encoded by the Neutral pin below.
                     chromatic_lens_distortion_enabled=False,
@@ -2771,30 +2801,69 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             # The globe: extended over every slice (so it is the persistent
             # geographic reference), partitioned to stay under the per-node
             # texture bound, laddered for a fast first paint -- and deliberately
-            # WITHOUT substitutive LOD (see N_GLOBE).
+            # WITHOUT substitutive LOD (a mesh's decimated levels are a separate
+            # authoring route, and a fixed-resolution backdrop has nothing to gain).
             #
             # `extend_to_all` is inferred from the 3-column positions + `fill`.
             # Before royerlab/luxar#1157 was fixed a fully-extended node was never
             # queried at all, and this demo carried a 25k globe replicated into
             # all 139 slots as a workaround; the fix made that unnecessary.
-            scene.add_points(
+            scene.add_mesh(
                 "Earth",
-                globe_xyz,
-                colors=globe_colors,
-                radii=GLOBE_RADII,
+                vertices=globe_v,
+                faces=globe_f,
+                uvs=globe_uv,
+                texture=globe_tex,
+                texture_encoding="jpeg",
+                texture_width=globe_tw,
+                texture_height=globe_th,
                 dim_order=["x", "y", "z"],
                 fill={
                     "taxon": float(ALL_LIFE_SLOT),
                     "period": float(PERIOD_ALL_SLOT),
                 },
                 blending_mode=GLOBE_BLENDING,
-                intensity=GLOBE_INTENSITY,
+                # The dimming that used to be baked into the point colours. Now a
+                # live node multiplier, so the Layers panel can restore full
+                # brightness instead of clipping past 1.0 to get there.
+                intensity=GLOBE_DIM,
                 offset=0.0,
                 gamma=1.0,
                 opacity=1.0,
                 layer=True,
-                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
-                additive_lod=STREAM_LOD,
+                # UNLIT, like the ocean-currents basemap: this globe is the
+                # geographic REFERENCE the occurrence colours are read against, so
+                # a view-anchored key would make the same region read differently
+                # from different camera angles.
+                shading="none",
+                double_sided=False,
+                # No `partition` and no `additive_lod`: both were scale workarounds
+                # for a 700k-point shell (the per-node texture bound and first
+                # paint). 33k vertices needs neither, and a mesh refuses an
+                # arbitrary-order additive ladder outright.
+            )
+
+            # A thin cloud deck, at the same weight as the ocean demo's and for
+            # the same reason: the occurrence points are the data, so the
+            # atmosphere has to stay subordinate to them. `fill` matches the
+            # globe's so the shell is present in every taxon/period slot rather
+            # than appearing only on one.
+            add_cloud_shell(
+                scene,
+                "clouds",
+                demo_name=DEMO_NAME,
+                radius=1.0,
+                altitude=0.012,
+                strength=0.22,
+                gamma=2.2,
+                # Same nD placement as the globe: without these the shell would
+                # exist in one taxon/period slot and the atmosphere would blink
+                # out as soon as the user changed either.
+                dim_order=["x", "y", "z"],
+                fill={
+                    "taxon": float(ALL_LIFE_SLOT),
+                    "period": float(PERIOD_ALL_SLOT),
+                },
             )
 
             add_lod_tiles(
@@ -2930,7 +2999,7 @@ def _build_params() -> Dict[str, Any]:
         "n_parts": N_PARTS or parts_needed_for(N_POINTS),
         "snapshot": GBIF_SNAPSHOT,
         "seed": SAMPLE_SEED,
-        "n_globe": N_GLOBE,
+        "n_globe": GLOBE_LON * GLOBE_LAT,
         "tile_points": TARGET_TILE_POINTS,
         "marginal_cap": MARGINAL_CELL_CAP,
         "joint_cap": JOINT_CELL_CAP,

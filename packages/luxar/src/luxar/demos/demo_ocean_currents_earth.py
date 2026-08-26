@@ -79,9 +79,11 @@ from __future__ import annotations
 DEMO_META = {
     "key": "ocean_currents_earth",
     "title": "Ocean Currents of Earth",
-    "description": "HYCOM surface-current streamlines (Lines) over a NASA Blue Marble globe (Points).",
+    "description": "HYCOM surface-current streamlines (Lines) over a NASA Blue Marble globe (textured Mesh).",
     "category": "geoscience",
-    "geometry": "points+lines",
+    # "mixed": the globe is a textured Mesh and the currents are Lines. The
+    # closed vocabulary in registry.py has no "mesh+lines".
+    "geometry": "mixed",
     "requirements": {
         "download_mb": 72,
         "compute": "medium",
@@ -117,8 +119,9 @@ from luxar.demos import (
 )
 from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._globe_common import (
-    fibonacci_sphere,
-    sample_equirect,
+    add_cloud_shell,
+    add_textured_globe,
+    blue_marble_basemap,
 )
 from luxar.demos._globe_common import lonlat_to_xyz as _lonlat_to_xyz
 from luxar.encoding import EncodingMode
@@ -148,8 +151,18 @@ BLUE_MARBLE_URL: Final = (
 R_EARTH_KM: Final = 6371.0
 RADIUS: Final = 100.0  # globe radius in scene units
 
-N_GLOBE: Final = 8_000_000  # jittered Fibonacci-sphere surface points
-GLOBE_RADII: Final = 0.098  # ~0.78x mean point spacing -> a sealed shell
+# The globe is a TEXTURED MESH. It was 8M points, and it had to be: a point
+# cloud resolves the Blue Marble at about one sample per point, so sealing a
+# shell that could show the coastlines needed millions. A UV sphere samples the
+# texture per FRAGMENT, so the vertex count only has to make the sphere read as
+# round — and the 8M-element budget goes back to the streamlines.
+GLOBE_LON: Final = 512
+GLOBE_LAT: Final = 256
+# 16384x8192 across two tiles, matching the earthquakes globe. Splitting is what
+# lifts the ceiling past the 16384 per-axis GPU limit, and it also keeps each tile
+# inside WebP's hard 16383 bound so the basemap can use the smaller codec.
+GLOBE_TEXTURE_WIDTH: Final = 16384
+GLOBE_TILES: Final = 2
 N_SEEDS: Final = 220_000  # streamlines
 N_STEPS: Final = 52  # advection steps per streamline (-> N_STEPS + 1 vertices)
 STEP_KM: Final = 14.0  # arc-length step -> ~730 km ribbons
@@ -173,12 +186,6 @@ LAT_LIMIT: Final = 79.9  # HYCOM's grid stops at +/-80
 # margin.
 MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
 
-# Points share the element texture at 3 texels per point, so a single Points
-# node holds at most MAX_POINTS_PER_POINTS_NODE (5,591,040) on the same
-# 4096-class floor. The 8M-point globe exceeds that (the clamped tail is the
-# Fibonacci lattice's southern cap), so it gets the same treatment: partition
-# into parts under the bound, each part keeping its own stream ladder.
-MAX_GLOBE_POINTS_PER_NODE: Final = 4_000_000
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -518,11 +525,25 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
     with asection("Loading surface currents"):
         field = load_hycom_surface(hycom_path)
 
-    with asection(f"Building globe ({N_GLOBE:,} points)"):
-        texture = np.asarray(image_module.open(marble_path).convert("RGB"))
-        glon, glat = fibonacci_sphere(N_GLOBE)
-        gpos = lonlat_to_xyz(glon, glat, np.zeros(N_GLOBE, dtype=np.float64))
-        gcolors = sample_equirect(texture, glon, glat)
+    with asection(f"Building globe mesh ({GLOBE_LON}x{GLOBE_LAT} quads)"):
+        # The SHARED hi-res basemap, not `marble_path`'s 2048x1024 image. That
+        # image was sized for the point cloud, which resolved roughly one texel per
+        # point and so could not use more; a per-fragment mesh makes the basemap the
+        # only limit on how sharp a coastline looks. `marble_path` is still
+        # downloaded by `download_sources` (it is part of the demo's declared
+        # provenance) and is used as the FALLBACK when the larger master is
+        # unavailable.
+        try:
+            basemap, basemap_w, basemap_h = blue_marble_basemap(
+                "ocean_currents_earth", width=GLOBE_TEXTURE_WIDTH
+            )
+            tiles = GLOBE_TILES
+        except Exception as error:
+            aprint(f"⚠️  Hi-res basemap unavailable ({error}); using the 2048 image")
+            basemap = np.asarray(image_module.open(marble_path).convert("RGB"))
+            basemap_h, basemap_w = basemap.shape[:2]
+            tiles = 1
+        aprint(f"globe basemap: {basemap_w}x{basemap_h} across {tiles} tile(s)")
 
     with asection(f"Advecting {N_SEEDS:,} streamlines x {N_STEPS} steps"):
         seed_lon, seed_lat = seed_ocean_points(field, N_SEEDS)
@@ -576,32 +597,57 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                     # white the fastest currents are supposed to reach.
                     tone_mapping="None",
                     camera=globe_camera(-84.0, 25.0),
+                    # Turntable about the SOUTH-NORTH axis. Orbit auto-rotation spins
+                    # azimuthally about the controls' up vector, so pinning up to
+                    # +y is what makes this a planetary rotation rather than a
+                    # tumble: `lonlat_to_xyz` puts the north pole on +y.
+                    auto_rotate=True,
+                    auto_rotate_speed=0.35,
                 ),
             )
             scene.attrs["title"] = "Ocean Currents of Earth — HYCOM surface circulation"
             scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
-            scene.add_points(
+            add_textured_globe(
+                scene,
                 "earth",
-                positions=gpos,
-                radii=GLOBE_RADII,
-                colors=gcolors,
-                # `opaque`, NOT `normal` — the globe is the BACKDROP. Opaque is
-                # the only mode that leaves the viewer's sorted transparent set
-                # and the only one that unconditionally depth-writes, so it is
-                # the only one that reliably composites *under* the translucent
-                # ribbons drawn in front of it (see `BlendingMode`'s docstring).
+                basemap=basemap,
+                radius=RADIUS,
+                n_lon=GLOBE_LON,
+                n_lat=GLOBE_LAT,
+                tiles=tiles,
+                fmt="webp",
+                quality=90,
+                # UNLIT, unlike the earthquakes globe, and the difference is the
+                # point of the arm existing. This basemap is a REFERENCE for the
+                # current speeds drawn over it: a view-anchored diffuse key would
+                # darken the limb as the camera moved, so the same ocean would read
+                # as a different colour depending on where you were looking from.
+                # `tone_mapping="None"` is pinned for the same reason (see
+                # tests/test_demos_tone_mapping_policy.py) — the two only work as a
+                # pair.
+                shading="none",
+                # `opaque` is the mesh default and the right one here: the globe is
+                # the BACKDROP. It is the only mode that leaves the viewer's sorted
+                # transparent set and the only one that unconditionally depth-writes,
+                # so it is the only one that reliably composites *under* the
+                # translucent ribbons in front of it.
                 blending_mode="opaque",
                 opacity=1.0,
                 layer=True,
-                # A geometric `stream:` ladder gives a fast first paint where a
-                # stratified sampler would dump ~all 8M into one final commit.
-                additive_lod=dict(counts="stream:20000", method="random", seed=0),
-                # 8M points exceed a single Points node's element-texture cap
-                # (1365 * maxTextureSize points; 5,591,040 on a 4096-class GPU)
-                # just as the ribbons exceed the segment cap, and the clamp is
-                # equally silent. Partition to stay under the bound; each part
-                # carries its own stream ladder.
-                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
+            )
+            # A THIN cloud deck above the basemap. Deliberately much weaker than
+            # the earthquakes demo's: the ribbons are the DATA here, and they are
+            # drawn at FLOW_LIFT (0.0015) while the shell sits at 0.012, so the
+            # clouds are in front of them. At this strength they read as
+            # atmosphere over the map rather than as an occluder of the currents.
+            add_cloud_shell(
+                scene,
+                "clouds",
+                demo_name="ocean_currents_earth",
+                radius=RADIUS,
+                altitude=0.012,
+                strength=0.22,
+                gamma=2.2,
             )
             scene.add_lines(
                 "currents",

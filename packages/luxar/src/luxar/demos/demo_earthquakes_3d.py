@@ -96,7 +96,10 @@ DEMO_META = {
     "title": "Global Earthquakes (3D)",
     "description": "Real USGS earthquakes on a 3D Blue Marble globe, spikes scaled by magnitude and colored by time.",
     "category": "geoscience",
-    "geometry": "points+lines",
+    # "mixed" now the globe is a textured MESH: the closed vocabulary in
+    # registry.py has no "mesh+points+lines" and adding one per combination does
+    # not scale.
+    "geometry": "mixed",
     "requirements": {
         "download_mb": 5,  # approx
         "compute": "medium",
@@ -123,13 +126,16 @@ from arbol import aprint, asection
 from PIL import Image
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.demos._globe_common import (
+    add_cloud_shell,
+    add_textured_globe,
+    blue_marble_basemap,
     fibonacci_sphere,
     lonlat_to_xyz,
     sample_equirect,
-    surface_point_radius,
+    uv_sphere,
 )
 from luxar.utils.paths import get_demos_output_dir
 
@@ -141,7 +147,6 @@ from luxar.utils.paths import get_demos_output_dir
 EARTH_RADIUS = 1.0
 
 # Cloud layer radius (slightly above Earth surface)
-CLOUD_RADIUS = 1.015  # About 1.5% above Earth surface (~100km at Earth scale)
 
 # Sphere resolution (number of points on Earth surface).
 #
@@ -156,8 +161,50 @@ CLOUD_RADIUS = 1.015  # About 1.5% above Earth surface (~100km at Earth scale)
 # they are diffuse, luminous and thresholded down to ~40% coverage, so the
 # lattice does not read through them, and their generator evaluates fractal
 # noise in a Python loop that does not scale.
-EARTH_POINTS = 2_000_000
-CLOUD_POINTS = 60000  # Fewer points for clouds (they're diffuse)
+# The globe is a TEXTURED MESH, not a point cloud. It used to be 2M points, and
+# the comment above records why it had to be: a point cloud resolves the Blue
+# Marble at roughly one sample per point, so covering a 2048x1024 texture needed
+# millions of them just to stop the continents looking stippled.
+#
+# A UV sphere samples the texture PER FRAGMENT, so the vertex count only has to
+# be enough to make the sphere read as round — 256x128 quads is 65,536 triangles
+# and 33,153 vertices, about 60x fewer elements than the point version, with a
+# sharper surface. The element budget goes back to the earthquakes.
+GLOBE_LON = 512
+GLOBE_LAT = 256
+
+# The basemap is now 8192x4096 — 16x the pixels of the 2048x1024 image this demo
+# used while the globe was a point cloud. That old ceiling was not a choice: a
+# point cloud resolves a texture at about one sample per point, so detail beyond
+# ~2k was invisible however large the image. Sampling per fragment makes the
+# basemap the only thing limiting how sharp a coastline looks.
+# 16384x8192 across TWO tiles of 8192x8192 — 4x the pixels of a single
+# 8192x4096, and cheaper on disk than the alternative: two WebP payloads instead
+# of one large JPEG, because 16384 is one pixel over WebP's hard 16383 limit so a
+# single texture that size can only be JPEG.
+#
+# Splitting is also the only way past 16384 at all. A GPU silently CLAMPS a
+# larger texture — wrong image, no diagnostic — so `MAX_MESH_TEXTURE_SIZE`
+# refuses it at authoring time, and `add_mesh` refuses `texture` alongside
+# `partition` (a part re-indexes vertices, but the image is node-level). One node
+# per longitude band is the route, and it lifts the ceiling to tiles x 16384.
+GLOBE_TEXTURE_WIDTH = 16384
+GLOBE_TILES = 2
+GLOBE_TEXTURE_FORMAT = "webp"
+GLOBE_TEXTURE_QUALITY = 90
+
+# The cloud deck is REAL WEATHER — NASA's Blue Marble cloud composite — not
+# procedural noise, and a translucent mesh shell rather than 60k luminous points.
+# The alpha of that texture IS the cloud cover, which is what makes the shell
+# work at all: mesh multiplies texture alpha into coverage, so clear sky is
+# genuinely transparent instead of black.
+CLOUD_ALTITUDE = 0.015  # fraction of Earth radius (~96 km) — see `add_cloud_shell`
+CLOUD_STRENGTH = 0.75  # peak alpha of a fully cloudy texel
+CLOUD_GAMMA = 1.7  # >1 thins the source's low-luminance haze floor
+# The shell's own grid. Coarser than the globe's: it carries no relief and its
+# texture is 2048 wide, so extra vertices buy nothing.
+CLOUD_LON = 192
+CLOUD_LAT = 96
 
 # NASA Blue Marble image URL (2048x1024 equirectangular projection). The former
 # neo.gsfc.nasa.gov/archive URL 404s; this eoimages.gsfc.nasa.gov Blue Marble
@@ -903,107 +950,6 @@ def fractal_noise_3d(
 # =============================================================================
 
 
-def generate_cloud_layer(
-    n_points: int,
-    radius: float,
-    noise_scale: float = 3.0,
-    threshold: float = 0.1,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Generate a cloud layer using Perlin noise.
-
-    Creates cloud points distributed on a sphere with density and opacity
-    controlled by Perlin noise to create realistic cloud patterns.
-
-    Args:
-        n_points: Base number of points to sample
-        radius: Radius of the cloud sphere
-        noise_scale: Scale of the noise (higher = finer detail)
-        threshold: Noise threshold below which clouds don't appear
-
-    Returns:
-        Tuple of (positions, colors, radii, sharpness) for cloud points
-    """
-    aprint(f"Generating cloud layer ({n_points:,} candidate points)...")
-
-    # Generate candidate positions using Fibonacci sphere
-    candidates = generate_fibonacci_sphere(n_points, radius)
-
-    # Evaluate noise at each point to determine cloud density
-    cloud_positions = []
-    cloud_colors = []
-    cloud_radii = []
-    cloud_sharpness = []
-
-    # Cloud color: subtle white with slight blue tint
-    base_color = np.array([0.9, 0.92, 1.0])
-
-    for i in range(n_points):
-        x, y, z = candidates[i]
-
-        # Sample fractal noise for cloud density
-        noise_val = fractal_noise_3d(
-            x * noise_scale,
-            y * noise_scale,
-            z * noise_scale,
-            octaves=4,
-            persistence=0.5,
-        )
-
-        # Map noise to cloud density (only keep positive values above threshold)
-        # This creates gaps in the clouds
-        density = (noise_val + 1.0) / 2.0  # Map from [-1,1] to [0,1]
-
-        # Apply threshold and non-linear mapping for more interesting patterns
-        if density > threshold:
-            # Keep this point as a cloud
-            cloud_positions.append(candidates[i])
-
-            # Vary opacity based on density (denser = more opaque)
-            opacity_factor = (density - threshold) / (1.0 - threshold)
-            opacity_factor = opacity_factor**0.7  # Non-linear for softer edges
-
-            # Color with subtle variation
-            variation = np.random.uniform(-0.02, 0.02, 3)
-            color = base_color * (0.3 + 0.7 * opacity_factor) + variation
-            cloud_colors.append(np.clip(color, 0, 1))
-
-            # Radius varies with density (denser = larger points)
-            base_radius = 0.006 + 0.004 * opacity_factor
-            cloud_radii.append(base_radius)
-
-            # Soft, diffuse sharpness (normalized [0, 1] knob; low = peakier/softer)
-            cloud_sharpness.append(0.35)
-
-        # Progress indicator
-        if (i + 1) % 20000 == 0:
-            aprint(f"  Progress: {i + 1:,}/{n_points:,}")
-
-    n_clouds = len(cloud_positions)
-    aprint(
-        f"✓ Generated {n_clouds:,} cloud points ({n_clouds / n_points * 100:.1f}% density)"
-    )
-
-    if n_clouds == 0:
-        return (
-            np.array([]).reshape(0, 3).astype(np.float32),
-            np.array([]).reshape(0, 3).astype(np.float32),
-            np.array([]).astype(np.float32),
-            np.array([]).astype(np.float32),
-        )
-
-    return (
-        np.array(cloud_positions, dtype=np.float32),
-        np.array(cloud_colors, dtype=np.float32),
-        np.array(cloud_radii, dtype=np.float32),
-        np.array(cloud_sharpness, dtype=np.float32),
-    )
-
-
-# =============================================================================
-# USGS Earthquake Data
-# =============================================================================
-
-
 def download_earthquake_data(
     days: int = 30,
     min_magnitude: float = 4.5,
@@ -1212,43 +1158,40 @@ def generate_earthquake_scene(
         aprint("⚠️  No earthquakes found matching criteria")
         return 0, 0, 0
 
-    # Download and prepare Earth texture (cached under ~/.cache/luxar/earthquakes/)
-    try:
-        earth_texture = download_and_prepare_earth_texture()
-        use_texture = True
-    except Exception:
-        aprint("⚠️  Falling back to heuristic coloring")
-        use_texture = False
-
-    # Generate Earth sphere
-    with asection(f"Generating Earth sphere ({EARTH_POINTS:,} points)"):
-        # jitter=True: the bare lattice beats against the equirectangular Blue
-        # Marble into curved moire "worms" that look exactly like a broken land
-        # mask. The dither trades that structure for unstructured noise.
-        earth_positions = generate_fibonacci_sphere(
-            EARTH_POINTS, EARTH_RADIUS, jitter=True
+    # Generate Earth sphere — a textured MESH.
+    with asection(f"Generating Earth mesh ({GLOBE_LON}x{GLOBE_LAT} quads)"):
+        globe_v, globe_f, globe_uv, globe_n = uv_sphere(
+            GLOBE_LON, GLOBE_LAT, EARTH_RADIUS
         )
-
-        if use_texture:
-            earth_colors = compute_earth_colors_from_texture(
-                earth_positions, earth_texture
+        # ONE download path now. The old `download_and_prepare_earth_texture`
+        # existed to feed per-point colour sampling and capped at 2048 because a
+        # point cloud could not resolve more; the mesh wants the image itself, four
+        # times larger on each axis. A failure here still falls back to the
+        # heuristic colours, so a machine with no network renders a recognisable
+        # Earth rather than nothing.
+        #
+        # The moire dither the point version needed is gone with it: that artifact
+        # came from a point lattice beating against the texture grid, and a mesh
+        # samples the texture continuously instead.
+        globe_basemap = None
+        try:
+            globe_basemap, basemap_w, basemap_h = blue_marble_basemap(
+                "earthquakes", width=GLOBE_TEXTURE_WIDTH
             )
-        else:
-            earth_colors = compute_earth_colors(earth_positions)
-
-        aprint(f"✓ Generated Earth surface with {EARTH_POINTS:,} points")
-
-    # Generate cloud layer
-    with asection("Generating cloud layer"):
-        cloud_positions, cloud_colors, cloud_radii, cloud_sharpness = (
-            generate_cloud_layer(
-                CLOUD_POINTS,
-                CLOUD_RADIUS,
-                noise_scale=3.5,  # Moderate detail
-                threshold=0.35,  # Sparse clouds (only ~40% coverage)
+            use_texture = True
+            aprint(
+                f"basemap: {basemap_w}x{basemap_h} across {GLOBE_TILES} "
+                f"{GLOBE_TEXTURE_FORMAT} tiles"
             )
+        except Exception as error:
+            aprint(
+                f"⚠️  Basemap unavailable ({error}); falling back to heuristic colours"
+            )
+            use_texture = False
+        aprint(
+            f"✓ Generated Earth surface: {len(globe_v):,} vertices, "
+            f"{len(globe_f):,} triangles"
         )
-        n_clouds = len(cloud_positions)
 
     # Generate earthquake lines
     with asection("Generating earthquake visualization"):
@@ -1273,50 +1216,116 @@ def generate_earthquake_scene(
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
                 dimensions=dims,
-                viewer_config=ViewerConfig(cinematic_mode=True),
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True,
+                    # Turntable about the SOUTH-NORTH axis. Orbit auto-rotation
+                    # spins azimuthally about the controls' up vector, so pinning
+                    # up to +y is what makes this a planetary rotation rather than
+                    # a tumble: `lonlat_to_xyz` puts the north pole on +y, which
+                    # is also the viewer's default up — stated explicitly here so
+                    # the two cannot drift apart.
+                    #
+                    # The target is the ORIGIN rather than the bounds centre: the
+                    # globe is generated about the origin by construction (every
+                    # radius is measured from it), while the metadata bounding box
+                    # is pulled off-centre by the earthquake spikes, which are not
+                    # symmetric. An off-centre pivot makes the planet wobble.
+                    camera=CameraConfig(target=(0.0, 0.0, 0.0), up=(0.0, 1.0, 0.0)),
+                    auto_rotate=True,
+                    auto_rotate_speed=0.35,
+                ),
             )
 
-            # Add Earth surface. The radius is DERIVED from the point spacing
-            # (`surface_point_radius`), not pinned: a constant is tuned once at
-            # one point count and then silently stipples the globe when the
-            # count changes. At EARTH_POINTS the spacing is ~0.0025 Earth radii,
-            # close to the old hardcoded 0.003 only by coincidence; at the 120k
-            # count it was chosen for, that radius was a third of the spacing.
-            earth_point_radius = surface_point_radius(
-                len(earth_positions), EARTH_RADIUS, overlap=1.0
-            )
-            aprint(f"Earth point radius: {earth_point_radius:.5f} R⊕")
-            earth_radii = np.full(
-                len(earth_positions), earth_point_radius, dtype=np.float32
-            )
-            earth_sharpness = np.full(len(earth_positions), 0.55, dtype=np.float32)
-
-            # Earth surface uses opaque blending - solid rendering with depth write
-            # This means the Earth will occlude earthquake rays behind it
-            scene.add_points(
-                "Earth",
-                positions=earth_positions,
-                colors=earth_colors,
-                radii=earth_radii,
-                sharpness=earth_sharpness,
-                opacity=1.0,
-                blending_mode="opaque",
-                layer=True,
-            )
-
-            # Add cloud layer with luminous blending - subtle atmospheric glow
-            # Clouds are semi-transparent and glow softly above the Earth surface
-            if len(cloud_positions) > 0:
-                scene.add_points(
-                    "Clouds",
-                    positions=cloud_positions,
-                    colors=cloud_colors,
-                    radii=cloud_radii,
-                    sharpness=cloud_sharpness,
-                    opacity=0.15,  # Very subtle - don't overwhelm the visualization
-                    blending_mode="luminous",
+            # Earth surface: a textured mesh. `opaque` is the mesh default and
+            # what a solid planet needs — it writes depth, so the globe occludes
+            # the earthquake rays on its far side, which is the whole reason the
+            # point version also used `opaque`.
+            #
+            # `shading="smooth"` with the sphere's own radial normals: this is a
+            # PLANET, so a lit surface with a terminator reads correctly and is
+            # what makes the mesh version look better than the flat point cloud
+            # rather than merely sharper. (A data basemap whose colours carry
+            # meaning wants `shading="none"` instead — see the ocean demo.)
+            if use_texture and globe_basemap is not None:
+                # One call builds the geometry, slices the basemap across tiles,
+                # transcodes each slice, and writes one mesh node per band.
+                n_tiles = add_textured_globe(
+                    scene,
+                    "Earth",
+                    basemap=globe_basemap,
+                    radius=EARTH_RADIUS,
+                    n_lon=GLOBE_LON,
+                    n_lat=GLOBE_LAT,
+                    tiles=GLOBE_TILES,
+                    fmt=GLOBE_TEXTURE_FORMAT,
+                    quality=GLOBE_TEXTURE_QUALITY,
+                    # A PLANET, so a lit surface with a terminator reads correctly
+                    # and is what makes the mesh version look better than the flat
+                    # point cloud rather than merely sharper. (A data basemap whose
+                    # colours carry meaning wants `shading="none"` — see the ocean
+                    # demo.)
+                    shading="smooth",
+                    # `opaque` is the mesh default and what a solid planet needs:
+                    # it writes depth, so the globe occludes the earthquake rays on
+                    # its far side.
+                    opacity=1.0,
                     layer=True,
-                    intensity=0.5,
+                )
+                aprint(f"✓ Globe written as {n_tiles} textured tile(s)")
+            else:
+                # No basemap: fall back to the heuristic per-VERTEX colours. Much
+                # coarser than the point version's per-point sampling was, and that
+                # is honest — the fallback exists so a failed download still renders
+                # a recognisable Earth, not to match the textured path.
+                scene.add_mesh(
+                    "Earth",
+                    vertices=globe_v,
+                    faces=globe_f,
+                    normals=globe_n,
+                    normal_dims=[0, 1, 2],
+                    colors=compute_earth_colors(globe_v),
+                    shading="smooth",
+                    double_sided=False,
+                    opacity=1.0,
+                    layer=True,
+                )
+
+            # Real weather: NASA's Blue Marble cloud composite as a translucent
+            # shell at altitude, replacing 60k procedural luminous points.
+            #
+            # `luminous` was the right mode for those points and is the WRONG one
+            # for this: luminous ADDS, so a cloud brightened the ocean under it.
+            # A cloud deck occludes what is beneath it, which is `normal` — and it
+            # only reads correctly because the texture's alpha is the cloud
+            # fraction, so clear sky composites as nothing rather than as black.
+            if use_texture:
+                add_cloud_shell(
+                    scene,
+                    "Clouds",
+                    demo_name="earthquakes",
+                    radius=EARTH_RADIUS,
+                    altitude=CLOUD_ALTITUDE,
+                    strength=CLOUD_STRENGTH,
+                    gamma=CLOUD_GAMMA,
+                    n_lon=CLOUD_LON,
+                    n_lat=CLOUD_LAT,
+                    # 4096 — the measured balance point, not a round number.
+                    #
+                    # Two things pull in opposite directions. Going UP fixes
+                    # bilinear magnification facets: the source is 2048, so over a
+                    # 16384-wide basemap the shell is magnified 8x and its texel
+                    # lattice becomes visible. Going up also COSTS, because the
+                    # Lanczos upsample has to be dithered before it is quantized
+                    # to 8 bits (otherwise the interpolated values land on shared
+                    # bytes and plateau) and a dithered field barely compresses.
+                    #
+                    # Measured, lossless alpha:  2048 -> 1.07 MB (8x magnified,
+                    # facets visible) | 4096 -> 2.41 MB | 8192 -> 8.40 MB.
+                    #
+                    # 4096 puts magnification at 4x, where the lattice stops
+                    # reading, for a third of what 8192 costs. Clouds are a
+                    # diffuse layer; there is no detail up there to resolve.
+                    width=4096,
                 )
 
             # Add earthquake lines with luminous blending - glowing additive effect
@@ -1368,15 +1377,33 @@ def generate_earthquake_scene(
                 color="rgba(255,255,255,0.6)",
                 blend_mode="difference",
             )
+            # The observed window, read from the EVENTS rather than from the
+            # `days` argument. The two are not the same thing: `days` is what was
+            # requested of the USGS API, and the catalogue returns whatever it
+            # has — a shorter span near a feed outage, or a slightly longer one
+            # from late-arriving revisions. Stating the request as if it were the
+            # data is the kind of caption that is wrong without ever looking it.
+            event_times = [eq["time"] for eq in earthquakes]
+            first = datetime.fromtimestamp(min(event_times) / 1000.0, tz=timezone.utc)
+            last = datetime.fromtimestamp(max(event_times) / 1000.0, tz=timezone.utc)
+            same_year = first.year == last.year
+            window = (
+                f"{first.strftime('%-d %b')} – {last.strftime('%-d %b %Y')}"
+                if same_year
+                else f"{first.strftime('%-d %b %Y')} – {last.strftime('%-d %b %Y')}"
+            )
             add_demo_caption(
                 scene,
-                f"{n_lines:,} earthquakes • Magnitude 4.5+ • USGS",
+                f"{n_lines:,} earthquakes • M{min_magnitude:g}+ • {window} UTC • USGS",
                 DEMO_META.get("citation"),
             )
 
         aprint(f"✓ Written to {output_path}")
 
-    return len(earth_positions), n_clouds, n_lines
+    # The middle slot used to be a cloud POINT count. It is now the shell's
+    # triangle count — the same role (how much cloud geometry was written)
+    # in the units the geometry actually has.
+    return len(globe_v), CLOUD_LON * CLOUD_LAT * 2, n_lines
 
 
 # =============================================================================

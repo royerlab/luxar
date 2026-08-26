@@ -38,6 +38,8 @@ The four primitives, and why each is shaped the way it is:
 
 from __future__ import annotations
 
+from typing import Any, Optional, Tuple
+
 import numpy as np
 
 __all__ = [
@@ -176,3 +178,879 @@ def surface_point_radius(n: int, radius: float, *, overlap: float = 0.75) -> flo
         raise ValueError(f"n must be >= 1, got {n}")
     spacing = radius * float(np.sqrt(4.0 * np.pi / n))
     return spacing * overlap
+
+
+def uv_sphere(
+    n_lon: int,
+    n_lat: int,
+    radius: float,
+    relief: np.ndarray | float = 0.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build a textured UV sphere: vertices, faces, UVs and normals.
+
+    A **UV** sphere, not the icosphere ``generate_test_data.py`` uses, and the
+    difference is the whole point. An icosphere has excellent triangle uniformity
+    and no natural equirectangular seam, so mapping a lon/lat image onto it needs
+    a per-triangle decision about which side of the dateline each vertex belongs
+    to. A lon/lat grid *is* the texture's own parameterization: UVs are the grid
+    coordinates, and the seam is handled by duplicating the lambda = +/-180
+    column so the two sides interpolate independently instead of wrapping the
+    whole image backwards across one band of quads.
+
+    Vertices follow :func:`lonlat_to_xyz` exactly — ``y`` polar, longitude
+    eastward, ``-z`` keeping the frame right-handed. That is not a detail: every
+    data overlay in these demos is registered through that same function, so a
+    sphere built in a different frame would put earthquakes in the sea.
+
+    ## Poles
+
+    The pole rows are kept as degenerate quads rather than collapsed to a single
+    vertex. A shared pole vertex needs one UV, but the triangles meeting it span
+    the whole ``u`` range, so any single value smears one texel column across
+    every one of them. Duplicated pole vertices each carry their own ``u`` and
+    the distortion stays within a triangle, which is where an equirectangular
+    projection puts it anyway.
+
+    Args:
+        n_lon: Longitude divisions. The returned grid has ``n_lon + 1`` columns —
+            the extra one is the duplicated seam.
+        n_lat: Latitude divisions, pole to pole.
+        radius: Sphere radius in scene units.
+        relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
+            Applied exactly as :func:`lonlat_to_xyz` applies it.
+
+    Returns:
+        ``(vertices, faces, uvs, normals)`` — ``(V, 3)`` float32, ``(F, 3)``
+        uint32, ``(V, 2)`` float32 in ``[0, 1]``, ``(V, 3)`` float32 unit
+        outward normals.
+    """
+    if n_lon < 3 or n_lat < 2:
+        raise ValueError(
+            f"uv_sphere needs n_lon >= 3 and n_lat >= 2, got {n_lon}x{n_lat}"
+        )
+
+    # The seam column is a DUPLICATE of lon = -180 at lon = +180, so u runs the
+    # full [0, 1] and the texture's last texel column meets its first without the
+    # renderer having to wrap across a quad.
+    lon = np.linspace(-180.0, 180.0, n_lon + 1)
+    lat = np.linspace(90.0, -90.0, n_lat + 1)
+    lon_grid, lat_grid = np.meshgrid(lon, lat)
+
+    vertices = lonlat_to_xyz(
+        lon_grid.ravel(), lat_grid.ravel(), np.asarray(relief).ravel(), radius
+    )
+
+    # UVs are the grid coordinates themselves, with **v running top-down**:
+    # ``v = 0`` addresses the texture's FIRST row, which for an equirectangular
+    # image is +90 latitude. That is the same convention
+    # :func:`sample_equirect` applies, so the mesh and the point-sampled overlays
+    # agree about which way up the world is, and it is the convention the viewer
+    # pins by forcing ``flipY = false``.
+    #
+    # This was wrong in the first cut — ``v = (lat + 90) / 180``, i.e. bottom-up —
+    # and the resulting globe rendered latitude-mirrored while every numeric check
+    # passed, because those checks modelled the sampler from ``texture.flipY`` and
+    # that flag is silently ignored for an ``ImageBitmap``. Caught by eye, from
+    # earthquakes landing in the wrong ocean.
+    u = (lon_grid.ravel() + 180.0) / 360.0
+    v = (90.0 - lat_grid.ravel()) / 180.0
+    uvs = np.column_stack([u, v]).astype(np.float32)
+
+    # Outward unit normals, computed from the SPHERE rather than from the
+    # displaced vertices. For a relief-displaced globe the true surface normal
+    # tilts with the terrain, but the radial one is what makes the shading read
+    # as a planet; a derived normal on a 45x-exaggerated relief grid produces
+    # faceted noise, not shape. Callers wanting the geometric normal can pass
+    # `shading="flat"` and let the shader derive it.
+    normals = lonlat_to_xyz(lon_grid.ravel(), lat_grid.ravel(), 0.0, 1.0)
+
+    # Faces, CCW as seen from OUTSIDE. `sorted(normal_dims)` for a plain 3D scene
+    # is (0, 1, 2) = (x, y, z), and this winding is front-facing in that frame —
+    # which is the contract MESH_NODE_SPEC section 3.2 states and what keeps a
+    # single-sided globe from rendering inside-out.
+    cols = n_lon + 1
+    row = np.arange(n_lat)[:, None]
+    col = np.arange(n_lon)[None, :]
+    tl = (row * cols + col).ravel()
+    tr = tl + 1
+    bl = tl + cols
+    br = bl + 1
+    faces = np.concatenate(
+        [
+            np.column_stack([tl, bl, br]),
+            np.column_stack([tl, br, tr]),
+        ]
+    ).astype(np.uint32)
+
+    return vertices, faces, uvs, normals.astype(np.float32)
+
+
+def encode_globe_texture(tex: np.ndarray, *, quality: int = 92) -> np.ndarray:
+    """Re-encode an equirectangular RGB array as JPEG bytes for ``add_mesh``.
+
+    Encoded rather than raw, and the ratio is why: the Blue Marble at 2048x1024
+    is ~6.3 MB as a raw ``(h, w, 3)`` uint8 array and ~1.5 MB as JPEG. Blosc over
+    the raw array does not close that gap — a photograph has little of the
+    structure a general-purpose compressor exploits — and every demo store that
+    embeds this is downloaded by users.
+
+    JPEG specifically, not PNG: this is a photograph, so the lossy codec is both
+    much smaller and visually indistinguishable at quality 92. A categorical or
+    index-like texture would want PNG (and ``texture_filter="nearest"``), since
+    JPEG's chroma subsampling invents intermediate values between classes.
+
+    Args:
+        tex: ``(h, w, 3)`` uint8 RGB, or float in [0, 1] (rescaled).
+        quality: JPEG quality, 1-95.
+
+    Returns:
+        1-D uint8 array of JPEG bytes, ready for
+        ``add_mesh(texture=..., texture_encoding="jpeg", ...)``.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    arr = np.asarray(tex)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        raise ValueError(f"Expected an (h, w, 3) RGB texture, got {arr.shape}")
+    if np.issubdtype(arr.dtype, np.floating):
+        arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+    elif arr.dtype != np.uint8:
+        arr = arr.astype(np.uint8)
+
+    buf = BytesIO()
+    Image.fromarray(arr, mode="RGB").save(buf, format="JPEG", quality=quality)
+    return np.frombuffer(buf.getvalue(), dtype=np.uint8)
+
+
+#: NASA Blue Marble Next Generation, topography + bathymetry, December 2004.
+#:
+#: The 21600x10800 master (30 MB). Downscaled once on first use and cached, so
+#: the download is paid once per machine and every demo shares it.
+BLUE_MARBLE_HIRES_URL = (
+    "https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73909/"
+    "world.topo.bathy.200412.3x21600x10800.jpg"
+)
+
+#: NASA Blue Marble cloud composite (2048x1024), a near-greyscale cloud
+#: fraction map. Bright = cloud.
+BLUE_MARBLE_CLOUDS_URL = (
+    "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57747/"
+    "cloud_combined_2048.jpg"
+)
+
+#: Per-axis ceiling for a mesh texture, mirroring ``MAX_MESH_TEXTURE_SIZE`` in
+#: ``luxar/validation/base.py``. A globe basemap is the one place a demo can
+#: realistically approach it, so the helpers below clamp rather than let the
+#: writer refuse.
+MAX_GLOBE_TEXTURE_WIDTH = 16384
+
+
+def blue_marble_basemap(
+    demo_name: str, *, width: int = 8192
+) -> Tuple[np.ndarray, int, int]:
+    """Fetch the Blue Marble basemap, downscaled to ``width`` pixels across.
+
+    Defaults to 8192x4096 — **16x the pixels** of the 2048x1024 image these demos
+    used while the globe was a point cloud. That ceiling was not a choice back
+    then: a point cloud resolves a texture at roughly one sample per point, so
+    detail beyond ~2k was invisible however large the image. A mesh samples per
+    fragment, so the basemap is now the only thing limiting how sharp a coastline
+    looks, and it is worth paying for.
+
+    The source is the 21600x10800 master, so `draft` is used to let libjpeg do the
+    first factor-of-two reduction in the DCT domain — decoding 233 megapixels at
+    full size to then throw three quarters of it away costs about a gigabyte of
+    RAM for nothing.
+
+    Args:
+        demo_name: Cache namespace (``~/.cache/luxar/<demo_name>/``).
+        width: Target width; height follows the 2:1 equirectangular ratio.
+            Clamped to :data:`MAX_GLOBE_TEXTURE_WIDTH`.
+
+    Returns:
+        ``(rgb, width, height)`` — ``(h, w, 3)`` uint8, row 0 at +90 latitude.
+    """
+    from PIL import Image
+
+    from . import cached_download
+
+    width = min(int(width), MAX_GLOBE_TEXTURE_WIDTH)
+    height = width // 2
+    path = cached_download(
+        BLUE_MARBLE_HIRES_URL, demo_name, f"blue_marble_{width}x{height}.jpg"
+    )
+    # PIL refuses anything over ~179 megapixels as a possible decompression bomb,
+    # and the 21600x10800 master is 233. The guard is right in general and wrong
+    # here: this is a pinned NASA URL with a known size, not user input. Raised
+    # only around this decode and restored afterwards, so nothing else in the
+    # process inherits a disabled safety check.
+    previous_limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = None
+    try:
+        with Image.open(path) as img:
+            # Ask libjpeg for the smallest DCT-domain reduction that still covers
+            # the target, then resample the rest. Without this the 21600-wide
+            # master is decoded at full size only to discard three quarters of it.
+            img.draft("RGB", (width, height))
+            img = img.convert("RGB")
+            if img.size != (width, height):
+                img = img.resize((width, height), Image.Resampling.LANCZOS)
+            return np.asarray(img), width, height
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous_limit
+
+
+def blue_marble_clouds(
+    demo_name: str,
+    *,
+    strength: float = 0.55,
+    gamma: float = 1.8,
+    width: int = 2048,
+) -> Tuple[np.ndarray, int, int]:
+    """Build an RGBA cloud texture from NASA's Blue Marble cloud composite.
+
+    The cloud map is a near-greyscale cloud-fraction image, and it becomes a
+    **texture whose alpha is the cloud cover**: RGB is flat white and the source
+    luminance drives alpha. That is what makes the shell work — mesh multiplies
+    texture alpha into coverage, so clear sky is genuinely transparent rather than
+    black, and no separate mask channel or shader variant is needed.
+
+    ``gamma`` above 1 is what makes the layer read as *weather* rather than as
+    haze. The source has a broad low-luminance floor (thin cirrus, sensor
+    background) which at linear alpha veils the whole planet and mutes the
+    basemap's colours; raising it to a power pushes that floor toward zero while
+    leaving the bright cores near their full value.
+
+    PNG, necessarily: JPEG has no alpha channel at all, and the alpha IS the
+    payload here. It compresses well regardless, since the three colour channels
+    are constant.
+
+    Args:
+        demo_name: Cache namespace.
+        strength: Peak alpha for a fully cloudy texel, in ``[0, 1]``.
+        gamma: Exponent applied to the normalized luminance before scaling.
+        width: Target width; height follows the 2:1 ratio.
+
+    Returns:
+        ``(rgba, width, height)`` — ``(h, w, 4)`` uint8, row 0 at +90 latitude.
+    """
+    from PIL import Image, ImageFilter
+
+    from . import cached_download
+
+    height = width // 2
+    path = cached_download(
+        BLUE_MARBLE_CLOUDS_URL, demo_name, "blue_marble_clouds_2048.jpg"
+    )
+    with Image.open(path) as img:
+        img = img.convert("L")
+        # De-block BEFORE anything else. The source is a JPEG, so it carries 8x8
+        # DCT artefacts, and they are invisible at native size for a reason that
+        # stops holding here: this layer is magnified (a 2048-wide cloud map over a
+        # 16384-wide basemap) AND the gamma below is a contrast stretch on the low
+        # end, which amplifies block noise precisely where cloud is faintest. The
+        # result is visible square patches in the haze.
+        #
+        # A sub-pixel Gaussian removes the blocks while leaving real cloud edges —
+        # weather has no structure at the 1-pixel scale of a 2048-wide global map,
+        # so nothing of the data is lost. Applied before the resize and before the
+        # gamma, since both would otherwise bake the artefact in.
+        img = img.filter(ImageFilter.GaussianBlur(radius=0.9))
+        if img.size != (width, height):
+            # LANCZOS in BOTH directions, and the UPSAMPLING direction is the one
+            # that matters here. The source is only 2048x1024 while the basemap is
+            # now 16384x8192, so a cloud shell at native size is 8x coarser than
+            # the terrain under it — and against a sharp coastline that coarseness
+            # reads as square blocks of haze rather than as cloud.
+            #
+            # Bilinear would soften the blocks but leave the grid visible as
+            # diamond-shaped facets; nearest would keep them hard. Lanczos gives a
+            # genuinely smooth field, which is the right answer for a diffuse
+            # quantity: no real information is invented either way, but the
+            # ARTEFACT is what the eye picks up, and only Lanczos removes it.
+            #
+            # (Mipmaps and anisotropic filtering handle the MINIFYING direction at
+            # render time; they cannot help when the texture is being magnified.)
+            img = img.resize((width, height), Image.Resampling.LANCZOS)
+        luminance = np.asarray(img, dtype=np.float32) / 255.0
+
+    alpha = np.clip(luminance**gamma * float(strength), 0.0, 1.0)
+    # DITHER before quantizing, which is the actual fix for the "blocky" cloud
+    # layer. The artefact was not JPEG blocks and not bilinear facets: it was
+    # 8-BIT BANDING in the alpha, and the gamma is what creates it. `x ** 1.7` has
+    # a small derivative near zero, so a whole range of faint input luminances
+    # collapses onto the same output byte — and faint is most of the sky, so the
+    # result is broad terraces with hard edges, exactly the grey contour blobs
+    # that were visible.
+    #
+    # A triangular +/- 1 LSB dither (the sum of two uniforms) converts those steps
+    # into noise the eye integrates back to a smooth gradient. Standard practice
+    # for quantizing a smooth gradient to 8 bits, and it costs nothing. Seeded so
+    # a rebuild is reproducible.
+    rng = np.random.default_rng(0xC10D)
+    lsb = 1.0 / 255.0
+    dither = (rng.random(alpha.shape) - rng.random(alpha.shape)) * lsb
+    alpha = np.clip(alpha + dither, 0.0, 1.0)
+    rgba = np.empty((height, width, 4), dtype=np.uint8)
+    # Flat white: cloud is white, and the shell is authored unlit so nothing
+    # tints it. Colour variation in the source is sensor artefact, not weather.
+    rgba[..., :3] = 255
+    rgba[..., 3] = np.round(alpha * 255.0).astype(np.uint8)
+    return rgba, width, height
+
+
+def encode_globe_texture_png(rgba: np.ndarray) -> np.ndarray:
+    """Encode an RGBA texture as PNG bytes for ``add_mesh``.
+
+    The alpha-carrying sibling of :func:`encode_globe_texture`. JPEG cannot be
+    used for anything with an alpha channel — it has none — and for a cloud mask
+    the alpha is the entire payload.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    arr = np.asarray(rgba)
+    if arr.ndim != 3 or arr.shape[2] != 4:
+        raise ValueError(f"Expected an (h, w, 4) RGBA texture, got {arr.shape}")
+    buf = BytesIO()
+    Image.fromarray(arr.astype(np.uint8), mode="RGBA").save(
+        buf, format="PNG", optimize=True
+    )
+    return np.frombuffer(buf.getvalue(), dtype=np.uint8)
+
+
+def add_cloud_shell(
+    scene: Any,
+    name: str,
+    *,
+    demo_name: str,
+    radius: float,
+    altitude: float = 0.012,
+    strength: float = 0.55,
+    gamma: float = 1.8,
+    width: int = 2048,
+    n_lon: int = 192,
+    n_lat: int = 96,
+    opacity: float = 1.0,
+    layer: bool = True,
+    **extra: Any,
+) -> None:
+    """Add a translucent Blue Marble cloud shell just above a globe.
+
+    The shell sits at ``radius * (1 + altitude)`` — a real altitude, not a
+    coincident surface. Coplanar geometry z-fights: the clouds would strobe
+    against the basemap as the camera moved, in a pattern that reads as a
+    rendering glitch rather than as a missing offset. ``0.012`` of Earth's radius
+    is ~76 km, which is above the troposphere and still small enough that the
+    parallax at the limb looks like atmosphere rather than a detached bubble.
+
+    ``normal`` blending, not ``additive``: clouds OCCLUDE the surface under them,
+    and an additive layer would brighten it instead — a bright ocean showing
+    through a cloud bank. Depth-tested against the opaque globe, so the far-side
+    clouds are hidden rather than showing through the planet.
+
+    Args:
+        scene: The scene (or group) to add the node to.
+        name: Node name.
+        demo_name: Cache namespace for the download.
+        radius: The globe's radius in scene units.
+        altitude: Shell height as a fraction of ``radius``.
+        strength: Peak cloud alpha.
+        gamma: Cloud-alpha exponent (>1 thins the haze).
+        width: Cloud texture width.
+        n_lon: Longitude divisions of the shell mesh.
+        n_lat: Latitude divisions of the shell mesh.
+        opacity: Node opacity, multiplying the texture's alpha.
+        layer: Expose in the Layers panel.
+        **extra: Forwarded verbatim to ``add_mesh``. The reason this exists is
+            ``dim_order`` / ``fill``: in an nD scene the shell has to be present
+            in every non-displayed slot, exactly as the globe under it is, or the
+            atmosphere would appear on one slice and vanish on the rest.
+    """
+    rgba, tex_w, tex_h = blue_marble_clouds(
+        demo_name, strength=strength, gamma=gamma, width=width
+    )
+    # WebP, not PNG, and this is where the codec choice pays most. The payload is
+    # a smooth alpha field over three constant colour channels: PNG stores it
+    # losslessly at several MB, while lossy WebP reaches a visually identical
+    # result for a fraction of that — and unlike JPEG it can carry the alpha at
+    # all, which here IS the image. Falls back to PNG above WebP's 16383 limit.
+    cloud_fmt = "webp" if max(tex_w, tex_h) <= MAX_WEBP_DIMENSION else "png"
+    payload, encoding, tex_w, tex_h, tex_c = encode_texture(
+        rgba,
+        fmt=cloud_fmt,
+        quality=85,
+        # LOSSLESS alpha (100), and the measurements are worth recording because
+        # two independent artefacts were mistaken for each other here, and both
+        # produced "blocky clouds".
+        #
+        # Plateau width along a scanline, against an authored signal whose mean is
+        # 1.44 px:
+        #
+        #   alpha_q  size      plateau mean   max     error
+        #   70       0.83 MB   6.66           191 px  2.45
+        #   85       2.56 MB   1.64            31 px  0.22
+        #   92       2.41 MB   1.44            31 px  0.00
+        #   100      2.41 MB   1.44            31 px  0.00
+        #
+        # So (a) lossy alpha at 70 was inventing 191-pixel terraces — that was the
+        # visible staircase — and (b) above ~92 it is byte-identical to lossless
+        # AND SMALLER than 85, because the dithered signal defeats quantization, so
+        # the encoder spends bytes fighting noise it cannot remove. There is no
+        # point anywhere below lossless.
+        #
+        # The OTHER artefact was different and earlier: at the source's native
+        # 2048 over a 16384-wide basemap the shell is magnified 8x, and bilinear
+        # magnification of an 8-bit field shows its texel lattice. That one is
+        # fixed by resolution, not by compression — see the caller's `width`.
+        alpha_quality=100,
+        channels=4,
+    )
+    vertices, faces, uvs, normals = uv_sphere(n_lon, n_lat, radius * (1.0 + altitude))
+    scene.add_mesh(
+        name,
+        vertices=vertices,
+        faces=faces,
+        uvs=uvs,
+        # Normals are supplied even though the shell is UNLIT and never reads
+        # them, because `normal_dims` is what declares the authored winding frame
+        # — and without a frame the viewer cannot decide projected winding, so it
+        # falls back to `DoubleSide` regardless of `double_sided=False`. Measured,
+        # not assumed: the first version of this omitted them and the shell came
+        # back `side: DoubleSide`, doubling cloud density at the limb, which is
+        # exactly what the `double_sided=False` below is here to prevent.
+        normals=normals,
+        normal_dims=[0, 1, 2],
+        texture=payload,
+        texture_encoding=encoding,
+        texture_width=tex_w,
+        texture_height=tex_h,
+        texture_channels=tex_c,
+        # Unlit: a cloud deck lit by a view-anchored key would slide its terminator
+        # independently of the globe's underneath, which reads as two planets.
+        shading="none",
+        blending_mode="normal",
+        opacity=opacity,
+        layer=layer,
+        # Single-sided. Without it the shell's far interior draws over the near
+        # clouds, doubling their density at the limb exactly where it is already
+        # highest.
+        double_sided=False,
+        **extra,
+    )
+
+
+def resample_equirect_grid(src: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Area-average an equirectangular grid down to ``(height, width)``.
+
+    Block-mean rather than nearest or bilinear, and for a topographic grid that
+    matters: subsampling a 21600x10800 relief model picks one cell in every
+    ~400 and the result is *noise* — a summit or a trench survives only if the
+    sampling grid happens to land on it, so the same mountain appears and
+    disappears as the target resolution changes. An area average keeps the
+    hypsometric distribution honest at every scale.
+
+    Falls back to bilinear-ish index sampling when the ratio is not integral,
+    which is the uninteresting case here (both ETOPO and Blue Marble are powers
+    of two times the targets these demos ask for).
+
+    Args:
+        src: ``(h, w)`` or ``(h, w, c)`` source grid, row 0 at +90 latitude.
+        width: Target width.
+        height: Target height.
+
+    Returns:
+        The resampled grid, float32, same trailing shape as ``src``.
+    """
+    arr = np.asarray(src, dtype=np.float32)
+    sh, sw = arr.shape[:2]
+    if (sh, sw) == (height, width):
+        return arr
+    if sh % height == 0 and sw % width == 0:
+        fy, fx = sh // height, sw // width
+        tail = arr.shape[2:]
+        blocks = arr.reshape((height, fy, width, fx) + tail)
+        return blocks.mean(axis=(1, 3), dtype=np.float32)
+    rows = np.clip((np.arange(height) + 0.5) * sh / height, 0, sh - 1).astype(np.int64)
+    cols = np.clip((np.arange(width) + 0.5) * sw / width, 0, sw - 1).astype(np.int64)
+    return arr[np.ix_(rows, cols)]
+
+
+#: Hard per-axis ceiling of the WebP bitstream: dimensions are 14-bit, so 16383
+#: is the largest either axis can be.
+#:
+#: One pixel below the 16384 GPU limit, which is a genuinely awkward coincidence:
+#: at the maximum texture size a GPU accepts, WebP is unavailable. Measured, not
+#: read off a spec — PIL raises "encoding error 5: Image size exceeds WebP limit
+#: of 16383 pixels" at 16384 wide. Ask for 16383 instead and it encodes.
+MAX_WEBP_DIMENSION = 16383
+
+#: Bytes-on-disk for the Blue Marble basemap, measured at two sizes so a caller
+#: can choose knowing the cost rather than guessing:
+#:
+#: ===============  ==========  ==========  ==========
+#: size             JPEG q92    JPEG q85    WebP q90
+#: ===============  ==========  ==========  ==========
+#: 8192 x 4096       6.0 MB      4.2 MB      4.3 MB
+#: 16384 x 8192     20.4 MB     14.4 MB     n/a (over the WebP limit)
+#: ===============  ==========  ==========  ==========
+#:
+#: WebP q90 is 28% smaller than JPEG q92 at the same visual quality, and WebP q82
+#: is 55% smaller (2.7 MB) — worth it for a photographic basemap that every user
+#: downloads. Encoding is ~15x slower (1.8 s vs 0.1 s at 8192), which is paid once
+#: at authoring time and never by a viewer.
+TEXTURE_FORMAT_NOTES = "see the table above"
+
+
+def encode_texture(
+    image: Any,
+    *,
+    fmt: str = "webp",
+    quality: int = 90,
+    alpha_quality: int = 70,
+    channels: Optional[int] = None,
+) -> Tuple[np.ndarray, str, int, int, int]:
+    """Encode (or TRANSCODE) an image to a codec of your choosing.
+
+    The input may be a numpy array, a path, or already-encoded bytes — and the
+    output codec is chosen INDEPENDENTLY of it. That decoupling is the point:
+    "here is a PNG, give me WebP at q88" is one call, so an author never has to
+    pre-convert a source file to get the on-disk format they want.
+
+    Returns everything ``add_mesh`` needs, in the order it needs it, because the
+    declared dimensions are load-bearing on the read side (the viewer budgets a
+    node from them before fetching a byte) and deriving them separately from the
+    encode is how they drift apart.
+
+    Format guidance, measured rather than assumed (see :data:`TEXTURE_FORMAT_NOTES`):
+
+    * ``webp`` — the default, and the right choice for a photographic basemap:
+      28% smaller than JPEG at matched quality. **Hard 16383-pixel per-axis
+      limit** (:data:`MAX_WEBP_DIMENSION`), one below the GPU's 16384, so it is
+      unavailable at the largest size a GPU will take.
+    * ``jpeg`` — the fallback above 16383, and for a source that is already JPEG
+      where a transcode would just add a second generation of loss.
+    * ``png`` — lossless, and REQUIRED for anything with alpha (JPEG has no alpha
+      channel at all) or a palette that JUMPS, like a hypsometric ramp at sea
+      level: a lossy codec rings across that discontinuity and paints a fake
+      coastline.
+
+    Args:
+        image: ``(h, w, c)`` array, a path to an image, or encoded bytes.
+        fmt: ``webp`` | ``jpeg`` | ``png``.
+        quality: 1-100 for the colour channels. Ignored for ``png``.
+        alpha_quality: 1-100 for the ALPHA channel (WebP only), defaulting to 70.
+            A separate knob because PIL's default is 100 — **lossless alpha** —
+            and for a mask-carrying texture the alpha IS the payload, so `quality`
+            alone changes nothing. Measured on the 8192x4096 cloud shell: 5.31 MB
+            at alpha 100, 1.80 MB at 70, 1.40 MB at 50. A diffuse coverage field
+            has no detail that survives to the screen anyway, so 70 is close to
+            free.
+        channels: Force a channel count (3 = RGB, 4 = RGBA). Inferred otherwise;
+            ``png`` keeps alpha, the lossy codecs drop it.
+
+    Returns:
+        ``(payload, encoding, width, height, channels)``.
+    """
+    from io import BytesIO
+
+    fmt = fmt.lower()
+    if fmt not in ("webp", "jpeg", "png"):
+        raise ValueError(f"Unsupported texture format {fmt!r}; use webp, jpeg or png")
+
+    img = _open_any_image(image)
+
+    want_alpha = channels == 4 or (channels is None and img.mode in ("RGBA", "LA", "P"))
+    if fmt == "jpeg" and want_alpha:
+        raise ValueError(
+            "JPEG has no alpha channel; use png (lossless) or webp for an RGBA texture"
+        )
+    target_mode = "RGBA" if want_alpha else "RGB"
+    if img.mode != target_mode:
+        img = img.convert(target_mode)
+
+    width, height = img.size
+    if fmt == "webp" and max(width, height) > MAX_WEBP_DIMENSION:
+        raise ValueError(
+            f"{width}x{height} exceeds WebP's hard {MAX_WEBP_DIMENSION}-pixel "
+            "per-axis limit. Use jpeg at this size, or resample to "
+            f"{MAX_WEBP_DIMENSION} or below."
+        )
+
+    buf = BytesIO()
+    if fmt == "png":
+        img.save(buf, format="PNG", optimize=True)
+    elif fmt == "webp":
+        # method=4 is PIL's balance point: method=6 is ~3x slower for ~2% fewer
+        # bytes, which is not a trade worth making on a 33-megapixel basemap.
+        img.save(
+            buf,
+            format="WEBP",
+            quality=int(quality),
+            alpha_quality=int(alpha_quality),
+            method=4,
+        )
+    else:
+        img.save(buf, format="JPEG", quality=int(quality), optimize=True)
+
+    payload = np.frombuffer(buf.getvalue(), dtype=np.uint8)
+    return payload, fmt, width, height, 4 if want_alpha else 3
+
+
+def add_textured_globe(
+    scene: Any,
+    name: str,
+    *,
+    basemap: np.ndarray,
+    radius: float,
+    n_lon: int = 512,
+    n_lat: int = 256,
+    tiles: int = 1,
+    fmt: str = "webp",
+    quality: int = 90,
+    shading: str = "smooth",
+    relief: Any = 0.0,
+    **mesh_kwargs: Any,
+) -> int:
+    """Add a textured globe, optionally SPLIT across several mesh nodes.
+
+    Returns the number of nodes written.
+
+    ## Why splitting exists, and why it is nodes rather than a partition
+
+    A single texture is capped at 16384 pixels per axis (``MAX_MESH_TEXTURE_SIZE``,
+    enforced on both the write and read sides because a GPU that is handed more
+    *silently clamps*, rendering the wrong image with no diagnostic). That puts the
+    largest single-texture globe at 16384x8192.
+
+    The Blue Marble master is 21600x10800, so the full-resolution basemap does not
+    fit in one texture at all. Splitting the sphere into longitude bands, each its
+    own node with its own texture slice, lifts the ceiling to ``tiles`` x 16384 —
+    and it is the ONLY route, because ``add_mesh`` refuses ``texture`` alongside
+    ``partition``: a partition re-indexes vertices but the image is node-level, so
+    every part would either duplicate the whole texture or need a shared-atlas
+    mechanism that does not exist.
+
+    Useful sizes:
+
+    * ``tiles=1`` at 8192 — 6.0 MB (JPEG) / 4.3 MB (WebP), the comfortable default.
+    * ``tiles=1`` at 16384 — 4x the pixels, 20.4 MB JPEG. Over WebP's limit.
+    * ``tiles=2`` at 8192 each — also 4x the pixels, but two 4.3 MB WebP payloads
+      instead of one 20.4 MB JPEG, and each node is budgeted separately so neither
+      approaches the per-node decode ceiling.
+    * ``tiles=4`` at 5400 each — the native 21600x10800 master, exactly.
+
+    The cost is real and worth stating: every tile is a separate draw call and a
+    separate resident decoded surface, so ``tiles=4`` at native resolution holds
+    ~930 MB of texture across the four nodes. That is why this is a knob and not
+    the default.
+
+    ## The seam
+
+    Each tile's UVs span its own sub-image, and adjacent tiles SHARE a vertex
+    column at their boundary — the same duplicated-seam trick :func:`uv_sphere`
+    uses at the dateline, applied at every tile edge. Slices are cut with a
+    one-column overlap so the two sides interpolate to the same colour instead of
+    clamping to different edge texels, which would draw a hairline meridian.
+
+    Args:
+        scene: Scene or group to add to.
+        name: Node name (tiles get ``name`` + ``_0``, ``_1``, ... when ``tiles > 1``).
+        basemap: ``(h, w, 3)`` equirectangular RGB, row 0 at +90 latitude.
+        radius: Sphere radius in scene units.
+        n_lon: Total longitude divisions across the whole globe.
+        n_lat: Latitude divisions.
+        tiles: Number of longitude bands. 1 = a single node.
+        fmt: Texture codec (see :func:`encode_texture`).
+        quality: Codec quality.
+        shading: ``smooth`` | ``flat`` | ``none``.
+        relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
+        **mesh_kwargs: Forwarded to ``add_mesh`` (blending_mode, opacity, ...).
+    """
+    if tiles < 1:
+        raise ValueError(f"tiles must be >= 1, got {tiles}")
+    src = np.asarray(basemap)
+    if src.ndim != 3 or src.shape[2] != 3:
+        raise ValueError(f"Expected an (h, w, 3) basemap, got {src.shape}")
+    if n_lon % tiles != 0:
+        raise ValueError(
+            f"n_lon ({n_lon}) must divide evenly into {tiles} tiles so their "
+            "boundaries land on vertex columns"
+        )
+
+    src_h, src_w = src.shape[:2]
+    if src_w % tiles != 0:
+        raise ValueError(
+            f"basemap width ({src_w}) must divide evenly into {tiles} tiles"
+        )
+    tile_src_w = src_w // tiles
+    lon_per_tile = 360.0 / tiles
+    relief_grid = np.asarray(relief, dtype=np.float32)
+
+    # With more than one tile the nodes go inside a PARTITION GROUP, and the group
+    # is what carries `layer=True`. Without it the Layers panel lists "Earth_0"
+    # and "Earth_1" as separate entries — an implementation detail of how the
+    # basemap was split, offered to the user as two independent things to toggle.
+    # One globe should be one layer.
+    #
+    # A PLAIN group, not a `kind=partition` one, and that is a correction rather
+    # than a preference. A partition group was the obvious choice — these nodes
+    # genuinely are disjoint spatial parts of one object — but it is
+    # coverage-selected: the viewer anchors a partition's framing on "one part
+    # fills the screen", so auto-framing put the camera at 1.137 on a radius-1.118
+    # globe, i.e. standing on the surface looking at the Amazon. Measured, not
+    # guessed; the single-tile build framed correctly.
+    #
+    # A plain group carries the layer just as well and leaves framing alone. The
+    # frustum culling a partition would have bought is not worth a scene that
+    # opens inside the planet.
+    layer_flag = bool(mesh_kwargs.pop("layer", False))
+    if tiles > 1:
+        parent = scene.add_group(name, layer=layer_flag)
+        target: Any = parent
+        child_layer = False
+    else:
+        target = scene
+        child_layer = layer_flag
+
+    for t in range(tiles):
+        lon0 = -180.0 + t * lon_per_tile
+        vertices, faces, uvs, normals = _uv_sphere_band(
+            n_lon // tiles,
+            n_lat,
+            radius,
+            lon0,
+            lon0 + lon_per_tile,
+            relief_grid,
+            tiles,
+            t,
+        )
+        # One column of overlap on the right, wrapping at the dateline, so the
+        # shared vertex column samples the same colour from both sides.
+        c0 = t * tile_src_w
+        c1 = c0 + tile_src_w
+        if tiles == 1:
+            slice_rgb = src
+        else:
+            right = src[:, c1 % src_w : (c1 % src_w) + 1]
+            slice_rgb = np.concatenate([src[:, c0:c1], right], axis=1)
+        payload, encoding, tw, th, tc = encode_texture(
+            slice_rgb, fmt=fmt, quality=quality, channels=3
+        )
+        target.add_mesh(
+            f"part_{t}" if tiles > 1 else name,
+            vertices=vertices,
+            faces=faces,
+            uvs=uvs,
+            texture=payload,
+            texture_encoding=encoding,
+            texture_width=tw,
+            texture_height=th,
+            texture_channels=tc,
+            normals=normals,
+            normal_dims=[0, 1, 2],
+            shading=shading,
+            # Clamped, not repeated: a tile covers a longitude BAND, so wrapping
+            # its u would fetch the far edge of its own slice — the opposite side
+            # of the world — at the seam.
+            texture_wrap="clamp" if tiles > 1 else "repeat",
+            double_sided=False,
+            layer=child_layer,
+            **mesh_kwargs,
+        )
+    return tiles
+
+
+def _uv_sphere_band(
+    n_lon: int,
+    n_lat: int,
+    radius: float,
+    lon_start: float,
+    lon_end: float,
+    relief: np.ndarray,
+    tiles: int,
+    tile_index: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """One longitude band of a UV sphere, with UVs spanning its own sub-texture.
+
+    The band form of :func:`uv_sphere`. Its ``u`` runs 0..1 across the band rather
+    than across the world, because each band carries its own texture slice — and
+    the slice has one extra column of overlap, so ``u`` is scaled to land the
+    band's last vertex on the FIRST column of the neighbour's content rather than
+    on the overlap column's own edge.
+    """
+    lon = np.linspace(lon_start, lon_end, n_lon + 1)
+    lat = np.linspace(90.0, -90.0, n_lat + 1)
+    lon_grid, lat_grid = np.meshgrid(lon, lat)
+
+    if relief.ndim == 2:
+        # Slice the global relief grid to this band's columns, sharing the
+        # boundary column with the neighbour so the surfaces meet exactly.
+        cols = relief.shape[1] - 1
+        step = cols // tiles
+        c0 = tile_index * step
+        band_relief = relief[:, c0 : c0 + n_lon + 1]
+        relief_values = band_relief.ravel()
+    else:
+        relief_values = relief
+
+    vertices = lonlat_to_xyz(lon_grid.ravel(), lat_grid.ravel(), relief_values, radius)
+    normals = lonlat_to_xyz(lon_grid.ravel(), lat_grid.ravel(), 0.0, 1.0)
+
+    # u spans the band. With `tiles == 1` the slice is the whole image and u is
+    # the plain 0..1; with more, the slice has one overlap column so the useful
+    # range stops one column short of 1.
+    span = 1.0 if tiles == 1 else n_lon / (n_lon + 1.0)
+    u = (lon_grid.ravel() - lon_start) / (lon_end - lon_start) * span
+    v = (90.0 - lat_grid.ravel()) / 180.0
+    uvs = np.column_stack([u, v]).astype(np.float32)
+
+    cols = n_lon + 1
+    row = np.arange(n_lat)[:, None]
+    col = np.arange(n_lon)[None, :]
+    tl = (row * cols + col).ravel()
+    tr = tl + 1
+    bl = tl + cols
+    br = bl + 1
+    faces = np.concatenate(
+        [np.column_stack([tl, bl, br]), np.column_stack([tl, br, tr])]
+    ).astype(np.uint32)
+    return vertices, faces, uvs, normals.astype(np.float32)
+
+
+def _open_any_image(image: Any) -> Any:
+    """Open a path, encoded bytes, or an array as a PIL image.
+
+    The transcode half of :func:`encode_texture`, extracted so that function stays
+    under the complexity ratchet — and it reads better split, because past this
+    point the input's own format is irrelevant to the encode.
+    """
+    from io import BytesIO
+    from pathlib import Path as _Path
+
+    from PIL import Image
+
+    if isinstance(image, (str, _Path)):
+        # The pixel guard is right in general and wrong for a caller who handed us
+        # a specific file on purpose; raised only around this open and restored.
+        previous_limit = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = None
+        try:
+            with Image.open(image) as opened:
+                return opened.copy()
+        finally:
+            Image.MAX_IMAGE_PIXELS = previous_limit
+    if isinstance(image, (bytes, bytearray, memoryview)):
+        return Image.open(BytesIO(bytes(image)))
+
+    arr = np.asarray(image)
+    if np.issubdtype(arr.dtype, np.floating):
+        arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+    elif arr.dtype != np.uint8:
+        arr = arr.astype(np.uint8)
+    if arr.ndim != 3 or arr.shape[2] not in (3, 4):
+        raise ValueError(f"Expected an (h, w, 3|4) texture, got {arr.shape}")
+    return Image.fromarray(arr, mode="RGBA" if arr.shape[2] == 4 else "RGB")
