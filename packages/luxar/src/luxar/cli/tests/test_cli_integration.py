@@ -236,6 +236,11 @@ class TestServeIntegration:
         response = requests.get(f"{test_server}/health", headers=headers)
         assert "Access-Control-Allow-Origin" in response.headers
         assert response.headers["Access-Control-Allow-Origin"] == origin
+        exposed = {
+            header.strip()
+            for header in response.headers["Access-Control-Expose-Headers"].split(",")
+        }
+        assert exposed == {"Content-Range", "Content-Length", "Accept-Ranges"}
 
     def test_no_cache_header_on_data_responses(self, test_server):
         """Every mutable data response must require browser revalidation."""

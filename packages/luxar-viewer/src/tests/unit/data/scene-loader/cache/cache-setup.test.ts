@@ -58,6 +58,23 @@ describe('setupCaches — cache telemetry state resolution', () => {
     appConfig.cache.l0Enabled = originalL0Enabled;
   });
 
+  it('a .zarr.zip gets NO caching store, while its directory twin does', async () => {
+    // `setupCaches` now changes tier policy by URL SUFFIX: MultiLevelCachingStore
+    // builds its own chunk URLs from a base and cannot address a member inside an
+    // archive, so a zipped store reads uncached rather than 404ing every chunk.
+    // Pinned here because nothing else would notice the policy silently flipping.
+    appConfig.cache.enabled = true;
+    appConfig.cache.l0Enabled = true;
+
+    const zipped = await setupCaches('http://example.com/scene.luxar.zarr.zip', {});
+    expect(zipped.cachingStore).toBeNull();
+    // The in-memory tiers are unaffected — only L1/L2 need a URL per chunk.
+    expect(zipped.l0Cache).not.toBeNull();
+
+    const directory = await setupCaches('http://example.com/scene.luxar.zarr/', {});
+    expect(directory.cachingStore).not.toBeNull();
+  });
+
   it('?no-cache resolves to disabled-no-cache regardless of app config', async () => {
     appConfig.cache.enabled = true;
     appConfig.cache.l0Enabled = true;
