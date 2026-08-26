@@ -135,6 +135,11 @@ from luxar.utils.paths import get_demos_output_dir
 #: Grid is 3x3 per family.
 GRID = 3
 
+#: Authored sampling resolution. Re-measure the family display windows with
+#: ``GALLERY_ONLY=exotic_surfaces,exotic_surfaces_algebraic pnpm gallery`` after
+#: changing this or the sampling model.
+RESOLUTION = 112
+
 #: Edge length each surface is normalized into, and the spacing between cell
 #: centres. The gap keeps neighbouring surfaces from reading as one object; the
 #: occlusion bake is per surface regardless, so they never shade each other.
@@ -173,7 +178,7 @@ FAMILY_COLORS = (
 
 FAMILY_NAMES = ("Minimal surfaces", "Algebraic surfaces")
 #: Viewer display-window maxima measured for the two baked-RGB families at the
-#: default resolution. With a zero offset, the authored intensity is 1 / max.
+#: authored ``RESOLUTION``. With a zero offset, intensity is 1 / max.
 FAMILY_DISPLAY_MAXIMA = (2.177, 2.085)
 
 
@@ -753,7 +758,7 @@ def _detail_lines(family: int) -> List[str]:
     ]
 
 
-def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
+def generate_exotic_surfaces(output_path: Path, resolution: int = RESOLUTION) -> int:
     """Generate the two-family surface grid.
 
     Args:
@@ -940,7 +945,7 @@ def generate_exotic_surfaces(output_path: Path, resolution: int = 112) -> int:
 
 def main() -> None:
     """Main demo entry point."""
-    resolution = 112
+    resolution = RESOLUTION
     for arg in sys.argv[1:]:
         if arg.startswith("--resolution="):
             resolution = int(arg.split("=")[1])
