@@ -820,7 +820,12 @@ plus the root `README.md`, `CLAUDE.md`, and
 `.agents/skills/luxar-visualization/SKILL.md` guarded against the live demo and
 example inventories, `packages/luxar/src/luxar/demos/README.md` guarded against
 the exported helper inventory, and the gallery capture spec whose `DemoEntry`
-interface defines the manifest field contract.
+interface defines the manifest field contract. The Cholesky documentation guard
+reads that same `CLAUDE.md` and skill page, and adds
+`.agents/skills/luxar-visualization/references/scene-api.md`,
+`.agents/skills/luxar-gsplat-pipeline/SKILL.md` and
+`docs/specs/GSPLATS_DIMENSION_MAPPING.md` to the Python-owned set.
+Consequently, every `CLAUDE.md` edit runs the Python matrix.
 Two workflow files and `.gitattributes` are `dom_py` for the same reason:
 `test_docs_workflow.py` reads `docs.yml` and `.gitattributes`, and
 `test_run_external_reference_audits.py` asserts the schedule, permissions and

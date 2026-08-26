@@ -98,6 +98,19 @@ scene.add_gsplats_from_volume(name, volume, seeds=None, n_iters=1000,
 `cholesky_factors` is the packed lower-triangular factor **L of the covariance**
 (Σ = L·Lᵀ), so the diagonal is **scale-like**. Isotropic Gaussian of std σ in 3D:
 `cholesky_factors = [σ, 0, σ, 0, 0, σ]` (the diagonal carries σ, not `1/σ`).
+This is the same contract documented by `Group.add_gsplats` and
+the `AdditiveSubLOD` docstring.
+
+To place lower-dimensional splats on one slice of a stacked scene, request the
+embedding explicitly:
+
+```python
+scene.add_gsplats(
+    name, centers, amplitudes, cholesky_factors,
+    dim_order=["x", "y", "z"],
+    fill={"time": t}, fill_sigma={"time": 0.0}, extend_to_all=[],
+)
+```
 
 ## Groups & transforms
 
