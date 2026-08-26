@@ -330,6 +330,33 @@ def test_hand_built_structure_does_not_normalise_each_child(tmp_path, kind):
         assert attrs["amplitude_data_range"][1] > 100.0
 
 
+def test_hand_built_partition_volume_fits_keep_shared_raw_exposure(tmp_path):
+    axis = np.linspace(-1.0, 1.0, 16, dtype=np.float32)
+    z, y, x = np.meshgrid(axis, axis, axis, indexing="ij")
+    volume = np.exp(-8.0 * (x * x + y * y + z * z)).astype(np.float32)
+
+    out = tmp_path / "manual-partition-volumes.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=DIMS)
+        wrapper = scene.add_partition_group(
+            "g", display_type="gsplats", max_elements=2000
+        )
+        for index, peak in enumerate((200.0, 800.0)):
+            wrapper.add_gsplats_from_volume(
+                f"child_{index}",
+                volume * peak,
+                seeds=30,
+                n_iters=10,
+                device="cpu",
+                verbose=False,
+            )
+
+    for child_name in ("child_0", "child_1"):
+        attrs = read_node_attrs(out / "g" / child_name)
+        assert NORMALIZATION_FACTOR_ATTR not in attrs
+        assert attrs["amplitude_data_range"][1] > 10.0
+
+
 def test_hand_built_structure_can_explicitly_normalise_a_child(tmp_path):
     out = tmp_path / "manual-explicit.luxar.zarr"
     with LuxarZarrCompiler(out) as compiler:

@@ -15,16 +15,19 @@ therefore emits a thousand times the radiance of 0.8 and drives `1 - exp(-tau)`
 straight to an opaque shell. The only lever left was `opacity`, which then had to
 carry a factor of about 1/500 on a control that runs from zero to one.
 
-`add_gsplats_from_data`, `add_gsplats_from_file` and the graft path now scale
-amplitudes so a robust upper reference (the 99.9th percentile, the same statistic
-`amplitude_data_range` already uses) lands at 1.0. The reference is robust rather
-than the maximum so that one saturated splat cannot compress the scene toward
-black or move the factor on every refit, and the target leaves about a thousandth
-of the splats above 1.0 for the authored window to clip. Data already in range is
-left alone, so a fit of an already-normalised volume that is then dimmed by hand
-is not double-brightened. `normalize_amplitudes=False` opts out, a number sets an
-explicit target, and the factor applied is recorded as
-`amplitude_normalization_factor`.
+`add_gsplats_from_data`, `add_gsplats_from_file`, `add_gsplats_from_volume` and
+the graft path now scale amplitudes so a robust upper reference (the 99.9th
+percentile, the same statistic `amplitude_data_range` already uses) lands at
+1.0. The reference is robust rather than the maximum so that one saturated
+splat cannot compress the scene toward black or move the factor on every refit,
+and the target leaves about a thousandth of the splats above 1.0 for the authored
+window to clip. Data already in range is left alone, so a fit of an
+already-normalised volume that is then dimmed by hand is not double-brightened.
+A child inserted directly into a `kind=lod` or `kind=partition` group defaults
+to no normalisation because its exposure must stay shared with its siblings;
+`normalize_amplitudes=True` overrides that rule, `False` preserves raw units
+elsewhere, and a number sets an explicit target. The factor applied is recorded
+as `amplitude_normalization_factor`.
 
 One factor covers the whole structure. That is the part worth stating, because
 getting it wrong is invisible until it is on screen: a coarser substitutive level

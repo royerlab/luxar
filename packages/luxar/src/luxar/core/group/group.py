@@ -973,6 +973,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
+        normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
         opacity: Optional[float] = None,
         absorption: Optional[float] = None,
         blending_mode: Optional[str] = None,
@@ -997,6 +998,14 @@ class Group(Node):
             dim_order: Map fitted data columns to scene dimensions by name
             fill: Fixed coordinate values for unmapped dimensions
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
+            normalize_amplitudes: Scale amplitudes so a robust upper
+                reference (the 99.9th percentile) lands at 1.0. The default is
+                enabled outside a ``kind=lod`` or ``kind=partition`` group and
+                disabled for children inserted directly into those groups so
+                sibling exposure stays shared. Pass ``True`` to override that
+                specialized-group default, ``False`` to preserve raw units, or
+                a positive number to set an explicit target. The factor used is
+                recorded as ``amplitude_normalization_factor``.
             opacity: Node opacity (0.0-1.0)
             absorption: Absorption coefficient kappa (>= 0) read by the
                 "volumetric" blending mode; kappa=0 renders like additive
@@ -1006,6 +1015,9 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_volume_impl
 
+        normalize_amplitudes = _resolve_normalize_amplitudes_default(
+            parent or self, normalize_amplitudes
+        )
         return self._transactional_add(
             name,
             parent,
@@ -1025,6 +1037,7 @@ class Group(Node):
                 dim_order=dim_order,
                 fill=fill,
                 fill_sigma=fill_sigma,
+                normalize_amplitudes=normalize_amplitudes,
                 opacity=opacity,
                 absorption=absorption,
                 blending_mode=blending_mode,

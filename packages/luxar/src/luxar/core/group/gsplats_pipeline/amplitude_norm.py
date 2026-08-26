@@ -62,6 +62,9 @@ Design decisions, and why
   The reference pools every spatial partition part, but follows only the finest
   child through each substitutive LOD group: coarse merged representatives carry
   combined mass and must not darken the finest view users inspect up close.
+  Consequently, a child inserted directly into a ``kind=lod`` or
+  ``kind=partition`` group defaults to no normalisation: scaling it independently
+  would destroy the sibling-relative exposure that the enclosing structure owns.
 
 * **``auto`` is a no-op on data that is already in range.** Many datasets are
   fitted from volumes already normalised to ``[0, 1]`` and then dimmed by a

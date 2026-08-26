@@ -552,9 +552,12 @@ it across each gsplat structure**.
 > the radiance of 0.8 and saturates `1 - exp(-tau)` into an opaque shell, and no
 > viewer control can compensate — the only remaining lever is `opacity`, which
 > would have to carry a ~1/500 factor on a `[0,1]` control. `add_gsplats_from_data`,
-> `add_gsplats_from_file` and the graft path therefore normalise by default
-> (robust p99.9 -> 1.0, **one factor for the whole structure**), recording it as
-> `amplitude_normalization_factor`; pass `normalize_amplitudes=False` to opt out.
+> `add_gsplats_from_file`, `add_gsplats_from_volume` and the graft path therefore
+> normalise by default (robust p99.9 -> 1.0, **one factor for the whole
+> structure**), recording it as `amplitude_normalization_factor`; pass
+> `normalize_amplitudes=False` to opt out. A child inserted directly into a
+> `kind=lod` or `kind=partition` group defaults to no normalisation because its
+> exposure must stay shared with its siblings.
 > The factor must be shared across every substitutive level and additive rung —
 > a per-level factor scales the levels against each other and the brightness pops
 > at every LOD switch. See `core/group/gsplats_pipeline/amplitude_norm.py`.

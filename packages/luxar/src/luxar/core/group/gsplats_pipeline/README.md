@@ -38,13 +38,16 @@ gsplats_pipeline/
 
 ### `amplitude_norm.py` — insertion-time amplitude normalization
 
-The public data and file doors normalize fitted raw-unit amplitudes before
-writing a scene. ``True`` / ``"auto"`` maps a robust p99.9 reference to 1.0
-only when it exceeds 1.0, ``False`` opts out, and a positive number sets an
-explicit target. Partition parts share one pooled reference; substitutive LOD
-groups contribute only their finest child to that reference, while the resolved
-factor still scales every level and additive rung. Applied factors are stamped
-as ``amplitude_normalization_factor``.
+The public data, file, and volume doors normalize fitted raw-unit amplitudes
+before writing a scene. ``True`` / ``"auto"`` maps a robust p99.9 reference to
+1.0 only when it exceeds 1.0, ``False`` opts out, and a positive number sets an
+explicit target. A child inserted directly into a ``kind=lod`` or
+``kind=partition`` group defaults to no normalization because its exposure must
+stay shared with its siblings; whole structures still use one pooled factor.
+Partition parts share one pooled reference; substitutive LOD groups contribute
+only their finest child to that reference, while the resolved factor still
+scales every level and additive rung. Applied factors are stamped as
+``amplitude_normalization_factor``.
 
 ### `from_data.py` — `add_gsplats_from_data_impl(group, *, name, result, ...)`
 

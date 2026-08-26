@@ -163,11 +163,14 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   `volumetric`, optical depth** (`tau = absorption * opacity * intensity` with
   `intensity ∝ A`), which nothing windows. An amplitude of 800 therefore emits
   1000x the radiance of 0.8 and saturates `1 - exp(-tau)` to an opaque shell.
-  `add_gsplats_from_data` / `add_gsplats_from_file` / a graft now normalise by
-  default (robust p99.9 → 1.0, one factor for the whole structure, a no-op on
-  data already in range); pass `normalize_amplitudes=False` only if you have a
-  reason. Note this is the *opposite* of what this bullet used to claim — the
-  viewer does **not** normalise by the stored maximum.
+  `add_gsplats_from_data` / `add_gsplats_from_file` /
+  `add_gsplats_from_volume` / a graft now normalise by default (robust p99.9 →
+  1.0, one factor for the whole structure, a no-op on data already in range).
+  A child inserted directly into a `kind=lod` or `kind=partition` group instead
+  defaults to no normalisation so its exposure stays shared with its siblings;
+  pass `normalize_amplitudes=True` to override that rule or `False` to preserve
+  raw units elsewhere. Note this is the *opposite* of what this bullet used to
+  claim — the viewer does **not** normalise by the stored maximum.
 - **`opacity` is the exposure lever, and with normalised amplitudes it lives in
   its natural range.** That is the point of normalising: against raw counts
   `opacity` has to carry a ~1/500 factor on a `[0,1]` control, which is

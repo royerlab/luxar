@@ -994,6 +994,7 @@ def add_gsplats_from_volume_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
+    normalize_amplitudes: NormalizeSpec = True,
     opacity: Optional[float] = None,
     absorption: Optional[float] = None,
     blending_mode: Optional[str] = None,
@@ -1063,5 +1064,6 @@ def add_gsplats_from_volume_impl(
         dim_order=dim_order,
         fill=fill,
         fill_sigma=fill_sigma,
+        normalize_amplitudes=normalize_amplitudes,
         **scene_attrs,
     )
