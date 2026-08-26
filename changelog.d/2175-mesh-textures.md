@@ -45,8 +45,8 @@ is node-level.
 `demo_biodiversity_planetary_scale` rendered the planet as point clouds — two of
 them at 8M points — because a point cloud resolves a texture at roughly one sample
 per point. They are now UV spheres with a 16384x8192 Blue Marble basemap across
-multiple nodes (four for the relief globe), at two to three orders of magnitude fewer elements, and the element
-budget goes back to the data being visualised.
+multiple nodes (four for the relief globe), using roughly 4x to 61x fewer
+elements, and the element budget goes back to the data being visualised.
 
 Each carries a real cloud deck from NASA's Blue Marble composite at altitude,
 where the texture's alpha *is* the cloud fraction. Rivers uses 15x relief
