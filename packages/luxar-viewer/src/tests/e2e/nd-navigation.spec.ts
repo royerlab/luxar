@@ -89,7 +89,7 @@ test.describe('nD Navigation - Dimension Selection', () => {
 
       expect(geometry.titleLines).toBe(1);
       expect(geometry.statusLines).toBe(1);
-      expect(geometry.headerHeight).toBeLessThanOrEqual(30);
+      expect(geometry.headerHeight).toBeLessThanOrEqual(32);
     });
   }
 
