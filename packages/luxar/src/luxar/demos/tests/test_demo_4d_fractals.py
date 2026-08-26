@@ -247,10 +247,15 @@ class TestAmbientOcclusionInputs:
         solid = np.zeros((5, 5, 5), dtype=bool)
         solid[1:4, 1:4, 1:4] = True
         normals = surface_normals(solid)
+        surface = surface_of(solid)
 
         np.testing.assert_allclose(normals[1, 2, 2], [-1.0, 0.0, 0.0])
         np.testing.assert_allclose(normals[3, 2, 2], [1.0, 0.0, 0.0])
-        assert np.all(np.isfinite(normals[surface_of(solid)]))
+        assert np.all(np.linalg.norm(normals[surface], axis=1) > 0.0)
+
+        isolated = np.zeros((5, 5, 5), dtype=bool)
+        isolated[2, 2, 2] = True
+        np.testing.assert_array_equal(surface_normals(isolated)[2, 2, 2], 0.0)
 
     def test_occlusion_isolated_by_fractal_and_w_slice(self) -> None:
         solid = np.zeros((17, 17, 17), dtype=bool)
@@ -277,6 +282,11 @@ class TestAmbientOcclusionInputs:
         colors = apply_fractal_ambient_occlusion(
             positions, repeated_normals, base_colors
         )
+        scaled_positions = positions.copy()
+        scaled_positions[:, :2] *= 10.0
+        scaled_colors = apply_fractal_ambient_occlusion(
+            scaled_positions, repeated_normals, base_colors
+        )
         merged_shade = _demo.bake_ambient_occlusion(
             positions,
             normals=repeated_normals,
@@ -284,11 +294,21 @@ class TestAmbientOcclusionInputs:
             n_directions=_demo.AO_N_DIRECTIONS,
             spatial_dims=(2, 3, 4),
         )
+        no_normal_shade = _demo.bake_ambient_occlusion(
+            positions,
+            normals=None,
+            occluder="opaque",
+            n_directions=_demo.AO_N_DIRECTIONS,
+            spatial_dims=(2, 3, 4),
+            group_by=np.repeat([0, 1], len(spatial)),
+        )
 
+        np.testing.assert_array_equal(colors, scaled_colors)
         np.testing.assert_allclose(
             colors[: len(spatial)], colors[len(spatial) :], atol=1e-6
         )
         assert float(np.max(np.abs(colors[:, 0] - merged_shade))) > 0.02
+        assert float(np.max(np.abs(colors[:, 0] - no_normal_shade))) > 0.1
         assert float(colors.mean()) < 0.98
         assert float(np.ptp(colors[:, 0])) > 0.05
         assert np.all(colors <= base_colors)

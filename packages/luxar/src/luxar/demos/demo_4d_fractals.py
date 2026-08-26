@@ -48,7 +48,7 @@ DEMO_META = {
     "geometry": "points",
     "requirements": {
         "download_mb": 0,
-        "compute": "medium",
+        "compute": "heavy",
         "gpu": "none",
         "local_data": None,
     },
@@ -86,9 +86,9 @@ W_STRIDE = 4
 #: still read as stippled. The store compresses well (lattice coordinates), so
 #: the measured AO-shaded default output is about 147 MB on disk.
 TARGET_MAX_POINTS_PER_PLANE = 150_000
-#: Direction budget for the grouped surface AO bake. Twenty-four is the
-#: library's full-sphere default and keeps the all-fractals nD bake bounded;
-#: normals still put those directions into each point's facing hemisphere.
+#: Direction budget for the grouped surface AO bake. Twenty-four is half the
+#: library's measured floor for normal-weighted AO, chosen to bound peak memory;
+#: on representative slices it adds about 20% excess AO variance versus 48.
 AO_N_DIRECTIONS = 24
 #: Layers-panel display window re-measured after AO. The grouped bake's mean
 #: multiplier is 0.570 at the default grid, so 1.971 × 0.570 preserves the
@@ -566,7 +566,11 @@ def apply_fractal_ambient_occlusion(
     normals: np.ndarray,
     base_colors: np.ndarray,
 ) -> np.ndarray:
-    """Bake surface AO without crossing the hidden fractal or w dimensions."""
+    """Bake surface AO without crossing the hidden fractal or w dimensions.
+
+    Rows must remain grouped by ``(fractal, w)`` as emitted by the generator;
+    run-based labels avoid sorting the 44.5-million-row production array.
+    """
     joint_keys = positions_5d[:, :2]
     group_starts = np.ones(len(positions_5d), dtype=bool)
     group_starts[1:] = np.any(joint_keys[1:] != joint_keys[:-1], axis=1)
@@ -820,7 +824,7 @@ def main() -> None:
     aprint("  5: 4D Diamond Fractal - Concentric taxicab shells")
     aprint("")
     aprint("⏱️  Generation time: ~25 minutes at the default grid")
-    aprint("   (Use a smaller --grid for a faster build.)")
+    aprint("   Peak memory: ~24 GB; use a smaller --grid to reduce time and memory.")
     aprint("")
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
