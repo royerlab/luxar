@@ -525,6 +525,8 @@ class TestServeIntegration:
             assert response.status_code == 200
             entries = {e["name"]: e["type"] for e in response.json()["entries"]}
             assert entries.get("zipped_scene.luxar.zarr.zip") == "zarr"
+            assert entries.get("plain.zarr") == "zarr"
+            assert entries.get("results.zip") == "file"
 
             response = requests.get(f"{test_server}/")
             assert response.status_code == 200
