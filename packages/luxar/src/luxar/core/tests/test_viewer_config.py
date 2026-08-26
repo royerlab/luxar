@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from luxar.conftest import find_repo_relative_file
+from luxar.conftest import viewer_source
 from luxar.core.viewer_config import (
     VALID_FOV_PRESETS,
     AnimationConfig,
@@ -86,14 +86,7 @@ class TestCameraConfig:
         assert d["fov_preset"] == "50mm Normal"
 
     def test_fov_preset_names_match_viewer_contract(self) -> None:
-        camera_source = find_repo_relative_file(
-            Path("packages/luxar-viewer/src/config/sections/camera/data.ts"),
-            Path(__file__).resolve(),
-        )
-        assert camera_source is not None, (
-            "cannot locate packages/luxar-viewer/src/config/sections/camera/data.ts; "
-            "if the viewer file moved, update this contract test"
-        )
+        camera_source = viewer_source("src/config/sections/camera/data.ts")
 
         source = camera_source.read_text(encoding="utf-8")
         presets_match = re.search(

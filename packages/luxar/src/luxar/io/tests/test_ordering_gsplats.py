@@ -197,28 +197,9 @@ def test_barrier_bound_eps_matches_viewer_gsplats_step_fraction() -> None:
     but parsing the TypeScript declaration instead of restating the number —
     a prose comment on each side is not a link.
     """
-    from pathlib import Path
+    from luxar.conftest import read_ts_number_const, viewer_source
 
-    from luxar.conftest import find_repo_relative_file, read_ts_number_const
-    from luxar.io._ordering import bounds as bounds_module
-
-    rel = (
-        Path("packages")
-        / "luxar-viewer"
-        / "src"
-        / "data"
-        / "loaders"
-        / "spatial-query"
-        / "tolerance-computer.ts"
-    )
-    start = Path(bounds_module.__file__).resolve()
-    computer = find_repo_relative_file(rel, start)
-    assert computer is not None, (
-        f"cannot locate {rel} in any ancestor of {start}. If the viewer file "
-        "moved, update this test — do NOT delete it: it is the only link "
-        "keeping _BARRIER_BOUND_EPS and the viewer's gsplats continuous-dim "
-        "epsilon in agreement."
-    )
+    computer = viewer_source("src/data/loaders/spatial-query/tolerance-computer.ts")
     source = computer.read_text(encoding="utf-8")
 
     step_fraction = read_ts_number_const(source, "GSPLATS_CONTINUOUS_EPS_STEP_FRACTION")
