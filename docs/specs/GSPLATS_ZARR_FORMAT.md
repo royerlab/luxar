@@ -839,7 +839,11 @@ the appended center column), the shared `source_dtype`, unanimous
 `source_stored_bytes` at the root. Values inside each `fitting` record describe
 the component as fitted; a caller may subsequently filter or normalize the
 splats before stacking, so per-part counts need not sum to the archived root
-count.
+count. The current record does not identify which center column holds its
+coordinate, so a later rewrite can scrub stale fitting/source fields but cannot
+generically remove records for coordinates eliminated wholesale. After such a
+rewrite, the list length is provenance cardinality from stack time, not a
+surviving-frame count; re-stack the rewritten components to refresh it.
 
 On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
 of the finest surviving parts, after each part's post-fit cull, measured on that

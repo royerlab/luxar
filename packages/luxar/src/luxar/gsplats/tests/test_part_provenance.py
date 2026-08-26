@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -109,10 +110,39 @@ def test_part_provenance_validates_reference_and_stack_cardinality() -> None:
             values=[0, 1],
             fit_reference={"kind": "unknown"},
         )
+    with pytest.raises(ValueError, match="fit_reference.note"):
+        collect_part_provenance(
+            fits,
+            values=[0, 1],
+            fit_reference={"kind": "preprocessed", "note": "  "},
+        )
     with pytest.raises(ValueError, match="part_provenance.*2 datasets"):
         GSplatData.combine_as_new_dimension(
             fits,
             part_provenance=[{"coordinate": 0, "fitting": {}}],
+        )
+
+    valid = {"coordinate": 1.0, "fitting": {}}
+    with pytest.raises(TypeError, match=r"part_provenance\[0\] must be a dict"):
+        GSplatData.combine_as_new_dimension(
+            fits,
+            values=[0.0, 1.0],
+            part_provenance=cast(Any, [None, valid]),
+        )
+    with pytest.raises(ValueError, match=r"part_provenance\[0\]\.coordinate"):
+        GSplatData.combine_as_new_dimension(
+            fits,
+            values=[0.0, 1.0],
+            part_provenance=[{"coordinate": 2.0, "fitting": {}}, valid],
+        )
+    with pytest.raises(ValueError, match=r"part_provenance\[0\]\.fitting"):
+        GSplatData.combine_as_new_dimension(
+            fits,
+            values=[0.0, 1.0],
+            part_provenance=cast(
+                Any,
+                [{"coordinate": 0.0, "fitting": []}, valid],
+            ),
         )
 
 

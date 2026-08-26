@@ -445,7 +445,8 @@ _UNAFFECTED = {
     "concatenate": "builds merged_stats from scratch (no metric keys)",
     "combine_as_new_dimension": "goes through concatenate; fresh stats, then may "
     "attach caller-supplied per-part provenance whose nested fitting keys follow "
-    "the same content/region scrub rules on later rewrites",
+    "the same content/region scrub rules on later rewrites; record cardinality "
+    "cannot be pruned because the current record does not identify its center axis",
     "merge_with_channel_colors": "builds its own merged_stats from scratch",
     "embed_dimension": "widens the center columns; dataset-level source-volume "
     "metrics survive, while promoted-dimensional count/energy stamps are "
