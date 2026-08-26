@@ -145,6 +145,8 @@ to `loader_types` (the Phase-3 switch-on, #1241) re-ran `gen-contract` for the v
 | `normals` | float32 | `(V, 3)` | no | `COORDINATE` | Per-vertex; paired with a required `normal_dims` attr — see §3.4 |
 | `colors` | uint8/uint16/float32 | `(V, 3\|4)` | no | color helpers | RGB or RGBA; the 4th component is a **load-bearing** per-vertex opacity — see §6.2 |
 | `scalars` | float32/float16/uint8 | `(V,)` | no | scalar helpers | Colormap lookup |
+| `uvs` | float32 | `(V, 2)` | no | `COORDINATE` | Required iff `texture`; values outside `[0, 1]` are legal |
+| `texture` | raw numeric or encoded uint8 bytes | `(H, W, C)` or `(B,)` | no | `COLOR` for raw | Per-node base colour; mutually exclusive with other base-colour sources |
 | `label_offsets`/`label_bytes` | — | CSR | no | — | Per-vertex hover tooltips |
 | `image_label_*` | — | CSR | no | — | Per-vertex hover thumbnails |
 
@@ -180,9 +182,17 @@ has_normals: bool
 normal_dims: [int, int, int]  # required iff has_normals; see 3.4
 has_colors: bool
 has_scalars: bool
+has_uvs: bool
+has_texture: bool
+texture_encoding: "raw" | "png" | "webp" | "jpeg"
+texture_width: int
+texture_height: int
+texture_channels: 1 | 3 | 4
+texture_color_space: "srgb" | "linear"
+texture_data_range: [float, float]  # HDR raw textures only
 has_labels: bool
 has_image_labels: bool
-shading: "smooth" | "flat"      # default "smooth" when normals present, else "flat"; consumed by §3.4/§6.2
+shading: "smooth" | "flat" | "none"  # "none" is explicit unlit; never the default
 double_sided: bool              # default true
 position_bounds: {"min": [...], "max": [...]}  # nD vertex bbox, per io/_compiler/bounds.py
 ordering: "none"                # v1 always; reserved for a future spatial index
@@ -197,8 +207,10 @@ plus the standard render attrs already handled by `apply_default_render_attrs` a
 ```python
 MESH_RESERVED_ATTRS = frozenset({
     "type", "n_vertices", "n_faces", "ndim",
-    "has_normals", "normal_dims", "has_colors", "has_scalars", "has_labels",
-    "has_image_labels", "shading", "double_sided", "position_bounds",
+    "has_normals", "normal_dims", "has_colors", "has_scalars", "has_uvs",
+    "has_texture", "texture_encoding", "texture_width", "texture_height",
+    "texture_channels", "texture_color_space", "texture_data_range", "has_labels",
+    "has_image_labels", "has_keys", "shading", "double_sided", "position_bounds",
     "ordering",  # mesh-only: no spatial index, so a supplied ordering can't be honoured
 })
 ```
@@ -420,7 +432,11 @@ scene.add_mesh(
     colors: NDArray | Sequence[float] | None = None,
     scalars: NDArray[np.float32] | float | None = None,
     *,
-    shading: Literal["smooth", "flat"] | None = None,
+    uvs: NDArray[np.float32] | None = None,
+    texture: NDArray | None = None,
+    texture_encoding: Literal["raw", "png", "webp", "jpeg"] = "raw",
+    texture_color_space: Literal["srgb", "linear"] = "srgb",
+    shading: Literal["smooth", "flat", "none"] | None = None,
     double_sided: bool = True,
     labels: Sequence[str] | None = None,
     image_labels: Any | None = None,
@@ -432,7 +448,7 @@ scene.add_mesh(
 `"smooth"` with no stored `normals` has nothing to smooth — the writer stamps the value as given and the
 viewer's §6.2 rule falls back to the flat derivative normal at render time (no write-time rewrite); an
 explicit `"flat"` is always honored and renders the faceted derivative-normal surface even when `normals`
-is present (§3.4, §6.2).
+is present (§3.4, §6.2). Explicit `"none"` is unlit and computes no normal.
 
 `normal_dims` is §3.4's required companion attr, surfaced as an **explicit keyword** because it has no
 other way in: it is a member of `MESH_RESERVED_ATTRS` (§3.3), so passing it through `**attrs` fails the

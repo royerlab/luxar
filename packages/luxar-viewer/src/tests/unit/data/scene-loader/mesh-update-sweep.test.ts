@@ -53,7 +53,7 @@ vi.mock('../../../../rendering/material-manager', () => ({
       side: 0,
       needsUpdate: false,
       updateCameraParams: vi.fn(),
-      updateFlatNormal: vi.fn(),
+      updateShading: vi.fn(),
       updateColormapTexture: vi.fn(),
       updateScalarRange: vi.fn(),
       updateIntensity: vi.fn(),

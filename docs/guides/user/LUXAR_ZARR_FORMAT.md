@@ -993,18 +993,25 @@ Two structural differences from the other three types:
   "normal_dims": [0, 1, 2],          // REQUIRED iff has_normals — see below
   "has_colors": true,
   "has_scalars": false,
-  "shading": "smooth",               // "smooth" | "flat"
+  "has_uvs": true,
+  "has_texture": true,
+  "texture_encoding": "raw",         // "raw" | "png" | "webp" | "jpeg"
+  "texture_width": 2048,
+  "texture_height": 1024,
+  "texture_channels": 3,
+  "texture_color_space": "srgb",     // "srgb" | "linear"
+  "shading": "smooth",               // "smooth" | "flat" | "none"
   "double_sided": true,
   "position_bounds": {"min": [...], "max": [...]},
   "ordering": "none",                // always "none" in v1 (no spatial index)
   // ... plus the standard render attrs (opacity, gamma, intensity, offset,
   //     absorption, blending_mode, colormap, layer, transform, nd_transform,
   //     extend_to_all) and mesh-only appearance attrs (ambient, shade_exponent,
-  //     specular, shininess, alpha_cutoff)
+  //     specular, shininess, alpha_cutoff, texture_filter, texture_wrap)
 }
 ```
 
-The five mesh-only appearance attrs control the view-anchored shading model;
+The seven mesh-only appearance attrs control shading and texture sampling;
 they are rejected on points, lines, Gaussian splats, and groups.
 
 #### vertices/ (Required)
@@ -1156,9 +1163,10 @@ Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
 `group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
-mode's κ), blending mode, and colormap controls, plus five mesh-only shading
-controls (ambient, shade falloff, specular, shininess, alpha cutoff). The five
-shading attrs are valid only on mesh leaves and do not inherit through groups.
+mode's κ), blending mode, and colormap controls, plus mesh shading controls
+(ambient, shade falloff, specular, shininess, alpha cutoff). Seven mesh-only
+appearance attrs also include `texture_filter` and `texture_wrap`; they are valid
+only on mesh leaves and do not inherit through groups.
 
 ```javascript
 {

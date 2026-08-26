@@ -629,22 +629,22 @@ Variant of the Chromatrace demo with an 89-step slider stepping through each fin
 ### Data-Driven Demos (External Datasets)
 
 #### demo_global_rivers_earth.py - Rivers of Earth
-A topographic ETOPO globe (Points) plus every HydroRIVERS reach (Lines) in geographic 3D.
+A relief-displaced textured mesh globe plus every HydroRIVERS reach (Lines) in geographic 3D.
 
 **Run**: `luxar demo run global_rivers_earth`
 
-**Demonstrates**: Mixed Points+Lines geometry in one scene, geographic (lat/lon/elevation) coordinate mapping, large real-world datasets with local caching (~1 GB download on first run).
+**Demonstrates**: Mixed Mesh+Lines geometry, tiled high-resolution textures, geographic (lat/lon/elevation) coordinate mapping, and large real-world datasets with local caching (~1 GB download on first run).
 
 ---
 
 #### demo_ocean_currents_earth.py - Ocean Currents of Earth
-HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) draped over a jittered-Fibonacci NASA Blue Marble globe — a "Perpetual Ocean"-style visualization of the Gulf Stream, Kuroshio, and Antarctic Circumpolar Current.
+HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) draped over a textured NASA Blue Marble mesh globe — a "Perpetual Ocean"-style visualization of the Gulf Stream, Kuroshio, and Antarctic Circumpolar Current.
 
 **Run**: `luxar demo run ocean_currents_earth`
 
 **Requires**: Internet access on first run (~72 MB: HYCOM GLBy0.08 surface u/v + Blue Marble texture; cached under `~/.cache/luxar/ocean_currents_earth/`).
 
-**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, `stream:` additive LOD for fast first paint on an 8M-point globe.
+**Demonstrates**: Mixed Mesh+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, and tiled globe textures.
 
 ---
 

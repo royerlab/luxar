@@ -631,4 +631,8 @@ def test_texture_acceptances(texture, encoding, dims, expected, test_id) -> None
     stamps, and what the viewer's admission gate later spends.
     """
     w, h, c = dims
-    assert validate_texture_for_writing(texture, encoding, w, h, c) == expected
+    color_space = "linear" if test_id.startswith("hdr_") else "srgb"
+    assert (
+        validate_texture_for_writing(texture, encoding, w, h, c, color_space)
+        == expected
+    )

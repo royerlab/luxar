@@ -78,7 +78,7 @@ import numpy as np
 #: :func:`funnel_add_error`.
 _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
 
-#: The five mesh-only appearance keys refused on every non-mesh node by the
+#: The seven mesh-only appearance keys refused on every non-mesh node by the
 #: adder/group and write-through guards.
 MESH_ONLY_APPEARANCE_ATTRS = frozenset(
     {

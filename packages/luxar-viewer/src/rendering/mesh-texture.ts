@@ -77,7 +77,7 @@ export interface MeshTextureCapabilities {
    * that a device may have without this one.
    */
   filterableFloatTextures: boolean;
-  /** `caps.maxTextureSize`, for the anisotropy clamp and the size notice. */
+  /** Upload-time anisotropy ceiling supplied by the material manager. */
   maxAnisotropy?: number;
 }
 
@@ -252,8 +252,8 @@ export function createMeshTexture(
   texture.generateMipmaps = mipmaps;
   // Anisotropy matters more here than for any existing texture: a globe is viewed
   // at grazing incidence near its silhouette, which is exactly where isotropic
-  // mipmapping blurs along the wrong axis. Clamped to the device maximum, since
-  // an over-large value is a validation error on some backends.
+  // mipmapping blurs along the wrong axis. Clamped to the material manager's
+  // conservative upload ceiling.
   texture.anisotropy = mipmaps ? Math.max(1, Math.min(8, caps.maxAnisotropy ?? 1)) : 1;
   texture.needsUpdate = true;
 

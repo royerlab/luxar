@@ -167,6 +167,7 @@ export function applyMeshTexture(
   if (cache.meshTextureSource !== data || !texture) {
     cache.meshTexture?.dispose();
     texture = createMeshTexture(data, attrs, materialManager.getTextureCapabilities(), object.name);
+    object.geometry.addEventListener('dispose', () => texture?.dispose());
     cache.meshTextureSource = data;
     cache.meshTexture = texture;
   }

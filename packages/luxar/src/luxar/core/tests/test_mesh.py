@@ -2773,11 +2773,26 @@ def test_hdr_texture_keeps_its_range_and_stamps_a_window(tmp_path) -> None:
         store, encoding_mode=EncodingMode.PRECISION, compressor=None
     ) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        scene.add_mesh("m", _V, _F, uvs=_TEX_UV, texture=hdr)
+        scene.add_mesh(
+            "m", _V, _F, uvs=_TEX_UV, texture=hdr, texture_color_space="linear"
+        )
     mesh = LuxarScene.load(store).get_mesh("m")
     assert mesh.texture.dtype == np.float32
     assert float(mesh.texture.max()) == pytest.approx(6.5)
     assert mesh.metadata["texture_data_range"] == [0.0, 6.5]
+    assert mesh.metadata["texture_color_space"] == "linear"
+
+
+def test_hdr_texture_refuses_srgb_transfer(tmp_path) -> None:
+    hdr = np.full((4, 4, 3), 2.0, dtype=np.float32)
+    with pytest.raises(ValueError, match="HDR values above 1.0 cannot use"):
+        _write_textured(tmp_path, texture=hdr)
+
+
+@pytest.mark.parametrize("color_space", ["sRGB", "banana", "rec2020"])
+def test_bad_texture_color_space_is_refused(tmp_path, color_space) -> None:
+    with pytest.raises(ValueError, match="texture_color_space must be one of"):
+        _write_textured(tmp_path, texture=_TEX_RGB, texture_color_space=color_space)
 
 
 def test_sdr_float_texture_stamps_no_hdr_window(tmp_path) -> None:

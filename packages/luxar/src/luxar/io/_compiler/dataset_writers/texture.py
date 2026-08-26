@@ -54,6 +54,7 @@ def write_texture(
     width: Optional[int],
     height: Optional[int],
     channels: Optional[int],
+    color_space: str,
     ctx: DatasetCtx,
 ) -> Tuple[int, int, int]:
     """Write a mesh texture and return its resolved ``(height, width, channels)``.
@@ -65,6 +66,7 @@ def write_texture(
         width: Declared width; required for encoded payloads.
         height: Declared height; required for encoded payloads.
         channels: Declared channel count; required for encoded payloads.
+        color_space: Declared transfer function; HDR raw values require ``linear``.
         ctx: Dataset write context (encoder, mode, compressor).
 
     Returns:
@@ -73,7 +75,7 @@ def write_texture(
     from ....validation.base import validate_texture_for_writing
 
     res_h, res_w, res_c = validate_texture_for_writing(
-        texture, encoding, width, height, channels
+        texture, encoding, width, height, channels, color_space
     )
     arr = np.asarray(texture)
 

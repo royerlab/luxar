@@ -363,6 +363,9 @@ TEXTURE_FILTERS: Tuple[str, ...] = ("linear", "nearest")
 #: dateline seam without bleeding the north pole into the south.
 TEXTURE_WRAPS: Tuple[str, ...] = ("repeat", "clamp")
 
+#: The transfer functions a mesh texture may declare.
+TEXTURE_COLOR_SPACES: Tuple[str, ...] = ("srgb", "linear")
+
 
 def _validate_texture_choice(value: Any, name: str, allowed: Tuple[str, ...]) -> str:
     """Validate a texture sampling attr against a closed vocabulary."""
@@ -379,6 +382,11 @@ def validate_texture_filter(value: Any, name: str) -> str:
 def validate_texture_wrap(value: Any, name: str) -> str:
     """Validate a mesh ``texture_wrap`` attr."""
     return _validate_texture_choice(value, name, TEXTURE_WRAPS)
+
+
+def validate_texture_color_space(value: Any, name: str) -> str:
+    """Validate a mesh ``texture_color_space`` declaration."""
+    return _validate_texture_choice(value, name, TEXTURE_COLOR_SPACES)
 
 
 def validate_absorption(absorption: Any) -> float:

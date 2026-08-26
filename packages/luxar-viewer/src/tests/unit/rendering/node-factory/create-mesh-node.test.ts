@@ -16,6 +16,7 @@ import {
   resolveMeshShading,
   applyMeshShading,
   applyMeshSide,
+  applyMeshTexture,
 } from '../../../../rendering/node-factory/create-mesh-node';
 import { MeshMaterial } from '../../../../rendering/materials/mesh/material-glsl';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
@@ -191,6 +192,32 @@ describe('applyMeshSide', () => {
     applyMeshSide(node, 'double');
     expect(material.side).toBe(THREE.DoubleSide);
     expect(material.version).toBeGreaterThan(before);
+  });
+});
+
+describe('applyMeshTexture', () => {
+  it('disposes the uploaded GPU texture with the shared geometry', () => {
+    const attrs = {
+      ...ATTRS,
+      has_uvs: true,
+      has_texture: true,
+      texture_width: 1,
+      texture_height: 1,
+      texture_channels: 3,
+      texture_color_space: 'srgb',
+    } as MeshMetadata;
+    const node = createEmptyMeshNode('/surface', attrs, loader, null);
+    applyMeshTexture(node, attrs, {
+      kind: 'raw',
+      pixels: new Uint8Array([255, 0, 0]),
+      width: 1,
+      height: 1,
+      channels: 3,
+    });
+    const texture = (node.userData as { meshTexture: THREE.Texture }).meshTexture;
+    const dispose = vi.spyOn(texture, 'dispose');
+    node.geometry.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
 

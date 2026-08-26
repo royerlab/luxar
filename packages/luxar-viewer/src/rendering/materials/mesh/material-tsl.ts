@@ -516,7 +516,6 @@ export class MeshTSLMaterial
   setColormapTexture(texture: THREE.DataTexture | null): void {
     if (!this.defines) this.defines = {};
     if (texture) {
-      this.defines.USE_COLORMAP = '';
       if (!this.uniforms.uColormapTex) {
         this.uniforms.uColormapTex = { value: texture };
         this.uniforms.uScalarMin = { value: 0.0 };
@@ -525,11 +524,17 @@ export class MeshTSLMaterial
         this.uniforms.uColormapTex.value = texture;
       }
     } else {
-      delete this.defines.USE_COLORMAP;
       if (this.uniforms.uColormapTex) this.uniforms.uColormapTex.value = null;
       if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = 0.0;
       if (this.uniforms.uScalarScale) this.uniforms.uScalarScale.value = 1.0;
     }
+    syncMeshColorSourceDefines(
+      this.defines,
+      resolveMeshColorSource({
+        baseColorTexture: this.uniforms.uBaseColorTex?.value ?? undefined,
+        colormapTexture: texture ?? undefined,
+      })
+    );
   }
 
   setScalarRange(min: number, max: number): void {

@@ -179,6 +179,7 @@ def _write_mesh_texture_arrays(
             texture_width,
             texture_height,
             texture_channels,
+            texture_color_space,
             ctx.dataset_ctx,
         )
         meta.update(

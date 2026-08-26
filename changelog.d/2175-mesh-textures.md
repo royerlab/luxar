@@ -45,15 +45,14 @@ is node-level.
 `demo_biodiversity_planetary_scale` rendered the planet as point clouds — two of
 them at 8M points — because a point cloud resolves a texture at roughly one sample
 per point. They are now UV spheres with a 16384x8192 Blue Marble basemap across
-two nodes, at two to three orders of magnitude fewer elements, and the element
+multiple nodes (four for the relief globe), at two to three orders of magnitude fewer elements, and the element
 budget goes back to the data being visualised.
 
 Each carries a real cloud deck from NASA's Blue Marble composite at altitude,
-where the texture's alpha *is* the cloud fraction. Rivers keeps its 45x relief
-exaggeration, now as a displaced mesh with `shading="flat"` so the terrain casts
-light instead of reading as a colour band, and its cloud shell's altitude is
-derived from the relief's own maximum — Everest sits at 6.2% of the radius there,
-five times what the flat globes use.
+where the texture's alpha *is* the cloud fraction. Rivers uses 15x relief
+exaggeration as a displaced mesh with smooth shading, and its cloud shell's
+altitude is derived from the relief's own maximum — Everest sits at about 2.1%
+of the radius there.
 
 Every translucent layer over a globe — cloud deck, current ribbons, sea surface —
 uses `luminous` blending. That is additive **and** depth-tested, which is the

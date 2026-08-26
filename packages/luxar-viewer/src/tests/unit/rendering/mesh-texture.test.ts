@@ -209,7 +209,7 @@ describe('createMeshTexture — sampling', () => {
     expect(tex.anisotropy).toBe(1);
   });
 
-  it('clamps anisotropy to the device maximum', () => {
+  it('clamps anisotropy to the supplied upload ceiling', () => {
     const tex = createMeshTexture(raw(new Uint8Array(8)), attrs(), {
       ...CAPS,
       maxAnisotropy: 2,

@@ -1151,6 +1151,7 @@ def validate_texture_for_writing(
     width: Optional[int] = None,
     height: Optional[int] = None,
     channels: Optional[int] = None,
+    color_space: str = "srgb",
     context: str = "texture",
 ) -> Tuple[int, int, int]:
     """Validate a mesh texture payload and resolve its declared dimensions.
@@ -1179,6 +1180,7 @@ def validate_texture_for_writing(
         width: Declared width. Required for encoded payloads.
         height: Declared height. Required for encoded payloads.
         channels: Declared channel count. Required for encoded payloads.
+        color_space: ``srgb`` or ``linear``. HDR raw values require ``linear``.
         context: Context for error messages.
 
     Returns:
@@ -1189,6 +1191,9 @@ def validate_texture_for_writing(
             carry, a bad channel count, missing or disagreeing dimensions, or a
             non-finite float value.
     """
+    from .types import validate_texture_color_space
+
+    validate_texture_color_space(color_space, "texture_color_space")
     if encoding not in TEXTURE_ENCODINGS:
         raise ValidationError(
             f"{context}: Unknown texture_encoding {encoding!r}. Valid: "
@@ -1205,6 +1210,18 @@ def validate_texture_for_writing(
             arr, encoding, width, height, channels, context
         )
     )
+
+    if (
+        encoding == "raw"
+        and color_space == "srgb"
+        and np.issubdtype(arr.dtype, np.floating)
+        and bool(np.any(arr[..., : min(res_c, 3)] > 1.0))
+    ):
+        raise ValidationError(
+            f"{context}: HDR values above 1.0 cannot use texture_color_space='srgb'",
+            "Pass texture_color_space='linear'; the sRGB transfer function is only "
+            "defined for SDR values in [0, 1]",
+        )
 
     if res_c not in _TEXTURE_CHANNELS:
         raise ValidationError(

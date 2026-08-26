@@ -809,6 +809,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             texture_color_space: ``srgb`` (default) or ``linear``. An ordinary
                 PNG/JPEG is sRGB-encoded; declaring it wrong gives a subtly
                 over-dark or washed-out surface rather than an obvious failure.
+                HDR raw textures must be declared ``linear``.
             **attrs: Additional attributes.
 
         Returns:
