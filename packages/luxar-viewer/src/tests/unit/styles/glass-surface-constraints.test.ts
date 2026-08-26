@@ -161,7 +161,7 @@ describe('dimension-sliders.css — bounded single-line labels (#2188)', () => {
  * unit suite cannot observe the overflow; the geometry half lives in
  * `tests/e2e/nd-navigation.spec.ts`.
  */
-describe('dimension-sliders.css — the row survives a long dimension NAME (#2196)', () => {
+describe('dimension-sliders.css — the row survives a long dimension NAME (follow-up to #2193)', () => {
   const css = loadCss('components/dimension-sliders.css');
 
   it('reserves the value floor once, on the row', () => {

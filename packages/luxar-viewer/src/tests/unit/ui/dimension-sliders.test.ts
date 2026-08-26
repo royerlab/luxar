@@ -116,10 +116,10 @@ describe('DimensionSliders - keyboard selection indicator', () => {
   });
 
   // A slider row's name is now CSS-ellipsised once it would claim the value's
-  // reserved width (#2196), so the full text has to survive somewhere. jsdom
-  // does no layout and therefore cannot see the truncation itself — what it CAN
-  // pin is that nothing is left unrecoverable, which is the half that regressed
-  // when the ellipsis was added.
+  // reserved width, so the full text has to survive somewhere. jsdom does no
+  // layout and therefore cannot see the truncation itself — what it CAN pin is
+  // that nothing is left unrecoverable, which is the half that regressed when
+  // the ellipsis was added.
   it('gives every slider name a tooltip carrying its full text', () => {
     const sliders = buildSliders();
     const names = Array.from(
@@ -133,14 +133,35 @@ describe('DimensionSliders - keyboard selection indicator', () => {
     sliders.dispose();
   });
 
-  it('prefers an authored description over the bare name, and only then underlines', () => {
-    // The `--with-tooltip` dotted underline advertises that hovering reveals
-    // something NEW. It must not appear on the fallback tooltip, which only
-    // repeats text already on screen.
+  /**
+   * The tooltip text and the `--with-tooltip` dotted underline are two
+   * decisions off the SAME fact, so they are asserted together: the underline
+   * advertises that hovering reveals something new, and must not appear on a
+   * fallback tooltip that merely repeats the visible name.
+   *
+   * The empty-string row is the one that matters. Compilers write
+   * `description: ''` rather than omitting the key — the shipped
+   * `dimension_sliders_5d_example` does — and reading it with `??` (which falls
+   * through on null/undefined only) put `title=""` on every row of the real
+   * viewer: the class ternary saw no description, the tooltip used it anyway,
+   * and the full name became unrecoverable precisely where the CSS had begun
+   * truncating it. Nothing else in the suite covers a falsy-but-present
+   * description.
+   */
+  it.each([
+    { label: 'no description key', description: undefined, title: 'Frame', underlined: false },
+    { label: 'an empty description', description: '', title: 'Frame', underlined: false },
+    {
+      label: 'an authored description',
+      description: 'Acquisition frame index',
+      title: 'Acquisition frame index',
+      underlined: true,
+    },
+  ])('with $label the name reads title "$title"', ({ description, title, underlined }) => {
     const described: SimpleDims = {
       ...dims,
       metadata: dims.metadata!.map((meta, index) =>
-        index === 3 ? { ...meta, description: 'Acquisition frame index' } : meta
+        index === 3 ? { ...meta, description } : meta
       ),
     };
     const sliders = new DimensionSliders({
@@ -159,8 +180,8 @@ describe('DimensionSliders - keyboard selection indicator', () => {
 
     const frame = document.querySelector<HTMLElement>('.luxar-dimension-slider__name')!;
     expect(frame.textContent).toBe('Frame');
-    expect(frame.title).toBe('Acquisition frame index');
-    expect(frame.className).toContain('luxar-dimension-slider__name--with-tooltip');
+    expect(frame.title).toBe(title);
+    expect(frame.className.includes('luxar-dimension-slider__name--with-tooltip')).toBe(underlined);
     sliders.dispose();
   });
 });

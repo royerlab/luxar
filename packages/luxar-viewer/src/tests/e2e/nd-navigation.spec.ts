@@ -94,7 +94,7 @@ test.describe('nD Navigation - Dimension Selection', () => {
   }
 
   /**
-   * #2196: the row's label is the DIMENSION NAME out of the store, so it is
+   * Follow-up to #2193: the row's label is the DIMENSION NAME out of the store, so it is
    * dataset-controlled — and #2193 left it `flex: 0 0 auto; white-space: nowrap`
    * with no width bound. A long name then took the whole row: at a 400px panel a
    * 62-char name measured 385px, the value readout was squeezed to 0px, and the
@@ -109,8 +109,11 @@ test.describe('nD Navigation - Dimension Selection', () => {
    * `tests/unit/ui/dimension-sliders.test.ts`; layout is only observable here.
    */
   for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 380, height: 700 },
+    // At 1440 the panel is at its 800px cap, so a 62-char name still FITS
+    // inside the row minus the reserved floor — the bound must hold without
+    // truncating anything. It only bites once the panel narrows.
+    { width: 1440, height: 900, expectTruncated: false },
+    { width: 380, height: 700, expectTruncated: true },
   ]) {
     test(`a long dimension name cannot overrun the slider row at ${viewport.width}x${viewport.height}`, async ({
       page,
@@ -137,17 +140,21 @@ test.describe('nD Navigation - Dimension Selection', () => {
         const scroll = document.querySelector<HTMLElement>('.luxar-dimension-sliders__scroll')!;
         const rowRect = row.getBoundingClientRect();
         const panelRect = panel.getBoundingClientRect();
+        const floor = parseFloat(getComputedStyle(row).getPropertyValue('--luxar-dim-value-floor'));
 
         return {
           nameLines: lineCount(name),
           valueLines: lineCount(value),
           nameTruncated: name.scrollWidth > name.clientWidth,
+          nameWidth: name.getBoundingClientRect().width,
           valueWidth: value.getBoundingClientRect().width,
+          rowWidth: rowRect.width,
+          floor,
           // How far the row's own children spill past it — the overflow that
           // becomes a horizontal scrollbar.
-          childOverflow: Math.max(
-            ...Array.from(row.children, (child) => child.getBoundingClientRect().right)
-          ) - rowRect.right,
+          childOverflow:
+            Math.max(...Array.from(row.children, (child) => child.getBoundingClientRect().right)) -
+            rowRect.right,
           scrollOverflow: scroll.scrollWidth - scroll.clientWidth,
           panelLeft: panelRect.left,
           panelRight: panelRect.right,
@@ -159,8 +166,13 @@ test.describe('nD Navigation - Dimension Selection', () => {
       // readout, which is the whole point of the panel, does not.
       expect(geometry.nameLines).toBe(1);
       expect(geometry.valueLines).toBe(1);
-      expect(geometry.nameTruncated).toBe(true);
-      expect(geometry.valueWidth).toBeGreaterThanOrEqual(80);
+      expect(geometry.valueWidth).toBeGreaterThanOrEqual(geometry.floor);
+
+      // The width-independent invariant: whether or not the name had to be cut,
+      // it never claims the row minus the reserved floor.
+      expect(geometry.floor).toBeGreaterThan(0);
+      expect(geometry.nameWidth).toBeLessThanOrEqual(geometry.rowWidth - geometry.floor + 1);
+      expect(geometry.nameTruncated).toBe(viewport.expectTruncated);
 
       // No horizontal scrollbar inside a slider panel, at any width.
       expect(geometry.childOverflow).toBeLessThanOrEqual(1);
