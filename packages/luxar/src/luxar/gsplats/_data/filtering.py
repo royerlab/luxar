@@ -123,7 +123,12 @@ def stamp_region_scoped_stats(
     occupancy: float,
     source_itemsize: "int | None" = None,
 ) -> None:
-    """Replace the source-grid record with one measured for this region."""
+    """Replace the source-grid record with one measured for this region.
+
+    ``source_declared`` stays absent because this grid was measured rather than
+    declared; ``source_stored_bytes`` describes the whole acquisition, not the
+    extracted region.
+    """
     for key in _REGION_SCOPED_STATS_KEYS:
         stats.pop(key, None)
     source = [int(size) for size in source_shape]

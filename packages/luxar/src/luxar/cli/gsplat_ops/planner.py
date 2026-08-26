@@ -78,7 +78,12 @@ def _stamp_content_box_output(
     *,
     verbose: bool,
 ) -> None:
-    """Describe a standalone content box after its halo splats were removed."""
+    """Describe a standalone content box after its halo splats were removed.
+
+    The score measures the box in isolation. Neighbour contributions inside the
+    core are absent, so the boundary shell is a lower bound and the result is not
+    comparable to a whole-fit score.
+    """
     from luxar.gsplats.fit_basis import fit_image_min, reference_on_fit_basis
     from luxar.gsplats.fitting.results import _occupied_fraction
     from luxar.gsplats.fitting.validation import _resolve_source_dtype
