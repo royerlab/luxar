@@ -720,13 +720,11 @@ def test_green_schedule_ignores_older_cancelled_push_attempt(
     workflow: str, tmp_path: Path
 ) -> None:
     result, calls = _run_cancelled_push_repair(
-        workflow, tmp_path, push_python_latest="success"
+        workflow, tmp_path, push_python_latest="success", push_release="success"
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == [
-        "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs",
-    ]
+    assert calls == ["repos/royerlab/luxar/actions/jobs/22/rerun"]
 
 
 def test_single_cancelled_required_job_uses_job_rerun(
