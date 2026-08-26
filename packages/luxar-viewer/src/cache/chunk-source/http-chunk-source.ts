@@ -1,7 +1,7 @@
 /**
  * The directory-store byte source: one HTTP request per chunk.
  *
- * This is the behaviour {@link MultiLevelCachingStore} had inline before the
+ * This is the behaviour `MultiLevelCachingStore` had inline before the
  * {@link ChunkSource} seam existed, moved verbatim rather than rewritten —
  * same `buildUrl`, same `fetchWithRetry`, same retry budget, same
  * body-cancellation on a response we decline to read. The store's ~100

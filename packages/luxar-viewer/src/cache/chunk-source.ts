@@ -1,5 +1,5 @@
 /**
- * The byte source behind {@link MultiLevelCachingStore}.
+ * The byte source behind `MultiLevelCachingStore`.
  *
  * The caching store used to hold a `baseUrl: string` and build every chunk URL
  * itself (`buildUrl(baseUrl, key)`), which quietly hard-wired one assumption
@@ -46,7 +46,7 @@ export type ChunkFetchOutcome =
   /** Transient failure after the source exhausted its own retries. */
   | { kind: 'error'; cause: Error };
 
-/** Where {@link MultiLevelCachingStore} gets its bytes. */
+/** Where `MultiLevelCachingStore` gets its bytes. */
 export interface ChunkSource {
   /**
    * Stable identity of the thing being read, used to derive the OPFS bucket.
