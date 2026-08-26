@@ -190,6 +190,31 @@ def test_invalid_banner_aborts_without_partial_writes(
     assert "sum to 1, not 2" in capsys.readouterr().err
 
 
+def test_demo_count_decrease_cannot_make_missing_bucket_negative(
+    sync_module: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    readme, claude, skill, examples = _checkout(tmp_path)
+    before = {path: path.read_bytes() for path in (readme, claude, skill)}
+
+    assert (
+        sync_module.synchronize(
+            0,
+            sync_module._example_count(examples),
+            check=False,
+            repo=tmp_path,
+            readme=readme,
+            claude=claude,
+            visualization_skill=skill,
+        )
+        == 2
+    )
+
+    assert {path: path.read_bytes() for path in before} == before
+    assert "cannot absorb the demo-count decrease" in capsys.readouterr().err
+
+
 def test_committed_counts_are_synchronized(sync_module: ModuleType) -> None:
     assert sync_module.main(["--check"]) == 0, (
         "demo documentation counts are stale — run `hatch run sync-demo-counts`"
