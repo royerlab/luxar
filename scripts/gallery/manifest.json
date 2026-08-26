@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit \u2014 an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees \u2014 orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), readme (true = a current top pick for the README gallery), note (free-text human annotation; the capture code never reads it).",
+  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit \u2014 an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees \u2014 orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), note (free-text human annotation; the capture code never reads it).",
   "demos": [
     {
       "id": "lorenz",
@@ -8,8 +8,7 @@
       "category": "synthetic",
       "script": "demo_lorenz.py",
       "dataset": "datasets/demos/lorenz.luxar.zarr",
-      "exposure": 1.3,
-      "readme": true
+      "exposure": 1.3
     },
     {
       "id": "spiral_galaxy",
@@ -17,8 +16,7 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_spiral_galaxy.py",
-      "dataset": "datasets/demos/spiral_galaxy.luxar.zarr",
-      "readme": true
+      "dataset": "datasets/demos/spiral_galaxy.luxar.zarr"
     },
     {
       "id": "mandelbulb",
@@ -70,8 +68,7 @@
       "viewAngle": {
         "azimuth": 90,
         "elevation": 25
-      },
-      "readme": true
+      }
     },
     {
       "id": "gaia_milky_way",
@@ -82,8 +79,7 @@
       "dataset": "datasets/demos/gaia_milky_way.luxar.zarr",
       "citation": "Gaia Collaboration et al. 2023",
       "autoFrame": false,
-      "autoExpose": false,
-      "readme": true
+      "autoExpose": false
     },
     {
       "id": "asteroids_solar_system",
@@ -114,8 +110,7 @@
       "viewAngle": {
         "azimuth": 90,
         "elevation": 0
-      },
-      "readme": true
+      }
     },
     {
       "id": "gsplats_3d_ct_totalsegmentator",
@@ -125,7 +120,6 @@
       "script": "demo_gsplats_3d_ct_totalsegmentator.py",
       "dataset": "datasets/demos/gsplats_3d_ct_totalsegmentator.luxar.zarr",
       "citation": "Wasserthal et al. 2023",
-      "readme": true,
       "orbitUp": "z",
       "distance": 600,
       "note": "body lies along Z; up=Z gives upright coronal + turntable (not roll)"
@@ -164,7 +158,6 @@
         "elevation": 40
       },
       "fillTarget": 0.69,
-      "readme": true,
       "note": "the first SHADED tile. EXPOSURE: the offset-key capture's frame 0 measures p10 0.378, p50 0.506, p99 0.597, spread 0.219 over 32,845 lit pixels. The p50 landing on TARGET_MID confirms the auto-exposure flat-subject pass still fired under the wider asymmetric lighting distribution. This tile deliberately carries NO exposure override because the policy already puts its median on target; the final-frame spread is an outcome measurement, not the post-phase-1 gate input used to calibrate NARROW_SPREAD_MAX. ORBITUP+VIEWANGLE: the orbit hard-sets cam.up to the orbitUp axis, and the default WAS world-y at the time, which silently discarded this demo's baked up=(1,0,0) - the shipped animation was rolled ~90deg away from its own poster AND tumbled, subject aspect swinging 0.40..0.92 (130pct) over one rock. orbitUp x matches the baked up and makes the rock a real turntable, but positionForOrbitUp then parks the camera edge-on to this thin slab (aspect ~4.5, lit fraction 0.09, a sliver), so viewAngle 45/40 is REQUIRED alongside it, not optional; together they hold aspect at 1.46..1.50 (2.5pct swing). The default now derives from the camera's own up-vector and would reach x unaided, but orbitUp x is retained deliberately because it also triggers positionForOrbitUp, and the viewAngle 45/40 is calibrated against that parked pose. FILLTARGET: the fill loop closes on an OUTLIER-ROBUST percentile bbox, but what reaches the frame edge is exactly the outliers - detached membrane specks and the slab's far corners - so the robust metric reports a fit while the true extent is cropped. Measured over EVERY orbit frame (the README embeds the animation, not the still), border-lit pixels: 0.84 -> 3389, 0.75 -> 1256, 0.69 -> 0 across all 120 frames. Captured on an NVIDIA RTX PRO 6000; a macOS/Metal run reproduced the same three numbers within 1pct"
     },
     {
@@ -199,7 +192,6 @@
       "script": "demo_gsplats_4d_celegans_tracking.py",
       "dataset": "datasets/demos/gsplats_4d_celegans_tracking.luxar.zarr",
       "citation": "Santella et al. 2022",
-      "readme": true,
       "timelapse": {
         "framePoint": 0.87
       },
@@ -223,8 +215,7 @@
       "category": "genomics",
       "script": "demo_dipc_3d_genome.py",
       "dataset": "datasets/demos/dipc_3d_genome.luxar.zarr",
-      "citation": "Tan et al. 2018",
-      "readme": true
+      "citation": "Tan et al. 2018"
     },
     {
       "id": "dmri_tractography",
@@ -237,7 +228,6 @@
       "lodFinest": false,
       "autoFrame": false,
       "autoExpose": false,
-      "readme": true,
       "note": "87 tract bundles, 6.83M segments at the finest level. lodFinest:false so the coverage LOD serves the ~640K-element coarse levels \u2014 forcing every element never reaches networkidle inside the 120s goto budget. autoFrame/autoExpose off because both closed loops re-screenshot a scene this heavy until they converge (one run took an hour before timing out in measureLuminance), and because the demo's opening pose and its additive opacity/intensity window are deliberately baked \u2014 letting the harness retune them would undo the tuning"
     },
     {
@@ -640,8 +630,7 @@
       "script": "demo_gsplats_3d_tng_cosmic_web.py",
       "dataset": "datasets/demos/gsplats_3d_tng_cosmic_web.luxar.zarr",
       "citation": "Nelson et al. 2019",
-      "autoExpose": false,
-      "readme": true
+      "autoExpose": false
     },
     {
       "id": "cubic_array",
