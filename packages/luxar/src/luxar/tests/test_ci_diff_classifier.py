@@ -246,10 +246,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
 #: satisfy every positive row.
 NON_DOMAIN_PATHS: list[str] = ["CHANGELOG.md", "docs/index.rst"]
 
-#: Viewer sources with no Python consumer. These must remain TypeScript-only so
-#: adding a few contract inputs cannot silently turn whole viewer subtrees into
-#: ``dom_py`` and make pure-viewer PRs pay for the Python matrix.
+#: Inputs with no Python consumer. These must remain outside ``dom_py`` so adding
+#: a few contract inputs cannot silently widen ownership to whole subtrees and
+#: make unrelated PRs pay for the Python matrix.
 NON_PYTHON_DOMAIN_PATHS: list[str] = [
+    ".github/workflows/publish.yml",
     "packages/luxar-viewer/src/config/sections/adaptive-dpr/data.ts",
     "packages/luxar-viewer/src/data/loaders/spatial-query/spatial-query-builder.ts",
     "packages/luxar-viewer/src/rendering/display-range.ts",
@@ -397,10 +398,10 @@ def test_a_prose_only_change_claims_no_language_domain(
 
 
 @pytest.mark.parametrize("path", NON_PYTHON_DOMAIN_PATHS)
-def test_unconsumed_viewer_sources_do_not_claim_the_python_domain(
+def test_inputs_without_python_readers_do_not_claim_the_python_domain(
     workflow: str, path: str
 ) -> None:
-    """Cross-language ownership must stay narrower than whole viewer subtrees."""
+    """Cross-language ownership must stay narrower than whole input subtrees."""
     assert (REPO / path).exists(), f"{path} moved; update this test"
     assert not _classifies(_domain_patterns(workflow)["py"], path), (
         f"{path} sets dom_py even though no Python gate reads it; narrow the "
