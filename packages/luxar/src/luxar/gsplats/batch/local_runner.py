@@ -18,8 +18,9 @@ import math
 import os
 import shutil
 import socket
+from collections import Counter
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 from arbol import aprint, asection
 
@@ -94,6 +95,21 @@ def _worker_env(gpu: int, workers: dict[int, int]) -> dict[str, str]:
     return {
         "CUDA_VISIBLE_DEVICES": str(gpu),
         QUALITY_WORKERS_PER_DEVICE_ENV: str(max(1, workers.get(gpu, 1))),
+    }
+
+
+def _active_worker_counts(
+    task_ids: list[int],
+    assignment: dict[int, int],
+    workers: dict[int, int],
+    skip_if: Callable[[int], bool],
+) -> dict[int, int]:
+    """Count active workers per device with one resume check per task."""
+    active_tasks = Counter(
+        assignment.get(task_id, -1) for task_id in task_ids if not skip_if(task_id)
+    )
+    return {
+        gpu: max(1, min(count, active_tasks[gpu])) for gpu, count in workers.items()
     }
 
 
@@ -266,19 +282,7 @@ def run_batch_local(
         out = _out_path(job_by_id[task_id])
         return resume and (out.exists() or Path(str(out) + ".empty").exists())
 
-    active_workers = {
-        gpu: max(
-            1,
-            min(
-                count,
-                sum(
-                    not _skip(task_id) and assignment.get(task_id, -1) == gpu
-                    for task_id in task_ids
-                ),
-            ),
-        )
-        for gpu, count in workers.items()
-    }
+    active_workers = _active_worker_counts(task_ids, assignment, workers, _skip)
 
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]

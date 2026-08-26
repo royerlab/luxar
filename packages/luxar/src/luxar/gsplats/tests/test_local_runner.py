@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from luxar.gsplats.batch.local_runner import (
+    _active_worker_counts,
     _finalize_output,
     _staging_path,
     _task_voxels,
@@ -50,6 +51,24 @@ def test_gpu_worker_env_carries_same_device_concurrency() -> None:
         QUALITY_WORKERS_PER_DEVICE_ENV: "4",
     }
     assert _worker_env(-1, {-1: 8}) == {}
+
+
+def test_active_worker_counts_checks_each_task_once() -> None:
+    checked: list[int] = []
+
+    def _skip(task_id: int) -> bool:
+        checked.append(task_id)
+        return task_id in {1, 4}
+
+    counts = _active_worker_counts(
+        [0, 1, 2, 3, 4],
+        {0: 0, 1: 0, 2: 1, 3: 1, 4: 1},
+        {0: 4, 1: 2},
+        _skip,
+    )
+
+    assert checked == [0, 1, 2, 3, 4]
+    assert counts == {0: 1, 1: 2}
 
 
 # ---------------------------------------------------------------------------

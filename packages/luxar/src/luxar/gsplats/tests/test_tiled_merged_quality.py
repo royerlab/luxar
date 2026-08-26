@@ -341,6 +341,50 @@ def test_cuda_quality_budget_rejects_a_small_shared_card(
     assert "4 worker(s)" in reason
 
 
+def test_cuda_quality_budget_honors_a_low_explicit_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An override replaces the CUDA ceiling instead of disabling its guard."""
+    import torch
+
+    from luxar.gsplats import metrics
+    from luxar.gsplats.utils import device as device_utils
+
+    monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0.25")
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 128.0)
+    monkeypatch.setattr(
+        device_utils, "resolve_torch_device", lambda _device: torch.device("cuda:0")
+    )
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda _device: 95 * 1024**3)
+
+    reason = _quality_memory_guard((256, 256, 256), "cuda")
+    assert reason is not None
+    assert "needs ~0.5 GiB of cuda:0 memory" in reason
+    assert "0.25 GiB per-worker budget" in reason
+
+
+def test_cuda_quality_budget_falls_back_when_free_vram_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed VRAM probe retains the fixed device-memory ceiling."""
+    import torch
+
+    from luxar.gsplats import metrics
+    from luxar.gsplats.utils import device as device_utils
+
+    monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 512.0)
+    monkeypatch.setattr(
+        device_utils, "resolve_torch_device", lambda _device: torch.device("cuda:0")
+    )
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda _device: None)
+
+    reason = _quality_memory_guard((1024, 1024, 1024), "cuda")
+    assert reason is not None
+    assert "needs ~32.0 GiB of cuda:0 memory" in reason
+    assert "24 GiB per-worker budget" in reason
+
+
 def test_cpu_quality_budget_still_uses_the_full_host_peak(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -357,7 +401,7 @@ def test_cpu_quality_budget_still_uses_the_full_host_peak(
 
     reason = _quality_memory_guard((512, 512, 512), "cpu")
     assert reason is not None
-    assert "host memory needs ~4.0 GiB" in reason
+    assert "needs ~4.0 GiB of host memory" in reason
 
 
 def test_budget_probe_leaves_invalid_device_reporting_to_the_score(
@@ -372,9 +416,11 @@ def test_budget_probe_leaves_invalid_device_reporting_to_the_score(
     assert _quality_memory_guard((32, 32, 32), "not-a-device") is None
 
 
-def test_split_peak_counts_keep_host_and_device_allocations_explicit() -> None:
+def test_split_peak_counts_cover_host_and_ssim_allocations() -> None:
+    from luxar.gsplats import metrics
+
     assert _QUALITY_HOST_REFERENCE_VOLUMES == 2
-    assert _QUALITY_DEVICE_PEAK_VOLUMES == 8
+    assert _QUALITY_DEVICE_PEAK_VOLUMES >= metrics._SSIM_PEAK_TENSOR_COUNT
 
 
 def test_the_default_budget_is_held_under_the_memory_actually_free(

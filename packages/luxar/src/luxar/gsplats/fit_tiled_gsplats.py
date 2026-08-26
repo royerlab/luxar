@@ -804,12 +804,14 @@ def fit_tiled(
     **Merged quality metrics**: the per-tile scores describe crops of an
     apodized decomposition and do not compose, so the merged reconstruction is
     rendered once against ``volume`` and scored. Scoring materializes the whole
-    volume, so it is bounded by a memory budget — half the memory actually free,
-    held under a 24 GiB ceiling, with ``LUXAR_TILED_QUALITY_MAX_GB`` overriding
-    both (``0`` declines outright). Over budget, or on a failure, it says so even
-    when ``verbose=False``. A partition is scored by rendering each surviving
-    tile-part and summing the volumes in place, matching how the viewer composes
-    the parts without flattening or copying the full splat set.
+    volume, so separate host-reference and render-device peaks are bounded by
+    half the memory actually free, each held under a 24 GiB ceiling. CUDA workers
+    sharing a card divide its free-memory allowance. ``LUXAR_TILED_QUALITY_MAX_GB``
+    overrides both budgets (``0`` declines outright). Over budget, or on a
+    failure, it says so even when ``verbose=False``. A partition is scored by
+    rendering each surviving tile-part and summing the volumes in place, matching
+    how the viewer composes the parts without flattening or copying the full splat
+    set.
 
     **GPU utilization with progressive**: When ``progressive=True``, each
     per-pass fit uses fewer splats (``max_splats_per_pass``), which may

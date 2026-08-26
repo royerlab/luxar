@@ -17,15 +17,15 @@ from luxar.gsplats.gsplat_data import GSplatData
 #: silently carries no PSNR is the failure this scoring exists to end. Override
 #: with ``LUXAR_TILED_QUALITY_MAX_GB`` when the machine can take more, or set it
 #: to ``0`` to decline scoring outright. This is a CEILING, not the budget: the
-#: default is additionally held under a share of the memory actually free (see
-#: :func:`_default_quality_budget_gb`), since a fixed number describes whichever
-#: machine it was written on and not the one running the fit.
+#: default is additionally held under a share of the host memory or CUDA memory
+#: actually free, since a fixed number describes whichever machine it was
+#: written on and not the one running the fit.
 _QUALITY_BUDGET_GB = 24.0
 
-#: Share of currently-free physical memory the default budget will commit to a
-#: score. Deliberately well under 1: the peak below is an estimate, the fit
-#: process is holding the merged splats too, and being wrong in this direction
-#: costs a metric while being wrong in the other costs the whole fit.
+#: Share of currently-free host memory or CUDA memory the default budget will
+#: commit to a score. Deliberately well under 1: the peaks below are estimates,
+#: the fit process is holding the merged splats too, and being wrong in this
+#: direction costs a metric while being wrong in the other costs the whole fit.
 _QUALITY_BUDGET_MEM_FRACTION = 0.5
 
 #: Host-side float32 copies held before the reference reaches the render device:
@@ -128,8 +128,6 @@ def _quality_memory_guard(
 ) -> "str | None":
     """Return the resource that cannot safely admit scoring, if any."""
     voxel_gb = 4 * float(np.prod(volume_shape)) / 1024**3
-    override = _has_usable_quality_override()
-    host_peak_gb = _QUALITY_HOST_REFERENCE_VOLUMES * voxel_gb
 
     from luxar.gsplats.utils.device import resolve_torch_device
 
@@ -139,32 +137,38 @@ def _quality_memory_guard(
         # Preserve the scoring path's existing failure contract: device errors
         # are reported by the guarded render attempt, never raised after fitting.
         return None
-    if resolved.type != "cuda":
-        host_peak_gb = _QUALITY_DEVICE_PEAK_VOLUMES * voxel_gb
+
+    peak_gb = (
+        _QUALITY_HOST_REFERENCE_VOLUMES
+        if resolved.type == "cuda"
+        else _QUALITY_DEVICE_PEAK_VOLUMES
+    ) * voxel_gb
     host_budget_gb = _quality_budget_gb()
-    if host_peak_gb > host_budget_gb:
+    if peak_gb > host_budget_gb:
         return (
-            f"host memory needs ~{host_peak_gb:.1f} GiB, over the "
+            f"needs ~{peak_gb:.1f} GiB of host memory, over the "
             f"{host_budget_gb:g} GiB budget"
         )
 
-    if resolved.type == "cuda" and not override:
+    if resolved.type == "cuda":
         from luxar.gsplats.metrics import _gpu_free_memory
 
         free_bytes = _gpu_free_memory(resolved)
-        if free_bytes is not None:
-            workers = _quality_worker_count()
+        workers = _quality_worker_count()
+        if _has_usable_quality_override() or free_bytes is None:
+            device_budget_gb = host_budget_gb
+        else:
             device_budget_gb = min(
                 _QUALITY_BUDGET_GB,
                 _QUALITY_BUDGET_MEM_FRACTION * free_bytes / workers / 1024**3,
             )
-            device_peak_gb = _QUALITY_DEVICE_PEAK_VOLUMES * voxel_gb
-            if device_peak_gb > device_budget_gb:
-                return (
-                    f"{resolved} memory needs ~{device_peak_gb:.1f} GiB, over "
-                    f"the {device_budget_gb:g} GiB per-worker budget "
-                    f"({workers} worker(s) sharing the device)"
-                )
+        device_peak_gb = _QUALITY_DEVICE_PEAK_VOLUMES * voxel_gb
+        if device_peak_gb > device_budget_gb:
+            return (
+                f"needs ~{device_peak_gb:.1f} GiB of {resolved} memory, over "
+                f"the {device_budget_gb:g} GiB per-worker budget "
+                f"({workers} worker(s) sharing the device)"
+            )
     return None
 
 
