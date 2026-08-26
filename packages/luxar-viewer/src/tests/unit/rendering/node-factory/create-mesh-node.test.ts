@@ -24,6 +24,7 @@ import type { MeshDataLoader, MeshMetadata } from '../../../../types/mesh';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import { log } from '../../../../utils/log';
+import type { PickingSystem } from '../../../../rendering/picking/picking-system';
 
 const ATTRS: MeshMetadata = {
   type: 'mesh',
@@ -196,6 +197,40 @@ describe('applyMeshSide', () => {
 });
 
 describe('applyMeshTexture', () => {
+  it('disposes both blank shader placeholders when the real image arrives', () => {
+    const attrs = {
+      ...ATTRS,
+      has_uvs: true,
+      has_texture: true,
+      texture_width: 1,
+      texture_height: 1,
+      texture_channels: 3,
+      texture_color_space: 'srgb',
+    } as MeshMetadata;
+    const pickingSystem = {
+      allocatePickId: () => 1,
+      registerNode: (main: THREE.Object3D, pick: THREE.Object3D) => {
+        main.userData.pickNode = pick;
+      },
+    } as unknown as PickingSystem;
+    const node = createEmptyMeshNode('/surface', attrs, loader, pickingSystem);
+    const placeholders = (node.userData as { meshTexturePlaceholders: THREE.Texture[] })
+      .meshTexturePlaceholders;
+    const disposals = placeholders.map((placeholder) => vi.spyOn(placeholder, 'dispose'));
+
+    applyMeshTexture(node, attrs, {
+      kind: 'raw',
+      pixels: new Uint8Array([255, 0, 0]),
+      width: 1,
+      height: 1,
+      channels: 3,
+    });
+
+    expect(disposals).toHaveLength(2);
+    expect(disposals.every((dispose) => dispose.mock.calls.length === 1)).toBe(true);
+    expect(node.userData.meshTexturePlaceholders).toBeUndefined();
+  });
+
   it('disposes the uploaded GPU texture with the shared geometry', () => {
     const attrs = {
       ...ATTRS,

@@ -617,7 +617,6 @@ const UNENCODED_COLOR_DTYPES = new Set([
   '=f4',
 ]);
 
-/** Human-readable byte count for error messages. */
 /**
  * The texture encodings this loader can decode, and which decode path each takes.
  *
@@ -748,6 +747,7 @@ function resolveTextureDeclaration(path: string, attrs: MeshMetadata): TextureDe
   };
 }
 
+/** Human-readable byte count for error messages. */
 function mib(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }

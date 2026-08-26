@@ -162,7 +162,10 @@ export function applyMeshTexture(
   const cache = object.userData as {
     meshTextureSource?: MeshTextureData;
     meshTexture?: THREE.Texture;
+    meshTexturePlaceholders?: THREE.Texture[];
   };
+  cache.meshTexturePlaceholders?.forEach((placeholder) => placeholder.dispose());
+  delete cache.meshTexturePlaceholders;
   let texture = cache.meshTexture ?? null;
   if (cache.meshTextureSource !== data || !texture) {
     cache.meshTexture?.dispose();
@@ -406,6 +409,10 @@ export function createEmptyMeshNode(
   };
   mesh.userData = userData;
 
+  const texturePlaceholders: THREE.Texture[] = [];
+  const visualPlaceholder = material.uniforms.uBaseColorTex?.value;
+  if (visualPlaceholder instanceof THREE.Texture) texturePlaceholders.push(visualPlaceholder);
+
   if (attrs.transform) applyTransform(mesh, attrs.transform);
 
   if (pickingSystem) {
@@ -415,6 +422,7 @@ export function createEmptyMeshNode(
     // from the same node opacity and cutoff. Both are re-pushed by the layers panel
     // through `syncMeshPickAppearance`; seeding them here keeps the FIRST pick
     // (which can precede any panel interaction) consistent with the screen.
+    const pickPlaceholder = attrs.has_texture ? new THREE.Texture() : null;
     const pickMaterial = materialManager.createMeshPickingMaterial({
       nodeId: pickId,
       opacity: attrs.opacity ?? 1.0,
@@ -422,8 +430,9 @@ export function createEmptyMeshNode(
       // Same placeholder-at-creation rule as the visual material above: this
       // decides whether the pick program declares a sampler, and `has_texture` is a
       // per-node constant. `applyMeshTexture` installs the real image at commit.
-      baseColorTexture: attrs.has_texture ? new THREE.Texture() : null,
+      baseColorTexture: pickPlaceholder,
     });
+    if (pickPlaceholder) texturePlaceholders.push(pickPlaceholder);
     materialManager.register(pickMaterial);
     // Share the same indexed BufferGeometry — only the material differs. The
     // picking system re-syncs `geometry` from the main node every pick render, so a
@@ -436,6 +445,15 @@ export function createEmptyMeshNode(
     // the appearance sync below find their way back here.
     pickMaterial.setPickSide(material.side);
     pickMaterial.setPickMode(resolveRequestedMeshMode(attrs));
+  }
+
+  if (texturePlaceholders.length > 0) {
+    (
+      mesh.userData as MeshUserData & { meshTexturePlaceholders: THREE.Texture[] }
+    ).meshTexturePlaceholders = texturePlaceholders;
+    for (const placeholder of texturePlaceholders) {
+      geometry.addEventListener('dispose', () => placeholder.dispose());
+    }
   }
 
   return mesh;

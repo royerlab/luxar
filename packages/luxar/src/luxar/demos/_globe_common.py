@@ -44,10 +44,23 @@ from typing import Any, Optional, Tuple
 import numpy as np
 
 __all__ = [
+    "Clouds",
+    "GLOBE_ASSET_CACHE",
+    "SeaLevel",
+    "add_cloud_shell",
+    "add_textured_globe",
+    "blue_marble_basemap",
+    "blue_marble_clouds",
+    "build_earth",
+    "encode_globe_texture",
+    "encode_texture",
     "fibonacci_sphere",
     "lonlat_to_xyz",
+    "resample_equirect_grid",
     "sample_equirect",
     "surface_point_radius",
+    "surface_vertex_normals",
+    "uv_sphere",
 ]
 
 

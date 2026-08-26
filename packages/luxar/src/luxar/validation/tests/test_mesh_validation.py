@@ -584,6 +584,20 @@ def test_uv_acceptances(uvs, test_id) -> None:
             "per-axis limit",
             "declared_encoded_width_over_the_axis_limit",
         ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros(64, np.uint8), "png", 16_000, 16_000, 3
+            ),
+            "over the 512 MiB per-node budget",
+            "declared_encoded_texture_over_the_decode_budget",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros((0, 4, 3), np.uint8), "raw"
+            ),
+            "Dimensions must be positive",
+            "zero_height",
+        ),
     ],
 )
 def test_texture_rejections(factory, error_pattern, test_id) -> None:

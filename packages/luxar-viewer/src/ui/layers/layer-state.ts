@@ -80,17 +80,18 @@ function deriveScalarRangeFromDescendants(node: SceneNode): [number, number] | u
   return best;
 }
 
-/**
- * `color_data_range` of the node, else the UNION of every descendant's.
- * A partition's parts each declare their own spread, and the slider bounds
- * must cover the whole layer — taking the first part's range alone would
- * leave a later HDR part's colours unreachable.
- */
+/** Direct element-colour or texture range stamped on this node. */
 function directColorRange(node: SceneNode): [number, number] | undefined {
   return (node.attrs.color_data_range || node.attrs.texture_data_range) as
     [number, number] | undefined;
 }
 
+/**
+ * Direct colour range, else the UNION of every descendant's.
+ * A partition's parts each declare their own spread, and the slider bounds
+ * must cover the whole layer — taking the first part's range alone would
+ * leave a later HDR part's colours unreachable.
+ */
 function deriveColorRangeFromDescendants(node: SceneNode): [number, number] | undefined {
   const own = directColorRange(node);
   if (own) return own;
