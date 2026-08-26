@@ -317,6 +317,14 @@ class TestAmbientOcclusionInputs:
         scaled_colors = apply_fractal_ambient_occlusion(
             scaled_positions, repeated_normals, base_colors
         )
+        expected_shade = _demo.bake_ambient_occlusion(
+            positions,
+            normals=repeated_normals,
+            occluder="opaque",
+            n_directions=_demo.AO_N_DIRECTIONS,
+            spatial_dims=(2, 3, 4),
+            group_by=np.repeat([0, 1, 2], len(spatial)),
+        )
         merged_shade = _demo.bake_ambient_occlusion(
             positions,
             normals=repeated_normals,
@@ -339,6 +347,7 @@ class TestAmbientOcclusionInputs:
         )
 
         np.testing.assert_array_equal(colors, scaled_colors)
+        np.testing.assert_allclose(colors[:, 0], expected_shade, atol=1e-6)
         blocks = colors.reshape(3, len(spatial), 3)
         np.testing.assert_allclose(blocks[0], blocks[1], atol=1e-6)
         np.testing.assert_allclose(blocks[0], blocks[2], atol=1e-6)
