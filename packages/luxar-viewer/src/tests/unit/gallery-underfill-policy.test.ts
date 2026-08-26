@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { COVERAGE_MIN, LIT_FRACTION_MIN, evaluateUnderfill } from '../screenshots/crop-policy';
 
 describe('gallery under-fill policy', () => {
+  it('pins the measured floors that catch the original regression', () => {
+    expect(COVERAGE_MIN).toBe(0.5);
+    expect(LIT_FRACTION_MIN).toBe(0.1);
+    expect(
+      evaluateUnderfill({
+        demoId: 'atp_synthase',
+        measurement: { coverage: 0.493, litFraction: 0.24 },
+      }).underfilled
+    ).toBe(true);
+  });
+
   it('stays quiet at the measured floors and warns immediately below them', () => {
     const atFloor = evaluateUnderfill({
       demoId: 'demo',

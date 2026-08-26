@@ -1,6 +1,6 @@
 /**
- * Gallery crop policy — the pure DECISION half of the capture harness's
- * border-lit (cropped-subject) check.
+ * Gallery framing policy — the pure DECISION half of the capture harness's
+ * under-fill and border-lit (cropped-subject) checks.
  *
  * A **border-lit pixel** is a lit pixel (luma above `LIT_THRESHOLD`) on the
  * outermost row or column of the captured frame — row 0, row H−1, column 0 or

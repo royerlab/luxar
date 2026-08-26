@@ -19,6 +19,9 @@
  *     subject is blown white or the background is lifted to grey. The decision
  *     logic is `./exposure-policy` (pure, unit-tested); a per-demo `exposure`
  *     in the manifest overrides the whole thing.
+ *   - **Under-fill check** — measures final still span + lit area on every
+ *     framing path after all nudges. Warns below the measured gallery floors
+ *     and never fails — see `./crop-policy`.
  *   - **Crop check** — counts LIT pixels on the frame's outermost row/column in
  *     the still and in orbit poses spread across the whole rock on a ~5° grid
  *     (plus the last frame of a timelapse, where a developing subject is
