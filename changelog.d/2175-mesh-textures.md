@@ -54,3 +54,16 @@ exaggeration, now as a displaced mesh with `shading="flat"` so the terrain casts
 light instead of reading as a colour band, and its cloud shell's altitude is
 derived from the relief's own maximum — Everest sits at 6.2% of the radius there,
 five times what the flat globes use.
+
+Every translucent layer over a globe — cloud deck, current ribbons, sea surface —
+uses `luminous` blending. That is additive **and** depth-tested, which is the
+distinction that matters: the far side stays hidden behind the opaque planet, so
+nothing is given up relative to `normal`. What is gained is that additive
+composition is commutative, so a scene with 11M current segments plus a cloud
+shell has no depth-order to get wrong; and on the currents the accumulation is
+informative, since a boundary current concentrates flow and therefore brightens.
+
+Note that `strength` means something different under the two modes: alpha-over at
+0.22 is a lerp 22% of the way to white whatever is behind, while additive at 0.22
+is an addition of 0.22 that tone mapping then compresses along with the rest of
+the highlights. Additive needs more amplitude for the same apparent density.
