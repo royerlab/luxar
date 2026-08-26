@@ -77,7 +77,7 @@ test.describe('nD Navigation - Dimension Selection', () => {
           if (!element) return 0;
           const range = document.createRange();
           range.selectNodeContents(element);
-          return range.getClientRects().length;
+          return new Set(Array.from(range.getClientRects(), (rect) => Math.round(rect.top))).size;
         };
 
         return {
