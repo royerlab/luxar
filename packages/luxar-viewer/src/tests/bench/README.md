@@ -1,7 +1,7 @@
 # Zipped-store open benchmark
 
-The instrument that decides whether reading `.zarr.zip` **through the chunk cache** is
-worth building — the gate on royerlab/luxar#1716.
+Measures the zipped archive path against the directory store it was built from, both
+uncached and on a chunk-cache revisit.
 
 ```bash
 pnpm bench:zip:fixtures     # one scene, packaged three ways (needs hatch)
@@ -26,7 +26,18 @@ One headless Chromium run (median of three repeats) on the default generated fix
 This run shows the archive path at about 1.4× the requests and up to about 1.6×
 the transferred bytes of the equivalent uncached directory path. Treat these
 as reference deltas, not portable absolute timings; regenerate them on the
-target machine before making the Phase 2 cache decision.
+target machine before comparing an archive against its source directory.
+
+The revisit mode on the same fixtures (median of three repeats) produced:
+
+| variant       | requests | bytes (kB) |
+| ------------- | -------: | ---------: |
+| directory     |        1 |        0.0 |
+| zip (STORED)  |        6 |       88.2 |
+| zip (DEFLATE) |        4 |       87.5 |
+
+The chunk cache absorbs the per-member traffic for both layouts. The archive's residual
+is its central-directory preamble, which is read below the chunk-key cache.
 
 ## Why it has its own Playwright config
 

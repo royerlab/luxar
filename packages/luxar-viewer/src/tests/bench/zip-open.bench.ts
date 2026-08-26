@@ -1,9 +1,9 @@
 /**
  * Cold-open benchmark: zipped store vs the directory store it was built from.
  *
- * This is the instrument that decides whether reading `.zarr.zip` through the
- * chunk cache is worth building (royerlab/luxar#1716). It reports the five
- * numbers that issue names, per variant:
+ * This measures the zipped archive path against the directory store it was
+ * built from, both cold and on a chunk-cache revisit. It reports five numbers
+ * per variant:
  *
  *   1. time to first render (viewer `initialized`)
  *   2. request count
