@@ -18,8 +18,11 @@ Two of Luxar's four geometry types, plus two non-displayed dimensions:
     polylines whose **time coordinate advances along the chain**.
   * **taxon** and **period** are non-displayed categorical dimensions, so
     ``[`` / ``]`` scrubs the sample by taxonomic group and by decade. Each has a
-    leading "all" slot (``All life`` / ``All years``) where the always-on summary
-    layers live, and the scene opens there.
+    leading "all" slot (``All life`` / ``All years``). ``All years`` is where the
+    per-taxon marginals live and the scene OPENS on ``(Birds, All years)``;
+    ``All life`` now carries only the per-decade marginals, since the dense
+    every-record-at-once summary that used to fill ``(All life, All years)`` read
+    as mush and was removed.
 
 ================================================================================
 WHAT THIS SHOWS THAT A DENSITY MAP CANNOT
@@ -755,6 +758,24 @@ Arbol.max_depth = 5
 #: is queried at every slice as intended rather than skipped and frozen.
 ALL_LIFE_SLOT: Final = 0
 PERIOD_ALL_SLOT: Final = 0
+
+#: The taxon the scene OPENS on, as an internal group id (see :func:`taxon_slot`).
+#:
+#: Not :data:`ALL_LIFE_SLOT`, and that is the whole point. The (all-taxa,
+#: all-years) cell used to hold a dense always-on summary of every occurrence at
+#: once; that layer is gone, because seeing all 318k records superimposed reads as
+#: undifferentiated mush rather than as biodiversity. So the cell it occupied is
+#: now EMPTY, and opening there would show a bare globe.
+#:
+#: The taxon marginals are the replacement: `(one group, all years)` is a legible,
+#: single-hued layer. Birds are the opening choice because they carry by far the
+#: richest migration-track coverage, so the ribbons and the occurrences tell the
+#: same story on the first frame.
+#:
+#: `ALL_LIFE_SLOT` itself SURVIVES as a coordinate, because the per-decade
+#: marginals live at `(all taxa, decade)` -- scrubbing period alone is a real
+#: view. Only the (all, all) corner is unpopulated.
+OPENING_TAXON_GROUP: Final = 0
 
 #: Time is a DECADE, not a year, and both non-displayed dims carry an explicit
 #: "all" slot. Both choices come from the same measurement.
@@ -2561,6 +2582,40 @@ def assert_tile_budget(max_elements: int) -> None:
         )
 
 
+def assert_opening_slice_is_populated(
+    positions5: np.ndarray, taxon_coord: float, period_coord: float
+) -> None:
+    """Fail the BUILD if the scene would open on an EMPTY slice.
+
+    The viewer shows the intersection of the non-displayed slices, so an opening
+    ``current_step`` that names a cell no layer occupies produces a valid scene
+    whose first frame is just the context globe. Nothing else catches that: the
+    compile succeeds, every array round-trips, the store validates, and the demo
+    test asserts on source text. It cost one round of "the demo shows no data"
+    when the dense all-life summary layer was removed from under the opening pin.
+
+    Checked against the OCCURRENCE positions specifically -- the globe is
+    ``extend_to_all`` and is therefore present at every slice, so including it
+    would make this assertion vacuous.
+    """
+    if positions5.shape[0] == 0:
+        raise RuntimeError("no occurrence positions were built at all")
+    hit = int(
+        np.count_nonzero(
+            (positions5[:, 3] == np.float32(taxon_coord))
+            & (positions5[:, 4] == np.float32(period_coord))
+        )
+    )
+    if hit == 0:
+        raise RuntimeError(
+            f"the scene would open on (taxon={taxon_coord:g}, "
+            f"period={period_coord:g}), where no occurrence sits -- the first "
+            "frame would show only the globe. Point OPENING_TAXON_GROUP at a "
+            "populated marginal, or restore a layer at that cell."
+        )
+    aprint(f"opening slice carries {hit:,} occurrences")
+
+
 def add_lod_tiles(
     scene: Any,
     name: str,
@@ -2731,7 +2786,8 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 categories=list(TAXON_CATEGORIES),
                 display=False,
                 description=(
-                    "Major taxonomic group; the first slot shows every group at once"
+                    "Major taxonomic group; the first slot pools every group,"
+                    " and is populated per decade"
                 ),
             ),
             Dimension(
@@ -2780,18 +2836,26 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                     # and needs a live A/B.
                     tone_mapping="Neutral",
                     camera=globe_camera(10.0, 25.0, distance=2.95),
-                    # Open on (All life, All years) -- the slots the summary
-                    # layers occupy. Without this the scene would open on
-                    # taxon=All life and period=All years anyway (both are
-                    # category index 0, the range minima), but pinning it makes
-                    # the intent explicit and survives any future reordering of
-                    # the categories.
+                    # Open on (Birds, All years), NOT on the all-taxa corner.
+                    #
+                    # This pin is load-bearing rather than merely explicit. The
+                    # range minima are (All life, All years), so WITHOUT it the
+                    # viewer opens on the one cell that no longer has occurrence
+                    # data in it -- the dense all-life summary that used to fill
+                    # it is deliberately gone. The first frame would be a bare
+                    # globe, and the sliders would look broken until you happened
+                    # to scrub off zero.
+                    #
+                    # `assert_opening_slice_is_populated` below fails the BUILD if
+                    # that ever becomes true again, because it is invisible to
+                    # every other check: the scene is valid, every layer loads,
+                    # and the frame is simply empty.
                     dimensions=DimensionsConfig(
                         current_step=[
                             0.0,
                             0.0,
                             0.0,
-                            float(ALL_LIFE_SLOT),
+                            float(taxon_slot(OPENING_TAXON_GROUP)),
                             float(PERIOD_ALL_SLOT),
                         ]
                     ),
@@ -2866,6 +2930,11 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 },
             )
 
+            assert_opening_slice_is_populated(
+                taxon_pos,
+                float(taxon_slot(OPENING_TAXON_GROUP)),
+                float(PERIOD_ALL_SLOT),
+            )
             scene.add_points(
                 "By taxon & period",
                 taxon_pos,
@@ -2878,13 +2947,13 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 gamma=OCCURRENCE_GAMMA,
                 opacity=RECORDS_OPACITY,
                 layer=True,
-                # VISIBLE, deliberately. These layers occupy the per-taxon and
-                # per-decade slots, so at the opening (All life, All years) slice
-                # they contribute exactly nothing and the first paint is
-                # unchanged. Shipping them hidden made both sliders look broken:
-                # moving one correctly sliced the summary layers away and there
-                # was nothing enabled to replace them, so the scene just went
-                # black until you found the Layers panel.
+                # VISIBLE, deliberately -- and now these ARE the opening frame.
+                # They used to be the quiet half of the scene, contributing
+                # nothing at an (All life, All years) open while a dense summary
+                # layer carried the first paint. That summary is gone, so the
+                # scene opens on this layer's (Birds, All years) marginal
+                # instead. Shipping them hidden was tried and made both sliders
+                # look broken; now it would leave the scene empty outright.
                 partition=dict(max_elements=TARGET_TILE_POINTS),
                 additive_lod=STREAM_LOD,
             )
@@ -2922,13 +2991,13 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 opacity=1.0,
                 intensity=1.0,
                 layer=True,
-                # VISIBLE, deliberately. These layers occupy the per-taxon and
-                # per-decade slots, so at the opening (All life, All years) slice
-                # they contribute exactly nothing and the first paint is
-                # unchanged. Shipping them hidden made both sliders look broken:
-                # moving one correctly sliced the summary layers away and there
-                # was nothing enabled to replace them, so the scene just went
-                # black until you found the Layers panel.
+                # VISIBLE, deliberately -- and now these ARE the opening frame.
+                # They used to be the quiet half of the scene, contributing
+                # nothing at an (All life, All years) open while a dense summary
+                # layer carried the first paint. That summary is gone, so the
+                # scene opens on this layer's (Birds, All years) marginal
+                # instead. Shipping them hidden was tried and made both sliders
+                # look broken; now it would leave the scene empty outright.
                 partition=dict(max_elements=MAX_TRACK_VERTICES_PER_NODE),
             )
 
