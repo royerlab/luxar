@@ -26,23 +26,31 @@ ISOTROPIC_PACKING = re.compile(r"\[(?P<items>(?:σ|0)(?:\s*,\s*(?:σ|0)){5})\]")
 
 def _assert_isotropic_packing_recovers_sigma(text: str, source: str) -> None:
     """Every author-facing packing claim must describe covariance, not precision."""
-    match = ISOTROPIC_PACKING.search(text)
+    compact = re.sub(r"\s+", "", text)
+    assert "[1/σ,0,1/σ,0,0,1/σ]" not in compact
+    assert "[1/sigma,0,1/sigma,0,0,1/sigma]" not in compact
 
-    assert match is not None, (
+    matches = list(ISOTROPIC_PACKING.finditer(text))
+
+    assert matches, (
         f"{source} must state the executable isotropic packing [σ, 0, σ, 0, 0, σ]"
     )
 
-    packed = np.array(
-        [SIGMA if item.strip() == "σ" else 0.0 for item in match["items"].split(",")],
-        dtype=np.float32,
-    )
-    data = GSplatData(
-        centers=np.zeros((1, 3), dtype=np.float32),
-        amplitudes=np.ones(1, dtype=np.float32),
-        cholesky_factors=packed[None, :],
-    )
+    for match in matches:
+        packed = np.array(
+            [
+                SIGMA if item.strip() == "σ" else 0.0
+                for item in match["items"].split(",")
+            ],
+            dtype=np.float32,
+        )
+        data = GSplatData(
+            centers=np.zeros((1, 3), dtype=np.float32),
+            amplitudes=np.ones(1, dtype=np.float32),
+            cholesky_factors=packed[None, :],
+        )
 
-    np.testing.assert_allclose(data.marginal_sigmas()[0], SIGMA, rtol=1e-6)
+        np.testing.assert_allclose(data.marginal_sigmas()[0], SIGMA, rtol=1e-6)
 
 
 @pytest.mark.parametrize("relative_path", PACKING_CLAIM_PATHS)
@@ -81,9 +89,11 @@ def test_viewer_fixture_warning_links_to_authoring_contract() -> None:
     text = (
         REPO_ROOT / "packages/luxar-viewer/tests/fixtures/generate_test_data.py"
     ).read_text(encoding="utf-8")
+    warning = re.search(r"# IMPORTANT:.*?\n\s*cholesky =", text, re.DOTALL)
 
-    assert "Group.add_gsplats" in text
-    assert "AdditiveSubLOD" in text
+    assert warning is not None
+    assert "Group.add_gsplats" in warning.group()
+    assert "AdditiveSubLOD" in warning.group()
 
 
 def test_basic_example_does_not_claim_disjoint_splats_overlap() -> None:
@@ -111,6 +121,7 @@ def test_stacked_axis_docs_distinguish_embedding_from_direct_authoring() -> None
         assert "regularizes" in text
         assert "1e-7" in text
         assert "full scene-dimensional" in text
+        assert "without `dim_order`" in text
         assert re.search(r"strictly\s+positive", text)
         assert re.search(r"smaller\s+than the coordinate step", text)
 
