@@ -49,6 +49,33 @@ def _aggregate_part_source_stats(
     return aggregate
 
 
+def _validated_part_provenance(
+    part_provenance: Optional[Sequence[Dict[str, Any]]],
+    datasets: Sequence["GSplatData"],
+    values: Sequence[float | np.ndarray],
+) -> Optional[list[Dict[str, Any]]]:
+    """Copy and validate caller-supplied records against the stacked parts."""
+    if part_provenance is None:
+        return None
+    if len(part_provenance) != len(datasets):
+        raise ValueError(
+            f"part_provenance has {len(part_provenance)} entries for "
+            f"{len(datasets)} datasets"
+        )
+    records = deepcopy(list(part_provenance))
+    for index, (record, value) in enumerate(zip(records, values)):
+        if not isinstance(record, dict):
+            raise TypeError(f"part_provenance[{index}] must be a dict")
+        if isinstance(value, np.ndarray) or record.get("coordinate") != value:
+            raise ValueError(
+                f"part_provenance[{index}].coordinate must equal the scalar "
+                f"values[{index}]"
+            )
+        if not isinstance(record.get("fitting"), dict):
+            raise ValueError(f"part_provenance[{index}].fitting must be a dictionary")
+    return records
+
+
 class CompositionMixin(_GSplatDataOps):
     """Merge / partition / embed — the multi-dataset composition family."""
 
@@ -291,26 +318,9 @@ class CompositionMixin(_GSplatDataOps):
                 f"number of datasets ({len(datasets)})"
             )
 
-        safe_part_provenance: Optional[list[Dict[str, Any]]] = None
-        if part_provenance is not None:
-            if len(part_provenance) != len(datasets):
-                raise ValueError(
-                    f"part_provenance has {len(part_provenance)} entries for "
-                    f"{len(datasets)} datasets"
-                )
-            safe_part_provenance = deepcopy(list(part_provenance))
-            for index, (record, value) in enumerate(zip(safe_part_provenance, values)):
-                if not isinstance(record, dict):
-                    raise TypeError(f"part_provenance[{index}] must be a dict")
-                if isinstance(value, np.ndarray) or record.get("coordinate") != value:
-                    raise ValueError(
-                        f"part_provenance[{index}].coordinate must equal the scalar "
-                        f"values[{index}]"
-                    )
-                if not isinstance(record.get("fitting"), dict):
-                    raise ValueError(
-                        f"part_provenance[{index}].fitting must be a dictionary"
-                    )
+        safe_part_provenance = _validated_part_provenance(
+            part_provenance, datasets, values
+        )
 
         embedded = [
             ds.embed_dimension(val, sigma=sigma) for ds, val in zip(datasets, values)
