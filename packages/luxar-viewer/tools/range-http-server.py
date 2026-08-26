@@ -7,10 +7,10 @@ where every chunk is its own file, and fatal for a zipped one, where the reader
 asks for byte windows inside a single archive and would silently receive the
 whole file in place of each window.
 
-The E2E and perf harnesses both boot ``python3 -m http.server``, so this exists
-to serve ``.zarr.zip`` fixtures to a browser. It speaks exactly as much of
-RFC 9110 §14 as a zip reader needs: a single ``bytes=`` range, answered ``206``
-with ``Content-Range``; ``416`` when unsatisfiable; plain ``200`` otherwise.
+The E2E and zip-benchmark harnesses use this to serve ``.zarr.zip`` fixtures to
+a browser. It speaks exactly as much of RFC 9110 §14 as a zip reader needs: a
+single ``bytes=`` range, answered ``206`` with ``Content-Range``; ``416`` when
+unsatisfiable; plain ``200`` otherwise.
 
 CORS is wide open and ``Accept-Ranges``/``Content-Range`` are exposed, because
 the viewer runs on the Vite port and the data on this one.

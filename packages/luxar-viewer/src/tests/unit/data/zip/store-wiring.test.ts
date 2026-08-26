@@ -32,6 +32,75 @@ function open(files: Record<string, string>) {
 const decode = (bytes: Uint8Array | undefined) =>
   bytes ? new TextDecoder().decode(bytes) : undefined;
 
+function writeUint64(view: DataView, offset: number, value: number): void {
+  view.setUint32(offset, value >>> 0, true);
+  view.setUint32(offset + 4, Math.floor(value / 0x100000000), true);
+}
+
+/** Build a ZIP64 archive whose entry count crosses the classic 65,535 limit. */
+function zip64Archive(entryCount = 65_536): Uint8Array {
+  const names = Array.from({ length: entryCount }, (_, index) =>
+    index === entryCount - 1 ? 'zarr.json' : `e${index}`
+  );
+  const localSize = names.reduce((total, name) => total + 30 + name.length, 0);
+  const centralSize = names.reduce((total, name) => total + 46 + name.length, 0);
+  const zip64EndSize = 56;
+  const zip64LocatorSize = 20;
+  const classicEndSize = 22;
+  const bytes = new Uint8Array(
+    localSize + centralSize + zip64EndSize + zip64LocatorSize + classicEndSize
+  );
+  const view = new DataView(bytes.buffer);
+  const encoder = new TextEncoder();
+  const offsets: number[] = [];
+  let cursor = 0;
+
+  for (const name of names) {
+    const encoded = encoder.encode(name);
+    offsets.push(cursor);
+    view.setUint32(cursor, 0x04034b50, true);
+    view.setUint16(cursor + 4, 20, true);
+    view.setUint16(cursor + 26, encoded.length, true);
+    bytes.set(encoded, cursor + 30);
+    cursor += 30 + encoded.length;
+  }
+
+  const centralOffset = cursor;
+  names.forEach((name, index) => {
+    const encoded = encoder.encode(name);
+    view.setUint32(cursor, 0x02014b50, true);
+    view.setUint16(cursor + 4, 20, true);
+    view.setUint16(cursor + 6, 20, true);
+    view.setUint16(cursor + 28, encoded.length, true);
+    view.setUint32(cursor + 42, offsets[index], true);
+    bytes.set(encoded, cursor + 46);
+    cursor += 46 + encoded.length;
+  });
+
+  const zip64EndOffset = cursor;
+  view.setUint32(cursor, 0x06064b50, true);
+  writeUint64(view, cursor + 4, 44);
+  view.setUint16(cursor + 12, 45, true);
+  view.setUint16(cursor + 14, 45, true);
+  writeUint64(view, cursor + 24, entryCount);
+  writeUint64(view, cursor + 32, entryCount);
+  writeUint64(view, cursor + 40, centralSize);
+  writeUint64(view, cursor + 48, centralOffset);
+  cursor += zip64EndSize;
+
+  view.setUint32(cursor, 0x07064b50, true);
+  writeUint64(view, cursor + 8, zip64EndOffset);
+  view.setUint32(cursor + 16, 1, true);
+  cursor += zip64LocatorSize;
+
+  view.setUint32(cursor, 0x06054b50, true);
+  view.setUint16(cursor + 8, 0xffff, true);
+  view.setUint16(cursor + 10, 0xffff, true);
+  view.setUint32(cursor + 12, 0xffffffff, true);
+  view.setUint32(cursor + 16, 0xffffffff, true);
+  return bytes;
+}
+
 describe('createZipStore wiring — flat archive', () => {
   it('resolves leading-slash zarr keys against slash-less entry names', async () => {
     const store = open({
@@ -48,6 +117,14 @@ describe('createZipStore wiring — flat archive', () => {
     const store = open({ 'zarr.json': '{}' });
     expect(await store.get('/nope/c/0')).toBeUndefined();
   });
+
+  it('reads a ZIP64 archive above the 65,535-entry boundary', async () => {
+    const bytes = zip64Archive();
+    const blob = new Blob([bytes as unknown as BlobPart]);
+    const store = ZipFileStore.fromBlob(blob, createZipStoreOptions(URL_));
+
+    expect(await store.get('/zarr.json')).toEqual(new Uint8Array());
+  }, 20_000);
 });
 
 describe('createZipStore wiring — refusals surface, not swallowed', () => {

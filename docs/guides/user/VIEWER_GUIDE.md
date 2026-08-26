@@ -37,6 +37,28 @@ pointing `src` at a running Luxar data server. Port `8000` is the default for
 Both trailing-slash forms are accepted. Prefer data source URLs without a
 trailing slash as the canonical spelling used in examples and logs.
 
+### Opening a Zipped Scene
+
+The viewer can open a `.luxar.zarr.zip` scene without extracting it. Serve the
+directory containing the archive, then select the archive in the dataset browser:
+
+```bash
+luxar serve /path/to/scenes --viewer
+```
+
+You can also pass the archive URL directly to `src`, for example:
+
+```
+http://localhost:5173/?src=http://127.0.0.1:8000/scene.luxar.zarr.zip
+```
+
+The data server must support HTTP byte ranges and return `206 Partial Content`.
+`luxar serve` provides the required behavior. Archives are read-only: commands
+that update an existing store in place refuse them, so write to a directory or
+new archive instead. Image overlays stored inside an archive are currently
+skipped, and browser drag-and-drop/local-file opening does not yet accept a
+`.zarr.zip`; serve it over HTTP instead.
+
 ---
 
 ## URL Parameters

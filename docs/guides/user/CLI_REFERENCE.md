@@ -49,6 +49,25 @@ luxar profiles  # List the network-simulation profiles usable via --profile
   [Build system guide](../developer/BUILD_SYSTEM_SPEC.md)
 - Network profiles → [Network simulation spec](../developer/NETWORK_SIMULATION_SPEC.md)
 
+## `luxar serve`
+
+Serve a scene directory directly, or serve a directory of scenes and choose one
+from the viewer's dataset browser:
+
+```bash
+luxar serve --viewer
+```
+
+Pass either a scene directory such as `scene.luxar.zarr` or a containing
+directory such as `/path/to/scenes` as the command's path argument.
+
+For a `.luxar.zarr.zip`, serve its containing directory rather than passing the
+archive itself. The server advertises and honours the HTTP byte ranges the
+viewer uses to read members without extracting the archive. Zipped scenes are
+read-only; image overlays inside them and browser local-file/drop opening are
+not currently supported. See the [viewer guide](./VIEWER_GUIDE.md#opening-a-zipped-scene)
+for the direct-URL form and the full limitations.
+
 ## `luxar optimise`
 
 Re-chunk a store that already exists so it streams well, in one
