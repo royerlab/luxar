@@ -27,6 +27,7 @@ from luxar.gsplats.batch.fit_command import build_task_fit_argv
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
 from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
 from luxar.gsplats.batch.task_pool import TaskResult, run_task_pool
+from luxar.gsplats.merged_quality import QUALITY_WORKERS_PER_DEVICE_ENV
 from luxar.gsplats.utils.device import resolve_gpu_selection, resolve_jobs_per_gpu
 
 
@@ -84,6 +85,16 @@ def build_device_assignment(
     if not slots:
         slots = [next(iter(workers))]
     return {tid: slots[i % len(slots)] for i, tid in enumerate(task_ids)}
+
+
+def _worker_env(gpu: int, workers: dict[int, int]) -> dict[str, str]:
+    """Pin one worker and expose its fair share of device quality memory."""
+    if gpu < 0:
+        return {}
+    return {
+        "CUDA_VISIBLE_DEVICES": str(gpu),
+        QUALITY_WORKERS_PER_DEVICE_ENV: str(max(1, workers.get(gpu, 1))),
+    }
 
 
 def _staging_path(out: Path, token: str | int) -> Path:
@@ -273,7 +284,7 @@ def run_batch_local(
 
     def _env(task_id: int) -> dict[str, str]:
         gpu = assignment.get(task_id, -1)
-        return {} if gpu < 0 else {"CUDA_VISIBLE_DEVICES": str(gpu)}
+        return _worker_env(gpu, workers)
 
     n_run = sum(0 if _skip(t) else 1 for t in task_ids)
     dev_desc = "CPU" if not gpu_indices else f"GPU(s) {gpu_indices}"

@@ -28,16 +28,20 @@ _QUALITY_BUDGET_GB = 24.0
 #: costs a metric while being wrong in the other costs the whole fit.
 _QUALITY_BUDGET_MEM_FRACTION = 0.5
 
-#: Full-size float32 volumes live at the scoring peak, which sits inside SSIM
-#: rather than at the render: the reconstruction and the reference, plus the
-#: convolution intermediates :func:`luxar.gsplats.metrics._ssim_nd` keeps live
-#: (``_SSIM_PEAK_TENSOR_COUNT``, the same count that function's own tiled
-#: fallback is sized by — and that fallback only engages on CUDA, so on CPU this
-#: is the true peak). Counting only the reconstruction and the reference
-#: under-reports it fourfold, and the shortfall does not merely cost a metric:
-#: scoring runs BEFORE the archive is written, so thrashing or an OOM kill here
-#: loses the whole fit.
-_QUALITY_PEAK_VOLUMES = 8
+#: Host-side float32 copies held before the reference reaches the render device:
+#: ``np.asarray`` materializes a lazy source, then a non-zero ``image_min`` makes
+#: ``reference_on_fit_basis`` allocate the shifted/clipped array.
+_QUALITY_HOST_REFERENCE_VOLUMES = 2
+
+#: Full-size float32 volumes estimated at the scoring-device peak. This retains
+#: the existing conservative count until the compiled CUDA renderer is measured
+#: independently; CUDA SSIM already tiles itself from free VRAM, so this is now
+#: a device-side render/metric allowance rather than a host-memory proxy.
+_QUALITY_DEVICE_PEAK_VOLUMES = 8
+
+#: Local batch workers share one CUDA device. The parent records that concurrency
+#: here so each process admits only its share of the sampled free VRAM.
+QUALITY_WORKERS_PER_DEVICE_ENV = "LUXAR_QUALITY_WORKERS_PER_DEVICE"
 
 
 def _available_ram_gb() -> "float | None":
@@ -96,6 +100,67 @@ def _quality_budget_gb() -> float:
         )
         return default
     return value
+
+
+def _quality_worker_count() -> int:
+    """Concurrent scoring workers sharing this process's render device."""
+    raw = os.environ.get(QUALITY_WORKERS_PER_DEVICE_ENV)
+    if raw is None:
+        return 1
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 1
+
+
+def _has_usable_quality_override() -> bool:
+    raw = os.environ.get("LUXAR_TILED_QUALITY_MAX_GB")
+    if raw is None:
+        return False
+    try:
+        return not math.isnan(float(raw))
+    except ValueError:
+        return False
+
+
+def _quality_memory_guard(
+    volume_shape: tuple[int, ...], device: Optional[str]
+) -> "str | None":
+    """Return the resource that cannot safely admit scoring, if any."""
+    voxel_gb = 4 * float(np.prod(volume_shape)) / 1024**3
+    override = _has_usable_quality_override()
+    host_peak_gb = _QUALITY_HOST_REFERENCE_VOLUMES * voxel_gb
+
+    from luxar.gsplats.utils.device import resolve_torch_device
+
+    resolved = resolve_torch_device(device)
+    if resolved.type != "cuda":
+        host_peak_gb = _QUALITY_DEVICE_PEAK_VOLUMES * voxel_gb
+    host_budget_gb = _quality_budget_gb()
+    if host_peak_gb > host_budget_gb:
+        return (
+            f"host memory needs ~{host_peak_gb:.1f} GiB, over the "
+            f"{host_budget_gb:g} GiB budget"
+        )
+
+    if resolved.type == "cuda" and not override:
+        from luxar.gsplats.metrics import _gpu_free_memory
+
+        free_bytes = _gpu_free_memory(resolved)
+        if free_bytes is not None:
+            workers = _quality_worker_count()
+            device_budget_gb = min(
+                _QUALITY_BUDGET_GB,
+                _QUALITY_BUDGET_MEM_FRACTION * free_bytes / workers / 1024**3,
+            )
+            device_peak_gb = _QUALITY_DEVICE_PEAK_VOLUMES * voxel_gb
+            if device_peak_gb > device_budget_gb:
+                return (
+                    f"{resolved} memory needs ~{device_peak_gb:.1f} GiB, over "
+                    f"the {device_budget_gb:g} GiB per-worker budget "
+                    f"({workers} worker(s) sharing the device)"
+                )
+    return None
 
 
 #: What to do about an archive this module could not score. One wording for
@@ -216,13 +281,10 @@ def stamp_merged_quality(
     if not parts or sum(part.n_splats for part in parts) == 0:
         return
     _announce_missing_basis(image_min)
-    budget_gb = _quality_budget_gb()
-    needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
-    if needed_gb > budget_gb:
+    over_budget = _quality_memory_guard(volume_shape, device)
+    if over_budget is not None:
         aprint(
-            f"Merged quality metrics skipped: scoring {volume_shape} peaks at "
-            f"~{needed_gb:.1f} GiB (the reconstruction, the reference, and "
-            f"SSIM's intermediates), over the {budget_gb:g} GiB budget. Raise "
+            f"Merged quality metrics skipped: scoring {volume_shape} {over_budget}. Raise "
             f"LUXAR_TILED_QUALITY_MAX_GB to score it anyway. {_COMPARE_RECOURSE}"
         )
         return

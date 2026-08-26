@@ -24,8 +24,10 @@ from luxar.gsplats import merged_quality
 from luxar.gsplats.fit_tiled_gsplats import fit_tiled
 from luxar.gsplats.merged_quality import (
     _QUALITY_BUDGET_GB,
-    _QUALITY_PEAK_VOLUMES,
+    _QUALITY_DEVICE_PEAK_VOLUMES,
+    _QUALITY_HOST_REFERENCE_VOLUMES,
     _quality_budget_gb,
+    _quality_memory_guard,
 )
 
 #: Anisotropic on purpose: an isotropic spacing would hide a per-axis error in
@@ -297,17 +299,70 @@ def test_a_partition_budget_skip_points_straight_at_compare(
     assert "gsplat flatten" not in out
 
 
-def test_the_peak_estimate_covers_ssims_intermediates() -> None:
-    """The budget must count the SSIM peak, not just the two volumes it scores.
+def test_cuda_quality_budget_uses_vram_not_busy_host_ram(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 512-cubed score fits a large card even when host RAM is busy."""
+    import torch
 
-    SSIM holds several convolution intermediates live on top of the
-    reconstruction and the reference, and its own tiled fallback only engages on
-    CUDA. Since scoring runs before the archive is written, an under-count is not
-    a missing metric — it is a thrash or an OOM kill that loses the finished fit.
-    """
-    from luxar.gsplats.metrics import _SSIM_PEAK_TENSOR_COUNT
+    from luxar.gsplats import metrics
+    from luxar.gsplats.utils import device as device_utils
 
-    assert _QUALITY_PEAK_VOLUMES >= _SSIM_PEAK_TENSOR_COUNT
+    monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.3)
+    monkeypatch.setattr(
+        device_utils, "resolve_torch_device", lambda _device: torch.device("cuda:0")
+    )
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda _device: 95 * 1024**3)
+
+    assert _quality_memory_guard((512, 512, 512), "cuda") is None
+
+
+def test_cuda_quality_budget_rejects_a_small_shared_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each concurrent worker receives only its share of free VRAM."""
+    import torch
+
+    from luxar.gsplats import metrics
+    from luxar.gsplats.utils import device as device_utils
+
+    monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
+    monkeypatch.setenv(merged_quality.QUALITY_WORKERS_PER_DEVICE_ENV, "4")
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 128.0)
+    monkeypatch.setattr(
+        device_utils, "resolve_torch_device", lambda _device: torch.device("cuda:0")
+    )
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda _device: 16 * 1024**3)
+
+    reason = _quality_memory_guard((512, 512, 512), "cuda")
+    assert reason is not None
+    assert "cuda:0 memory" in reason
+    assert "4 worker(s)" in reason
+
+
+def test_cpu_quality_budget_still_uses_the_full_host_peak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CPU render and SSIM remain guarded entirely by physical host RAM."""
+    import torch
+
+    from luxar.gsplats.utils import device as device_utils
+
+    monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.3)
+    monkeypatch.setattr(
+        device_utils, "resolve_torch_device", lambda _device: torch.device("cpu")
+    )
+
+    reason = _quality_memory_guard((512, 512, 512), "cpu")
+    assert reason is not None
+    assert "host memory needs ~4.0 GiB" in reason
+
+
+def test_split_peak_counts_keep_host_and_device_allocations_explicit() -> None:
+    assert _QUALITY_HOST_REFERENCE_VOLUMES == 2
+    assert _QUALITY_DEVICE_PEAK_VOLUMES == 8
 
 
 def test_the_default_budget_is_held_under_the_memory_actually_free(
@@ -358,6 +413,25 @@ def test_a_nan_override_cannot_switch_the_guard_off(
         budget = _quality_budget_gb()
         assert np.isfinite(budget) and budget == pytest.approx(_QUALITY_BUDGET_GB)
     assert "LUXAR_TILED_QUALITY_MAX_GB" in capsys.readouterr().out
+
+
+def test_a_malformed_override_cannot_disable_the_cuda_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    from luxar.gsplats import metrics
+    from luxar.gsplats.utils import device as device_utils
+
+    monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "24 GiB")
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 128.0)
+    monkeypatch.setattr(
+        device_utils, "resolve_torch_device", lambda _device: torch.device("cuda:0")
+    )
+    monkeypatch.setattr(metrics, "_gpu_free_memory", lambda _device: 4 * 1024**3)
+
+    reason = _quality_memory_guard((512, 512, 512), "cuda")
+    assert reason is not None and "cuda:0 memory" in reason
 
 
 def test_an_infinite_override_is_taken_at_face_value(
