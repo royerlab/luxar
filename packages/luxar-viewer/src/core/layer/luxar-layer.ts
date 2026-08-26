@@ -42,6 +42,28 @@
  *   nodes it owns; a host with its own transparent geometry should set explicit
  *   values rather than rely on insertion order.
  *
+ * ## A scene's tone mapping does NOT apply in layer mode
+ *
+ * Luxar tone-maps in the mega-shader, which is a **post-processing pass** —
+ * `PostProcessingManager` even forces `renderer.toneMapping = NoToneMapping`
+ * because of it. The layer owns no post-processing, so a scene's
+ * `viewer_config.tone_mapping` reaches nothing here and is silently inert. It
+ * is not a per-material setting that could be pushed onto the nodes.
+ *
+ * The practical consequence is worth stating plainly, because it is invisible
+ * from the scene file: **emissive geometry in a host with no tone mapping clips
+ * flat**. `additive` blending sums contributions into a framebuffer that clamps
+ * at 1.0, and normalising amplitudes fixes the per-splat scale, not the
+ * accumulated one. Without a filmic rolloff, overlapping bright structure goes
+ * to white with no gradient.
+ *
+ * A host that wants the rolloff has to tone-map itself
+ * (`renderer.toneMapping = THREE.ACESFilmicToneMapping`, which an `OutputPass`
+ * will pick up) — noting that this applies to the host's own geometry too.
+ * Otherwise the only exposure controls are the scene's authored `opacity` and
+ * {@link LuxarLayer.setExposure}, and `max` blending is the one mode that
+ * cannot saturate at all.
+ *
  * ## Limits (same as `LuxarApp`, and for the same reasons)
  *
  * One layer per page, and never alongside a `LuxarApp`. The scene-loader

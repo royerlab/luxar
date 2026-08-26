@@ -104,6 +104,21 @@ reads projected screen area, which is transform-invariant.
 - **No UI.** No panels, no picking UI, no monitor, no keyboard handling. The
   cross-layer `notifier` stays unregistered, so Luxar's toasts and error
   overlays are silently dropped unless the host registers a backend.
+- **A scene's `tone_mapping` is inert.** Luxar tone-maps in the mega-shader,
+  which is a post-processing pass the layer does not own (`PostProcessingManager`
+  even forces `renderer.toneMapping = NoToneMapping` because of it). It is not a
+  per-material setting that could be pushed onto the nodes, so
+  `viewer_config.tone_mapping` reaches nothing and changing it has no effect.
+
+  This matters more than it sounds. `additive` blending sums contributions into a
+  framebuffer that clamps at 1.0, and normalising amplitudes fixes the per-splat
+  scale, not the accumulated one — so in a host with no tone mapping, overlapping
+  bright structure clips flat to white with no gradient, and the scene file gives
+  no hint that this will happen. A host wanting the filmic rolloff must set
+  `renderer.toneMapping` itself (an `OutputPass` picks it up), which also applies
+  to the host's own geometry. Otherwise exposure is the only control — the
+  scene's authored `opacity` plus `setExposure()` — and `max` is the one blending
+  mode that cannot saturate at all.
 - **`dispose()` is async** and tears down process singletons — the loader and its
   caches, the data-worker pool, the depth-sort worker, the material cache. It is
   a full teardown of Luxar in the page, not a partial one, which is consistent
