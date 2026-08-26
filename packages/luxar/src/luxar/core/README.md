@@ -107,7 +107,7 @@ with LuxarZarrCompiler('output.luxar.zarr') as compiler:
 - `add_text(text, position, ...)` - Screen-space text overlay (returns `Overlay`)
 - `add_image(image, position, ...)` - Screen-space image overlay (returns `Overlay`)
 - `add_html(html, position, ...)` - Screen-space sanitized-HTML overlay (returns `Overlay`)
-- `to_zarr(path)` - Finalize the writer and copy the backing store to `path`
+- `to_zarr(path)` - Finalize the writer and export to its supported destination
 - `dimensions` (property) - Get/set scene-level dimensions (required at construction)
 - `viewer_config` (property) - Get/set ViewerConfig hints
 - `overlays` (property) - List of `Overlay` descriptors added to the scene
@@ -814,10 +814,13 @@ The core module is designed to work with Luxar's progressive writing system:
 3. **Data Writing**: Data written immediately to Zarr via writer
 4. **Memory Efficiency**: Data never kept in memory after writing
 
-`Scene.to_zarr(path)` is an export/copy helper for this progressive model: it
-finalizes the current backing store and copies the on-disk Zarr directory to
-`path`. Because finalization closes the writer, do not add more nodes to a scene
-after calling `to_zarr()`; use a new `LuxarZarrCompiler` for additional writes.
+`Scene.to_zarr(path)` is an export helper for this progressive model. A
+directory-backed scene is copied to a new directory destination; an
+archive-backed scene is finalized at its selected archive path, replacing an
+existing archive there. A directory-backed scene cannot be copied directly to
+a `.zip` destination; create the archive with `LuxarZarrCompiler` or use
+`luxar optimise`. Because finalization closes the writer, do not add more nodes
+to a scene after calling `to_zarr()`; use a new compiler for additional writes.
 
 ### Scene Graph Structure
 
