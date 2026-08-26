@@ -591,6 +591,13 @@ _EXEMPT_LOD_GROUP_CALLERS = {
         "detached-tree graft; selector comes from gsplats.tree."
         "gate_authored_selector (stored-tree question, not explicit-vs-derived)"
     ),
+    # This demo hand-builds a ladder with no user-supplied explicit-threshold
+    # branch; it always derives screen-area thresholds, choosing the anchor from
+    # the realized BSP part count so a one-part partition remains whole-object.
+    "demos/demo_ocean_currents_earth.py": (
+        "hand-built demo ladder; thresholds are always derived and its anchor "
+        "depends on the realized BSP part count"
+    ),
 }
 
 #: The full expected set of production ``add_lod_group(...)`` call sites.
@@ -603,6 +610,7 @@ _LOD_GROUP_CALLERS = frozenset(_LADDER_PRODUCERS) | frozenset(_EXEMPT_LOD_GROUP_
 #: exactly one today, hence the comprehension; a module that legitimately grows a
 #: second call site becomes an explicit entry here.
 _EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {rel: 1 for rel in _LOD_GROUP_CALLERS}
+_EXPECTED_CALLS_PER_MODULE["demos/demo_ocean_currents_earth.py"] = 2
 
 
 def _luxar_root() -> Path:
