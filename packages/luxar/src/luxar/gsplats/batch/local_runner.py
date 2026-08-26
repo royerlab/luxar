@@ -89,12 +89,13 @@ def build_device_assignment(
 
 
 def _worker_env(gpu: int, workers: dict[int, int]) -> dict[str, str]:
-    """Pin one worker and expose its fair share of device quality memory."""
+    """Pin one worker and expose its fair share of quality-memory budgets."""
+    quality_workers = str(max(1, workers.get(gpu, 1)))
     if gpu < 0:
-        return {}
+        return {QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers}
     return {
         "CUDA_VISIBLE_DEVICES": str(gpu),
-        QUALITY_WORKERS_PER_DEVICE_ENV: str(max(1, workers.get(gpu, 1))),
+        QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
     }
 
 

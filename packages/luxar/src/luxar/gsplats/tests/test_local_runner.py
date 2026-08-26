@@ -50,7 +50,12 @@ def test_gpu_worker_env_carries_same_device_concurrency() -> None:
         "CUDA_VISIBLE_DEVICES": "3",
         QUALITY_WORKERS_PER_DEVICE_ENV: "4",
     }
-    assert _worker_env(-1, {-1: 8}) == {}
+
+
+def test_cpu_worker_env_carries_same_host_concurrency() -> None:
+    assert _worker_env(-1, {-1: 8}) == {
+        QUALITY_WORKERS_PER_DEVICE_ENV: "8",
+    }
 
 
 def test_active_worker_counts_checks_each_task_once() -> None:
