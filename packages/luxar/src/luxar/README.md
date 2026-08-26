@@ -14,6 +14,8 @@ Core Luxar Python package and public API exports.
 | `core/` | Scene graph nodes (Scene, Group, Points, Lines, GSplats, Mesh), dimensions, transforms, viewer config |
 | `io/` | Zarr compiler (`LuxarZarrCompiler`), reader (`LuxarScene`), writer utilities |
 | `encoding/` | Semantic type-based encoding (quantization, broadcasting, LUT) |
+| `mesh/` | Mesh validation and geometry helpers |
+| `shading/` | Geometry-derived appearance bakes such as ambient occlusion |
 | `colormaps/` | Colormap definitions and utilities |
 | `gsplats/` | Gaussian splatting pipeline (fitting, rendering, merging, CLI, CUDA/Metal backends) |
 | `cli/` | Command-line interface (`luxar` command) |

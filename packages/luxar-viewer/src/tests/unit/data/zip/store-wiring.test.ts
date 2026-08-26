@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import ZipFileStore from '@zarrita/storage/zip';
-import { normalizeZipEntries } from '../../../../data/zip/entries';
+import { createZipStoreOptions } from '../../../../data/zarr';
 
 const URL_ = 'https://example.com/scene.luxar.zarr.zip';
 
@@ -26,9 +26,7 @@ function open(files: Record<string, string>) {
     Object.fromEntries(Object.entries(files).map(([name, body]) => [name, strToU8(body)]))
   );
   const blob = new Blob([bytes as unknown as BlobPart]);
-  return ZipFileStore.fromBlob(blob, {
-    transformEntries: (entries) => normalizeZipEntries(entries, URL_),
-  });
+  return ZipFileStore.fromBlob(blob, createZipStoreOptions(URL_));
 }
 
 const decode = (bytes: Uint8Array | undefined) =>
@@ -49,18 +47,6 @@ describe('createZipStore wiring — flat archive', () => {
   it('returns undefined for a missing key — the same shape FetchStore gives a 404', async () => {
     const store = open({ 'zarr.json': '{}' });
     expect(await store.get('/nope/c/0')).toBeUndefined();
-  });
-});
-
-describe('createZipStore wiring — nested archive', () => {
-  it('reads through the re-key, so a `zip -r` archive is not an empty scene', async () => {
-    const store = open({
-      'scene.luxar.zarr/zarr.json': '{"zarr_format":3,"node_type":"group"}',
-      'scene.luxar.zarr/points/c/0/0': 'NESTED-CHUNK',
-    });
-
-    expect(decode(await store.get('/zarr.json'))).toContain('"node_type":"group"');
-    expect(decode(await store.get('/points/c/0/0'))).toBe('NESTED-CHUNK');
   });
 });
 

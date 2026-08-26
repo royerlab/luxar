@@ -89,7 +89,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 85 bundled demos
+luxar demo              # Browse the 86 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -103,7 +103,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 85 Luxar demos  ·  74 built  ·  8 cached  ·  3 not generated yet
+🎬 86 Luxar demos  ·  75 built  ·  8 cached  ·  3 not generated yet
 
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
@@ -112,12 +112,13 @@ geometry, what it needs, and whether you have already built it:
 
  MEDICAL ─────────────────────────────────────────────────────────────── 4 demos
  ✓ 16  dmri_tractography                       lines         588 MB
- • 25  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
+ • 26  gsplats_2d_cmu1_pathology               gsplats       150 MB GPU? git-lfs
 
- SYNTHETIC ──────────────────────────────────────────────────────────── 19 demos
+ SYNTHETIC ──────────────────────────────────────────────────────────── 20 demos
  ✓  9  cloud                                   points
    10  collision                               points
  ...
+ ✓ 19  exotic_surfaces                         points
 
  ✓ built   • inputs cached   (blank) not generated yet
  GPU/GPU? = required/optional     git-lfs kaggle manual = data you supply

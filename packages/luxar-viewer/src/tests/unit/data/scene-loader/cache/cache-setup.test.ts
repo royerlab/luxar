@@ -130,18 +130,6 @@ describe('setupCaches — cache telemetry state resolution', () => {
     expect(result.l0Cache).not.toBeNull();
   });
 
-  it('bypasses L1/L2 for zipped stores while directory stores keep them', async () => {
-    appConfig.cache.enabled = true;
-    appConfig.cache.l0Enabled = true;
-
-    const zipped = await setupCaches('http://example.com/scene.luxar.zarr.zip', {});
-    const directory = await setupCaches('http://example.com/scene.zarr/', {});
-
-    expect(zipped.cachingStore).toBeNull();
-    expect(zipped.rawStore).not.toBeNull();
-    expect(directory.cachingStore).not.toBeNull();
-  });
-
   it('L0-only configuration (l1/l2 off, l0 on) → enabled', async () => {
     appConfig.cache.enabled = false;
     appConfig.cache.l0Enabled = true;

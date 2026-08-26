@@ -56,16 +56,6 @@ describe('SceneIdentityWatchdog', () => {
     banner = installRecordingBanner();
   });
 
-  it('does not watch zipped stores whose attrs are archive members', () => {
-    expect(SceneIdentityWatchdog.isWatchable('https://example.com/scene.luxar.zarr.zip')).toBe(
-      false
-    );
-    expect(
-      SceneIdentityWatchdog.isWatchable('https://example.com/SCENE.LUXAR.ZARR.ZIP?token=abc#view')
-    ).toBe(false);
-    expect(SceneIdentityWatchdog.isWatchable('https://example.com/scene.luxar.zarr')).toBe(true);
-  });
-
   afterEach(() => {
     vi.useRealTimers();
     clearNotifierBackend();

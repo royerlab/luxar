@@ -18,6 +18,7 @@
  */
 
 import { defineConfig, devices } from '@playwright/test';
+import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -32,6 +33,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const headless = process.env.LUXAR_BENCH_HEADLESS !== '0';
 const viewerPort = benchViewerPort;
 const dataPort = benchDataPort;
+
+fs.mkdirSync(benchFixtureDir, { recursive: true });
 
 export default defineConfig({
   testDir: './src/tests/bench',
