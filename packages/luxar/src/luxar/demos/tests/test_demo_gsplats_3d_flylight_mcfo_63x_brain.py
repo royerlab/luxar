@@ -48,7 +48,7 @@ def _tiny_store(path: Path, n: int = 16) -> Path:
     save_gsplats(
         path,
         centers=rng.uniform(-5.0, 5.0, (n, 3)).astype(np.float32),
-        amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
+        amplitudes=rng.uniform(20.0, 100.0, n).astype(np.float32),
         cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
         colors=rng.uniform(0.1, 0.9, (n, 3)).astype(np.float32),
     )
@@ -68,6 +68,8 @@ class TestAuthoredCompositing:
         out = _demo.create_luxar_scene(src, tmp_path / "scene.luxar.zarr")
 
         attrs = dict(zarr.open_group(str(out), mode="r")["mcfo_neurons"].attrs)
+        assert "amplitude_normalization_factor" not in attrs
+        assert attrs["amplitude_data_range"][1] > 50.0
         assert attrs["blending_mode"] == "volumetric"
         assert attrs["absorption"] == pytest.approx(0.81)
         assert attrs["opacity"] == pytest.approx(0.02)

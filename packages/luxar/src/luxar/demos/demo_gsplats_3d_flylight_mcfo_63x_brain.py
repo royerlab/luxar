@@ -215,8 +215,10 @@ VOXEL_UM = (0.19, 0.19, 0.38)
 # numbers back here if the data is ever rebuilt.
 DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
 
-# Opacity is the exposure lever and wants to be tiny; scaling the amplitudes
-# instead does nothing, because the viewer normalises by the stored maximum.
+# These values were tuned against the archive's raw amplitude units. The scene
+# therefore opts out of insertion-time amplitude normalisation below; otherwise
+# the archive's p99.9 ~= 79 scale would dim both radiance and optical depth by
+# that factor while leaving this window and opacity unchanged.
 # Absorption is much higher here (0.81) than on a hazier volume: with the
 # background gone, depth cueing can be strong without muddying anything.
 OPACITY = 0.02
@@ -454,6 +456,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 scene.add_gsplats_from_file(
                     name="mcfo_neurons",
                     path=str(data_path),
+                    normalize_amplitudes=False,
                     # `volumetric` — emission–absorption. The neurons are sparse
                     # but the brain is 167 um deep, so additive summing along the
                     # ray saturates every dense arbor to white and the MCFO hues,
