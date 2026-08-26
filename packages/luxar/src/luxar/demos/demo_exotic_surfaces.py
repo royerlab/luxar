@@ -135,9 +135,10 @@ from luxar.utils.paths import get_demos_output_dir
 #: Grid is 3x3 per family.
 GRID = 3
 
-#: Authored sampling resolution. Re-measure the family display windows with
-#: ``GALLERY_ONLY=exotic_surfaces,exotic_surfaces_algebraic pnpm gallery`` after
-#: changing this or the sampling model.
+#: Authored sampling resolution. After changing this or the sampling model,
+#: re-measure the minimal family with ``GALLERY_ONLY=exotic_surfaces pnpm gallery``.
+#: The algebraic family has no gallery tile; step the ``family`` axis in the
+#: viewer and read its display window from the Layers panel.
 RESOLUTION = 112
 
 #: Edge length each surface is normalized into, and the spacing between cell
