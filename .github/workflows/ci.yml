@@ -153,15 +153,23 @@ jobs:
             # scripts/gallery/manifest.json (test_demo_meta.py cross-validates it
             # against the demo registry), generate-gallery.spec.ts (the gallery
             # manifest field contract is parsed from it), docs/guides/user/CLI_REFERENCE.md
-            # (test_docs_command_coverage.py), and the root and demos README files
+            # (test_docs_command_coverage.py), the root and demos README files
             # (test_readme_demo_docs.py, test_demo_import_spelling.py), plus the
             # CLAUDE.md and visualization-skill projections checked by
             # sync_demo_counts.py. #2170 tracks deriving this hand-maintained input
             # inventory. Markdown alone runs only docs-quality, so these need
             # explicit Python ownership.
+            # Python contract tests also parse a narrow set of viewer TypeScript
+            # sources for FOV/blending defaults, texture and LOD limits, query and
+            # exposure thresholds, and the shared fixture-staleness exit code.
+            # Name those files, not whole viewer subtrees: unrelated viewer edits
+            # should remain TypeScript-only and avoid the Python matrix.
             # test_docs_workflow.py also parses docs.yml and derives the published
             # LFS candidate set from .gitattributes, so both are Python gate inputs.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^\.agents/skills/luxar-visualization/SKILL\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/guides/user/CLI_REFERENCE\.md$|^format-contract/|^\.github/workflows/docs\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/tests/(global-setup\.ts|README\.md|screenshots/generate-gallery\.spec\.ts)$|src/types/format-contract\.ts$|tests/fixtures/README\.md$))' && dom_py=true || true
+            # external-reference-audits.yml is one too: its schedule, permissions
+            # and token wiring are asserted by test_run_external_reference_audits.py,
+            # and a workflow file matches no other domain on its own.
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^\.agents/skills/luxar-visualization/SKILL\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/guides/user/CLI_REFERENCE\.md$|^format-contract/|^\.github/workflows/(docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/format-contract\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
             # The gallery-selection unit test also reads the root README and gallery manifest.
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^README\.md$|^scripts/gallery/manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
