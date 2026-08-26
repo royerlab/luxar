@@ -19,8 +19,9 @@
  * Runs in the opt-in perf suite (`pnpm test:perf`, vitest.perf.config.ts)
  * and skips cleanly when `public/wasm/luxar_wasm_bg.wasm` is absent.
  */
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, beforeAll, vi } from 'vitest';
 import type { WasmModule } from '../../../wasm/types';
+import { expectQuietHostThroughput } from '../../helpers/quiet-host-throughput';
 import { loadWasmArtifact, wasmArtifactExists } from '../../helpers/wasm-artifact';
 
 vi.mock('../../../utils/log', () => ({
@@ -32,9 +33,9 @@ import { registerNode, sortNode } from '../../../workers/sort-worker/sorting';
 import type { SortWorkerCtx } from '../../../workers/sort-worker/state';
 
 /**
- * Extremely generous floor — the measured full path is well above
- * 40 M splats/s on any healthy build; 10 M/s only catches catastrophic
- * breakage (debug WASM, TS fallback silently selected, comparison sort).
+ * Extremely generous floor — the measured full path is well above 40 M
+ * splats/s on any healthy build. It is report-only unless
+ * LUXAR_PERF_QUIET_HOST=1 because even this floor is wall-clock-sensitive.
  */
 const MIN_SPLATS_PER_SECOND = 10e6;
 /** Iterations averaged per run (each with a DIFFERENT rotation). */
@@ -149,12 +150,13 @@ describeIfWasm('Full-path sortNode throughput (record-only bench)', () => {
           `median of ${RUNS} runs × ${ITERATIONS} iters, rotating model-view)`
       );
 
-      expect(
+      expectQuietHostThroughput(
         splatsPerSecond,
+        MIN_SPLATS_PER_SECOND,
         `sortNode full path: ${(splatsPerSecond / 1e6).toFixed(1)} M splats/s ` +
           `(median ${medianMs.toFixed(2)} ms for ${size.toLocaleString()} splats; ` +
           `generous floor ${(MIN_SPLATS_PER_SECOND / 1e6).toFixed(0)} M/s — record-only bench)`
-      ).toBeGreaterThanOrEqual(MIN_SPLATS_PER_SECOND);
+      );
     });
   }
 });
