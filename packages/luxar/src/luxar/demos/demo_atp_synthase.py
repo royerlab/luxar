@@ -143,6 +143,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.shading import bake_ambient_occlusion
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -275,6 +276,94 @@ def center_structure(positions: np.ndarray) -> np.ndarray:
 # =============================================================================
 # Color Schemes and Atomic Properties
 # =============================================================================
+
+
+#: Ambient-occlusion radius, in nm. The complex measures ~20.8 nm, so a couple of
+#: nm separates an atom on the open outer face of the F1 head from one packed
+#: between subunits, which is the structure this demo is about.
+#:
+#: Checked against a sweep rather than assumed, since the nuclear-pore demo's
+#: first guess turned out to be four times too wide. Contrast here is FLAT —
+#: 0.245 / 0.250 / 0.262 / 0.268 / 0.279 / 0.276 at 0.8 / 1.0 / 1.5 / 2.0 / 3.0 /
+#: 5.0 nm — because a filled complex has no central void for a wide window to
+#: degenerate into measuring, unlike a ring with a pore. 1.5 nm sits within 6% of
+#: the peak and is the biophysically meaningful burial scale, so it stands.
+AO_RADIUS_NM = 1.5
+
+#: Occlusion grid resolution. Raised above the library default because the
+#: feature scale (a few nm) is small next to the structure's own extent.
+AO_GRID_CELLS = 128
+
+#: Fraction of the ambient illumination that is DIRECT, and so occludable. The
+#: remaining `1 - AO_STRENGTH` is indirect light — multiply-scattered ambient
+#: that reaches even a fully enclosed atom — so this is a physical split rather
+#: than a taste knob.
+#:
+#: Worth being precise about why this composes with `volumetric` rather than
+#: double-counting it. Emission-absorption transport has two terms, and the node
+#: already supplies one: `absorption` attenuates radiance on its way OUT to the
+#: eye. The emission term is the other, and for matter that is lit from outside
+#: instead of glowing on its own the correct source is `albedo x incident
+#: irradiance` — and the incident irradiance at a point is exactly what ambient
+#: occlusion measures. So the occlusion belongs multiplied into the emission
+#: (which is what colour x intensity is), and the two are the in-scattered source
+#: and the outgoing attenuation of one transport equation, not two darkenings
+#: stacked. Volumetric alone answers "what is in front of what", which changes as
+#: the camera moves; the occlusion term answers "how much sky can reach here",
+#: which does not.
+#:
+#: 0.85 rather than something timider: points need more of the term than a mesh
+#: does, because a shaded surface puts ONE element in each pixel while a point
+#: cloud blends soft overlapping sprites and mutes per-element contrast. Measured
+#: contrast (std/mean of the normalized multiplier) 0.135 at 0.6 against 0.262 at
+#: 0.85, with the 5th percentile still at 0.32.
+AO_STRENGTH = 0.85
+
+
+def _apply_burial_shading(
+    colors: np.ndarray, positions: np.ndarray, radii: np.ndarray
+) -> np.ndarray:
+    """Darken atoms by how enclosed they are, and report the range.
+
+    Ambient occlusion over a sphere of directions is a close correlate of an
+    atom's **burial** — the fraction of directions from which solvent could reach
+    it — so the darkening tracks a real property rather than decorating one. It
+    is a correlate and not a measurement: a solvent-accessible surface area wants
+    a probe rolled over the van der Waals surface (Shrake-Rupley), not a density
+    integral, so nothing should read these numbers as SASA.
+
+    No normals are passed. An all-atom structure is a filled volume several atoms
+    thick rather than a thin shell, so there is no surface orientation to face and
+    the full sphere is the right reading.
+
+    Args:
+        colors: ``(N, 3)`` float32 linear-light colours.
+        positions: ``(N, 3)`` atom positions in nm.
+        radii: ``(N,)`` per-atom radii; cubed to weight big atoms as more matter.
+
+    Returns:
+        ``(N, 3)`` float32 colours, occlusion-multiplied.
+    """
+    occlusion = bake_ambient_occlusion(
+        positions,
+        mass=(radii.astype(np.float64) ** 3),
+        radius=AO_RADIUS_NM,
+        grid_cells=AO_GRID_CELLS,
+        strength=AO_STRENGTH,
+    )
+
+    # Rescale so the LEAST buried atom keeps its colour untouched. This preserves
+    # peak brightness, while the mean still falls to about half at the shipped
+    # settings; the bake therefore changes the intensity/absorption balance as
+    # well as adding burial contrast.
+    normalized = occlusion / max(float(occlusion.max()), 1e-6)
+    aprint(
+        f"✓ Burial shading (ambient occlusion, r={AO_RADIUS_NM} nm): "
+        f"raw [{occlusion.min():.3f}, {occlusion.max():.3f}] "
+        f"-> normalized [{normalized.min():.3f}, 1.000]"
+    )
+    aprint("  The least-buried atoms keep full colour; packed interior darkens.")
+    return (colors * normalized[:, None]).astype(np.float32)
 
 
 def element_to_vdw_radius(elements: np.ndarray) -> np.ndarray:
@@ -474,6 +563,8 @@ def generate_atp_synthase(
             aprint(f"  C: {1.70 * 0.1 * 0.4:.3f} nm")
             aprint(f"  N: {1.55 * 0.1 * 0.4:.3f} nm")
             aprint(f"  O: {1.52 * 0.1 * 0.4:.3f} nm")
+
+            colors = _apply_burial_shading(colors, positions, radii)
 
         # Write to Zarr
         with asection("Creating Luxar scene"):

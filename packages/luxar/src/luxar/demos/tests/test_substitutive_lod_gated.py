@@ -140,10 +140,11 @@ def test_the_scan_covers_the_shared_helpers() -> None:
     and a ``demo_*.py``-only scan would never look. No helper trips the guard
     today, so nothing else here would notice the narrower set.
     """
-    names = {p.name for p in DEMO_FILES}
-    assert REQUIRED_SHARED_HELPERS <= names, (
+    demos_dir = Path(__file__).resolve().parents[1]
+    relative_paths = {path.relative_to(demos_dir).as_posix() for path in DEMO_FILES}
+    assert REQUIRED_SHARED_HELPERS <= relative_paths, (
         "shared helper modules are outside this guard's scan: "
-        f"{sorted(REQUIRED_SHARED_HELPERS - names)}"
+        f"{sorted(REQUIRED_SHARED_HELPERS - relative_paths)}"
     )
 
 

@@ -42,8 +42,9 @@ no entry point of its own had every function unreachable and passed vacuously.
 module-level ``def``s for such modules; the two changes only work together.
 
 The set is a DENYLIST on purpose: every ``*.py`` directly under ``demos/``
-*except* :data:`EXCLUDED`, plus every helper in ``demos/_support/`` except its
-barrel. An allowlist keyed on a filename pattern would be opt-in, so a future
+*except* :data:`EXCLUDED`, plus every helper recursively below
+``demos/_support/`` except package barrels. An allowlist keyed on a filename
+pattern would be opt-in, so a future
 ``demos/_plot_helpers.py`` or ``demos/_support/_plot_helpers.py`` would escape
 all seventeen guards and reopen the very blind spot this module exists to close.
 
@@ -66,8 +67,8 @@ infrastructure rather than demo code, and one would produce a *false* positive:
 ``__init__.py``
     A pure re-export barrel; it holds no demo code and no gates.
 
-``_support/__init__.py`` is excluded for the same barrel-only reason. Every
-other module in ``_support/`` is scanned.
+Every ``__init__.py`` below ``_support/`` is excluded for the same barrel-only
+reason. Every other Python module in that subtree is scanned recursively.
 
 ``registry.py`` is deliberately NOT excluded — it passes all seventeen guards, so
 there is no reason to carve it out.
@@ -101,11 +102,23 @@ EXCLUDED = frozenset({"__init__.py", "_dependencies.py"})
 REQUIRED_SHARED_HELPERS = frozenset(
     {
         "_caption.py",
-        "_fields.py",
         "_graph_common.py",
         "_interop_common.py",
         "_roundtrip_common.py",
-        "_umap_utils.py",
+        "_support/_fields.py",
+        "_support/_umap_utils.py",
+        "_support/datasets/bundles.py",
+        "_support/datasets/cache.py",
+        "_support/datasets/data_fetch.py",
+        "_support/datasets/lfs.py",
+        "_support/datasets/payload_agreement.py",
+        "_support/downloads/download.py",
+        "_support/downloads/remote_zip.py",
+        "_support/downloads/zip_safety.py",
+        "_support/runtime/device.py",
+        "_support/runtime/flags.py",
+        "_support/runtime/provenance.py",
+        "_support/runtime/viewer.py",
     }
 )
 
@@ -124,16 +137,17 @@ def scanned_demo_modules(demos_dir: Path | None = None) -> list[Path]:
     root = DEMOS_DIR if demos_dir is None else demos_dir
     paths = sorted(
         [p for p in root.glob("*.py") if p.name not in EXCLUDED]
-        + [p for p in (root / "_support").glob("*.py") if p.name != "__init__.py"]
+        + [p for p in (root / "_support").rglob("*.py") if p.name != "__init__.py"]
     )
     names = {p.name for p in paths}
+    relative_paths = {p.relative_to(root).as_posix() for p in paths}
 
     n_demos = sum(1 for name in names if name.startswith("demo_"))
     assert n_demos >= MIN_DEMO_MODULES, (
         f"found only {n_demos} demo_*.py modules under {root} (expected at "
         f"least {MIN_DEMO_MODULES}) — discovery or the package layout changed"
     )
-    missing = REQUIRED_SHARED_HELPERS - names
+    missing = REQUIRED_SHARED_HELPERS - relative_paths
     assert not missing, (
         f"shared helper module(s) {sorted(missing)} are not in the scanned set "
         f"— the dependency guards would no longer cover them"

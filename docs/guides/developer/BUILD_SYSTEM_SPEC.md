@@ -794,8 +794,8 @@ and each job runs its expensive steps only for the domain(s) it covers:
 
 | Domain | Set by | Gates |
 |--------|--------|-------|
-| `dom_py` | `*.py`, `Makefile`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh`, plus gate inputs that carry no Python extension, listed below | `python-tests`, `wheel-viewer` |
-| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
+| `dom_py` | `*.py`, `Makefile`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh`, plus cross-language gate inputs listed below | `python-tests`, `wheel-viewer` |
+| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}`, plus gallery-selection inputs listed below | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_rust` | `*.rs`, `Cargo.toml/lock` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_go` | `*.go`, `go.mod/sum`, `cli/_launchers/` | `go-launcher` |
 
@@ -817,7 +817,10 @@ ratchet's only input that carries no Python extension),
 `scripts/gallery/manifest.json` (cross-validated against the demo registry) and
 `docs/guides/user/CLI_REFERENCE.md` (drift-guarded against the live Typer app),
 plus the root `README.md` and `packages/luxar/src/luxar/demos/README.md` guarded
-against the live demo registry and exported helper inventory.
+against the live demo registry and exported helper inventory, and the gallery
+capture spec whose `DemoEntry` interface defines the manifest field contract.
+`dom_ts` explicitly owns the root `README.md` and gallery manifest because the
+gallery-selection unit test resolves and validates the README capture set from them.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
@@ -869,8 +872,9 @@ classifiers advertise — "declared" and "tested" are kept identical by
 construction, because a claimed-but-never-exercised version is the same species of
 lie as an untested 3.10 claim would be. Finding a break within 24h is the trade
 against spending three legs on every PR, on a box with three self-hosted slots.
-On obsidian, `max-parallel: 2` starts two Python legs while reserving the third
-slot for `typescript-tests`; the final Python leg follows, while the short
+On obsidian, `max-parallel: 2` prevents one run's Python matrix from monopolising
+all three shared slots; repository-wide queue order may still put other work ahead
+of that run's `typescript-tests`. The final Python leg follows, while the short
 `release-readiness` and `wheel-viewer` checks run independently on GitHub-hosted
 runners. (If newer interpreters ever become deliberately unsupported, the honest
 fix is a `requires-python` upper bound, not a quiet single-leg matrix.)

@@ -150,14 +150,16 @@ luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor
 **`fit` already stamps the quality of the fit it just did** into `result.stats`
 (`foreground_psnr_db`, `foreground_threshold`, `foreground_fraction`) and prints
 it, so most arms need no extra run. That stamped number is already scored against
-the **unfloored** input it was handed — `fit` renders against the raw array, not
-against its own floored/normalized copy. Reach for `compare` when scoring against
-a *different* reference than the volume that was fitted — a denoised variant's
-untouched source, another arm's target:
+the input in raw units but on the fit's **background-relative basis**: the level
+the fit actually subtracted (`image_min`: the resolved floor when suppression is
+on, otherwise the data minimum or percentile endpoint) is removed and clipped,
+while fit-time normalization is undone.
+Reach for `compare` when scoring against a *different* reference than the volume
+that was fitted — a denoised variant's untouched source, another arm's target:
 
 ```bash
 luxar gsplat compare fitted.gsplats.zarr original.tiff --output-json metrics.json
-#   --channel/--timepoint, --device, --truncate
+#   --channel/--timepoint (reference side only), --device, --truncate
 #   (--shape is not an override: it must equal the reference shape. Omit it.)
 ```
 
@@ -180,6 +182,67 @@ Neither the global nor the foreground PSNR covers the **dim band** (1–10% of m
 above) — mask it yourself with `gsplats.rendering.render_to_volume_tensor` plus
 `metrics.compute_psnr`
 (both torch; `render_to_volume` returns NumPy, which `compute_psnr` rejects).
+
+### Scoring a STACKED or TRANSFORMED archive (read before `gsplat compare`)
+
+Five separate wrong numbers were produced in one day by the same mistake:
+**comparing two things held under different conventions.** None looked like an
+error — each produced a plausible dB that a reader would simply believe. Check
+all six failure modes before you trust a `compare`; the measured cases and full
+controls are in [references/scoring-convention-failures.md](references/scoring-convention-failures.md).
+
+**1. Score each timepoint before stacking, and retain its stamps.** A stacked
+axis is the LAST centre column in a `.gsplats.zarr`; the source movie is usually
+time-FIRST, so comparing both whole silently misaligns them. One archive measured
+17.57 dB foreground whole versus 50.26 dB per timepoint. There is currently no
+CLI route to recover that per-timepoint score from the stacked store:
+`compare --timepoint` slices only the reference, and `gsplat slice` preserves the
+archive rank. Do not present either as an archive slicer.
+
+**2. Keep the input archive's column order separate from the compiled scene's.**
+In an `add_gsplats`/`add_points` authoring call, `dim_order[i]` names input data
+column `i`; the compiler permutes those columns into scene `Dimensions` order
+before storing them. `dim_order` is not persisted. Therefore the upstream
+`.gsplats.zarr` follows the authoring argument, while the compiled scene node
+follows `Dimensions`. Also check what the stacked column HOLDS: it is often a
+physical value (minutes, µm) rather than an index, so `frame = round(value / step)`.
+
+**3. Score before any spatial transform. "It was only a scale" is not a defence.**
+Fitted centres are usually voxel indices; a shipped archive has often been scaled
+to physical units and recentred. Comparing the transformed archive against an
+untransformed reference cost **16 dB** even for a pure diagonal scale. Score at
+fit time. If you must score later, invert the transform explicitly and prove the
+result against an independent control; do not assume a scale is harmless.
+
+**4. Fixing ONE convention mismatch and getting a different wrong number is not
+progress.** One radar comparison successively exposed a mismatched grid, a −999
+no-data fill that poisoned Otsu, and centres in km against a voxel-indexed
+reference. Fixing the first two still left 6.70 dB foreground. **Carry a prior for
+what the number should be, and keep digging while it is violated** — a
+wrong-but-less-wrong number is the most expensive state to stop in.
+
+**5. Never assign an axis ROLE from a data-dependent property.** A levelling
+rotation derived in the plane of "the two widest axes" is correct only until the
+tilt passes ~45°, at which point the second axis becomes the wider one, the roles
+swap, and the angle comes out 90° off: a synthetic 70° tilt was measured as −20°
+and "levelling" made the cloud LESS elongated (in-plane ratio 2.30 → 1.15). It
+passed ruff, mypy, the complexity ratchet and the existing tests. Fix roles by
+the convention the consumer uses, and exercise any such derivation against
+synthetic inputs whose answer you already know.
+
+**6. Never compare a preprocessed fit against its own preprocessed input.** It is
+excellent by construction. Score against the original — see "Denoising before a
+fit" for the subtler version, where the mask itself is the thing that lies.
+
+Quality stamps are the way out of most of this, but **check whether they exist
+before relying on them**: they are written per fit by `fit`, and coverage is
+uneven downstream. Both `combine_as_new_dimension` and the `batch-fit` merge load
+or concatenate inputs without carrying their per-fit quality to the merged root.
+The component fits and current per-tile stores do carry the numbers, so inspect
+and preserve them before merging. Older physical-coordinate fits may lack them
+because metrics were skipped before #1668. Absent stamps mean re-measurement, and
+re-measurement means every trap above. For post-fit command context, also see the
+`luxar-gsplat-edit` skill.
 
 ### Denoising before a fit (`luxar gsplat denoise`, or your own filter)
 
@@ -258,6 +321,7 @@ An index into the measured sections, not a substitute for them.
 | Symptom | Reach for |
 | --- | --- |
 | Thin/faint structure missing | start with `--floor auto`, never a higher floor; on a near-all-zero stack also test `--floor none` — "Background floor suppression" above — then raise K |
+| `compare` says a known-good archive is mediocre | you compared a stacked 4D store whole, or across a transform — "Scoring a STACKED or TRANSFORMED archive" |
 | Noise survives a denoising pass that measured well | you measured displacement, not removal — "Denoising before a fit"; on isolated-voxel noise use a component-size filter |
 | Background haze survives | the viewer's display window and opacity — same section; or `filter --soft-highpass p90` (the `luxar-gsplat-edit` skill) |
 | Thin filaments render as chains of beads | the six-knob schedule under "BOTH entry points default to 1000 iters" below. NOT more seeds (measured *worse*), and NOT a preset: a preset moves `n_iters`, `early_stop_patience` and `max_eccentricity` — but nothing on this schedule, so `enable_dynamic_ops`, `patience` (the plateau LR-decay one, default 15, NOT `early_stop_patience`) and `l1_diag` all stay where they are and you must set them yourself |
@@ -305,6 +369,11 @@ Each of these has burned a whole fit cycle. Check them before you launch a long 
   tell "deleted" from "moved one voxel". Judge a filter on a MIP or in 3D (a single
   slice hides it), and prefer a filter that moves nothing. See "Denoising before a
   fit".
+- **A stacked 4D archive compared WHOLE is mis-sliced, not badly fitted.** The
+  stacked axis is the last centre column; the source movie is time-first. Measured
+  cost on one archive: foreground 17.57 dB compared whole vs 50.26 dB per
+  timepoint. Score and retain each fit before stacking; the CLI cannot slice the
+  stacked archive per timepoint. See "Scoring a STACKED or TRANSFORMED archive".
 - **Score against the ORIGINAL, and on the foreground.** Global PSNR on a
   97–99%-empty stack is flattered by the empty part and barely moves; foreground
   (say, above 10% of max) and a dim band (1–10%) are where the answer lives. Never
@@ -489,8 +558,10 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     # (c) Fit in one step from a volume:
     scene.add_gsplats_from_volume("embryo", volume, seeds=8000, n_iters=5000, device="cuda")
 
-    # (d) From raw arrays — cholesky_factors packed lower-triangular; 3D = (N,6):
-    #     [L00, L10, L11, L20, L21, L22]; isotropic std σ -> [1/σ,0,1/σ,0,0,1/σ]
+    # (d) From raw arrays — cholesky_factors is the packed lower-triangular factor L
+    #     of the COVARIANCE (Σ = L·Lᵀ); 3D = (N,6):
+    #     [L00, L10, L11, L20, L21, L22]. Diagonal is scale-like:
+    #     isotropic std σ -> [σ,0,σ,0,0,σ]  (NOT 1/σ)
     scene.add_gsplats("trio", centers=c, amplitudes=a, cholesky_factors=L, colors=rgb)
 ```
 

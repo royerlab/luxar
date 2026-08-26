@@ -321,7 +321,7 @@ OUTPUT:
 
 DEMO_META = {
     "key": "gsplats_4d_zebrafish_timelapse",
-    "title": "4D Zebrafish Timelapse",
+    "title": "4D Zebrafish Gastrulation (endoderm)",
     "description": (
         "Five hours of zebrafish gastrulation as one 4D Gaussian-splat node, "
         "inside a gridded cage that gives the sparse embryo a scale."

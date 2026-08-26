@@ -31,6 +31,9 @@ data/
 │                                  #   quantized codes; registered by zarr.ts as
 │                                  #   `numcodecs.luxar_delta_v1`; Python twin in
 │                                  #   luxar/encoding/_encoders/delta_codec.py)
+├── zip/                           # Uncached HTTP-range access to .zarr.zip stores
+│   ├── entries.ts                 # Validates flat/nested archive layouts and normalizes keys
+│   └── range-reader.ts            # Strict 206/Content-Range reader for archive byte windows
 ├── scene-loader.ts                # Orchestrates hierarchical scene loading (spans all geometries)
 ├── scene-identity-watchdog.ts     # Re-probes the dataset's root .zattrs (interval + tab focus)
 │                                  #   and raises the scene-identity banner when the ?src=
@@ -146,6 +149,10 @@ data/
     ├── worker-pool.ts             # Pool manager with load balancing
     └── data-worker.ts             # Worker with WASM acceleration
 ```
+
+Zipped stores currently bypass the persistent L1/L2 chunk cache because those
+tiers build URL-addressable chunk paths, while archive members are read through
+the zip store. The in-memory L0 and slice caches remain available.
 
 ### State Management Architecture
 

@@ -6,12 +6,12 @@ This example demonstrates:
 - The four arrays that define a Gaussian splat:
   - ``centers``: (N, 3) — splat position in scene space.
   - ``amplitudes``: (N,) or scalar — peak intensity at the center.
-  - ``cholesky_factors``: (N, 6) — packed lower-triangular factor of the
-    inverse covariance matrix. Defines the splat's shape and orientation.
+  - ``cholesky_factors``: (N, 6) — packed lower-triangular factor **L of the
+    covariance** (``Σ = L·Lᵀ``). Defines the splat's shape and orientation.
     For a 3D splat the 6 packed entries are the lower-triangular order
-    ``[L00, L10, L11, L20, L21, L22]``; for an axis-aligned splat with
-    standard deviations (sx, sy, sz) the packing is
-    ``[1/sx, 0, 1/sy, 0, 0, 1/sz]``.
+    ``[L00, L10, L11, L20, L21, L22]``. The diagonal is *scale-like*: for an
+    axis-aligned splat with standard deviations (sx, sy, sz) the packing is
+    ``[sx, 0, sy, 0, 0, sz]`` — bigger numbers mean bigger splats.
   - ``colors``: (N, 3) — per-splat RGB.
 
 The scene contains three splats with deliberately different shapes:
@@ -57,25 +57,30 @@ def pack_lower_triangular(L: np.ndarray) -> np.ndarray:
 def isotropic_cholesky(sigma: float) -> np.ndarray:
     """Packed Cholesky for an isotropic Gaussian with standard deviation ``sigma``.
 
-    The Cholesky factor of the precision matrix ``Σ^{-1} = (1/σ²) I`` is
-    ``(1/σ) I``, so the packed form is ``[1/σ, 0, 1/σ, 0, 0, 1/σ]``.
+    The Cholesky factor of the covariance ``Σ = σ² I`` is ``σ I``, so the packed
+    form is ``[σ, 0, σ, 0, 0, σ]`` — the diagonal carries σ itself, not ``1/σ``.
     """
-    inv = 1.0 / sigma
-    return pack_lower_triangular(np.diag([inv, inv, inv]))
+    return pack_lower_triangular(np.diag([sigma, sigma, sigma]))
 
 
 def axis_aligned_cholesky(sx: float, sy: float, sz: float) -> np.ndarray:
-    """Packed Cholesky for an axis-aligned anisotropic Gaussian."""
-    return pack_lower_triangular(np.diag([1.0 / sx, 1.0 / sy, 1.0 / sz]))
+    """Packed Cholesky for an axis-aligned anisotropic Gaussian.
+
+    With no off-diagonal terms each diagonal entry is that axis' standard
+    deviation directly: ``Σ = diag(sx², sy², sz²)``.
+    """
+    return pack_lower_triangular(np.diag([sx, sy, sz]))
 
 
 def tilted_cholesky(sx: float, sy: float, sz: float, off_xy: float) -> np.ndarray:
     """Packed Cholesky for a Gaussian with a single off-diagonal coupling.
 
     Adding a non-zero L[1, 0] entry couples the X and Y axes of the
-    precision matrix, tilting the splat in the XY plane.
+    covariance, tilting the splat in the XY plane. Note that the coupling also
+    widens Y: ``Σ[1, 1] = L[1, 0]² + L[1, 1]²``, so the Y standard deviation
+    becomes ``sqrt(off_xy² + sy²)`` rather than ``sy``.
     """
-    L = np.diag([1.0 / sx, 1.0 / sy, 1.0 / sz])
+    L = np.diag([sx, sy, sz])
     L[1, 0] = off_xy
     return pack_lower_triangular(L)
 
@@ -132,8 +137,8 @@ def main() -> None:
             body=(
                 "Three splats defined directly by <code>centers</code>, "
                 "<code>amplitudes</code>, <code>colors</code>, and packed "
-                "<code>cholesky_factors</code> — the Cholesky factor of the "
-                "inverse covariance sets each splat's shape and orientation."
+                "<code>cholesky_factors</code> — the Cholesky factor L of the "
+                "covariance (Σ = L·Lᵀ) sets each splat's shape and orientation."
             ),
             observe=[
                 "Left (red) splat is near-spherical (isotropic Cholesky).",
