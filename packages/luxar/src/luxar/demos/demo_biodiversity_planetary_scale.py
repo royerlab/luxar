@@ -460,20 +460,6 @@ GLOBE_TILES: Final = 2
 #: ~0.78x the mean point spacing, the ratio that seals the shell without
 #: over-drawing (0.29 spacing at 700k points on a radius-100 globe).
 GLOBE_RADII: Final = 0.23
-#: The Blue Marble texture is multiplied down HARD. It has to be: the globe is a
-#: sealed shell, so at full brightness the continents (bright green
-#: Europe, tan Sahara, saturated blue ocean) carry more contrast than the data
-#: drawn on top of them and the occurrence colours stop reading as data at all.
-#: Baked colour dimming is the lever that drops the texture's contrast so the
-#: data reads on top. Layer `opacity` is not even an option here: under `opaque`
-#: it is inert (`transparent: false` disables framebuffer blending, so the
-#: fragment's emitted alpha is discarded), so it can neither dim the shell nor
-#: make it translucent.
-#:
-#: 0.12, not the 0.20 that first looked right: 0.20 was chosen against a sparse
-#: early globe, and once the shell sealed at N_GLOBE it was bright enough that a
-#: 7,283-record selection stopped reading against it.
-GLOBE_DIM: Final = 0.12
 OCCURRENCE_RADII: Final = 0.062
 OCCURRENCE_OPACITY: Final = 0.75
 #: Baked colour scale for the occurrence records. KEPT at 0.85 even though the
@@ -2609,6 +2595,13 @@ def add_lod_tiles(
       picking and camera framing treat the layer as one entity rather than
       snapping to whichever tile was hit. Mirrors the library's own
       ``partition=`` path.
+
+
+    NOTE: currently UNCALLED. Its only caller was the "All life" aggregate
+    layer, removed because it was the densest thing in the scene and what made
+    the textured basemap invisible. Kept because its BSP-tiling behaviour is
+    pinned by a test and is the reusable half of that layer, but be aware that
+    the test is the only thing exercising it — nothing in the built scene does.
     """
     assert_tile_budget(max_elements)
     # Real coordinates in the "all" summary slots: the layer shows at the opening
@@ -2669,12 +2662,23 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
     rng = np.random.default_rng(SAMPLE_SEED + 99)
 
     with asection("Preparing occurrence geometry"):
-        occ_xyz = jittered_positions(sample.lat, sample.lon, sample.unc, rng)
-        occ_colors = (
-            TAXON_GROUP_COLORS[sample.taxon.astype(np.intp)] * OCCURRENCE_COLOR_SCALE
-        )
-        aprint(f"always-on layer: {occ_xyz.shape[0]:,} points")
-
+        # The "All life" aggregate layer is gone, and with it the always-on
+        # occurrence geometry it drew. It was the densest thing in the scene by a
+        # wide margin — every sampled record, at every slice — and it cost more
+        # than it showed: at that density the individual records stop being
+        # legible and the whole globe reads as one bright shell.
+        #
+        # It was also what made the textured basemap invisible. Fourteen point and
+        # line layers at OCCURRENCE_INTENSITY 100 saturate every pixel before the
+        # globe at ~0.6 contributes anything, and raising the globe does not help
+        # (measured: at 25 it clips and Neutral tone mapping desaturates the
+        # continents to amber). Removing the densest layer is what gives the
+        # basemap room, so the same change answers both complaints.
+        #
+        # The all-taxon SLOT stays. It is load-bearing for a different reason —
+        # every scrubbable layer stores taxon-marginal, period-marginal and joint
+        # copies so that moving one slider never empties the scene — and
+        # `ALL_LIFE_SLOT` is still where the globe's `fill` puts it.
         taxon_xyz = jittered_positions(
             sample.taxon_lat, sample.taxon_lon, sample.taxon_unc, rng
         )
@@ -2818,7 +2822,13 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 scene,
                 "Earth",
                 demo_name=DEMO_NAME,
-                radius=1.0,
+                # RADIUS, not 1.0. This demo's world is at radius 100 — every
+                # occurrence goes through its own `lonlat_to_xyz`, which multiplies
+                # by RADIUS — so a unit-radius globe is a marble at the centre of a
+                # 100-unit point shell. It renders correctly and is ~1% of the
+                # frame, which is why no amount of intensity made the basemap
+                # legible: the problem was never brightness.
+                radius=RADIUS,
                 n_lon=GLOBE_LON,
                 n_lat=GLOBE_LAT,
                 texture_width=GLOBE_TEXTURE_WIDTH,
@@ -2831,14 +2841,20 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 shading="none",
                 clouds=Clouds(strength=0.45, gamma=2.0, intensity=1.6),
                 blending_mode=GLOBE_BLENDING,
-                # GLOBE_DIM * GLOBE_INTENSITY, and the product is the point. The
-                # point version applied these separately — DIM baked into the
-                # colours, INTENSITY as the node multiplier — for a net 0.586.
-                # Moving the dimming off the colours (baked dimming is
-                # unrecoverable) means both factors have to reach the one multiplier
-                # that survives; passing DIM alone made the globe 5x too dark, which
-                # against occurrence points at intensity 100 read as NO GLOBE.
-                intensity=GLOBE_DIM * GLOBE_INTENSITY,
+                # GLOBE_INTENSITY alone, not GLOBE_DIM * GLOBE_INTENSITY.
+                #
+                # GLOBE_DIM existed to pre-dim per-point colours that were BAKED,
+                # because a point carried its colour and there was no other place to
+                # put the attenuation. A texture has a live node multiplier, so the
+                # pre-dim is not just unnecessary — it is the wrong lever, since
+                # baked attenuation cannot be recovered from the Layers panel
+                # without clipping past 1.0.
+                #
+                # The net was 0.12 * 4.88 = 0.586, which was tuned to sit behind an
+                # always-on occurrence shell that no longer exists. With that layer
+                # removed the basemap has room, so the node multiplier alone is the
+                # right amount of light.
+                intensity=GLOBE_INTENSITY,
                 offset=0.0,
                 gamma=1.0,
                 opacity=1.0,
@@ -2848,26 +2864,6 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                     "taxon": float(ALL_LIFE_SLOT),
                     "period": float(PERIOD_ALL_SLOT),
                 },
-            )
-
-            add_lod_tiles(
-                scene,
-                "All life",
-                occ_xyz,
-                occ_colors,
-                radii=OCCURRENCE_RADII,
-                opacity=OCCURRENCE_OPACITY,
-                max_elements=TARGET_TILE_POINTS,
-                levels=OCCURRENCE_LOD_LEVELS,
-                coverage=OCCURRENCE_COVERAGE,
-                # `normal`, with no display-range push. The Layers-panel settings
-                # transcribed below were tuned on `Earth` and on the SCRUBBABLE
-                # records layer; this one was left alone, so it keeps its own
-                # appearance rather than inheriting settings never chosen for it.
-                compositing=dict(
-                    blending_mode="normal",
-                    opacity=OCCURRENCE_OPACITY,
-                ),
             )
 
             scene.add_points(

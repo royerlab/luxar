@@ -1094,3 +1094,25 @@ def test_occurrence_coverage_refines_once_a_tile_fills_the_viewport() -> None:
     metric = screen_fill_diagonal_ratio / fill_factor
     selected = max(i for i, c in enumerate(OCCURRENCE_COVERAGE) if c <= metric)
     assert selected == len(OCCURRENCE_COVERAGE) - 1
+
+
+def test_the_globe_is_built_at_the_scene_radius() -> None:
+    """The globe must be at ``RADIUS``, not at a hardcoded unit sphere.
+
+    This shipped wrong and was hard to recognise. Every occurrence goes through
+    the demo's own ``lonlat_to_xyz``, which multiplies by ``RADIUS`` (100), so a
+    globe built at radius 1.0 is a marble at the centre of a 100-unit point shell.
+    It renders perfectly — committed, textured, in frustum — and occupies about 1%
+    of the frame, which is why it read as "the terrain is missing" and why no
+    amount of node intensity fixed it. The stored bounds are what gave it away:
+    the occurrence layer spanned +/-100 while the globe spanned +/-1.
+
+    A scale mismatch between a backdrop and the data drawn on it is invisible to
+    every other check in this suite, so it gets its own.
+    """
+    source = Path(demo_module.__file__).read_text()
+    globe_call = source.split("build_earth(")[1].split("\n            )")[0]
+    assert "radius=RADIUS" in globe_call, (
+        "the globe must use the demo's RADIUS; a literal would silently rescale it"
+    )
+    assert "radius=1.0" not in globe_call
