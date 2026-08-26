@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Any, Literal, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import numpy as np
 from arbol import aprint
@@ -14,7 +14,6 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import _FITTING_INFO_KEYS
 from luxar.io._compiler.gsplat_tree import json_safe_value
 
-FitReferenceKind = Literal["acquisition", "preprocessed", "synthetic"]
 _FIT_REFERENCE_KINDS = frozenset(("acquisition", "preprocessed", "synthetic"))
 
 #: Upper bound, in GiB, on the memory a merged-quality score may hold resident.

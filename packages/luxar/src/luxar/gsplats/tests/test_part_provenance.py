@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.save_gsplats import split_fitting_info
+from luxar.gsplats.lod import RecipeParams, build_recipe
 from luxar.gsplats.merged_quality import collect_part_provenance
 
 from ._gsplat_data_helpers import _make_3d_gsplat
@@ -103,3 +105,60 @@ def test_part_provenance_validates_reference_and_stack_cardinality() -> None:
             fits,
             part_provenance=[{"coordinate": 0, "fitting": {}}],
         )
+
+
+def test_source_summary_requires_complete_agreement() -> None:
+    fits = [
+        _fit(1, source_shape=[3, 4, 5], source_dtype="uint16", source_bytes=120),
+        _fit(2, source_shape=[6, 4, 5], source_dtype="uint8"),
+    ]
+    provenance = collect_part_provenance(
+        fits,
+        values=[0, 1],
+        fit_reference={"kind": "preprocessed"},
+    )
+
+    stacked = GSplatData.combine_as_new_dimension(
+        fits,
+        values=[0, 1],
+        part_provenance=provenance,
+    )
+
+    assert "source_shape" not in stacked.stats
+    assert "source_dtype" not in stacked.stats
+    assert "source_bytes" not in stacked.stats
+
+
+def test_part_provenance_survives_lod_and_save_load(tmp_path: Path) -> None:
+    fits = [
+        _fit(1, source_shape=[8, 8, 8], source_dtype="uint16", source_bytes=1024),
+        _fit(2, source_shape=[8, 8, 8], source_dtype="uint16", source_bytes=1024),
+    ]
+    provenance = collect_part_provenance(
+        fits,
+        values=[0.0, 1.0],
+        fit_reference={"kind": "acquisition"},
+    )
+    stacked = GSplatData.combine_as_new_dimension(
+        fits,
+        values=[0.0, 1.0],
+        part_provenance=provenance,
+    )
+
+    ladder = build_recipe(
+        stacked,
+        "levels",
+        RecipeParams(
+            compression_factor=2,
+            levels=2,
+            coarsen_dims=[0, 1, 2],
+            device="cpu",
+        ),
+    )
+    path = tmp_path / "stack.gsplats.zarr"
+    ladder.save(path, include_fitting_info=True)
+    loaded = GSplatData.load(path, include_stats=True)
+
+    assert loaded.stats["part_provenance"] == provenance
+    assert loaded.stats["source_shape"] == [2, 8, 8, 8]
+    assert loaded.stats["source_bytes"] == 2048
