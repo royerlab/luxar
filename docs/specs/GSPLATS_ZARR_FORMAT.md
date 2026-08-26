@@ -833,8 +833,13 @@ may quote a bare component dB range only when **every** entry says
 provenance but are not scores against the published acquisition. Non-finite
 fields are omitted from that entry rather than shortening the list. When every
 entry records the same source grid and dtype, the stack also carries
-`source_shape = [parts, *part_shape]`, the shared `source_dtype`, and the sum of
-all `source_bytes` at the root.
+`source_shape = [parts, *part_shape]` in source-array order (stack first, unlike
+the appended center column), the shared `source_dtype`, unanimous
+`source_declared`, and sums of `source_voxels`, `source_bytes`, and
+`source_stored_bytes` at the root. Values inside each `fitting` record describe
+the component as fitted; a caller may subsequently filter or normalize the
+splats before stacking, so per-part counts need not sum to the archived root
+count.
 
 On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
 of the finest surviving parts, after each part's post-fit cull, measured on that

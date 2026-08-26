@@ -205,6 +205,7 @@ def _read_part_provenance(value: Any) -> Optional[dict[str, Any]]:
         )
     return {
         "frames": len(value),
+        "quality_quotable": quotable,
         "source_bytes": _total(fittings, "source_bytes"),
         "psnr_db": _span(fittings, "psnr_db") if quotable else None,
         "foreground_psnr_db": (
@@ -312,6 +313,7 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
         if fit.get("source_bytes") is not None
         else (part_info or {}).get("source_bytes"),
         "frames": (part_info or {}).get("frames"),
+        "quality_quotable": (part_info or {}).get("quality_quotable"),
     }
 
 
@@ -661,6 +663,7 @@ def _dataset_rows(
                 "psnr": _db(info.get("psnr_db")) if info else _ABSENT,
                 "fg_psnr": _db(info.get("foreground_psnr_db")) if info else _ABSENT,
                 "vs_raw": _ratio(info.get("source_bytes"), stored) if info else _ABSENT,
+                "quality_quotable": info.get("quality_quotable") if info else None,
             }
         )
     return rows
@@ -801,16 +804,16 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
                 if row["is_fit"]:
                     unread.append(f"{name}/{row['file']}")
                 continue
-            missing = [
-                label
-                for label, value in (
-                    ("splats", row["splats"]),
+            expected = [
+                ("splats", row["splats"]),
+                ("compression", row["vs_raw"]),
+            ]
+            if row["quality_quotable"] is not False:
+                expected[1:1] = [
                     ("PSNR", row["psnr"]),
                     ("foreground PSNR", row["fg_psnr"]),
-                    ("compression", row["vs_raw"]),
-                )
-                if value == _ABSENT
-            ]
+                ]
+            missing = [label for label, value in expected if value == _ABSENT]
             if missing:
                 problems.append(f"{name}/{row['file']}: no {', '.join(missing)}")
         if not _files_of(entry):

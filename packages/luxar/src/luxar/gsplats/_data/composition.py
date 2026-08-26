@@ -41,11 +41,21 @@ def _aggregate_part_source_stats(
     ):
         aggregate["source_dtype"] = dtypes[0]
 
-    source_bytes = [fit.get("source_bytes") for fit in fittings]
-    if source_bytes and all(
-        isinstance(value, int) and not isinstance(value, bool) for value in source_bytes
+    declared = [fit.get("source_declared") for fit in fittings]
+    if (
+        "source_shape" in aggregate
+        and declared
+        and isinstance(declared[0], bool)
+        and all(value == declared[0] for value in declared)
     ):
-        aggregate["source_bytes"] = sum(source_bytes)
+        aggregate["source_declared"] = declared[0]
+
+    for key in ("source_voxels", "source_bytes", "source_stored_bytes"):
+        values = [fit.get(key) for fit in fittings]
+        if values and all(
+            isinstance(value, int) and not isinstance(value, bool) for value in values
+        ):
+            aggregate[key] = sum(values)
     return aggregate
 
 

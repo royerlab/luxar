@@ -897,6 +897,7 @@ def combine_to_4d(
     brightness pop — would flatten the real signal growth from 0.2% to 1.4%
     occupancy that is the developmental story.
     """
+    # Preserve the as-fitted stamps before the archived splats are transformed.
     part_provenance = collect_part_provenance(
         per_timepoint,
         values=times_min,

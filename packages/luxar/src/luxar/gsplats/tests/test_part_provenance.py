@@ -28,16 +28,22 @@ def test_stacked_fit_provenance_is_rooted_in_fitting_and_describes_the_source() 
             psnr_db=41.5,
             foreground_psnr_db=28.25,
             source_shape=[3, 4, 5],
+            source_declared=True,
             source_dtype="uint16",
+            source_voxels=60,
             source_bytes=120,
+            source_stored_bytes=80,
         ),
         _fit(
             2,
             psnr_db=43.0,
             foreground_psnr_db=29.75,
             source_shape=[3, 4, 5],
+            source_declared=True,
             source_dtype="uint16",
+            source_voxels=60,
             source_bytes=120,
+            source_stored_bytes=75,
         ),
     ]
     reference = {
@@ -64,8 +70,11 @@ def test_stacked_fit_provenance_is_rooted_in_fitting_and_describes_the_source() 
     assert stacked.stats["part_provenance"][0]["fit_reference"] == reference
     assert stacked.stats["part_provenance"][1]["fitting"]["psnr_db"] == 43.0
     assert stacked.stats["source_shape"] == [2, 3, 4, 5]
+    assert stacked.stats["source_declared"] is True
     assert stacked.stats["source_dtype"] == "uint16"
+    assert stacked.stats["source_voxels"] == 120
     assert stacked.stats["source_bytes"] == 240
+    assert stacked.stats["source_stored_bytes"] == 155
 
     fitting, _config, _provenance, pipeline = split_fitting_info(stacked.stats)
     assert fitting is not None
@@ -109,8 +118,21 @@ def test_part_provenance_validates_reference_and_stack_cardinality() -> None:
 
 def test_source_summary_requires_complete_agreement() -> None:
     fits = [
-        _fit(1, source_shape=[3, 4, 5], source_dtype="uint16", source_bytes=120),
-        _fit(2, source_shape=[6, 4, 5], source_dtype="uint8"),
+        _fit(
+            1,
+            source_shape=[3, 4, 5],
+            source_declared=True,
+            source_dtype="uint16",
+            source_voxels=60,
+            source_bytes=120,
+            source_stored_bytes=80,
+        ),
+        _fit(
+            2,
+            source_shape=[6, 4, 5],
+            source_declared=True,
+            source_dtype="uint8",
+        ),
     ]
     provenance = collect_part_provenance(
         fits,
@@ -125,14 +147,33 @@ def test_source_summary_requires_complete_agreement() -> None:
     )
 
     assert "source_shape" not in stacked.stats
+    assert "source_declared" not in stacked.stats
     assert "source_dtype" not in stacked.stats
+    assert "source_voxels" not in stacked.stats
     assert "source_bytes" not in stacked.stats
+    assert "source_stored_bytes" not in stacked.stats
 
 
 def test_part_provenance_survives_lod_and_save_load(tmp_path: Path) -> None:
     fits = [
-        _fit(1, source_shape=[8, 8, 8], source_dtype="uint16", source_bytes=1024),
-        _fit(2, source_shape=[8, 8, 8], source_dtype="uint16", source_bytes=1024),
+        _fit(
+            1,
+            source_shape=[8, 8, 8],
+            source_declared=True,
+            source_dtype="uint16",
+            source_voxels=512,
+            source_bytes=1024,
+            source_stored_bytes=700,
+        ),
+        _fit(
+            2,
+            source_shape=[8, 8, 8],
+            source_declared=True,
+            source_dtype="uint16",
+            source_voxels=512,
+            source_bytes=1024,
+            source_stored_bytes=650,
+        ),
     ]
     provenance = collect_part_provenance(
         fits,
@@ -161,4 +202,7 @@ def test_part_provenance_survives_lod_and_save_load(tmp_path: Path) -> None:
 
     assert loaded.stats["part_provenance"] == provenance
     assert loaded.stats["source_shape"] == [2, 8, 8, 8]
+    assert loaded.stats["source_declared"] is True
+    assert loaded.stats["source_voxels"] == 1024
     assert loaded.stats["source_bytes"] == 2048
+    assert loaded.stats["source_stored_bytes"] == 1350

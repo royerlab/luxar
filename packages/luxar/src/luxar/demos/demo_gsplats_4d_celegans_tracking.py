@@ -1569,6 +1569,7 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
 
         # Combine into a single 4D dataset: time is the new dimension (sigma=0)
         values = [float(t) for t in range(n_timepoints)]
+        # Preserve the as-fitted stamps before the archived splats are filtered.
         part_provenance = collect_part_provenance(
             gsplats_list,
             values=values,

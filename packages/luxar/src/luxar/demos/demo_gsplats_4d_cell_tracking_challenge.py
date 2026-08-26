@@ -893,6 +893,7 @@ def combine_to_4d(
         prepared.append(g)
 
     values = list(range(len(prepared)))
+    # Preserve the as-fitted stamps before filtering and intensity normalization.
     part_provenance = collect_part_provenance(
         per_timepoint,
         values=values,

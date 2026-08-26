@@ -323,6 +323,7 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         assert info["source_bytes"] == 3000
         assert gen._db(info["psnr_db"]) == "31.2–54.9"
         assert gen._db(info["foreground_psnr_db"]) == "21.2–44.9"
+        assert info["quality_quotable"] is True
 
     @pytest.mark.parametrize("kind", [None, "preprocessed", "synthetic"])
     def test_non_acquisition_parts_are_not_quoted(
@@ -342,6 +343,35 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         assert info["source_bytes"] == 3000
         assert info["psnr_db"] is None
         assert info["foreground_psnr_db"] is None
+        assert info["quality_quotable"] is False
+
+    def test_check_does_not_demand_scores_classified_as_unquotable(
+        self, gen: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = {
+            "bucket": "zenodo",
+            "dir": "movie",
+            "files": [{"name": "stack.gsplats.zarr.zip", "bytes": 1000}],
+        }
+        key = gen._char_key("movie", "", "stack.gsplats.zarr.zip")
+        monkeypatch.setattr(
+            gen,
+            "load_characteristics",
+            lambda: {
+                key: {
+                    "n_splats": 100,
+                    "source_bytes": 10_000,
+                    "psnr_db": None,
+                    "foreground_psnr_db": None,
+                    "quality_quotable": False,
+                }
+            },
+        )
+
+        problems, unread = gen._gaps({"datasets": {"movie": entry}})
+
+        assert unread == []
+        assert problems == []
 
 
 class TestFiguresAreAbsentRatherThanInvented:
