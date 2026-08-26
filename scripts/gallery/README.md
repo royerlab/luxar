@@ -76,10 +76,17 @@ README gallery table.
   `zoom`, exposure and LOD settle, then always logs both the 3rd–97th-percentile
   bbox **span** and the **lit screen area**. Span alone misses a long, thin
   subject, so the harness warns when either signal falls below its measured
-  floor: 50% span or 10% lit area. Those floors sit just below the smallest
-  values in the 29 committed README tiles (51.0% and 12.7%), so no manifest
-  opt-out is needed. The warning never fails a capture, and a failed in-page
-  decode is reported as `coverage=unmeasured` rather than losing the media.
+  floor: 50% span or 10% lit area. The snapshot basis is frame 0 of the 29
+  committed 340 px animated WebP tiles, a mixed-vintage set rendered from
+  2026-07-15 through 2026-08-25, whose minima were 51.0% and 12.7%. The runtime
+  check instead reads the settled PNG. WebP and PNG agree closely for the same
+  current render, but an older committed tile can drift enough to warn; that is
+  the staleness signal working, not a reason to hide it. Re-derive the floors
+  from a full run's `final coverage=` / `final lit=` lines when the tile set or
+  renderer changes (including #2176 and #2160); do not use WebP frame 0 for a
+  `timelapse`, whose settled still may select a different timepoint. The warning
+  never fails a capture, and a failed in-page decode is reported as
+  `final coverage=unmeasured final lit=unmeasured` rather than losing the media.
 - **Crop check:** counts the **lit pixels on the frame's outermost row/column**
   (the still plus orbit poses on a ~5° grid across the whole rock — plus the last
   frame of a `timelapse`, where a developing subject is largest — measured off

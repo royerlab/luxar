@@ -74,23 +74,31 @@
 export const BORDER_LIT_MAX = 0;
 
 /**
- * Warn-only under-fill floors, measured from the 29 committed README tiles.
- * Their smallest observed values were 51.0% span and 12.7% lit area, so these
- * rounded-down floors flag a real regression without requiring an opt-out for
- * any current tile. The two signals are deliberately independent: coverage is
- * the wider percentile-bbox axis, while lit fraction catches a long, thin
- * subject whose span can look full despite occupying little screen area.
+ * Warn-only under-fill floors. The snapshot measured frame 0 of the 29 committed
+ * 340 px animated WebP tiles, a mixed-vintage set rendered from 2026-07-15 through
+ * 2026-08-25; its minima were 51.0% span and 12.7% lit area. The runtime check
+ * instead reads the settled PNG. WebP and PNG agree closely for the same current
+ * render, but an older committed tile can drift enough to warn; that warning is
+ * the intended staleness signal, not a reason to suppress it. Re-derive these
+ * snapshot floors from a full run's `final coverage=` / `final lit=` lines when
+ * the tile set or renderer changes. The two signals are deliberately independent:
+ * coverage is the wider percentile-bbox axis, while lit fraction catches a long,
+ * thin subject whose span can look full despite occupying little screen area.
  */
 export const COVERAGE_MIN = 0.5;
 export const LIT_FRACTION_MIN = 0.1;
 
 export interface CoverageMeasurement {
+  /** Wider 3rd–97th-percentile bounding-box axis as a fraction of the frame. */
   coverage: number;
+  /** Fraction of frame pixels whose luma exceeds `LIT_THRESHOLD`. */
   litFraction: number;
 }
 
 export interface UnderfillVerdict {
+  /** Whether either under-fill signal is below its warning floor. */
   underfilled: boolean;
+  /** Human-readable warning, non-null iff `underfilled` is true. */
   message: string | null;
 }
 

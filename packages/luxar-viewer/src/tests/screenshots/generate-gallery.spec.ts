@@ -469,10 +469,7 @@ async function setDistance(page: any, dist: number): Promise<void> {
  * A retained PNG can be supplied when measuring a frame the harness already
  * captured; framing probes otherwise take a smaller JPEG screenshot.
  */
-async function measureCoverage(
-  page: any,
-  pngShot?: Buffer
-): Promise<CoverageMeasurement> {
+async function measureCoverage(page: any, pngShot?: Buffer): Promise<CoverageMeasurement> {
   const shot = pngShot ?? (await page.screenshot({ type: 'jpeg', quality: 60 }));
   const b64 = shot.toString('base64');
   return await page.evaluate(
