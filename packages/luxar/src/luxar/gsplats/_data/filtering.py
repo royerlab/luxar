@@ -65,9 +65,10 @@ the rewriter has no source volume from which to remeasure it.
 
 Every scrub here is by KEY, never by dropping a whole nested container, and never
 reaches into a dict the caller still owns: ``GSplatData`` is conceptually
-immutable, and every call site hands over a result it has just built (a nested
-``pass_stats`` list is REPLACED with scrubbed copies rather than edited in place,
-because a shallow ``dict(self.stats)`` shares that list with the input).
+immutable, and every call site hands over a result it has just built (nested
+``pass_stats`` and ``part_provenance`` lists are REPLACED with scrubbed copies
+rather than edited in place, because a shallow ``dict(self.stats)`` shares those
+lists with the input).
 """
 
 from __future__ import annotations
@@ -312,6 +313,28 @@ _STRUCTURE_SCOPE_EXEMPT_KEYS = ("coarsen_dims",)
 _NESTED_STATS_LIST_KEYS = ("pass_stats",)
 
 
+def _drop_part_provenance_fitting_keys(
+    stats: "MutableMapping[str, Any]", dropped: "Sequence[str]"
+) -> None:
+    provenance = stats.get("part_provenance")
+    if not isinstance(provenance, list):
+        return
+    dropped_set = set(dropped)
+    scrubbed: list[Any] = []
+    for entry in provenance:
+        if not isinstance(entry, dict):
+            scrubbed.append(entry)
+            continue
+        record = dict(entry)
+        fitting = record.get("fitting")
+        if isinstance(fitting, dict):
+            record["fitting"] = {
+                key: value for key, value in fitting.items() if key not in dropped_set
+            }
+        scrubbed.append(record)
+    stats["part_provenance"] = scrubbed
+
+
 def drop_content_scoped_stats(stats: "MutableMapping[str, Any]") -> None:
     """Remove the measured reconstruction scores from ONE stats dict, in place.
 
@@ -321,17 +344,18 @@ def drop_content_scoped_stats(stats: "MutableMapping[str, Any]") -> None:
     a dataset — it also reaches each additive sub-LOD's own dict (the leaf's
     on-disk ``lod_stats``), where a progressive fit's per-pass scores live.
 
-    Mutates ``stats`` (which the caller owns) but nothing REACHABLE from it: a
-    nested ``pass_stats`` list is replaced with scrubbed copies rather than edited
+    Mutates ``stats`` (which the caller owns) but nothing REACHABLE from it:
+    nested lists are replaced with scrubbed copies rather than edited
     entry-by-entry. Every ``GSplatData`` call site reaches this through a shallow
-    ``dict(source.stats)``, which shares that list with the input — so editing the
-    entries would delete the input's own per-pass scores and break the
+    ``dict(source.stats)``, which shares those lists with the input — so editing
+    the entries would delete the input's own scores and break the
     "conceptually immutable, operations return new instances" contract (#1600
     review). The top-level dict is a copy, the nested list must be made one.
     """
     dropped = (*_CONTENT_SCOPED_STATS_KEYS, *_CONTENT_SCOPED_OP_RECORD_KEYS)
     for key in dropped:
         stats.pop(key, None)
+    _drop_part_provenance_fitting_keys(stats, dropped)
     for key in _NESTED_STATS_LIST_KEYS:
         nested = stats.get(key)
         if isinstance(nested, list):
@@ -558,6 +582,7 @@ def _stats_after_filter(result: "GSplatData", *, cropped: bool) -> "GSplatData":
     for stats in (result.stats, *(lod.stats for lod in _all_sublods(result))):
         for key in _REGION_SCOPED_STATS_KEYS:
             stats.pop(key, None)
+        _drop_part_provenance_fitting_keys(stats, _REGION_SCOPED_STATS_KEYS)
     return result
 
 

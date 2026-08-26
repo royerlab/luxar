@@ -130,6 +130,18 @@ def _stats() -> Dict[str, Any]:
         **_OP_RECORD,
         **_DESCRIPTIVE,
         "pass_stats": [dict(d) for d in _PASS_STATS],
+        "part_provenance": [
+            {
+                "coordinate": 0,
+                "fit_reference": {"kind": "acquisition", "note": "raw stack"},
+                "fitting": {
+                    **_METRICS,
+                    **_OP_RECORD,
+                    **_REGION,
+                    **_DESCRIPTIVE,
+                },
+            }
+        ],
     }
 
 
@@ -432,7 +444,8 @@ _VIEW_CASES: List[
 _UNAFFECTED = {
     "concatenate": "builds merged_stats from scratch (no metric keys)",
     "combine_as_new_dimension": "goes through concatenate; fresh stats, then may "
-    "attach caller-supplied per-part provenance",
+    "attach caller-supplied per-part provenance whose nested fitting keys follow "
+    "the same content/region scrub rules on later rewrites",
     "merge_with_channel_colors": "builds its own merged_stats from scratch",
     "embed_dimension": "widens the center columns; dataset-level source-volume "
     "metrics survive, while promoted-dimensional count/energy stamps are "
@@ -1064,6 +1077,34 @@ def test_nested_pass_stats_lose_the_score_but_keep_the_counts() -> None:
         assert "cumulative_psnr_db" not in entry, f"pass {i} kept a stale PSNR"
         assert entry["pass_index"] == _PASS_STATS[i]["pass_index"]
         assert entry["seeds_requested"] == _PASS_STATS[i]["seeds_requested"]
+
+
+def test_part_provenance_follows_content_and_region_scope() -> None:
+    """Nested component fits keep identity while stale measurements are scrubbed."""
+    source = _fitted()
+    original = source.stats["part_provenance"]
+
+    culled = source.cull(method="cumulative", retention=0.5)
+    culled_record = culled.stats["part_provenance"][0]
+    culled_fitting = culled_record["fitting"]
+    assert culled_record["coordinate"] == 0
+    assert culled_record["fit_reference"] == original[0]["fit_reference"]
+    assert not set(_CONTENT_SCOPED_STATS_KEYS) & culled_fitting.keys()
+    assert not set(_CONTENT_SCOPED_OP_RECORD_KEYS) & culled_fitting.keys()
+    for key, value in _REGION.items():
+        assert culled_fitting[key] == value
+    assert culled_fitting["fitter_name"] == _DESCRIPTIVE["fitter_name"]
+
+    cropped = source.filter_by(bbox=[(0.0, 50.0)] * 3)
+    cropped_fitting = cropped.stats["part_provenance"][0]["fitting"]
+    assert not set(_CONTENT_SCOPED_STATS_KEYS) & cropped_fitting.keys()
+    assert not set(_CONTENT_SCOPED_OP_RECORD_KEYS) & cropped_fitting.keys()
+    assert not set(_REGION_SCOPED_STATS_KEYS) & cropped_fitting.keys()
+    assert cropped_fitting["fitter_name"] == _DESCRIPTIVE["fitter_name"]
+
+    assert source.stats["part_provenance"] == original
+    assert culled.stats["part_provenance"] is not original
+    assert cropped.stats["part_provenance"] is not original
 
 
 def test_the_two_categories_stay_independent() -> None:
