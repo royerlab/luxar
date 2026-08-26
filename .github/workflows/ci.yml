@@ -66,7 +66,8 @@ concurrency:
   # and ref exactly as before. Any rerun gets a distinct attempt number, so a
   # newer fresh run does not cancel it (including superseded PR reruns).
   # Neither rerun path restarts queue-watchdog, so an obsidian-routed
-  # job whose runner disappears can consume its job timeout while still queued.
+  # job whose runner disappears after dispatch can reach its timeout before any
+  # step starts or runner name is recorded.
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
@@ -229,8 +230,9 @@ jobs:
   # degrades to GitHub-hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
   #
   # Freshness matters more than it looks: a job dispatched to a registered-but-
-  # offline self-hosted runner does not fall back, it QUEUES until its job timeout
-  # expires. So the failure mode this guards against is a delayed red CI.
+  # offline self-hosted runner does not fall back; it can reach its timeout before
+  # any step starts or runner name is recorded. So the failure mode this guards
+  # against is a delayed red CI.
   # This check only covers the moment of routing; the `queue-watchdog` job below
   # covers the window AFTER it (box dies post-routing, jobs already queued).
   pick-runner:
@@ -312,17 +314,17 @@ jobs:
   # pick-runner's heartbeat check is a snapshot: it proves obsidian was alive
   # when the run was ROUTED, not that it survives long enough to pick the jobs
   # up. GitHub never re-evaluates `runs-on` — a job assigned to the `obsidian`
-  # label whose runners then vanish does not fall back. Job-level
-  # `timeout-minutes` can be charged while the job is queued, so a saturated or
-  # vanished fleet can turn queue delay into a cancelled required leg. This job
-  # covers the first 10 minutes from the hosted
-  # side: while any obsidian-routed job is still queued it checks in-progress
+  # label whose runners then vanish does not fall back. Its timeout window can
+  # start before any step runs or runner name is recorded, so a dispatched leg
+  # lost with its slot eventually becomes a cancelled required leg. This job
+  # covers the first 10 minutes from the hosted side: while any obsidian-routed
+  # job is still queued it checks in-progress
   # obsidian jobs across repository runs. If none are visible it cancels the run.
   # The workflow token cannot read repository-variable updates, so the publisher
   # is unavailable here; a stale GitHub `in_progress` state can therefore keep a
-  # dead runner covered. A box that dies after this window can still consume the
-  # queued legs' job timeouts; set LUXAR_CI_FORCE_HOSTED=1 and re-run ALL jobs to
-  # recover ("re-run failed" reuses the previous router output).
+  # dead runner covered. A box that dies after this window can still strand a
+  # dispatched leg until its timeout; set LUXAR_CI_FORCE_HOSTED=1 and re-run ALL
+  # jobs to recover ("re-run failed" reuses the previous router output).
   #
   # On a push or the daily full-matrix schedule, max-parallel deliberately holds
   # one Python leg queued while two Python legs and TypeScript occupy the three
@@ -760,11 +762,12 @@ jobs:
     # `changes` job.
     if: ${{ !cancelled() }}
     runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
-    # 120, not 60: job timeouts can be charged while a self-hosted leg is queued.
-    # The measured ~15.5 min run therefore keeps roughly the same 90-minute queue
-    # tolerance as the 83-91 min Python leg under its 180-minute budget. This also
-    # preserves the SCHED_IDLE starvation margin; release-readiness keeps 30 on
-    # its GitHub-hosted runner, where neither queue is capacity-constrained.
+    # 120, not 60: the measured ~15.5 min run stretches to ~51 min at the
+    # documented 3.3x SCHED_IDLE extreme, so 60 had the thinnest starvation margin
+    # of any obsidian-routed job. The cost is doubled time-to-red and delayed stale
+    # repair for a dispatch-lost leg; on the hosted fallback it also doubles hang
+    # detection and worst-case billed time. release-readiness keeps 30 because its
+    # GitHub-hosted runner is not exposed to SCHED_IDLE starvation.
     timeout-minutes: 120
     defaults:
       run:
