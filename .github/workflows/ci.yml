@@ -42,7 +42,7 @@ on:
     # the long Python/TypeScript legs to obsidian when available and to hosted
     # runners otherwise; 5 of 12 recent scheduled runs took the billed hosted path.
     # Thus routing adds either self-hosted queue depth or those long legs to the
-    # hosted bill; the routed long legs alone expose roughly 250-280 hosted
+    # hosted bill; the routed long legs alone expose roughly 200-240 hosted
     # minutes/day at that observed rate.
     - cron: '17 9 * * *'
     - cron: '17 0,3,6,12,15,18,21 * * *'

@@ -879,7 +879,7 @@ when obsidian has neither fresh capacity nor work in flight. Five of the twelve
 scheduled runs measured on 2026-08-25 took that billed path. Every added window
 therefore consumes hosted minutes for short jobs, while routing adds either obsidian
 queue depth or the long legs to the hosted bill. Those routed long legs alone expose
-roughly 250–280 hosted minutes/day at that observed rate; one daily pair of extra
+roughly 200–240 hosted minutes/day at that observed rate; one daily pair of extra
 Python legs is small beside that baseline. (If newer interpreters ever become
 deliberately unsupported, the honest fix is a `requires-python` upper bound, not a
 quiet single-leg matrix.)
