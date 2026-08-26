@@ -10,6 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..typing_utils.constants import (
+    MESH_DECODE_BUDGET_BYTES,
     SHARPNESS_MAX,
     SHARPNESS_MIN,
 )
@@ -1246,19 +1247,16 @@ MAX_MESH_TEXTURE_SIZE = 16384
 #: MIRROR: ``MESH_DECODE_BUDGET_BYTES`` in
 #: ``packages/luxar-viewer/src/config/constants.ts``.
 #:
-#: Checked here against the TEXTURE ALONE, which is deliberately weaker than the
-#: viewer's check (that one sums the texture with every vertex array). Weaker in
-#: the safe direction: a texture that exceeds the whole budget by itself provably
-#: cannot load anywhere, so refusing it can never be a false rejection, while
-#: guessing at the geometry's share could refuse a scene that would have worked.
+#: Checked here against the TEXTURE ALONE for a local fail-fast refusal. The mesh
+#: writer separately passes this exact decoded footprint to
+#: :func:`validate_mesh_decode_budget`, which combines it with the geometry and
+#: UV terms before any node group is created.
 #:
 #: It exists because the per-axis limit above does NOT imply this one. 16000x16000
 #: is under 16384 on both axes and still decodes to 1.02 GB — twice the ceiling —
 #: so without this a perfectly legal-looking authoring call produces a store that
 #: every viewer rejects at load, and the author finds out from a user.
-from ..typing_utils.constants import (  # noqa: E402
-    MESH_DECODE_BUDGET_BYTES as MESH_TEXTURE_DECODE_BUDGET_BYTES,
-)
+MESH_TEXTURE_DECODE_BUDGET_BYTES = MESH_DECODE_BUDGET_BYTES
 
 
 def validate_uvs_for_writing(uvs: Any, n_vertices: int, context: str = "uvs") -> None:
