@@ -650,7 +650,14 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 # FLOW_LIFT (0.0015) while the shell sits at 0.012 — in front of
                 # them. At this strength it reads as atmosphere over the map rather
                 # than as an occluder of the currents.
-                clouds=Clouds(strength=0.45, gamma=2.0, intensity=1.6),
+                # A STRONGER deck than the other two data globes, because this
+                # scene's foreground is by far the brightest: the current ribbons
+                # are `luminous`, so overlapping streamlines ACCUMULATE and a
+                # boundary current saturates. At the shared 0.45/1.6 the clouds
+                # were there and unreadable. Cloud strength is not portable
+                # between demos for the same reason exposure is not — it is
+                # relative to whatever is drawn over it.
+                clouds=Clouds(strength=0.65, gamma=1.9, intensity=2.4),
                 # `opaque` is the mesh default and the right one here: the globe is
                 # the BACKDROP. It is the only mode that leaves the viewer's sorted
                 # transparent set and the only one that unconditionally depth-writes,
