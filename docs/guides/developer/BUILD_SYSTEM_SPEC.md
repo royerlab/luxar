@@ -819,6 +819,12 @@ ratchet's only input that carries no Python extension),
 plus the root `README.md` and `packages/luxar/src/luxar/demos/README.md` guarded
 against the live demo registry and exported helper inventory, and the gallery
 capture spec whose `DemoEntry` interface defines the manifest field contract.
+The Cholesky documentation guard likewise makes `CLAUDE.md`,
+`.agents/skills/luxar-visualization/SKILL.md`,
+`.agents/skills/luxar-visualization/references/scene-api.md`,
+`.agents/skills/luxar-gsplat-pipeline/SKILL.md`, and
+`docs/specs/GSPLATS_DIMENSION_MAPPING.md` Python-owned. Consequently, every
+`CLAUDE.md` edit runs the Python matrix.
 `dom_ts` explicitly owns the root `README.md` and gallery manifest because the
 gallery-selection unit test resolves and validates the README capture set from them.
 A check whose own inputs are unclassified is a check that skips for exactly the

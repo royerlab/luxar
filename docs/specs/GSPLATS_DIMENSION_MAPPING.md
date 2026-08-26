@@ -63,14 +63,15 @@ Auto-mapping behavior when `None`:
 **`fill_sigma`** — Standard deviations for unmapped dimensions in the Cholesky embedding (default 1.0). Controls splat extent in filled dimensions.
 
 For a hand-authored stacked time/channel axis from lower-dimensional splats,
-pair `fill={"time": t}` with `fill_sigma={"time": 0.0}` and pass
-`extend_to_all=[]` (omitting it auto-broadcasts every unmapped dimension). The
-embedding treats zero as semantic no-extent and regularizes it to `1e-7` before
-Cholesky decomposition. If the input already has full scene-dimensional centers
-and factors without `dim_order` embedding, author a strictly positive diagonal
+use `dim_order=["x", "y", "z"]`, pair `fill={"time": t}` with
+`fill_sigma={"time": 0.0}`, and pass `extend_to_all=[]` (omitting it
+auto-broadcasts every unmapped dimension). The embedding treats zero as semantic
+no-extent and regularizes that semantic zero to `1e-7` before Cholesky
+decomposition. If the input already has full scene-dimensional centers and
+factors without `dim_order` embedding, author a strictly positive diagonal
 smaller than the coordinate step, because the public writer rejects a literal
-zero. Use `extend_to_all` instead when the geometry should remain visible at
-every coordinate.
+zero. Use `extend_to_all` instead when the geometry should remain visible at every
+coordinate.
 
 ---
 

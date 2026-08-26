@@ -26,6 +26,15 @@ PACKING_CLAIM_PATHS = (
 )
 
 ISOTROPIC_PACKING = re.compile(r"\[(?P<items>(?:σ|0)(?:\s*,\s*(?:σ|0)){5})\]")
+STACKED_AXIS_RECIPE = re.compile(
+    r"(?:To hand-author a|For a hand-authored) stacked time/channel axis"
+    r".*?(?=\n(?:- |\n))",
+    re.DOTALL,
+)
+ZERO_FILL_SIGMA = re.compile(
+    r"regularizes\s+(?:the|that)\s+semantic\s+zero\s+to\s+"
+    r"`(?P<epsilon>\d+(?:\.\d+)?e[+-]?\d+)`"
+)
 
 
 def _assert_isotropic_packing_recovers_sigma(text: str, source: str) -> None:
@@ -99,6 +108,13 @@ def test_viewer_fixture_warning_links_to_authoring_contract() -> None:
     assert "AdditiveSubLOD" in warning.group()
 
 
+def _stacked_axis_recipe(text: str, source: str) -> str:
+    """Extract the hand-authored stacked-axis recipe from an authoring document."""
+    match = STACKED_AXIS_RECIPE.search(text)
+    assert match is not None, f"{source} must document stacked-axis authoring"
+    return match.group()
+
+
 def test_stacked_axis_docs_distinguish_embedding_from_direct_authoring() -> None:
     """Stacked-axis recipes must opt into embedding rather than broadcasting."""
     dimension_mapping = (
@@ -108,9 +124,14 @@ def test_stacked_axis_docs_distinguish_embedding_from_direct_authoring() -> None
         REPO_ROOT / ".agents/skills/luxar-visualization/SKILL.md"
     ).read_text(encoding="utf-8")
 
-    for text in (dimension_mapping, visualization_skill):
-        assert 'fill_sigma={"time": 0.0}' in text
-        assert "extend_to_all=[]" in text
+    for source, text in (
+        ("docs/specs/GSPLATS_DIMENSION_MAPPING.md", dimension_mapping),
+        (".agents/skills/luxar-visualization/SKILL.md", visualization_skill),
+    ):
+        recipe = _stacked_axis_recipe(text, source)
+        assert 'dim_order=["x", "y", "z"]' in recipe
+        assert 'fill_sigma={"time": 0.0}' in recipe
+        assert "extend_to_all=[]" in recipe
 
     scene_api = (
         REPO_ROOT / ".agents/skills/luxar-visualization/references/scene-api.md"
@@ -118,6 +139,23 @@ def test_stacked_axis_docs_distinguish_embedding_from_direct_authoring() -> None
     assert 'dim_order=["x", "y", "z"]' in scene_api
     assert 'fill_sigma={"time": 0.0}' in scene_api
     assert "extend_to_all=[]" in scene_api
+
+
+def _documented_zero_fill_sigma() -> float:
+    """Return the shared epsilon documented for semantic zero-width axes."""
+    documented_values = []
+    for relative_path in (
+        "docs/specs/GSPLATS_DIMENSION_MAPPING.md",
+        ".agents/skills/luxar-visualization/SKILL.md",
+    ):
+        text = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+        recipe = _stacked_axis_recipe(text, relative_path)
+        match = ZERO_FILL_SIGMA.search(recipe)
+        assert match is not None, f"{relative_path} must document the zero-fill epsilon"
+        documented_values.append(float(match["epsilon"]))
+
+    assert documented_values[0] == documented_values[1]
+    return documented_values[0]
 
 
 def test_zero_fill_sigma_writes_positive_epsilon(tmp_path: Path) -> None:
@@ -152,4 +190,7 @@ def test_zero_fill_sigma_writes_positive_epsilon(tmp_path: Path) -> None:
 
     group = zarr.open(str(output), mode="r")["splats"]
     diagonal = ArrayDecoder().decode(group["cholesky_factors_diag"], group)
-    np.testing.assert_allclose(diagonal[0], [SIGMA, SIGMA, SIGMA, 1e-7], rtol=1e-6)
+    expected_epsilon = _documented_zero_fill_sigma()
+    np.testing.assert_allclose(
+        diagonal[0], [SIGMA, SIGMA, SIGMA, expected_epsilon], rtol=1e-6
+    )
