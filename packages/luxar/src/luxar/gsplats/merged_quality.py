@@ -149,12 +149,20 @@ def _quality_memory_guard(
         else _QUALITY_DEVICE_PEAK_VOLUMES
     ) * voxel_gb
     host_budget_gb = _quality_budget_gb()
-    if not has_override:
+    if has_override:
+        host_budget_description = (
+            f"{host_budget_gb:g} GiB LUXAR_TILED_QUALITY_MAX_GB cap"
+        )
+    else:
         host_budget_gb /= workers
+        host_budget_description = (
+            f"{host_budget_gb:g} GiB per-worker budget "
+            f"({workers} worker(s) sharing the device)"
+        )
     if peak_gb > host_budget_gb:
         return (
             f"needs ~{peak_gb:.1f} GiB of host memory, over the "
-            f"{host_budget_gb:g} GiB budget"
+            f"{host_budget_description}"
         )
 
     if resolved.type == "cuda":

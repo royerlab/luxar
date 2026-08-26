@@ -363,6 +363,26 @@ def test_cuda_quality_budget_rejects_shared_workers_on_a_small_host(
     reason = _quality_memory_guard((512, 512, 512), "cuda")
     assert reason is not None
     assert "needs ~1.0 GiB of host memory" in reason
+    assert "0.5375 GiB per-worker budget (4 worker(s) sharing the device)" in reason
+
+
+def test_host_quality_budget_names_an_explicit_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Host declines distinguish an operator cap from a divided default."""
+    import torch
+
+    from luxar.gsplats.utils import device as device_utils
+
+    monkeypatch.setenv("LUXAR_TILED_QUALITY_MAX_GB", "0.25")
+    monkeypatch.setattr(
+        device_utils, "resolve_torch_device", lambda _device: torch.device("cpu")
+    )
+
+    reason = _quality_memory_guard((256, 256, 256), "cpu")
+    assert reason is not None
+    assert "needs ~0.5 GiB of host memory" in reason
+    assert "0.25 GiB LUXAR_TILED_QUALITY_MAX_GB cap" in reason
 
 
 def test_cuda_quality_budget_honors_a_low_explicit_override(
