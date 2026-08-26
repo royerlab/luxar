@@ -177,6 +177,30 @@ describe('DirectoryNavigator', () => {
       expect(byName['results.zip'].type).toBe('file');
     });
 
+    it('classifies zipped stores in list-style HTML directory listings', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'text/html' },
+      });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          `<html><body><ul>
+<li><a href="scene.luxar.zarr.zip">scene.luxar.zarr.zip</a></li>
+<li><a href="results.zip">results.zip</a></li>
+</ul></body></html>`,
+      });
+
+      const result = await navigator.navigate('listing');
+      const byName = Object.fromEntries(result.entries.map((e) => [e.name, e]));
+
+      expect(byName['scene.luxar.zarr.zip'].type).toBe('zarr');
+      expect(byName['results.zip'].type).toBe('file');
+    });
+
     it('should parse an nginx-style <pre><a href> HTML directory listing', async () => {
       // Zarr check fails. TWO responses: the probe checks both root documents
       // (`zarr.json` for format 3, `.zgroup` for format 2) and a directory that
@@ -298,6 +322,29 @@ describe('DirectoryNavigator', () => {
       );
       expect(result.strategy).toBe('index');
       expect(result.entries).toHaveLength(2);
+    });
+
+    it('infers zipped stores when an index omits the entry type', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({ ok: false });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          entries: [
+            { name: 'scene.luxar.zarr.zip' },
+            { name: 'results.zip' },
+          ],
+        }),
+      });
+
+      const result = await navigator.navigate('datasets');
+      const byName = Object.fromEntries(result.entries.map((e) => [e.name, e]));
+
+      expect(byName['scene.luxar.zarr.zip'].type).toBe('zarr');
+      expect(byName['results.zip'].type).toBe('file');
     });
   });
 

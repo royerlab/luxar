@@ -314,7 +314,7 @@ export class DirectoryNavigator {
           const name = text.replace(/\/$/, '');
 
           let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
-          if (isDir && name.endsWith('.zarr')) {
+          if (isDir ? name.endsWith('.zarr') : isZippedZarrStoreUrl(name)) {
             type = 'zarr';
           }
 
@@ -367,7 +367,13 @@ export class DirectoryNavigator {
         path: this.currentPath ? `${this.currentPath}/${entry.name}` : entry.name,
         type:
           entry.type ||
-          (entry.name.endsWith('.zarr') ? 'zarr' : entry.isDirectory ? 'directory' : 'file'),
+          (entry.isDirectory
+            ? entry.name.endsWith('.zarr')
+              ? 'zarr'
+              : 'directory'
+            : isZippedZarrStoreUrl(entry.name)
+              ? 'zarr'
+              : 'file'),
         size: entry.size,
         modified: entry.modified ? new Date(entry.modified) : undefined,
       }));
