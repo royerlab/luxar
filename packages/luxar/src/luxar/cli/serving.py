@@ -234,6 +234,28 @@ def _validate_serve_path(path: Path, *, allow_sensitive_path: bool = False) -> N
         )
 
 
+def _listing_item_type(item: Path) -> str:
+    """Classify one directory-listing entry as zarr, directory, or file."""
+    if item.is_dir():
+        # Check if it's a zarr directory
+        if item.name.endswith(".zarr"):
+            return "zarr"
+        # Fallback for a zarr store whose directory is not named `*.zarr`.
+        # BOTH root-group documents count: format 2 writes `.zgroup`, format 3
+        # writes `zarr.json`, and Luxar now emits 3 while existing stores stay 2.
+        if (item / ".zgroup").exists() or (item / "zarr.json").exists():
+            return "zarr"
+        return "directory"
+
+    # A zipped store is a FILE, and the viewer reads it in place over range
+    # requests (no unpacking) — so it is a dataset, not an archive to download.
+    # Listing it as `file` made a perfectly loadable scene invisible in the
+    # dataset browser.
+    if item.is_file() and item.name.lower().endswith(".zarr.zip"):
+        return "zarr"
+    return "file"
+
+
 class DirectoryListingStaticFiles(StaticFiles):
     """Mutable data files with JSON listings and forced revalidation."""
 
@@ -274,29 +296,10 @@ class DirectoryListingStaticFiles(StaticFiles):
                     if item.name.startswith(".") and item.name not in _ZARR_DOT_FILES:
                         continue
 
-                    item_type = "directory" if item.is_dir() else "file"
-                    # Check if it's a zarr directory
-                    if item.is_dir() and item.name.endswith(".zarr"):
-                        item_type = "zarr"
-                    # A zipped store is a FILE, and the viewer reads it in place
-                    # over range requests (no unpacking) — so it is a dataset,
-                    # not an archive to download. Listing it as `file` made a
-                    # perfectly loadable scene invisible in the dataset browser.
-                    elif item.is_file() and item.name.lower().endswith(".zarr.zip"):
-                        item_type = "zarr"
-                    # Fallback for a zarr store whose directory is not named
-                    # `*.zarr`. BOTH root-group documents count: format 2 writes
-                    # `.zgroup`, format 3 writes `zarr.json`, and Luxar now
-                    # emits 3 while existing stores stay 2.
-                    elif item.is_dir() and (
-                        (item / ".zgroup").exists() or (item / "zarr.json").exists()
-                    ):
-                        item_type = "zarr"
-
                     entries.append(
                         {
                             "name": item.name,
-                            "type": item_type,
+                            "type": _listing_item_type(item),
                             "size": item.stat().st_size if item.is_file() else None,
                         }
                     )

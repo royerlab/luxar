@@ -529,8 +529,7 @@ class TestServeIntegration:
             response = requests.get(f"{test_server}/")
             assert response.status_code == 200
             expected_link = (
-                '<a href="zipped_scene.luxar.zarr.zip">'
-                "zipped_scene.luxar.zarr.zip</a>"
+                '<a href="zipped_scene.luxar.zarr.zip">zipped_scene.luxar.zarr.zip</a>'
             )
             assert expected_link in response.text
             assert '<a href="plain.zarr/">plain.zarr/</a>' in response.text
