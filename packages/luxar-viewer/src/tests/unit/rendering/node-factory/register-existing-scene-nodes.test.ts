@@ -159,6 +159,25 @@ describe('registerExistingSceneNodes', () => {
     expect(pick.uniforms.uSurfaceDepth.value).toBe(0);
   });
 
+  it('builds a textured mesh pick material from the live visual texture', () => {
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    const node = makeNode('mesh', '/surface');
+    const texture = new THREE.Texture();
+    node.userData.attrs = { has_texture: true };
+    (node.material as unknown as { uniforms: Record<string, { value: unknown }> }).uniforms = {
+      uBaseColorTex: { value: texture },
+    };
+    root.add(node);
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as MeshPickingMaterial;
+    expect(pick.defines.LUXAR_MESH_PICK_BASE_COLOR_TEX).toBe('');
+    expect(pick.uniforms.uBaseColorTex.value).toBe(texture);
+  });
+
   it('prefers the visual material LIVE state over the node attrs', () => {
     // The context-restore case. `rebuildAfterContextRestore` re-runs this pass with
     // FRESH pick materials (the old ones were compiled against the dead context) while

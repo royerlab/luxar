@@ -695,6 +695,8 @@ def resample_equirect_grid(src: np.ndarray, width: int, height: int) -> np.ndarr
 
     Non-integral ratios use variable-width bins whose edges cover every source
     cell exactly once, so the ETOPO-to-mesh path remains an area average too.
+    Upsampling falls back to nearest-neighbour sampling because area bins would
+    contain zero source cells.
 
     Args:
         src: ``(h, w)`` or ``(h, w, c)`` source grid, row 0 at +90 latitude.
