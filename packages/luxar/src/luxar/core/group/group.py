@@ -35,6 +35,15 @@ if TYPE_CHECKING:
     from ..scene import Scene
 
 TNode = TypeVar("TNode")
+_DEFAULT_NORMALIZE_AMPLITUDES = object()
+
+
+def _resolve_normalize_amplitudes_default(
+    parent: Node, normalize_amplitudes: Any
+) -> Any:
+    if normalize_amplitudes is not _DEFAULT_NORMALIZE_AMPLITUDES:
+        return normalize_amplitudes
+    return parent.attrs.get("kind") not in ("lod", "partition")
 
 
 class Group(Node):
@@ -713,7 +722,7 @@ class Group(Node):
         fill_sigma: Optional[Dict[str, float]] = None,
         lod_group: Any = None,
         additive_lod: Any = None,
-        normalize_amplitudes: Any = True,
+        normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats from a GSplatData object.
@@ -785,14 +794,18 @@ class Group(Node):
             normalize_amplitudes: Scale amplitudes so a robust upper
                 reference (the 99.9th percentile) lands at 1.0, applied as ONE
                 factor across every substitutive level and additive rung.
-                ``True`` / ``"auto"`` (the default) acts only when that
-                reference exceeds 1.0, so data already in range is untouched;
-                ``False`` ships raw units; a positive number sets an explicit
-                target. The factor used is recorded as
+                ``True`` / ``"auto"`` (the default outside a ``kind=lod`` or
+                ``kind=partition`` group) acts only when that reference exceeds
+                1.0, so data already in range is untouched. Children inserted
+                into those specialized groups default to ``False`` because
+                their exposure must be shared across siblings; pass ``True``
+                explicitly to override that rule. A positive number sets an
+                explicit target. The factor used is recorded as
                 ``amplitude_normalization_factor``.
 
-                On by default because raw fitted amplitudes cannot be corrected
-                at display time. A fit stores source units (detector counts),
+                On by default for standalone insertion because raw fitted
+                amplitudes cannot be corrected at display time. A fit stores
+                source units (detector counts),
                 and while the colormap window feeds only the LUT index —
                 clamped to ``[0, 1]``, so it picks a colour — emitted radiance
                 and volumetric optical depth are both LINEAR in the raw stored
@@ -822,6 +835,9 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_data import add_gsplats_from_data_impl
 
+        normalize_amplitudes = _resolve_normalize_amplitudes_default(
+            parent or self, normalize_amplitudes
+        )
         return self._transactional_add(
             name,
             parent,
@@ -850,7 +866,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
-        normalize_amplitudes: Any = True,
+        normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
@@ -891,14 +907,18 @@ class Group(Node):
             normalize_amplitudes: Scale amplitudes so a robust upper
                 reference (the 99.9th percentile) lands at 1.0, applied as ONE
                 factor across every substitutive level and additive rung.
-                ``True`` / ``"auto"`` (the default) acts only when that
-                reference exceeds 1.0, so data already in range is untouched;
-                ``False`` ships raw units; a positive number sets an explicit
-                target. The factor used is recorded as
+                ``True`` / ``"auto"`` (the default outside a ``kind=lod`` or
+                ``kind=partition`` group) acts only when that reference exceeds
+                1.0, so data already in range is untouched. Children inserted
+                into those specialized groups default to ``False`` because
+                their exposure must be shared across siblings; pass ``True``
+                explicitly to override that rule. A positive number sets an
+                explicit target. The factor used is recorded as
                 ``amplitude_normalization_factor``.
 
-                On by default because raw fitted amplitudes cannot be corrected
-                at display time. A fit stores source units (detector counts),
+                On by default for standalone insertion because raw fitted
+                amplitudes cannot be corrected at display time. A fit stores
+                source units (detector counts),
                 and while the colormap window feeds only the LUT index —
                 clamped to ``[0, 1]``, so it picks a colour — emitted radiance
                 and volumetric optical depth are both LINEAR in the raw stored
@@ -917,6 +937,9 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 
+        normalize_amplitudes = _resolve_normalize_amplitudes_default(
+            parent or self, normalize_amplitudes
+        )
         return self._transactional_add(
             name,
             parent,

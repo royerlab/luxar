@@ -307,6 +307,45 @@ def test_partition_opt_out(tmp_path):
     assert read_node_attrs(out / "g" / "part_0")["amplitude_data_range"][1] > 100.0
 
 
+@pytest.mark.parametrize("kind", ["lod", "partition"])
+def test_hand_built_structure_does_not_normalise_each_child(tmp_path, kind):
+    out = tmp_path / f"manual-{kind}.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=DIMS)
+        if kind == "lod":
+            wrapper = scene.add_lod_group("g", display_type="gsplats")
+            child_attrs = [dict(coverage_fraction=0.0), dict(coverage_fraction=1.0)]
+        else:
+            wrapper = scene.add_partition_group(
+                "g", display_type="gsplats", max_elements=2000
+            )
+            child_attrs = [{}, {}]
+
+        wrapper.add_gsplats_from_data("child_0", _data(peak=200.0), **child_attrs[0])
+        wrapper.add_gsplats_from_data("child_1", _data(peak=800.0), **child_attrs[1])
+
+    for child_name in ("child_0", "child_1"):
+        attrs = read_node_attrs(out / "g" / child_name)
+        assert NORMALIZATION_FACTOR_ATTR not in attrs
+        assert attrs["amplitude_data_range"][1] > 100.0
+
+
+def test_hand_built_structure_can_explicitly_normalise_a_child(tmp_path):
+    out = tmp_path / "manual-explicit.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=DIMS)
+        wrapper = scene.add_partition_group(
+            "g", display_type="gsplats", max_elements=2000
+        )
+        wrapper.add_gsplats_from_data(
+            "child", _data(peak=800.0), normalize_amplitudes=True
+        )
+
+    attrs = read_node_attrs(out / "g" / "child")
+    assert attrs[NORMALIZATION_FACTOR_ATTR] > 0.0
+    assert attrs["amplitude_data_range"][1] == pytest.approx(1.0, abs=0.02)
+
+
 # ----------------------------------------------------------- spec resolution
 
 

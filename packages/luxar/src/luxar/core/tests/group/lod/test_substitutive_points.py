@@ -156,12 +156,12 @@ class TestResolveSubstitutiveAxisPoints:
 # ────────────────────────────────────────────────────────────────────────
 
 
-def _build(tmp_path, *, n=6000, levels=3, **kw):
+def _build(tmp_path, *, n=6000, levels=3, radius_scale=1.0, **kw):
     out = tmp_path / "t.luxar.zarr"
     rng = np.random.RandomState(0)
     pos = rng.normal(0, 20, (n, 3)).astype(np.float32)
     colors = rng.uniform(0, 1, (n, 3)).astype(np.float32)
-    radii = rng.uniform(0.5, 1.5, n).astype(np.float32)
+    radii = rng.uniform(0.5, 1.5, n).astype(np.float32) * radius_scale
     with LuxarZarrCompiler(out) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         scene.add_points(
@@ -333,11 +333,12 @@ class TestAddPointsSubstitutiveLod:
         from luxar.encoding import ArrayDecoder
         from luxar.gsplats.utils.trils import merge_tril, unpack_tril
 
-        grp, _ = _build(tmp_path, levels=3)
+        grp, _ = _build(tmp_path, levels=3, radius_scale=0.05)
         dec = ArrayDecoder()
         lights = []
         for i in range(3):  # gsplat children
             child = grp[f"child_{i}"]
+            assert "amplitude_normalization_factor" not in child.attrs
             a = dec.decode(child["amplitudes"], grp).astype(np.float64)
             # v3.1: Cholesky stored split (diag + offdiag), each per-channel
             # quantized; decode then recombine into packed L.
