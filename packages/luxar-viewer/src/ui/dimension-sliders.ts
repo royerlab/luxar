@@ -84,9 +84,6 @@ export class DimensionSliders {
    */
   private scrollBody: HTMLElement;
 
-  /** Status bar displaying current slice position */
-  private statusBar: HTMLElement;
-
   /** Status text element in the title bar */
   private statusText: HTMLElement | null = null;
 
@@ -216,8 +213,6 @@ export class DimensionSliders {
     const { root, scroll } = this.createSlidersContainer();
     this.slidersContainer = root;
     this.scrollBody = scroll;
-    // Status bar removed - status now shown in title
-    this.statusBar = document.createElement('div'); // Keep for compatibility but hidden
 
     // Populate with actual sliders and initialize display
     this.createSliders();
@@ -276,8 +271,6 @@ export class DimensionSliders {
     this.container.appendChild(container);
     return { root: container, scroll };
   }
-
-  // Status bar method removed - status now shown in title
 
   /**
    * Creates individual slider controls for all non-displayed dimensions.
@@ -415,6 +408,8 @@ export class DimensionSliders {
     const range = this.dimensionRanges[dimIndex];
     const step = dimMeta?.step ?? 1;
     const isDiscrete = dimMeta?.discrete || false;
+    const unit = this.dimensionUnits[dimIndex] || '';
+    const formatWithUnit = (value: string): string => `${value}${unit ? ` ${unit}` : ''}`;
 
     // Must have either categories or be a discrete dimension with valid range
     if (!categories && !(isDiscrete && range)) return;
@@ -450,9 +445,10 @@ export class DimensionSliders {
       // Use explicit category labels
       categories.forEach((category, index) => {
         const option = document.createElement('option');
+        const displayValue = formatWithUnit(category);
         option.value = String(index);
-        option.textContent = category;
-        option.title = `${category} (index: ${index})`;
+        option.textContent = displayValue;
+        option.title = `${displayValue} (index: ${index})`;
         dropdown.appendChild(option);
       });
     } else {
@@ -460,9 +456,10 @@ export class DimensionSliders {
       const [min, max] = range;
       for (let value = min; value <= max; value += step) {
         const option = document.createElement('option');
+        const displayValue = formatWithUnit(String(Math.round(value)));
         option.value = String(value);
-        option.textContent = String(Math.round(value)); // Round for display
-        option.title = `Value: ${value}`;
+        option.textContent = displayValue;
+        option.title = `Value: ${displayValue}`;
         dropdown.appendChild(option);
       }
     }
@@ -530,17 +527,19 @@ export class DimensionSliders {
     const dimMeta = this.dims.metadata?.[dimIndex];
     const categories = dimMeta?.categories;
     const range = this.dimensionRanges[dimIndex];
+    const unit = this.dimensionUnits[dimIndex] || '';
+    const formatWithUnit = (value: string): string => `${value}${unit ? ` ${unit}` : ''}`;
 
     // Determine the two labels
     let label0: string;
     let label1: string;
     if (categories && categories.length === 2) {
-      label0 = categories[0];
-      label1 = categories[1];
+      label0 = formatWithUnit(categories[0]);
+      label1 = formatWithUnit(categories[1]);
     } else {
       // Discrete non-categorical: use numeric labels
-      label0 = String(Math.round(range[0]));
-      label1 = String(Math.round(range[1]));
+      label0 = formatWithUnit(String(Math.round(range[0])));
+      label1 = formatWithUnit(String(Math.round(range[1])));
     }
 
     // Container (grid item) — reuses dropdown wrapper class for consistent grid layout
@@ -950,13 +949,13 @@ export class DimensionSliders {
   /**
    * Updates the status bar text to reflect the current dimensional state.
    *
-   * The status bar provides a concise overview of the current navigation state,
-   * showing both which dimensions are being displayed in 3D and the current
-   * slice positions in all non-displayed dimensions.
+   * The status bar shows the current keyboard-navigation target and the
+   * dimensions displayed in 3D. Per-dimension values remain visible on their
+   * own controls.
    *
    * Format:
-   * - Categorical: "[/]: 1 · Channel | Display: X, Y, Z | Channel: DAPI | Time: 5.20s"
-   * - Numeric: "[/]: 1 · Time | Display: X, Y, Z | Time: 5.20s | Index: 2"
+   * - Available target: "[/]: 1 · Channel · Display: X, Y, Z"
+   * - No target: "[/]: unavailable · Display: X, Y, Z"
    *
    * @public
    */
@@ -978,36 +977,11 @@ export class DimensionSliders {
       .join(', ');
     parts.push(`Display: ${displayedNames}`);
 
-    // Show current slice position for each non-displayed dimension
-    for (let i = 0; i < this.dims.ndim; i++) {
-      if (!this.dims.displayed.includes(i)) {
-        const name = this.dimensionNames[i] || `Dim ${i}`;
-        const dimMeta = this.dims.metadata?.[i];
-        const categories = dimMeta?.categories;
+    const statusContent = parts.join(' · ');
 
-        let valueStr: string;
-        if (categories) {
-          // Categorical: show category label
-          const index = Math.round(this.dims.currentStep[i]);
-          const label = categories[index];
-          valueStr = label !== undefined ? label : `Invalid(${index})`;
-        } else {
-          // Numeric: show value with unit
-          const value = this.dims.currentStep[i].toFixed(2);
-          const unit = this.dimensionUnits[i] || '';
-          valueStr = `${value}${unit ? ' ' + unit : ''}`;
-        }
-
-        parts.push(`${name}: ${valueStr}`);
-      }
-    }
-
-    const statusContent = parts.join(' | ');
-    this.statusBar.textContent = statusContent;
-
-    // Also update the status text in title if it exists
     if (this.statusText) {
       this.statusText.textContent = statusContent;
+      this.statusText.title = statusContent;
     }
   }
 
@@ -1461,8 +1435,7 @@ export class DimensionSliders {
    * Set visibility of slider interface (show or hide).
    *
    * Used by main application to control slider display based on dataset
-   * characteristics (nD vs 3D) or user preferences. Affects both slider
-   * container and status bar.
+   * characteristics (nD vs 3D) or user preferences.
    *
    * @param visible - true to show sliders, false to hide them
    *
@@ -1477,7 +1450,6 @@ export class DimensionSliders {
     // '' rather than 'block' when shown — the stylesheet's `display: flex`
     // must win (see toggle()).
     this.slidersContainer.style.display = visible ? '' : 'none';
-    this.statusBar.style.display = visible ? 'block' : 'none';
   }
 
   /**
@@ -1517,6 +1489,5 @@ export class DimensionSliders {
 
     // Remove DOM elements
     this.slidersContainer.remove();
-    this.statusBar.remove();
   }
 }

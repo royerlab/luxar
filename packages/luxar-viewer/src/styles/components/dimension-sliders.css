@@ -22,7 +22,7 @@
   width: 80%;
   max-width: 800px;
   min-width: 400px;
-  max-height: 240px;
+  max-height: min(360px, 45vh);
   display: flex;
   flex-direction: column;
 
@@ -100,21 +100,30 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--luxar-spacing-4);
   margin-bottom: var(--luxar-spacing-5);
   padding-bottom: var(--luxar-spacing-3);
   border-bottom: 1px solid var(--luxar-border-strong);
 }
 
 .luxar-dimension-sliders__title {
+  flex: 0 0 auto;
   font-weight: var(--luxar-font-bold);
   font-size: var(--luxar-text-lg);
+  white-space: nowrap;
 }
 
 .luxar-dimension-sliders__status {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--luxar-font-mono);
   font-size: var(--luxar-text-md);
   color: var(--luxar-text-primary);
   opacity: 0.8;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ========== Individual Slider ========== */
@@ -127,11 +136,14 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--luxar-spacing-4);
   margin-bottom: var(--luxar-spacing-2);
 }
 
 .luxar-dimension-slider__name {
+  flex: 0 0 auto;
   font-weight: var(--luxar-font-medium);
+  white-space: nowrap;
 }
 
 .luxar-dimension-slider__name--with-tooltip {
@@ -146,10 +158,16 @@
 }
 
 .luxar-dimension-slider__value {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--luxar-font-mono);
   font-size: var(--luxar-text-md);
   color: var(--luxar-text-primary);
   cursor: help;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ========== Animation Controls Wrapper ========== */

@@ -650,6 +650,12 @@ Thumbs and `accent-color` are `--luxar-highlight`; the mono values are
 `text-primary` (instrument voice, not an accent); focus goes through
 `--luxar-border-focus`.
 
+For any flex row that pairs a fixed label with a dataset-controlled value,
+protect the label with `flex: 0 0 auto; white-space: nowrap` and give the value
+`min-width: 0`, single-line ellipsis, and a tooltip carrying the full text. This
+keeps long values from shrinking or wrapping the label and prevents horizontal
+scrollbars inside bounded panels.
+
 ### 7.7 The panel filter row (pending #1508)
 
 Type-to-filter for list-bearing panels is **one shared recipe**,

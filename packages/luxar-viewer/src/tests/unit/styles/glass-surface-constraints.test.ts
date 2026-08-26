@@ -111,6 +111,44 @@ describe('dimension-sliders.css — §5.1.2 scroll delegation', () => {
   });
 });
 
+describe('dimension-sliders.css — bounded single-line labels (#2188)', () => {
+  const css = loadCss('components/dimension-sliders.css');
+
+  it('keeps the panel height responsive while exposing common dimension counts', () => {
+    expect(ruleBody(css, '.luxar-dimension-sliders')).toMatch(/max-height:\s*min\(360px,\s*45vh\)/);
+  });
+
+  it('protects the title and ellipsizes the status on one line', () => {
+    expect(ruleBody(css, '.luxar-dimension-sliders__header')).toMatch(
+      /gap:\s*var\(--luxar-spacing-\d+\)/
+    );
+
+    const title = ruleBody(css, '.luxar-dimension-sliders__title');
+    expect(title).toMatch(/flex:\s*0\s+0\s+auto/);
+    expect(title).toMatch(/white-space:\s*nowrap/);
+
+    const status = ruleBody(css, '.luxar-dimension-sliders__status');
+    expect(status).toMatch(/min-width:\s*0/);
+    expect(status).toMatch(/white-space:\s*nowrap/);
+    expect(status).toMatch(/overflow:\s*hidden/);
+    expect(status).toMatch(/text-overflow:\s*ellipsis/);
+    expect(status).toMatch(/text-align:\s*right/);
+  });
+
+  it('protects slider names and ellipsizes long values', () => {
+    const name = ruleBody(css, '.luxar-dimension-slider__name');
+    expect(name).toMatch(/flex:\s*0\s+0\s+auto/);
+    expect(name).toMatch(/white-space:\s*nowrap/);
+
+    const value = ruleBody(css, '.luxar-dimension-slider__value');
+    expect(value).toMatch(/min-width:\s*0/);
+    expect(value).toMatch(/white-space:\s*nowrap/);
+    expect(value).toMatch(/overflow:\s*hidden/);
+    expect(value).toMatch(/text-overflow:\s*ellipsis/);
+    expect(value).toMatch(/text-align:\s*right/);
+  });
+});
+
 describe('toast.css — §5.1.3 root fade is legal because the toast is not glass', () => {
   const css = loadCss('components/toast.css');
 
