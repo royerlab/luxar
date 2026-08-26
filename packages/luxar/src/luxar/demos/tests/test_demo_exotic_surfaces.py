@@ -166,29 +166,6 @@ def test_two_families_of_exactly_nine():
     assert len(FAMILY_NAMES) == len(FAMILY_COLORS) == len(FAMILY_DISPLAY_MAXIMA) == 2
 
 
-def test_generated_layers_pin_the_authored_volumetric_appearance(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-):
-    monkeypatch.setattr(
-        _demo,
-        "bake_ambient_occlusion",
-        lambda points, **_kwargs: np.ones(len(points), dtype=np.float32),
-    )
-
-    output = tmp_path / "exotic.luxar.zarr"
-    assert generate_exotic_surfaces(output, resolution=8) > 0
-
-    root = zarr.open_group(str(output), mode="r")
-    for family_name, display_max in zip(FAMILY_NAMES, (2.177, 2.085), strict=True):
-        attrs = dict(root[family_name].attrs)
-        assert attrs["blending_mode"] == "volumetric"
-        assert attrs["opacity"] == pytest.approx(0.60)
-        assert attrs["absorption"] == pytest.approx(1.0)
-        assert attrs["gamma"] == pytest.approx(1.0)
-        assert attrs["intensity"] == pytest.approx(1.0 / display_max)
-        assert attrs.get("offset", 0.0) == pytest.approx(0.0)
-
-
 def test_every_surface_is_credited_and_described():
     """The demo's premise is that each surface has a stateable property."""
     for surface in SURFACES:
@@ -249,6 +226,29 @@ def test_cells_tile_without_overlapping():
 # ---------------------------------------------------------------------------
 # The appearance bugs that made the previous demo illegible
 # ---------------------------------------------------------------------------
+
+
+def test_generated_layers_pin_the_authored_volumetric_appearance(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        _demo,
+        "bake_ambient_occlusion",
+        lambda points, **_kwargs: np.ones(len(points), dtype=np.float32),
+    )
+
+    output = tmp_path / "exotic.luxar.zarr"
+    assert generate_exotic_surfaces(output, resolution=8) > 0
+
+    root = zarr.open_group(str(output), mode="r")
+    for family_name, display_max in zip(FAMILY_NAMES, (2.177, 2.085), strict=True):
+        attrs = dict(root[family_name].attrs)
+        assert attrs["blending_mode"] == "volumetric"
+        assert attrs["opacity"] == pytest.approx(0.60)
+        assert attrs["absorption"] == pytest.approx(1.0)
+        assert attrs["gamma"] == pytest.approx(1.0)
+        assert attrs["intensity"] == pytest.approx(1.0 / display_max)
+        assert attrs.get("offset", 0.0) == pytest.approx(0.0)
 
 
 @pytest.mark.parametrize("surface", SURFACES[:3] + SURFACES[9:12], ids=lambda s: s.key)
