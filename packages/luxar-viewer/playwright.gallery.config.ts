@@ -7,6 +7,7 @@
  * Usage:
  *   pnpm gallery
  *   GALLERY_ONLY=lorenz,desi_galaxies pnpm gallery
+ *   GALLERY_ONLY=readme pnpm gallery  # root README media only
  *   GALLERY_DEBUG=1 pnpm gallery    # forward both servers' stdout to the reporter
  *
  * Prerequisites:
