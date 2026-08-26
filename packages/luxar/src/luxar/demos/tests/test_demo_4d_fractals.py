@@ -293,6 +293,8 @@ class TestWrittenDatasetContract:
     def test_dimension_metadata_and_decoded_planes(
         self, tmp_path: Path, grid: int
     ) -> None:
+        import zarr
+
         from luxar.io.reader import LuxarScene
 
         # 12 exercises phase alignment when grid//2 is not divisible by the
@@ -315,6 +317,12 @@ class TestWrittenDatasetContract:
         assert wdim["step"] == step
         assert wdim["range"] == [float(axis[0]), float(axis[-1])]
         assert len(planes) > 2, "test grid too small to exercise the slider"
+
+        attrs = zarr.open_group(out, mode="r")["Fractals4D"].attrs
+        assert attrs["blending_mode"] == "volumetric"
+        assert attrs["opacity"] == pytest.approx(0.43)
+        assert attrs["absorption"] == pytest.approx(1.23)
+        assert attrs["intensity"] == pytest.approx(1.0 / _demo.DISPLAY_MAX)
 
         pos = scene.get_points("Fractals4D")["positions"]
         w = pos[:, 1]

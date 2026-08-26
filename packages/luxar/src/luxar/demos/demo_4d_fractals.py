@@ -28,7 +28,7 @@ Mathematical Background:
 
 Performance:
     - Per-w-plane vectorized NumPy generation bounds peak memory at grid^3
-    - All 6 fractals generate and write in about 7 minutes at the default grid
+    - All 6 fractals, grouped AO, and writing take about 25 minutes at the default grid
 
 Usage:
     python demo_4d_fractals.py [--grid=N]
@@ -89,6 +89,10 @@ TARGET_MAX_POINTS_PER_PLANE = 150_000
 #: library's full-sphere default and keeps the all-fractals nD bake bounded;
 #: normals still put those directions into each point's facing hemisphere.
 AO_N_DIRECTIONS = 24
+#: Layers-panel display window re-measured after AO. The grouped bake's mean
+#: multiplier is 0.570 at the default grid, so 1.971 × 0.570 preserves the
+#: previously authored mean emission while keeping the AO contrast.
+DISPLAY_MAX = 1.123
 
 
 def axis_world_values(grid_size: int) -> np.ndarray:
@@ -735,10 +739,10 @@ def generate_4d_fractal_dataset(
                 absorption=1.23,
                 gamma=1.0,
                 # `intensity` is the display WINDOW, not a gain: the viewer
-                # recovers [-offset/i, (1-offset)/i]. The old 0.0625 stated the
-                # window [0, 16]. 1/1.971 states the authored [0, 1.971] window
-                # left by the Layers-panel appearance pass.
-                intensity=1.0 / 1.971,
+                # recovers [-offset/i, (1-offset)/i]. AO lowers mean emission
+                # to 0.570 of the unshaded value, so the previous 1.971 window
+                # becomes 1.123 to preserve the authored mean brightness.
+                intensity=1.0 / DISPLAY_MAX,
                 layer=True,
             )
 
@@ -814,7 +818,7 @@ def main() -> None:
     aprint("  4: 4D Hypercheckerboard - Alternating parity cells")
     aprint("  5: 4D Diamond Fractal - Concentric taxicab shells")
     aprint("")
-    aprint("⏱️  Generation time: ~7 minutes at the default grid")
+    aprint("⏱️  Generation time: ~25 minutes at the default grid")
     aprint("   (Use a smaller --grid for a faster build.)")
     aprint("")
 
