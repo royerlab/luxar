@@ -606,9 +606,9 @@ _LOD_GROUP_CALLERS = frozenset(_LADDER_PRODUCERS) | frozenset(_EXEMPT_LOD_GROUP_
 #: How many ``add_lod_group(...)`` CALLS each of those modules makes. Asserted as
 #: well as the key set, because a SECOND call added inside an already-listed
 #: module changes no key and would otherwise slip past every structural guard
-#: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Every module has
-#: exactly one today, hence the comprehension; a module that legitimately grows a
-#: second call site becomes an explicit entry here.
+#: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Most modules have
+#: exactly one today, hence the comprehension; a module with a deliberate second
+#: call site gets an explicit override below.
 _EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {rel: 1 for rel in _LOD_GROUP_CALLERS}
 _EXPECTED_CALLS_PER_MODULE["demos/demo_ocean_currents_earth.py"] = 2
 
