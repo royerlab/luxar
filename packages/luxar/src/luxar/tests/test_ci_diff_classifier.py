@@ -282,6 +282,7 @@ NON_DOCS_PATHS: list[str] = [
 
 _PYTHON_SOURCE_ROOTS = (
     REPO / "packages/luxar/src/luxar",
+    REPO / "packages/luxar/examples/tests",
     REPO / "scripts",
     REPO / "stats",
 )
