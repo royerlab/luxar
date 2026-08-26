@@ -39,8 +39,7 @@ trailing slash as the canonical spelling used in examples and logs.
 
 ### Opening a Zipped Scene
 
-The viewer can open a `.luxar.zarr.zip` scene without extracting it. Serve the
-directory containing the archive, then select the archive in the dataset browser:
+The viewer can open a `.luxar.zarr.zip` scene without extracting it.
 
 Produce an archive directly by naming it as the compiler output:
 
