@@ -815,7 +815,8 @@ The core module is designed to work with Luxar's progressive writing system:
 4. **Memory Efficiency**: Data never kept in memory after writing
 
 `Scene.to_zarr(path)` is an export helper for this progressive model. A
-directory-backed scene is copied to a new directory destination; an
+directory-backed scene is copied to a new directory destination, unless `path`
+is its current backing store for an explicit finalize-in-place. An
 archive-backed scene is finalized at its selected archive path, replacing an
 existing archive there. A directory-backed scene cannot be copied directly to
 a `.zip` destination; create the archive with `LuxarZarrCompiler` or use

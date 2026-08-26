@@ -116,12 +116,14 @@ scene.to_zarr("export.luxar.zarr")
 
 `to_zarr(path)` finalizes the backing writer. For a directory-backed scene it
 atomically copies the on-disk Zarr store to a destination that must not already
-exist or live inside the source store. For an archive-backed scene, `path` must
-be the selected archive path; finalization publishes there and replaces an
-existing archive. A directory-backed scene cannot be copied directly to a
-`.zip` destination — create it with `LuxarZarrCompiler` or use `luxar optimise`
-instead. Because finalization closes the writer, **do not add more nodes after
-calling `to_zarr()`**; create a new compiler for further writes.
+exist unless it is the current backing store, which is an explicit
+finalize-in-place; the destination also cannot live inside the source store.
+For an archive-backed scene, `path` must be the selected archive path;
+finalization publishes there and replaces an existing archive. A
+directory-backed scene cannot be copied directly to a `.zip` destination —
+create it with `LuxarZarrCompiler` or use `luxar optimise` instead. Because
+finalization closes the writer, **do not add more nodes after calling
+`to_zarr()`**; create a new compiler for further writes.
 
 ## Validation helpers (`validation.py`)
 
