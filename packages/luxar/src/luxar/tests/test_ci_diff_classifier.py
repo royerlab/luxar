@@ -204,6 +204,21 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "LOD and biodiversity contract tests parse the live screen-coverage constants",
     ),
     (
+        "packages/luxar-viewer/src/types/geometry-capabilities.ts",
+        "py",
+        "test_geometry_capabilities.py compares the viewer capability table",
+    ),
+    (
+        "packages/luxar-viewer/src/types/line-join.ts",
+        "py",
+        "test_constants.py compares the line-join vocabulary",
+    ),
+    (
+        "packages/luxar-viewer/src/types/lod-group.ts",
+        "py",
+        "test_constants.py compares the LOD selector vocabulary",
+    ),
+    (
         "packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts",
         "py",
         "test_score_exposure.py parses the capture harness thresholds",

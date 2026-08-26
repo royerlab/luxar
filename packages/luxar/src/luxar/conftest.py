@@ -11,9 +11,9 @@ session (see ``_zarr_format_follows_luxar``), and holds a few small shared test
 helpers: ``confine_temp_dirs`` isolates in-process temporary files,
 ``array_compressor`` reads an array's compressor without the caller knowing
 which zarr format wrote it, and ``find_repo_relative_file`` /
-``read_ts_number_const`` let the handful of cross-language constant-lock tests
-read a number straight out of a TypeScript source rather than trust a prose
-comment to stay in sync.
+``read_ts_number_const`` / ``read_ts_string_union`` let the handful of
+cross-language constant-lock tests read values straight out of a TypeScript
+source rather than trust a prose comment to stay in sync.
 """
 
 from __future__ import annotations
@@ -204,3 +204,31 @@ def read_ts_number_const(source: str, name: str) -> float:
         "If it was renamed or computed, update the caller — do NOT delete it."
     )
     return float(m.group(1))
+
+
+def read_ts_string_union(source: str, name: str) -> frozenset[str]:
+    """Parse a literal-string union from a TypeScript type or property.
+
+    Accepts either ``type NAME = 'a' | 'b';`` (optionally exported) or an
+    interface property spelled ``NAME: 'a' | 'b';``. Raises ``AssertionError``
+    when the declaration is missing, computed, multiline, or repeats a member:
+    source-lock tests should fail loudly when the TypeScript shape changes rather
+    than silently compare an incomplete vocabulary.
+    """
+    escaped_name = re.escape(name)
+    match = re.search(
+        rf"^\s*(?:(?:export\s+)?type\s+{escaped_name}\s*=|{escaped_name}\s*:)\s*"
+        r"((?:'[^'\r\n]+'\s*\|\s*)*'[^'\r\n]+')\s*;",
+        source,
+        re.MULTILINE,
+    )
+    assert match is not None, (
+        f"no literal-string union named {name!r} found in the given source. "
+        "If it was renamed, computed, or split across lines, update the caller "
+        "or this parser — do NOT delete the cross-language lock."
+    )
+    members = re.findall(r"'([^']+)'", match.group(1))
+    assert len(members) == len(set(members)), (
+        f"literal-string union {name!r} repeats a member: {members!r}"
+    )
+    return frozenset(members)

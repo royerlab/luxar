@@ -8,8 +8,12 @@ path that cannot represent it — the defect class this module exists to prevent
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
+from luxar.conftest import find_repo_relative_file
 from luxar.typing_utils._format_contract import (
     GEOMETRY_TYPES,
     LOADER_TYPES,
@@ -24,6 +28,52 @@ from luxar.typing_utils.geometry_capabilities import (
     supports_lod,
     supports_partition,
 )
+
+
+def test_capability_table_matches_the_viewer() -> None:
+    """Shared writer/viewer capabilities are one decision in two languages.
+
+    The viewer also owns ``pooled`` and ``depthSortable`` render-only flags; the
+    cross-language contract is the exhaustive row set plus the shared ``lod`` and
+    ``partition`` columns.
+    """
+    rel = Path("packages/luxar-viewer/src/types/geometry-capabilities.ts")
+    start = Path(__file__).resolve()
+    source_path = find_repo_relative_file(rel, start)
+    assert source_path is not None, (
+        f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
+        "update this test — do NOT delete the cross-language lock."
+    )
+    source = source_path.read_text(encoding="utf-8")
+    table = re.search(
+        r"export const GEOMETRY_CAPABILITIES:[^=]+?=\s*Object\.freeze\(\{"
+        r"(?P<body>.*?)^\s*\}\);",
+        source,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert table is not None, (
+        "cannot find the literal GEOMETRY_CAPABILITIES Object.freeze table in "
+        f"{source_path}. If its shape changed, update this parser — do NOT delete "
+        "the cross-language lock."
+    )
+    rows = re.findall(
+        r"^\s*(\w+):\s*\{\s*lod:\s*(true|false),\s*"
+        r"partition:\s*(true|false),\s*pooled:\s*(true|false),\s*"
+        r"depthSortable:\s*(true|false)\s*\},",
+        table.group("body"),
+        re.MULTILINE,
+    )
+    viewer_capabilities = {
+        name: tuple(value == "true" for value in values[:2]) for name, *values in rows
+    }
+    assert len(viewer_capabilities) == len(rows), (
+        f"duplicate geometry rows in viewer capability table: {rows!r}"
+    )
+    python_capabilities = {
+        name: tuple(capabilities)
+        for name, capabilities in GEOMETRY_CAPABILITIES.items()
+    }
+    assert viewer_capabilities == python_capabilities
 
 
 def test_every_contract_geometry_type_has_a_row() -> None:

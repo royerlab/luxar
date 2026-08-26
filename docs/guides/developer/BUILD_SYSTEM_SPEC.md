@@ -828,7 +828,8 @@ token wiring of `external-reference-audits.yml`. A workflow file matches no
 other domain on its own, so each has to be named or its guard never runs.
 A narrow set of viewer TypeScript files is also `dom_py`: Python contract tests
 parse the live camera and rendering defaults, blending modes, element-texture
-capacity, LOD and spatial-query constants, gallery exposure thresholds, and
+capacity, LOD and spatial-query constants, line-join and LOD-selector
+vocabularies, the geometry-capability table, gallery exposure thresholds, and
 fixture-staleness exit code from those sources. The classifier names only those
 consumed files rather than broad `src/config/`, `src/rendering/`, or `tools/`
 prefixes, so unrelated viewer changes remain TypeScript-only and do not pull in

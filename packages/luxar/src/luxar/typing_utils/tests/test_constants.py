@@ -1,18 +1,48 @@
-"""Guards for cross-language numeric constants.
+"""Guards for cross-language constants.
 
 These pin values that must stay literally equal across the Python package and
-the TypeScript viewer. The two languages cannot share a symbol, so each side
-asserts its own value and names the other file — the same convention used for
-``ALPHA_CLAMP`` (``luxar.gsplats.utils.alpha`` <->
-``rendering/materials/_shared/volumetric.ts``).
+the TypeScript viewer. Numeric constants use same-value assertions on each side;
+shared vocabularies parse the viewer source here so changing only one language
+fails directly.
 """
 
 import math
+from pathlib import Path
 
+from luxar.conftest import find_repo_relative_file, read_ts_string_union
 from luxar.typing_utils.constants import (
     DEFAULT_POINT_RADIUS,
     DEFAULT_TRUNCATION_RADIUS,
+    LINE_JOIN_STYLES,
+    LOD_SELECTORS,
 )
+
+
+def _viewer_type_source(filename: str) -> str:
+    rel = Path("packages/luxar-viewer/src/types") / filename
+    start = Path(__file__).resolve()
+    source_path = find_repo_relative_file(rel, start)
+    assert source_path is not None, (
+        f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
+        "update this test — do NOT delete the cross-language lock."
+    )
+    return source_path.read_text(encoding="utf-8")
+
+
+def test_line_join_styles_match_the_viewer_union() -> None:
+    """Writer validation and viewer parsing accept exactly the same spellings."""
+    viewer_styles = read_ts_string_union(
+        _viewer_type_source("line-join.ts"), "LineJoinStyle"
+    )
+    assert viewer_styles == LINE_JOIN_STYLES
+
+
+def test_lod_selectors_match_the_viewer_metadata_union() -> None:
+    """Authored selector units stay valid on both sides of the file format."""
+    viewer_selectors = read_ts_string_union(
+        _viewer_type_source("lod-group.ts"), "selector"
+    )
+    assert viewer_selectors == LOD_SELECTORS
 
 
 class TestDefaultTruncationRadius:
