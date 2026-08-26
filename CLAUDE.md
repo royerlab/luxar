@@ -726,13 +726,13 @@ luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # 
 # Structure-preserving round-trip (leaf/lod/partition/nested + fitting/pipeline
 # groups kept); auto/memory also re-quantize the CENTERS to per-axis uint16
 # fixed-point, so on ordinary spatial data centers are bit-exact only under
-# -e precision. Three exceptions stay exact in every mode: a GRIDDED axis
-# (a stacked time/channel centers column that lands on a regular lattice) keeps
-# uint16 but has its grid snapped onto the data's own spacing; a LUT-eligible centers
-# array is stored verbatim as lut_uint8 (~1 B/value); and an axis that is NEITHER
-# gridded nor LUT-eligible
-# whose grid would displace splats past their own sigma FOR MORE THAN 0.1% OF
-# THE SPLATS falls back to float32 (a smaller degenerate population is quantized
+# -e precision. Three exceptions stay exact in every mode: a GRIDDED axis (a
+# stacked time/channel centers column that lands on a regular lattice) keeps
+# uint16 but has its grid snapped onto the data's own spacing; a LUT-eligible
+# centers array is stored verbatim as lut_uint8 (~1 B/value); and an axis that
+# is NEITHER gridded nor LUT-eligible whose grid would displace splats past
+# their own sigma FOR MORE THAN 0.1% OF THE SPLATS falls back to float32
+# (a smaller degenerate population is quantized
 # away silently — see MAX_UNREPRESENTABLE_SPLAT_FRACTION). Decode is always
 # float32 so viewer/GPU/WASM are unaffected. Unlike migrate-format (legacy→current,
 # float32 vs AUTO-uint16 only) this exposes the full ladder incl. memory=uint8.
