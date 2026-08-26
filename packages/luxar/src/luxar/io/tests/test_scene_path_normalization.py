@@ -318,9 +318,9 @@ class TestSceneExtensionNormalization:
             )
             with pytest.raises(ValueError, match="transient packaging failure"):
                 compiler.finalize()
-            with pytest.raises(ValueError, match="previous finalization failure"):
+            with pytest.raises(ValueError, match="staging was discarded"):
                 compiler.finalize()
-            with pytest.raises(RuntimeError, match="archive finalization failed"):
+            with pytest.raises(RuntimeError, match="staging was discarded"):
                 compiler.write_points(
                     "late",
                     np.array([[7.0, 8.0, 9.0]], dtype=np.float32),
@@ -351,7 +351,7 @@ class TestSceneExtensionNormalization:
                 compiler.finalize()
 
             with pytest.raises(
-                ValueError, match="previous finalization failure"
+                ValueError, match="staging was discarded"
             ) as exc:
                 scene.to_zarr(requested)
             with pytest.raises(
@@ -366,13 +366,27 @@ class TestSceneExtensionNormalization:
     def test_body_failure_does_not_publish_or_leave_staging(self, tmp_path, capsys):
         requested = tmp_path / "scene.luxar.zarr.zip"
 
+        with LuxarZarrCompiler(requested) as original:
+            _write_minimal_scene(original)
+        previous_archive = requested.read_bytes()
+
         with pytest.raises(RuntimeError, match="authoring failed"):
             with LuxarZarrCompiler(requested) as compiler:
-                _write_minimal_scene(compiler)
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                compiler.write_points(
+                    "replacement", np.ones((1, 3), dtype=np.float32)
+                )
                 raise RuntimeError("authoring failed")
 
         output = capsys.readouterr().out
-        assert not requested.exists()
-        assert list(tmp_path.iterdir()) == []
+        with pytest.raises(ValueError, match="staging was discarded"):
+            compiler.finalize()
+        with pytest.raises(ValueError, match="staging was discarded"):
+            scene.to_zarr(requested)
+        with pytest.raises(RuntimeError, match="staging was discarded"):
+            compiler.write_points("late", np.ones((1, 3), dtype=np.float32))
+
+        assert requested.read_bytes() == previous_archive
+        assert sorted(path.name for path in tmp_path.iterdir()) == [requested.name]
         assert f"discarding incomplete archive staging for {requested}" in output
         assert "leaving the store unfinalized" not in output

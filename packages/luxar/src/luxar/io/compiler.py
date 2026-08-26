@@ -317,8 +317,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
         if self._archive_finalize_failed:
             raise RuntimeError(
-                f"Cannot {op} after archive finalization failed and staging was "
-                "discarded. Create a new LuxarZarrCompiler."
+                f"Cannot {op} after archive staging was discarded. "
+                "Create a new LuxarZarrCompiler."
             )
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -341,6 +341,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if exc_type is not None and not self._is_finalized:
                 # An exception is propagating and the store is only partially
                 # written: do NOT finalize, mark it incomplete instead.
+                if self._archive_path is not None:
+                    self._archive_finalize_failed = True
                 try:
                     self.store.attrs["incomplete"] = True
                     if self._archive_path is not None:
@@ -1787,7 +1789,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             return
         if self._archive_finalize_failed:
             raise ValueError(
-                "Cannot finalize archive after a previous finalization failure; "
+                "Cannot finalize archive after its staging was discarded; "
                 "create a new LuxarZarrCompiler"
             )
 
