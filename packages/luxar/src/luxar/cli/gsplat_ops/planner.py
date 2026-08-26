@@ -611,7 +611,7 @@ def run_content_fit(
     if created_plan and not keep_boxes:
         Path(plan_json_path).unlink(missing_ok=True)
     elif created_plan and verbose:
-        # --keep-boxes retains the internal plan too; its token-suffixed name
+        # --keep-tiles retains the internal plan too; its token-suffixed name
         # is no longer predictable from the output path, so point at it.
         aprint(f"Kept plan at {plan_json_path}")
 

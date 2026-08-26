@@ -80,7 +80,7 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   notice. Each standalone `fit --plan-box` worker persists its own re-measured
   fitting block, but the parent scrubs those measured and region-scoped stamps
   before merging so parts match the sequential path. Disposable `-j N` workers
-  skip that discarded scoring work; `--keep-boxes` retains the outputs and opts
+  skip that discarded scoring work; `--keep-tiles` retains the outputs and opts
   their workers back into scoring.
 - **`CONTENT_CULL_RETENTION = 0.999`** (`fit_planned.py`) — the near-lossless
   post-fit retention every content box is fitted at, instead of the fitter's own

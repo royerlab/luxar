@@ -52,7 +52,7 @@ _SKIP_CONTENT_BOX_STAMP_ENV = "LUXAR_INTERNAL_SKIP_CONTENT_BOX_STAMP"
 def _worker_env(keep_boxes: bool) -> "dict[str, str]":
     """Build the internal parent-to-child environment for box scoring.
 
-    Disposable boxes skip stamps that the merge scrubs anyway; ``--keep-boxes``
+    Disposable boxes skip stamps that the merge scrubs anyway; ``keep_boxes``
     opts retained box artifacts back into scoring.
     """
     env = os.environ.copy()
