@@ -967,8 +967,8 @@ undispatched after its runners disappear can therefore remain queued until GitHu
 before any step starts or runner name is recorded. The repair job has only
 `actions: write` permission and runs on GitHub-hosted Linux; recovered long legs reuse
 their original runner-routing decision and repay work that the scheduled run already
-performed. On the multi-job path, up to four obsidian-routed long
-legs can therefore run alongside the next push run, increasing self-hosted contention.
+performed. On the multi-job path, up to four long legs routed to obsidian can therefore
+run alongside the next push run, increasing self-hosted contention.
 When the original routing decision was `ubuntu-latest`, up to eight repair windows per
 day can also add hosted-runner minutes, but only on a SHA that can otherwise block
 promotion.
