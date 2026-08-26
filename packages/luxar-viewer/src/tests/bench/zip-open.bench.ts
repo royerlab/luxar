@@ -1,5 +1,5 @@
 /**
- * Cold-open benchmark: zipped store vs the directory store it was built from.
+ * Zipped-store benchmark: archive vs the directory store it was built from.
  *
  * This measures the zipped archive path against the directory store it was
  * built from, both cold and on a chunk-cache revisit. It reports five numbers

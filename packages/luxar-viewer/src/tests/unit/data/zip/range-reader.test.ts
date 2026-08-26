@@ -165,9 +165,9 @@ describe('LuxarHttpRangeReader.read', () => {
       )
     );
 
-    await expect(new LuxarHttpRangeReader(URL_).read(10, 3)).rejects.toThrow(
-      /requested window was 3 bytes.*returned 2/i
-    );
+    const read = new LuxarHttpRangeReader(URL_).read(10, 3);
+    await expect(read).rejects.toBeInstanceOf(RangeUnsupportedError);
+    await expect(read).rejects.toThrow(/requested window was 3 bytes.*returned 2/i);
   });
 
   it('THROWS when Content-Range starts at a different offset', async () => {
@@ -181,9 +181,25 @@ describe('LuxarHttpRangeReader.read', () => {
       )
     );
 
-    await expect(new LuxarHttpRangeReader(URL_).read(10, 3)).rejects.toThrow(
-      /requested window started at byte 10.*started at byte 0/i
+    const read = new LuxarHttpRangeReader(URL_).read(10, 3);
+    await expect(read).rejects.toBeInstanceOf(RangeUnsupportedError);
+    await expect(read).rejects.toThrow(/requested window was bytes 10-12.*reported bytes 0-2/i);
+  });
+
+  it('THROWS when Content-Range ends at a different offset', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response(new Uint8Array([7, 8, 9]), {
+          status: 206,
+          headers: { 'content-range': 'bytes 10-99/100' },
+        })
+      )
     );
+
+    const read = new LuxarHttpRangeReader(URL_).read(10, 3);
+    await expect(read).rejects.toBeInstanceOf(RangeUnsupportedError);
+    await expect(read).rejects.toThrow(/requested window was bytes 10-12.*reported bytes 10-99/i);
   });
 
   it('reports a missing archive without Range advice', async () => {
@@ -378,7 +394,9 @@ describe('LuxarHttpRangeReader — retained ranges', () => {
     reader.retainReads(true);
     await reader.read(60, 40);
 
-    await expect(reader.read(50, 30)).rejects.toThrow(/requested window was 10 bytes.*returned 1/i);
+    const read = reader.read(50, 30);
+    await expect(read).rejects.toBeInstanceOf(RangeUnsupportedError);
+    await expect(read).rejects.toThrow(/requested window was 10 bytes.*returned 1/i);
   });
 
   it('stops retaining once the cap is reached, rather than growing without bound', async () => {

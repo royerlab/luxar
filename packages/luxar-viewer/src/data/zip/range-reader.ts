@@ -426,14 +426,19 @@ export class LuxarHttpRangeReader {
 
       const contentRange = response.headers.get('content-range');
       if (contentRange !== null) {
-        const match = /^\s*bytes\s+(\d+)-\d+\/(?:\d+|\*)\s*$/i.exec(contentRange);
-        const start = match ? Number(match[1]) : null;
-        if (start === null || start !== offset) {
+        const match = /^\s*bytes\s+(\d+)-(\d+)\/(?:\d+|\*)\s*$/i.exec(contentRange);
+        const rangeStart = match ? Number(match[1]) : null;
+        const rangeEnd = match ? Number(match[2]) : null;
+        if (rangeStart === null || rangeEnd === null) {
           throw new RangeUnsupportedError(
             this.url,
-            start === null
-              ? `the server returned an unusable Content-Range (${contentRange})`
-              : `the requested window started at byte ${offset}, but Content-Range started at byte ${start}`
+            `the server returned an unusable Content-Range (${contentRange})`
+          );
+        }
+        if (rangeStart !== offset || rangeEnd !== end) {
+          throw new RangeUnsupportedError(
+            this.url,
+            `the requested window was bytes ${offset}-${end}, but Content-Range reported bytes ${rangeStart}-${rangeEnd}`
           );
         }
       }
