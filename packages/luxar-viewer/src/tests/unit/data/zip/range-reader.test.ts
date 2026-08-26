@@ -202,6 +202,21 @@ describe('LuxarHttpRangeReader.read', () => {
     await expect(read).rejects.toThrow(/requested window was bytes 10-12.*reported bytes 10-99/i);
   });
 
+  it('accepts a correct-sized partial body when Content-Range is unparseable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response(new Uint8Array([7, 8, 9]), {
+          status: 206,
+          headers: { 'content-range': 'bytes=10-12/100' },
+        })
+      )
+    );
+
+    const bytes = await new LuxarHttpRangeReader(URL_).read(10, 3);
+    expect(Array.from(bytes)).toEqual([7, 8, 9]);
+  });
+
   it('reports a missing archive without Range advice', async () => {
     vi.stubGlobal(
       'fetch',
