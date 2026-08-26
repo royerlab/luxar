@@ -405,6 +405,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             except OSError:
                 pass
 
+    def _check_archive_can_finalize(self) -> None:
+        """Refuse finalization after archive staging has been discarded."""
+        if self._archive_finalize_failed:
+            raise ValueError(
+                "Cannot finalize archive after its staging was discarded; "
+                "create a new LuxarZarrCompiler"
+            )
+
+    def _discard_failed_archive_staging(self) -> None:
+        """Poison an archive compiler and remove its failed staging store."""
+        if self._archive_path is None:
+            return
+        self._archive_finalize_failed = True
+        self._cleanup_archive_staging()
+
     @arbol_warnings()
     def create_scene(
         self,
@@ -1788,11 +1803,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Finalize the Zarr store with metadata consolidation."""
         if self._is_finalized:
             return
-        if self._archive_finalize_failed:
-            raise ValueError(
-                "Cannot finalize archive after its staging was discarded; "
-                "create a new LuxarZarrCompiler"
-            )
+        self._check_archive_can_finalize()
 
         try:
             # A prior aborted attempt may have marked the store incomplete; a
@@ -1909,9 +1920,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 pass
             # Preserve the historical wrapping for ordinary Exceptions, but let
             # a KeyboardInterrupt / SystemExit propagate unchanged.
-            if self._archive_path is not None:
-                self._archive_finalize_failed = True
-                self._cleanup_archive_staging()
+            self._discard_failed_archive_staging()
             if isinstance(e, Exception):
                 raise ValueError(f"Could not finalize Zarr store: {e}") from e
             raise
