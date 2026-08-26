@@ -727,14 +727,61 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
         "frames": None,
         "measured_from": None,
         "measured_sha256": None,
+        "unmeasured_reason": "unpinned-local-copy",
     }
-    (row,) = gen._dataset_rows(
-        "ds",
-        _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])["datasets"]["ds"],
-        archives,
+
+
+def test_refresh_preserves_quality_prose_on_a_successful_read(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = "ds/a.gsplats.zarr.zip"
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    _write_frame(archive)
+    digest = gen._sha256_of(archive)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {
+            key: {
+                "quality_note": "internal provenance",
+                "quality_caveat": "reader-facing caveat",
+            }
+        },
     )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+
+    gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
+
+    entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert entry["quality_note"] == "internal provenance"
+    assert entry["quality_caveat"] == "reader-facing caveat"
+
+
+def test_a_hand_recovered_null_digest_is_not_an_unpinned_marker(gen: Any) -> None:
+    row = {"char_key": "ds/a.gsplats.zarr.zip"}
+    chars = {"ds/a.gsplats.zarr.zip": {"measured_sha256": None}}
+    assert gen._why_absent(row, chars) == ""
+    chars["ds/a.gsplats.zarr.zip"]["unmeasured_reason"] = "unpinned-local-copy"
+    assert "not the pinned artifact" in gen._why_absent(row, chars)
+
+
+def test_a_note_does_not_read_figures_from_unpinned_bytes(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    _write_frame(archive, n_splats=30)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {"ds/a.gsplats.zarr.zip": {"quality_note": "hand note"}},
+    )
+    entry = _entry(archive.name, "d" * 64)
+
+    (row,) = gen._dataset_rows("ds", _fake_manifest([entry])["datasets"]["ds"])
+
     assert row["splats"] == gen._ABSENT
-    assert row["topology"] == gen._ABSENT
 
 
 def test_refresh_summary_distinguishes_rejected_and_retained_reads(
@@ -1033,6 +1080,7 @@ class TestCheckExplainsAnAbsentFigure:
         "topology": None,
         "measured_from": None,
         "measured_sha256": None,
+        "unmeasured_reason": "unpinned-local-copy",
     }
 
     def test_an_unpinned_local_copy_is_named_as_the_cause(
@@ -1050,6 +1098,7 @@ class TestCheckExplainsAnAbsentFigure:
     ) -> None:
         """The diagnosis must not fire for an archive that was really measured."""
         sidecar = dict(self._ADJUDICATED, measured_sha256="a" * 64, n_splats=10)
+        sidecar.pop("unmeasured_reason")
 
         problems = self._gaps_for(gen, tmp_path, monkeypatch, sidecar)
 

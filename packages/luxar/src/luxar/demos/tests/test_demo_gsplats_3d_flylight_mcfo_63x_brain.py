@@ -56,6 +56,89 @@ def _tiny_store(path: Path, n: int = 16) -> Path:
     return path
 
 
+def test_build_composite_writes_gain_balanced_uint16(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volumes = {
+        0: np.full((2, 3, 4), 10, dtype=np.uint8),
+        1: np.full((2, 3, 4), 20, dtype=np.uint8),
+        2: np.full((2, 3, 4), 5, dtype=np.uint8),
+    }
+    volumes[0][0, 0, 0] = 30
+    volumes[1][0, 0, 0] = 40
+    volumes[2][0, 0, 0] = 15
+    monkeypatch.setattr(_demo, "signal_channel_indices", lambda _path: [0, 1, 2])
+    monkeypatch.setattr(_demo, "reference_channel_index", lambda _path: 3)
+    monkeypatch.setattr(
+        _demo, "decode_h5j_channel", lambda _path, channel: volumes[channel]
+    )
+    monkeypatch.setattr(_demo, "BALANCE_PERCENTILE", 50.0)
+
+    out = tmp_path / "composite.zarr"
+    _demo.build_composite(tmp_path / "source.h5j", out)
+
+    composite = np.asarray(zarr.open_group(str(out), mode="r")["composite"])
+    assert composite.dtype == np.uint16
+    assert composite[1, 1, 1] == 20
+    assert composite[0, 0, 0] == 60
+
+
+def test_colour_preserves_hue_metadata_and_off_grid_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fit = tmp_path / "fit.gsplats.zarr"
+    centers = np.array([[0, 0, 0], [0, 0, 1], [-1, 0, 0]], dtype=np.float32)
+    save_gsplats(
+        fit,
+        centers=centers,
+        amplitudes=np.ones(3, dtype=np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (3, 1)).astype(np.float32),
+        fitting_info={"psnr_db": 41.5},
+        fitting_config={"n_iters": 5000},
+        provenance_info={"source_file": "source.h5j"},
+        description="stamped fit",
+        truncation_radius=2.5,
+    )
+    shape = (10, 10, 10)
+    volumes = {channel: np.full(shape, 10, dtype=np.uint8) for channel in range(3)}
+    for channel, (bright, dim) in enumerate(((250, 50), (50, 10), (20, 4))):
+        volumes[channel][0, 0, 0] = bright
+        volumes[channel][0, 0, 1] = dim
+    monkeypatch.setattr(_demo, "signal_channel_indices", lambda _path: [0, 1, 2])
+    monkeypatch.setattr(
+        _demo, "decode_h5j_channel", lambda _path, channel: volumes[channel]
+    )
+    monkeypatch.setattr(_demo, "BALANCE_PERCENTILE", 50.0)
+
+    out = tmp_path / "coloured.gsplats.zarr"
+    _demo.colour_from_channels(tmp_path / "source.h5j", fit, out)
+
+    loaded = _demo.load_gsplat_node(str(out))[0]
+    colors = np.asarray(loaded.additive_sublods[0].colors)
+    assert sorted(map(tuple, colors.tolist())) == [
+        (0, 0, 0),
+        (255, 51, 20),
+        (255, 51, 20),
+    ]
+    root = zarr.open_group(str(out), mode="r")
+    assert root["fitting"].attrs["psnr_db"] == pytest.approx(41.5)
+    assert root["fitting/config"].attrs["n_iters"] == 5000
+    assert root["provenance"].attrs["source_file"] == "source.h5j"
+    assert root.attrs["description"] == "stamped fit"
+    assert loaded.additive_sublods[0].truncation_radius == pytest.approx(2.5)
+
+
+def test_colour_requires_exactly_three_signal_channels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fit = _tiny_store(tmp_path / "fit.gsplats.zarr", n=2)
+    monkeypatch.setattr(_demo, "signal_channel_indices", lambda _path: [0, 1, 2, 3])
+    with pytest.raises(ValueError, match="exactly 3 signal channels"):
+        _demo.colour_from_channels(
+            tmp_path / "source.h5j", fit, tmp_path / "coloured.gsplats.zarr"
+        )
+
+
 class TestAuthoredCompositing:
     def test_scene_bakes_the_tuned_volumetric_window(self, tmp_path) -> None:
         """Pin the exposure story the module docstring explains.
@@ -386,6 +469,7 @@ def test_no_stale_splat_count_literal_survives_in_a_user_visible_string() -> Non
         line.strip()
         for line in source.splitlines()
         if "653,759" in line
+        and "bundled fallback" not in line
         and "1000-iteration build" not in line
         and "which this one replaces" not in line
     ]

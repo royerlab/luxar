@@ -20,6 +20,10 @@ figure for data that has one. The committed measurements carry a
 ``measured_sha256`` so ``--check`` can say when a figure was taken from bytes the
 manifest no longer pins, which is the drift a refit causes.
 
+``quality_note`` is internal provenance and is never rendered. ``quality_caveat``
+is reader-facing text rendered next to an absent figure. ``unmeasured_reason`` is
+written by ``--refresh`` when a local file exists but is not the pinned artifact.
+
 This script NEVER talks to Zenodo. It writes markdown for a human to paste into
 a draft, and publication stays a manual act.
 
@@ -443,6 +447,7 @@ def _retain_preferred_measurements(
                     "frames": None,
                     "measured_from": None,
                     "measured_sha256": None,
+                    "unmeasured_reason": "unpinned-local-copy",
                 }
             else:
                 measured[key] = old_entry
@@ -498,6 +503,11 @@ def refresh_characteristics(
                 # is precisely the state the hand-edited descriptions were in.
                 "measured_from": root,
                 "measured_sha256": measured_sha256,
+                **{
+                    field: existing[key][field]
+                    for field in ("quality_note", "quality_caveat")
+                    if key in existing and field in existing[key]
+                },
             }
 
     read = len(measured)
@@ -517,7 +527,12 @@ def refresh_characteristics(
                     "record text does not require holding the archives, which are "
                     "hosted on Zenodo rather than in this repository. "
                     "measured_sha256 records WHICH bytes each figure came from; "
-                    "--check reports any that no longer match the manifest pin."
+                    "--check reports any non-null digest that no longer matches "
+                    "the manifest pin. A null digest means the figures were "
+                    "recovered from the stated source rather than archive bytes. "
+                    "quality_note is internal provenance; quality_caveat is "
+                    "published beside an absent figure. unmeasured_reason records "
+                    "why refresh deliberately withheld measurements."
                 ),
                 "archives": archives,
             },
@@ -616,7 +631,13 @@ def _dataset_rows(
         # otherwise documenting why one figure is missing silently deletes the
         # rest, and the only way to explain a gap is to widen it.
         if info is not None and "measured_sha256" not in info:
-            path = next(_locate(dataset, entry, variant, spec["name"]), None)
+            pinned = _pinned_digest(spec)
+            path, digest = _select_pinned_location(
+                _locate(dataset, entry, variant, spec["name"]),
+                pinned,
+            )
+            if digest != pinned:
+                path = None
             read = _read_archive(path) if path else None
             if read is not None:
                 info = {**read, **{k: v for k, v in info.items() if v is not None}}
@@ -779,12 +800,7 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
     return "".join(out)
 
 
-def _why_absent(
-    dataset: str,
-    entry: dict[str, Any],
-    row: dict[str, Any],
-    chars: dict[str, Any],
-) -> str:
+def _why_absent(row: dict[str, Any], chars: dict[str, Any]) -> str:
     """Name the cause when the sidecar already records one.
 
     ``refresh`` writes an entry whose every measurement is null when it finds a
@@ -796,9 +812,7 @@ def _why_absent(
     numbers the marker withholds.
     """
     info = chars.get(row.get("char_key", ""))
-    if not info or "measured_sha256" not in info:
-        return ""
-    if info.get("measured_sha256") is not None:
+    if not info or info.get("unmeasured_reason") != "unpinned-local-copy":
         return ""
     return (
         " (a local copy is present but its bytes are not the pinned artifact, "
@@ -839,7 +853,7 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
             if missing:
                 problems.append(
                     f"{name}/{row['file']}: no {', '.join(missing)}"
-                    + _why_absent(name, entry, row, chars)
+                    + _why_absent(row, chars)
                 )
         if not _files_of(entry):
             problems.append(f"{name}: no files uploaded")
