@@ -407,6 +407,34 @@ def test_levelling_angle_recovers_the_tilt_and_actually_levels(
     assert _inplane_ratio(rotated) >= 0.99 * _inplane_ratio(centers)
 
 
+def test_levelling_angle_has_the_cli_rotation_sign(tmp_path: Path, monkeypatch) -> None:
+    import luxar.gsplats.tree as tree_mod
+
+    leaf = _tilted_cloud(48.84, n=2000)
+    monkeypatch.setattr(tree_mod, "iter_leaves", lambda node: [node])
+    angle = _demo.levelling_angle_deg(leaf)
+    centers = leaf.additive_sublods[0].centers
+    source = tmp_path / "tilted.gsplats.zarr"
+    output = tmp_path / "levelled.gsplats.zarr"
+    save_gsplats(
+        source,
+        centers=centers,
+        amplitudes=np.ones(len(centers), dtype=np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (len(centers), 1)).astype(
+            np.float32
+        ),
+    )
+
+    _demo._luxar(
+        "gsplat", "transform", str(source), str(output), "--rotate-z", f"{angle:.8f}"
+    )
+
+    levelled = _demo.load_gsplat_node(str(output))[0]
+    transformed = np.asarray(levelled.additive_sublods[0].centers)
+    assert _inplane_ratio(transformed) > 4.0
+    assert _inplane_ratio(transformed) > 3.0 * _inplane_ratio(centers)
+
+
 # ---------------------------------------------------------------------------
 # The count the demo TELLS people must match the archive it ships.
 #

@@ -69,6 +69,9 @@ channel through a 3-D volume share the implementation in
 images, over sampled timepoints, or with demo-specific titles for a
 single-channel volume.
 
+The two FlyLight MCFO demos share `_h5j.py`, which identifies reference and
+signal channels from H5J metadata and decodes the stitched HEVC channel payloads.
+
 The LOD topology a fitting demo writes its cached artifact with is chosen in
 `_lod_policy.py`, not left to whichever fitter the demo happened to call
 (`fit_gaussian_splats` returns one additive sub-LOD, the progressive fitter
