@@ -78,6 +78,7 @@ describe('DimensionSliders - keyboard selection indicator', () => {
 
     expect(status?.textContent).toBe('[/]: 1 · Frame · Display: X, Y, Z');
     expect(status?.title).toBe(status?.textContent);
+    expect(status?.getAttribute('aria-live')).toBe('polite');
 
     sliders.setSelectedDimension(1);
     expect(status?.textContent).toBe('[/]: 2 · Channel · Display: X, Y, Z');
@@ -345,7 +346,7 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
     sliders.dispose();
   });
 
-  it('preserves units in compact categorical toggles and dropdowns', () => {
+  it('keeps authored categorical labels unchanged when metadata also has units', () => {
     const dims: SimpleDims = {
       ndim: 5,
       displayed: [0, 1, 2],
@@ -380,14 +381,21 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
     });
 
     const toggle = document.getElementById('luxar-dim-toggle-3')!;
-    expect(toggle.textContent).toBe('1 s');
-    expect(toggle.title).toContain('1 s');
+    expect(toggle.textContent).toBe('1');
+    expect(toggle.title).toContain('1');
+    expect(toggle.title).not.toContain('1 s');
 
     const options = Array.from(
       document.querySelectorAll<HTMLOptionElement>('#luxar-dim-dropdown-4 option')
     );
-    expect(options.map((option) => option.textContent)).toEqual(['0 ms', '5 ms', '10 ms']);
-    expect(options[2].title).toContain('10 ms');
+    expect(options.map((option) => option.textContent)).toEqual(['0', '5', '10']);
+    expect(options[2].title).toContain('10');
+    expect(options[2].title).not.toContain('10 ms');
+
+    const labels = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-dimension-dropdown__label')
+    );
+    expect(labels.map((label) => label.title)).toEqual(['Phase', 'Exposure']);
 
     sliders.dispose();
   });

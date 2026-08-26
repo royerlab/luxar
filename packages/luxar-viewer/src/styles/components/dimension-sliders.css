@@ -246,6 +246,9 @@
   font-weight: var(--luxar-font-medium);
   color: var(--luxar-text-primary);
   margin-bottom: var(--luxar-spacing-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .luxar-dimension-dropdown__label--with-tooltip {
@@ -294,7 +297,10 @@
   border: 1px solid var(--luxar-border-strong);
   border-radius: var(--luxar-radius-sm);
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
   user-select: none;
+  white-space: nowrap;
   transition: var(--luxar-transition-fast);
 }
 

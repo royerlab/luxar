@@ -313,6 +313,7 @@ export class DimensionSliders {
 
     this.statusText = document.createElement('div');
     this.statusText.className = 'luxar-dimension-sliders__status';
+    this.statusText.setAttribute('aria-live', 'polite');
 
     titleContainer.appendChild(title);
     titleContainer.appendChild(this.statusText);
@@ -408,9 +409,6 @@ export class DimensionSliders {
     const range = this.dimensionRanges[dimIndex];
     const step = dimMeta?.step ?? 1;
     const isDiscrete = dimMeta?.discrete || false;
-    const unit = this.dimensionUnits[dimIndex] || '';
-    const formatWithUnit = (value: string): string => `${value}${unit ? ` ${unit}` : ''}`;
-
     // Must have either categories or be a discrete dimension with valid range
     if (!categories && !(isDiscrete && range)) return;
 
@@ -430,6 +428,8 @@ export class DimensionSliders {
     // Add tooltip with description if available
     if (dimMeta?.description) {
       label.title = dimMeta.description;
+    } else {
+      label.title = name;
     }
 
     // Create dropdown matching Luxar UI style
@@ -445,10 +445,9 @@ export class DimensionSliders {
       // Use explicit category labels
       categories.forEach((category, index) => {
         const option = document.createElement('option');
-        const displayValue = formatWithUnit(category);
         option.value = String(index);
-        option.textContent = displayValue;
-        option.title = `${displayValue} (index: ${index})`;
+        option.textContent = category;
+        option.title = `${category} (index: ${index})`;
         dropdown.appendChild(option);
       });
     } else {
@@ -456,10 +455,9 @@ export class DimensionSliders {
       const [min, max] = range;
       for (let value = min; value <= max; value += step) {
         const option = document.createElement('option');
-        const displayValue = formatWithUnit(String(Math.round(value)));
         option.value = String(value);
-        option.textContent = displayValue;
-        option.title = `Value: ${displayValue}`;
+        option.textContent = String(Math.round(value));
+        option.title = `Value: ${value}`;
         dropdown.appendChild(option);
       }
     }
@@ -527,19 +525,16 @@ export class DimensionSliders {
     const dimMeta = this.dims.metadata?.[dimIndex];
     const categories = dimMeta?.categories;
     const range = this.dimensionRanges[dimIndex];
-    const unit = this.dimensionUnits[dimIndex] || '';
-    const formatWithUnit = (value: string): string => `${value}${unit ? ` ${unit}` : ''}`;
-
     // Determine the two labels
     let label0: string;
     let label1: string;
     if (categories && categories.length === 2) {
-      label0 = formatWithUnit(categories[0]);
-      label1 = formatWithUnit(categories[1]);
+      label0 = categories[0];
+      label1 = categories[1];
     } else {
       // Discrete non-categorical: use numeric labels
-      label0 = formatWithUnit(String(Math.round(range[0])));
-      label1 = formatWithUnit(String(Math.round(range[1])));
+      label0 = String(Math.round(range[0]));
+      label1 = String(Math.round(range[1]));
     }
 
     // Container (grid item) — reuses dropdown wrapper class for consistent grid layout
@@ -557,6 +552,8 @@ export class DimensionSliders {
 
     if (dimMeta?.description) {
       label.title = dimMeta.description;
+    } else {
+      label.title = name;
     }
 
     // Single button toggle — shows current value, click swaps to other

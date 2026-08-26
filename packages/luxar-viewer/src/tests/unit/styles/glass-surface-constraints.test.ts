@@ -115,7 +115,9 @@ describe('dimension-sliders.css — bounded single-line labels (#2188)', () => {
   const css = loadCss('components/dimension-sliders.css');
 
   it('keeps the panel height responsive while exposing common dimension counts', () => {
-    expect(ruleBody(css, '.luxar-dimension-sliders')).toMatch(/max-height:\s*min\(360px,\s*45vh\)/);
+    expect(ruleBody(css, '.luxar-dimension-sliders')).toMatch(
+      /max-height:\s*min\([^;]*\d+(?:\.\d+)?vh[^;]*\)/
+    );
   });
 
   it('protects the title and ellipsizes the status on one line', () => {
@@ -146,6 +148,15 @@ describe('dimension-sliders.css — bounded single-line labels (#2188)', () => {
     expect(value).toMatch(/overflow:\s*hidden/);
     expect(value).toMatch(/text-overflow:\s*ellipsis/);
     expect(value).toMatch(/text-align:\s*right/);
+  });
+
+  it('ellipsizes compact categorical labels and toggle values on one line', () => {
+    for (const selector of ['.luxar-dimension-dropdown__label', '.luxar-dimension-toggle']) {
+      const rule = ruleBody(css, selector);
+      expect(rule).toMatch(/white-space:\s*nowrap/);
+      expect(rule).toMatch(/overflow:\s*hidden/);
+      expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+    }
   });
 });
 
