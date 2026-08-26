@@ -820,11 +820,10 @@ def validate_mesh_ladder_decode_budget(
     their SUM against a single budget (``mesh-progressive-loader.ts``). The write
     side otherwise never sees the sum: the flat check runs once on the authored
     mesh, and each level's own ``write_mesh`` re-checks only itself. A shell
-    ladder duplicates every vertex on a shell boundary, so its total runs
-    several times the flat mesh — for a six-level radial ladder, roughly 3.5x.
-    A comfortably-under-budget surface therefore wrote cleanly and then failed to
-    load, which is precisely the class of failure this family of checks exists to
-    prevent.
+    ladder duplicates every vertex on a shell boundary, so its total exceeds the
+    flat mesh by a factor that grows with the level count. A comfortably-under-
+    budget surface therefore wrote cleanly and then failed to load, which is
+    precisely the class of failure this family of checks exists to prevent.
 
     Sound in the same direction as its flat sibling: it charges only decoded
     values, so it can never refuse a ladder the loader would admit.
@@ -864,7 +863,8 @@ def validate_mesh_ladder_decode_budget(
             "are concatenated into one node's buffers and all stay resident, so "
             "they are charged together rather than against separate budgets — a "
             "shell ladder duplicates every vertex on a shell boundary, so the "
-            "total is several times the flat surface.",
+            "total exceeds the flat surface by a factor that grows with the "
+            "level count.",
             "Write fewer levels, decimate the surface first, or split it across "
             "several mesh nodes — the budget is per node",
         )

@@ -102,11 +102,11 @@ ladder's `additive_<i>` levels into one node's buffers and keeps all of them
 resident, so it charges their SUM against a single budget. The write side
 otherwise never saw the sum — the flat check runs once on the authored mesh and
 each level re-checks only itself — and a shell ladder duplicates every boundary
-vertex, so a six-level radial ladder runs several times the flat surface. A
-comfortably under-budget mesh could therefore still write a ladder the viewer
-refuses. `validate_mesh_ladder_decode_budget` charges the levels together, once,
-from the payloads the writer is about to emit, and shares its per-mesh accounting
-with the flat check so the two cannot drift.
+vertex, so the summed footprint exceeds the flat surface by a factor that grows
+with the level count. A comfortably under-budget mesh could therefore still
+write a ladder the viewer refuses. `validate_mesh_ladder_decode_budget` charges
+the levels together, once, from the payloads the writer is about to emit, and
+shares its per-mesh accounting with the flat check so the two cannot drift.
 
 The viewer-side constant's comment claimed there was no Python twin because the
 write side cannot know what a tab survives. That is true of this gate's *primary*

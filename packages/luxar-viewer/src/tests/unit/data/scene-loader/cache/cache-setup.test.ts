@@ -37,7 +37,6 @@ vi.mock('../../../../../data/zarr', () => ({
 }));
 
 import { setupCaches } from '../../../../../data/scene-loader/cache/cache-setup';
-import { createStoreForUrl } from '../../../../../data/zarr';
 import { config as appConfig } from '../../../../../config';
 
 describe('setupCaches — cache telemetry state resolution', () => {
@@ -47,7 +46,6 @@ describe('setupCaches — cache telemetry state resolution', () => {
   let originalL0Enabled: boolean;
 
   beforeEach(() => {
-    vi.mocked(createStoreForUrl).mockClear();
     originalEnabled = appConfig.cache.enabled;
     originalL0Enabled = appConfig.cache.l0Enabled;
   });
