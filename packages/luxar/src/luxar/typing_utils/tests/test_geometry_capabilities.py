@@ -30,6 +30,45 @@ from luxar.typing_utils.geometry_capabilities import (
 )
 
 
+def _read_viewer_capabilities(source: str) -> dict[str, tuple[bool, bool]]:
+    table = re.search(
+        r"export const GEOMETRY_CAPABILITIES:[^=]+?=\s*Object\.freeze\(\{"
+        r"(?P<body>.*?)^\s*\}\);",
+        source,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert table is not None, (
+        "cannot find the literal GEOMETRY_CAPABILITIES Object.freeze table. "
+        "If its shape changed, update this parser — do NOT delete the "
+        "cross-language lock."
+    )
+    rows = re.findall(
+        r"^\s*(\w+):\s*\{([^{}]*)\}\s*,?\s*$",
+        table.group("body"),
+        re.MULTILINE,
+    )
+    assert rows, (
+        "cannot find literal rows in the viewer capability table. If its shape "
+        "changed, update this parser — do NOT delete the cross-language lock."
+    )
+    viewer_capabilities: dict[str, tuple[bool, bool]] = {}
+    for name, body in rows:
+        values = []
+        for field in ("lod", "partition"):
+            matches = re.findall(rf"\b{field}\s*:\s*(true|false)\b", body)
+            assert len(matches) == 1, (
+                f"expected exactly one {field!r} flag in viewer capability row "
+                f"{name!r}, found {len(matches)}. If its shape changed, update "
+                "this parser — do NOT delete the cross-language lock."
+            )
+            values.append(matches[0] == "true")
+        assert name not in viewer_capabilities, (
+            f"duplicate geometry row in viewer capability table: {name!r}"
+        )
+        viewer_capabilities[name] = (values[0], values[1])
+    return viewer_capabilities
+
+
 def test_capability_table_matches_the_viewer() -> None:
     """Shared writer/viewer capabilities are one decision in two languages.
 
@@ -45,35 +84,26 @@ def test_capability_table_matches_the_viewer() -> None:
         "update this test — do NOT delete the cross-language lock."
     )
     source = source_path.read_text(encoding="utf-8")
-    table = re.search(
-        r"export const GEOMETRY_CAPABILITIES:[^=]+?=\s*Object\.freeze\(\{"
-        r"(?P<body>.*?)^\s*\}\);",
-        source,
-        re.MULTILINE | re.DOTALL,
-    )
-    assert table is not None, (
-        "cannot find the literal GEOMETRY_CAPABILITIES Object.freeze table in "
-        f"{source_path}. If its shape changed, update this parser — do NOT delete "
-        "the cross-language lock."
-    )
-    rows = re.findall(
-        r"^\s*(\w+):\s*\{\s*lod:\s*(true|false),\s*"
-        r"partition:\s*(true|false),\s*pooled:\s*(true|false),\s*"
-        r"depthSortable:\s*(true|false)\s*\},",
-        table.group("body"),
-        re.MULTILINE,
-    )
-    viewer_capabilities = {
-        name: tuple(value == "true" for value in values[:2]) for name, *values in rows
-    }
-    assert len(viewer_capabilities) == len(rows), (
-        f"duplicate geometry rows in viewer capability table: {rows!r}"
-    )
+    viewer_capabilities = _read_viewer_capabilities(source)
     python_capabilities = {
-        name: tuple(capabilities)
+        name: (capabilities.lod, capabilities.partition)
         for name, capabilities in GEOMETRY_CAPABILITIES.items()
     }
     assert viewer_capabilities == python_capabilities
+
+
+def test_capability_parser_ignores_render_only_shape() -> None:
+    """Render-only flags and row ordering do not enter the Python contract."""
+    source = """export const GEOMETRY_CAPABILITIES: Readonly<Record<string, object>> =
+  Object.freeze({
+    points: { castsShadow: false, partition: true, lod: true, pooled: true },
+    mesh: { depthSortable: true, lod: false, pooled: false, partition: true }
+  });
+"""
+    assert _read_viewer_capabilities(source) == {
+        "points": (True, True),
+        "mesh": (False, True),
+    }
 
 
 def test_every_contract_geometry_type_has_a_row() -> None:

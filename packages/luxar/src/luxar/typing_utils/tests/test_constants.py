@@ -3,11 +3,15 @@
 These pin values that must stay literally equal across the Python package and
 the TypeScript viewer. Numeric constants use same-value assertions on each side;
 shared vocabularies parse the viewer source here so changing only one language
-fails directly.
+fails directly. The numeric convention is the same one used for ``ALPHA_CLAMP``
+(``luxar.gsplats.utils.alpha`` <->
+``rendering/materials/_shared/volumetric.ts``).
 """
 
 import math
 from pathlib import Path
+
+import pytest
 
 from luxar.conftest import find_repo_relative_file, read_ts_string_literals
 from luxar.typing_utils.constants import (
@@ -16,6 +20,7 @@ from luxar.typing_utils.constants import (
     LINE_JOIN_STYLES,
     LOD_SELECTORS,
 )
+from luxar.typing_utils.geometry_capabilities import lod_capable_types
 
 
 def _viewer_type_source(filename: str) -> str:
@@ -42,6 +47,36 @@ def test_lod_selectors_match_the_viewer_metadata_union() -> None:
         _viewer_type_source("lod-group.ts"), "selector"
     )
     assert viewer_selectors == LOD_SELECTORS
+
+
+def test_lod_display_types_match_the_capability_table() -> None:
+    """The viewer's metadata union names exactly the LOD-capable geometries."""
+    viewer_display_types = read_ts_string_literals(
+        _viewer_type_source("lod-group.ts"), "display_type"
+    )
+    assert viewer_display_types == set(lod_capable_types())
+
+
+def test_string_literal_parser_ignores_block_comments() -> None:
+    """A commented declaration cannot shadow the live TypeScript property."""
+    source = """/*
+selector: 'wrong' | 'commented';
+*/
+selector: 'coverage' | 'screen-area';
+"""
+    assert read_ts_string_literals(source, "selector") == {
+        "coverage",
+        "screen-area",
+    }
+
+
+def test_string_literal_parser_rejects_ambiguous_declarations() -> None:
+    """Two live declarations fail loudly instead of selecting the first one."""
+    source = """selector: 'first' | 'value';
+selector: 'coverage' | 'screen-area';
+"""
+    with pytest.raises(AssertionError, match="found 2"):
+        read_ts_string_literals(source, "selector")
 
 
 class TestDefaultTruncationRadius:

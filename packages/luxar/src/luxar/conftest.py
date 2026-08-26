@@ -216,26 +216,28 @@ def read_ts_string_literals(source: str, name: str) -> frozenset[str]:
     a member: source-lock tests should fail loudly when the TypeScript shape
     changes rather than silently compare an incomplete vocabulary.
     """
+    source_without_comments = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
     escaped_name = re.escape(name)
-    union_match = re.search(
-        rf"^\s*(?:(?:export\s+)?type\s+{escaped_name}\s*=|{escaped_name}\s*:)\s*"
+    union_matches = re.findall(
+        rf"^\s*(?:(?:export\s+)?type\s+{escaped_name}\s*=|"
+        rf"{escaped_name}\s*\??\s*:)\s*"
         r"((?:'[^'\r\n]+'\s*\|\s*)*'[^'\r\n]+')\s*;",
-        source,
+        source_without_comments,
         re.MULTILINE,
     )
-    array_match = re.search(
+    array_matches = re.findall(
         rf"^\s*(?:export\s+)?const\s+{escaped_name}(?:\s*:[^=]+)?=\s*\[\s*"
         r"((?:'[^'\r\n]+'\s*,\s*)*'[^'\r\n]+'\s*,?)\s*\]\s*;",
-        source,
+        source_without_comments,
         re.MULTILINE,
     )
-    matches = [match for match in (union_match, array_match) if match is not None]
+    matches = union_matches + array_matches
     assert len(matches) == 1, (
         f"expected exactly one literal string declaration named {name!r}, found "
         f"{len(matches)}. If it was renamed, computed, or split across lines, "
         "update the caller or this parser — do NOT delete the cross-language lock."
     )
-    members = re.findall(r"'([^']+)'", matches[0].group(1))
+    members = re.findall(r"'([^']+)'", matches[0])
     assert len(members) == len(set(members)), (
         f"literal-string union {name!r} repeats a member: {members!r}"
     )
