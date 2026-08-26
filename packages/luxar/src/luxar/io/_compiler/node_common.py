@@ -198,7 +198,7 @@ _MESH_APPEARANCE_VALIDATORS = {
     "alpha_cutoff": (validate_appearance_fraction, "Alpha cutoff"),
     "shade_exponent": (validate_positive_finite, "Shade exponent"),
     "shininess": (validate_positive_finite, "Shininess"),
-    # Slab thickness in CELLS, so any positive multiple is meaningful and there
+    # Slab half-width in CELLS, so any positive multiple is meaningful and there
     # is no upper bound to impose. Zero is refused by `validate_positive_finite`
     # and that refusal is load-bearing: a zero slab reduces mesh's whole-triangle
     # membership test to exact float equality with the slice plane, and the node

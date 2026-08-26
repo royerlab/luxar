@@ -338,8 +338,8 @@ exact cross-section. A coarse mesh with a narrow window can drop whole regions.
 
 Discrete hidden dimensions — time, channel, anything categorical, which is the
 usual case for a mesh — are unaffected: a timepoint either matches or it does
-not. For the continuous case the slab thickness is authored per node via
-`slab_tolerance`. See
+not. For the continuous case the slab half-width is authored per node via
+`slab_tolerance` (the slab spans `slice ± step × slab_tolerance`). See
 [LUXAR_ZARR_FORMAT.md → nD slicing: whole-triangle cull](LUXAR_ZARR_FORMAT.md#nd-slicing-whole-triangle-cull).
 
 ---

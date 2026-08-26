@@ -84,7 +84,7 @@ _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
 #:
 #: Five are appearance (the shading controls), which is what the name records.
 #: ``slab_tolerance`` is the exception and is deliberately here anyway: it is a
-#: LOADING knob — the thickness of the nD membership slab a continuous hidden
+#: LOADING knob — the half-width of the nD membership slab a continuous hidden
 #: dimension is culled against (spec §5.2.1) — but it is mesh-only for exactly
 #: the same reason and must be refused on the other three types by exactly the
 #: same guard. A second frozenset would be a second thing to forget.

@@ -179,7 +179,8 @@ export interface MeshMetadata {
    * per-node input to `computeTolerance('mesh', …)`. Mesh culls whole triangles
    * against the slab — a triangle draws only when all three of its vertices are
    * inside — so on a continuous hidden axis it shows "the surface near this
-   * slice" as a thick slab, never a planar cut (§5.3). This says how thick.
+   * slice" as a thick slab, never a planar cut (§5.3). This says how far from
+   * the slice — the slab spans twice that.
    *
    * Mesh is the only geometry type whose continuous arm is tunable, and the
    * reason is that it has nothing to measure: the other three derive their
