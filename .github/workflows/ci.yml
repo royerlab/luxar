@@ -1055,7 +1055,7 @@ jobs:
   # A scheduled run can put fresh successful checks on the same SHA as an older
   # cancelled push run, but branch protection's rollup can retain the cancelled
   # duplicate for each required context. Once this run has proved the five
-  # protected contexts green, rerun only the cancelled long jobs from that push
+  # protected contexts green, rerun the cancelled required jobs from that push
   # so the push suite itself converges to the verdict branch protection reads.
   repair-cancelled-push-checks:
     needs:
@@ -1100,20 +1100,23 @@ jobs:
 
           push_jobs=$(gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/jobs?filter=latest&per_page=100")
-          jq -r '
+          required_json=$(printf '%s\n' "${required[@]}" \
+            | jq -Rsc 'split("\n") | map(select(length > 0))')
+          jq -r --argjson required "$required_json" '
             [.[] | .jobs[]]
             | group_by(.name)[]
             | max_by(.id)
             | select(
                 .conclusion == "cancelled"
-                and (.name == "python-tests (3.12)" or .name == "typescript-tests")
+                and (.name | IN($required[]))
               )
             | [.id, .name]
             | @tsv
           ' <<<"$push_jobs" | while IFS=$'\t' read -r job_id job_name; do
             echo "Rerunning cancelled push job: $job_name ($job_id)"
             gh api --method POST \
-              "repos/${GITHUB_REPOSITORY}/actions/jobs/$job_id/rerun" >/dev/null
+              "repos/${GITHUB_REPOSITORY}/actions/jobs/$job_id/rerun" >/dev/null \
+              || echo "::warning::rerun rejected for $job_name ($job_id)"
           done
 
   go-launcher:

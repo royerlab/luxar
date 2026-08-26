@@ -937,12 +937,13 @@ GitHub branch protection does not necessarily replace a cancelled push check wit
 later successful scheduled check of the same name on the same SHA. After a scheduled
 run has completed the five protected contexts successfully,
 `repair-cancelled-push-checks` inspects the completed push run for that SHA and reruns
-only cancelled `python-tests (3.12)` and `typescript-tests` jobs. Failed jobs are left
-failed, non-required matrix legs are left alone, and a schedule whose own protected
-contexts are not all green performs no repair. The job has only `actions: write`
-permission and runs on GitHub-hosted Linux; the recovered long legs use their original
-run's runner-routing decision and therefore repay work that the scheduled run already
-performed, but only on a SHA that can become promotable.
+cancelled jobs for any of those five protected contexts. Failed jobs are left failed,
+non-required matrix legs are left alone, and a schedule whose own protected contexts
+are not all green performs no repair. A rejected rerun is reported as a warning without
+preventing the remaining cancelled jobs from being attempted. The job has only
+`actions: write` permission and runs on GitHub-hosted Linux; recovered long legs use
+their original run's runner-routing decision and therefore repay work that the
+scheduled run already performed, but only on a SHA that can become promotable.
 
 ## Architecture Notes
 
