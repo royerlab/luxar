@@ -45,7 +45,7 @@ export interface MeshRefinementCtx {
     path: string,
     data: LoadedMeshData,
     viewState: MeshViewState,
-    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
+    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all' | 'slab_tolerance'>
   ): Promise<StagedMeshCommit>;
   commitMesh(staged: StagedMeshCommit, session?: UpdateSession): void;
   /**
@@ -108,6 +108,7 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
               normal_dims: nodeAttrs?.normal_dims,
               double_sided: nodeAttrs?.double_sided ?? true,
               extend_to_all: nodeAttrs?.extend_to_all,
+              slab_tolerance: nodeAttrs?.slab_tolerance,
             });
             // Superseded/disposed while we were loading + projecting: an abort
             // landing during the async round-trip is not a throw (so the

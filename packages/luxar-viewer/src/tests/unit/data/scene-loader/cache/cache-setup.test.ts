@@ -32,13 +32,8 @@ vi.mock('../../../../../cache/chunk-prefetcher', () => ({
   ChunkPrefetcher: vi.fn().mockImplementation(() => ({})),
 }));
 
-vi.mock('zarrita', () => ({
-  registry: {},
-  FetchStore: vi.fn().mockImplementation(() => ({})),
-  // Stubbed for vitest strict-mock compatibility; cache-setup.ts
-  // doesn't open zarr groups itself, but it imports through paths
-  // that may transitively touch the zarr namespace.
-  withMaybeConsolidatedMetadata: undefined,
+vi.mock('../../../../../data/zarr', () => ({
+  createStoreForUrl: vi.fn().mockImplementation(() => ({})),
 }));
 
 import { setupCaches } from '../../../../../data/scene-loader/cache/cache-setup';

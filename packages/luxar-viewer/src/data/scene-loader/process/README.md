@@ -100,7 +100,7 @@ export async function processMeshData(
   path: string,
   data: LoadedMeshData,
   viewState: MeshViewState,
-  attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
+  attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all' | 'slab_tolerance'>
 ): Promise<StagedMeshCommit>;
 export function resetMeshNoticesForTesting(): void; // test seam (clears BOTH mesh notices)
 ```

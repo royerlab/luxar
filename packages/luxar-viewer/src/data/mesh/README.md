@@ -178,18 +178,27 @@ exist on `WasmModule` and in both backends.
 Winding is decidable only against the authored winding frame, which is
 `sorted(normal_dims)`. Three cases, and they are genuinely different:
 
-| Displayed triple vs frame              | Action                                                           |
-| -------------------------------------- | ---------------------------------------------------------------- |
-| Same triple, even parity               | Draw as authored                                                 |
-| Same triple, odd parity                | Swap two of each triangle's three indices (`side: 'front'` kept) |
-| A different triple, or no frame at all | `side: 'double'` for the epoch + a one-time notice               |
+| Displayed triple vs frame              | Action                                             |
+| -------------------------------------- | -------------------------------------------------- |
+| Same triple, even parity               | Draw as authored                                   |
+| Same triple, odd parity                | Swap two of each triangle's three indices          |
+| A different triple, or no frame at all | `side: 'double'` for the epoch + a one-time notice |
 
 The reversal is keyed to the _current_ `displayDims` parity, not to the event of
 `displayDims` changing, so it runs on **every** index build in an odd-parity epoch
 — initial load and slice moves included. Nothing restricts the opening view to
-ascending order, so the very first build can already need it. Without it a
+ascending order, so the very first build can already need it.
+
+Two consequences without it, and `double_sided` only covers the first. A
 `double_sided: false` mesh renders inside-out, which for an open surface means it
-vanishes.
+vanishes. And whenever the stored-normal variant is active, the fragment shader's
+`gl_FrontFacing ? N : -N` flip is inverted, so the surface lights as if facing
+away — `gl_FrontFacing` reports _projected_ winding, and a `DoubleSide` mesh's
+back face is still a back face. That second one bites even when both sides draw,
+which is why `resolveWinding` decides parity for a double-sided node too and
+`side` is decided separately (it follows the node's own `double_sided`: `'front'`
+when single-sided, `'double'` otherwise, and `'double'` regardless when the frame
+is undecidable).
 
 Two traps: swapping all three indices is a rotation and leaves winding
 _unchanged_; and reversing in the undecidable case is worse than doing nothing,

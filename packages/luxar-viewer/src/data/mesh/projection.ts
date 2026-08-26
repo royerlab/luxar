@@ -180,53 +180,94 @@ export interface WindingDecision {
  * Nothing restricts the opening view to ascending order, so the very first build
  * can already need it.
  *
+ * ## Why a double-sided mesh is NOT exempt
+ *
+ * This function used to return early for `doubleSided`, reasoning that "both
+ * orientations draw, so parity is unobservable". That is true of rasterization
+ * COVERAGE and false of `gl_FrontFacing`, which the stored-normal fragment
+ * variant reads to flip the interpolated normal toward the camera
+ * (`materials/mesh/shader-glsl.ts`, and the TSL twin via the `frontFacing`
+ * node). In an odd-parity epoch every projected triangle's winding is reversed,
+ * so that flip lands on the wrong side: the wrap term drops to the dim end of
+ * its range and the surface shades with an inverted gradient collapsing toward
+ * `uAmbient` — precisely the artifact the flip exists to remove.
+ *
+ * Spec §5.4 says exactly this, in the sentence that rules out the alternative
+ * `side`-swap implementation: "the stored-normal shading flip (§6.2) requires
+ * the index post-pass form, since the opposite side of a `DoubleSide` mesh is
+ * `DoubleSide` and leaves projected winding (and thus `gl_FrontFacing`)
+ * reversed." And `double_sided` defaults **true** (§3.3), so the exemption
+ * covered the DEFAULT configuration.
+ *
+ * So `reverse` is decided whenever winding is observable at all — when the
+ * material culls, OR when the stored-normal variant is active. `side` still
+ * comes from `doubleSided` alone, and the undecidable-frame notice stays gated
+ * on it too: a mesh that already draws both sides has nothing to be told about
+ * a `DoubleSide` fallback.
+ *
  * @param displayDims - The displayed axis triple, in x/y/z order.
  * @param normalDims - `normal_dims` when the node has stored normals.
  * @param doubleSided - The node's authored `double_sided`.
+ * @param storedNormalsActive - Whether this epoch's shader reads the stored
+ *   `normal` attribute, i.e. whether anything consumes `gl_FrontFacing`. Pass
+ *   {@link storedNormalsUsable}'s result. Keyed on the normal-dims match alone
+ *   rather than also on `shading === 'smooth'`: a needless flip on a
+ *   flat-shaded double-sided node is invisible — coverage is identical and the
+ *   derivative normal is orientation-defined by the fragment — so buying
+ *   correctness here costs no extra plumbing.
  */
 export function resolveWinding(
   displayDims: readonly number[],
   normalDims: readonly number[] | undefined,
-  doubleSided: boolean
+  doubleSided: boolean,
+  storedNormalsActive: boolean
 ): WindingDecision {
-  // An authored double-sided mesh needs no decision: both orientations draw, so
-  // parity is unobservable. Returning early also keeps the notice below quiet
-  // for the overwhelmingly common case.
-  if (doubleSided) return { reverse: false, side: 'double' };
+  // Winding is observable when the material culls, or when the stored-normal
+  // shader reads `gl_FrontFacing` (see the doc comment — a double-sided mesh is
+  // exempt from the first but not the second). Neither: nothing downstream can
+  // tell, so skip the work and keep the notice quiet.
+  if (doubleSided && !storedNormalsActive) return { reverse: false, side: 'double' };
+
+  // Undecidable frame: nothing can be reversed, and the epoch draws both sides.
+  // The REASON is attached only when the node actually asked to be single-sided —
+  // it explains a fallback away from `FrontSide`, which is not a fallback for a
+  // node that never wanted it. (These branches are unreachable while
+  // `storedNormalsActive` is true, since `storedNormalsUsable` already implies
+  // three displayed dims, three normal dims and the same triple; the gating is
+  // written out anyway so the invariant is local rather than inferred.)
+  const undecidable = (reason: string): WindingDecision =>
+    doubleSided
+      ? { reverse: false, side: 'double' }
+      : { reverse: false, side: 'double', undecidableReason: reason };
 
   if (displayDims.length !== 3) {
-    return {
-      reverse: false,
-      side: 'double',
-      undecidableReason: `${displayDims.length} displayed dimensions (a winding frame needs 3)`,
-    };
+    return undecidable(`${displayDims.length} displayed dimensions (a winding frame needs 3)`);
   }
 
   if (!normalDims || normalDims.length !== 3) {
-    return {
-      reverse: false,
-      side: 'double',
-      undecidableReason:
-        'the mesh declares no winding frame (no stored normals), so projected ' +
-        'orientation varies per triangle',
-    };
+    return undecidable(
+      'the mesh declares no winding frame (no stored normals), so projected ' +
+        'orientation varies per triangle'
+    );
   }
 
   const frame = [...normalDims].sort((a, b) => a - b);
   const displayed = [...displayDims].sort((a, b) => a - b);
   const sameTriple = frame.every((d, i) => d === displayed[i]);
   if (!sameTriple) {
-    return {
-      reverse: false,
-      side: 'double',
-      undecidableReason:
-        `displayed axes [${displayDims.join(', ')}] are a different triple than the ` +
+    return undecidable(
+      `displayed axes [${displayDims.join(', ')}] are a different triple than the ` +
         `winding frame [${frame.join(', ')}], so projected orientation varies per ` +
-        'triangle and no index reversal can correct it',
-    };
+        'triangle and no index reversal can correct it'
+    );
   }
 
-  return { reverse: permutationParityIsOdd(displayDims, frame), side: 'front' };
+  // Decidable. `side` is the node's own request; `reverse` is the parity, which
+  // matters to the cull AND to `gl_FrontFacing`.
+  return {
+    reverse: permutationParityIsOdd(displayDims, frame),
+    side: doubleSided ? 'double' : 'front',
+  };
 }
 
 /**
@@ -419,9 +460,12 @@ export function projectMeshTo3D(
     if (reusable) reusable.displayDimsKey = displayDimsKey;
   }
 
-  const winding = resolveWinding(displayDims, normalDims, doubleSided);
   // Per-epoch, like `side`: which normal the shade term may read (spec §3.4).
+  // Computed BEFORE the winding decision, which needs it — a stored-normal epoch
+  // consumes `gl_FrontFacing`, so its winding must stay coherent even when the
+  // material draws both sides.
   const normalsUsable = storedNormalsUsable(displayDims, normalDims);
+  const winding = resolveWinding(displayDims, normalDims, doubleSided, normalsUsable);
 
   // A discrete nd_transform maps this world slice to no local grid point on some
   // hidden dimension, so nothing in this node belongs to the slice. Mirror the

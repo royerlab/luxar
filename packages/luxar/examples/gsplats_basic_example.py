@@ -144,7 +144,6 @@ def main() -> None:
                 "Left (red) splat is near-spherical (isotropic Cholesky).",
                 "Centre (green) splat is elongated along Y (anisotropic diagonal).",
                 "Right (blue) splat is tilted in the XY plane (off-diagonal term).",
-                "Additive blending makes overlapping splats brighten.",
             ],
             observe_label="Notice",
         )

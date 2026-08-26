@@ -101,19 +101,36 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "its .md only selects docs-quality, which runs no pytest",
     ),
     (
-        "README.md",
+        ".agents/skills/luxar-gsplat-pipeline/SKILL.md",
         "py",
-        "test_readme_demo_docs.py drift-guards the root demo documentation",
-    ),
-    (
-        "CLAUDE.md",
-        "py",
-        "check-demo-counts synchronizes its bundled-demo count with the registry",
+        "test_cholesky_documentation.py executes its documented Cholesky packing",
     ),
     (
         ".agents/skills/luxar-visualization/SKILL.md",
         "py",
-        "check-demo-counts synchronizes its demo and focused-example counts",
+        "test_cholesky_documentation.py executes its documented Cholesky packing, "
+        "and check-demo-counts synchronizes its demo and focused-example counts",
+    ),
+    (
+        ".agents/skills/luxar-visualization/references/scene-api.md",
+        "py",
+        "test_cholesky_documentation.py executes its documented Cholesky packing",
+    ),
+    (
+        "CLAUDE.md",
+        "py",
+        "test_cholesky_documentation.py guards its contributor-facing convention, "
+        "and check-demo-counts synchronizes its bundled-demo count with the registry",
+    ),
+    (
+        "docs/specs/GSPLATS_DIMENSION_MAPPING.md",
+        "py",
+        "test_cholesky_documentation.py guards its hand-authoring contract",
+    ),
+    (
+        "README.md",
+        "py",
+        "test_readme_demo_docs.py drift-guards the root demo documentation",
     ),
     (
         "README.md",

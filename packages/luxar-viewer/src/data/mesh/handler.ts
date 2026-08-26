@@ -117,6 +117,7 @@ export async function loadAndStage(
     // extended mesh would otherwise commit on first load but cull on the first
     // slice move, when this sweep re-projects it.
     extend_to_all: meshAttrs?.extend_to_all,
+    slab_tolerance: meshAttrs?.slab_tolerance,
   });
   markPathHealthy();
   session.setMetadata({ info: `${data.faceCount} faces` });

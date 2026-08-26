@@ -170,6 +170,29 @@ export interface MeshMetadata {
   /** `opaque`-mode alpha cutout threshold in `[0, 1]` (§6.2). */
   alpha_cutoff?: number;
 
+  /**
+   * Half-width, IN CELLS, of the nD membership slab a CONTINUOUS hidden dimension
+   * is culled against (§5.2.1): a vertex is inside when it is within
+   * `slab_tolerance` cells of the slice. Strictly positive; defaults to one cell.
+   *
+   * The only authored control mesh has over its nD approximation, and the only
+   * per-node input to `computeTolerance('mesh', …)`. Mesh culls whole triangles
+   * against the slab — a triangle draws only when all three of its vertices are
+   * inside — so on a continuous hidden axis it shows "the surface near this
+   * slice" as a thick slab, never a planar cut (§5.3). This says how far from
+   * the slice — the slab spans twice that.
+   *
+   * Mesh is the only geometry type whose continuous arm is tunable, and the
+   * reason is that it has nothing to measure: the other three derive their
+   * tolerance from a per-element extent (`radii` / `widths` / the truncated
+   * `sigma`) that a mesh vertex does not have, so the slab thickness is invented
+   * rather than read off the data.
+   *
+   * No effect on a DISCRETE hidden dimension (time, channel — the dominant real
+   * case), which takes the half-cell membership rule instead.
+   */
+  slab_tolerance?: number;
+
   blending_mode?: BlendingMode;
 
   /** Whether this node is exposed as a layer in the Layers panel */
