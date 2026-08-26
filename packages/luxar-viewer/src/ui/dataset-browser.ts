@@ -8,6 +8,7 @@
  * for interactive states.
  */
 
+import { isZippedZarrStoreUrl } from '../data/zip/entries';
 import { DirectoryNavigator, type DirectoryEntry } from '../data';
 import { escapeHtml } from '../utils/escape-html';
 import { extractBaseUrl, extractPath } from './dataset-browser/url-utils';
@@ -151,14 +152,14 @@ export class DatasetBrowser {
       // No dataset specified - show browser at root, will display manual entry
       baseUrl = this.origin + '/';
       initialPath = ''; // Don't navigate - just show the browser UI
-    } else if (src.includes('.zarr/') || src.endsWith('.zarr')) {
+    } else if (src.includes('.zarr/') || src.endsWith('.zarr') || isZippedZarrStoreUrl(src)) {
       // We're inside or at a zarr dataset - navigate to parent directory
       try {
         const parsed = new URL(src);
         const pathname = parsed.pathname;
 
         // Find the .zarr part and go to parent directory
-        const zarrIndex = pathname.lastIndexOf('.zarr');
+        const zarrIndex = pathname.toLowerCase().lastIndexOf('.zarr');
         if (zarrIndex > 0) {
           const parentPath = pathname.substring(0, pathname.lastIndexOf('/', zarrIndex - 1));
           baseUrl = parsed.origin + parentPath + '/';
@@ -610,8 +611,9 @@ export class DatasetBrowser {
    * Full URLs are selected as-is (parity with the manual-entry form). A
    * relative path is selected only when it deliberately names a `.zarr`
    * directory — i.e. its last path segment ends with `.zarr` (trailing
-   * slashes ignored). A mere `.zarr` substring (`archives.zarr-backup`,
-   * `foo.zarr.zip`) is NOT a dataset; those navigate instead, and
+   * slashes ignored), OR deliberately names a zipped store (`foo.zarr.zip`,
+   * read in place over range requests). A mere `.zarr` SUBSTRING
+   * (`archives.zarr-backup`) is not a dataset; those navigate instead, and
    * `navigate()` still auto-selects if the server reports a real zarr.
    */
   private commitPathEditor(raw: string): void {
@@ -621,7 +623,11 @@ export class DatasetBrowser {
       return;
     }
     const isFullUrl = path.startsWith('http://') || path.startsWith('https://');
-    const endsWithZarr = path.replace(/\/+$/, '').endsWith('.zarr');
+    const trimmed = path.replace(/\/+$/, '');
+    // A zipped store is a dataset too: the viewer reads it in place over range
+    // requests. Selecting it is right; navigating INTO it would be meaningless
+    // (an archive has no listable children).
+    const endsWithZarr = trimmed.endsWith('.zarr') || isZippedZarrStoreUrl(trimmed);
     if (isFullUrl || endsWithZarr) {
       const fullUrl = isFullUrl ? path : this.navigator.getFullUrl(path);
       if (safeFireSelect(this.onDatasetSelect, fullUrl)) this.close();

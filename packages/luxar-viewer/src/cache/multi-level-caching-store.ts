@@ -22,6 +22,13 @@ import type { MultiLevelCacheStats } from './types';
 export type CacheError =
   | { readonly kind: 'Missing' }
   | { readonly kind: 'NetworkError'; readonly cause: Error }
+  /**
+   * The whole container is unreadable — not this one key. Rethrown by
+   * {@link MultiLevelCachingStore.get} so the loader surfaces `cause`, because
+   * reporting it as a miss would render an empty scene and swallow the
+   * diagnosis a message like `RangeUnsupportedError` exists to deliver.
+   */
+  | { readonly kind: 'Fatal'; readonly cause: Error }
   | { readonly kind: 'Aborted' };
 
 export interface MultiLevelCachingStoreOptions {
@@ -395,6 +402,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
     if (isErr(result)) {
       if (result.error.kind === 'NetworkError') {
         log.warning(Modules.CACHE, `Network error fetching ${key}: ${result.error.cause.message}`);
+      } else if (result.error.kind === 'Fatal') {
+        // The container itself is unreadable (no Range support, archive missing,
+        // access denied). Returning `undefined` would let zarrita fill the chunk
+        // and render an empty scene, hiding a message written to be actionable.
+        throw result.error.cause;
       } else if (result.error.kind === 'Aborted' && !this.disposed) {
         throw new DOMException(`Cache read aborted during invalidation: ${key}`, 'AbortError');
       }
@@ -415,6 +427,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *   error or 5xx after retries exhausted. Caller may back off.
    * - `err({ kind: 'Aborted' })` — caller signal, cache invalidation, or
    *   store disposal aborted the read.
+   * - `err({ kind: 'Fatal', cause })` — the whole container is unreadable, not
+   *   just this key. {@link MultiLevelCachingStore.get} rethrows `cause` rather
+   *   than reporting a miss, so the failure reaches the user instead of
+   *   rendering an empty scene.
    */
   async getResult(
     key: string,
@@ -589,6 +605,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
           result: err({ kind: 'NetworkError', cause: outcome.cause }),
           source: 'network',
         };
+      }
+      if (outcome.kind === 'fatal') {
+        // Reported, not thrown: `getResult` catches throws and flattens them to
+        // NetworkError, which `get` turns into `undefined` — i.e. exactly the
+        // empty scene this kind exists to prevent. `get` rethrows it instead.
+        return { result: err({ kind: 'Fatal', cause: outcome.cause }), source: 'network' };
       }
       if (outcome.kind === 'missing') {
         return { result: err({ kind: 'Missing' }), source: 'missing' };

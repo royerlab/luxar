@@ -44,7 +44,74 @@ export type ChunkFetchOutcome =
   /** A caller signal, a store disposal, or an invalidation cancelled the read. */
   | { kind: 'aborted' }
   /** Transient failure after the source exhausted its own retries. */
-  | { kind: 'error'; cause: Error };
+  | { kind: 'error'; cause: Error }
+  /**
+   * The CONTAINER is unreadable — not this one key.
+   *
+   * Distinct from `error` because the store's handling of the two must differ:
+   * a failed chunk degrades to a fill-valued read, which is right for one
+   * chunk and catastrophic for the whole store (a misconfigured server would
+   * render an empty scene instead of saying what is wrong). The store rethrows
+   * this so the loader surfaces `cause`.
+   */
+  | { kind: 'fatal'; cause: Error };
+
+/**
+ * A fault with the CONTAINER itself, as opposed to one missing member.
+ *
+ * Lives in the cache layer, not next to the reader that raises it, for the same
+ * reason {@link ArchiveByteReader} does: `src/cache` sits below `src/data`, so
+ * the source cannot import a concrete reader to recognise its errors. `data`
+ * imports this downward instead.
+ *
+ * The distinction is load-bearing. A missing chunk is a normal `undefined` that
+ * zarrita fills; an unreadable container must surface, or a misconfigured
+ * server renders an empty scene and the crafted remedy never reaches anyone.
+ */
+export class ArchiveFaultError extends Error {
+  constructor(
+    message: string,
+    readonly url: string,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = 'ArchiveFaultError';
+  }
+}
+
+/**
+ * The minimum a byte-container has to offer for {@link ChunkSource} to read it.
+ *
+ * Declared HERE, and injected, rather than importing a concrete store: `src/cache`
+ * sits below `src/data` in the layer order, so the cache layer must not reach up
+ * for `data/zip/store`. The cache defines the port; the data layer supplies the
+ * adapter. It also keeps this module ignorant of zip specifics entirely.
+ */
+export interface ArchiveByteReader {
+  /**
+   * Read one member.
+   *
+   * `signal` is ADVISORY. A container whose reader has no per-call channel — a
+   * zip, whose `unzipit` reader is `read(offset, size)` — cannot cancel an
+   * individual member read, and an ambient "current signal" would be raced by
+   * concurrent gets. Such an implementation scopes real cancellation to its own
+   * lifetime instead, aborting in flight reads from `dispose()`, and uses this
+   * signal only to stop early and to label the outcome. Do not read a passed
+   * signal as a guarantee that the bytes stopped arriving.
+   */
+  get(key: string, signal?: AbortSignal): Promise<Uint8Array | undefined>;
+  /**
+   * Fresh identity of the container, bypassing caches — an opaque token, so
+   * this layer needs to know nothing about ETags or HTTP. `null` means "cannot
+   * tell", which is never evidence of a change.
+   *
+   * The container answers this rather than the caller because it is a request
+   * against the same URL the container already reads: doing it here lets one
+   * `HEAD` serve both identity and the archive length.
+   */
+  probeIdentity?(signal?: AbortSignal, timeoutMs?: number): Promise<string | null>;
+  dispose(): void;
+}
 
 /** Where `MultiLevelCachingStore` gets its bytes. */
 export interface ChunkSource {

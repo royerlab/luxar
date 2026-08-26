@@ -21,7 +21,9 @@ import {
   deviceClassPoolBytes,
   type CacheBudgets,
 } from '../../../cache/heap-budget';
+import { ZipChunkSource } from '../../../cache/chunk-source/zip-chunk-source';
 import { isZippedStoreUrl } from '../../zip/entries';
+import { LuxarZipStore } from '../../zip/store';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import type { CacheTelemetryState } from '../../../types/data-monitor-types';
@@ -107,14 +109,15 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   // tier doesn't reserve pool it can't use.
   const sliceEnabled = appConfig.cache.sliceCacheEnabled && !noCache && !noSliceCache;
   const l0Enabled = appConfig.cache.l0Enabled && !noCache;
-  // A zipped store cannot go through MultiLevelCachingStore yet: that class
-  // holds a base URL and builds its own chunk URLs, so it has no way to ask a
-  // zip archive for a member. Until it takes an injectable byte source, a
-  // `.zarr.zip` reads uncached rather than silently 404ing every chunk against
-  // `archive.zip/<key>`. Deliberately narrow: it costs zipped datasets their
-  // L1/L2 tiers and changes nothing for directory stores.
+  // Zipped stores are cached like any other now: MultiLevelCachingStore takes a
+  // ChunkSource rather than a base URL, so an archive member is reachable
+  // without a per-chunk URL. Caching earns MORE here than for a directory
+  // store — an archive costs ~2 requests per member (unzipit reads each local
+  // file header in its own round trip) and a repeat read cannot fall back to
+  // the browser's HTTP cache, because every member read is a `Range` request
+  // against one URL.
   const zipped = isZippedStoreUrl(url);
-  const l1Enabled = appConfig.cache.enabled && !noCache && !zipped;
+  const l1Enabled = appConfig.cache.enabled && !noCache;
   // Device-class fallback pool (mobile/laptop/desktop) for WebKit without an
   // override — where the heap can't be measured. undefined in non-browser envs.
   const budgets = computeCacheBudgets(undefined, poolOverrideBytes, deviceClassPoolBytes(), {
@@ -170,14 +173,17 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   let cachingStore: MultiLevelCachingStore | null = null;
 
   if (l1Enabled) {
-    cachingStore = new MultiLevelCachingStore(url, {
-      l1MaxSize: budgets.l1Bytes,
-      l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
-      debug: cacheDebug || appConfig.cache.debug,
-      noCache,
-      noOpfs,
-      clearCache,
-    });
+    cachingStore = new MultiLevelCachingStore(
+      zipped ? new ZipChunkSource(url, new LuxarZipStore(url)) : url,
+      {
+        l1MaxSize: budgets.l1Bytes,
+        l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
+        debug: cacheDebug || appConfig.cache.debug,
+        noCache,
+        noOpfs,
+        clearCache,
+      }
+    );
     await cachingStore.init();
     if (noOpfs) {
       log.info(Modules.SCENE_LOADER, 'L2 OPFS tier disabled via ?no-opfs URL parameter');
@@ -216,12 +222,6 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
     rawStore = cachingStore;
   } else {
-    if (zipped && appConfig.cache.enabled && !noCache) {
-      log.info(
-        Modules.SCENE_LOADER,
-        'Zipped store (.zarr.zip): reading uncached — the L1/L2 chunk cache does not support archives yet'
-      );
-    }
     rawStore = zarr.createStoreForUrl(url);
   }
 

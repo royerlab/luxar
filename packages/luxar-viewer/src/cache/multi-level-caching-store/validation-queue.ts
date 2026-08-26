@@ -115,7 +115,9 @@ export interface RemoteValidationToken {
   /** Comparison token. Implicit tokens carry a `zattrs:` prefix so they can
    *  never collide with a producer-stamped content hash. */
   hash: string;
-  mode: 'content-hash' | 'zattrs-hash';
+  /** `archive-etag`: a zipped store, identified by a HEAD on the archive
+   *  (its root attrs are inside the file, so no document can be re-read). */
+  mode: 'content-hash' | 'zattrs-hash' | 'archive-etag';
 }
 
 /**

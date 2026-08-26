@@ -1,9 +1,9 @@
 /**
- * Cold-open benchmark: zipped store vs the directory store it was built from.
+ * Zipped-store benchmark: archive vs the directory store it was built from.
  *
- * This is the instrument that decides whether reading `.zarr.zip` through the
- * chunk cache is worth building (royerlab/luxar#1716). It reports the five
- * numbers that issue names, per variant:
+ * This measures the zipped archive path against the directory store it was
+ * built from, both cold and on a chunk-cache revisit. It reports five numbers
+ * per variant:
  *
  *   1. time to first render (viewer `initialized`)
  *   2. request count
@@ -18,11 +18,10 @@
  * measuring only time/requests/bytes could bless a change that makes the
  * viewer stutter. The shipped demo archives are 100% DEFLATE.
  *
- * FAIRNESS NOTE: every variant runs with `?no-cache`, because a zipped store
- * currently bypasses L1/L2 regardless. That makes this an uncached-vs-uncached
- * comparison, which is the right A/B for the store layer but is NOT the cold
- * open a user experiences on a directory store with the cache on. Read the
- * directory row as "the same store, same conditions", not as today's baseline.
+ * FAIRNESS NOTE: the default run gives every variant `?no-cache`. That makes
+ * it an uncached-vs-uncached comparison, which is the right A/B for the store
+ * layer. Revisit mode instead leaves L1/L2 enabled for every variant and
+ * measures the second load in the same browser context.
  */
 
 import { test, expect } from '@playwright/test';
@@ -35,6 +34,19 @@ import { waitForLuxarReady } from '../e2e/helpers';
 const REPEATS = Number(process.env.LUXAR_BENCH_REPEATS ?? 3);
 /** Ready-wait budget. Software rendering in headless is slow; be generous. */
 const READY_TIMEOUT_MS = Number(process.env.LUXAR_BENCH_READY_TIMEOUT_MS ?? 240_000);
+
+/**
+ * `LUXAR_BENCH_REVISIT=1` measures the SECOND load in the same browser context,
+ * with the chunk cache ON.
+ *
+ * The default run is deliberately `?no-cache`, which is the right A/B for the
+ * store layer but says nothing about caching. And simply dropping `?no-cache`
+ * would say almost as little: every sample gets a fresh context, so L1 is empty
+ * and L2/OPFS starts cold — a "cached" first visit is an uncached visit plus the
+ * cost of populating the cache. The question caching actually answers is what a
+ * RETURN visit costs, so measure that.
+ */
+const REVISIT = process.env.LUXAR_BENCH_REVISIT === '1';
 
 interface Variant {
   readonly label: string;
@@ -122,8 +134,21 @@ async function sample(page: import('@playwright/test').Page, datasetUrl: string)
     }).observe({ entryTypes: ['longtask'] });
   });
 
+  const query = REVISIT ? 'debug' : 'debug&no-cache';
+
+  if (REVISIT) {
+    // First visit: populate the cache, then discard its counters entirely.
+    await page.goto(`/?src=${encodeURIComponent(datasetUrl)}&${query}`);
+    await waitForLuxarReady(page, READY_TIMEOUT_MS);
+    requests = 0;
+    bytes = 0;
+    await page.evaluate(() => {
+      (window as unknown as { __longTaskMs: number }).__longTaskMs = 0;
+    });
+  }
+
   const started = Date.now();
-  await page.goto(`/?src=${encodeURIComponent(datasetUrl)}&debug&no-cache`);
+  await page.goto(`/?src=${encodeURIComponent(datasetUrl)}&${query}`);
   try {
     await waitForLuxarReady(page, READY_TIMEOUT_MS);
   } catch (error) {
@@ -204,7 +229,9 @@ test('zipped vs directory cold open', async ({ browser }) => {
 
   const table = [
     '',
-    `### Zipped-store cold open (median of ${REPEATS}, uncached, Range-capable server)`,
+    REVISIT
+      ? `### Zipped-store REVISIT (median of ${REPEATS}, chunk cache ON, second load in one context)`
+      : `### Zipped-store cold open (median of ${REPEATS}, uncached, Range-capable server)`,
     '',
     '| variant | ready (ms) | requests | bytes (kB) | long tasks (ms) | central dir (kB) |',
     '|---|---:|---:|---:|---:|---:|',
