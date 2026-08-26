@@ -104,7 +104,7 @@ export class LuxarHttpRangeReader {
   /**
    * Arm or disarm retention of fetched ranges.
    *
-   * Armed by {@link LuxarZipStore} around the directory read and disarmed
+   * Armed by `LuxarZipStore` around the directory read and disarmed
    * afterwards, so what survives is the archive's structure — not its data.
    */
   retainReads(on: boolean): void {

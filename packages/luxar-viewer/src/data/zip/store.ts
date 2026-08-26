@@ -60,7 +60,7 @@ export class LuxarZipStore implements AsyncReadable {
 
   /**
    * Fresh identity of the archive, delegated to the reader so the `HEAD` it
-   * costs also seeds the length {@link ZipFileStore} would otherwise ask for
+   * costs also seeds the length `ZipFileStore` would otherwise ask for
    * separately.
    */
   probeIdentity(signal?: AbortSignal): Promise<string | null> {
