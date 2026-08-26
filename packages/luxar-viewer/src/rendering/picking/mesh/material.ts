@@ -79,9 +79,7 @@ export class MeshPickingMaterial
         uSurfaceDepth: { value: 1 },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
-        ...(config.baseColorTexture
-          ? { uBaseColorTex: { value: config.baseColorTexture } }
-          : {}),
+        ...(config.baseColorTexture ? { uBaseColorTex: { value: config.baseColorTexture } } : {}),
       },
       vertexShader: MESH_PICK_GLSL.vertex,
       fragmentShader: MESH_PICK_GLSL.fragment,

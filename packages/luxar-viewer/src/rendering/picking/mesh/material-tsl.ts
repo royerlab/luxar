@@ -70,9 +70,7 @@ export class MeshPickingTSLMaterial
       // Bound only when the node has a texture, matching the GLSL twin's define:
       // `texture()` captures its Texture, so the real image is installed by
       // `updateBaseColorTexture` below rather than written through a proxy.
-      ...(config.baseColorTexture
-        ? { uBaseColorTex: texture(config.baseColorTexture) }
-        : {}),
+      ...(config.baseColorTexture ? { uBaseColorTex: texture(config.baseColorTexture) } : {}),
     };
 
     this.uniforms = {
@@ -87,9 +85,7 @@ export class MeshPickingTSLMaterial
       // node, so writing this would change nothing. `updateBaseColorTexture` rebuilds
       // the node instead, and this exists so callers can READ the bound texture
       // (`clone()` does, and so does `applyMeshTexture`'s idempotence check).
-      ...(config.baseColorTexture
-        ? { uBaseColorTex: { value: config.baseColorTexture } }
-        : {}),
+      ...(config.baseColorTexture ? { uBaseColorTex: { value: config.baseColorTexture } } : {}),
     };
 
     this.toneMapped = false;

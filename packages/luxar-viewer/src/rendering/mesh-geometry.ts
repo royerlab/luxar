@@ -655,8 +655,7 @@ function replaceVertexAttribute(
   // A DISTINCT currency key per attribute. Sharing one would make an epoch that
   // uploaded normals look like it had uploaded uvs too, so the uv write would be
   // skipped as already-current and the mesh would sample the 1-vertex stub.
-  const key =
-    name === 'normal' ? 'meshNormal' : name === 'uv' ? 'meshUv' : 'meshAScalar';
+  const key = name === 'normal' ? 'meshNormal' : name === 'uv' ? 'meshUv' : 'meshAScalar';
   // A ladder's buffer is CAPACITY-sized while `data` is the committed prefix, so
   // the in-place copy is the steady state there too — the length test compares the
   // bound buffer against the capacity, and the copy writes only the prefix.

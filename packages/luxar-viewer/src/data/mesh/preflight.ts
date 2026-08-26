@@ -628,7 +628,7 @@ const UNENCODED_COLOR_DTYPES = new Set([
  * `createImageBitmap` and gets back a 4-channel 8-bit surface whatever the source
  * stored — so guessing wrong means charging the wrong number against the ceiling.
  */
-const TEXTURE_DECODE_KIND: Record<MeshTextureEncoding, 'raw' | 'codec'> = {
+export const TEXTURE_DECODE_KIND: Record<MeshTextureEncoding, 'raw' | 'codec'> = {
   raw: 'raw',
   png: 'codec',
   webp: 'codec',

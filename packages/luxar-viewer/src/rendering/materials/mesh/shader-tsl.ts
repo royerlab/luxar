@@ -252,9 +252,7 @@ export function meshWebGPUFactory(
   // WebGPU bakes the attribute set into the pipeline, so an unused-but-declared
   // attribute is a real difference between variants, not dead code the compiler
   // drops.
-  const aUv: TSLNode | null = config.useBaseColorTexture
-    ? attribute<'vec2'>('uv', 'vec2')
-    : null;
+  const aUv: TSLNode | null = config.useBaseColorTexture ? attribute<'vec2'>('uv', 'vec2') : null;
 
   // ---- Varyings ----
   // Declared up front and `.assign()`ed inside the vertex body — the TSL pattern

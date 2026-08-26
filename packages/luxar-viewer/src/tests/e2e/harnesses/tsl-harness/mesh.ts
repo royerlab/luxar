@@ -135,10 +135,22 @@ const QUAD_UVS = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
  */
 function buildBaseColorTexture(): THREE.DataTexture {
   const data = new Uint8Array([
-    255, 0, 0, 255,      // red, opaque
-    0, 255, 0, 255,      // green, opaque
-    0, 0, 255, 255,      // blue, opaque
-    255, 255, 255, 0,    // white, FULLY TRANSPARENT — the cutout quadrant
+    255,
+    0,
+    0,
+    255, // red, opaque
+    0,
+    255,
+    0,
+    255, // green, opaque
+    0,
+    0,
+    255,
+    255, // blue, opaque
+    255,
+    255,
+    255,
+    0, // white, FULLY TRANSPARENT — the cutout quadrant
   ]);
   const tex = new THREE.DataTexture(data, 2, 2, THREE.RGBAFormat, THREE.UnsignedByteType);
   tex.magFilter = THREE.NearestFilter;

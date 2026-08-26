@@ -59,7 +59,14 @@ vi.mock('../../../../data/zarr', async (importOriginal) => {
 
 /** A stub `ImageBitmap` recording whether it was closed. */
 function fakeBitmap(width: number, height: number) {
-  return { width, height, closed: false, close(this: { closed: boolean }) { this.closed = true; } };
+  return {
+    width,
+    height,
+    closed: false,
+    close(this: { closed: boolean }) {
+      this.closed = true;
+    },
+  };
 }
 
 describe('decodeMeshTexture — encoded payloads', () => {
@@ -76,13 +83,7 @@ describe('decodeMeshTexture — encoded payloads', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('decodes to a bitmap payload carrying the verified dimensions', async () => {
-    const result = await decodeMeshTexture(
-      PATH,
-      handle('|u1'),
-      decl(),
-      newDecoder(),
-      storeRoot
-    );
+    const result = await decodeMeshTexture(PATH, handle('|u1'), decl(), newDecoder(), storeRoot);
     expect(result).toMatchObject({ kind: 'bitmap', width: 4, height: 2, channels: 4 });
   });
 
@@ -151,13 +152,7 @@ describe('decodeMeshTexture — raw payloads', () => {
     // sampled value, since the GPU normalizes uint8 to [0, 1] for free. At
     // 4096x4096 RGBA that is the difference between inside the budget and over.
     nextRead = { data: new Uint8Array(12) };
-    const result = await decodeMeshTexture(
-      PATH,
-      handle('|u1'),
-      rawDecl,
-      newDecoder(),
-      storeRoot
-    );
+    const result = await decodeMeshTexture(PATH, handle('|u1'), rawDecl, newDecoder(), storeRoot);
     expect(result.kind).toBe('raw');
     if (result.kind === 'raw') expect(result.pixels).toBeInstanceOf(Uint8Array);
   });
@@ -174,9 +169,7 @@ describe('decodeMeshTexture — raw payloads', () => {
     // natively would hand the GPU quantization codes and render a garbage image
     // — the dtype alone cannot decide this, only the encoding attr can.
     const decoder = newDecoder();
-    const spy = vi
-      .spyOn(decoder, 'decode')
-      .mockResolvedValue(new Float32Array(12) as never);
+    const spy = vi.spyOn(decoder, 'decode').mockResolvedValue(new Float32Array(12) as never);
     const result = await decodeMeshTexture(
       PATH,
       handle('<u2', {

@@ -160,19 +160,6 @@ export function detectFramebufferYDown(renderer: Renderer): boolean {
 }
 
 /**
- * Build a `RendererCapabilities` snapshot from a constructed
- * renderer. Call once after renderer init; pass the result to
- * consumers (PostProcessingManager, SceneManager, …).
- *
- * `framebufferYDown` is computed by {@link detectFramebufferYDown} when
- * not supplied — that's the production path. Tests pass an explicit
- * value to skip the renderer-backend probe.
- */
-export function createRendererCapabilities(
-  renderer: Renderer,
-  framebufferYDown: boolean = detectFramebufferYDown(renderer)
-): RendererCapabilities {
-/**
  * Whether a live WebGPU device advertises the optional `float32-filterable`
  * feature (or, under the WebGL2 compat backend, the equivalent GL extension).
  *
@@ -202,6 +189,19 @@ function hasWebGPUFloat32Filterable(renderer: unknown): boolean {
   return false;
 }
 
+/**
+ * Build a `RendererCapabilities` snapshot from a constructed
+ * renderer. Call once after renderer init; pass the result to
+ * consumers (PostProcessingManager, SceneManager, …).
+ *
+ * `framebufferYDown` is computed by {@link detectFramebufferYDown} when
+ * not supplied — that's the production path. Tests pass an explicit
+ * value to skip the renderer-backend probe.
+ */
+export function createRendererCapabilities(
+  renderer: Renderer,
+  framebufferYDown: boolean = detectFramebufferYDown(renderer)
+): RendererCapabilities {
   const display = detectDisplayCapabilities();
 
   if (isWebGLRenderer(renderer)) {

@@ -159,7 +159,10 @@ export function applyMeshTexture(
   // re-uploading a 2048x1024 basemap on every slice move is the regression this
   // avoids. Cached on the node rather than in a module map so it is collected with
   // the node and cannot outlive a dataset switch.
-  const cache = object.userData as { meshTextureSource?: MeshTextureData; meshTexture?: THREE.Texture };
+  const cache = object.userData as {
+    meshTextureSource?: MeshTextureData;
+    meshTexture?: THREE.Texture;
+  };
   let texture = cache.meshTexture ?? null;
   if (cache.meshTextureSource !== data || !texture) {
     cache.meshTexture?.dispose();

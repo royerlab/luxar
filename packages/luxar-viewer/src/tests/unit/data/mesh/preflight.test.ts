@@ -1051,7 +1051,12 @@ describe('preflightMesh — textures and UVs', () => {
     // would push it past the 512 MiB ceiling and falsely reject writer output.
     const result = await preflightMesh(
       PATH,
-      texAttrs({ texture_encoding: 'raw', texture_width: 4096, texture_height: 4096, texture_channels: 4 }),
+      texAttrs({
+        texture_encoding: 'raw',
+        texture_width: 4096,
+        texture_height: 4096,
+        texture_channels: 4,
+      }),
       texHandles({ texture: fakeArray([4096, 4096, 4], '|u1', [512, 4096, 4]) })
     );
     expect(result.accountedBytes).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
