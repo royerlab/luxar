@@ -114,6 +114,55 @@ describe('DimensionSliders - keyboard selection indicator', () => {
     expect(status?.textContent).not.toContain('[/]: 10 · Channel');
     sliders.dispose();
   });
+
+  // A slider row's name is now CSS-ellipsised once it would claim the value's
+  // reserved width (#2196), so the full text has to survive somewhere. jsdom
+  // does no layout and therefore cannot see the truncation itself — what it CAN
+  // pin is that nothing is left unrecoverable, which is the half that regressed
+  // when the ellipsis was added.
+  it('gives every slider name a tooltip carrying its full text', () => {
+    const sliders = buildSliders();
+    const names = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-dimension-slider__name')
+    );
+
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      expect(name.title).toBe(name.textContent);
+    }
+    sliders.dispose();
+  });
+
+  it('prefers an authored description over the bare name, and only then underlines', () => {
+    // The `--with-tooltip` dotted underline advertises that hovering reveals
+    // something NEW. It must not appear on the fallback tooltip, which only
+    // repeats text already on screen.
+    const described: SimpleDims = {
+      ...dims,
+      metadata: dims.metadata!.map((meta, index) =>
+        index === 3 ? { ...meta, description: 'Acquisition frame index' } : meta
+      ),
+    };
+    const sliders = new DimensionSliders({
+      container: document.getElementById('test-container')!,
+      dims: described,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 15],
+        [0, 2],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'Frame', 'Channel'],
+      selectedDimension: 0,
+    });
+
+    const frame = document.querySelector<HTMLElement>('.luxar-dimension-slider__name')!;
+    expect(frame.textContent).toBe('Frame');
+    expect(frame.title).toBe('Acquisition frame index');
+    expect(frame.className).toContain('luxar-dimension-slider__name--with-tooltip');
+    sliders.dispose();
+  });
 });
 
 // ui.md O1 / Phase E39: previously named "Memory Leak Prevention" — a

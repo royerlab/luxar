@@ -21,7 +21,11 @@
      scrolling body (which takes flex: 1; min-height: 0). */
   width: 80%;
   max-width: 800px;
-  min-width: 400px;
+  /* The floor yields to the viewport instead of overflowing it: a flat 400px
+     combined with `left: 50%; translateX(-50%)` put the panel at left -6px /
+     right 386px in a 380px window — hanging off BOTH edges, with no scroll
+     affordance because the panel is `position: fixed`. */
+  min-width: min(400px, calc(100vw - 2 * var(--luxar-spacing-10)));
   max-height: min(360px, 45vh);
   display: flex;
   flex-direction: column;
@@ -138,11 +142,31 @@
   align-items: center;
   gap: var(--luxar-spacing-4);
   margin-bottom: var(--luxar-spacing-2);
+
+  /* Width held in reserve for the live value readout, so a long dimension NAME
+     can never squeeze it to nothing. The value is right-aligned, so a box wider
+     than its glyphs is invisible — the reservation costs nothing on the common
+     short value and only bites when the name would otherwise take the row. */
+  --luxar-dim-value-floor: 88px;
 }
 
 .luxar-dimension-slider__name {
+  /* Two bounds, and they answer different attacks — §7.6 protects a label from
+     a long VALUE, which `flex: 0 0 auto` still does here. But unlike a GUI
+     controller label ("Opacity"), this text is DATASET-controlled: it is the
+     dimension name straight out of the store. So it needs a bound of its own,
+     or it takes the whole row — a 62-char name measured 385px against a 400px
+     panel, leaving the value 0px wide and overflowing the row by 34px, which
+     `__scroll` (overflow-y: auto forces overflow-x to compute to auto) then
+     turned into a horizontal scrollbar inside the panel.
+     `max-width` rather than a shrink factor on purpose: flex shrink is weighted
+     by base size, so making the name shrinkable would let a long value shrink
+     it too — the exact regression §7.6 exists to prevent. */
   flex: 0 0 auto;
+  max-width: calc(100% - var(--luxar-dim-value-floor) - var(--luxar-spacing-4));
   font-weight: var(--luxar-font-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -153,7 +177,11 @@
 
 .luxar-dimension-slider__value {
   flex: 1 1 auto;
-  min-width: 0;
+  /* The other half of the row contract: the name may not claim the last
+     `--luxar-dim-value-floor` pixels, and the value may not be shrunk below
+     them. Both halves are needed — the name's `max-width` alone would leave the
+     floor unclaimed if a future edit made the value shrinkable past it. */
+  min-width: var(--luxar-dim-value-floor);
   font-family: var(--luxar-font-mono);
   font-size: var(--luxar-text-md);
   color: var(--luxar-text-primary);

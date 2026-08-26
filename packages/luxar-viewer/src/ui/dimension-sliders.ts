@@ -672,10 +672,13 @@ export class DimensionSliders {
     const name = this.dimensionNames[dimIndex] || `Dim ${dimIndex}`;
     dimName.textContent = name;
 
-    // Add tooltip with description if available
-    if (dimMeta?.description) {
-      dimName.title = dimMeta.description;
-    }
+    // The name is ellipsised by CSS once it would claim the value's reserved
+    // width, so it always needs a tooltip to stay recoverable — falling back to
+    // the bare name when there is no description, exactly as the dropdown and
+    // toggle labels already do (`createDropdownInGrid` / `createToggleInGrid`).
+    // The dotted-underline affordance stays tied to `description`: a tooltip
+    // that only repeats visible text should not advertise itself.
+    dimName.title = dimMeta?.description ?? name;
 
     const valueLabel = document.createElement('span');
     valueLabel.id = `luxar-dim-value-${dimIndex}`;
