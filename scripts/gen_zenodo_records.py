@@ -648,6 +648,10 @@ def _dataset_rows(
                 # can distinguish an unmeasured archive from one deliberately
                 # left unmeasured because the local bytes are not the pinned ones.
                 "char_key": _char_key(dataset, variant, spec["name"]),
+                # A published, reader-facing reason for an absent figure. Kept
+                # separate from `quality_note`, which is internal provenance and
+                # is never rendered -- see the module docstring.
+                "caveat": (info or {}).get("quality_caveat"),
             }
         )
     return rows
@@ -745,6 +749,13 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
                     f"{row['topology']} | {row['psnr']} | {row['fg_psnr']} | "
                     f"{row['vs_raw']} |\n"
                 )
+            # An em dash in a quality column means "not stated", which a reader
+            # cannot distinguish from "not measurable" or from evasion. Where the
+            # sidecar records a reason meant for publication, say it here rather
+            # than leaving the blank to speak for itself.
+            for row in rows:
+                if row.get("caveat"):
+                    out.append(f"\n- `{row['file']}`: {row['caveat']}\n")
         else:
             out.append("\n| File | Size |\n|---|---:|\n")
             for row in rows:

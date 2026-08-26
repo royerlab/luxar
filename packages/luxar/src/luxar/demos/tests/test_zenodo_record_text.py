@@ -1169,3 +1169,93 @@ class TestWhoWroteTheEntryDecides:
         )
 
         assert row["splats"] == "99,999"
+
+
+# ---------------------------------------------------------------------------
+# An absent quality figure must publish its reason; its provenance must not.
+#
+# `quality_note` was read by nobody -- so every reason recorded in the sidecar
+# was invisible on the records, and a reader saw a bare em dash with no way to
+# tell "never scored" from "cannot be scored" from "not telling you". On a record
+# whose stated purpose is publishing reconstruction quality, that blank is the
+# cell most likely to read as evasion.
+#
+# The two fields stay separate on purpose. Notes carry the wrong turns taken on
+# the way to a number, which belong in the repository and not on a DOI.
+# ---------------------------------------------------------------------------
+
+
+class TestAnAbsentFigurePublishesItsReason:
+    def _render(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sidecar: dict
+    ) -> str:
+        manifest = _fake_manifest([_entry("movie.gsplats.zarr.zip", "p" * 64)])
+        # `_fake_manifest` is shaped for `_dataset_rows`; rendering a whole record
+        # also needs the record header fields.
+        manifest["records"]["cc-by"].update(
+            {"title": "Test record", "zenodo_doi": "10.5281/zenodo.0"}
+        )
+        chars_path = tmp_path / "chars.json"
+        chars_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "archives": {
+                        gen._char_key("ds", "", "movie.gsplats.zarr.zip"): sidecar
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(gen, "CHARACTERISTICS", chars_path)
+        return gen.render_record("cc-by", manifest)
+
+    _MEASURED = {
+        "n_splats": 10,
+        "psnr_db": None,
+        "measured_from": "cache",
+        "measured_sha256": "a" * 64,
+    }
+
+    def test_the_caveat_reaches_the_record(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        text = self._render(
+            gen,
+            tmp_path,
+            monkeypatch,
+            dict(self._MEASURED, quality_caveat="Scoring measures the regridding."),
+        )
+
+        assert "Scoring measures the regridding." in text
+
+    def test_the_internal_note_never_reaches_the_record(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Provenance is for maintainers. A DOI is forever and public.
+
+        The notes name the files I checked by mistake and the metrics that fooled
+        me. Publishing that would be worse than publishing nothing, so the
+        boundary is a test rather than a convention.
+        """
+        text = self._render(
+            gen,
+            tmp_path,
+            monkeypatch,
+            dict(
+                self._MEASURED,
+                quality_note="measured against fused.deconv.new.zarr.zip by mistake",
+                quality_caveat="Not recoverable for this archive.",
+            ),
+        )
+
+        assert "Not recoverable for this archive." in text
+        assert "by mistake" not in text
+        assert "fused.deconv" not in text
+
+    def test_no_caveat_adds_no_footnote(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A dataset with nothing to explain gains no empty bullet."""
+        text = self._render(gen, tmp_path, monkeypatch, dict(self._MEASURED))
+
+        assert "`movie.gsplats.zarr.zip`:" not in text
