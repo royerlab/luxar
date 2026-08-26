@@ -43,6 +43,10 @@ def add_gsplats(
 ) -> Union[GSplats, Group]:
 ```
 
+`cholesky_factors` packs the lower-triangular factor L of the covariance
+(Σ = L·Lᵀ) in row-major order. Its diagonal is scale-like: isotropic std σ in
+3D uses `[σ, 0, σ, 0, 0, σ]`, not `1/σ`.
+
 **`dim_order`** — Maps data columns to scene dimensions by name. Also reorders and embeds Cholesky factors automatically. For example, `dim_order=["z", "y", "x"]` declares that the first column of `centers` corresponds to the scene's "z" dimension, etc.
 
 When `dim_order` is specified and the data has fewer dimensions than the scene, the `fill` and `fill_sigma` parameters provide fixed coordinates and covariance widths for the unmapped dimensions. The method automatically expands the centers and Cholesky factors to scene dimensionality.
@@ -188,6 +192,7 @@ The number of specified dimensions must match the splat data dimensionality.
 cholesky_factors.shape[1] == splat_ndim * (splat_ndim + 1) // 2
 ```
 Cholesky factors must match splat dimensionality, not scene dimensionality.
+Their values follow the covariance-factor packing described above.
 
 ### Rule 3: Mutual Exclusivity
 ```

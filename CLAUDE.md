@@ -727,7 +727,7 @@ luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # 
 # groups kept); auto/memory also re-quantize the CENTERS to per-axis uint16
 # fixed-point, so on ordinary spatial data centers are bit-exact only under
 # -e precision. Three exceptions stay exact in every mode: a GRIDDED axis (a
-# stacked time/channel centers column with near-zero Cholesky extent) keeps
+# stacked time/channel centers column that lands on a regular lattice) keeps
 # uint16 but has its grid snapped onto the data's own spacing; a LUT-eligible
 # centers array is stored verbatim as
 # lut_uint8 (~1 B/value); and an axis that is NEITHER gridded nor LUT-eligible

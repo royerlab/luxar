@@ -228,7 +228,9 @@ class GSplatData(
     amplitudes : np.ndarray, shape (N_total,)
         Cached concatenation of all LOD amplitudes.
     cholesky_factors : np.ndarray, shape (N_total, tril)
-        Cached concatenation of all LOD Cholesky factors.
+        Cached concatenation of all LOD packed lower-triangular factors L of the
+        covariance (Σ = L·Lᵀ), using the convenience-constructor convention:
+        isotropic std σ uses [σ, 0, σ, 0, 0, σ], not 1/sigma.
     colors : Optional[np.ndarray], shape (N_total, 3) or (N_total, 4)
         Cached concatenation of all LOD colors (None if no LOD has colors).
         The optional 4th column is per-splat opacity alpha in [0, 1].

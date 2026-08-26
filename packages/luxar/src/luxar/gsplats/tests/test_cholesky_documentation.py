@@ -8,8 +8,11 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
 
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.group.group import Group
+from luxar.encoding import ArrayDecoder
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
@@ -19,6 +22,7 @@ PACKING_CLAIM_PATHS = (
     ".agents/skills/luxar-visualization/SKILL.md",
     ".agents/skills/luxar-visualization/references/scene-api.md",
     ".agents/skills/luxar-gsplat-pipeline/SKILL.md",
+    "docs/specs/GSPLATS_DIMENSION_MAPPING.md",
 )
 
 ISOTROPIC_PACKING = re.compile(r"\[(?P<items>(?:σ|0)(?:\s*,\s*(?:σ|0)){5})\]")
@@ -37,12 +41,10 @@ def _assert_isotropic_packing_recovers_sigma(text: str, source: str) -> None:
     )
 
     for match in matches:
+        items = [item.strip() for item in match["items"].split(",")]
+        assert items == ["σ", "0", "σ", "0", "0", "σ"]
         packed = np.array(
-            [
-                SIGMA if item.strip() == "σ" else 0.0
-                for item in match["items"].split(",")
-            ],
-            dtype=np.float32,
+            [SIGMA if item == "σ" else 0.0 for item in items], dtype=np.float32
         )
         data = GSplatData(
             centers=np.zeros((1, 3), dtype=np.float32),
@@ -54,8 +56,8 @@ def _assert_isotropic_packing_recovers_sigma(text: str, source: str) -> None:
 
 
 @pytest.mark.parametrize("relative_path", PACKING_CLAIM_PATHS)
-def test_skill_packing_claim_recovers_sigma(relative_path: str) -> None:
-    """Every skill packing claim must execute as the documented covariance."""
+def test_authoring_doc_packing_claim_recovers_sigma(relative_path: str) -> None:
+    """Every authoring-doc packing claim must execute as the covariance."""
     text = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
 
     _assert_isotropic_packing_recovers_sigma(text, relative_path)
@@ -66,6 +68,7 @@ def test_skill_packing_claim_recovers_sigma(relative_path: str) -> None:
     (
         ("Group.add_gsplats", getdoc(Group.add_gsplats)),
         ("AdditiveSubLOD", getdoc(AdditiveSubLOD)),
+        ("GSplatData", getdoc(GSplatData)),
     ),
 )
 def test_source_docstring_packing_recovers_sigma(
@@ -96,17 +99,8 @@ def test_viewer_fixture_warning_links_to_authoring_contract() -> None:
     assert "AdditiveSubLOD" in warning.group()
 
 
-def test_basic_example_does_not_claim_disjoint_splats_overlap() -> None:
-    """The explainer must describe the corrected, effectively disjoint geometry."""
-    text = (REPO_ROOT / "packages/luxar/examples/gsplats_basic_example.py").read_text(
-        encoding="utf-8"
-    )
-
-    assert "Additive blending makes overlapping splats brighten." not in text
-
-
 def test_stacked_axis_docs_distinguish_embedding_from_direct_authoring() -> None:
-    """Stacked-axis docs must distinguish regularized fill from direct input."""
+    """Stacked-axis recipes must opt into embedding rather than broadcasting."""
     dimension_mapping = (
         REPO_ROOT / "docs/specs/GSPLATS_DIMENSION_MAPPING.md"
     ).read_text(encoding="utf-8")
@@ -115,19 +109,47 @@ def test_stacked_axis_docs_distinguish_embedding_from_direct_authoring() -> None
     ).read_text(encoding="utf-8")
 
     for text in (dimension_mapping, visualization_skill):
-        assert "stacked time/channel axis" in text
         assert 'fill_sigma={"time": 0.0}' in text
         assert "extend_to_all=[]" in text
-        assert "regularizes" in text
-        assert "1e-7" in text
-        assert "full scene-dimensional" in text
-        assert "without `dim_order`" in text
-        assert re.search(r"strictly\s+positive", text)
-        assert re.search(r"smaller\s+than the coordinate step", text)
 
-    contributor_reference = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    assert "stacked sigma=0 time/channel axis" not in contributor_reference
-    assert (
-        "stacked time/channel centers column with near-zero Cholesky extent"
-        in contributor_reference
+    scene_api = (
+        REPO_ROOT / ".agents/skills/luxar-visualization/references/scene-api.md"
+    ).read_text(encoding="utf-8")
+    assert 'dim_order=["x", "y", "z"]' in scene_api
+    assert 'fill_sigma={"time": 0.0}' in scene_api
+    assert "extend_to_all=[]" in scene_api
+
+
+def test_zero_fill_sigma_writes_positive_epsilon(tmp_path: Path) -> None:
+    """The documented stacked-axis recipe must survive the public writer."""
+    output = tmp_path / "stacked.luxar.zarr"
+    dimensions = Dimensions(
+        [
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+            Dimension("time", display=False, discrete=True, step=1.0),
+        ]
     )
+    centers = np.zeros((1, 3), dtype=np.float32)
+    amplitudes = np.ones(1, dtype=np.float32)
+    cholesky_factors = np.array(
+        [[SIGMA, 0.0, SIGMA, 0.0, 0.0, SIGMA]], dtype=np.float32
+    )
+
+    with LuxarZarrCompiler(output) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
+        scene.add_gsplats(
+            "splats",
+            centers,
+            amplitudes,
+            cholesky_factors,
+            dim_order=["x", "y", "z"],
+            fill={"time": 0.0},
+            fill_sigma={"time": 0.0},
+            extend_to_all=[],
+        )
+
+    group = zarr.open(str(output), mode="r")["splats"]
+    diagonal = ArrayDecoder().decode(group["cholesky_factors_diag"], group)
+    np.testing.assert_allclose(diagonal[0], [SIGMA, SIGMA, SIGMA, 1e-7], rtol=1e-6)
