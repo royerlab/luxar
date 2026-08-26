@@ -48,6 +48,7 @@ function makeCaps(over: Partial<HDRCapabilities> = {}): HDRCapabilities {
     hdr: false,
     deepColor: false,
     floatTextures: false,
+    filterableFloatTextures: false,
     colorDepth: { red: 8, green: 8, blue: 8 },
     recommendedColorSpace: 'srgb',
     ...over,
@@ -70,6 +71,9 @@ describe('detectDisplayCapabilities', () => {
         hdr: false,
         deepColor: false,
         floatTextures: false,
+        // Overwritten by createRendererCapabilities, like floatTextures above:
+        // this function only probes the DISPLAY, never the renderer.
+        filterableFloatTextures: false,
         colorDepth: { red: 8, green: 8, blue: 8 },
         recommendedColorSpace: 'srgb',
       });
