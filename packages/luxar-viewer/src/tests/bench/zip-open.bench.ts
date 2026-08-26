@@ -18,11 +18,10 @@
  * measuring only time/requests/bytes could bless a change that makes the
  * viewer stutter. The shipped demo archives are 100% DEFLATE.
  *
- * FAIRNESS NOTE: every variant runs with `?no-cache`, because a zipped store
- * currently bypasses L1/L2 regardless. That makes this an uncached-vs-uncached
- * comparison, which is the right A/B for the store layer but is NOT the cold
- * open a user experiences on a directory store with the cache on. Read the
- * directory row as "the same store, same conditions", not as today's baseline.
+ * FAIRNESS NOTE: the default run gives every variant `?no-cache`. That makes
+ * it an uncached-vs-uncached comparison, which is the right A/B for the store
+ * layer. Revisit mode instead leaves L1/L2 enabled for every variant and
+ * measures the second load in the same browser context.
  */
 
 import { test, expect } from '@playwright/test';

@@ -10,7 +10,7 @@ pnpm bench:zip              # measure
 
 Useful env vars: `LUXAR_BENCH_REPEATS` (default 3), `LUXAR_BENCH_VARIANTS`
 (`directory,zip (STORED),zip (DEFLATE)`), `LUXAR_BENCH_OUT` (write JSON),
-`LUXAR_BENCH_HEADLESS=0`, `LUXAR_BENCH_FIXTURES`.
+`LUXAR_BENCH_HEADLESS=0`, `LUXAR_BENCH_FIXTURES`, and `LUXAR_BENCH_REVISIT=1`.
 
 ## Reference run
 
@@ -62,10 +62,10 @@ rasterization and are not what a user sees. What is valid is the _difference_ be
 rows: the scene, the renderer and the machine are identical, and only the store layer
 changes. `zip (DEFLATE) − directory` in the long-task column is the inflate cost.
 
-**Every variant runs `?no-cache`.** A zipped store bypasses L1/L2 today regardless, so
-this is an uncached-vs-uncached comparison — the right A/B for the store layer, but _not_
-the cold open a user gets on a directory store with the cache on. Read the `directory`
-row as "the same store under the same conditions", not as today's baseline.
+**The default run gives every variant `?no-cache`.** This is an
+uncached-vs-uncached comparison — the right A/B for the store layer. Set
+`LUXAR_BENCH_REVISIT=1` to measure the second load in the same browser context
+with the L1/L2 chunk cache enabled for every variant.
 
 The bench asserts only that it measured something. A regression here is a decision for
 #1716, not a red build — and it is not wired into CI.
