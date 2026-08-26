@@ -57,7 +57,7 @@ def cached_download(
 ) -> Path:
     """Download ``url`` once into ``~/.cache/luxar/<name>/<filename>``.
 
-    Reuses :func:`luxar.utils.download.robust_download` /
+    Reuses :func:`luxar.demos.robust_download` /
     :func:`download_with_checksum` (retry, resume, checksum), but adds the
     skip-if-already-present behaviour a cache needs: a complete cached file is
     returned without touching the network.
@@ -73,7 +73,7 @@ def cached_download(
     Returns:
         Path to the cached file.
     """
-    from .download import (
+    from ..downloads.download import (
         download_with_checksum,
         quarantine_file,
         robust_download,
@@ -186,7 +186,7 @@ def cache_computed(
                 aprint(f"✓ Loaded cached result: {cache_file.name}")
             return result
         except Exception as exc:  # truncated / incompatible pickle
-            from .download import quarantine_file
+            from ..downloads.download import quarantine_file
 
             quarantine_file(
                 cache_file, reason=f"unreadable pickle ({exc})", verbose=True

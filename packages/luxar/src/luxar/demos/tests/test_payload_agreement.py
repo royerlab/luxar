@@ -6,7 +6,9 @@ import warnings
 import numpy as np
 import pytest
 
-from luxar.utils.payload_agreement import voxel_sampled_payload_agreement
+from luxar.demos._support.datasets.payload_agreement import (
+    voxel_sampled_payload_agreement,
+)
 
 
 class TestVoxelSampledPayloadAgreement:

@@ -9,8 +9,11 @@ from typing import Final, Union
 
 from arbol import aprint
 
-from .._zarr_compat import is_consolidated, read_node_attrs
-from .source_fingerprints import production_source_fingerprint, store_writer_environment
+from ...._zarr_compat import is_consolidated, read_node_attrs
+from ....utils.source_fingerprints import (
+    production_source_fingerprint,
+    store_writer_environment,
+)
 
 #: Scene-root attr holding the fingerprint of the builder that wrote the scene.
 BUILDER_FINGERPRINT_ATTR: Final[str] = "builder_fingerprint"
