@@ -18,8 +18,8 @@ work identically on the root. What the `Scene` class adds on top of `Group` is:
   as scene-specific viewer defaults.
 - **Screen-space overlays** — `add_text()`, `add_image()`, `add_html()` for HTML
   annotations anchored to the viewport (delegated to the `overlays/` subpackage).
-- **Export** — `to_zarr()` finalizes the progressive writer and atomically
-  copies the backing store to a destination.
+- **Export** — `to_zarr()` finalizes the progressive writer, copying a
+  directory store or publishing an archive at its selected output path.
 
 `Scene` is created through `LuxarZarrCompiler`, never instantiated directly.
 
@@ -114,12 +114,16 @@ driven by `_notify_labels_added` / `_notify_image_labels_added`).
 scene.to_zarr("export.luxar.zarr")
 ```
 
-`to_zarr(path)` finalizes the backing writer and atomically copies the on-disk
-Zarr store to `path`. Because finalization closes the writer, **do not add more
-nodes after calling `to_zarr()`** — create a new `LuxarZarrCompiler` for further
-writes. Passing the current backing-store path is an explicit finalize-in-place;
-otherwise the destination must not already exist and must not live inside the
-source store (raises `FileExistsError` / `ValueError`).
+`to_zarr(path)` finalizes the backing writer. For a directory-backed scene it
+atomically copies the on-disk Zarr store to a destination that must not already
+exist unless it is the current backing store, which is an explicit
+finalize-in-place; the destination also cannot live inside the source store.
+For an archive-backed scene, `path` must be the selected archive path;
+finalization publishes there and replaces an existing archive. A
+directory-backed scene cannot be copied directly to a `.zip` destination —
+create it with `LuxarZarrCompiler` or use `luxar optimise` instead. Because
+finalization closes the writer, **do not add more nodes after calling
+`to_zarr()`**; create a new compiler for further writes.
 
 ## Validation helpers (`validation.py`)
 

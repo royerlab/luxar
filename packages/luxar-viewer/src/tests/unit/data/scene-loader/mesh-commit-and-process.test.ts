@@ -503,6 +503,55 @@ describe('processMeshData — membership tolerance', () => {
     expect(overEdge.projected.visibleFaceCount).toBe(0);
   });
 
+  it('an authored slab_tolerance widens the continuous slab', async () => {
+    // The knob's reason for existing (#2143). Triangle at w = 3 against a
+    // step-1 continuous axis: the default one-cell slab culls it, and an
+    // authored 5 cells keeps it. Same data, same view, only the attr differs —
+    // so this fails on any build where the attr is declared but never reaches
+    // `computeTolerance`, which is exactly how it shipped unreachable.
+    const view = () => viewWithDim(0.5, { name: 'w', discrete: false, step: 1 });
+
+    const byDefault = await processMeshData('/surface', loadedAtW(3), view(), {
+      normal_dims: undefined,
+      double_sided: true,
+    });
+    expect(byDefault.projected.visibleFaceCount).toBe(0);
+
+    const widened = await processMeshData('/surface', loadedAtW(3), view(), {
+      normal_dims: undefined,
+      double_sided: true,
+      slab_tolerance: 5,
+    });
+    expect(widened.projected.visibleFaceCount).toBe(1);
+  });
+
+  it('an authored slab_tolerance NARROWS the slab too, and does not touch a discrete axis', async () => {
+    // Both guards in one, because each rules out a different wrong build.
+    //
+    // Narrowing: a build that took `Math.max(1, slab_tolerance)` — or ignored
+    // the attr and always used one cell — passes the widening test above and
+    // fails this one.
+    const narrowed = await processMeshData(
+      '/surface',
+      loadedAtW(3),
+      viewWithDim(0.5, { name: 'w', discrete: false, step: 10 }),
+      { normal_dims: undefined, double_sided: true, slab_tolerance: 0.1 }
+    );
+    // step × 0.1 = 1, and |3| > 1.
+    expect(narrowed.projected.visibleFaceCount).toBe(0);
+
+    // Discrete axes take the half-cell membership rule and must ignore the knob
+    // entirely: a build that applied it to both arms would cull this (half-cell
+    // 5 × 0.1 = 0.5 < 3) instead of keeping it.
+    const discrete = await processMeshData(
+      '/surface',
+      loadedAtW(3),
+      viewWithDim(0.5, { name: 'w', discrete: true, step: 10 }),
+      { normal_dims: undefined, double_sided: true, slab_tolerance: 0.1 }
+    );
+    expect(discrete.projected.visibleFaceCount).toBe(1);
+  });
+
   it('a large ride-along maxRadius no longer widens the continuous slab', async () => {
     // Triangle at w = 50, slice at w = 0. The ride-along tolerance is a huge
     // point-radius (1e6) that would keep the triangle. The mesh's continuous slab is

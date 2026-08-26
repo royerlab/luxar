@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import ZipFileStore from '@zarrita/storage/zip';
-import { createZipStoreOptions } from '../../../../data/zarr';
+import { createZipStoreOptions } from '../../../../data/zip/store';
 
 const URL_ = 'https://example.com/scene.luxar.zarr.zip';
 

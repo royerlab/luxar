@@ -1007,12 +1007,14 @@ Two structural differences from the other three types:
   // ... plus the standard render attrs (opacity, gamma, intensity, offset,
   //     absorption, blending_mode, colormap, layer, transform, nd_transform,
   //     extend_to_all) and mesh-only appearance attrs (ambient, shade_exponent,
-  //     specular, shininess, alpha_cutoff, texture_filter, texture_wrap)
+  //     specular, shininess, alpha_cutoff, texture_filter, texture_wrap),
+  //     plus slab_tolerance
 }
 ```
 
 The seven mesh-only appearance attrs control shading and texture sampling;
-they are rejected on points, lines, Gaussian splats, and groups.
+`slab_tolerance` controls nD membership loading. All eight mesh-only authored
+attrs are rejected on points, lines, Gaussian splats, and groups.
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.
@@ -1074,6 +1076,65 @@ Per-vertex labels (`label_offsets`/`label_bytes`), keys
 Points (see *Per-Element Labels* and *Per-Element Keys*).
 
 **Not written for a mesh node:** no spatial index (`ordering` is always `"none"`).
+
+#### nD slicing: whole-triangle cull
+
+A mesh slices differently from the other three geometry types, and the difference
+is visible. Points, Lines and GSplats are collections of independent elements, so
+slicing keeps or drops each element on its own — and Lines goes further, *clipping*
+a segment that straddles the slice and interpolating its attributes at the cut. A
+triangle cannot be handled that way cheaply: cutting one against an nD slab yields
+a polygon that has to be re-triangulated, with new vertices and interpolated
+attributes, every frame the slice moves.
+
+Luxar does not do that. The rule is:
+
+> A triangle is drawn **iff all three of its vertices** fall inside the slice slab.
+
+Two consequences follow, and both are worth knowing before you author a mesh with
+hidden dimensions.
+
+**A cut surface has a ragged edge.** Because whole triangles are kept or dropped,
+the boundary follows triangle edges rather than the slice plane. On a
+well-tessellated surface sliced with a slab comparable to its edge length this
+reads as a slightly jagged edge. On a *coarse* mesh with a thin slab it can drop
+whole regions — if no triangle has all three vertices inside, nothing is drawn.
+
+**On a continuous hidden dimension you get a slab, not a section.** There is no
+interpolation, so there is no such thing as an exact cross-section: what you see is
+"the surface near this slice", of finite thickness. The viewer says so once per
+node, by name, in an `info` log line.
+
+`slab_tolerance` is the control over that thickness:
+
+```python
+scene.add_mesh(
+    "surface", vertices, faces,
+    normals=normals, normal_dims=[0, 1, 2],
+    slab_tolerance=2.5,   # vertices within ±2.5 cells (a 5-cell slab); default 1.0
+)
+```
+
+It is a half-width measured in cells of the hidden dimension's own `step`, must
+be strictly positive, and defaults to one cell. Raising it thickens the slab
+(more surface shown, more of it away from the slice); lowering it thins the slab
+toward the degenerate case above. It applies **only** to *continuous* hidden dimensions — a
+*discrete* one (time, channel, or any axis with `categories`) uses a half-cell
+membership rule instead and ignores the attr. Discrete hidden dimensions are the
+dominant real case for a mesh, and they have none of the problems in this section:
+a timepoint either matches or it does not.
+
+Mesh is the only geometry type whose slab is tunable, and the reason is that it has
+nothing to measure. The other three derive their tolerance from a per-element
+extent — a point's `radii`, a line's `widths`, a splat's truncated `sigma` — that a
+mesh vertex simply does not have, so the thickness is chosen rather than read off
+the data.
+
+If your mesh's hidden dimensions are continuous *and* spatial, and you need a true
+planar section, a mesh node is the wrong representation today — fit the volume as
+Gaussian splats instead, which slice exactly. Exact nD triangle clipping is a
+deliberate non-goal for now; see `docs/specs/MESH_NODE_SPEC.md` §5 and §9.
+
 
 **Additive sub-LOD subgroups (`additive_<i>/`) ARE written, but only for a reveal.**
 A prefix of an index buffer is a holed surface, not a coarse one, so the ladder is

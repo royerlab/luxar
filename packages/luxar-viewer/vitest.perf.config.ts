@@ -7,20 +7,19 @@
  * — gating every PR on them produced false-positive failures and
  * pushed contributors toward `--retries`.
  *
- * This config picks ONLY the perf-budget suite. Run via
- * `pnpm test:perf` locally or as a scheduled / nightly CI job
- * after a fresh WASM rebuild.
+ * This config picks only the opt-in WASM performance suites. Run via
+ * `pnpm test:perf` locally after a fresh WASM rebuild. Absolute floors are
+ * report-only unless `pnpm test:perf:strict` explicitly enforces them on a
+ * quiet host.
  */
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // Deliberately still 'jsdom', even though the main config now defaults to
-    // 'node' and both files included below are node-safe. This suite compares
-    // timings against per-commit baselines under `perf-results/`, all of which
-    // were recorded in a jsdom worker; switching the environment would change
-    // the measurement substrate and silently invalidate them. Flip this only
-    // together with re-recording the baselines.
+    disableConsoleIntercept: true,
+    // Deliberately still 'jsdom', matching the environment in which these
+    // thresholds were established. Switching environments would change the
+    // measurement substrate, so treat that as a separate benchmark-policy change.
     environment: 'jsdom',
     globals: true,
     // WASM-only setup: the perf benches read no zarr fixtures, and bench

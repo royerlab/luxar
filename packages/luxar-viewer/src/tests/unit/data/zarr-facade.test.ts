@@ -7,6 +7,7 @@
  * on this facade rather than importing the backend directly.
  */
 
+import { createZipStoreOptions } from '../../../data/zip/store';
 import { describe, expect, it } from 'vitest';
 import ZipFileStore from '@zarrita/storage/zip';
 import { zipSync } from 'fflate';
@@ -149,7 +150,7 @@ describe('Zarr facade contract', () => {
     });
     const store = ZipFileStore.fromBlob(
       new Blob([archive as BlobPart]),
-      zarr.createZipStoreOptions('scene.luxar.zarr.zip')
+      createZipStoreOptions('scene.luxar.zarr.zip')
     );
 
     expect(new TextDecoder().decode(await store.get('/zarr.json'))).toContain(

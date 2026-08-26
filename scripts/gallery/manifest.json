@@ -349,6 +349,17 @@
       "note": "dimensionNav dropped after the #842 regeneration: `w` is now declared discrete over [-1.0, 0.96] at step 0.04 (50 materialised stops, not the 15 the old hint assumed) and the store opens already populated, so there is no empty slice to step past. zoom and exposure are KEPT and were re-measured rather than dropped \u2014 the previous note lumped all three together, but removing them takes border-lit from 0/4316 to 3419/4316 and blows the slice out to a pale wash. They describe the render, not the old navigation."
     },
     {
+      "id": "exotic_surfaces",
+      "title": "Exotic Mathematical Surfaces",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_exotic_surfaces.py",
+      "dataset": "datasets/demos/exotic_surfaces.luxar.zarr",
+      "fillTarget": 0.62,
+      "citation": "von Schnering & Nesper 1991 (TPMS nodal approximations)",
+      "note": "The 3x3 grid is a flat WALL (~3.6 x 3.6 x 1.0), so viewAngle is deliberately omitted: an oblique view collapses the nine cells into one mass. fillTarget 0.72 was measured with additive transport; 0.62 keeps the wall safely framed with both additive and volumetric layers. There is also a hidden two-stop categorical `family` axis that swaps the entire wall (0 = triply-periodic minimal surfaces, 1 = algebraic); this tile shows family 0, which reads as the more coherent grid. A second tile could show family 1 via dimensionNav."
+    },
+    {
       "id": "galaxy_simulation",
       "title": "Galaxy Simulation",
       "geometry": "points",

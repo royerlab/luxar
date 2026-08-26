@@ -9,6 +9,7 @@ keys on whole objects and does not care where the bytes came from.
 | module                 | what it reads                                                             |
 | ---------------------- | ------------------------------------------------------------------------- |
 | `http-chunk-source.ts` | a directory-backed zarr store: one retrying, gated HTTP request per chunk |
+| `zip-chunk-source.ts`  | a zipped store through an injected archive byte reader                    |
 
 ## Why the port lives one directory up
 
@@ -34,4 +35,6 @@ would make the bandwidth meter over-report by the compression ratio.
 escapes into `getResult`, is flattened to `NetworkError`, becomes `undefined`, and
 zarrita decodes the chunk as _fill values_ — silently wrong geometry rather than an
 error. Aborts are the sharp edge here: check the signal before reading a body, and map
-a rejecting body read to `aborted` rather than letting it propagate.
+a rejecting body read to `aborted` rather than letting it propagate. A fault that
+makes the whole archive unreadable is the exception: return `fatal`, which the caching
+store rethrows instead of degrading to fill values.

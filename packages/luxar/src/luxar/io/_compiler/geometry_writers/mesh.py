@@ -264,6 +264,7 @@ def validate_mesh_arrays(
         validate_colors_for_writing,
         validate_faces_for_writing,
         validate_labels_for_writing,
+        validate_mesh_decode_budget,
         validate_positions_for_writing,
         validate_uvs_for_writing,
         validate_vertices_for_writing,
@@ -300,6 +301,17 @@ def validate_mesh_arrays(
         validate_labels_for_writing(keys, n_vertices, context="keys", noun="Keys")
     if image_labels is not None:
         validate_image_labels_for_writing(image_labels, n_vertices)
+    # Last, because it needs every channel's presence and the validated shapes.
+    # A store over the viewer's per-node ceiling does not render at all, so it is
+    # refused here rather than in a browser (#2145).
+    validate_mesh_decode_budget(
+        n_vertices,
+        n_dims,
+        int(np.asarray(faces).size // 3),
+        normals=normals,
+        colors=colors,
+        scalars=scalars,
+    )
     return n_vertices, n_dims
 
 

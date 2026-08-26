@@ -75,7 +75,7 @@ export interface RetryCtx {
     path: string,
     data: Awaited<ReturnType<MeshDataLoader['updateView']>>,
     viewState: MeshViewState,
-    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
+    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all' | 'slab_tolerance'>
   ): Promise<StagedMeshCommit>;
   commitMeshGeometry(staged: StagedMeshCommit): void;
 }

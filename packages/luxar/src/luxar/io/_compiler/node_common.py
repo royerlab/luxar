@@ -200,6 +200,10 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         # them on points, lines, gsplats, and groups before anything is written.
         "shade_exponent",
         "shininess",
+        # Mesh-only nD LOADING knob rather than an appearance one, but advertised
+        # here for the same reason: a typo must print in the "known render
+        # attributes" hint instead of being reported as an unknown key.
+        "slab_tolerance",
         "specular",
         # Mesh-only texture sampling. Same reasoning again: authorable knobs, so
         # a typo should see them in the hint.
@@ -220,6 +224,12 @@ _MESH_APPEARANCE_VALIDATORS = {
     # no-op that reads like a working setting.
     "texture_filter": (validate_texture_filter, "Texture filter"),
     "texture_wrap": (validate_texture_wrap, "Texture wrap"),
+    # Slab half-width in CELLS, so any positive multiple is meaningful and there
+    # is no upper bound to impose. Zero is refused by `validate_positive_finite`
+    # and that refusal is load-bearing: a zero slab reduces mesh's whole-triangle
+    # membership test to exact float equality with the slice plane, and the node
+    # renders nothing (spec §5.2.1 — it is why mesh cannot reuse the Lines arm).
+    "slab_tolerance": (validate_positive_finite, "Slab tolerance"),
 }
 
 # Non-appearance keys that legitimately reach :func:`validate_render_attrs` and
@@ -741,7 +751,7 @@ def validate_render_attrs(
 
 
 def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
-    """Validate the five mesh-only appearance values in the shared attr gate."""
+    """Validate five appearance controls plus slab tolerance in the shared gate."""
     for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
         if key in attrs:
             validator(attrs[key], label)
