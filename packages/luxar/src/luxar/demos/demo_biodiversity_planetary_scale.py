@@ -365,8 +365,8 @@ from luxar.demos import (
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.demos._globe_common import (
     add_cloud_shell,
-    encode_globe_texture,
-    uv_sphere,
+    add_textured_globe,
+    blue_marble_basemap,
 )
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
@@ -451,8 +451,12 @@ SAMPLE_SEED: Final = 20260803
 # so the shell would seal. A UV sphere samples the basemap per fragment, so the
 # resolution question disappears: 256x128 quads read as round and the texture
 # carries the detail.
-GLOBE_LON: Final = 256
-GLOBE_LAT: Final = 128
+GLOBE_LON: Final = 512
+GLOBE_LAT: Final = 256
+# 16384x8192 across two tiles, matching the other Earth globes. See
+# `add_textured_globe` for why splitting is the only route past 16384.
+GLOBE_TEXTURE_WIDTH: Final = 16384
+GLOBE_TILES: Final = 2
 #: ~0.78x the mean point spacing, the ratio that seals the shell without
 #: over-drawing (0.29 spacing at 700k points on a radius-100 globe).
 GLOBE_RADII: Final = 0.23
@@ -2489,10 +2493,12 @@ def sample_equirect(
     return (top * (1.0 - fy) + bottom * fy).astype(np.float32)
 
 
-def build_globe() -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, int]:
-    """The Blue Marble shell as a textured mesh.
+def build_globe() -> np.ndarray:
+    """The Blue Marble basemap for the globe shell.
 
-    Returns ``(vertices, faces, uvs, jpeg_bytes, width, height)``.
+    Returns the ``(h, w, 3)`` RGB array. Geometry, longitude slicing and codec
+    choice all belong to :func:`add_textured_globe`, which the four Earth demos
+    share — duplicating any of it here is how they drift apart.
 
     The dimming that used to be baked into the per-point colours is now the
     node's ``intensity``, and that is a real improvement rather than a
@@ -2507,17 +2513,14 @@ def build_globe() -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, 
         license="Public domain",
         url="https://visibleearth.nasa.gov/",
     )
-    path = cached_download(BLUE_MARBLE_URL, DEMO_NAME, filename="blue_marble.jpg")
-    texture = np.asarray(image_module.open(path).convert("RGB"))
-    vertices, faces, uvs, _normals = uv_sphere(GLOBE_LON, GLOBE_LAT, 1.0)
-    return (
-        vertices,
-        faces,
-        uvs,
-        encode_globe_texture(texture),
-        int(texture.shape[1]),
-        int(texture.shape[0]),
-    )
+    try:
+        basemap, _w, _h = blue_marble_basemap(DEMO_NAME, width=GLOBE_TEXTURE_WIDTH)
+        return basemap
+    except Exception as error:
+        # The 2048 image this demo already downloads, as the offline fallback.
+        aprint(f"⚠️  Hi-res basemap unavailable ({error}); using the 2048 image")
+        path = cached_download(BLUE_MARBLE_URL, DEMO_NAME, filename="blue_marble.jpg")
+        return np.asarray(image_module.open(path).convert("RGB"))
 
 
 # =============================================================================
@@ -2685,7 +2688,7 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
         aprint(f"scrubbable layer: {taxon_pos.shape[0]:,} elements")
 
     with asection(f"Building globe mesh ({GLOBE_LON}x{GLOBE_LAT} quads)"):
-        globe_v, globe_f, globe_uv, globe_tex, globe_tw, globe_th = build_globe()
+        globe_basemap = build_globe()
 
     with asection("Assembling migration ribbons"):
         indices = chain_segment_indices(tracks.lengths)
@@ -2808,20 +2811,23 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             # Before royerlab/luxar#1157 was fixed a fully-extended node was never
             # queried at all, and this demo carried a 25k globe replicated into
             # all 139 slots as a workaround; the fix made that unnecessary.
-            scene.add_mesh(
+            add_textured_globe(
+                scene,
                 "Earth",
-                vertices=globe_v,
-                faces=globe_f,
-                uvs=globe_uv,
-                texture=globe_tex,
-                texture_encoding="jpeg",
-                texture_width=globe_tw,
-                texture_height=globe_th,
-                dim_order=["x", "y", "z"],
-                fill={
-                    "taxon": float(ALL_LIFE_SLOT),
-                    "period": float(PERIOD_ALL_SLOT),
-                },
+                basemap=globe_basemap,
+                radius=1.0,
+                n_lon=GLOBE_LON,
+                n_lat=GLOBE_LAT,
+                # One tile unless the hi-res master was available: the fallback
+                # image is 2048 wide and splitting it would only add a seam.
+                tiles=GLOBE_TILES if globe_basemap.shape[1] > 4096 else 1,
+                fmt="webp",
+                quality=90,
+                # UNLIT, like the ocean-currents basemap: this globe is the
+                # geographic REFERENCE the occurrence colours are read against, so
+                # a view-anchored key would make the same region read differently
+                # from different camera angles.
+                shading="none",
                 blending_mode=GLOBE_BLENDING,
                 # The dimming that used to be baked into the point colours. Now a
                 # live node multiplier, so the Layers panel can restore full
@@ -2831,16 +2837,11 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 gamma=1.0,
                 opacity=1.0,
                 layer=True,
-                # UNLIT, like the ocean-currents basemap: this globe is the
-                # geographic REFERENCE the occurrence colours are read against, so
-                # a view-anchored key would make the same region read differently
-                # from different camera angles.
-                shading="none",
-                double_sided=False,
-                # No `partition` and no `additive_lod`: both were scale workarounds
-                # for a 700k-point shell (the per-node texture bound and first
-                # paint). 33k vertices needs neither, and a mesh refuses an
-                # arbitrary-order additive ladder outright.
+                dim_order=["x", "y", "z"],
+                fill={
+                    "taxon": float(ALL_LIFE_SLOT),
+                    "period": float(PERIOD_ALL_SLOT),
+                },
             )
 
             # A thin cloud deck, at the same weight as the ocean demo's and for
