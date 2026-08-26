@@ -373,6 +373,38 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         assert unread == []
         assert problems == []
 
+    @pytest.mark.parametrize(
+        "include_quality_flag",
+        [True, False],
+        ids=["quotable", "unclassified"],
+    )
+    def test_check_demands_missing_scores_unless_classified_as_unquotable(
+        self,
+        gen: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        include_quality_flag: bool,
+    ) -> None:
+        entry = {
+            "bucket": "zenodo",
+            "dir": "movie",
+            "files": [{"name": "stack.gsplats.zarr.zip", "bytes": 1000}],
+        }
+        key = gen._char_key("movie", "", "stack.gsplats.zarr.zip")
+        characteristics = {
+            "n_splats": 100,
+            "source_bytes": 10_000,
+            "psnr_db": None,
+            "foreground_psnr_db": None,
+        }
+        if include_quality_flag:
+            characteristics["quality_quotable"] = True
+        monkeypatch.setattr(gen, "load_characteristics", lambda: {key: characteristics})
+
+        problems, unread = gen._gaps({"datasets": {"movie": entry}})
+
+        assert unread == []
+        assert problems == ["movie/stack.gsplats.zarr.zip: no PSNR, foreground PSNR"]
+
 
 class TestFiguresAreAbsentRatherThanInvented:
     def test_a_missing_number_renders_as_absent(self, gen: Any) -> None:
