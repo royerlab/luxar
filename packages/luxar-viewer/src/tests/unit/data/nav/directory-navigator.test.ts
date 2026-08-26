@@ -324,7 +324,7 @@ describe('DirectoryNavigator', () => {
       expect(result.entries).toHaveLength(2);
     });
 
-    it('infers zipped stores when an index omits the entry type', async () => {
+    it('infers zarr stores when an index omits the entry type', async () => {
       mockFetch.mockResolvedValueOnce({ ok: false });
       mockFetch.mockResolvedValueOnce({ ok: false });
       mockFetch.mockResolvedValueOnce({ ok: false });
@@ -333,13 +333,18 @@ describe('DirectoryNavigator', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
-          entries: [{ name: 'scene.luxar.zarr.zip' }, { name: 'results.zip' }],
+          entries: [
+            { name: 'dataset1.zarr' },
+            { name: 'scene.luxar.zarr.zip' },
+            { name: 'results.zip' },
+          ],
         }),
       });
 
       const result = await navigator.navigate('datasets');
       const byName = Object.fromEntries(result.entries.map((e) => [e.name, e]));
 
+      expect(byName['dataset1.zarr'].type).toBe('zarr');
       expect(byName['scene.luxar.zarr.zip'].type).toBe('zarr');
       expect(byName['results.zip'].type).toBe('file');
     });

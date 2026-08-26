@@ -367,12 +367,10 @@ export class DirectoryNavigator {
         path: this.currentPath ? `${this.currentPath}/${entry.name}` : entry.name,
         type:
           entry.type ||
-          (entry.isDirectory
-            ? entry.name.endsWith('.zarr')
-              ? 'zarr'
-              : 'directory'
-            : isZippedZarrStoreUrl(entry.name)
-              ? 'zarr'
+          (entry.name.endsWith('.zarr') || isZippedZarrStoreUrl(entry.name)
+            ? 'zarr'
+            : entry.isDirectory
+              ? 'directory'
               : 'file'),
         size: entry.size,
         modified: entry.modified ? new Date(entry.modified) : undefined,
