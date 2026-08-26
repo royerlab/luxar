@@ -940,10 +940,13 @@ run has completed the five protected contexts successfully,
 cancelled jobs for any of those five protected contexts. Failed jobs are left failed,
 non-required matrix legs are left alone, and a schedule whose own protected contexts
 are not all green performs no repair. A rejected rerun is reported as a warning without
-preventing the remaining cancelled jobs from being attempted. The job has only
-`actions: write` permission and runs on GitHub-hosted Linux; recovered long legs use
-their original run's runner-routing decision and therefore repay work that the
-scheduled run already performed, but only on a SHA that can become promotable.
+preventing the remaining cancelled jobs from being attempted. A failed repaired job is
+terminal for that SHA because only cancelled jobs are selected; recovering it requires
+a manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
+later merge cannot cancel the repaired attempt. The job has only `actions: write`
+permission and runs on GitHub-hosted Linux; recovered long legs use their original
+run's runner-routing decision and therefore repay work that the scheduled run already
+performed, but only on a SHA that can become promotable.
 
 ## Architecture Notes
 

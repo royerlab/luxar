@@ -62,10 +62,10 @@ concurrency:
   # scheduled run executes the full suite itself -- but it still leaves "did
   # every required job pass today?" unanswerable at a glance.
   #
-  # Nothing else changes -- PR runs already carry `refs/pull/N/merge` and so
-  # were never in the same group as a push, and two runs of the same PR still
-  # coalesce (same event, same ref).
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  # Fresh runs all have attempt 1, so PR and push runs still coalesce by event
+  # and ref exactly as before. A rerun gets a distinct attempt number so the
+  # next merge cannot cancel a repaired push attempt back into the same state.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
 # Least privilege: these jobs only check out and test. Override per-job if a

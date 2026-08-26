@@ -582,7 +582,13 @@ def test_scheduled_ci_supplies_a_green_window_every_three_hours(
 
 def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
     """A green cron must clear cancelled duplicate contexts on the same SHA."""
-    jobs = yaml.safe_load(workflow)["jobs"]
+    parsed = yaml.safe_load(workflow)
+    assert parsed["concurrency"]["group"] == (
+        "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-"
+        "${{ github.run_attempt }}"
+    )
+
+    jobs = parsed["jobs"]
     repair = jobs["repair-cancelled-push-checks"]
 
     assert set(repair["needs"]) == {
