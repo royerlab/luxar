@@ -982,6 +982,9 @@ if os.environ["ROUTER_API_ERROR"] == "runs" and "/actions/runs?" in endpoint:
     raise SystemExit(1)
 if os.environ["ROUTER_API_ERROR"] == "jobs" and "/runs/" in endpoint and "/jobs?" in endpoint:
     raise SystemExit(1)
+if os.environ["ROUTER_API_ERROR"] == "jobs-json" and "/runs/" in endpoint and "/jobs?" in endpoint:
+    print("not-json")
+    raise SystemExit(0)
 if "/actions/runs?" in endpoint:
     run_ids = [2038, 9999] if os.environ["ROUTER_OTHER_ACTIVE"] == "1" else [2038]
     print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
@@ -1057,7 +1060,7 @@ def test_pick_runner_routes_same_repo_on_fresh_capacity_heartbeat(
     assert "integer expression expected" not in result.stderr
 
 
-@pytest.mark.parametrize("api_error", ["runs", "jobs"])
+@pytest.mark.parametrize("api_error", ["runs", "jobs", "jobs-json"])
 def test_pick_runner_fails_api_read_toward_obsidian(
     workflow: str, tmp_path: Path, api_error: str
 ) -> None:
@@ -1089,14 +1092,14 @@ def test_pick_runner_routes_busy_box_to_obsidian(workflow: str, tmp_path: Path) 
         ("950", 5, "ubuntu-latest"),
     ],
 )
-def test_pick_runner_caps_busy_box_backlog_at_one_fleet_width(
+def test_pick_runner_caps_busy_box_backlog_at_five_jobs(
     workflow: str,
     tmp_path: Path,
     heartbeat: str,
     queued_obsidian_jobs: int,
     expected: str,
 ) -> None:
-    """Five queued jobs consume one fleet-width, so new work bursts hosted."""
+    """Five queued obsidian jobs hit the cap, so new work bursts hosted."""
     result, label = _run_pick_runner(
         workflow,
         tmp_path,

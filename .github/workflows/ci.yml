@@ -225,8 +225,8 @@ jobs:
   #
   # Same-repo runs route to obsidian while the positive capacity timestamp is
   # fresh OR another obsidian job is in progress. To keep that cost preference
-  # from growing an unbounded queue, five already-queued obsidian jobs consume
-  # one fleet-width and burst new work to GitHub-hosted. A stale publisher with
+  # from growing an unbounded queue, five already-queued obsidian jobs hit the
+  # backlog cap and burst new work to GitHub-hosted. A stale publisher with
   # no active work also degrades to hosted. LUXAR_CI_FORCE_HOSTED is the manual
   # escape hatch.
   #
@@ -286,6 +286,7 @@ jobs:
             capacity_fresh=1
           fi
           active_obsidian=0
+          max_queued_obsidian=5
           queued_obsidian=0
           runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
             2>/dev/null) || runs=""
@@ -309,7 +310,7 @@ jobs:
                 exit 0
               }
             queued_obsidian=$(( queued_obsidian + queued ))
-            if [ "$queued_obsidian" -ge 5 ]; then
+            if [ "$queued_obsidian" -ge "$max_queued_obsidian" ]; then
               echo "$queued_obsidian obsidian jobs are already queued -> routing to ubuntu-latest"
               echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
               exit 0

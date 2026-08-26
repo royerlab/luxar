@@ -908,9 +908,10 @@ also runs the short `release-readiness` and `wheel-viewer` checks on GitHub-host
 runners, and `pick-runner` routes the long Python/TypeScript legs to hosted runners
 when obsidian has neither fresh capacity nor work in flight, or when five obsidian
 jobs are already queued. That one-fleet-width cap keeps self-hosted work preferred
-without letting a saturated box accumulate an unbounded backlog; simultaneous router
-snapshots may overshoot it by one run. Five of the twelve most recent daily scheduled
-runs (2026-08-14 to 2026-08-25) took the billed path before the cap existed. Every
+without letting a saturated box accumulate an unbounded backlog. Router decisions are
+concurrent snapshots, so a burst can overshoot the cap before its newly routed jobs
+materialise. Five of the twelve most recent daily scheduled runs (2026-08-14 to
+2026-08-25) took the billed path before the cap existed. Every
 added window therefore consumes hosted minutes for short jobs, while routing adds
 either bounded obsidian queue depth or the long legs to the hosted bill. Those routed
 long legs alone exposed roughly 200–240 hosted minutes/day at that observed rate; one
