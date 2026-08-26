@@ -344,9 +344,9 @@
       "category": "synthetic",
       "script": "demo_4d_fractals.py",
       "dataset": "datasets/demos/fractals_4d.luxar.zarr",
-      "zoom": 0.7,
-      "exposure": -1.5,
-      "note": "dimensionNav dropped after the #842 regeneration: `w` is now declared discrete over [-1.0, 0.96] at step 0.04 (50 materialised stops, not the 15 the old hint assumed) and the store opens already populated, so there is no empty slice to step past. zoom and exposure are KEPT and were re-measured rather than dropped \u2014 the previous note lumped all three together, but removing them takes border-lit from 0/4316 to 3419/4316 and blows the slice out to a pale wash. They describe the render, not the old navigation."
+      "fillTarget": 0.85,
+      "zoom": 0.8,
+      "note": "The #2168 AO regeneration invalidated the old -1.5 exposure override and 0.7 zoom. Auto-exposure now converges at +1.09 stops (p50 0.710, p99 0.848, no clipping). fillTarget 0.85 plus zoom 0.8 keeps more subject area than 0.7 while measuring 0/4316 border-lit pixels across the orbit. dimensionNav stays absent: #842 made all 50 discrete w stops populated."
     },
     {
       "id": "exotic_surfaces",

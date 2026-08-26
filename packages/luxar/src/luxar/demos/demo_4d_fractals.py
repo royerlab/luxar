@@ -27,8 +27,9 @@ Mathematical Background:
     - Diamond Fractal: thin concentric L1-distance (taxicab) shells
 
 Performance:
-    - Per-w-plane vectorized NumPy generation bounds peak memory at grid^3
-    - All 6 fractals generate and write in about 7 minutes at the default grid
+    - Per-w-plane generation bounds the lattice workspace at grid^3; the grouped
+      normal-aware AO pass is output-sized (23.7 GB peak RSS at the default grid)
+    - All 6 fractals, grouped AO, and writing take about 25 minutes at the default grid
 
 Usage:
     python demo_4d_fractals.py [--grid=N]
@@ -47,7 +48,7 @@ DEMO_META = {
     "geometry": "points",
     "requirements": {
         "download_mb": 0,
-        "compute": "medium",
+        "compute": "heavy",
         "gpu": "none",
         "local_data": None,
     },
@@ -67,6 +68,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.shading import bake_ambient_occlusion
 from luxar.utils.paths import get_demos_output_dir
 
 #: Lattice resolution per axis. Four times the former 50 — the resolution bump
@@ -82,8 +84,16 @@ W_STRIDE = 4
 #: SPARSER — the opposite of the intended effect. 150k covers about half the
 #: surface voxels of the densest fractal at grid 200; at 80k the flat faces
 #: still read as stippled. The store compresses well (lattice coordinates), so
-#: the measured default output is about 89 MB on disk.
+#: the measured AO-shaded default output is about 147 MB on disk.
 TARGET_MAX_POINTS_PER_PLANE = 150_000
+#: Direction budget for the grouped surface AO bake. Twenty-four is half the
+#: library's measured floor for normal-weighted AO, chosen to bound peak memory;
+#: on representative slices it adds about 20% excess AO variance versus 48.
+AO_N_DIRECTIONS = 24
+#: Layers-panel display window re-measured after AO. The grouped bake's mean
+#: multiplier is 0.570 at the default grid, so 1.971 × 0.570 preserves the
+#: previously authored mean emission while keeping the AO contrast.
+DISPLAY_MAX = 1.123
 
 
 def axis_world_values(grid_size: int) -> np.ndarray:
@@ -382,6 +392,25 @@ def surface_of(mask: np.ndarray) -> np.ndarray:
     return mask & ~interior
 
 
+def surface_normals(mask: np.ndarray) -> np.ndarray:
+    """Outward unit normals from the occupancy gradient of a 3D solid.
+
+    The gradient is measured before :func:`surface_of` removes the interior, so
+    it describes the solid the visible points came from rather than the
+    one-voxel shell left for rendering. Degenerate rows stay zero and therefore
+    use the AO implementation's documented full-sphere fallback.
+    """
+    gradients = np.gradient(mask.astype(np.float32))
+    normals = -np.stack(gradients, axis=-1)
+    lengths = np.linalg.norm(normals, axis=-1, keepdims=True)
+    return np.divide(
+        normals,
+        lengths,
+        out=np.zeros_like(normals),
+        where=lengths > 1e-12,
+    )
+
+
 def materialised_w_planes(grid_size: int, stride: int) -> np.ndarray:
     """Indices of the w-planes actually written, as a strided subset.
 
@@ -403,7 +432,7 @@ def generate_4d_fractal(
     w_stride: int = W_STRIDE,
     surface_only: bool = True,
     max_points_per_plane: int = TARGET_MAX_POINTS_PER_PLANE,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate one 4D geometric fractal, one w-plane at a time.
 
     Evaluated PER W-PLANE rather than over the whole 4D lattice at once. The
@@ -424,7 +453,7 @@ def generate_4d_fractal(
             exactly backwards for "make it less fuzzy".
 
     Returns:
-        ``(positions, values)`` for points in the fractal.
+        ``(positions, values, normals)`` for points in the fractal.
 
     Raises:
         ValueError: If ``grid_size < 3`` (below that, some fractal rules have
@@ -448,10 +477,12 @@ def generate_4d_fractal(
     per_plane_counts: list[int] = []
     chunks_pos: list[np.ndarray] = []
     chunks_val: list[np.ndarray] = []
+    chunks_normal: list[np.ndarray] = []
 
     for w_index in planes:
         IW = np.full_like(IX, w_index)
         keep, values = fractal_func(IW, IX, IY, IZ, grid_size)
+        normal_field = surface_normals(keep)
         if surface_only:
             keep = surface_of(keep)
 
@@ -477,6 +508,7 @@ def generate_4d_fractal(
             )
         )
         chunks_val.append(values[keep])
+        chunks_normal.append(normal_field[keep])
 
     counts = np.asarray(per_plane_counts)
     if (counts == 0).any():
@@ -492,8 +524,9 @@ def generate_4d_fractal(
 
     positions = np.vstack(chunks_pos)
     pattern_values = np.concatenate(chunks_val)
+    normals = np.vstack(chunks_normal)
     aprint(f"  ✓ {fractal_name}: {len(positions):,} points")
-    return positions, pattern_values
+    return positions, pattern_values, normals
 
 
 def pattern_values_to_colors(values: np.ndarray) -> np.ndarray:
@@ -528,6 +561,36 @@ def pattern_values_to_colors(values: np.ndarray) -> np.ndarray:
     return colors  # type: ignore[no-any-return]
 
 
+def apply_fractal_ambient_occlusion(
+    positions_5d: np.ndarray,
+    normals: np.ndarray,
+    base_colors: np.ndarray,
+) -> np.ndarray:
+    """Bake surface AO without crossing the hidden fractal or w dimensions.
+
+    Rows must remain grouped by ``(fractal, w)`` as emitted by the generator;
+    run-based labels avoid sorting the 44.5-million-row production array.
+    """
+    joint_keys = positions_5d[:, :2]
+    group_starts = np.ones(len(positions_5d), dtype=bool)
+    group_starts[1:] = np.any(joint_keys[1:] != joint_keys[:-1], axis=1)
+    group_by = np.cumsum(group_starts, dtype=np.int32) - 1
+
+    shade = bake_ambient_occlusion(
+        positions_5d,
+        normals=normals,
+        occluder="opaque",
+        n_directions=AO_N_DIRECTIONS,
+        spatial_dims=(2, 3, 4),
+        group_by=group_by,
+    )
+    aprint(
+        f"  Ambient occlusion: {int(group_by[-1]) + 1} fractal/w groups, "
+        f"range [{shade.min():.3f}, {shade.max():.3f}], mean {shade.mean():.3f}"
+    )
+    return (base_colors * shade[:, None]).astype(np.float32)
+
+
 def generate_4d_fractal_dataset(
     output_path: Path,
     grid_size: int = GRID_SIZE_DEFAULT,
@@ -554,13 +617,13 @@ def generate_4d_fractal_dataset(
 
     all_positions = []
     all_colors = []
-    all_fractal_ids = []
+    all_normals = []
 
     with asection(f"Generating 6 × 4D Fractals (grid: {grid_size}^4)"):
         for frac_id, frac_name in enumerate(fractal_names):
             with asection(f"Fractal {frac_id}: {frac_name}"):
                 # Generate fractal (FAST!)
-                positions, pattern_values = generate_4d_fractal(
+                positions, pattern_values, normals = generate_4d_fractal(
                     frac_id,
                     grid_size=grid_size,
                 )
@@ -571,25 +634,32 @@ def generate_4d_fractal_dataset(
                 # Add fractal type ID as first coordinate
                 fractal_ids = np.full(len(positions), frac_id, dtype=np.float32)
 
-                all_positions.append(positions)
+                all_positions.append(
+                    np.column_stack(
+                        [
+                            fractal_ids,
+                            positions[:, 0],  # W
+                            positions[:, 1],  # X
+                            positions[:, 2],  # Y
+                            positions[:, 3],  # Z
+                        ]
+                    )
+                )
                 all_colors.append(colors)
-                all_fractal_ids.append(fractal_ids)
+                all_normals.append(normals)
 
     # Combine all fractals
     with asection("Combining all fractals"):
-        positions = np.vstack(all_positions)
-        colors = np.vstack(all_colors)
-        fractal_ids = np.concatenate(all_fractal_ids)
-
-        # Reorder: [fractal_id, w, x, y, z]
-        positions_5d = np.column_stack(
-            [
-                fractal_ids,
-                positions[:, 0],  # W
-                positions[:, 1],  # X
-                positions[:, 2],  # Y
-                positions[:, 3],  # Z
-            ]
+        positions_5d = np.vstack(all_positions)
+        all_positions.clear()
+        normals = np.vstack(all_normals)
+        all_normals.clear()
+        base_colors = np.vstack(all_colors)
+        all_colors.clear()
+        colors = apply_fractal_ambient_occlusion(
+            positions_5d,
+            normals,
+            base_colors,
         )
 
         aprint(f"✓ Total points: {len(positions_5d):,}")
@@ -679,10 +749,10 @@ def generate_4d_fractal_dataset(
                 absorption=1.23,
                 gamma=1.0,
                 # `intensity` is the display WINDOW, not a gain: the viewer
-                # recovers [-offset/i, (1-offset)/i]. The old 0.0625 stated the
-                # window [0, 16]. 1/1.971 states the authored [0, 1.971] window
-                # left by the Layers-panel appearance pass.
-                intensity=1.0 / 1.971,
+                # recovers [-offset/i, (1-offset)/i]. AO lowers mean emission
+                # to 0.570 of the unshaded value, so the previous 1.971 window
+                # becomes 1.123 to preserve the authored mean brightness.
+                intensity=1.0 / DISPLAY_MAX,
                 layer=True,
             )
 
@@ -758,8 +828,8 @@ def main() -> None:
     aprint("  4: 4D Hypercheckerboard - Alternating parity cells")
     aprint("  5: 4D Diamond Fractal - Concentric taxicab shells")
     aprint("")
-    aprint("⏱️  Generation time: ~7 minutes at the default grid")
-    aprint("   (Use a smaller --grid for a faster build.)")
+    aprint("⏱️  Generation time: ~25 minutes at the default grid")
+    aprint("   Peak memory: ~24 GB; use a smaller --grid to reduce time and memory.")
     aprint("")
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
