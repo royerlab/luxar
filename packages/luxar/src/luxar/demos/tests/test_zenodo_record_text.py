@@ -983,3 +983,84 @@ def test_an_additive_count_is_absent_if_any_chunk_is_unreadable(
     )
 
     assert total is None, "a partial sum must not be published as a total"
+
+
+# ---------------------------------------------------------------------------
+# `--check` has to say WHY a figure is absent when it already knows.
+#
+# refresh writes an all-null entry when the local copy's bytes are NOT the
+# pinned artifact: the figures are absent deliberately, because measuring that
+# copy would describe a generation the record does not serve. Printed
+# identically to "nobody measured this yet", it reads as an invitation to make
+# the generator read the archive -- which republishes precisely the unpinned
+# numbers the marker withholds. celegans and nexrad both sit in this state with
+# a local copy whose size matches the pin EXACTLY and whose digest does not.
+# ---------------------------------------------------------------------------
+
+
+class TestCheckExplainsAnAbsentFigure:
+    def _gaps_for(
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sidecar: dict[str, Any],
+    ) -> list[str]:
+        archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
+        archive.parent.mkdir(exist_ok=True)
+        _write_bundle(archive, [{"n_splats": 10}], tmp_path)
+        manifest = _fake_manifest([_entry("movie.gsplats.zarr.zip", "p" * 64)])
+        chars_path = tmp_path / "chars.json"
+        chars_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "archives": {
+                        gen._char_key("ds", "", "movie.gsplats.zarr.zip"): sidecar
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(gen, "CHARACTERISTICS", chars_path)
+        problems, _unread, *_rest = gen._gaps(manifest)
+        return problems
+
+    _ADJUDICATED = {
+        "n_splats": None,
+        "psnr_db": None,
+        "foreground_psnr_db": None,
+        "source_bytes": None,
+        "topology": None,
+        "measured_from": None,
+        "measured_sha256": None,
+    }
+
+    def test_an_unpinned_local_copy_is_named_as_the_cause(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (problem,) = self._gaps_for(gen, tmp_path, monkeypatch, dict(self._ADJUDICATED))
+
+        assert "not the pinned artifact" in problem, (
+            "an absence refresh decided on must say so, or it reads as unmeasured "
+            "work and invites republishing the unpinned figures"
+        )
+
+    def test_a_measured_entry_gets_no_such_excuse(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The diagnosis must not fire for an archive that was really measured."""
+        sidecar = dict(self._ADJUDICATED, measured_sha256="a" * 64, n_splats=10)
+
+        problems = self._gaps_for(gen, tmp_path, monkeypatch, sidecar)
+
+        assert not any("not the pinned artifact" in p for p in problems)
+
+    def test_a_never_measured_entry_gets_no_such_excuse(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hand-written note is not a refresh verdict, so it explains nothing."""
+        problems = self._gaps_for(
+            gen, tmp_path, monkeypatch, {"quality_note": "measured elsewhere"}
+        )
+
+        assert not any("not the pinned artifact" in p for p in problems)

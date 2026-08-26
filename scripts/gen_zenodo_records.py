@@ -630,6 +630,10 @@ def _dataset_rows(
                 "psnr": _db(info.get("psnr_db")) if info else _ABSENT,
                 "fg_psnr": _db(info.get("foreground_psnr_db")) if info else _ABSENT,
                 "vs_raw": _ratio(info.get("source_bytes"), stored) if info else _ABSENT,
+                # Lets `--check` look the row's own sidecar entry back up, so it
+                # can distinguish an unmeasured archive from one deliberately
+                # left unmeasured because the local bytes are not the pinned ones.
+                "char_key": _char_key(dataset, variant, spec["name"]),
             }
         )
     return rows
@@ -750,6 +754,33 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
     return "".join(out)
 
 
+def _why_absent(
+    dataset: str,
+    entry: dict[str, Any],
+    row: dict[str, Any],
+    chars: dict[str, Any],
+) -> str:
+    """Name the cause when the sidecar already records one.
+
+    ``refresh`` writes an entry whose every measurement is null when it finds a
+    local copy whose bytes are NOT the pinned artifact: the figures are absent
+    on purpose, because measuring that copy would describe a generation the
+    record does not serve. That is a different job from an unmeasured archive --
+    fetch the hosted copy, rather than go and measure -- and printing the two
+    identically invites someone to "fix" the generator into publishing the very
+    numbers the marker withholds.
+    """
+    info = chars.get(row.get("char_key", ""))
+    if not info or "measured_sha256" not in info:
+        return ""
+    if info.get("measured_sha256") is not None:
+        return ""
+    return (
+        " (a local copy is present but its bytes are not the pinned artifact, "
+        "so it was deliberately not measured; fetch the hosted copy)"
+    )
+
+
 def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
     """Figures a record would print as absent, and the rows nothing was read for."""
     problems: list[str] = []
@@ -781,7 +812,10 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
                 if value == _ABSENT
             ]
             if missing:
-                problems.append(f"{name}/{row['file']}: no {', '.join(missing)}")
+                problems.append(
+                    f"{name}/{row['file']}: no {', '.join(missing)}"
+                    + _why_absent(name, entry, row, chars)
+                )
         if not _files_of(entry):
             problems.append(f"{name}: no files uploaded")
     return problems, unread
