@@ -189,6 +189,12 @@ def synchronize(
         if check:
             for path, (actual, expected) in changed.items():
                 print(_diff(path, actual, expected, repo=repo), end="")
+            if changed:
+                print(
+                    "demo documentation counts are stale — run "
+                    "`hatch run sync-demo-counts` and commit the result.",
+                    file=sys.stderr,
+                )
             return 1 if changed else 0
 
         for path, (_, expected) in changed.items():

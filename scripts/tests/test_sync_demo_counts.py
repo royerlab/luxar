@@ -144,10 +144,14 @@ def test_check_reports_drift_without_writing(
     )
 
     assert {path: path.read_text() for path in before} == before
-    output = capsys.readouterr().out
-    assert "README.md (synchronized)" in output
-    assert "CLAUDE.md (synchronized)" in output
-    assert "SKILL.md (synchronized)" in output
+    captured = capsys.readouterr()
+    assert "README.md (synchronized)" in captured.out
+    assert "CLAUDE.md (synchronized)" in captured.out
+    assert "SKILL.md (synchronized)" in captured.out
+    assert (
+        "demo documentation counts are stale — run `hatch run sync-demo-counts` "
+        "and commit the result."
+    ) in captured.err
 
 
 def test_main_check_uses_current_document_paths(
