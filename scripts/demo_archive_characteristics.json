@@ -337,19 +337,24 @@
       "measured_sha256": "fadb070081f3deb5018c80951b0b42109647f059ea8897a9bfad9fd1d13b7d00"
     },
     "gsplats_flylight_mcfo_63x/flylight_mcfo_63x.gsplats.zarr.zip": {
-      "n_splats": null,
+      "n_splats": 508371,
       "ndim": null,
       "format_version": null,
       "topology": null,
-      "psnr_db": null,
-      "foreground_psnr_db": null,
-      "foreground_fraction": null,
-      "source_shape": null,
-      "source_dtype": null,
-      "source_bytes": null,
+      "psnr_db": 60.13,
+      "foreground_psnr_db": 36.0,
+      "foreground_fraction": 0.00066762063603195,
+      "source_shape": [
+        463,
+        2707,
+        2573
+      ],
+      "source_dtype": "uint16",
+      "source_bytes": 6449692786,
       "frames": null,
       "measured_from": null,
-      "measured_sha256": null
+      "measured_sha256": null,
+      "quality_note": "REFIT 2026-08-25 from Janelia's public H5J (sha256 189595b1...) and scored on the VOXEL GRID before any transform, with --image-min 1 matching the background level every box subtracted. Scoring after the rotate-y/scale/rotate-z chain is invalid (droso lost 16 dB that way), and the fit could not stamp itself: full-volume scoring peaks at ~96 GiB against a 22.4 GiB budget, so `gsplat compare` was run on the written archive as the fitter advised. NOTE this is a NEW fit, not a re-measurement of the previously shipped archive: 508,371 splats against 653,759, from the same cal_h5j.json, the same 75-box content plan (47 non-empty) and the same --floor auto. The figures therefore describe THIS archive. Global PSNR 60.13 dB is near-meaningless here (99.93% of voxels are empty); the foreground figure is the one that says whether the neurites survived. Cross-check: cal_h5j.json's held-out foreground peaked at 32.63 dB on the densest 320^3 region, so 36.00 dB whole-volume with more splats is consistent."
     },
     "gsplats_kidney/kidney_ch0.gsplats.zarr.zip": {
       "n_splats": 51015,
