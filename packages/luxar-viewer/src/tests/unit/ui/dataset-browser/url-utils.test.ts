@@ -15,6 +15,7 @@ describe('extractBaseUrl', () => {
   it('strips a trailing .zarr segment so the listing target is the parent dir', () => {
     expect(extractBaseUrl('http://x.test/data/foo.zarr', ORIGIN)).toBe('http://x.test/data/');
     expect(extractBaseUrl('http://x.test/data/foo.zarr/', ORIGIN)).toBe('http://x.test/data/');
+    expect(extractBaseUrl('http://x.test/data/foo.zarr.zip', ORIGIN)).toBe('http://x.test/data/');
   });
 
   it('returns the parent dir for a deeply nested .zarr path', () => {
@@ -50,6 +51,7 @@ describe('extractPath', () => {
   it('returns the path up to and including the .zarr segment', () => {
     expect(extractPath('http://x.test/data/foo.zarr')).toBe('data/foo.zarr');
     expect(extractPath('http://x.test/a/b/foo.zarr')).toBe('a/b/foo.zarr');
+    expect(extractPath('http://x.test/data/foo.zarr.zip')).toBe('data/foo.zarr.zip');
   });
 
   it('truncates path components after the .zarr (zarr-internal paths)', () => {

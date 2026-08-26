@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { DirectoryEntry } from '../../../data';
+import { DirectoryNavigator, type DirectoryEntry } from '../../../data';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { isTypingInInput } from '../../../utils/dom/focus';
 
@@ -149,6 +149,37 @@ describe('DatasetBrowser', () => {
       // And fired exactly one initial navigate (no double-fetch).
       expect(navigateMock).toHaveBeenCalledTimes(1);
       expect(navigateMock).toHaveBeenCalledWith('');
+    });
+
+    it('opens a loaded .zarr.zip at its parent and marks the archive as loaded', async () => {
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({
+          entries: [
+            {
+              name: 'sample.zarr.zip',
+              path: 'sample.zarr.zip',
+              type: 'zarr',
+            },
+          ],
+        })
+      );
+
+      new DatasetBrowser({
+        container,
+        onDatasetSelect,
+        onClose,
+        currentSrc: 'http://server.test/data/sample.zarr.zip',
+        origin: 'http://server.test',
+      });
+
+      expect(vi.mocked(DirectoryNavigator)).toHaveBeenCalledWith('http://server.test/data/');
+      await vi.waitFor(() => {
+        const current = container.querySelector(
+          '.luxar-dataset-browser__file-item--current'
+        ) as HTMLElement | null;
+        expect(current?.textContent).toContain('sample.zarr.zip');
+        expect(current?.textContent).toContain('LOADED');
+      });
     });
   });
 

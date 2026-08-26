@@ -152,7 +152,7 @@ export class DatasetBrowser {
       // No dataset specified - show browser at root, will display manual entry
       baseUrl = this.origin + '/';
       initialPath = ''; // Don't navigate - just show the browser UI
-    } else if (src.includes('.zarr/') || src.endsWith('.zarr')) {
+    } else if (src.includes('.zarr/') || src.endsWith('.zarr') || isZippedZarrStoreUrl(src)) {
       // We're inside or at a zarr dataset - navigate to parent directory
       try {
         const parsed = new URL(src);
