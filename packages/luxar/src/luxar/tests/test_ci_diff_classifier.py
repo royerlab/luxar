@@ -99,7 +99,8 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
     (
         ".agents/skills/luxar-visualization/SKILL.md",
         "py",
-        "test_cholesky_documentation.py executes its documented Cholesky packing",
+        "test_cholesky_documentation.py executes its documented Cholesky packing, "
+        "and check-demo-counts synchronizes its demo and focused-example counts",
     ),
     (
         ".agents/skills/luxar-visualization/references/scene-api.md",
@@ -109,7 +110,8 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
     (
         "CLAUDE.md",
         "py",
-        "test_cholesky_documentation.py guards its contributor-facing convention",
+        "test_cholesky_documentation.py guards its contributor-facing convention, "
+        "and check-demo-counts synchronizes its bundled-demo count with the registry",
     ),
     (
         "docs/specs/GSPLATS_DIMENSION_MAPPING.md",
@@ -413,7 +415,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert matrix_lists, "python-tests must declare its event-specific version matrices"
     largest_matrix_size = max(len(json.loads(matrix)) for matrix in matrix_lists)
     assert hosted_cap >= largest_matrix_size, (
-        "the hosted max-parallel branch must not throttle the off-PR Python matrix"
+        "the hosted max-parallel branch must not throttle the full Python matrix"
     )
 
     pytest_addopts = jobs["python-tests"]["env"]["PYTEST_ADDOPTS"]
@@ -464,6 +466,33 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert pick_runner["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}", (
         "pick-runner must authenticate gh api with the workflow token"
     )
+
+
+def test_scheduled_ci_supplies_a_green_window_every_three_hours(
+    workflow: str,
+) -> None:
+    """Promotion must not depend on a merge-free hour appearing by chance."""
+    # BaseLoader preserves the YAML 1.1 ``on`` key instead of coercing it to True.
+    parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
+    schedules = [entry["cron"] for entry in parsed["on"]["schedule"]]
+    matrix_line = next(
+        line for line in workflow.splitlines() if "python-version: ${{" in line
+    )
+    match = re.search(r"github\.event\.schedule == '([^']+)'", matrix_line)
+    assert match is not None, "the full Python matrix must name a daily schedule"
+    assert match.group(1) in schedules, (
+        "one scheduled window must retain the full daily Python matrix"
+    )
+
+    scheduled_hours: list[int] = []
+    for schedule in schedules:
+        minute, hour, day, month, weekday = schedule.split()
+        assert (minute, day, month, weekday) == ("17", "*", "*", "*")
+        if hour == "*/3":
+            scheduled_hours.extend(range(0, 24, 3))
+        else:
+            scheduled_hours.extend(int(value) for value in hour.split(","))
+    assert sorted(scheduled_hours) == list(range(0, 24, 3))
 
 
 def _run_pick_runner(

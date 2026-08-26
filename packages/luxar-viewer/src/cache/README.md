@@ -170,9 +170,12 @@ under "L0 Decompressed Chunk Cache" below.
 
 `MultiLevelCachingStore.getStats()` returns a `health` field with:
 
-- `validationMode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none'`
+- `validationMode: 'content-hash' | 'zattrs-hash' | 'archive-etag' | 'ttl' | 'none'`
   - `content-hash`: Luxar dataset with `content_hash` attr — strongest
     invalidation guarantee.
+  - `archive-etag`: a zipped store, identified by a probe on the archive itself
+    (its root attrs live inside it, so no document can be re-fetched alone).
+    Covers the whole store at once rather than one document.
   - `zattrs-hash`: dataset without `content_hash`; the SHA-256 of the raw
     root `.zattrs` bytes serves as an implicit validation token. Luxar
     writers re-stamp a per-save `timestamp` attr, so a dataset regenerated
@@ -184,10 +187,9 @@ under "L0 Decompressed Chunk Cache" below.
   - `none`: `.zattrs` unreachable, no cached hash, no TTL configured —
     cache may be stale indefinitely until manually cleared. The cache tab
     surfaces this as an `unvalidated-external-dataset` badge.
-- `lastValidatedAt: number | null`: wall-clock millis at last
-  successful validation (hash modes), or the fixed known-good baseline
-  under `ttl`/`none` — seeded once and NOT advanced by repeat no-token
-  checks, so the TTL age grows monotonically.
+- `lastValidatedAt: number | null`: wall-clock millis at last successful source
+  validation, or the fixed known-good baseline under `ttl`/`none` — seeded once
+  and NOT advanced by repeat no-token checks, so the TTL age grows monotonically.
 - `unvalidatedExternalDataset: boolean`: convenience flag.
 
 `OPFSStore.getStats()` exposes health counters:
@@ -415,7 +417,7 @@ Main class implementing zarrita's `AsyncReadable` interface.
 #### Constructor
 
 ```typescript
-new MultiLevelCachingStore(baseUrl: string, options?: {
+new MultiLevelCachingStore(source: string | ChunkSource, options?: {
   l1MaxSize?: number;             // L1 size in bytes (default: 100MB)
   l2MaxSize?: number;             // L2 size in bytes (default: 2GB)
   debug?: boolean;                // Enable debug logging (default: false)
@@ -482,7 +484,7 @@ data-loading monitor, debug overlay, and cache E2E suite:
     networkRequests: number   // User-demand network requests
   },
   health: {
-    validationMode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none',
+    validationMode: 'content-hash' | 'zattrs-hash' | 'archive-etag' | 'ttl' | 'none',
     lastValidatedAt: number | null,
     unvalidatedExternalDataset: boolean,
     opfsAvailable: boolean
@@ -865,6 +867,14 @@ await window.__luxarDebug.cache.clearAll();
 
 ## File Layout
 
+- `chunk-source.ts` — the byte-source port the caching store reads through
+  (`ChunkSource`). Declared in this layer, not in `src/data`, so the cache never
+  has to import a concrete store to read through it.
+- `chunk-source/http-chunk-source.ts` — the directory-store source: one
+  retrying HTTP request per chunk, owning the response lifetime.
+- `chunk-source/zip-chunk-source.ts` — the zipped-store source: members read out
+  of one archive, identity from a probe on the archive, and archive-level faults
+  reported as `fatal` so the store rethrows instead of rendering an empty scene.
 - `multi-level-caching-store.ts` — L1+L2 facade implementing zarrita's
   `AsyncReadable` with validation, prefetcher hookup, and disposal.
 - `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.

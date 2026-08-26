@@ -8,7 +8,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isZippedStoreUrl, normalizeZipEntries } from '../../../../data/zip/entries';
+import {
+  isZippedStoreUrl,
+  isZippedZarrStoreUrl,
+  normalizeZipEntries,
+} from '../../../../data/zip/entries';
 
 const URL_ = 'https://example.com/scene.luxar.zarr.zip';
 
@@ -86,5 +90,24 @@ describe('normalizeZipEntries — refusals', () => {
   it('refuses a store buried two directories deep (only one level is unwrapped)', () => {
     const entries = entriesFrom(['out/scene.luxar.zarr/zarr.json']);
     expect(() => normalizeZipEntries(entries, URL_)).toThrow(/does not contain a zarr store/);
+  });
+});
+
+describe('isZippedZarrStoreUrl — discovery, not routing', () => {
+  it('accepts a zipped zarr store', () => {
+    expect(isZippedZarrStoreUrl('/data/scene.luxar.zarr.zip')).toBe(true);
+    expect(isZippedZarrStoreUrl('/data/SCENE.GSPLATS.ZARR.ZIP?token=x')).toBe(true);
+  });
+
+  it('REJECTS an ordinary archive that merely ends in .zip', () => {
+    // The point of being narrower than `isZippedStoreUrl`: a directory listing
+    // full of `results.zip` must not sprout ZARR badges that die on click.
+    expect(isZippedZarrStoreUrl('/data/results.zip')).toBe(false);
+    expect(isZippedZarrStoreUrl('/data/backup.tar.zip')).toBe(false);
+  });
+
+  it('is still narrower than the routing predicate, which accepts both', () => {
+    expect(isZippedStoreUrl('/data/results.zip')).toBe(true);
+    expect(isZippedZarrStoreUrl('/data/results.zip')).toBe(false);
   });
 });

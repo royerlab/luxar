@@ -88,6 +88,22 @@ export function normalizeZipEntries<T>(
 }
 
 /**
+ * Does this listing entry look like a zipped ZARR store, specifically?
+ *
+ * Narrower than {@link isZippedStoreUrl} on purpose. Suffix matching is fine for
+ * ROUTING a URL the user explicitly asked for — they said `.zip`, so try to open
+ * it and fail loudly if it holds no store. It is wrong for DISCOVERY: marking
+ * every `results.zip` in a directory listing as a dataset gives it a ZARR badge
+ * and a click that dies with "does not contain a zarr store". `serving.py`'s JSON
+ * listing already restricts to `.zarr.zip`; this keeps the HTML/PROPFIND
+ * fallbacks agreeing with it.
+ */
+export function isZippedZarrStoreUrl(url: string): boolean {
+  const withoutQuery = url.split(/[?#]/, 1)[0];
+  return withoutQuery.toLowerCase().endsWith('.zarr.zip');
+}
+
+/**
  * Does this dataset URL name a zipped store?
  *
  * Query and fragment are ignored so a signed or parameterized URL

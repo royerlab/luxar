@@ -427,6 +427,13 @@ check-contract = "python scripts/gen_format_contract.py --check"
 gen-data-manifest = "python scripts/gen_data_manifest.py"
 # Assert the committed demo-data manifest matches the tree.
 check-data-manifest = "python scripts/gen_data_manifest.py --check"
+# Synchronize the four live documentation sites with the demo registry and the
+# focused-example glob. Historical changelog counts are intentionally excluded;
+# concurrent stale branches may still need to rerun this after the first merges.
+# README catalogue section counts remain guarded by the renderer pytest.
+sync-demo-counts = "python scripts/sync_demo_counts.py"
+# Assert those committed counts match their derivation sources.
+check-demo-counts = "python scripts/sync_demo_counts.py --check"
 # Audit built demo scenes when present; a checkout without generated scenes is
 # a read-only no-op. The underlying gate is unit-tested in the Python suite.
 check-demo-ladders = "python scripts/check_demo_ladders.py {args}"
@@ -449,6 +456,7 @@ check-static = [
     "check-versions",
     "check-contract",
     "check-data-manifest",
+    "check-demo-counts",
     "check-demo-ladders",
     "check-scene-credits",
     "security"
@@ -516,7 +524,8 @@ MKL_NUM_THREADS = "{env:MKL_NUM_THREADS:1}"
 NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 
 [[tool.hatch.envs.test.matrix]]
-# Every version the classifiers advertise, mirroring the CI matrix's non-PR set:
+# Every version the classifiers advertise, mirroring the CI matrix's full set
+# (dev pushes and the daily 09:17 schedule):
 # `requires-python = ">=3.12"` has no ceiling, so the version most developers
 # actually run (their newest interpreter) has to be testable too —
 # `hatch run test.py3.14:cov`.

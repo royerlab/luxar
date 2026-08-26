@@ -176,7 +176,7 @@ describe('shouldShowBrowser — zipped stores', () => {
   it('loads a .zarr.zip directly without probing for children', async () => {
     // The child probes are meaningless for an archive: `archive.zip/zarr.json`
     // 404s for EVERY archive, so probing would divert a perfectly loadable
-    // dataset into the browser — which cannot list it either.
+    // dataset into the browser.
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
 
