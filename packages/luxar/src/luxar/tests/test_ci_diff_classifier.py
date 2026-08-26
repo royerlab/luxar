@@ -768,6 +768,192 @@ def test_scheduled_ci_supplies_a_green_window_every_three_hours(
     assert sorted(scheduled_hours) == list(range(0, 24, 3))
 
 
+def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
+    """A green cron must clear cancelled duplicate contexts on the same SHA."""
+    parsed = yaml.safe_load(workflow)
+    assert parsed["concurrency"]["group"] == (
+        "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-"
+        "${{ github.run_attempt }}"
+    )
+    assert parsed["concurrency"]["cancel-in-progress"] is True
+
+    jobs = parsed["jobs"]
+    repair = jobs["repair-cancelled-push-checks"]
+
+    assert set(repair["needs"]) == {
+        "python-tests",
+        "typescript-tests",
+        "release-readiness",
+        "wheel-viewer",
+        "docs-quality",
+    }
+    condition = re.sub(r"\s+", "", repair["if"])
+    assert "github.event_name=='schedule'" in condition
+    assert "always()" in condition
+    assert "!cancelled()" in condition
+    assert repair["permissions"] == {"actions": "write"}
+    assert repair["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}"
+
+    script = repair["steps"][0]["run"]
+    assert "actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest" in script
+    assert "event=push" in script
+    assert "status=completed" in script
+    assert "head_sha=${GITHUB_SHA}" in script
+    assert 'select(.name == "CI")' in script
+    assert "max_by(.id).id // empty" in script
+    assert "actions/runs/${push_run}/jobs?filter=latest" in script
+    assert '.conclusion == "cancelled"' in script
+    for context in (
+        "python-tests (3.12)",
+        "typescript-tests",
+        "release-readiness",
+        "wheel-viewer",
+        "docs-quality",
+    ):
+        assert context in script
+    assert "actions/jobs/$job_id/rerun" in script
+    assert "actions/runs/${push_run}/rerun-failed-jobs" in script
+
+
+def _run_cancelled_push_repair(
+    workflow: str,
+    tmp_path: Path,
+    *,
+    scheduled_python: str = "success",
+    push_python_latest: str = "cancelled",
+    push_typescript: str = "cancelled",
+    push_release: str = "cancelled",
+    rejected_endpoint: str = "",
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Execute the repair shell against deterministic workflow/job snapshots."""
+    script = yaml.safe_load(workflow)["jobs"]["repair-cancelled-push-checks"]["steps"][
+        0
+    ]["run"]
+    calls_path = tmp_path / "calls"
+    fake_gh = tmp_path / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+endpoint = next((arg for arg in sys.argv if arg.startswith("repos/")), "")
+if "--method" in sys.argv:
+    with open(os.environ["CALLS_PATH"], "a", encoding="utf-8") as stream:
+        stream.write(endpoint + "\\n")
+    if endpoint == os.environ["REJECTED_ENDPOINT"]:
+        raise SystemExit(1)
+elif f"/runs/{os.environ['GITHUB_RUN_ID']}/jobs?" in endpoint:
+    print(json.dumps([{"jobs": [
+        {"id": 10, "name": "python-tests (3.12)", "conclusion": "cancelled"},
+        {"id": 11, "name": "python-tests (3.12)", "conclusion": os.environ["SCHEDULED_PYTHON"]},
+        {"id": 12, "name": "typescript-tests", "conclusion": "success"},
+        {"id": 13, "name": "release-readiness", "conclusion": "success"},
+        {"id": 14, "name": "wheel-viewer", "conclusion": "success"},
+        {"id": 15, "name": "docs-quality", "conclusion": "success"},
+        {"id": 16, "name": "python-tests (3.14)", "conclusion": "failure"},
+    ]}]))
+elif "/actions/runs?" in endpoint:
+    print("900")
+elif "/runs/900/jobs?" in endpoint:
+    print(json.dumps([{"jobs": [
+        {"id": 21, "name": "python-tests (3.12)", "conclusion": "cancelled"},
+        {"id": 22, "name": "typescript-tests", "conclusion": os.environ["PUSH_TYPESCRIPT"]},
+        {"id": 23, "name": "release-readiness", "conclusion": os.environ["PUSH_RELEASE"]},
+        {"id": 24, "name": "python-tests (3.14)", "conclusion": "cancelled"},
+        {"id": 25, "name": "python-tests (3.12)", "conclusion": os.environ["PUSH_PYTHON_LATEST"]},
+    ]}]))
+else:
+    raise SystemExit(f"unexpected endpoint: {endpoint}")
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+        env=os.environ
+        | {
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "CALLS_PATH": str(calls_path),
+            "GITHUB_REPOSITORY": "royerlab/luxar",
+            "GITHUB_RUN_ID": "800",
+            "GITHUB_SHA": "deadbeef",
+            "SCHEDULED_PYTHON": scheduled_python,
+            "PUSH_PYTHON_LATEST": push_python_latest,
+            "PUSH_TYPESCRIPT": push_typescript,
+            "PUSH_RELEASE": push_release,
+            "REJECTED_ENDPOINT": rejected_endpoint,
+        },
+    )
+    calls = calls_path.read_text().splitlines() if calls_path.exists() else []
+    return result, calls
+
+
+def test_green_schedule_reruns_all_latest_cancelled_required_push_jobs(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(workflow, tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [
+        "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs",
+    ]
+
+
+def test_green_schedule_ignores_older_cancelled_push_attempt(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow, tmp_path, push_python_latest="success", push_release="success"
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/jobs/22/rerun"]
+
+
+def test_single_cancelled_required_job_uses_job_rerun(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        push_typescript="success",
+        push_release="success",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/jobs/25/rerun"]
+
+
+def test_rejected_multi_job_rerun_is_reported(workflow: str, tmp_path: Path) -> None:
+    endpoint = "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs"
+    result, calls = _run_cancelled_push_repair(
+        workflow, tmp_path, rejected_endpoint=endpoint
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [endpoint]
+    assert (
+        "rerun rejected for push run 900 (3 cancelled required jobs)" in result.stdout
+    )
+
+
+def test_non_green_schedule_does_not_repair_push_jobs(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow, tmp_path, scheduled_python="failure"
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == []
+    assert "python-tests (3.12)=failure" in result.stdout
+
+
 def _run_pick_runner(
     workflow: str,
     tmp_path: Path,
