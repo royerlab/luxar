@@ -308,6 +308,7 @@ NON_PYTHON_DOMAIN_PATHS: list[str] = [
     "packages/luxar-viewer/src/rendering/display-range.ts",
     "packages/luxar-viewer/src/scene/lod-fade.ts",
     "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",
+    "packages/luxar-viewer/src/types/blending.ts",
     "packages/luxar-viewer/tools/example-smoke-inventory.ts",
 ]
 

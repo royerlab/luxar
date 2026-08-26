@@ -106,6 +106,17 @@ def test_capability_parser_ignores_render_only_shape() -> None:
     }
 
 
+def test_capability_parser_rejects_nonliteral_rows() -> None:
+    """A table shape change keeps the cross-language guidance in the failure."""
+    source = """export const GEOMETRY_CAPABILITIES: Readonly<Record<string, object>> =
+  Object.freeze({
+    points: LEAF_ROW,
+  });
+"""
+    with pytest.raises(AssertionError, match="do NOT delete the cross-language lock"):
+        _read_viewer_capabilities(source)
+
+
 def test_every_contract_geometry_type_has_a_row() -> None:
     """The Python stand-in for ``Record<GeometryTypeName, GeometryCapabilities>``.
 

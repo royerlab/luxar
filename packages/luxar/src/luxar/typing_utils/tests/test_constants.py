@@ -100,6 +100,12 @@ selector: 'coverage' | 'screen-area';
         read_ts_string_literals(source, "selector")
 
 
+def test_string_literal_parser_rejects_repeated_members() -> None:
+    """A duplicated member cannot collapse silently through set conversion."""
+    with pytest.raises(AssertionError, match="repeats a member"):
+        read_ts_string_literals("type X = 'a' | 'a';", "X")
+
+
 class TestDefaultTruncationRadius:
     """The canonical GSplat truncation radius ``T``."""
 
