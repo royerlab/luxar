@@ -57,15 +57,17 @@ export function updateOverviewTab(
   // "DATA LOADED" card: cumulative bytes delivered across all tiers
   // (L1 + L2 + network), so it stays informative on a warm/cache-served
   // reload where `bytesTransferred` is legitimately 0. The subtitle
-  // breaks out how much of that came over the network plus live bandwidth.
+  // breaks out how much of that came over the network plus live bandwidth
+  // and the total request count.
   const network = cacheMetrics.network;
   const dataLoaded = network ? (network.totalBytesServed ?? network.bytesTransferred) : 0;
+  const requestsServed = network ? (network.totalRequestsServed ?? network.requestCount) : 0;
   patchField(container, 'network-bytes', network ? formatBytes(dataLoaded) : '0B');
   patchField(
     container,
     'network-detail',
     network
-      ? `${formatBytes(network.bytesTransferred)} net · ${formatBytes(network.bandwidth)}/s`
+      ? `${formatBytes(network.bytesTransferred)} net · ${formatBytes(network.bandwidth)}/s · ${requestsServed.toLocaleString()} reqs`
       : '0B net'
   );
 

@@ -47,4 +47,61 @@ describe('updateOverviewTab', () => {
     ).toBe(false);
     expect(badges).not.toHaveBeenCalled();
   });
+
+  it('keeps the request count in the patched network detail', () => {
+    const container = document.createElement('div');
+    container.innerHTML =
+      '<span data-field="visible-points"></span><span data-field="network-bytes"></span><span data-field="network-detail"></span>';
+    const stats = {
+      datasetSize: 1,
+      visiblePoints: 1,
+      datasetSegments: 0,
+      visibleSegments: 0,
+      datasetSplats: 0,
+      visibleSplats: 0,
+      droppedElements: 0,
+      avgQueryTime: 0,
+      queriesPerSecond: 0,
+    } as GlobalStats;
+    const badges = vi.fn();
+
+    updateOverviewTab(
+      container,
+      stats,
+      {
+        totalCacheMemory: 0,
+        memoryLimit: 1,
+        network: {
+          bytesTransferred: 500,
+          requestCount: 7,
+          bandwidth: 50,
+          totalBytesServed: 1000,
+          totalRequestsServed: 42,
+        },
+      } as CacheMetrics,
+      badges
+    );
+    expect(container.querySelector('[data-field="network-detail"]')?.textContent).toBe(
+      '500B net · 50B/s · 42 reqs'
+    );
+
+    updateOverviewTab(
+      container,
+      stats,
+      {
+        totalCacheMemory: 0,
+        memoryLimit: 1,
+        network: {
+          bytesTransferred: 500,
+          requestCount: 7,
+          bandwidth: 50,
+          totalBytesServed: 1000,
+        },
+      } as CacheMetrics,
+      badges
+    );
+    expect(container.querySelector('[data-field="network-detail"]')?.textContent).toBe(
+      '500B net · 50B/s · 7 reqs'
+    );
+  });
 });
