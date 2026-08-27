@@ -98,10 +98,8 @@ vi.mock('../../../../../data/scene-loader/loaders/loader-factory', () => ({
   createProgressiveMeshLoader: createProgressiveMeshLoaderMock,
 }));
 
-import {
-  loadLodGroupNode,
-  type LoadSceneChildren,
-} from '../../../../../data/scene-loader/nodes/load-lod-group-node';
+import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
+import type { LoadSceneChildren } from '../../../../../data/scene-loader/nodes/load-children-concurrently';
 import { loadMeshNode } from '../../../../../data/scene-loader/nodes/load-mesh-node';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { MeshProgressiveLoader } from '../../../../../data/mesh/mesh-progressive-loader';
