@@ -211,6 +211,7 @@ describe('Public barrel side effects', () => {
         'InputContext',
         'KeyAction',
         'LuxarApp',
+        'LuxarLayer',
         'StorageKeys',
         'applyBlendingStateToMaterial',
         'applyColormapTextureToMaterial',

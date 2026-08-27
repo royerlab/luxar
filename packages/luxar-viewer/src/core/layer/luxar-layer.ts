@@ -38,9 +38,11 @@
  * - Calling {@link LuxarLayer.update} once per frame, before its own render.
  * - Calling {@link LuxarLayer.resize} after a viewport or camera-projection
  *   change (the layer cannot observe the host's canvas).
- * - Draw order for its *own* geometry. Luxar assigns `renderOrder` across the
- *   nodes it owns; a host with its own transparent geometry should set explicit
- *   values rather than rely on insertion order.
+ * - Draw order for its *own* geometry. Luxar stamps the configured
+ *   `renderOrder` onto every Group it owns; host transparent groups should use
+ *   explicit lower/higher values rather than rely on insertion order.
+ * - Calling {@link LuxarLayer.handleContextRestored} after the host restores a
+ *   WebGL context and rebuilds its own renderer / post-processing resources.
  *
  * ## A scene's post/camera/UI config does NOT apply in layer mode
  *
@@ -91,7 +93,8 @@ import {
 } from '../../data/zarr-loader';
 import { SceneLoaderManager, getSceneLoader } from '../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../scene/lod-group-registry';
-import { sceneDimsManager } from '../../scene/scene-dims-manager';
+import { sceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
+import type { FadeableMaterial } from '../../scene/lod-fade';
 import { materialManager } from '../../rendering/material-manager';
 import { createRendererCapabilities } from '../../rendering/renderer-capabilities';
 import { getGpuByteBudget } from '../../rendering/gpu-byte-budget';
@@ -112,7 +115,9 @@ import {
 } from '../../utils/camera-utils';
 import { config } from '../../config';
 import { isLuxarMaterial } from '../../ui/layers/luxar-material';
+import { clamp } from '../../utils/clamp';
 import { log, Modules } from '../../utils/log';
+import { markSceneResourcesDirtyForContextRestore } from '../../scene/scene-manager/render-pipeline/webgl-context-recovery';
 import type { Renderer } from '../../rendering/renderer-capabilities';
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { EmbedderDimensions } from '../app/embedder/events';
@@ -164,9 +169,9 @@ export interface LuxarLayerOptions {
   /** Worker-based back-to-front sorting for order-dependent geometry. Default true. */
   depthSort?: boolean;
   /**
-   * `renderOrder` for the layer root. Emissive Luxar geometry is additive with
-   * depth-write off, so it should generally draw after the host's opaque
-   * geometry. Default 10.
+   * `renderOrder` stamped onto every Group in the layer subtree. Three.js uses
+   * the nearest Group's value as the primary transparent-sort key, so nested
+   * scene / LOD / partition groups must agree. Default 10.
    */
   renderOrder?: number;
 }
@@ -174,15 +179,17 @@ export interface LuxarLayerOptions {
 /**
  * The opacity a material was authored with.
  *
- * Read from the uniform rather than `material.opacity`: the Luxar materials
- * carry exposure in `uOpacity`, and the Three.js `opacity` field is left at its
- * default. A material that exposes neither is treated as fully exposed, which
- * makes {@link LuxarLayer.setExposure} a no-op on it rather than a silent dim.
+ * Read through the same `getOpacity()` surface the LOD fade uses rather than
+ * `material.opacity`: Luxar materials carry exposure in their shader uniform,
+ * while the Three.js field stays at its default. A material without that
+ * surface is treated as fully exposed rather than silently dimmed.
  */
-function readOpacityUniform(mat: THREE.Material): number {
-  const uniforms = (mat as unknown as { uniforms?: { uOpacity?: { value?: number } } }).uniforms;
-  return uniforms?.uOpacity?.value ?? 1;
+function readOpacity(mat: THREE.Material): number {
+  return (mat as Partial<FadeableMaterial>).getOpacity?.() ?? 1;
 }
+
+const LOADER_ID = 'default';
+const DEFAULT_RENDER_ORDER = 10;
 
 /**
  * A Luxar scene rendered inside a host-owned Three.js pipeline.
@@ -192,13 +199,13 @@ function readOpacityUniform(mat: THREE.Material): number {
  */
 export class LuxarLayer {
   private readonly options: LuxarLayerOptions;
-  private readonly loaderId: string;
   private readonly bufferSize = new THREE.Vector2();
 
   private rootGroup: THREE.Group | null = null;
   private disposed = false;
   /** Guards against overlapping `load()` calls — see {@link LuxarLayer.load}. */
-  private inFlightLoad = false;
+  private inFlightLoad: Promise<THREE.Group> | null = null;
+  private disposePromise: Promise<void> | null = null;
   // Placement survives across load(), so alignTo() and load() may be called in
   // either order (see alignTo).
   private pendingMatrix: THREE.Matrix4 | null = null;
@@ -220,7 +227,6 @@ export class LuxarLayer {
       throw new Error('LuxarLayer requires a browser environment (window/document unavailable).');
     }
     this.options = options;
-    this.loaderId = 'default';
 
     applyModuleOverrides({ wasmPath: options.wasmPath, workerPath: options.workerPath });
 
@@ -263,18 +269,23 @@ export class LuxarLayer {
         'LuxarLayer.load() is already in progress; await it before loading another scene.'
       );
     }
-    this.inFlightLoad = true;
+    const pending = this.loadInner(src);
+    this.inFlightLoad = pending;
     try {
-      return await this.loadInner(src);
+      return await pending;
     } finally {
-      this.inFlightLoad = false;
+      if (this.inFlightLoad === pending) this.inFlightLoad = null;
     }
   }
 
   private async loadInner(src: string): Promise<THREE.Group> {
-    const root = await loadScene(src, this.options.loaderConfig, this.loaderId);
-    // A dispose() that lands mid-load must not leave the group attached.
-    if (this.disposed) return root;
+    const root = await loadScene(src, this.options.loaderConfig, LOADER_ID);
+    // A dispose() that lands mid-load must not leave either the group or the
+    // loader alive. dispose() waits for this cleanup before dropping globals.
+    if (this.disposed) {
+      await SceneLoaderManager.getInstance().destroyLoaderAsync(LOADER_ID);
+      return root;
+    }
 
     // A second load() is a dataset switch: `loadScene` has already disposed the
     // previous SceneLoader, so leaving the old group attached would keep the
@@ -283,9 +294,9 @@ export class LuxarLayer {
       this.options.scene.remove(this.rootGroup);
     }
 
-    root.renderOrder = this.options.renderOrder ?? 10;
     this.options.scene.add(root);
     this.rootGroup = root;
+    this.applyRenderOrder();
     // A placement declared before the scene arrived applies now. Hosts derive
     // the matrix from their own metadata, which resolves on a schedule
     // unrelated to this fetch, so either order is legitimate.
@@ -297,7 +308,8 @@ export class LuxarLayer {
     sceneDimsManager.initFromScene(this.options.scene);
 
     const dims = sceneDimsManager.getDims();
-    if (dims) await updateSceneForDimensions(dims, root, this.loaderId);
+    if (dims) await updateSceneForDimensions(dims, root, LOADER_ID);
+    this.applyRenderOrder();
 
     log.info(Modules.LUXAR, `Layer loaded: ${src}`);
     return root;
@@ -314,7 +326,11 @@ export class LuxarLayer {
     // Order matters: depth sorting assigns the cross-node render order that a
     // LOD swap may then invalidate, so sorting runs first.
     evaluateDepthSortPerFrame();
-    getSceneLoader(this.loaderId)?.lodGroupRegistry?.evaluatePerFrame();
+    getSceneLoader(LOADER_ID)?.lodGroupRegistry?.evaluatePerFrame();
+    // Scene / LOD / partition groups may attach lazily after load(). Three.js
+    // replaces the transparent group-order key at every Group boundary, so a
+    // newly attached default-zero group would otherwise nullify the option.
+    this.applyRenderOrder();
     // Geometry streams in and LOD swaps mint materials after setExposure() ran,
     // so a non-default exposure has to be re-asserted. Skipped entirely at the
     // authored exposure, which is the common case.
@@ -356,9 +372,17 @@ export class LuxarLayer {
       ndim: dims.ndim,
       displayed: [...dims.displayed],
       currentStep: [...dims.currentStep],
-      metadata: sceneDimsManager.getDimensionMetadata(),
-      ranges: sceneDimsManager.getDimensionRanges() ?? [],
-    } as EmbedderDimensions;
+      metadata: sceneDimsManager.getDimensionMetadata().map((metadata) => ({
+        ...metadata,
+        ...(metadata.range
+          ? { range: [metadata.range[0], metadata.range[1]] as [number, number] }
+          : {}),
+        ...(metadata.categories ? { categories: [...metadata.categories] } : {}),
+      })),
+      ranges: (sceneDimsManager.getDimensionRanges() ?? []).map(
+        (range) => [range[0], range[1]] as [number, number]
+      ),
+    };
   }
 
   /**
@@ -413,8 +437,18 @@ export class LuxarLayer {
 
     const settled = new Promise<void>((resolve) => this.dimWaiters.push(resolve));
     this.dimDirty = true;
-    if (!this.inFlightDimUpdate) this.inFlightDimUpdate = this.drainDimUpdates();
+    if (!this.inFlightDimUpdate) this.startDimDrain();
     return settled;
+  }
+
+  private startDimDrain(): void {
+    let resolveDrain!: () => void;
+    let rejectDrain!: (reason: unknown) => void;
+    this.inFlightDimUpdate = new Promise<void>((resolve, reject) => {
+      resolveDrain = resolve;
+      rejectDrain = reject;
+    });
+    void this.drainDimUpdates().then(resolveDrain, rejectDrain);
   }
 
   /**
@@ -433,7 +467,7 @@ export class LuxarLayer {
         this.dimWaiters = [];
 
         const dims = sceneDimsManager.getDims();
-        if (dims) await updateSceneForDimensions(dims, this.rootGroup, this.loaderId);
+        if (dims) await updateSceneForDimensions(dims, this.rootGroup, LOADER_ID);
 
         for (const resolve of claimed) resolve();
       }
@@ -458,12 +492,26 @@ export class LuxarLayer {
   prefetchDimensionValue(index: number, value: number, budgetMs = 16): void {
     if (this.disposed || !this.rootGroup) return;
     const dims = sceneDimsManager.getDims();
-    if (!dims) return;
+    if (!dims || index < 0 || index >= dims.ndim || !Number.isFinite(value)) return;
+    let predictedValue = value;
+    let min = -Infinity;
+    let max = Infinity;
+    const range = sceneDimsManager.getDimensionRanges()?.[index];
+    if (range) {
+      [min, max] = range;
+      predictedValue = clamp(predictedValue, min, max);
+    }
+    const metadata = dims.metadata?.[index];
+    if (metadata?.discrete) {
+      predictedValue = snapDiscreteValue(predictedValue, metadata.step || 1, min, max);
+    }
     const predicted = {
       ...dims,
-      currentStep: dims.currentStep.map((v, i) => (i === index ? value : v)),
+      currentStep: dims.currentStep.map((current, currentIndex) =>
+        currentIndex === index ? predictedValue : current
+      ),
     };
-    prefetchSceneForDimensions(predicted, this.rootGroup, this.loaderId, { budgetMs });
+    prefetchSceneForDimensions(predicted, this.rootGroup, LOADER_ID, { budgetMs });
   }
 
   /** Resolve once no slice update is in flight. */
@@ -537,7 +585,7 @@ export class LuxarLayer {
         // "authored" one — permanently, in the WeakMap. That is the likely case
         // rather than the exotic one: `update()` re-asserts exposure on nodes
         // the moment they commit, which is exactly when they start fading in.
-        base = (mesh.userData._lodFadeBase as number | undefined) ?? readOpacityUniform(mat);
+        base = (mesh.userData._lodFadeBase as number | undefined) ?? readOpacity(mat);
         this.authoredOpacity.set(mat, base);
       } else if (this.appliedExposure.get(mat) === this.exposure) {
         return; // already at this exposure
@@ -589,6 +637,29 @@ export class LuxarLayer {
     root.updateMatrixWorld(true);
   }
 
+  private applyRenderOrder(): void {
+    const root = this.rootGroup;
+    if (!root) return;
+    const renderOrder = this.options.renderOrder ?? DEFAULT_RENDER_ORDER;
+    root.traverse((object) => {
+      if ((object as THREE.Group).isGroup) object.renderOrder = renderOrder;
+    });
+  }
+
+  /**
+   * Rebuild Luxar-owned GPU resources after the host restores a WebGL context.
+   * Call from the host's `webglcontextrestored` handler after resetting its
+   * renderer and rebuilding any host-owned post-processing resources.
+   */
+  handleContextRestored(): void {
+    if (this.disposed || !this.rootGroup) return;
+    materialManager.rebuildAfterContextRestore();
+    markSceneResourcesDirtyForContextRestore(this.rootGroup);
+    this.resize();
+    getSceneLoader(LOADER_ID)?.nodeFactory.rebuildAfterContextRestore(this.rootGroup);
+    this.options.requestRender?.();
+  }
+
   /**
    * Tear down everything the layer owns: the scene group, the loader and its
    * caches, the data-worker pool, and the depth-sort worker.
@@ -604,8 +675,25 @@ export class LuxarLayer {
    * The host's renderer, camera, and scene are left untouched.
    */
   async dispose(): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposePromise) return this.disposePromise;
+    this.disposePromise = this.disposeInner();
+    return this.disposePromise;
+  }
+
+  private async disposeInner(): Promise<void> {
     this.disposed = true;
+
+    // Keep the process singletons alive until loadScene has either failed or
+    // disposed the loader it just registered. React unmounts commonly land
+    // here while load() is pending (and StrictMode does so deliberately).
+    if (this.inFlightLoad) {
+      try {
+        await this.inFlightLoad;
+      } catch {
+        // The original load() caller still receives the rejection; teardown
+        // must continue and destroy any loader registered before the failure.
+      }
+    }
 
     if (this.rootGroup) {
       this.options.scene.remove(this.rootGroup);
@@ -687,9 +775,9 @@ export class LuxarLayer {
       getCamera: () => this.options.getCamera(),
       requestRender: () => this.options.requestRender?.(),
       requestReprocess: () => {
-        void getSceneLoader(this.loaderId)?.updateView({});
+        void getSceneLoader(LOADER_ID)?.updateView({});
       },
-      isLoadInProgress: () => getSceneLoader(this.loaderId)?.isUpdateInProgress() ?? false,
+      isLoadInProgress: () => getSceneLoader(LOADER_ID)?.isUpdateInProgress() ?? false,
       getProfiler: () => SceneLoaderManager.getInstance().getProfiler(),
       getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? null,
     });

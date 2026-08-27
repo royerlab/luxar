@@ -198,7 +198,10 @@ The layer owns no renderer, camera, controls, post-processing, or UI — it
 contributes a `THREE.Group` plus the per-frame LOD and depth-sort bookkeeping.
 The host must call `update()` each frame before rendering, `resize()` after a
 viewport or camera-projection change, and pass `requestRender` if it renders
-on demand rather than continuously.
+on demand rather than continuously. `renderOrder` defaults to 10 and is stamped
+onto every nested Luxar Group; host transparent groups should use explicit
+lower/higher values. After restoring a WebGL context, rebuild the host renderer
+and post-processing first, then call `handleContextRestored()`.
 
 nD navigation coalesces, so a host can drive it from a slider at frame rate:
 

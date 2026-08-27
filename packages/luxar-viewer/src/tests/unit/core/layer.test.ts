@@ -21,6 +21,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
+import type { DimensionMetadata, SimpleDims } from '../../../types/dims';
 
 // The layer's only browser requirement: these must exist.
 vi.stubGlobal('window', globalThis.window ?? {});
@@ -42,11 +43,13 @@ const disposeInstance = vi.fn();
 const getProfiler = vi.fn();
 const sceneLoaderStub = {
   lodGroupRegistry: { evaluatePerFrame: vi.fn(() => false) },
+  nodeFactory: { rebuildAfterContextRestore: vi.fn() },
   isUpdateInProgress: vi.fn(() => false),
   updateView: vi.fn(),
 };
 
 const destroyAllAsync = vi.fn(async () => {});
+const destroyLoaderAsync = vi.fn(async (_id: string) => {});
 
 vi.mock('../../../data/scene-loader-manager', () => ({
   SceneLoaderManager: {
@@ -55,6 +58,7 @@ vi.mock('../../../data/scene-loader-manager', () => ({
       setRequestRender,
       getProfiler,
       destroyAllAsync: () => destroyAllAsync(),
+      destroyLoaderAsync: (id: string) => destroyLoaderAsync(id),
     }),
     disposeInstance: () => disposeInstance(),
   },
@@ -67,7 +71,7 @@ vi.mock('../../../scene/lod-group-registry', () => ({
   },
 }));
 
-const dimsState = {
+const dimsState: SimpleDims = {
   ndim: 4,
   displayed: [0, 1, 2],
   currentStep: [0, 0, 0, 0],
@@ -76,29 +80,37 @@ const dimsState = {
 const initFromScene = vi.fn();
 const setDimensionValueMock = vi.fn();
 const resetDims = vi.fn();
-const getDimsMock = vi.fn(() => dimsState as typeof dimsState | null);
+const getDimsMock = vi.fn((): SimpleDims | null => dimsState);
+const getDimensionMetadataMock = vi.fn((): DimensionMetadata[] => dimsState.metadata ?? []);
+const getDimensionRangesMock = vi.fn((): Array<[number, number]> => []);
 
-vi.mock('../../../scene/scene-dims-manager', () => ({
-  sceneDimsManager: {
-    initFromScene: (...a: unknown[]) => initFromScene(...a),
-    getDims: () => getDimsMock(),
-    getDimensionNames: () => ['x', 'y', 'z', 'time'],
-    getDimensionMetadata: () => [],
-    getDimensionRanges: () => [],
-    setDimensionValue: (...a: unknown[]) => setDimensionValueMock(...a),
-    reset: () => resetDims(),
-  },
-}));
+vi.mock('../../../scene/scene-dims-manager', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../scene/scene-dims-manager')>();
+  return {
+    ...actual,
+    sceneDimsManager: {
+      initFromScene: (...a: unknown[]) => initFromScene(...a),
+      getDims: () => getDimsMock(),
+      getDimensionNames: () => ['x', 'y', 'z', 'time'],
+      getDimensionMetadata: () => getDimensionMetadataMock(),
+      getDimensionRanges: () => getDimensionRangesMock(),
+      setDimensionValue: (...a: unknown[]) => setDimensionValueMock(...a),
+      reset: () => resetDims(),
+    },
+  };
+});
 
 const setCaps = vi.fn();
 const updateCameraParams = vi.fn();
 const disposeMaterials = vi.fn();
+const rebuildMaterials = vi.fn();
 vi.mock('../../../rendering/material-manager', () => ({
   materialManager: {
     setCaps: (...a: unknown[]) => setCaps(...a),
     updateCameraParams: (...a: unknown[]) => updateCameraParams(...a),
     register: vi.fn(),
     dispose: () => disposeMaterials(),
+    rebuildAfterContextRestore: () => rebuildMaterials(),
   },
 }));
 
@@ -149,6 +161,8 @@ describe('LuxarLayer', () => {
     loadSceneMock.mockImplementation(async () => new THREE.Group());
     updateSceneForDimensionsMock.mockResolvedValue(undefined);
     getDimsMock.mockReturnValue(dimsState);
+    getDimensionMetadataMock.mockReturnValue(dimsState.metadata ?? []);
+    getDimensionRangesMock.mockReturnValue([]);
   });
 
   describe('construction', () => {
@@ -325,24 +339,46 @@ describe('LuxarLayer', () => {
       );
     });
 
-    it('applies the configured renderOrder to the root', async () => {
+    it('applies the configured renderOrder through nested and lazy groups', async () => {
+      const root = new THREE.Group();
+      const sceneGroup = new THREE.Group();
+      const lodGroup = new THREE.Group();
+      sceneGroup.add(lodGroup);
+      root.add(sceneGroup);
+      loadSceneMock.mockResolvedValueOnce(root);
       const layer = new LuxarLayer(makeOptions({ renderOrder: 42 }));
-      const root = await layer.load('http://example.test/scene.zarr');
+      await layer.load('http://example.test/scene.zarr');
+
       expect(root.renderOrder).toBe(42);
+      expect(sceneGroup.renderOrder).toBe(42);
+      expect(lodGroup.renderOrder).toBe(42);
+
+      const lazyPartition = new THREE.Group();
+      lodGroup.add(lazyPartition);
+      layer.update();
+      expect(lazyPartition.renderOrder).toBe(42);
     });
 
-    it('does not attach when disposed mid-load', async () => {
+    it('waits for and cleans up a load before tearing down globals', async () => {
       const options = makeOptions();
       let release: (g: THREE.Group) => void = () => {};
       loadSceneMock.mockImplementation(() => new Promise((r) => (release = r as typeof release)));
 
       const layer = new LuxarLayer(options);
       const pending = layer.load('http://example.test/scene.zarr');
-      await layer.dispose();
+      const disposing = layer.dispose();
+      await Promise.resolve();
+      expect(destroyAllAsync).not.toHaveBeenCalled();
+      expect(disposeMaterials).not.toHaveBeenCalled();
+
       release(new THREE.Group());
-      await pending;
+      await Promise.all([pending, disposing]);
 
       expect(options.scene.children).toHaveLength(0);
+      expect(destroyLoaderAsync).toHaveBeenCalledWith('default');
+      expect(destroyLoaderAsync.mock.invocationCallOrder[0]).toBeLessThan(
+        disposeMaterials.mock.invocationCallOrder[0]
+      );
     });
   });
 
@@ -439,6 +475,93 @@ describe('LuxarLayer', () => {
         { budgetMs: 12 }
       );
       expect(updateSceneForDimensionsMock).not.toHaveBeenCalled();
+    });
+
+    it('clamps and snaps prefetches to the same discrete value as foreground updates', async () => {
+      const metadata: DimensionMetadata[] = [
+        { name: 'x', unit: '', scale: 1 },
+        { name: 'y', unit: '', scale: 1 },
+        { name: 'z', unit: '', scale: 1 },
+        {
+          name: 'time',
+          unit: 'frame',
+          scale: 1,
+          discrete: true,
+          step: 5,
+          range: [1, 12],
+        },
+      ];
+      getDimsMock.mockReturnValue({ ...dimsState, metadata });
+      getDimensionRangesMock.mockReturnValue([
+        [0, 0],
+        [0, 0],
+        [0, 0],
+        [1, 12],
+      ]);
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+
+      layer.prefetchDimensionValue(3, 16);
+
+      expect(prefetchSceneForDimensionsMock).toHaveBeenCalledWith(
+        expect.objectContaining({ currentStep: [0, 0, 0, 11] }),
+        expect.anything(),
+        'default',
+        { budgetMs: 16 }
+      );
+    });
+
+    it('does not strand a later update when dimension metadata is absent', async () => {
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+      getDimsMock.mockReturnValue(null);
+
+      await layer.setDimensionValue(3, 1);
+      await expect(layer.setDimensionValue(3, 2)).resolves.toBeUndefined();
+    });
+
+    it('deep-clones metadata and ranges returned to the host', async () => {
+      const categories = ['a', 'b'];
+      const range: [number, number] = [1, 12];
+      const metadata: DimensionMetadata[] = [
+        { name: 'time', unit: 'frame', scale: 1, range, categories },
+      ];
+      const ranges: Array<[number, number]> = [[1, 12]];
+      getDimensionMetadataMock.mockReturnValue(metadata);
+      getDimensionRangesMock.mockReturnValue(ranges);
+      const layer = new LuxarLayer(makeOptions());
+
+      const exposed = layer.getDimensions()!;
+      exposed.metadata[0].range![0] = 99;
+      exposed.metadata[0].categories![0] = 'changed';
+      exposed.ranges[0][0] = 99;
+
+      expect(range).toEqual([1, 12]);
+      expect(categories).toEqual(['a', 'b']);
+      expect(ranges).toEqual([[1, 12]]);
+    });
+  });
+
+  describe('context restoration', () => {
+    it('rebuilds layer-owned materials, geometry, registrations, and camera uniforms', async () => {
+      const requestRender = vi.fn();
+      const attribute = new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3);
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', attribute));
+      const root = new THREE.Group();
+      root.add(mesh);
+      loadSceneMock.mockResolvedValueOnce(root);
+      const layer = new LuxarLayer(makeOptions({ requestRender }));
+      await layer.load('http://example.test/scene.zarr');
+      updateCameraParams.mockClear();
+
+      const versionBefore = attribute.version;
+      layer.handleContextRestored();
+
+      expect(rebuildMaterials).toHaveBeenCalledTimes(1);
+      expect(attribute.version).toBeGreaterThan(versionBefore);
+      expect(sceneLoaderStub.nodeFactory.rebuildAfterContextRestore).toHaveBeenCalledWith(root);
+      expect(updateCameraParams).toHaveBeenCalledTimes(1);
+      expect(requestRender).toHaveBeenCalled();
     });
   });
 
@@ -603,6 +726,9 @@ describe('LuxarLayer', () => {
         uniforms: { uOpacity: { value: authored } },
         updateOpacity(v: number) {
           this.uniforms.uOpacity.value = v;
+        },
+        getOpacity() {
+          return this.uniforms.uOpacity.value;
         },
         updateIntensity() {},
         updateOffset() {},

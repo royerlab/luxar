@@ -77,6 +77,10 @@ each entry is there to prevent a _silent_ wrong result rather than an error:
   authored value rather than the live one, so the result does not depend on how a
   slider was dragged, and it re-applies as geometry streams in so late-arriving
   nodes match those already on screen.
+- `renderOrder` is stamped across nested scene / LOD / partition Groups (including
+  groups that stream in later), and `handleContextRestored()` rebuilds Luxar-owned
+  materials, geometry uploads, and loader registrations after the host restores a
+  WebGL context.
 
 One limitation is worth stating loudly because nothing surfaces it: **a scene's
 `viewer_config` post-processing, camera, and UI block has no effect in layer

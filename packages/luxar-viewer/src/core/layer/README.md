@@ -129,6 +129,7 @@ authored it, and the host's is a different one.
 | `awaitDimensionUpdate()`           | Resolve once no slice update is in flight                         |
 | `setVisible(v)` / `isVisible()`    | Show/hide without discarding caches                               |
 | `setExposure(m)` / `getExposure()` | Scale exposure relative to authored                               |
+| `handleContextRestored()`          | Rebuild Luxar resources after host WebGL context recovery         |
 | `dispose()`                        | Async full teardown of Luxar in the page                          |
 
 ## Host responsibilities
@@ -141,9 +142,14 @@ authored it, and the host's is a different one.
 - **`requestRender`** if the host renders on demand. Without it, geometry that
   commits outside a user interaction — progressive refinement, lazy LOD loads,
   retries — will not repaint. Hosts that render continuously can omit it.
-- **Draw order for the host's own geometry.** Luxar assigns `renderOrder` across
-  its own nodes; a host with its own transparent geometry should set explicit
-  values rather than rely on insertion order.
+- **Draw order for the host's own geometry.** `renderOrder` defaults to 10 and is
+  stamped onto every Group in the Luxar subtree, including groups that stream in
+  later. Three.js compares that Group key before per-mesh `renderOrder`, so host
+  transparent groups should use explicit lower/higher values rather than rely on
+  insertion order.
+- **WebGL context restoration.** The host owns the canvas event and must reset
+  its renderer / post-processing first, then call `handleContextRestored()` so
+  Luxar rebuilds its materials, geometry uploads, and loader registrations.
 
 ## Limits
 
