@@ -421,9 +421,7 @@ describe('SceneLoader', () => {
       loaders.set('/fault', failingLoader);
       loaders.set('/cached-success', successfulLoader);
 
-      const faultingPass = sceneLoader.updateView({ slicePosition: [0, 0, 1] });
-      const queuedPass = sceneLoader.updateView({ slicePosition: [0, 0, 2] });
-      await Promise.all([faultingPass, queuedPass]);
+      await sceneLoader.updateView({ slicePosition: [0, 0, 1] });
 
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledWith(fault.message, { persistent: true });
@@ -439,6 +437,33 @@ describe('SceneLoader', () => {
       expect(ordinaryFailureLoader.updateView).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(prefetch).not.toHaveBeenCalled();
+      expect((sceneLoader as any)._updateInProgress).toBe(false);
+    });
+
+    it('drains a superseded waiter when an archive fault stops the active pass', async () => {
+      const fault = new ArchiveFaultError('archive unavailable', 'https://example.test/scene.zip');
+      let rejectUpdate!: (error: Error) => void;
+      const failingLoader = {
+        updateView: vi.fn().mockImplementation(
+          () =>
+            new Promise<never>((_resolve, reject) => {
+              rejectUpdate = reject;
+            })
+        ),
+        dispose: vi.fn(),
+      };
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      loaders.clear();
+      loaders.set('/fault', failingLoader);
+
+      const faultingPass = sceneLoader.updateView({ slicePosition: [0, 0, 1] });
+      const queuedPass = sceneLoader.updateView({ slicePosition: [0, 0, 2] });
+      rejectUpdate(fault);
+
+      await Promise.all([faultingPass, queuedPass]);
+
+      expect(failingLoader.updateView).toHaveBeenCalledOnce();
+      expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect((sceneLoader as any)._updateInProgress).toBe(false);
     });
 

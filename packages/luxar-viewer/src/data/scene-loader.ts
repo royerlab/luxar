@@ -254,7 +254,9 @@ export class SceneLoader {
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
   // Terminal for this loader: loadScene is one-shot, and dataset switches create
-  // a fresh SceneLoader through SceneLoaderManager.createLoaderAsync.
+  // a fresh SceneLoader through SceneLoaderManager.createLoaderAsync. Only standalone
+  // bootstrap registers the default notifier overlay; embedders currently receive the
+  // log entry before updates remain stopped, without a host-facing fault notification.
   private _archiveFault: ArchiveFaultError | null = null;
   /**
    * True for the duration of a progressive-LOD refinement run
@@ -1037,7 +1039,9 @@ export class SceneLoader {
         nodeFactory: this.nodeFactory,
         // When this update was superseded mid-flight, skip the geometry
         // commits so a stale/partial frame never reaches the GPU; profiler
-        // sessions are still ended inside runAtomicCommit regardless.
+        // sessions are still ended inside runAtomicCommit regardless. Keep
+        // abort reserved for supersession/cancellation so profiler and log
+        // semantics stay accurate; archive faults discard independently.
         signal: updateController.signal,
         discard: sweepArchiveFault !== undefined,
         updatePointsGeometry: (path, data, session) =>
@@ -1179,7 +1183,12 @@ export class SceneLoader {
    * lock release on normal completion — live in that module.
    */
   private async scheduleGSplatsRefinement(): Promise<void> {
-    if (this._disposed || this._archiveFault) return;
+    if (this._disposed || this._archiveFault) {
+      // Do not release the serialization lock here. Production lock-owning callers
+      // enter this method synchronously before a fault can interleave; the faulting
+      // update bypasses queueNext, so this guard cannot follow a lock handoff.
+      return;
+    }
 
     // Mark the whole run as REFINEMENT, not as a load pass. The lock this run
     // holds was handed over by an update tail / post-load kick that had already
