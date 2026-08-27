@@ -507,11 +507,12 @@ class Group(Node):
                 or None. A 4th component is per-vertex opacity.
             scalars: Per-vertex scalars ``(V,)`` or a single value for colormap
                 lookup. Requires a ``colormap`` attr.
-            shading: ``"smooth"`` or ``"flat"``. Defaults to ``"smooth"`` when
-                ``normals`` are given, else ``"flat"``. An explicit value is
-                stored as given — ``"flat"`` renders faceted even with normals
-                present, and ``"smooth"`` without normals falls back to derived
-                flat normals at render time.
+            shading: ``"smooth"``, ``"flat"``, or unlit ``"none"``. Defaults to
+                ``"smooth"`` when ``normals`` are given, else ``"flat"``. An
+                explicit value is stored as given — ``"flat"`` renders faceted
+                even with normals present, ``"smooth"`` without normals falls
+                back to derived flat normals at render time, and ``"none"``
+                computes no lighting normal.
             double_sided: Whether back faces render (default ``True``).
             labels: Optional per-vertex strings for hover tooltips.
             image_labels: Optional per-vertex images for hover thumbnails. Not

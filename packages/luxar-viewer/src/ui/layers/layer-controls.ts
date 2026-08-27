@@ -258,9 +258,9 @@ export class LayerControls {
 
     // --- Mesh shading (§6.2) ------------------------------------------------
     //
-    // Five sliders, all hidden unless the primary selection is a MESH layer (see
-    // syncMeshAppearanceVisibility). Mesh is the only shaded geometry type, so these
-    // are the first controls in this panel that are type-gated rather than mode-gated.
+    // Five mesh-only sliders (see syncMeshAppearanceVisibility). The four lighting
+    // controls also require resolved shading other than `none`; Alpha cutoff has its
+    // own narrower opaque-mode gate.
     //
     // Linear tracks, unlike absorption's log one: the bounded fractions and small
     // exponents have meaningful midpoints, rather than being scale-free coefficients
@@ -728,10 +728,11 @@ export class LayerControls {
   private syncMeshAppearanceVisibility(): void {
     const primary = this.deps.state.getPrimarySelected();
     const isMesh = primary?.type === 'mesh';
-    this.ambientSlider?.setVisible(isMesh);
-    this.shadeExponentSlider?.setVisible(isMesh);
-    this.specularSlider?.setVisible(isMesh);
-    this.shininessSlider?.setVisible(isMesh);
+    const hasLighting = isMesh && primary.shading !== 'none';
+    this.ambientSlider?.setVisible(hasLighting);
+    this.shadeExponentSlider?.setVisible(hasLighting);
+    this.specularSlider?.setVisible(hasLighting);
+    this.shininessSlider?.setVisible(hasLighting);
     this.alphaCutoffSlider?.setVisible(
       isMesh && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'opaque'
     );

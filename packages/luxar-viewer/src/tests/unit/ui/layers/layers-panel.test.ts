@@ -1431,7 +1431,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
   function mountMeshLayer(
     container: HTMLElement,
     animationController: AnimationController,
-    blendingMode = 'opaque'
+    blendingMode = 'opaque',
+    attrs: Record<string, unknown> = {}
   ) {
     const calls = {
       ambient: vi.fn(),
@@ -1472,7 +1473,10 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     rootGroup.add(mesh);
 
     const panel = new LayersPanel(container, animationController);
-    panel.initFromScene(rootGroup, makeLayeredSceneGraph('mesh', { blending_mode: blendingMode }));
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', { blending_mode: blendingMode, ...attrs })
+    );
     panel.show();
     panel.layerState.select('/cloud', 'single');
     return { panel, calls };
@@ -1540,6 +1544,65 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     select.value = 'opaque';
     select.dispatchEvent(new Event('change', { bubbles: true }));
     expect(cutoff.style.display).not.toBe('none');
+  });
+
+  it('unlit mesh hides the four inert lighting controls but keeps Alpha cutoff', () => {
+    // `none` wins even when stored normals exist. The panel must use the same
+    // resolved shading rule as the material rather than treating normals as proof
+    // that the four lighting uniforms are active.
+    mountMeshLayer(container, animationController, 'opaque', {
+      shading: 'none',
+      has_normals: true,
+    });
+
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
+      expect(findControlGroup(container, label)!.style.display, `${label} on unlit mesh`).toBe(
+        'none'
+      );
+    }
+    expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
+  });
+
+  it('partitioned unlit mesh derives shading from its leaves', () => {
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'surface',
+          path: '/surface',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'mesh' },
+          children: [
+            {
+              name: 'part_0',
+              path: '/surface/part_0',
+              type: 'mesh',
+              attrs: { type: 'mesh', shading: 'none', has_normals: true },
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+    const rootGroup = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    mesh.name = '/surface/part_0';
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/surface', 'single');
+
+    expect(panel.layerState.getLayer('/surface')!.shading).toBe('none');
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
+      expect(findControlGroup(container, label)!.style.display, `${label} on partition`).toBe(
+        'none'
+      );
+    }
   });
 
   it('dragging each mesh slider reaches its material setter with the slider value', () => {

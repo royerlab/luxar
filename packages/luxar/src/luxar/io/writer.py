@@ -209,7 +209,8 @@ class ZarrWriterProtocol(Protocol):
                 None
             scalars: Optional - array of shape (V,), scalar float, or None. Used
                 for colormap lookup when a colormap is applied.
-            shading: ``"smooth"`` / ``"flat"``; defaults by normal presence
+            shading: ``"smooth"`` / ``"flat"`` / unlit ``"none"``; defaults by
+                normal presence
             double_sided: Whether back faces render (default True)
             labels: Optional list of strings, one per vertex, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
