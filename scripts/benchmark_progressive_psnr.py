@@ -27,7 +27,7 @@ leaves the fit on the volume's own hard-min basis (normalization still subtracts
 constant, since the chimera's global min is a min over separately normalized
 quadrant crops. This is a benchmark-only pin — ``gsplat fit``/``cal`` keep
 ``--floor auto``, which is the right default for real use (see the 2026-07-12
-``--floor`` decision in TODO.md).
+``--floor`` decision in docs/guides/developer/BENCHMARK_FLOOR_DECISION.md).
 """
 
 import os  # noqa: I001 — must set env before torch import
