@@ -19,6 +19,7 @@ export interface RangeSliderOptions {
   valueHigh: number;
   step?: number;
   label?: string;
+  tooltip?: string;
   onChange: (low: number, high: number) => void;
   /** Called when the user edits the slider bounds (click-to-edit on limits). */
   onBoundsChange?: (min: number, max: number) => void;
@@ -72,7 +73,7 @@ export class RangeSlider {
       labelRow.className = 'luxar-range-slider__label-row';
       this.labelEl = document.createElement('span');
       this.labelEl.className = 'luxar-range-slider__label';
-      this.labelEl.textContent = options.label;
+      this.setLabel(options.label, options.tooltip);
 
       this.lowLabel = document.createElement('span');
       this.lowLabel.className = 'luxar-range-slider__value';
@@ -361,6 +362,7 @@ export class RangeSlider {
   setLabel(label: string, tooltip?: string): void {
     if (!this.labelEl) return;
     this.labelEl.textContent = label;
+    this.labelEl.classList.toggle('luxar-range-slider__label--with-tooltip', Boolean(tooltip));
     if (tooltip) this.labelEl.title = tooltip;
     else this.labelEl.removeAttribute('title');
   }

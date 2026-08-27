@@ -1188,10 +1188,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(rgbMat.updateOffset).toHaveBeenLastCalledWith(0);
   });
 
-  it('switching between two active palettes keeps a user-adjusted scalar window', () => {
-    // Re-defaulting the window is for the off↔on MODE flip only — the
-    // rendered value is the same scalar on both sides of viridis → plasma,
-    // so a window the user dialled in must survive the palette change.
+  it('labels direct-colour and colormapped ranges with their mapping semantics', () => {
     const stubMat = makeColormapRoutingStub();
     const geometry = new THREE.BufferGeometry();
     geometry.userData.hasScalars = true;
@@ -1247,6 +1244,58 @@ describe('LayersPanel — blend select drives the leaf material', () => {
       'Scalar data values in this range are mapped across the colormap.'
     );
 
+    cmSelect.value = '';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(rangeLabel.textContent).toBe('Colour range');
+    expect(rangeLabel.title).toContain("not the layer's data extents");
+  });
+
+  it('switching between two active palettes keeps a user-adjusted scalar window', () => {
+    // Re-defaulting the window is for the off↔on MODE flip only — the
+    // rendered value is the same scalar on both sides of viridis → plasma,
+    // so a window the user dialled in must survive the palette change.
+    const stubMat = makeColormapRoutingStub();
+    const geometry = new THREE.BufferGeometry();
+    geometry.userData.hasScalars = true;
+    const mesh = new THREE.Mesh(geometry, stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: {
+            layer: true,
+            type: 'points',
+            has_scalars: true,
+            scalar_data_range: [0.0001, 0.02],
+          },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    )!;
+    cmSelect.value = 'viridis';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(0.02, 6);
+
     // The user narrows the window…
     panel.layerState.setDisplayRange('/cloud', 0.001, 0.01);
 
@@ -1262,8 +1311,6 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
     expect(panel.layerState.getLayer('/cloud')!.displayMin).toBeCloseTo(0, 6);
     expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(1, 6);
-    expect(rangeLabel.textContent).toBe('Colour range');
-    expect(rangeLabel.title).toContain("not the layer's data extents");
   });
 
   it('a group layer whose colormap lives on a DESCENDANT toggles by effective mode', () => {

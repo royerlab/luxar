@@ -201,10 +201,12 @@ describe('RangeSlider — public setters', () => {
     slider.setLabel('Colour range', 'Input RGB window');
     expect(label.textContent).toBe('Colour range');
     expect(label.title).toBe('Input RGB window');
+    expect(label.classList.contains('luxar-range-slider__label--with-tooltip')).toBe(true);
 
     slider.setLabel('Display range');
     expect(label.textContent).toBe('Display range');
     expect(label.hasAttribute('title')).toBe(false);
+    expect(label.classList.contains('luxar-range-slider__label--with-tooltip')).toBe(false);
   });
 
   it('setValues writes both inputs and refreshes labels', () => {
