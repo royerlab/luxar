@@ -1611,8 +1611,8 @@ def _add_mesh_partition(
         persist_pruned_bsp_tree,
         resolve_partition_spec,
         spatial_bsp_tree,
-        warn_if_partition_axes_not_displayed,
         warn_if_oversized_single_part,
+        warn_if_partition_axes_not_displayed,
     )
 
     # Same vocabulary as the sibling adders — and for a mesh ``max_elements``
