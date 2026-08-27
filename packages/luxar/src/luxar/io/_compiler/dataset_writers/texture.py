@@ -34,6 +34,10 @@ since the encoder's types all describe *numbers* it may requantize. This mirrors
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any, Literal, Optional, Tuple
 
 import numpy as np
@@ -47,6 +51,72 @@ from ..chunking import calculate_intelligent_chunks
 from ..context import DatasetCtx
 
 
+def _encode_ktx2(
+    texture: NDArray[Any], mode: str, quality: Optional[int], color_space: str
+) -> NDArray[np.uint8]:
+    if mode not in {"uastc", "etc1s"}:
+        raise ValueError("texture_ktx2_mode must be 'uastc' or 'etc1s'")
+    resolved_quality = (
+        2
+        if quality is None and mode == "uastc"
+        else 128
+        if quality is None
+        else quality
+    )
+    assert resolved_quality is not None
+    limit = (0, 4) if mode == "uastc" else (1, 255)
+    if (
+        isinstance(resolved_quality, bool)
+        or not isinstance(resolved_quality, int)
+        or not limit[0] <= resolved_quality <= limit[1]
+    ):
+        raise ValueError(
+            f"texture_ktx2_quality must be an integer in [{limit[0]}, {limit[1]}] "
+            f"for {mode}, got {resolved_quality!r}"
+        )
+
+    executable = shutil.which("toktx")
+    if executable is None:
+        raise RuntimeError(
+            "texture_encoding='ktx2' requires the optional KTX authoring tools: "
+            "install Pillow with `pip install 'luxar[ktx2]'` and install the "
+            "Khronos `toktx` executable, or use texture_encoding='raw'/'jpeg'"
+        )
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(
+            "texture_encoding='ktx2' requires Pillow; install `luxar[ktx2]`"
+        ) from exc
+
+    with tempfile.TemporaryDirectory(prefix="luxar-ktx2-") as tmp:
+        source = Path(tmp) / "source.png"
+        output = Path(tmp) / "texture.ktx2"
+        Image.fromarray(np.asarray(texture)).save(source)
+        command = [executable, "--t2", "--genmipmap"]
+        if mode == "uastc":
+            command += [
+                "--encode",
+                "uastc",
+                "--uastc_quality",
+                str(resolved_quality),
+                "--zcmp",
+                "3",
+            ]
+        else:
+            command += ["--encode", "basis-lz", "--qlevel", str(resolved_quality)]
+        if color_space == "linear":
+            command += ["--assign_oetf", "linear"]
+        command += [str(output), str(source)]
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        if completed.returncode != 0 or not output.is_file():
+            detail = (
+                completed.stderr or completed.stdout or "unknown toktx failure"
+            ).strip()
+            raise RuntimeError(f"toktx failed to encode KTX2 texture: {detail}")
+        return np.frombuffer(output.read_bytes(), dtype=np.uint8).copy()
+
+
 def write_texture(
     group: zarr.Group,
     texture: NDArray[Any],
@@ -56,6 +126,9 @@ def write_texture(
     channels: Optional[int],
     color_space: str,
     ctx: DatasetCtx,
+    ktx2_mode: str = "uastc",
+    ktx2_quality: Optional[int] = None,
+    encoded_ktx2: Optional[NDArray[np.uint8]] = None,
 ) -> Tuple[int, int, int]:
     """Write a mesh texture and return its resolved ``(height, width, channels)``.
 
@@ -78,6 +151,13 @@ def write_texture(
         texture, encoding, width, height, channels, color_space
     )
     arr = np.asarray(texture)
+
+    if encoding == "ktx2":
+        arr = (
+            encoded_ktx2
+            if encoded_ktx2 is not None
+            else _encode_ktx2(arr, ktx2_mode, ktx2_quality, color_space)
+        )
 
     if encoding != "raw":
         # Straight to `create_array`, bypassing the encoder — exactly what

@@ -1220,6 +1220,7 @@ TEXTURE_ENCODINGS: dict = {
     "png": "uint8 or uint16",
     "webp": "uint8",
     "jpeg": "uint8",
+    "ktx2": "uint8 RGB/RGBA (encoded by optional toktx tooling)",
 }
 
 #: Channel counts a texture may carry: grey, RGB, RGBA.
@@ -1415,17 +1416,31 @@ def validate_texture_for_writing(
             f"{context}: Unknown texture_encoding {encoding!r}. Valid: "
             f"{', '.join(sorted(TEXTURE_ENCODINGS))}",
             "Use 'raw' for an (H, W, C) array (the only encoding that carries "
-            "HDR), or 'png'/'webp'/'jpeg' for encoded bytes",
+            "HDR), 'ktx2' for uint8 RGB/RGBA input, or 'png'/'webp'/'jpeg' for "
+            "encoded bytes",
         )
 
     arr = np.asarray(texture)
     res_h, res_w, res_c = (
         _resolve_raw_texture_dims(arr, context)
-        if encoding == "raw"
+        if encoding in {"raw", "ktx2"}
         else _resolve_encoded_texture_dims(
             arr, encoding, width, height, channels, context
         )
     )
+
+    if encoding == "ktx2":
+        if arr.dtype != np.dtype(np.uint8):
+            raise ValidationError(
+                f"{context}: texture_encoding='ktx2' accepts only uint8 LDR input, "
+                f"got {arr.dtype}",
+                "Use uint8 RGB/RGBA input, or texture_encoding='raw' for HDR/float data",
+            )
+        if res_c == 1:
+            raise ValidationError(
+                f"{context}: texture_encoding='ktx2' supports only RGB or RGBA, got 1 channel",
+                "Use texture_encoding='raw' for a single-channel texture",
+            )
 
     if (
         encoding == "raw"
@@ -1463,7 +1478,10 @@ def validate_texture_for_writing(
     # encoded payload decodes to a 4-channel bitmap regardless of what it stored,
     # so the charge is w * h * 4; a raw one decodes to its own value count at
     # 4 bytes each.
-    decoded_bytes = res_w * res_h * (4 if encoding != "raw" else max(res_c, 1) * 4)
+    if encoding == "ktx2":
+        decoded_bytes = (res_w * res_h * 4 + 2) // 3
+    else:
+        decoded_bytes = res_w * res_h * (4 if encoding != "raw" else max(res_c, 1) * 4)
     if decoded_bytes > MESH_TEXTURE_DECODE_BUDGET_BYTES:
         budget_mib = MESH_TEXTURE_DECODE_BUDGET_BYTES // (1024 * 1024)
         raise ValidationError(

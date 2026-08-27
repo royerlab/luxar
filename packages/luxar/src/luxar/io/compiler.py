@@ -844,6 +844,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         texture_height: Optional[int] = None,
         texture_channels: Optional[int] = None,
         texture_color_space: str = "srgb",
+        texture_ktx2_mode: str = "uastc",
+        texture_ktx2_quality: Optional[int] = None,
         shading: Optional[str] = None,
         double_sided: bool = True,
         labels: Optional["Sequence[str]"] = None,
@@ -895,12 +897,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 with ``texture`` and refused without it. Values outside
                 ``[0, 1]`` are legal and tile under ``texture_wrap="repeat"``.
             texture: Optional base-colour image. ``(H, W, C)`` array under
-                ``texture_encoding="raw"``, else a 1-D ``uint8`` array of encoded
-                bytes. Mutually exclusive with ``colors`` and ``colormap`` — a
-                mesh has one base-colour source.
-            texture_encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg``. HDR
-                (float) textures require ``raw``: the image codecs are
-                integer-only and no browser decodes float.
+                ``texture_encoding="raw"`` or ``"ktx2"``, else a 1-D ``uint8``
+                array of encoded bytes. Mutually exclusive with ``colors`` and
+                ``colormap`` — a mesh has one base-colour source.
+            texture_encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg`` | ``ktx2``.
+                KTX2 accepts uint8 RGB/RGBA input and requires ``luxar[ktx2]``
+                plus the Khronos ``toktx`` executable. HDR requires ``raw``.
+            texture_ktx2_mode: ``uastc`` (default) or ``etc1s``.
+            texture_ktx2_quality: Codec quality; defaults to 2 for UASTC and 128
+                for ETC1S.
             texture_width: Declared width. Required for encoded payloads, where
                 it cannot be read without decoding; read off the array for
                 ``raw``, and refused if it disagrees.
@@ -937,6 +942,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             texture_height=texture_height,
             texture_channels=texture_channels,
             texture_color_space=texture_color_space,
+            texture_ktx2_mode=texture_ktx2_mode,
+            texture_ktx2_quality=texture_ktx2_quality,
             shading=shading,
             double_sided=double_sided,
             labels=labels,

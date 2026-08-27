@@ -184,7 +184,7 @@ has_colors: bool
 has_scalars: bool
 has_uvs: bool
 has_texture: bool
-texture_encoding: "raw" | "png" | "webp" | "jpeg"
+texture_encoding: "raw" | "png" | "webp" | "jpeg" | "ktx2"
 texture_width: int
 texture_height: int
 texture_channels: 1 | 3 | 4
@@ -503,11 +503,13 @@ scene.add_mesh(
     uvs: NDArray[np.float32] | None = None,
     texture: NDArray | None = None,
     *,
-    texture_encoding: Literal["raw", "png", "webp", "jpeg"] = "raw",
+    texture_encoding: Literal["raw", "png", "webp", "jpeg", "ktx2"] = "raw",
     texture_width: int | None = None,
     texture_height: int | None = None,
     texture_channels: int | None = None,
     texture_color_space: Literal["srgb", "linear"] = "srgb",
+    texture_ktx2_mode: Literal["uastc", "etc1s"] = "uastc",
+    texture_ktx2_quality: int | None = None,
     shading: Literal["smooth", "flat", "none"] | None = None,
     double_sided: bool = True,
     labels: Sequence[str] | None = None,

@@ -154,6 +154,9 @@ def _write_mesh_texture_arrays(
     texture_height: Optional[int],
     texture_channels: Optional[int],
     texture_color_space: str,
+    texture_ktx2_mode: str,
+    texture_ktx2_quality: Optional[int],
+    encoded_ktx2: Optional[NDArray[np.uint8]],
 ) -> dict[str, Any]:
     """Write the UV and texture arrays, and return the attrs they imply.
 
@@ -193,6 +196,9 @@ def _write_mesh_texture_arrays(
             texture_channels,
             texture_color_space,
             ctx.dataset_ctx,
+            texture_ktx2_mode,
+            texture_ktx2_quality,
+            encoded_ktx2,
         )
         meta.update(
             has_texture=True,
@@ -321,11 +327,14 @@ def validate_mesh_arrays(
             texture_channels,
             texture_color_space,
         )
-        texture_decoded_bytes = (
-            texture_width
-            * texture_height
-            * (4 if texture_encoding != "raw" else texture_channels * 4)
-        )
+        if texture_encoding == "ktx2":
+            texture_decoded_bytes = (texture_width * texture_height * 4 + 2) // 3
+        else:
+            texture_decoded_bytes = (
+                texture_width
+                * texture_height
+                * (4 if texture_encoding != "raw" else texture_channels * 4)
+            )
     validate_mesh_decode_budget(
         n_vertices,
         n_dims,
@@ -355,6 +364,8 @@ def write_mesh(
     texture_height: Optional[int] = None,
     texture_channels: Optional[int] = None,
     texture_color_space: str = "srgb",
+    texture_ktx2_mode: str = "uastc",
+    texture_ktx2_quality: Optional[int] = None,
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Optional["Sequence[str]"] = None,
@@ -419,6 +430,16 @@ def write_mesh(
         image_labels=image_labels,
         keys=keys,
     )
+    encoded_ktx2: Optional[NDArray[np.uint8]] = None
+    if texture is not None and texture_encoding == "ktx2":
+        from ..dataset_writers.texture import _encode_ktx2
+
+        encoded_ktx2 = _encode_ktx2(
+            np.asarray(texture),
+            texture_ktx2_mode,
+            texture_ktx2_quality,
+            texture_color_space,
+        )
     # 0i. Transform / nd_transform normalization is pure attr processing, so it
     # belongs in the gate too — and prepare_transform_attrs is NOT idempotent
     # (it transposes the matrix), so it must run exactly once.
@@ -552,6 +573,9 @@ def write_mesh(
         texture_height,
         texture_channels,
         texture_color_space,
+        texture_ktx2_mode,
+        texture_ktx2_quality,
+        encoded_ktx2,
     )
     metadata.update(texture_attrs)
 

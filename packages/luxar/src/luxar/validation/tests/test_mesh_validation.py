@@ -567,6 +567,18 @@ def test_uv_acceptances(uvs, test_id) -> None:
             "raw_array_under_an_encoded_encoding",
         ),
         (
+            lambda: validate_texture_for_writing(np.zeros((2, 2, 1), np.uint8), "ktx2"),
+            "supports only RGB or RGBA",
+            "ktx2_single_channel_refused",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros((2, 2, 3), np.float32), "ktx2"
+            ),
+            "only uint8 LDR input",
+            "ktx2_hdr_refused",
+        ),
+        (
             lambda: validate_texture_for_writing(
                 np.zeros(0, np.uint8), "jpeg", 2, 2, 3
             ),
@@ -642,6 +654,13 @@ def test_texture_rejections(factory, error_pattern, test_id) -> None:
             "rgba_u16",
         ),
         (np.zeros((2, 2, 1), np.uint8), "raw", (None, None, None), (2, 2, 1), "grey"),
+        (
+            np.zeros((2, 2, 4), np.uint8),
+            "ktx2",
+            (None, None, None),
+            (2, 2, 4),
+            "ktx2_rgba",
+        ),
         # HDR: float of any width is writable, exactly as for element colours.
         (
             np.full((2, 2, 3), 9.0, np.float32),
