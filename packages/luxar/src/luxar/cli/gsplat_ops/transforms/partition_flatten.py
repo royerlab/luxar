@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import typer
 from arbol import aprint, asection
 
 from ..encoding import _resolve_encoding_mode
+
+if TYPE_CHECKING:
+    from luxar.gsplats.tree import GSplatNode
+
+
+def _contains_partition(node: "GSplatNode") -> bool:
+    from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+    if isinstance(node, GSplatPartition):
+        return True
+    if isinstance(node, GSplatLodGroup):
+        return any(_contains_partition(child) for child in node.children)
+    return False
 
 
 def run_partition_dataset(
@@ -121,19 +134,7 @@ def run_flatten_dataset(
             load_gsplat_node,
             read_authored_appearance,
         )
-        from luxar.gsplats.tree import (
-            GSplatLodGroup,
-            GSplatNode,
-            GSplatPartition,
-            iter_default_leaves,
-        )
-
-        def contains_partition(candidate: GSplatNode) -> bool:
-            if isinstance(candidate, GSplatPartition):
-                return True
-            if isinstance(candidate, GSplatLodGroup):
-                return any(contains_partition(child) for child in candidate.children)
-            return False
+        from luxar.gsplats.tree import iter_default_leaves
 
         if output_path.exists() and not overwrite:
             aprint(f"❌ Error: {output_path} exists; pass --overwrite to replace it.")
@@ -159,7 +160,7 @@ def run_flatten_dataset(
             # `lod_cutpoints: [...]` describes a tree that no longer exists (#1600).
             if stats:
                 carried_stats = stats_after_structure_change(stats)
-                if contains_partition(node):
+                if _contains_partition(node):
                     # Batch-merge coordinates identify spatial slots. Flattening
                     # removes those slots, so their provenance is no longer valid.
                     carried_stats.pop("part_provenance", None)
