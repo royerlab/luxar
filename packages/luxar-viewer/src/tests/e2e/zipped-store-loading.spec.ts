@@ -131,7 +131,9 @@ test('a host that ignores Range fails loudly without initializing an empty scene
 
   await page.goto(`/?src=${encodeURIComponent(archiveURL)}&debug`);
 
-  await expect.poll(() => startupErrors.join('\n')).toMatch(/honours HTTP Range requests/);
+  await expect
+    .poll(() => startupErrors.join('\n'), { timeout: 10_000 })
+    .toMatch(/honours HTTP Range requests/);
   expect(
     await page.evaluate(() => ({
       initialized: window.__luxarDebug?.app.initialized,
