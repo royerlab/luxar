@@ -1,4 +1,3 @@
-import { RGBAFormat } from 'three';
 import type * as THREE from 'three';
 import type { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 
@@ -44,34 +43,52 @@ export function createKTX2TextureDecoder(
   renderer: Renderer | null | undefined
 ): KTX2TextureDecoder {
   let loader: KTX2Loader | null = null;
+  let loaderPending: Promise<KTX2Loader> | null = null;
+  let disposed = false;
 
   const decode = async (path: string, bytes: Uint8Array) => {
+    if (disposed) {
+      throw new Error(`${path}: KTX2 decoder was disposed before parsing began`);
+    }
     if (!renderer || !hasCompressedTextureSupport(renderer)) {
       throw new Error(
         `${path}: texture encoding 'ktx2' requires ASTC, ETC1/2, S3TC/BC, or PVRTC ` +
           "GPU compressed-texture support. Use 'raw' or 'jpeg' for a portable texture."
       );
     }
-    if (!loader) {
-      const module = await import('three/examples/jsm/loaders/KTX2Loader.js');
-      loader = new module.KTX2Loader().detectSupport(renderer);
+    if (!loaderPending) {
+      const pending = import('three/examples/jsm/loaders/KTX2Loader.js').then((module) => {
+        const created = new module.KTX2Loader().detectSupport(renderer);
+        if (disposed) {
+          created.dispose();
+          throw new Error(`${path}: KTX2 decoder was disposed before parsing began`);
+        }
+        loader = created;
+        return created;
+      });
+      loaderPending = pending;
+    }
+    const pending = loaderPending;
+    let activeLoader: KTX2Loader;
+    try {
+      activeLoader = await pending;
+    } catch (error) {
+      if (loaderPending === pending) loaderPending = null;
+      throw error;
     }
     const texture = await new Promise<THREE.CompressedTexture>((resolve, reject) => {
-      const activeLoader = loader;
-      if (!activeLoader) {
-        reject(new Error('KTX2 decoder was disposed before parsing began'));
-        return;
-      }
       activeLoader.parse(new Uint8Array(bytes).buffer, resolve, reject);
     });
     const image = texture.image as { depth?: number } | undefined;
-    const isUncompressedFallback = (texture.format as number) === RGBAFormat;
+    const isUncompressedTexture =
+      (texture as THREE.CompressedTexture & { isCompressedTexture?: boolean })
+        .isCompressedTexture !== true;
     const isCubeTexture = (texture as THREE.CompressedTexture & { isCubeTexture?: boolean })
       .isCubeTexture;
-    if (isUncompressedFallback || isCubeTexture || (image?.depth ?? 1) > 1) {
+    if (isUncompressedTexture || isCubeTexture || (image?.depth ?? 1) > 1) {
       texture.dispose();
-      const reason = isUncompressedFallback
-        ? 'would fall back to an uncompressed RGBA8 texture'
+      const reason = isUncompressedTexture
+        ? 'would produce an uncompressed texture'
         : isCubeTexture
           ? 'is a cubemap but mesh textures require one 2D image'
           : `contains ${image?.depth ?? '?'} layers but mesh textures require one 2D image`;
@@ -83,6 +100,8 @@ export function createKTX2TextureDecoder(
     return texture;
   };
   decode.dispose = () => {
+    if (disposed) return;
+    disposed = true;
     loader?.dispose();
     loader = null;
   };

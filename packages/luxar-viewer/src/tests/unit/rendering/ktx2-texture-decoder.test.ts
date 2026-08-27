@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { RGBAFormat, RGBA_S3TC_DXT5_Format } from 'three';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createKTX2TextureDecoder } from '../../../rendering/ktx2-texture-decoder';
 import type { Renderer } from '../../../rendering/renderer-capabilities';
@@ -11,22 +11,38 @@ import type { Renderer } from '../../../rendering/renderer-capabilities';
 const loaderState = vi.hoisted(() => ({
   texture: null as import('three').CompressedTexture | null,
   dispose: vi.fn(),
+  constructed: 0,
 }));
 
-vi.mock('three/examples/jsm/loaders/KTX2Loader.js', () => ({
-  KTX2Loader: class {
-    detectSupport() {
-      return this;
-    }
-    parse(_bytes: ArrayBuffer, resolve: (texture: import('three').CompressedTexture) => void) {
-      if (!loaderState.texture) throw new Error('test texture not configured');
-      resolve(loaderState.texture);
-    }
-    dispose() {
-      loaderState.dispose();
-    }
-  },
-}));
+vi.mock('three/examples/jsm/loaders/KTX2Loader.js', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('three/examples/jsm/loaders/KTX2Loader.js')
+  >();
+  return {
+    KTX2Loader: class extends actual.KTX2Loader {
+      constructor() {
+        super();
+        loaderState.constructed += 1;
+      }
+      detectSupport(renderer: import('three').WebGLRenderer) {
+        return super.detectSupport(renderer);
+      }
+      parse(
+        bytes: ArrayBuffer,
+        resolve: (texture: import('three').CompressedTexture) => void,
+        reject: (error: unknown) => void
+      ) {
+        if (bytes.byteLength > 1) return super.parse(bytes, resolve, reject);
+        if (!loaderState.texture) throw new Error('test texture not configured');
+        resolve(loaderState.texture);
+      }
+      dispose() {
+        loaderState.dispose();
+        super.dispose();
+      }
+    },
+  };
+});
 
 const supportedRenderer = () =>
   ({
@@ -37,12 +53,19 @@ const supportedRenderer = () =>
 const compressedTexture = (overrides: Record<string, unknown> = {}) =>
   ({
     format: RGBA_S3TC_DXT5_Format,
+    isCompressedTexture: true,
     image: { width: 8, height: 8 },
     dispose: vi.fn(),
     ...overrides,
   }) as unknown as import('three').CompressedTexture;
 
 describe('createKTX2TextureDecoder', () => {
+  beforeEach(() => {
+    loaderState.texture = null;
+    loaderState.dispose.mockClear();
+    loaderState.constructed = 0;
+  });
+
   it('rejects clearly when the renderer has no compressed-texture target', async () => {
     const renderer = {
       isWebGPURenderer: true,
@@ -73,13 +96,36 @@ describe('createKTX2TextureDecoder', () => {
 
   it('rejects and disposes an uncompressed RGBA8 transcode fallback', async () => {
     const dispose = vi.fn();
-    loaderState.texture = compressedTexture({ format: RGBAFormat, dispose });
+    loaderState.texture = compressedTexture({
+      format: RGBAFormat,
+      isCompressedTexture: false,
+      dispose,
+    });
     const decode = createKTX2TextureDecoder(supportedRenderer());
 
     await expect(decode('mesh/texture', new Uint8Array(1))).rejects.toThrow(
-      /uncompressed RGBA8.*raw.*jpeg/i
+      /uncompressed.*raw.*jpeg/i
     );
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an uncompressed non-RGBA KTX2 container parsed by Three', async () => {
+    // @ts-expect-error untyped Three.js example module
+    const { createDefaultContainer, VK_FORMAT_R8G8_UNORM, write } = await import('three/examples/jsm/libs/ktx-parse.module.js');
+    const container = createDefaultContainer();
+    Object.assign(container, {
+      vkFormat: VK_FORMAT_R8G8_UNORM,
+      pixelWidth: 2,
+      pixelHeight: 2,
+      levelCount: 1,
+      levels: [{ levelData: new Uint8Array(8), uncompressedByteLength: 8 }],
+    });
+    const decode = createKTX2TextureDecoder(supportedRenderer());
+
+    await expect(decode('mesh/texture', write(container))).rejects.toThrow(
+      /uncompressed.*raw.*jpeg/i
+    );
+    decode.dispose();
   });
 
   it('rejects and disposes layered containers', async () => {
@@ -101,13 +147,34 @@ describe('createKTX2TextureDecoder', () => {
   });
 
   it('disposes the lazily-created loader worker pool', async () => {
-    loaderState.dispose.mockClear();
     loaderState.texture = compressedTexture();
     const decode = createKTX2TextureDecoder(supportedRenderer());
     await decode('mesh/texture', new Uint8Array(1));
 
     decode.dispose();
     expect(loaderState.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('shares one loader across concurrent first decodes', async () => {
+    loaderState.texture = compressedTexture();
+    const decode = createKTX2TextureDecoder(supportedRenderer());
+
+    await Promise.all([
+      decode('mesh/texture-0', new Uint8Array(1)),
+      decode('mesh/texture-1', new Uint8Array(1)),
+    ]);
+
+    expect(loaderState.constructed).toBe(1);
+  });
+
+  it('rejects decoding after dispose without rebuilding a loader', async () => {
+    loaderState.texture = compressedTexture();
+    const decode = createKTX2TextureDecoder(supportedRenderer());
+    await decode('mesh/texture', new Uint8Array(1));
+    decode.dispose();
+
+    await expect(decode('mesh/texture', new Uint8Array(1))).rejects.toThrow(/disposed/i);
+    expect(loaderState.constructed).toBe(1);
   });
 });
 
