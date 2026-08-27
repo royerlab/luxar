@@ -343,6 +343,9 @@ describe('LuxarLayer', () => {
       const root = new THREE.Group();
       const sceneGroup = new THREE.Group();
       const lodGroup = new THREE.Group();
+      const mesh = new THREE.Mesh();
+      mesh.renderOrder = 7;
+      lodGroup.add(mesh);
       sceneGroup.add(lodGroup);
       root.add(sceneGroup);
       loadSceneMock.mockResolvedValueOnce(root);
@@ -352,6 +355,7 @@ describe('LuxarLayer', () => {
       expect(root.renderOrder).toBe(42);
       expect(sceneGroup.renderOrder).toBe(42);
       expect(lodGroup.renderOrder).toBe(42);
+      expect(mesh.renderOrder).toBe(7);
 
       const lazyPartition = new THREE.Group();
       lodGroup.add(lazyPartition);
@@ -362,7 +366,11 @@ describe('LuxarLayer', () => {
     it('waits for and cleans up a load before tearing down globals', async () => {
       const options = makeOptions();
       let release: (g: THREE.Group) => void = () => {};
+      let finishLoaderCleanup: () => void = () => {};
       loadSceneMock.mockImplementation(() => new Promise((r) => (release = r as typeof release)));
+      destroyLoaderAsync.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (finishLoaderCleanup = resolve))
+      );
 
       const layer = new LuxarLayer(options);
       const pending = layer.load('http://example.test/scene.zarr');
@@ -372,10 +380,15 @@ describe('LuxarLayer', () => {
       expect(disposeMaterials).not.toHaveBeenCalled();
 
       release(new THREE.Group());
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(destroyLoaderAsync).toHaveBeenCalledWith('default');
+      expect(disposeMaterials).not.toHaveBeenCalled();
+
+      finishLoaderCleanup();
       await Promise.all([pending, disposing]);
 
       expect(options.scene.children).toHaveLength(0);
-      expect(destroyLoaderAsync).toHaveBeenCalledWith('default');
       expect(destroyLoaderAsync.mock.invocationCallOrder[0]).toBeLessThan(
         disposeMaterials.mock.invocationCallOrder[0]
       );
@@ -560,6 +573,9 @@ describe('LuxarLayer', () => {
       expect(rebuildMaterials).toHaveBeenCalledTimes(1);
       expect(attribute.version).toBeGreaterThan(versionBefore);
       expect(sceneLoaderStub.nodeFactory.rebuildAfterContextRestore).toHaveBeenCalledWith(root);
+      expect(rebuildMaterials.mock.invocationCallOrder[0]).toBeLessThan(
+        sceneLoaderStub.nodeFactory.rebuildAfterContextRestore.mock.invocationCallOrder[0]
+      );
       expect(updateCameraParams).toHaveBeenCalledTimes(1);
       expect(requestRender).toHaveBeenCalled();
     });
