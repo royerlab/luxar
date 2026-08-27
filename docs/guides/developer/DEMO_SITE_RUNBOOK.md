@@ -248,7 +248,11 @@ unfixable without a full purge.
 Two Pages limits bound this set: **25 MiB per file** and **20,000 files**. The
 count is comfortable (180), but the largest clip sits at **24.87 MiB** —
 0.13 MiB under the cap. A single oversized file fails the whole deployment, so
-cap the capture bitrate rather than discovering this on a deploy.
+the gallery harness checks every PNG, WebP and WebM immediately after it is
+written. It warns at 20 MiB, fails at the 25 MiB boundary, and prints the total
+plus the five largest files at the end of the run. Treat a warning as a prompt
+to choose a deliberate per-demo encoding adjustment; do not silently trade
+quality for size with an automatic re-encode loop.
 
 ### 4.3 CORS on the R2 bucket
 
