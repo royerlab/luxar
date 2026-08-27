@@ -182,6 +182,21 @@ class GalleryHistory:
         sha, committed_at = output.split("\0", 1)
         return CommitStamp(sha=sha, committed_at=datetime.fromisoformat(committed_at))
 
+    def _require_tracked_head_files(self, label: str, *pathspecs: str) -> None:
+        candidates = self._git(
+            "ls-files", "--cached", "--with-tree=HEAD", "--", *pathspecs
+        ).splitlines()
+        tracked = (
+            self._git("ls-tree", "-r", "--name-only", "HEAD", "--", *candidates)
+            if candidates
+            else ""
+        )
+        if not tracked:
+            raise StalenessError(
+                f"configured gallery input {label!r} has no tracked files at HEAD: "
+                f"{', '.join(pathspecs)}"
+            )
+
     def _last_commit(self, path: Path) -> CommitStamp:
         return self._last_commit_for_pathspecs(path.as_posix())
 
@@ -241,6 +256,9 @@ class GalleryHistory:
 
     def report(self) -> GalleryReport:
         self._require_full_history()
+        for label, pathspecs in GLOBAL_INPUT_PATHSPECS.items():
+            self._require_tracked_head_files(label, *pathspecs)
+        self._require_tracked_head_files("luxar.shading", *SHADING_PATHSPECS)
         manifest_text = self._git("show", f"HEAD:{MANIFEST_PATH.as_posix()}")
         manifest = json.loads(manifest_text)
         entries = {entry["id"]: entry for entry in manifest["demos"]}

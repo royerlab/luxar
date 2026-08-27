@@ -273,6 +273,39 @@ def test_gallery_capture_tracks_all_render_configuration(
     assert all(status.stale_inputs == ("gallery capture",) for status in statuses)
 
 
+def test_renamed_configured_input_is_rejected(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _git(
+        repo,
+        "mv",
+        "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",
+        "packages/luxar-viewer/src/tests/screenshots/crop-rules.ts",
+    )
+    _commit(repo, "rename crop policy", 22)
+
+    with pytest.raises(
+        stale.StalenessError,
+        match="crop policy.*no tracked files at HEAD",
+    ):
+        stale.GalleryHistory(repo).report()
+
+
+def test_staged_configured_input_rename_does_not_affect_committed_report(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _git(
+        repo,
+        "mv",
+        "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",
+        "packages/luxar-viewer/src/tests/screenshots/crop-rules.ts",
+    )
+
+    assert all(
+        not status.stale_inputs for status in stale.GalleryHistory(repo).tile_statuses()
+    )
+
+
 def test_appending_a_manifest_entry_does_not_stale_the_previous_last_entry(
     tmp_path: Path,
 ) -> None:
