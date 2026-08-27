@@ -107,7 +107,6 @@ export class SceneGraphModel {
     this.sceneGraphState = {
       root,
       ...this.calculateSceneGraphStats(root),
-      droppedElements: 0,
     };
     this.markStructureDirty();
   }
