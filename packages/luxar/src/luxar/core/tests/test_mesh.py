@@ -19,6 +19,7 @@ from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import create_array
 from luxar.core.mesh import Mesh, ShadingMode
 from luxar.io import LuxarScene, MeshData
+from luxar.io._compiler.geometry_writers.mesh import VALID_SHADING_MODES
 
 # A welded tetrahedron: 4 vertices, 4 faces, every vertex shared by 3 faces.
 _V = np.array(
@@ -101,7 +102,7 @@ def test_shading_resolution(tmp_path, kwargs, expected_shading, test_id) -> None
 
 def test_shading_mode_type_matches_the_writer_contract() -> None:
     """The public read type must cover every shading value the writer accepts."""
-    assert set(get_args(ShadingMode)) == {"smooth", "flat", "none"}
+    assert set(get_args(ShadingMode)) == set(VALID_SHADING_MODES)
 
 
 def test_double_sided_defaults_true_and_round_trips_false(tmp_path) -> None:
