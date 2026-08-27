@@ -16,8 +16,7 @@ from luxar.gsplats.io.save_gsplats import write_gsplats_tree
 from luxar.gsplats.tree import GSplatLeaf
 
 _DEMO_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "demo_gsplats_4d_drosophila_embryogenesis.py"
+    Path(__file__).resolve().parents[1] / "demo_gsplats_4d_drosophila_embryogenesis.py"
 )
 _MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
 _ARCHIVE_SHA256 = "11d3e2d9b2ae374e39d1916b5ac0ba126fdae57a9c311f306aa3ec8c98d4a17b"

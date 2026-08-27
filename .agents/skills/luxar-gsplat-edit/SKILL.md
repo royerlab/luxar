@@ -117,7 +117,9 @@ So the check that would have caught it, and is worth keeping:
 
 * **Compare the resulting count against the CDF.** If `-r 0.96` does not keep
   roughly the fraction `np.cumsum(np.sort(amps)[::-1], dtype=np.float64)` says
-  it should, something other than the documented rule is acting.
+  it should, something other than the documented rule is acting. Here `amps`
+  means alpha-effective amplitude (`A·α` for RGBA), as returned by
+  `luxar.gsplats.utils.alpha.effective_amplitudes`, not raw amplitude.
 * **Check per-slice survival on a timelapse** (`np.unique` on the stacked centre
   column). On this data all 500 frames survived within a 2.4x spread, so the loss
   was uniform rather than gutting dim timepoints — worth confirming, not assuming.

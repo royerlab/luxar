@@ -291,7 +291,8 @@ def info_dataset(
                 n_contrib = np.searchsorted(cumsum_norm, threshold) + 1
                 pct = (n_contrib / n_splats) * 100
                 aprint(
-                    f"  Top {n_contrib:,} splats ({pct:.1f}%) contribute {threshold * 100:.0f}% of total amplitude"
+                    f"  Top {n_contrib:,} splats ({pct:.1f}%) contribute "
+                    f"{threshold * 100:.0f}% of total rendered amplitude (A·α)"
                 )
 
         if show_histograms:

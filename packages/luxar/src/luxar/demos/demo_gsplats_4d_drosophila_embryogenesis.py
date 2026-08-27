@@ -155,14 +155,15 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
         --method cumulative --retention 0.960
 
     # 3. Physical microns. Time is left as an INTEGER FRAME INDEX on purpose —
-    #    see `frames_to_minutes` below for why a scaled axis does not survive
+    #    see `normalise_time_axis` below for why a scaled axis does not survive
     #    the centres encoder.
     luxar gsplat transform culled.gsplats.zarr um.gsplats.zarr \
         --scale 1.93,0.40625,0.40625,1
 
     # 4. Re-chunk for streaming. Measured on this store: 173 -> 2 requests per
     #    timepoint step, and a 7.7% smaller zip.
-    luxar optimise um.gsplats.zarr droso_timelapse.gsplats.zarr --profile archive
+    luxar optimise um.gsplats.zarr \
+        drosophila_embryogenesis_500tp.gsplats.zarr.zip --profile archive
 
 Two choices in there are measured rather than conventional:
 
@@ -356,8 +357,9 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
         node, _ = load_gsplat_node(str(data_path))
 
         # Centre columns are (Z, Y, X, Time) — the fit's own order, with the
-        # stacked axis last. Time is already in MINUTES (the transform pass
-        # scaled the frame index by the 0.5-minute interval).
+        # stacked axis last. Time arrives as frame indices or minutes depending
+        # on how the centres encoder quantised the stacked axis;
+        # normalise_time_axis recognises both.
         t_lo, t_hi, n_t = normalise_time_axis(node)
         bmin, bmax = center_bounds(node)
         aprint(

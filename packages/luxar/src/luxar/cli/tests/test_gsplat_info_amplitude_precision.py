@@ -57,13 +57,15 @@ def test_info_contributor_count_matches_cumulative_cull_for_rgba(
     stored = GSplatData.load(path)
     expected = stored.cull(method="cumulative", retention=0.95).n_splats
     lines: list[str] = []
-    monkeypatch.setattr(inspect_commands, "aprint", lambda value: lines.append(str(value)))
+    monkeypatch.setattr(
+        inspect_commands, "aprint", lambda value: lines.append(str(value))
+    )
 
     info_dataset(path, show_histograms=False)
 
     output = "\n".join(lines)
     assert f"Top {expected:,} splats" in output
-    assert "contribute 95% of total amplitude" in output
+    assert "contribute 95% of total rendered amplitude (A·α)" in output
 
 
 def test_info_skips_contributor_claims_for_zero_total(
@@ -73,10 +75,12 @@ def test_info_skips_contributor_claims_for_zero_total(
     path = tmp_path / "zero.gsplats.zarr"
     data.save(path, ordering="none")
     lines: list[str] = []
-    monkeypatch.setattr(inspect_commands, "aprint", lambda value: lines.append(str(value)))
+    monkeypatch.setattr(
+        inspect_commands, "aprint", lambda value: lines.append(str(value))
+    )
 
     info_dataset(path, show_histograms=False)
 
     output = "\n".join(lines)
-    assert "contribute 95% of total amplitude" not in output
+    assert "contribute 95% of total rendered amplitude (A·α)" not in output
     assert "Culling Suggestion" not in output
