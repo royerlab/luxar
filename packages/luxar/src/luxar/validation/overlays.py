@@ -382,10 +382,10 @@ def _detect_encoded_image_format(
         return "jpeg"
     if image.startswith(b"RIFF") and image[8:12] == b"WEBP":
         return "webp"
-    message = "Unsupported encoded image format. Expected PNG, JPEG, or WebP payload"
-    if context is not None:
-        message += f": {context}"
-    raise ValueError(message)
+    message = "Unsupported encoded image format. Expected PNG, JPEG, or WebP payload."
+    if context is None:
+        raise ValueError(message)
+    raise ValueError(f"{message.removesuffix('.')}: {context}")
 
 
 def _pil_to_bytes(image: Any, fmt: str) -> bytes:

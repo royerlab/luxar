@@ -170,8 +170,9 @@ class TestValidateImageInput:
         assert fmt == "webp"
 
     def test_unsupported_bytes_rejected(self):
-        with pytest.raises(ValueError, match="encoded image format"):
+        with pytest.raises(ValueError, match="encoded image format") as exc:
             validate_image_input(b"not an image")
+        assert str(exc.value).endswith("PNG, JPEG, or WebP payload.")
 
     def test_numpy_rgb(self):
         arr = np.zeros((4, 4, 3), dtype=np.uint8)
