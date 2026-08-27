@@ -366,6 +366,18 @@ def test_main_lists_without_fetching(harness: ModuleType, capsys) -> None:
     assert "dormant" in out
 
 
+def test_help_documents_skip_and_teardown_guards(harness: ModuleType, capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        harness.main(["--help"])
+
+    assert exc_info.value.code == 0
+    out = capsys.readouterr().out
+    assert "--allow-skip" in out
+    assert "--require-verified" in out
+    assert "explicitly named target" in out
+    assert "pre-removal teardown" in out
+
+
 def test_an_explicitly_named_skip_is_a_failure(harness: ModuleType, capsys) -> None:
     """Asking for a dataset by name and getting no answer is not a pass.
 
@@ -377,6 +389,7 @@ def test_an_explicitly_named_skip_is_a_failure(harness: ModuleType, capsys) -> N
     assert harness.main(["gsplats_kidney"]) == 1
     err = capsys.readouterr().err
     assert "NOT verified" in err
+    assert "target(s)" in err
     assert "asked for them by name" in err
 
 
@@ -389,7 +402,7 @@ def test_require_verified_fails_when_nothing_was_verified(
 ) -> None:
     """The teardown gate: demand a count rather than trusting a green exit."""
     assert harness.main(["--require-verified", "1"]) == 1
-    assert "0 dataset(s) verified" in capsys.readouterr().err
+    assert "0 target(s) verified" in capsys.readouterr().err
 
 
 def test_a_bare_all_skipped_run_says_so_rather_than_implying_success(

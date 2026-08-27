@@ -58,14 +58,18 @@ Three requirements, each load-bearing
 
 Usage
 -----
-    python scripts/verify_cold_fetch.py                    # every reachable dataset
-    python scripts/verify_cold_fetch.py gsplats_kidney     # named datasets
-    python scripts/verify_cold_fetch.py --cache-root /data # put large temp caches here
-    python scripts/verify_cold_fetch.py --list             # what would be attempted
+    python scripts/verify_cold_fetch.py                     # every hosted target
+    python scripts/verify_cold_fetch.py gsplats_kidney      # one named target
+    python scripts/verify_cold_fetch.py gsplats_kidney --allow-skip
+    python scripts/verify_cold_fetch.py --require-verified N # pre-removal teardown
+    python scripts/verify_cold_fetch.py --cache-root /data  # large temp caches
+    python scripts/verify_cold_fetch.py --list              # what would be attempted
 
 Exit codes: 0 everything checked passed, 1 a verification failed, 2 a usage or
-configuration error. Datasets whose hosting is still dormant are reported as
-SKIP and do not fail the run — that is the expected state before publication.
+configuration error. A dormant target is reported as SKIP. A bare all-target
+run tolerates those skips before publication, but a SKIP on an explicitly named
+target fails unless ``--allow-skip`` is passed. Before removing payloads, use
+``--require-verified N`` with the expected target count so no variant is missed.
 """
 
 from __future__ import annotations
@@ -270,7 +274,7 @@ def _result_exit_code(
     # asked for that dataset by name.
     if skipped and explicit and not allow_skip:
         print(
-            f"\nerror: {skipped} explicitly requested dataset(s) were NOT verified "
+            f"\nerror: {skipped} explicitly requested target(s) were NOT verified "
             "— you asked for them by name and got no answer. This is not a pass. "
             "Pass --allow-skip only when exploring, never when deciding whether a "
             "payload can be removed.",
@@ -280,7 +284,7 @@ def _result_exit_code(
 
     if require_verified is not None and checked < require_verified:
         print(
-            f"\nerror: {checked} dataset(s) verified, --require-verified "
+            f"\nerror: {checked} target(s) verified, --require-verified "
             f"{require_verified} demanded.",
             file=sys.stderr,
         )
@@ -313,7 +317,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         type=int,
         metavar="N",
         help=(
-            "fail unless at least N datasets actually verified. Use this at "
+            "fail unless at least N targets actually verified. Use this at "
             "teardown: a run that skips everything otherwise exits 0."
         ),
     )
@@ -321,7 +325,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--allow-skip",
         action="store_true",
         help=(
-            "tolerate a skip on an explicitly named dataset (exploration only; "
+            "tolerate a skip on an explicitly named target (exploration only; "
             "never when deciding whether a payload can be removed)"
         ),
     )
