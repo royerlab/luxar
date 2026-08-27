@@ -26,6 +26,7 @@ from typer.testing import CliRunner  # noqa: E402
 
 from luxar._zarr_compat import read_node_attrs
 from luxar.cli import app  # noqa: E402
+from luxar.cli.tests._testing import normalized_cli_output  # noqa: E402
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats  # noqa: E402
 
 
@@ -117,8 +118,9 @@ def test_info_summarizes_nested_part_provenance_unless_full_is_requested(
             app, ["gsplat", "info", str(path), "--no-histograms"]
         )
         assert summary.exit_code == 0, summary.output
-        assert "part_provenance: 1 part, nested channels × timepoints" in summary.output
-        assert "psnr_db" not in summary.output
+        summary_output = normalized_cli_output(summary)
+        assert "part_provenance: 1 part, nested channels × timepoints" in summary_output
+        assert "psnr_db" not in summary_output
 
         full = CliRunner().invoke(
             app,
@@ -131,11 +133,11 @@ def test_info_summarizes_nested_part_provenance_unless_full_is_requested(
             ],
         )
         assert full.exit_code == 0, full.output
-        assert "psnr_db" in full.output
+        assert "psnr_db" in normalized_cli_output(full)
 
     help_result = CliRunner().invoke(app, ["gsplat", "info", "--help"])
     assert help_result.exit_code == 0, help_result.output
-    assert "--full-provenance" in help_result.output
+    assert "--full-provenance" in normalized_cli_output(help_result)
 
 
 def test_cli_fit_stamps_the_stored_dtype_not_the_loaders_cast(tmp_path: Path) -> None:
