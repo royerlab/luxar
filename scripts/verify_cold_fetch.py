@@ -289,7 +289,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             if spec.get("bucket") != "zenodo":
                 state = "not hosted"
             else:
-                state = "reachable" if is_reachable(manifest, name, variant) else "dormant"
+                state = (
+                    "reachable" if is_reachable(manifest, name, variant) else "dormant"
+                )
             print(f"{target_label(name, variant):<40} {state}")
         return 0
 
