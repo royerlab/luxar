@@ -318,7 +318,7 @@ chunks and partition parts report once as the node the author wrote. Candidate
 pairs are sweep-pruned on a displayed axis, and repeated pairwise hits are rolled
 up into connected overlap clusters so each warning names every participating
 owner without flooding the log. The primary remedy is to merge the geometry and
-partition it spatially, with displayed dimensions in the first three position
+partition it spatially, with the displayed dimensions in the first three position
 columns; additive blending is identified as an order-independent option for an
 emissive medium that changes surface appearance.
 

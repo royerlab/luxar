@@ -166,7 +166,7 @@ def _warn_sorted_overlap_clusters(
         aprint(
             f"  ⚠️  overlapping order-dependent nodes {participants} have view-dependent "
             'cross-node order; merge them into one node and pass partition={"max_elements": N}, '
-            "with displayed dimensions in the first three position columns, to order disjoint "
+            "with the displayed dimensions in the first three position columns, to order disjoint "
             "BSP cells back-to-front. For an emissive medium, additive blending is "
             "order-independent but changes surface appearance; otherwise separate their bounds."
         )
@@ -175,7 +175,7 @@ def _warn_sorted_overlap_clusters(
 def warn_overlapping_blending(
     store: zarr.Group, world_leaves: list[WorldBoundsLeaf] | None = None
 ) -> None:
-    """Warn once per co-visible node with unsafe overlapping blend semantics."""
+    """Warn about co-visible nodes with unsafe overlapping blend semantics."""
     if "scene_dimensions" not in store.attrs:
         return
     dimensions = Dimensions.from_dict(store.attrs["scene_dimensions"])
