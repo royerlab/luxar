@@ -25,6 +25,14 @@
       "zenodo_record": "21912284",
       "base_url": null,
       "published": false
+    },
+    "droso-timelapse": {
+      "title": "Drosophila melanogaster embryogenesis: a 500-timepoint light-sheet timelapse as Gaussian splats",
+      "license": "cc-by-4.0",
+      "zenodo_doi": "10.5281/zenodo.22118695",
+      "zenodo_record": "22118695",
+      "base_url": null,
+      "published": false
     }
   },
   "datasets": {

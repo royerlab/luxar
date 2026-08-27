@@ -33,7 +33,7 @@ PLACE (no `-e`).
 | --- | --- |
 | Crop to a coordinate box | `slice` (numpy-style ranges) |
 | Move/scale/rotate/recenter in space | `transform` |
-| Rescale or normalize brightness | `transform --scale-intensity / --normalize-intensity` |
+| Rescale or normalize brightness | `transform --scale-intensity / --normalize-intensity` — but see below: you usually do NOT need this |
 | Drop low-value splats (shrink file) | `cull` |
 | Reduce to a target splat count | `decimate --target N` / `-f 0.1` |
 | Keep splats matching property thresholds | `filter` |
@@ -46,6 +46,55 @@ PLACE (no `-e`).
 | Retrofit Q·e LOD quality stamps in place | `annotate-quality` |
 | Upgrade an old-format file | `migrate-format` |
 | Look at stats / quality | `info` / `render` / `compare` / `view` / `napari` |
+
+## Amplitudes: normalisation now happens on INSERTION, not here
+
+A fitted `.gsplats.zarr` stores amplitudes in **raw source units** — the fitter
+multiplies its `[0,1]` working copy back out by the volume's intensity range, so
+a fit from a uint16 detector stack carries detector counts, in the hundreds or
+thousands. Those units cannot be corrected at display time: the colormap window
+only feeds the LUT index (`t = clamp((A-min)*scale, 0, 1)`, clamped, so it picks
+a *colour*), while emitted radiance and volumetric optical depth are both LINEAR
+in the raw stored amplitude and nothing windows them.
+
+**Since #2211 the scene adders normalise by default** — `add_gsplats_from_data`,
+`add_gsplats_from_file` and the graft path scale a robust p99.9 to 1.0, with ONE
+factor for the whole structure, recorded as `amplitude_normalization_factor`.
+Data already in range is untouched.
+
+So `transform --normalize-intensity` is now for the cases the default does not
+cover: pinning an explicit target across SEVERAL archives that must share an
+exposure (multichannel, or a timelapse fitted in separate batches), or preparing
+an archive for a consumer that is not the Luxar scene compiler. **`--scale-intensity`
+on `gsplat convert` implies opting out of the automatic normalisation**, since
+normalising straight after an explicit scale would cancel it exactly.
+
+## `cull --method cumulative`: report the COUNT, and verify it
+
+`--retention R` keeps the brightest splats accounting for a fraction R of the
+**pooled** total amplitude — not R of the splats, and not R per timepoint. The
+surviving splat fraction is a property of the amplitude distribution, so the
+retention is an *input* and the count is the *outcome*: **always report and check
+the count.**
+
+Verified on one Drosophila timelapse: a 20-frame subset and the full 500-frame
+merge have **identical** amplitude distributions (both need exactly 65.0% of
+splats to carry 96% of amplitude), as they should — pooling more of the same
+distribution does not change its quantile structure. But the same
+`-r 0.960` returned 65% of splats on the 20-frame store and **12%** on the
+500-frame one. Same specimen, same fit settings, same flag, same distribution.
+
+**That discrepancy is unexplained and under investigation** (2026-08-26); the two
+stores differ in ladder depth (8 rungs vs 13), which is the leading suspect. Until
+it is understood:
+
+* **Check the resulting count against the distribution** before shipping. If
+  `-r 0.96` does not keep roughly the fraction the CDF says it should, something
+  other than the documented rule is acting.
+* **Check per-slice survival on a timelapse** (`np.unique` on the stacked centre
+  column). On this data every one of 500 frames survived within a 2.4x spread,
+  so the loss was uniform rather than gutting dim timepoints — but that is worth
+  confirming, not assuming.
 
 **There is deliberately no occlusion/shading command here.** If a fit renders as a
 flat glow with no visible shape, the fix is `luxar.shading.bake_ambient_occlusion`
