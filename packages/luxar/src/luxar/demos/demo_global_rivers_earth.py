@@ -3,13 +3,10 @@
 
 A rotatable 3D globe built from two of Luxar's geometry types at once:
 
-  * **Terrain (Points)** — the Earth's surface sampled on a **Fibonacci
-    spiral-sphere** (uniform, no pole clustering), each point displaced radially
-    by its **ETOPO 2022** elevation and colored by a hypsometric palette (deep
-    abyssal navy -> ocean blue -> coastal cyan -> green lowland -> tan -> snow).
-    Rendered **opaque** as a solid planet, with a geometric additive ladder
-    (most of the payload is in the last two levels — see the note in
-    ``build_scene``).
+  * **Terrain (Mesh)** — a tiled UV sphere displaced radially by **ETOPO 2022**
+    elevation and textured with a hypsometric palette (deep abyssal navy -> ocean
+    blue -> coastal cyan -> green lowland -> tan -> snow). Rendered **opaque** as
+    a solid planet with smooth relief shading.
   * **Rivers (Lines)** — every HydroRIVERS reach (Strahler order >= 3), kept as
     **connected polylines** (so the line material renders seamless joints),
     draped just above the terrain and colored teal->white by Strahler order so
@@ -18,8 +15,8 @@ A rotatable 3D globe built from two of Luxar's geometry types at once:
     by the globe instead of showing through it. The rivers stream via the
     spatial-chunk index.
 
-This exercises two of Luxar's four geometry types (Points + Lines) at global
-scale with level-of-detail, in real geographic 3D.
+This exercises two of Luxar's four geometry types (Mesh + Lines) at global scale
+in real geographic 3D.
 
 ================================================================================
 SELF-CONTAINED / REGENERATING (no LFS asset)
@@ -55,16 +52,17 @@ USAGE
 DEMO_META = {
     "key": "global_rivers_earth",
     "title": "Rivers of Earth",
-    "description": "A topographic ETOPO globe (Points) plus every HydroRIVERS reach (Lines) in geographic 3D.",
+    "description": "A topographic ETOPO globe (relief-displaced Mesh) plus every HydroRIVERS reach (Lines) in geographic 3D.",
     "category": "geoscience",
-    "geometry": "points+lines",
+    # "mixed": a relief-displaced Mesh terrain with Lines rivers over it.
+    "geometry": "mixed",
     "requirements": {
         "download_mb": 1000,
         "compute": "heavy",
         "gpu": "none",
         "local_data": None,
     },
-    "caches": ["global_rivers_earth"],
+    "caches": ["global_rivers_earth", "blue_marble"],
     "outputs": ["global_rivers_earth"],
     "citation": {
         "short": "ETOPO 2022 / HydroSHEDS",
@@ -88,6 +86,13 @@ from luxar.demos import (
     parse_demo_flags,
     scene_is_current,
 )
+from luxar.demos._globe_common import (
+    Clouds,
+    SeaLevel,
+    blue_marble_basemap,
+    build_earth,
+    resample_equirect_grid,
+)
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -104,15 +109,36 @@ ETOPO_URL = (
     "60s_surface_elev_gtif/ETOPO_2022_v1_60s_N90W180_surface.tif"
 )
 
-N_GLOBE = 8_000_000  # Fibonacci-sphere terrain points
-# A 4096-class GPU can commit at most 5,591,040 Points from one node. Keep the
-# 8M-point globe in parts below that floor, each with its own stream ladder.
-MAX_GLOBE_POINTS_PER_NODE = 4_000_000
+# The terrain is a RELIEF-DISPLACED textured mesh. It was 8M Fibonacci-sphere
+# points, and unlike the other three globes that count was not only about
+# resolving a texture — the relief itself lives in the geometry, so the vertex
+# density is doing real work here.
+#
+# 1024x512 quads is 526k vertices for 1.05M triangles: 15x fewer elements than
+# the point cloud, with a CONTINUOUS surface instead of a shell of discs. The
+# hypsometric colouring moves to a texture, which decouples colour resolution
+# from geometry resolution — the point version could not do that, since each
+# point carried exactly one colour.
+# 2048x1024 quads — 2.1M vertices, 4.2M triangles, split across four tiles so
+# each node carries ~526k vertices and a 4096-wide texture slice and stays well
+# inside the per-node decode budget.
+#
+# Raised from 1024x512 because the geometry and the texture have to be in the same
+# league: with a 16384-wide basemap over a 1024-column mesh each triangle covered
+# 16 texels, so the silhouette was polygonal against a photographic surface.
+GLOBE_LON = 2048
+GLOBE_LAT = 1024
+GLOBE_TEXTURE_WIDTH = 16384
+GLOBE_TILES = 4
 MIN_ORDER = 3  # keep HydroRIVERS reaches with Strahler order >= this
 DECIMATE_DEG = 0.06  # drop river vertices closer than this (~2-3x line width)
 RADIUS = 100.0  # globe radius (scene units)
-EXAGG = 45.0  # vertical exaggeration of elevation relief
-POINT_RADII = 0.09  # terrain point size (8M points form a dense shell)
+# 15x, down from 45x. At 45x Everest stood 6.2% of Earth's radius off the sphere
+# — taller, proportionally, than anything a planet does, and it read as a spiky
+# artefact rather than as terrain. 15x puts it at 2.1%: still legible at a glance,
+# still enough for the Andes and the mid-ocean ridges to catch light, but the globe
+# stays a globe.
+EXAGG = 15.0  # vertical exaggeration of elevation relief
 EARTH_OPACITY = 1.0  # solid globe: an OPAQUE shell the rivers are occluded BY
 RIVER_LIFT = 0.004  # lift rivers barely above the terrain surface
 RIVER_WIDTH = 0.015
@@ -337,18 +363,42 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
 
     etopo = tifffile.imread(etopo_path)
 
-    with asection(f"Building globe ({N_GLOBE:,} points)"):
-        glon, glat = fibonacci_sphere(N_GLOBE)
-        gelev = _sample_elevation(etopo, glon, glat)
-        gpos = lonlat_to_xyz(glon, glat, gelev / R_EARTH * EXAGG)
-        gscal = hypsometric_scalars(gelev)
-        # pre-bake terrain colors from the LUT (identical across additive-LOD
-        # levels; avoids serialising a LUT array on the additive-LOD path)
-        gcolors = (
-            EARTH_LUT[np.clip((gscal * 255).astype(np.int64), 0, 255)].astype(
-                np.float32
+    with asection(f"Building terrain mesh ({GLOBE_LON}x{GLOBE_LAT} quads)"):
+        # Relief on the mesh's own lon/lat grid. AREA-AVERAGED down from ETOPO's
+        # 21600x10800, not point-sampled: subsampling a relief model picks one
+        # cell in every ~440 and a summit survives only if the grid happens to
+        # land on it, so the same mountain range appears and disappears with the
+        # target resolution.
+        relief_grid = resample_equirect_grid(etopo, GLOBE_LON + 1, GLOBE_LAT + 1)
+        relief = relief_grid / R_EARTH * EXAGG
+
+        # The BASEMAP is now real Blue Marble imagery, not the hypsometric ramp.
+        # The ramp existed to encode elevation as colour, and the relief now
+        # expresses elevation GEOMETRICALLY — so the two were saying the same thing
+        # twice, and the photograph says everything the ramp could not: vegetation,
+        # desert, ice, bathymetry. The palette survives as `EARTH_LUT` for the
+        # rivers' own colouring.
+        try:
+            basemap, basemap_w, basemap_h = blue_marble_basemap(
+                width=GLOBE_TEXTURE_WIDTH
             )
-            / 255.0
+            tiles = GLOBE_TILES
+        except Exception as error:
+            aprint(f"⚠️  Basemap unavailable ({error}); falling back to hypsometric")
+            tex_h = 2048
+            tex_elev = resample_equirect_grid(etopo, tex_h * 2, tex_h)
+            tex_scal = hypsometric_scalars(tex_elev.ravel()).reshape(tex_elev.shape)
+            basemap = EARTH_LUT[np.clip((tex_scal * 255).astype(np.int64), 0, 255)]
+            basemap_h, basemap_w = basemap.shape[:2]
+            tiles = 1
+
+        # Reported, not used: `build_earth` derives the cloud altitude from the
+        # relief it is handed, so the number cannot fall out of step with EXAGG.
+        peak_relief = float(np.max(relief_grid)) / R_EARTH * EXAGG
+        aprint(
+            f"terrain: {GLOBE_LON}x{GLOBE_LAT} quads across {tiles} tiles, "
+            f"{basemap_w}x{basemap_h} basemap, relief x{EXAGG:g} "
+            f"(peak {peak_relief * 100:.2f}% of radius)"
         )
 
     with asection(f"Building rivers (order >= {MIN_ORDER})"):
@@ -402,7 +452,14 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                     # stating it keeps the turntable concentric with the sphere.
                     # A target alone does not pin the camera: the viewer still
                     # auto-frames the distance, it just preserves this pivot.
-                    camera=CameraConfig(target=(0.0, 0.0, 0.0)),
+                    camera=CameraConfig(target=(0.0, 0.0, 0.0), up=(0.0, 1.0, 0.0)),
+                    # Turntable about the SOUTH-NORTH axis. Orbit auto-rotation
+                    # spins azimuthally about the controls' up vector, so pinning
+                    # up to +y is what makes this a planetary rotation rather than
+                    # a tumble: `lonlat_to_xyz` puts the north pole on +y, which is
+                    # also the viewer's default up — stated so the two cannot drift.
+                    auto_rotate=True,
+                    auto_rotate_speed=0.35,
                     cinematic_mode=True,
                     tone_mapping="ACES",
                     # -1 EV. The globe went from a 0.05-opacity backdrop to an
@@ -418,56 +475,44 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
             scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
-            scene.add_points(
+            # ONE call: relief-displaced basemap tiles, the sea-level water
+            # surface, and the cloud deck. The whole recipe is shared with the
+            # other three Earth demos.
+            build_earth(
+                scene,
                 "terrain",
-                positions=gpos,
-                radii=POINT_RADII,
-                colors=gcolors,
-                # OPAQUE, not `normal`: this is the backdrop, and opaque is the
-                # only mode that leaves the viewer's sorted-transparent set and
-                # unconditionally writes depth — which is what gives the
-                # `luminous` rivers below a surface to be occluded by, so the
-                # far-side network is hidden instead of showing through.
+                radius=RADIUS,
+                n_lon=GLOBE_LON,
+                n_lat=GLOBE_LAT,
+                texture_width=GLOBE_TEXTURE_WIDTH,
+                tiles=tiles,
+                basemap=basemap,
+                relief=relief,
+                # SMOOTH, from normals computed off the DISPLACED surface — not the
+                # sphere's radial ones and not `flat`.
+                #
+                # This is the one globe of the four where shading shows the data:
+                # relief is the subject, and a basemap alone renders a mountain
+                # range as a colour band with no form. But `flat` derives one normal
+                # per TRIANGLE, so at this tessellation every triangle shaded as a
+                # facet and the mesh itself became the dominant feature.
+                shading="smooth",
+                # Water at sea level, so bathymetry reads as depth. Only expressible
+                # because the terrain is displaced GEOMETRY: land stands proud of it
+                # and the trenches sit below, which is what the real thing does.
+                sea_level=SeaLevel(),
+                # Altitude DERIVED from the relief's own peak rather than copied:
+                # under a 15x exaggeration Everest is 2.1% of the radius, so the
+                # 1.2% the flat globes use would sit below the Himalaya.
+                clouds=Clouds(strength=0.45, gamma=2.0, intensity=1.6),
+                # OPAQUE, not `normal`: this is the backdrop, and opaque is the only
+                # mode that leaves the viewer's sorted-transparent set and
+                # unconditionally writes depth — which is what gives the `luminous`
+                # rivers a surface to be occluded by, so the far-side network is
+                # hidden instead of showing through.
                 blending_mode="opaque",
                 opacity=EARTH_OPACITY,
                 layer=True,
-                # `spatial-uniform` with n_lods=5 looked like a ladder but was
-                # not one: its stratified-grid sampler emitted 8 / 56 / 272 /
-                # 1174 / 7,998,490 points, so 99.98% of the globe still landed in
-                # a single final commit. A `stream:` ladder is geometric by
-                # construction, so every level is a bounded fraction of its part.
-                additive_lod=dict(counts="stream:20000", method="random", seed=0),
-                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
-                # The terrain still appears late, well after the rivers. That is
-                # NOT a scheduling bug, so do not go looking for one: each
-                # partition's ladder above streams in geometric order.
-                #
-                # The last two levels contain 68% of the points and 62 of the
-                # terrain's 92 MB, so most of the terrain payload is still
-                # outstanding after the first eight levels. The shell is not
-                # complete until those final commits arrive. A line is visible
-                # from its FIRST chunk, which is why the rivers always win the
-                # race.
-                #
-                # Two fixes were tried and rejected, so that the data stays as it
-                # is:
-                #
-                #  * `substitutive_lod` — builds correctly (15,590 / 124,878 /
-                #    999,830 gsplat levels over the 8M-point finest, at 776 KB /
-                #    5.9 MB / 41 MB) but does not help HERE, twice over. A
-                #    whole-object `levels` ladder anchors its finest at >=0.5
-                #    screen area and steps one level per halving, so a globe that
-                #    fills the opening frame selects the 41 MB level, not the
-                #    cheap ones. And its coarse levels are calibrated by
-                #    conserved render-light (integrated emission), which needs an
-                #    integrating blend: under `opaque` (depth-writing alpha-over;
-                #    gsplats emit alpha 1.0, so it is an overwrite for them) the
-                #    Gaussian tails never accumulate, so only the dense cores
-                #    paint and the globe renders as dark specks —
-                #    identical mid-load and fully settled.
-                #  * Fewer, bigger points (2M at radius 0.18) would genuinely fix
-                #    the wait — ~23 MB, solid at ~12 MB — but trades away zoom
-                #    detail, which is the point of the demo.
             )
             # Connected polylines (indexed) so the material renders seamless
             # joints. No additive-LOD here: LOD-ing connected lines requires an

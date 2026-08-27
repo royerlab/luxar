@@ -1,0 +1,197 @@
+#version 300 es
+
+// Three.js r185 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+layout( location = 0 ) out vec4 fragColor;
+
+
+
+// uniforms
+
+layout( std140 ) uniform object {
+	float nodeUniform0;
+	mat3 nodeUniform2;
+	uint nodeUniform3;
+	float nodeUniform4;
+	float nodeUniform5;
+	float nodeUniform6;
+	float nodeUniform7;
+	mat4 nodeUniform10;
+	float nodeUniform14;
+	float nodeUniform15;
+	float nodeUniform16;
+};
+
+layout( std140 ) uniform render {
+	float cameraNear;
+	float cameraFar;
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrix;
+	mat4 cameraProjectionMatrixInverse;
+};
+uniform sampler2D nodeUniform1;
+
+// varyings
+in float nodeVarying0;
+in vec2 nodeVarying1;
+in float nodeVarying2;
+in vec4 v_clipSpace;
+flat  in float nodeVarying4;
+flat  in vec2 nodeVarying5;
+
+
+// vars
+float meshPickCoverage;
+vec2 nodeVar1;
+vec2 nodeVar2;
+bool nodeVar3;
+vec2 nodeVar4;
+vec4 nodeVar5;
+float meshPickNearFade;
+float nodeVar6;
+float nodeVar7;
+float nodeVar8;
+bool meshPickCutout;
+float meshPickBrightness;
+float nodeVar9;
+float nodeVar10;
+vec4 nodeVar14;
+vec3 positionView;
+vec4 DiffuseColor;
+vec4 Output;
+vec4 nodeVar17;
+
+// codes
+
+
+void main() {
+
+	// flow
+	// code
+
+	meshPickCoverage = 0.0;
+	nodeVar1 = ( nodeUniform2 * vec3( nodeVarying1, 1.0 ) ).xy;
+	nodeVar3 = bool( nodeUniform3 );
+
+	if ( nodeVar3 ) {
+
+		nodeVar4 = nodeVar1;
+		nodeVar2 = vec2( nodeVar4.x, 1.0 - nodeVar4.y );
+
+	} else {
+
+		nodeVar2 = nodeVar1;
+
+	}
+
+	nodeVar5 = texture( nodeUniform1, nodeVar2 );
+	meshPickCoverage = ( ( nodeVarying0 * nodeUniform0 ) * nodeVar5.w );
+	meshPickNearFade = 0.0;
+
+	if ( ( int( nodeUniform4 ) == 1 ) ) {
+
+		nodeVar6 = 1.0;
+
+	} else {
+
+
+		if ( ( nodeVarying2 >= 0.0 ) ) {
+
+			nodeVar7 = 0.0;
+
+		} else {
+
+			nodeVar8 = max( nodeUniform5, 1e-20 );
+			nodeVar7 = smoothstep( nodeVar8, ( nodeVar8 * 2.0 ), ( - nodeVarying2 ) );
+
+		}
+
+		nodeVar6 = nodeVar7;
+
+	}
+
+	meshPickNearFade = nodeVar6;
+	meshPickCutout = false;
+	meshPickCutout = ( int( nodeUniform6 ) == 1 );
+	meshPickBrightness = 0.0;
+
+	if ( meshPickCutout ) {
+
+		nodeVar9 = 1.0;
+
+	} else {
+
+		nodeVar9 = meshPickCoverage;
+
+	}
+
+	meshPickBrightness = clamp( ( nodeVar9 * meshPickNearFade ), 0.0, 1.0 );
+
+	if ( ( int( nodeUniform7 ) == 1 ) ) {
+
+		nodeVar14 = ( cameraProjectionMatrixInverse * v_clipSpace );
+		positionView = ( nodeVar14.xyz / vec3( nodeVar14.w ) );
+		nodeVar10 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
+
+	} else {
+
+		nodeVar10 = ( 1.0 - meshPickBrightness );
+
+	}
+
+	gl_FragDepth = nodeVar10;
+
+	if ( ( meshPickNearFade < 0.01 ) ) {
+
+		discard;
+
+
+	}
+
+
+	if ( ( meshPickCutout && ( meshPickCoverage < nodeUniform14 ) ) ) {
+
+		discard;
+
+
+	}
+
+	DiffuseColor = vec4( nodeVarying4, nodeVarying5.x, meshPickBrightness, nodeVarying5.y );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform16 );
+	nodeVar17 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar17;
+
+	// result
+	fragColor = nodeVar17;
+
+}

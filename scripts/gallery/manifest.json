@@ -288,7 +288,7 @@
     {
       "id": "earthquakes",
       "title": "Global Earthquakes (3D)",
-      "geometry": "points+lines",
+      "geometry": "mixed",
       "category": "geoscience",
       "script": "demo_earthquakes_3d.py",
       "dataset": "datasets/demos/earthquakes.luxar.zarr",
@@ -299,7 +299,7 @@
     {
       "id": "global_rivers_earth",
       "title": "Rivers of Earth",
-      "geometry": "points+lines",
+      "geometry": "mixed",
       "category": "geoscience",
       "script": "demo_global_rivers_earth.py",
       "dataset": "datasets/demos/global_rivers_earth.luxar.zarr",
@@ -311,7 +311,7 @@
     {
       "id": "biodiversity_planetary_scale",
       "title": "Biodiversity at Planetary Scale",
-      "geometry": "points+lines",
+      "geometry": "mixed",
       "category": "geoscience",
       "script": "demo_biodiversity_planetary_scale.py",
       "dataset": "datasets/demos/biodiversity_planetary_scale.luxar.zarr",
@@ -672,7 +672,7 @@
     {
       "id": "ocean_currents_earth",
       "title": "Ocean Currents of Earth",
-      "geometry": "points+lines",
+      "geometry": "mixed",
       "category": "geoscience",
       "script": "demo_ocean_currents_earth.py",
       "dataset": "datasets/demos/ocean_currents_earth.luxar.zarr",

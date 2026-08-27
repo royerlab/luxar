@@ -22,6 +22,8 @@ import {
   MESH_VERTEX_SHADER,
 } from '../../../../../rendering/materials/mesh/shader-glsl';
 import { BLENDING_MODES } from '../../../../../types/blending';
+import * as THREE from 'three';
+import { MeshMaterial } from '../../../../../rendering/materials/mesh/material-glsl';
 
 describe('resolveMeshBlendingMode', () => {
   it("maps only 'volumetric' — and maps it to 'opaque'", () => {
@@ -197,5 +199,16 @@ describe('the normal guard is TWO-SIDED in both shader sources', () => {
     // non-finite normals, so this is the hand-crafted-store case every sibling
     // shader sanitizes for. Asserted on the SOURCE because no unit test can run GLSL.
     expect(MESH_FRAGMENT_SHADER).toMatch(/nn < 1e30/);
+  });
+});
+
+describe('MeshMaterial.setColormapTexture', () => {
+  it('keeps the texture as the sole active base-colour source', () => {
+    const material = new MeshMaterial({ baseColorTexture: new THREE.Texture() });
+    material.setColormapTexture(
+      new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat)
+    );
+    expect(material.defines.LUXAR_MESH_BASE_COLOR_TEX).toBe('');
+    expect(material.defines.USE_COLORMAP).toBeUndefined();
   });
 });

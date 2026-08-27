@@ -8,8 +8,11 @@ path that cannot represent it — the defect class this module exists to prevent
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
+from luxar.conftest import viewer_source
 from luxar.typing_utils._format_contract import (
     GEOMETRY_TYPES,
     LOADER_TYPES,
@@ -24,6 +27,88 @@ from luxar.typing_utils.geometry_capabilities import (
     supports_lod,
     supports_partition,
 )
+
+
+def _read_viewer_capabilities(source: str) -> dict[str, tuple[bool, bool]]:
+    table = re.search(
+        r"export const GEOMETRY_CAPABILITIES:[^=]+?=\s*Object\.freeze\(\{"
+        r"(?P<body>.*?)^\s*\}\);",
+        source,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert table is not None, (
+        "cannot find the literal GEOMETRY_CAPABILITIES Object.freeze table. "
+        "If its shape changed, update this parser — do NOT delete the "
+        "cross-language lock."
+    )
+    rows = re.findall(
+        r"^\s*(\w+):\s*\{([^{}]*)\}\s*,?\s*$",
+        table.group("body"),
+        re.MULTILINE,
+    )
+    assert rows, (
+        "cannot find literal rows in the viewer capability table. If its shape "
+        "changed, update this parser — do NOT delete the cross-language lock."
+    )
+    viewer_capabilities: dict[str, tuple[bool, bool]] = {}
+    for name, body in rows:
+        values = []
+        for field in ("lod", "partition"):
+            matches = re.findall(rf"\b{field}\s*:\s*(true|false)\b", body)
+            assert len(matches) == 1, (
+                f"expected exactly one {field!r} flag in viewer capability row "
+                f"{name!r}, found {len(matches)}. If its shape changed, update "
+                "this parser — do NOT delete the cross-language lock."
+            )
+            values.append(matches[0] == "true")
+        assert name not in viewer_capabilities, (
+            f"duplicate geometry row in viewer capability table: {name!r}"
+        )
+        viewer_capabilities[name] = (values[0], values[1])
+    return viewer_capabilities
+
+
+def test_capability_table_matches_the_viewer() -> None:
+    """Shared writer/viewer capabilities are one decision in two languages.
+
+    The viewer also owns ``pooled`` and ``depthSortable`` render-only flags; the
+    cross-language contract is the exhaustive row set plus the shared ``lod`` and
+    ``partition`` columns.
+    """
+    source = viewer_source("src/types/geometry-capabilities.ts").read_text(
+        encoding="utf-8"
+    )
+    viewer_capabilities = _read_viewer_capabilities(source)
+    python_capabilities = {
+        name: (capabilities.lod, capabilities.partition)
+        for name, capabilities in GEOMETRY_CAPABILITIES.items()
+    }
+    assert viewer_capabilities == python_capabilities
+
+
+def test_capability_parser_ignores_render_only_shape() -> None:
+    """Render-only flags and row ordering do not enter the Python contract."""
+    source = """export const GEOMETRY_CAPABILITIES: Readonly<Record<string, object>> =
+  Object.freeze({
+    points: { castsShadow: false, partition: true, lod: true, pooled: true },
+    mesh: { depthSortable: true, lod: false, pooled: false, partition: true }
+  });
+"""
+    assert _read_viewer_capabilities(source) == {
+        "points": (True, True),
+        "mesh": (False, True),
+    }
+
+
+def test_capability_parser_rejects_nonliteral_rows() -> None:
+    """A table shape change keeps the cross-language guidance in the failure."""
+    source = """export const GEOMETRY_CAPABILITIES: Readonly<Record<string, object>> =
+  Object.freeze({
+    points: LEAF_ROW,
+  });
+"""
+    with pytest.raises(AssertionError, match="do NOT delete the cross-language lock"):
+        _read_viewer_capabilities(source)
 
 
 def test_every_contract_geometry_type_has_a_row() -> None:

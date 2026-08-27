@@ -85,14 +85,13 @@ export default defineConfig({
   // Local: up to 4 workers, scaled DOWN by how loaded the box is. CI: 1
   // (software rendering is slower and less stable with concurrency).
   //
-  // The CEILING of 4 is NOT the GPU — it is the dataset server, a GIL-bound
-  // `python3 -m http.server 9000` (see webServer below) streaming thousands of
-  // small zarr chunks to every worker at once. The evidence is already in the
-  // tree: all-examples-smoke-test.spec.ts raised its own timeout to 120 s to
-  // "absorb HTTP-server contention when several worker-pool tabs decode
-  // mid-size datasets concurrently". Raise it past 4 only together with a
-  // measurement, and if it saturates, replace that server rather than adding
-  // workers.
+  // The CEILING of 4 is NOT the GPU — it is the Python dataset server (see
+  // webServer below) streaming thousands of small zarr chunks to every worker
+  // at once. The evidence is already in the tree: all-examples-smoke-test.spec.ts
+  // raised its own timeout to 120 s to "absorb HTTP-server contention when
+  // several worker-pool tabs decode mid-size datasets concurrently". Raise it
+  // past 4 only together with a measurement, and if it saturates, replace that
+  // server rather than adding workers.
   //
   // Running AT the ceiling on a busy box invents failures. On a shared 16-core
   // workstation at a 1-minute load of 12-24, dimension-animation.spec.ts failed
@@ -222,10 +221,12 @@ export default defineConfig({
       },
     },
     {
-      // Python HTTP server to serve repository datasets/examples for E2E tests.
+      // Range-capable Python HTTP server for repository datasets/examples.
+      // Directory stores need only plain GETs, but `.zarr.zip` reads require
+      // strict 206 responses for byte windows inside the archive.
       // E2E global setup checks expected datasets and reports any missing fixtures.
       // Using port 9000 (ports 8000-8001 are used by luxar serve)
-      command: 'python3 -m http.server 9000 --bind 127.0.0.1',
+      command: 'python3 packages/luxar-viewer/tools/range-http-server.py 9000 --bind 127.0.0.1',
       // The marker is an ignored file unique to this checkout. A static server
       // rooted in a sibling worktree returns 404 instead of being reused.
       url: serverMetadata.dataIdentityURL,

@@ -18,8 +18,11 @@ Two of Luxar's four geometry types, plus two non-displayed dimensions:
     polylines whose **time coordinate advances along the chain**.
   * **taxon** and **period** are non-displayed categorical dimensions, so
     ``[`` / ``]`` scrubs the sample by taxonomic group and by decade. Each has a
-    leading "all" slot (``All life`` / ``All years``) where the always-on summary
-    layers live, and the scene opens there.
+    leading "all" slot (``All life`` / ``All years``). ``All years`` is where the
+    per-taxon marginals live and the scene OPENS on ``(Birds, All years)``;
+    ``All life`` now carries only the per-decade marginals, since the dense
+    every-record-at-once summary that used to fill ``(All life, All years)`` read
+    as mush and was removed.
 
 ================================================================================
 WHAT THIS SHOWS THAT A DENSITY MAP CANNOT
@@ -53,14 +56,9 @@ is small on screen never fetches its fine levels. Whole-globe framing holds
 ~0.2M of its 15M; zooming a tile walks it to the full 1,875,000-point level while
 its neighbours stay coarse.
 
-**The globe deliberately gets none of that.** A textured shell cannot survive
-Gaussian merging: at K=4/levels=2 the coarsest level is 46k merged splats per
-750k-point tile, and those coarse ellipsoids cannot reproduce a continuous
-textured shell — the planet becomes a pile of blobs. Coarse levels are
-meaningful for a diffuse point cloud (they read as *density*, which is exactly
-what the occurrence layer wants) and meaningless for a continuous surface. The
-globe is instead a fixed-resolution backdrop, sized (``N_GLOBE``) so it never
-needs reducing.
+**The globe deliberately gets none of that.** It is a fixed-resolution textured
+mesh backdrop: unlike the diffuse occurrence point cloud, its surface detail
+comes from per-fragment texture sampling rather than an element-density ladder.
 
 **Calibrating the occurrence thresholds** took two measured corrections, both
 worth knowing before reusing the recipe. (Historical note: the default
@@ -112,8 +110,8 @@ removed:
   **gsplat** level intact and no "filtered out during nD->3D processing"
   warnings.
 
-So the globe is now ONE ``extend_to_all`` layer of ``N_GLOBE`` points at a fixed
-resolution, and the replicated context globe is gone.
+So the globe is now one ``extend_to_all`` textured mesh at a fixed resolution,
+and the replicated context globe is gone.
 
 Only the globe is extended. Extending the always-on track layer as well was tried
 and reverted: 105,662 always-visible ribbons buried the selection (7,283 fish
@@ -313,14 +311,15 @@ DEMO_META = {
         "Marble globe, sliceable by taxon and period."
     ),
     "category": "geoscience",
-    "geometry": "points+lines",
+    # "mixed": a textured-Mesh globe with Points occurrences over it.
+    "geometry": "mixed",
     "requirements": {
         "download_mb": 330,
         "compute": "heavy",
         "gpu": "optional",
         "local_data": None,
     },
-    "caches": ["biodiversity_planetary_scale"],
+    "caches": ["biodiversity_planetary_scale", "blue_marble"],
     "outputs": ["biodiversity_planetary_scale"],
     "citation": {
         "short": "GBIF occurrence snapshot; Movebank: humpback whales (Andrews-Goff et al. 2023), turkey vultures (Bildstein et al. 2014), white storks (Berthold et al. 2022), blue whales (Mate B.); NASA Blue Marble",
@@ -362,6 +361,11 @@ from luxar.demos import (
     substitutive_lod_or_flat,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._globe_common import (
+    Clouds,
+    blue_marble_basemap,
+    build_earth,
+)
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -441,24 +445,19 @@ SAMPLE_SEED: Final = 20260803
 #: fast first paint, and no view-dependent reduction at all. 700k keeps it always
 #: resident inside the ~1M whole-globe budget (700k + ~210k occurrences + ~106k
 #: tracks) while still giving 0.24-degree spacing -- about 27 km at Earth scale.
-N_GLOBE: Final = 700_000
+# The globe is a textured MESH; it was 700k points at a fixed resolution chosen
+# so the shell would seal. A UV sphere samples the basemap per fragment, so the
+# resolution question disappears: 256x128 quads read as round and the texture
+# carries the detail.
+GLOBE_LON: Final = 512
+GLOBE_LAT: Final = 256
+# 16384x8192 across two tiles, matching the other Earth globes. See
+# `add_textured_globe` for why splitting is the only route past 16384.
+GLOBE_TEXTURE_WIDTH: Final = 16384
+GLOBE_TILES: Final = 2
 #: ~0.78x the mean point spacing, the ratio that seals the shell without
 #: over-drawing (0.29 spacing at 700k points on a radius-100 globe).
 GLOBE_RADII: Final = 0.23
-#: The Blue Marble texture is multiplied down HARD. It has to be: the globe is a
-#: sealed shell, so at full brightness the continents (bright green
-#: Europe, tan Sahara, saturated blue ocean) carry more contrast than the data
-#: drawn on top of them and the occurrence colours stop reading as data at all.
-#: Baked colour dimming is the lever that drops the texture's contrast so the
-#: data reads on top. Layer `opacity` is not even an option here: under `opaque`
-#: it is inert (`transparent: false` disables framebuffer blending, so the
-#: fragment's emitted alpha is discarded), so it can neither dim the shell nor
-#: make it translucent.
-#:
-#: 0.12, not the 0.20 that first looked right: 0.20 was chosen against a sparse
-#: early globe, and once the shell sealed at N_GLOBE it was bright enough that a
-#: 7,283-record selection stopped reading against it.
-GLOBE_DIM: Final = 0.12
 OCCURRENCE_RADII: Final = 0.062
 OCCURRENCE_OPACITY: Final = 0.75
 #: Baked colour scale for the occurrence records. KEPT at 0.85 even though the
@@ -602,14 +601,6 @@ MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
 #: threshold is therefore the only lever, and it happens to be the natural one:
 #: the copies split cleanly into ~106k parts.
 MAX_TRACK_VERTICES_PER_NODE: Final = 150_000
-# The globe is partitioned for a DIFFERENT reason than the occurrence layer: not
-# the 5.59M texture bound but the ladder's LAST commit. A `stream:20000`
-# geometric ladder doubles, so its final chunk is ~half the layer, and
-# `check_demo_ladders` fails any commit above 1,000,000 (a single commit that
-# large blocks the main thread). At the current N_GLOBE this cap is slack -- the
-# globe stays one part -- and it is the guard that catches a future raise of
-# N_GLOBE rather than letting that land as a main-thread stall.
-MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 
 #: View-dependent LOD for the two big summary layers. A `stream:` ladder alone is
 #: NOT enough: it is *progressive*, so it converges to 100% of the layer no
@@ -754,6 +745,24 @@ Arbol.max_depth = 5
 #: is queried at every slice as intended rather than skipped and frozen.
 ALL_LIFE_SLOT: Final = 0
 PERIOD_ALL_SLOT: Final = 0
+
+#: The taxon the scene OPENS on, as an internal group id (see :func:`taxon_slot`).
+#:
+#: Not :data:`ALL_LIFE_SLOT`, and that is the whole point. The (all-taxa,
+#: all-years) cell used to hold a dense always-on summary of every occurrence at
+#: once; that layer is gone, because seeing all 318k records superimposed reads as
+#: undifferentiated mush rather than as biodiversity. So the cell it occupied is
+#: now EMPTY, and opening there would show a bare globe.
+#:
+#: The taxon marginals are the replacement: `(one group, all years)` is a legible,
+#: single-hued layer. Birds are the opening choice because they carry by far the
+#: richest migration-track coverage, so the ribbons and the occurrences tell the
+#: same story on the first frame.
+#:
+#: `ALL_LIFE_SLOT` itself SURVIVES as a coordinate, because the per-decade
+#: marginals live at `(all taxa, decade)` -- scrubbing period alone is a real
+#: view. Only the (all, all) corner is unpopulated.
+OPENING_TAXON_GROUP: Final = 0
 
 #: Time is a DECADE, not a year, and both non-displayed dims carry an explicit
 #: "all" slot. Both choices come from the same measurement.
@@ -2415,44 +2424,13 @@ def _movebank_group(species: str, default: int) -> int:
 
 
 # =============================================================================
-# Globe — a jittered Fibonacci sphere sampled from NASA Blue Marble
+# Globe texture source
 # =============================================================================
 
 BLUE_MARBLE_URL: Final = (
     "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57752/"
     "land_shallow_topo_2048.jpg"
 )
-
-
-def fibonacci_sphere(
-    n: int, *, jitter: bool = True, seed: int = 1234
-) -> Tuple[np.ndarray, np.ndarray]:
-    """``(lon, lat)`` degrees for ``n`` near-uniform points on a sphere.
-
-    The dither is not cosmetic. An undithered Fibonacci lattice is a *lattice*,
-    and once the rendered point radius approaches the point spacing its spiral
-    arms beat against themselves into visible moire "worms" across the whole
-    globe. Displacing each point by up to half a mean cell trades that
-    structure for unstructured noise, which reads as texture rather than as a
-    rendering bug.
-    """
-    if n < 1:
-        raise ValueError(f"n must be >= 1, got {n}")
-    rng = np.random.default_rng(seed)
-    i = np.arange(n)
-    golden = (1.0 + 5.0**0.5) / 2.0
-    y = 1.0 - 2.0 * (i + 0.5) / n
-    r_xy = np.sqrt(np.maximum(0.0, 1.0 - y * y))
-    theta = 2.0 * np.pi * i / golden
-    lat = np.degrees(np.arcsin(np.clip(y, -1.0, 1.0)))
-    lon = np.degrees(np.arctan2(r_xy * np.sin(theta), r_xy * np.cos(theta)))
-    if jitter:
-        cell = np.degrees(np.sqrt(4.0 * np.pi / n))  # mean angular spacing
-        lat = np.clip(lat + rng.uniform(-0.5, 0.5, n) * cell, -89.999, 89.999)
-        lon = lon + rng.uniform(-0.5, 0.5, n) * cell / np.maximum(
-            np.cos(np.radians(lat)), 1e-2
-        )
-    return lon, lat
 
 
 def sample_equirect(
@@ -2478,8 +2456,19 @@ def sample_equirect(
     return (top * (1.0 - fy) + bottom * fy).astype(np.float32)
 
 
-def build_globe() -> Tuple[np.ndarray, np.ndarray]:
-    """``(positions, colors)`` for the Blue Marble shell."""
+def build_globe() -> np.ndarray:
+    """The Blue Marble basemap for the globe shell.
+
+    Returns the ``(h, w, 3)`` RGB array. Geometry, longitude slicing and codec
+    choice all belong to :func:`add_textured_globe`, which the four Earth demos
+    share — duplicating any of it here is how they drift apart.
+
+    The dimming that used to be baked into the per-point colours is now the
+    node's ``intensity``, and that is a real improvement rather than a
+    relocation: baked-in dimming is unrecoverable, so the Layers panel could
+    brighten the globe only by pushing past 1.0 and clipping. As a node
+    multiplier it is a live control with the full range still available.
+    """
     image_module = require_module("PIL.Image")
     print_data_provenance(
         title="NASA Blue Marble: Next Generation (land_shallow_topo)",
@@ -2487,14 +2476,14 @@ def build_globe() -> Tuple[np.ndarray, np.ndarray]:
         license="Public domain",
         url="https://visibleearth.nasa.gov/",
     )
-    path = cached_download(BLUE_MARBLE_URL, DEMO_NAME, filename="blue_marble.jpg")
-    texture = np.asarray(image_module.open(path).convert("RGB"))
-    lon, lat = fibonacci_sphere(N_GLOBE)
-    positions = lonlat_to_xyz(lon, lat, np.zeros(N_GLOBE))
-    # Dim the shell so the occurrence colours read as data on top of it rather
-    # than competing with the continents.
-    colors = sample_equirect(texture, lon, lat) * GLOBE_DIM
-    return positions, colors
+    try:
+        basemap, _w, _h = blue_marble_basemap(width=GLOBE_TEXTURE_WIDTH)
+        return basemap
+    except Exception as error:
+        # The 2048 image this demo already downloads, as the offline fallback.
+        aprint(f"⚠️  Hi-res basemap unavailable ({error}); using the 2048 image")
+        path = cached_download(BLUE_MARBLE_URL, DEMO_NAME, filename="blue_marble.jpg")
+        return np.asarray(image_module.open(path).convert("RGB"))
 
 
 # =============================================================================
@@ -2549,6 +2538,40 @@ def assert_tile_budget(max_elements: int) -> None:
         )
 
 
+def assert_opening_slice_is_populated(
+    positions5: np.ndarray, taxon_coord: float, period_coord: float
+) -> None:
+    """Fail the BUILD if the scene would open on an EMPTY slice.
+
+    The viewer shows the intersection of the non-displayed slices, so an opening
+    ``current_step`` that names a cell no layer occupies produces a valid scene
+    whose first frame is just the context globe. Nothing else catches that: the
+    compile succeeds, every array round-trips, the store validates, and the demo
+    test asserts on source text. It cost one round of "the demo shows no data"
+    when the dense all-life summary layer was removed from under the opening pin.
+
+    Checked against the OCCURRENCE positions specifically -- the globe is
+    ``extend_to_all`` and is therefore present at every slice, so including it
+    would make this assertion vacuous.
+    """
+    if positions5.shape[0] == 0:
+        raise RuntimeError("no occurrence positions were built at all")
+    hit = int(
+        np.count_nonzero(
+            (positions5[:, 3] == np.float32(taxon_coord))
+            & (positions5[:, 4] == np.float32(period_coord))
+        )
+    )
+    if hit == 0:
+        raise RuntimeError(
+            f"the scene would open on (taxon={taxon_coord:g}, "
+            f"period={period_coord:g}), where no occurrence sits -- the first "
+            "frame would show only the globe. Point OPENING_TAXON_GROUP at a "
+            "populated marginal, or restore a layer at that cell."
+        )
+    aprint(f"opening slice carries {hit:,} occurrences")
+
+
 def add_lod_tiles(
     scene: Any,
     name: str,
@@ -2583,6 +2606,13 @@ def add_lod_tiles(
       picking and camera framing treat the layer as one entity rather than
       snapping to whichever tile was hit. Mirrors the library's own
       ``partition=`` path.
+
+
+    NOTE: currently UNCALLED. Its only caller was the "All life" aggregate
+    layer, removed because it was the densest thing in the scene and what made
+    the textured basemap invisible. Kept because its BSP-tiling behaviour is
+    pinned by a test and is the reusable half of that layer, but be aware that
+    the test is the only thing exercising it — nothing in the built scene does.
     """
     assert_tile_budget(max_elements)
     # Real coordinates in the "all" summary slots: the layer shows at the opening
@@ -2643,12 +2673,23 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
     rng = np.random.default_rng(SAMPLE_SEED + 99)
 
     with asection("Preparing occurrence geometry"):
-        occ_xyz = jittered_positions(sample.lat, sample.lon, sample.unc, rng)
-        occ_colors = (
-            TAXON_GROUP_COLORS[sample.taxon.astype(np.intp)] * OCCURRENCE_COLOR_SCALE
-        )
-        aprint(f"always-on layer: {occ_xyz.shape[0]:,} points")
-
+        # The "All life" aggregate layer is gone, and with it the always-on
+        # occurrence geometry it drew. It was the densest thing in the scene by a
+        # wide margin — every sampled record, at every slice — and it cost more
+        # than it showed: at that density the individual records stop being
+        # legible and the whole globe reads as one bright shell.
+        #
+        # It was also what made the textured basemap invisible. Fourteen point and
+        # line layers at OCCURRENCE_INTENSITY 100 saturate every pixel before the
+        # globe at ~0.6 contributes anything, and raising the globe does not help
+        # (measured: at 25 it clips and Neutral tone mapping desaturates the
+        # continents to amber). Removing the densest layer is what gives the
+        # basemap room, so the same change answers both complaints.
+        #
+        # The all-taxon SLOT stays. It is load-bearing for a different reason —
+        # every scrubbable layer stores taxon-marginal, period-marginal and joint
+        # copies so that moving one slider never empties the scene — and
+        # `ALL_LIFE_SLOT` is still where the globe's `fill` puts it.
         taxon_xyz = jittered_positions(
             sample.taxon_lat, sample.taxon_lon, sample.taxon_unc, rng
         )
@@ -2661,8 +2702,8 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
         )
         aprint(f"scrubbable layer: {taxon_pos.shape[0]:,} elements")
 
-    with asection(f"Building globe ({N_GLOBE:,} points)"):
-        globe_xyz, globe_colors = build_globe()
+    with asection(f"Building globe mesh ({GLOBE_LON}x{GLOBE_LAT} quads)"):
+        globe_basemap = build_globe()
 
     with asection("Assembling migration ribbons"):
         indices = chain_segment_indices(tracks.lengths)
@@ -2701,7 +2742,8 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 categories=list(TAXON_CATEGORIES),
                 display=False,
                 description=(
-                    "Major taxonomic group; the first slot shows every group at once"
+                    "Major taxonomic group; the first slot pools every group,"
+                    " and is populated per decade"
                 ),
             ),
             Dimension(
@@ -2726,6 +2768,13 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 dimensions=dims,
                 viewer_config=ViewerConfig(
                     cinematic_mode=True,
+                    # Turntable about the SOUTH-NORTH axis. Orbit auto-rotation
+                    # spins azimuthally about the controls' up vector, so pinning
+                    # up to +y is what makes this a planetary rotation rather than
+                    # a tumble: `lonlat_to_xyz` puts the north pole on +y, which is
+                    # also the viewer's default up — stated so the two cannot drift.
+                    auto_rotate=True,
+                    auto_rotate_speed=0.35,
                     # Radius-dependent channel shifts/noise would corrupt the
                     # categorical taxon hue encoded by the Neutral pin below.
                     chromatic_lens_distortion_enabled=False,
@@ -2743,18 +2792,26 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                     # and needs a live A/B.
                     tone_mapping="Neutral",
                     camera=globe_camera(10.0, 25.0, distance=2.95),
-                    # Open on (All life, All years) -- the slots the summary
-                    # layers occupy. Without this the scene would open on
-                    # taxon=All life and period=All years anyway (both are
-                    # category index 0, the range minima), but pinning it makes
-                    # the intent explicit and survives any future reordering of
-                    # the categories.
+                    # Open on (Birds, All years), NOT on the all-taxa corner.
+                    #
+                    # This pin is load-bearing rather than merely explicit. The
+                    # range minima are (All life, All years), so WITHOUT it the
+                    # viewer opens on the one cell that no longer has occurrence
+                    # data in it -- the dense all-life summary that used to fill
+                    # it is deliberately gone. The first frame would be a bare
+                    # globe, and the sliders would look broken until you happened
+                    # to scrub off zero.
+                    #
+                    # `assert_opening_slice_is_populated` below fails the BUILD if
+                    # that ever becomes true again, because it is invisible to
+                    # every other check: the scene is valid, every layer loads,
+                    # and the frame is simply empty.
                     dimensions=DimensionsConfig(
                         current_step=[
                             0.0,
                             0.0,
                             0.0,
-                            float(ALL_LIFE_SLOT),
+                            float(taxon_slot(OPENING_TAXON_GROUP)),
                             float(PERIOD_ALL_SLOT),
                         ]
                     ),
@@ -2771,52 +2828,68 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             # The globe: extended over every slice (so it is the persistent
             # geographic reference), partitioned to stay under the per-node
             # texture bound, laddered for a fast first paint -- and deliberately
-            # WITHOUT substitutive LOD (see N_GLOBE).
+            # WITHOUT substitutive LOD (a mesh's decimated levels are a separate
+            # authoring route, and a fixed-resolution backdrop has nothing to gain).
             #
             # `extend_to_all` is inferred from the 3-column positions + `fill`.
             # Before royerlab/luxar#1157 was fixed a fully-extended node was never
             # queried at all, and this demo carried a 25k globe replicated into
             # all 139 slots as a workaround; the fix made that unnecessary.
-            scene.add_points(
+            # ONE call: basemap tiles + the thin cloud deck, with the nD
+            # placement forwarded to BOTH so the atmosphere is present in every
+            # taxon/period slot rather than appearing in one and blinking out.
+            build_earth(
+                scene,
                 "Earth",
-                globe_xyz,
-                colors=globe_colors,
-                radii=GLOBE_RADII,
-                dim_order=["x", "y", "z"],
-                fill={
-                    "taxon": float(ALL_LIFE_SLOT),
-                    "period": float(PERIOD_ALL_SLOT),
-                },
+                # RADIUS, not 1.0. This demo's world is at radius 100 — every
+                # occurrence goes through its own `lonlat_to_xyz`, which multiplies
+                # by RADIUS — so a unit-radius globe is a marble at the centre of a
+                # 100-unit point shell. It renders correctly and is ~1% of the
+                # frame, which is why no amount of intensity made the basemap
+                # legible: the problem was never brightness.
+                radius=RADIUS,
+                n_lon=GLOBE_LON,
+                n_lat=GLOBE_LAT,
+                texture_width=GLOBE_TEXTURE_WIDTH,
+                tiles=GLOBE_TILES,
+                basemap=globe_basemap,
+                # UNLIT, like the ocean-currents basemap: this globe is the
+                # geographic REFERENCE the occurrence colours are read against, so a
+                # view-anchored key would make the same region read differently from
+                # different camera angles.
+                shading="none",
+                clouds=Clouds(strength=0.45, gamma=2.0, intensity=1.6),
                 blending_mode=GLOBE_BLENDING,
+                # GLOBE_INTENSITY alone, not GLOBE_DIM * GLOBE_INTENSITY.
+                #
+                # GLOBE_DIM existed to pre-dim per-point colours that were BAKED,
+                # because a point carried its colour and there was no other place to
+                # put the attenuation. A texture has a live node multiplier, so the
+                # pre-dim is not just unnecessary — it is the wrong lever, since
+                # baked attenuation cannot be recovered from the Layers panel
+                # without clipping past 1.0.
+                #
+                # The net was 0.12 * 4.88 = 0.586, which was tuned to sit behind an
+                # always-on occurrence shell that no longer exists. With that layer
+                # removed the basemap has room, so the node multiplier alone is the
+                # right amount of light.
                 intensity=GLOBE_INTENSITY,
                 offset=0.0,
                 gamma=1.0,
                 opacity=1.0,
                 layer=True,
-                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
-                additive_lod=STREAM_LOD,
+                dim_order=["x", "y", "z"],
+                fill={
+                    "taxon": float(ALL_LIFE_SLOT),
+                    "period": float(PERIOD_ALL_SLOT),
+                },
             )
 
-            add_lod_tiles(
-                scene,
-                "All life",
-                occ_xyz,
-                occ_colors,
-                radii=OCCURRENCE_RADII,
-                opacity=OCCURRENCE_OPACITY,
-                max_elements=TARGET_TILE_POINTS,
-                levels=OCCURRENCE_LOD_LEVELS,
-                coverage=OCCURRENCE_COVERAGE,
-                # `normal`, with no display-range push. The Layers-panel settings
-                # transcribed below were tuned on `Earth` and on the SCRUBBABLE
-                # records layer; this one was left alone, so it keeps its own
-                # appearance rather than inheriting settings never chosen for it.
-                compositing=dict(
-                    blending_mode="normal",
-                    opacity=OCCURRENCE_OPACITY,
-                ),
+            assert_opening_slice_is_populated(
+                taxon_pos,
+                float(taxon_slot(OPENING_TAXON_GROUP)),
+                float(PERIOD_ALL_SLOT),
             )
-
             scene.add_points(
                 "By taxon & period",
                 taxon_pos,
@@ -2829,13 +2902,13 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 gamma=OCCURRENCE_GAMMA,
                 opacity=RECORDS_OPACITY,
                 layer=True,
-                # VISIBLE, deliberately. These layers occupy the per-taxon and
-                # per-decade slots, so at the opening (All life, All years) slice
-                # they contribute exactly nothing and the first paint is
-                # unchanged. Shipping them hidden made both sliders look broken:
-                # moving one correctly sliced the summary layers away and there
-                # was nothing enabled to replace them, so the scene just went
-                # black until you found the Layers panel.
+                # VISIBLE, deliberately -- and now these ARE the opening frame.
+                # They used to be the quiet half of the scene, contributing
+                # nothing at an (All life, All years) open while a dense summary
+                # layer carried the first paint. That summary is gone, so the
+                # scene opens on this layer's (Birds, All years) marginal
+                # instead. Shipping them hidden was tried and made both sliders
+                # look broken; now it would leave the scene empty outright.
                 partition=dict(max_elements=TARGET_TILE_POINTS),
                 additive_lod=STREAM_LOD,
             )
@@ -2873,13 +2946,13 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 opacity=1.0,
                 intensity=1.0,
                 layer=True,
-                # VISIBLE, deliberately. These layers occupy the per-taxon and
-                # per-decade slots, so at the opening (All life, All years) slice
-                # they contribute exactly nothing and the first paint is
-                # unchanged. Shipping them hidden made both sliders look broken:
-                # moving one correctly sliced the summary layers away and there
-                # was nothing enabled to replace them, so the scene just went
-                # black until you found the Layers panel.
+                # VISIBLE, deliberately -- and now these ARE the opening frame.
+                # They used to be the quiet half of the scene, contributing
+                # nothing at an (All life, All years) open while a dense summary
+                # layer carried the first paint. That summary is gone, so the
+                # scene opens on this layer's (Birds, All years) marginal
+                # instead. Shipping them hidden was tried and made both sliders
+                # look broken; now it would leave the scene empty outright.
                 partition=dict(max_elements=MAX_TRACK_VERTICES_PER_NODE),
             )
 
@@ -2930,7 +3003,7 @@ def _build_params() -> Dict[str, Any]:
         "n_parts": N_PARTS or parts_needed_for(N_POINTS),
         "snapshot": GBIF_SNAPSHOT,
         "seed": SAMPLE_SEED,
-        "n_globe": N_GLOBE,
+        "n_globe": GLOBE_LON * GLOBE_LAT,
         "tile_points": TARGET_TILE_POINTS,
         "marginal_cap": MARGINAL_CELL_CAP,
         "joint_cap": JOINT_CELL_CAP,

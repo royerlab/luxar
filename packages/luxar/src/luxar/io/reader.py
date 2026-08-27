@@ -104,6 +104,13 @@ class MeshData(_DictCompatMixin):
 
     vertices: np.ndarray
     faces: np.ndarray
+    uvs: Optional[np.ndarray]
+    # The payload as stored, NOT decoded: `(H, W, C)` under encoding `raw`, and a
+    # 1-D uint8 blob under `png`/`webp`/`jpeg`. Deliberately not decoded here —
+    # `luxar.io` has no image-codec dependency and should not acquire one, and
+    # `metadata["texture_encoding"]` plus the declared dimensions tell a consumer
+    # exactly what it is holding.
+    texture: Optional[np.ndarray]
     normals: Optional[np.ndarray]
     normal_dims: Optional[List[int]]
     colors: Optional[np.ndarray]
@@ -617,6 +624,8 @@ class LuxarScene:
         normals = self._decode_array(group, "normals")
         colors = self._decode_array(group, "colors")
         scalars = self._decode_array(group, "scalars")
+        uvs = self._decode_array(group, "uvs")
+        texture = self._decode_array(group, "texture")
 
         metadata = dict(group.attrs)
 
@@ -658,9 +667,21 @@ class LuxarScene:
                 f"counts must match."
             )
 
+        # UVs are per-vertex like normals, so the same count check applies for the
+        # same reason: a short array satisfies the annotation and breaks the first
+        # consumer that zips it against the vertices.
+        if uvs is not None and uvs.shape[0] != vertices.shape[0]:
+            raise ValueError(
+                f"Mesh node '{name}' has {uvs.shape[0]} texture coordinates for "
+                f"{vertices.shape[0]} vertices — UVs are per-vertex, so the counts "
+                f"must match."
+            )
+
         return MeshData(
             vertices=vertices,
             faces=faces,
+            uvs=uvs,
+            texture=texture,
             normals=normals,
             normal_dims=normal_dims,
             colors=colors,

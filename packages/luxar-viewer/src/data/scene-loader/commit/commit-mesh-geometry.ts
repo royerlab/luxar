@@ -32,7 +32,11 @@ import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { updateMeshGeometry } from '../../../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
-import { applyMeshSide, applyMeshShading } from '../../../rendering/node-factory/create-mesh-node';
+import {
+  applyMeshSide,
+  applyMeshShading,
+  applyMeshTexture,
+} from '../../../rendering/node-factory/create-mesh-node';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { computeFaceCentroids } from '../../../rendering/depth-sort-coordinator/triangle-ordering';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
@@ -102,6 +106,10 @@ export function commitMeshGeometry(
     // instead of re-deriving them), and scalars are view-independent by nature.
     normals: data.normals,
     scalars: data.scalars,
+    // Uploaded once for the same reason: a UV is authored per vertex against the
+    // texture, so it is view-independent — unlike `position`, which is re-extracted
+    // whenever `displayDims` changes.
+    uvs: data.uvs,
     vertexCount: data.vertexCount,
     // The node's TOTAL faces, which sizes the index buffer's capacity — not the
     // visible count, which changes every slice move and would reallocate (and leak)
@@ -140,6 +148,12 @@ export function commitMeshGeometry(
   // and back (§3.4 / §6.2). Both are guarded on change, so a slice move costs
   // nothing here.
   applyMeshShading(object, nodeAttrs, projected.storedNormalsUsable);
+
+  // The decoded texture, installed on the commit that carries it. Unlike the two
+  // above this is NOT epoch state — the image never changes with the view — but it
+  // lives here because a texture is DATA: the node was created before any fetch, so
+  // this is the first moment it exists. Idempotent, so every later commit is free.
+  if (data.texture) applyMeshTexture(object, nodeAttrs, data.texture);
 
   // A first-commit vertex-attribute rebind (position grow / color install) leaves
   // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it

@@ -11,9 +11,9 @@
  * is handed back as if it were the requested slice — the zip parser then reads
  * the wrong bytes at every offset. The failure is silent and looks like a
  * corrupt archive rather than a misconfigured server, and it is not
- * hypothetical: Python's `http.server` (which the Playwright fixture server
- * uses) has no `Range` support at all. Serve the directory containing an
- * archive with `luxar serve <dir>` instead.
+ * hypothetical: Python's plain `http.server` has no `Range` support at all.
+ * The Playwright fixture server and `luxar serve <dir>` both provide the
+ * required strict range responses.
  *
  * So every ranged read here REQUIRES `206 Partial Content`, verifies the
  * returned window, and cross-checks the `Content-Range` total against the

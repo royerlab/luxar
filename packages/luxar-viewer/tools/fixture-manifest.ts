@@ -19,8 +19,8 @@ import { join } from 'node:path';
 /**
  * Where the fixtures live, relative to the repository root.
  *
- * Load-bearing as BOTH a filesystem suffix and a URL path: the E2E data server is a plain
- * `http.server` rooted at the repository, so the 19 specs that read fixtures spell them
+ * Load-bearing as BOTH a filesystem suffix and a URL path: the E2E data server is rooted at
+ * the repository, so the 19 specs that read fixtures spell them as
  * `http://localhost:9000/packages/luxar-viewer/tests/fixtures/<name>`. Keeping one constant
  * means a directory move cannot leave the HTTP probe checking a path nothing serves.
  */

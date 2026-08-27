@@ -115,6 +115,42 @@ _REGION_SCOPED_STATS_KEYS = (
 )
 
 
+def stamp_region_scoped_stats(
+    stats: "MutableMapping[str, Any]",
+    *,
+    source_shape: "Sequence[int]",
+    fitted_shape: "Sequence[int]",
+    n_splats: int,
+    occupancy: float,
+    source_itemsize: "int | None" = None,
+) -> None:
+    """Replace the source-grid record with one measured for this region.
+
+    ``source_declared`` stays absent because this grid was measured rather than
+    declared; ``source_stored_bytes`` describes the whole acquisition, not the
+    extracted region.
+    """
+    for key in _REGION_SCOPED_STATS_KEYS:
+        stats.pop(key, None)
+    source = [int(size) for size in source_shape]
+    fitted = [int(size) for size in fitted_shape]
+    source_voxels = int(np.prod(source)) if source else 0
+    fitted_voxels = int(np.prod(fitted)) if fitted else 0
+    stats.update(
+        {
+            "source_shape": source,
+            "source_voxels": source_voxels,
+            "fitted_shape": fitted,
+            "fitted_voxels": fitted_voxels,
+            "occupancy": float(occupancy),
+        }
+    )
+    if source_itemsize is not None:
+        stats["source_bytes"] = source_voxels * int(source_itemsize)
+    if fitted_voxels and n_splats:
+        stats["voxels_per_splat"] = float(fitted_voxels / n_splats)
+
+
 #: MEASURED reconstruction scores — every number that was obtained by rendering
 #: a specific splat set and comparing it to the source volume. They describe the
 #: SPLATS, not the source and not the run, so any operation that changes which
@@ -508,6 +544,13 @@ def scrub_measured_stats(result: "GSplatData") -> None:
     """
     for stats in _measured_stats_dicts(result):
         drop_content_scoped_stats(stats)
+
+
+def scrub_region_scoped_stats(result: "GSplatData") -> None:
+    """Drop every source-grid stamp of ``result`` — top level and sub-LODs."""
+    for stats in _measured_stats_dicts(result):
+        for key in _REGION_SCOPED_STATS_KEYS:
+            stats.pop(key, None)
 
 
 def _stats_after_content_change(

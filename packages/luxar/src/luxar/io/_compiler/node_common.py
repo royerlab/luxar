@@ -34,6 +34,8 @@ from ...typing_utils.constants import (
 from ...validation.types import (
     validate_appearance_fraction,
     validate_positive_finite,
+    validate_texture_filter,
+    validate_texture_wrap,
 )
 
 # Writer-authoritative attrs each geometry writer stamps unconditionally.
@@ -128,6 +130,21 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "normal_dims",
         "has_colors",
         "has_scalars",
+        "has_uvs",
+        # Texture stamps: all writer-derived, and the three DIMENSION ones are
+        # reserved for a sharper reason than tidiness. The viewer's admission gate
+        # budgets a node from these numbers before it fetches a chunk, so a
+        # caller-supplied value that disagreed with the payload would make the
+        # budget mean something other than what it says — which is the whole
+        # decompression-bomb surface. They come from the validator, never from
+        # `**attrs`.
+        "has_texture",
+        "texture_encoding",
+        "texture_width",
+        "texture_height",
+        "texture_channels",
+        "texture_color_space",
+        "texture_data_range",
         "has_labels",
         "has_image_labels",
         "has_keys",
@@ -188,6 +205,10 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         # attributes" hint instead of being reported as an unknown key.
         "slab_tolerance",
         "specular",
+        # Mesh-only texture sampling. Same reasoning again: authorable knobs, so
+        # a typo should see them in the hint.
+        "texture_filter",
+        "texture_wrap",
         "visible",
     }
 )
@@ -198,6 +219,11 @@ _MESH_APPEARANCE_VALIDATORS = {
     "alpha_cutoff": (validate_appearance_fraction, "Alpha cutoff"),
     "shade_exponent": (validate_positive_finite, "Shade exponent"),
     "shininess": (validate_positive_finite, "Shininess"),
+    # Texture sampling. Mesh-only for the same reason the five above are: only a
+    # mesh has a texture to sample, so on any other node these are a silent
+    # no-op that reads like a working setting.
+    "texture_filter": (validate_texture_filter, "Texture filter"),
+    "texture_wrap": (validate_texture_wrap, "Texture wrap"),
     # Slab half-width in CELLS, so any positive multiple is meaningful and there
     # is no upper bound to impose. Zero is refused by `validate_positive_finite`
     # and that refusal is load-bearing: a zero slab reduces mesh's whole-triangle
@@ -732,7 +758,7 @@ def validate_render_attrs(
 
 
 def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
-    """Validate five appearance controls plus slab tolerance in the shared gate."""
+    """Validate seven appearance controls plus slab tolerance in the shared gate."""
     for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
         if key in attrs:
             validator(attrs[key], label)

@@ -41,13 +41,12 @@ is its central-directory preamble, which is read below the chunk-key cache.
 
 ## Why it has its own Playwright config
 
-Both `playwright.config.ts` and `playwright.perf.config.ts` serve data with
-`python3 -m http.server`, which has **no HTTP `Range` support at all** — it ignores the
-header and answers `200` with the whole body. A zipped store read that way receives the
-entire archive in place of each requested window, so a benchmark run against it would
-measure nonsense. (Before the `206` guard in `data/zip/range-reader.ts`, it would have
-done so _silently_.) This config boots `tools/range-http-server.py` instead, which is
-also what a positive zip E2E will need.
+`playwright.perf.config.ts` serves data with `python3 -m http.server`, which has **no
+HTTP `Range` support at all** — it ignores the header and answers `200` with the whole
+body. A zipped store read that way receives the entire archive in place of each requested
+window, so a benchmark run against it would measure nonsense. (Before the `206` guard in
+`data/zip/range-reader.ts`, it would have done so _silently_.) This config and the standard
+E2E config boot `tools/range-http-server.py` instead.
 
 ## What it reports, and why the fourth column exists
 

@@ -65,8 +65,10 @@ concurrency:
   # Fresh runs all have attempt 1, so PR and push runs still coalesce by event
   # and ref exactly as before. Any rerun gets a distinct attempt number, so a
   # newer fresh run does not cancel it (including superseded PR reruns).
-  # Neither rerun path restarts queue-watchdog, so an obsidian-routed
-  # job whose runner disappears can remain queued until GitHub's 24-hour limit.
+  # Neither rerun path restarts queue-watchdog. An obsidian-routed job left
+  # undispatched after its runners disappear can remain queued until GitHub's
+  # 24-hour ceiling; one dispatched before its slot recycles can instead reach
+  # its timeout before any step starts or runner name is recorded.
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
@@ -173,7 +175,7 @@ jobs:
             # external-reference-audits.yml is one too: its schedule, permissions
             # and token wiring are asserted by test_run_external_reference_audits.py,
             # and a workflow file matches no other domain on its own.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/format-contract\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
             # The gallery-selection unit test also reads the root README and gallery manifest.
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^README\.md$|^scripts/gallery/manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
@@ -224,13 +226,18 @@ jobs:
   # an in-progress obsidian job in any repository run proves the busy box is live.
   #
   # Same-repo runs route to obsidian while the positive capacity timestamp is
-  # fresh OR another obsidian job is in progress, so busy-box overflow queues
-  # instead of consuming paid runners. A stale publisher with no active work
-  # degrades to GitHub-hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
+  # fresh OR another obsidian job is in progress. With no fresh capacity and
+  # fewer than ten eligible runs, five obsidian jobs waiting at least five
+  # minutes hit the backlog cap and burst new work to GitHub-hosted. At the
+  # ten-run scan bound, any aged obsidian backlog routes hosted; without that
+  # evidence, known liveness still wins. A stale publisher with no active work
+  # degrades to hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
   #
-  # Freshness matters more than it looks: a job dispatched to a registered-but-
-  # offline self-hosted runner does not fail, it QUEUES — for up to 24 hours. So
-  # the failure mode this guards against is not a red CI, it is a CI that hangs.
+  # Freshness matters more than it looks: a job assigned to a registered-but-
+  # offline self-hosted label does not fail or fall back, it QUEUES for up to 24
+  # hours. So the failure mode this guards against is not a red CI, it is a CI
+  # that hangs. A leg dispatched before its slot recycles is the separate case
+  # that can reach its timeout before any step starts or runner name is recorded.
   # This check only covers the moment of routing; the `queue-watchdog` job below
   # covers the window AFTER it (box dies post-routing, jobs already queued).
   pick-runner:
@@ -242,11 +249,12 @@ jobs:
       label: ${{ steps.pick.outputs.label }}
     steps:
       - id: pick
-        name: Pick runner from obsidian capacity and activity
+        name: Pick runner from obsidian capacity, activity, and backlog
         env:
           FORCE_HOSTED: ${{ vars.LUXAR_CI_FORCE_HOSTED }}
           GH_TOKEN: ${{ github.token }}
           HEARTBEAT: ${{ vars.LUXAR_CI_HEARTBEAT }}
+          MAX_QUEUED_OBSIDIAN: ${{ vars.LUXAR_CI_MAX_QUEUED_OBSIDIAN }}
           # Empty on push events; the `|| github.repository` makes those read
           # as same-repo, which they are.
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
@@ -284,45 +292,115 @@ jobs:
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
-            2>/dev/null) || runs=""
-          if [ -z "$runs" ]; then
-            echo "run liveness unreadable; routing to obsidian to avoid paid overflow"
+          active_obsidian=0
+          max_queued_obsidian=${MAX_QUEUED_OBSIDIAN:-5}
+          if ! echo "$max_queued_obsidian" | grep -qE '^[1-9][0-9]*$'; then
+            max_queued_obsidian=5
+          fi
+          max_scanned_runs=10
+          scanned_runs=0
+          queue_grace_seconds=300
+          queue_cutoff=$(( now - queue_grace_seconds ))
+          queued_obsidian=0
+          for run_status in in_progress queued; do
+            runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=${run_status}&per_page=100" \
+              2>/dev/null) || runs=""
+            if [ -z "$runs" ]; then
+              if [ "$queued_obsidian" -gt 0 ]; then
+                echo "run activity unreadable after finding aged backlog -> routing to ubuntu-latest"
+                echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+              else
+                echo "run activity unreadable; routing to obsidian to avoid paid overflow"
+                echo "label=obsidian" >> "$GITHUB_OUTPUT"
+              fi
+              exit 0
+            fi
+            run_ids=$(echo "$runs" | jq -r --arg status "$run_status" \
+              --argjson cutoff "$queue_cutoff" \
+              '.workflow_runs[]
+              | select($status == "in_progress" or (.created_at | fromdateiso8601) <= $cutoff)
+              | .id' 2>/dev/null) || {
+                if [ "$queued_obsidian" -gt 0 ]; then
+                  echo "run backlog unreadable after finding aged backlog -> routing to ubuntu-latest"
+                  echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                else
+                  echo "run backlog unreadable; routing to obsidian to avoid paid overflow"
+                  echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                fi
+                exit 0
+              }
+            for run_id in $run_ids; do
+              if [ "$scanned_runs" -ge "$max_scanned_runs" ]; then
+                if [ "$queued_obsidian" -gt 0 ]; then
+                  echo "backlog scan reached its ${max_scanned_runs}-run limit after finding aged backlog -> routing to ubuntu-latest"
+                  echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+                break 2
+              fi
+              scanned_runs=$(( scanned_runs + 1 ))
+              jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
+                2>/dev/null) || jobs=""
+              if [ -z "$jobs" ]; then
+                if [ "$queued_obsidian" -gt 0 ]; then
+                  echo "job activity unreadable after finding aged backlog -> routing to ubuntu-latest"
+                  echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                else
+                  echo "job activity unreadable; routing to obsidian to avoid paid overflow"
+                  echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                fi
+                exit 0
+              fi
+              queued=$(echo "$jobs" | jq --argjson cutoff "$queue_cutoff" \
+                '[.jobs[] | select(.status == "queued")
+                | select(.labels | index("obsidian"))
+                | select((.created_at | fromdateiso8601) <= $cutoff)] | length' \
+                2>/dev/null) || {
+                  if [ "$queued_obsidian" -gt 0 ]; then
+                    echo "job backlog unreadable after finding aged backlog -> routing to ubuntu-latest"
+                    echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "job backlog unreadable; routing to obsidian to avoid paid overflow"
+                    echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                  fi
+                  exit 0
+                }
+              queued_obsidian=$(( queued_obsidian + queued ))
+              if [ "$queued_obsidian" -ge "$max_queued_obsidian" ]; then
+                echo "at least $queued_obsidian obsidian jobs have waited ${queue_grace_seconds}s -> routing to ubuntu-latest"
+                echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              if echo "$jobs" | jq -e '.jobs[] | select(.status == "in_progress")
+                | select(.labels | index("obsidian"))' >/dev/null; then
+                active_obsidian=1
+              fi
+            done
+          done
+          if [ "$active_obsidian" -eq 1 ]; then
+            echo "obsidian work is in progress with at least $queued_obsidian aged jobs queued -> routing to obsidian"
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          for run_id in $(echo "$runs" | jq -r '.workflow_runs[].id' 2>/dev/null); do
-            jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
-              2>/dev/null) || jobs=""
-            if [ -z "$jobs" ]; then
-              echo "job liveness unreadable; routing to obsidian to avoid paid overflow"
-              echo "label=obsidian" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            if echo "$jobs" | jq -e '.jobs[] | select(.status == "in_progress")
-              | select(.labels | index("obsidian"))' >/dev/null; then
-              echo "obsidian job is in progress in run $run_id -> routing to obsidian"
-              echo "label=obsidian" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
           echo "capacity heartbeat is unavailable or stale and no obsidian job is active -> routing to ubuntu-latest"
           echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
 
   # pick-runner's heartbeat check is a snapshot: it proves obsidian was alive
   # when the run was ROUTED, not that it survives long enough to pick the jobs
   # up. GitHub never re-evaluates `runs-on` — a job assigned to the `obsidian`
-  # label whose runners then vanish does not fail or fall back, it sits QUEUED
-  # for up to 24 hours, and job-level `timeout-minutes` only starts counting
-  # once a job is running. This job covers the first 10 minutes from the hosted
-  # side: while any obsidian-routed job is still queued it checks in-progress
-  # obsidian jobs across repository runs. If none are visible it cancels the run.
+  # label whose runners then vanish does not fall back. If it is never dispatched,
+  # it can remain queued until GitHub's 24-hour ceiling; job-level timeout has not
+  # started. If it was dispatched before its slot recycled, the timeout can run
+  # with no steps or runner name recorded and eventually cancel the required leg.
+  # This job covers the first 10 minutes from the hosted side: while any
+  # obsidian-routed job is still queued, it checks in-progress obsidian jobs across
+  # repository runs. If none are visible it cancels the run.
   # The workflow token cannot read repository-variable updates, so the publisher
   # is unavailable here; a stale GitHub `in_progress` state can therefore keep a
-  # dead runner covered. A box that dies after this window can still
-  # leave the run queued until GitHub's 24-hour timeout; set LUXAR_CI_FORCE_HOSTED=1
-  # and re-run ALL jobs to recover ("re-run failed" reuses the previous router
-  # output).
+  # dead runner covered. A box that dies after this window can still leave an
+  # undispatched leg queued until the 24-hour ceiling, or a dispatch-lost leg
+  # running down its timeout. Set LUXAR_CI_FORCE_HOSTED=1 and re-run ALL jobs to
+  # recover ("re-run failed" reuses the previous router output).
   #
   # On a push or the daily full-matrix schedule, max-parallel deliberately holds
   # one Python leg queued while two Python legs and TypeScript occupy the three
@@ -760,11 +838,15 @@ jobs:
     # `changes` job.
     if: ${{ !cancelled() }}
     runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
-    # 60, not 30: same SCHED_IDLE starvation argument as python-tests. Measured
-    # at 15.5 min alongside the xdist matrix, so 30 left under 2x — the thinnest
-    # margin of any obsidian-routed job. release-readiness keeps 30 on its
-    # GitHub-hosted runner, where SCHED_IDLE starvation does not apply.
-    timeout-minutes: 60
+    # 120, not 60: a successful TypeScript attempt ran 17m53s of real steps; at
+    # the documented 3.3x SCHED_IDLE extreme, a healthy starved run projects to
+    # roughly 59 minutes, leaving the former 60-minute budget no headroom for any
+    # pre-step dispatch latency. A dispatch-lost leg can spend the same budget
+    # without starting a step. The cost is doubled time-to-red and delayed stale
+    # repair for that leg; on the hosted fallback it also doubles hang detection
+    # and worst-case billed time. release-readiness keeps 30 because its hosted
+    # runner is not exposed to SCHED_IDLE starvation.
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: packages/luxar-viewer

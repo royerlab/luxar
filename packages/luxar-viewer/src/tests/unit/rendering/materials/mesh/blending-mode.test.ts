@@ -132,14 +132,14 @@ describe.each(BACKENDS)('MeshMaterial (%s) — mode transitions', (_label, make)
 describe.each(BACKENDS)('MeshMaterial (%s) — the shading variant', (_label, make) => {
   it('is a define, set from config', () => {
     expect(has(make(), FLAT)).toBe(false);
-    expect(has(make({ flatNormal: true }), FLAT)).toBe(true);
+    expect(has(make({ shading: 'flat' }), FLAT)).toBe(true);
   });
 
-  it('toggles both ways through updateFlatNormal', () => {
+  it('toggles both ways through updateShading', () => {
     const m = make();
-    m.updateFlatNormal(true);
+    m.updateShading('flat');
     expect(has(m, FLAT)).toBe(true);
-    m.updateFlatNormal(false);
+    m.updateShading('smooth');
     expect(has(m, FLAT)).toBe(false);
   });
 
@@ -153,9 +153,9 @@ describe.each(BACKENDS)('MeshMaterial (%s) — the shading variant', (_label, ma
     // reading it back yields `undefined` for both a recompile and a no-op.
     const m = make();
     const before = m.version;
-    m.updateFlatNormal(false); // already false
+    m.updateShading('smooth'); // already false
     expect(m.version, 'a redundant call must not bump the program version').toBe(before);
-    m.updateFlatNormal(true); // a real flip
+    m.updateShading('flat'); // a real flip
     expect(m.version).toBeGreaterThan(before);
   });
 
@@ -163,7 +163,7 @@ describe.each(BACKENDS)('MeshMaterial (%s) — the shading variant', (_label, ma
     // The layers panel clones on first interaction. A clone that lost the flag would
     // switch a flat-shaded node to smooth and read an unbound `normal` attribute —
     // (0,0,0) — shading the whole surface flat at uAmbient.
-    const m = make({ flatNormal: true, blendingMode: 'max' });
+    const m = make({ shading: 'flat', blendingMode: 'max' });
     const c = m.clone();
     expect(has(c, FLAT)).toBe(true);
     expect(c.userData.blendingMode).toBe('max');
@@ -275,12 +275,12 @@ describe('the two backends agree across the FULL flag cross-product', () => {
   const cases: MeshMaterialConfig[] = [];
   for (const blendingMode of BLENDING_MODES) {
     for (const colormap of flag) {
-      for (const flatNormal of flag) {
+      for (const shading of ['smooth', 'flat', 'none'] as const) {
         for (const gammaOne of flag) {
           for (const noGOG of flag) {
             cases.push({
               blendingMode,
-              flatNormal,
+              shading,
               gamma: gammaOne ? 1.0 : 2.2,
               intensity: noGOG ? 1.0 : 3.0,
               offset: noGOG ? 0.0 : 0.1,
@@ -293,14 +293,16 @@ describe('the two backends agree across the FULL flag cross-product', () => {
   }
 
   it('produces identical defines, blend state and shade uniforms for every configuration', () => {
-    expect(cases).toHaveLength(BLENDING_MODES.length * 16);
+    // 3 shading arms x gammaOne x noGOG x colormap. Was 16 when shading was a
+    // boolean; the third arm is `none`.
+    expect(cases).toHaveLength(BLENDING_MODES.length * 24);
     const divergences: string[] = [];
     for (const config of cases) {
       const g = new MeshMaterial(config);
       const t = new MeshTSLMaterial(config);
       const label =
         `${config.blendingMode} colormap=${!!config.colormapTexture} ` +
-        `flat=${config.flatNormal} gamma=${config.gamma} intensity=${config.intensity}`;
+        `flat=${config.shading} gamma=${config.gamma} intensity=${config.intensity}`;
       const gd = Object.keys(g.defines ?? {}).sort();
       const td = Object.keys(t.defines ?? {}).sort();
       if (JSON.stringify(gd) !== JSON.stringify(td)) {

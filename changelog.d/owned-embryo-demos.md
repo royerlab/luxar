@@ -9,9 +9,9 @@ downloaded directly.
 
 **Drosophila gastrulation** — one SiMView light-sheet stack (Royer/Keller,
 `His2Av::mRFP1`) caught at gastrulation, with the cephalic furrow and posterior
-midgut invagination both visible. 200,155 splats at 39.9 dB / 0.911 SSIM,
-calibrated by a Noise2Self K* sweep and fitted at the sweep's own
-diminishing-returns point.
+midgut invagination both visible. 200,023 splats at 41.65 dB (37.07 dB
+foreground); SSIM was not re-measured for this refit. It was calibrated by a
+Noise2Self K* sweep and fitted at the sweep's own diminishing-returns point.
 
 The stack carries no axial calibration, so the z-step was recovered from the
 embryo's geometry — a prolate embryo's mid-length cross-section must be circular,

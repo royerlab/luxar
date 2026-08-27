@@ -1,6 +1,6 @@
 /**
- * Gallery crop policy — the pure DECISION half of the capture harness's
- * border-lit (cropped-subject) check.
+ * Gallery framing policy — the pure DECISION half of the capture harness's
+ * under-fill and border-lit (cropped-subject) checks.
  *
  * A **border-lit pixel** is a lit pixel (luma above `LIT_THRESHOLD`) on the
  * outermost row or column of the captured frame — row 0, row H−1, column 0 or
@@ -72,6 +72,58 @@
  * brightness- or localization-aware measurement instead, not a bigger count.
  */
 export const BORDER_LIT_MAX = 0;
+
+/**
+ * Warn-only under-fill floors. The snapshot measured frame 0 of the 29 committed
+ * 340 px animated WebP tiles, a mixed-vintage set rendered from 2026-07-15 through
+ * 2026-08-26; its minima were 51.0% span and 12.7% lit area. The runtime check
+ * instead reads the settled PNG. WebP and PNG agree closely for the same current
+ * render, but an older committed tile can drift enough to warn; that warning is
+ * the intended staleness signal, not a reason to suppress it. Re-derive these
+ * snapshot floors from a full run's `final coverage=` / `final lit=` lines when
+ * the tile set or renderer changes. The two signals are deliberately independent:
+ * coverage is the wider percentile-bbox axis, while lit fraction catches a long,
+ * thin subject whose span can look full despite occupying little screen area.
+ */
+export const COVERAGE_MIN = 0.5;
+export const LIT_FRACTION_MIN = 0.1;
+
+export interface CoverageMeasurement {
+  /** Wider 3rd–97th-percentile bounding-box axis as a fraction of the frame. */
+  coverage: number;
+  /** Fraction of frame pixels whose luma exceeds `LIT_THRESHOLD`. */
+  litFraction: number;
+}
+
+export interface UnderfillVerdict {
+  /** Whether either under-fill signal is below its warning floor. */
+  underfilled: boolean;
+  /** Human-readable warning, non-null iff `underfilled` is true. */
+  message: string | null;
+}
+
+/** Decide whether the final still looks under-filled. This verdict never fails a capture. */
+export function evaluateUnderfill(args: {
+  demoId: string;
+  measurement: CoverageMeasurement;
+}): UnderfillVerdict {
+  const { demoId, measurement } = args;
+  const lowSpan = measurement.coverage < COVERAGE_MIN;
+  const lowArea = measurement.litFraction < LIT_FRACTION_MIN;
+  if (!lowSpan && !lowArea) return { underfilled: false, message: null };
+
+  const span = `${(measurement.coverage * 100).toFixed(1)}% span`;
+  const area = `${(measurement.litFraction * 100).toFixed(1)}% lit area`;
+  const failures: string[] = [];
+  if (lowSpan) failures.push(`span is below minimum ${(COVERAGE_MIN * 100).toFixed(1)}%`);
+  if (lowArea) failures.push(`lit area is below minimum ${(LIT_FRACTION_MIN * 100).toFixed(1)}%`);
+  return {
+    underfilled: true,
+    message:
+      `[${demoId}] under-filled? ${span}, ${area}; ${failures.join('; ')}. ` +
+      'This is a warning only: inspect the tile before changing its framing.',
+  };
+}
 
 /**
  * How much lower a `fillTarget` to suggest when a crop is detected. The ladder
