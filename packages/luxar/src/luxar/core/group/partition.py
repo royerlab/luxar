@@ -1002,6 +1002,27 @@ def warn_if_partition_needs_more_dims(ndim: int, name: str) -> bool:
     return True
 
 
+def warn_if_partition_axes_not_displayed(
+    ndim: int, displayed_dims: Sequence[int], name: str
+) -> None:
+    """Warn when a persisted BSP may split on an undisplayed data column.
+
+    Native scene partitions split only on the first up-to-three position
+    columns, while the viewer can traverse a split only when that stored column
+    is currently displayed. Surface the mismatch after a real multi-part tree
+    has been built, so a request that falls through to one leaf stays quiet.
+    """
+    split_columns = set(range(min(3, ndim)))
+    undisplayed = sorted(split_columns.difference(displayed_dims))
+    if undisplayed:
+        aprint(
+            f"  ⚠️  partition '{name}' can write bsp_tree splits on undisplayed "
+            f"position column(s) {undisplayed}; the viewer will discard this "
+            "bsp_tree if any split uses them and fall back to centroid ordering. "
+            "Put the displayed dimensions first to keep exact BSP ordering."
+        )
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Recursive midpoint BSP
 # ────────────────────────────────────────────────────────────────────────

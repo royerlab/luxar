@@ -181,6 +181,7 @@ def add_gsplats_impl(
                 bsp_leaf_parts,
                 resolve_partition_spec,
                 spatial_bsp_tree,
+                warn_if_partition_axes_not_displayed,
                 warn_if_oversized_single_part,
             )
 
@@ -198,6 +199,9 @@ def add_gsplats_impl(
                 len(parts), int(parts[0].size) if parts else 0, max_elements, name
             )
             if len(parts) > 1:
+                warn_if_partition_axes_not_displayed(
+                    ctr_arr.shape[1], scene.dimensions.displayed, name
+                )
                 preflight_extend_to_all(scene, extend_to_all, ctr_arr, "splats")
                 return add_gsplats_partition_wrapper_impl(
                     group,

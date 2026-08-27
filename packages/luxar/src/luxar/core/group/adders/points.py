@@ -218,7 +218,11 @@ def add_points_impl(
                 fine_partition = None
                 if is_requested(partition):
                     fine_partition = _resolve_points_partition(
-                        pos_arr, partition, name, image_labels
+                        pos_arr,
+                        partition,
+                        name,
+                        image_labels,
+                        scene.dimensions.displayed,
                     )
                 preflight_extend_to_all(scene, extend_to_all, pos_arr, "points")
                 return add_points_substitutive_lod_wrapper_impl(
@@ -254,7 +258,11 @@ def add_points_impl(
         # with a warning rather than in silence.
         if partition is not None:
             partition_plan = _resolve_points_partition(
-                pos_arr, partition, name, image_labels
+                pos_arr,
+                partition,
+                name,
+                image_labels,
+                scene.dimensions.displayed,
             )
             if partition_plan is not None:
                 max_elements, parts, bsp_tree = partition_plan
@@ -443,13 +451,18 @@ def add_points_impl(
 
 
 def _resolve_points_partition(
-    pos_arr: np.ndarray, partition: Any, name: str, image_labels: Any
+    pos_arr: np.ndarray,
+    partition: Any,
+    name: str,
+    image_labels: Any,
+    displayed_dims: Sequence[int],
 ) -> Optional[tuple[int, List[np.ndarray], Dict[str, Any]]]:
     """Resolve and execute a points partition, returning only a real split."""
     from ..partition import (
         bsp_leaf_parts,
         resolve_partition_spec,
         spatial_bsp_tree,
+        warn_if_partition_axes_not_displayed,
         warn_if_oversized_single_part,
         warn_if_partition_needs_more_dims,
     )
@@ -472,6 +485,8 @@ def _resolve_points_partition(
     warn_if_oversized_single_part(
         len(parts), int(parts[0].size) if parts else 0, max_elements, name
     )
+    if len(parts) > 1:
+        warn_if_partition_axes_not_displayed(pos_arr.shape[1], displayed_dims, name)
     return (max_elements, parts, tree.to_serializable()) if len(parts) > 1 else None
 
 

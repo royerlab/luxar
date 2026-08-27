@@ -306,6 +306,7 @@ def add_lines_impl(
             from ..lod.lines import identify_polylines
             from ..partition import (
                 resolve_partition_spec,
+                warn_if_partition_axes_not_displayed,
                 warn_if_oversized_single_part,
             )
 
@@ -342,6 +343,9 @@ def add_lines_impl(
             )
             if len(polyline_parts) > 1:
                 assert tree is not None
+                warn_if_partition_axes_not_displayed(
+                    vert_arr.shape[1], scene.dimensions.displayed, name
+                )
                 preflight_extend_to_all(scene, extend_to_all, vert_arr, "lines")
                 return add_lines_partition_wrapper_impl(
                     group,

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.core.dimensions import Dimensions
+from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.adders.lines import add_lines_partition_wrapper_impl
 from luxar.core.group.partition import (
     serialized_bsp_leaf_labels,
@@ -117,6 +117,83 @@ def test_native_partition_adders_write_valid_bsp_trees(tmp_path, rule: str) -> N
             assert serialized_bsp_tree_separates(tree, boxes)
         else:
             assert not serialized_bsp_tree_separates(tree, boxes)
+
+
+def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
+    tmp_path, capsys
+) -> None:
+    """Every native partition writer surfaces a tree the viewer will reject."""
+    centers = np.array(
+        [
+            [0.0, -6.0, 0.0, 0.0],
+            [1.0, -2.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0, 0.0],
+            [1.0, 6.0, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    line_vertices = np.array(
+        [
+            [0.0, -6.2, 0.0, 0.0],
+            [0.0, -5.8, 0.0, 0.0],
+            [1.0, -2.2, 0.0, 0.0],
+            [1.0, -1.8, 0.0, 0.0],
+            [0.0, 1.8, 0.0, 0.0],
+            [0.0, 2.2, 0.0, 0.0],
+            [1.0, 5.8, 0.0, 0.0],
+            [1.0, 6.2, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    line_indices = np.arange(8, dtype=np.uint32).reshape(4, 2)
+    mesh_vertices = np.array(
+        [
+            point
+            for state, center in ((0.0, -6.0), (1.0, -2.0), (0.0, 2.0), (1.0, 6.0))
+            for point in (
+                (state, center - 0.2, -0.2, 0.0),
+                (state, center + 0.2, -0.2, 0.0),
+                (state, center, 0.2, 0.0),
+            )
+        ],
+        dtype=np.float32,
+    )
+    mesh_faces = np.arange(12, dtype=np.uint32).reshape(4, 3)
+    dimensions = Dimensions(
+        [
+            Dimension("state", display=False, categories=["a", "b"]),
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+        ]
+    )
+
+    output = tmp_path / "hidden-first-partitions.luxar.zarr"
+    with LuxarZarrCompiler(output) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
+        scene.add_points("points", centers, partition={"max_elements": 1})
+        scene.add_lines(
+            "lines",
+            line_vertices,
+            widths=0.05,
+            indices=line_indices,
+            line_type="indexed",
+            partition={"max_elements": 2},
+        )
+        scene.add_mesh("mesh", mesh_vertices, mesh_faces, partition={"max_elements": 1})
+        scene.add_gsplats(
+            "gsplats",
+            centers=centers,
+            amplitudes=np.ones(centers.shape[0], dtype=np.float32),
+            cholesky_factors=np.array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1], dtype=np.float32),
+            partition={"max_elements": 1},
+        )
+
+    output_text = capsys.readouterr().out
+    for name in ("points", "lines", "mesh", "gsplats"):
+        assert f"partition '{name}'" in output_text
+    assert output_text.count("viewer will discard this bsp_tree") == 4
+    assert "displayed dimensions first" in output_text
 
 
 @pytest.mark.parametrize("geometry", ["points", "gsplats"])
