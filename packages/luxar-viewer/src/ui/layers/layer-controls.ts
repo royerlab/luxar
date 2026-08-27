@@ -714,8 +714,8 @@ export class LayerControls {
    * the material resolves to `shading="none"`, where their uniforms are compiled out.
    *
    * `alphaCutoff` instead carries a mode gate ON TOP: the cutout only exists in
-   * `opaque`, so
-   * in any other mesh mode the threshold is read by no branch of the fragment shader.
+   * `opaque`, so in any other mesh mode the threshold is read by no branch of the
+   * fragment shader.
    * The gate is on the MESH-RESOLVED mode, so a mesh in a volumetric-inherited/selected
    * mode (which a mesh resolves back to `opaque`) still shows its active cutout slider.
    *
