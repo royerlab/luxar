@@ -850,11 +850,13 @@ surviving-frame count; re-stack the rewritten components to refresh it.
 
 Composition may nest the same record recursively in an entry's `fitting` block.
 `batch-fit merge` uses this for its multi-level fan-in: root entries are spatial
-partition parts, optional inner entries are channels, and their inner entries are
-stacked timepoints carrying the original tile stamps. Coordinates at each level
-are the real slot, channel, or timepoint indices. Because the batch manifest does
-not state what preprocessing preceded the selected input array, these generated
-records omit `fit_reference` (unknown) rather than claiming acquisition scores.
+partition parts; a channel level appears only when multiple channels are selected,
+and a timepoint level appears only when multiple timepoints are selected. Records
+are therefore one to three levels deep, with timepoints directly under a part when
+only one channel is selected. Coordinates at each level are the real slot, channel,
+or timepoint indices. Because the batch manifest does not state what preprocessing
+preceded the selected input array, these generated records omit `fit_reference`
+(unknown) rather than claiming acquisition scores.
 An unstamped tile remains present without quality or source keys in its `fitting`
 dictionary, so a mixed store re-merged after a partial re-fit is explicit rather
 than silently partial. The root `fitting/part_provenance` list is the canonical
