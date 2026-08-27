@@ -416,11 +416,14 @@ describe('SceneLoader', () => {
       await sceneLoader.updateView({ displayDims: [0, 1, 2] });
 
       expect(sceneLoader.getFailedLoaders().has('/ordinary-failure')).toBe(true);
+      ordinaryFailureLoader.updateView.mockClear();
 
       loaders.set('/fault', failingLoader);
       loaders.set('/cached-success', successfulLoader);
 
-      await sceneLoader.updateView({ slicePosition: [0, 0, 1] });
+      const faultingPass = sceneLoader.updateView({ slicePosition: [0, 0, 1] });
+      const queuedPass = sceneLoader.updateView({ slicePosition: [0, 0, 2] });
+      await Promise.all([faultingPass, queuedPass]);
 
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledWith(fault.message, { persistent: true });
@@ -428,12 +431,12 @@ describe('SceneLoader', () => {
       expect(commitSpy).not.toHaveBeenCalled();
       expect(releaseShadows).toHaveBeenCalledOnce();
 
-      await sceneLoader.updateView({ slicePosition: [0, 0, 2] });
+      await sceneLoader.updateView({ slicePosition: [0, 0, 3] });
       sceneLoader.prefetchSlice({ slicePosition: [0, 0, 3] }, 5);
 
       expect(failingLoader.updateView).toHaveBeenCalledOnce();
       expect(successfulLoader.updateView).toHaveBeenCalledOnce();
-      expect(ordinaryFailureLoader.updateView).toHaveBeenCalledTimes(2);
+      expect(ordinaryFailureLoader.updateView).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(prefetch).not.toHaveBeenCalled();
       expect((sceneLoader as any)._updateInProgress).toBe(false);
