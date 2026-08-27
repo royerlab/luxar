@@ -101,6 +101,35 @@ def _partition_scene(
     return path, geometry
 
 
+def _hidden_first_partition_scene(tmp: Path) -> Path:
+    """A native 4D partition whose widest displayed column is index 3."""
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+    rng = np.random.default_rng(7)
+    positions = np.empty((400, 4), dtype=np.float32)
+    positions[:, 0] = rng.integers(0, 3, 400)
+    positions[:, 1:3] = rng.uniform(-1, 1, (400, 2))
+    positions[:, 3] = rng.uniform(-40, 40, 400)
+    dimensions = Dimensions(
+        [
+            Dimension("state", display=False, spatial=True, range=(0, 2)),
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+        ]
+    )
+    path = tmp / "hidden-first.luxar.zarr"
+    with LuxarZarrCompiler(path) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
+        scene.add_points(
+            "points",
+            positions,
+            partition={"max_elements": 100},
+            extend_to_all=[],
+        )
+    return path
+
+
 def _disjoint_centroid_split_lines_scene(tmp: Path) -> Path:
     """A native lines partition whose valid plane crosses one part's bounds."""
     from luxar import Dimensions, LuxarZarrCompiler
@@ -427,6 +456,21 @@ def _order_violations(tree: dict, boxes: list, poses: int = 60) -> int:
 
 
 class TestSplitPlanesCheck:
+    def test_axis_three_partition_is_healthy_and_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _hidden_first_partition_scene(Path(tmp))
+            attrs = read_node_attrs(path / "points") or {}
+            before = attrs["bsp_tree"]
+            assert before["axis"] == 3
+
+            report = diagnose_store(path)
+            assert report.healthy
+
+            fixed = diagnose_store(path, fix=True)
+            assert fixed.healthy
+            attrs = read_node_attrs(path / "points") or {}
+            assert attrs["bsp_tree"] == before
+
     def test_a_healthy_partition_reports_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _partition_store(Path(tmp))

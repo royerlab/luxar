@@ -48,8 +48,7 @@ def _part_boxes(
     ``None`` when the parts do not describe a usable box set: a missing
     ``position_bounds``, a ``child_index`` that is not a permutation of
     ``0..n-1``, or fewer than two spatial dims (splitting needs two, so 1D data
-    is never partitioned). Only the first three dims are read — a stacked
-    time/channel axis is never a split axis.
+    is never partitioned).
     """
     by_index: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
     names = [n for n in group.group_keys() if str(n).startswith("part_")]
@@ -68,8 +67,7 @@ def _part_boxes(
             return None
         if lo.shape != hi.shape or lo.size < 2:
             return None
-        spatial = min(3, int(lo.size))
-        by_index[int(index)] = (lo[:spatial], hi[:spatial])
+        by_index[int(index)] = (lo, hi)
     if sorted(by_index) != list(range(len(names))):
         return None
     return [by_index[i] for i in range(len(names))]
