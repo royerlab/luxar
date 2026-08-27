@@ -156,6 +156,9 @@ def test_media_flags_use_inclusive_warning_and_limit_boundaries() -> None:
     path = Path("tile.webm")
 
     assert (
+        stale._format_media_size(stale.GALLERY_MEDIA_WARNING_BYTES - 1) == "19.99 MiB"
+    )
+    assert (
         stale._media_flag(
             stale.GalleryMedia(path, stale.GALLERY_MEDIA_WARNING_BYTES - 1)
         )
@@ -169,6 +172,7 @@ def test_media_flags_use_inclusive_warning_and_limit_boundaries() -> None:
         stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES - 1))
         == " [WARNING]"
     )
+    assert stale._format_media_size(stale.GALLERY_MEDIA_LIMIT_BYTES - 1) == "24.99 MiB"
     assert (
         stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES))
         == " [OVER LIMIT]"

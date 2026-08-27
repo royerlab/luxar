@@ -513,7 +513,7 @@ def _format_stamp(stamp: CommitStamp) -> str:
 
 
 def _format_media_size(size_bytes: int) -> str:
-    return f"{size_bytes / MEBIBYTE:.2f} MiB"
+    return f"{size_bytes * 100 // MEBIBYTE / 100:.2f} MiB"
 
 
 def _media_flag(media: GalleryMedia) -> str:
