@@ -60,7 +60,7 @@ const CODEC_MIME: Record<MeshTextureEncoding, string | null> = {
   png: 'image/png',
   webp: 'image/webp',
   jpeg: 'image/jpeg',
-  ktx2: 'image/ktx2',
+  ktx2: null,
 };
 
 /**
@@ -130,18 +130,15 @@ export async function decodeMeshTexture(
           'Validation',
           path,
           new Error(
-            "texture encoding 'ktx2' requires GPU compressed-texture support; " +
-              "use 'raw' or 'jpeg' for a portable texture."
+            "texture encoding 'ktx2' has no renderer-owned decoder configured. " +
+              "Initialize the viewer renderer before loading the scene, or use 'raw' or " +
+              "'jpeg' for a portable texture."
           )
         );
       }
       let texture: import('three').CompressedTexture;
       try {
-        texture = await decodeKTX2(path, new Uint8Array(bytes), {
-          width,
-          height,
-          channels: channels as 3 | 4,
-        });
+        texture = await decodeKTX2(path, new Uint8Array(bytes));
       } catch (error) {
         throw new LoaderError(
           'Validation',

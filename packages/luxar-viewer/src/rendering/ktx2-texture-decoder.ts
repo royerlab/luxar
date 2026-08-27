@@ -1,5 +1,6 @@
+import { RGBAFormat } from 'three';
 import type * as THREE from 'three';
-import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import type { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 
 import type { KTX2TextureDecoder } from '../types/mesh';
 import type { Renderer } from './renderer-capabilities';
@@ -42,19 +43,44 @@ function hasCompressedTextureSupport(renderer: Renderer | null | undefined): boo
 export function createKTX2TextureDecoder(
   renderer: Renderer | null | undefined
 ): KTX2TextureDecoder {
-  const supported = hasCompressedTextureSupport(renderer);
   let loader: KTX2Loader | null = null;
 
-  return async (path, bytes) => {
-    if (!renderer || !supported) {
+  const decode = async (path: string, bytes: Uint8Array) => {
+    if (!renderer || !hasCompressedTextureSupport(renderer)) {
       throw new Error(
         `${path}: texture encoding 'ktx2' requires ASTC, ETC1/2, S3TC/BC, or PVRTC ` +
           "GPU compressed-texture support. Use 'raw' or 'jpeg' for a portable texture."
       );
     }
-    const activeLoader = (loader ??= new KTX2Loader().detectSupport(renderer));
-    return await new Promise<THREE.CompressedTexture>((resolve, reject) => {
+    if (!loader) {
+      const module = await import('three/examples/jsm/loaders/KTX2Loader.js');
+      loader = new module.KTX2Loader().detectSupport(renderer);
+    }
+    const texture = await new Promise<THREE.CompressedTexture>((resolve, reject) => {
+      const activeLoader = loader;
+      if (!activeLoader) {
+        reject(new Error('KTX2 decoder was disposed before parsing began'));
+        return;
+      }
       activeLoader.parse(new Uint8Array(bytes).buffer, resolve, reject);
     });
+    const image = texture.image as { depth?: number } | undefined;
+    const isUncompressedFallback = (texture.format as number) === RGBAFormat;
+    if (isUncompressedFallback || (image?.depth ?? 1) > 1) {
+      texture.dispose();
+      const reason = isUncompressedFallback
+        ? 'would fall back to an uncompressed RGBA8 texture'
+        : `contains ${image?.depth ?? '?'} layers but mesh textures require one 2D image`;
+      throw new Error(
+        `${path}: texture encoding 'ktx2' ${reason}. ` +
+          "Use 'raw' or 'jpeg' for a portable texture."
+      );
+    }
+    return texture;
   };
+  decode.dispose = () => {
+    loader?.dispose();
+    loader = null;
+  };
+  return decode;
 }

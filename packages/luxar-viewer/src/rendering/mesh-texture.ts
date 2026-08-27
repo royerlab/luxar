@@ -249,7 +249,10 @@ export function createMeshTexture(
   // ImageBitmap one is silently ignored by WebGL.
   texture.flipY = false;
   texture.magFilter = magFilter;
-  texture.minFilter = minFilter;
+  texture.minFilter =
+    data.kind === 'compressed' && texture.mipmaps.length <= 1 && mipmaps
+      ? THREE.LinearFilter
+      : minFilter;
   texture.wrapS = wrapS;
   texture.wrapT = wrapT;
   texture.generateMipmaps = data.kind === 'compressed' ? false : mipmaps;

@@ -366,11 +366,10 @@ export type MeshTextureData =
     };
 
 /** Renderer-owned KTX2 transcode seam injected into the data loader. */
-export type KTX2TextureDecoder = (
+export type KTX2TextureDecoder = ((
   path: string,
-  bytes: Uint8Array,
-  declaration: { width: number; height: number; channels: 3 | 4 }
-) => Promise<THREE.CompressedTexture>;
+  bytes: Uint8Array
+) => Promise<THREE.CompressedTexture>) & { dispose: () => void };
 
 /**
  * A whole decoded mesh, before display-space projection.

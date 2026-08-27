@@ -95,6 +95,7 @@ export class SceneLoaderManager {
   }
 
   setKTX2TextureDecoder(decoder: KTX2TextureDecoder | null): void {
+    if (this.decodeKTX2 !== decoder) this.decodeKTX2?.dispose();
     this.decodeKTX2 = decoder;
   }
 
@@ -400,6 +401,7 @@ export class SceneLoaderManager {
   static disposeInstance(): void {
     if (SceneLoaderManager.instance) {
       SceneLoaderManager.instance.destroyAll();
+      SceneLoaderManager.instance.setKTX2TextureDecoder(null);
       SceneLoaderManager.instance = null;
     }
   }

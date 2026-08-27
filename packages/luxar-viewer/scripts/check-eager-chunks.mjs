@@ -88,6 +88,12 @@ if (!entryHref) {
 
 const assetFiles = readdirSync(ASSETS);
 
+for (const suffix of ['.js', '.wasm']) {
+  if (!assetFiles.some((file) => file.startsWith('basis_transcoder-') && file.endsWith(suffix))) {
+    fail(`No Basis transcoder ${suffix} asset was emitted into dist/assets.`);
+  }
+}
+
 /**
  * Static (not dynamic) import specifiers of a built ESM chunk.
  *
