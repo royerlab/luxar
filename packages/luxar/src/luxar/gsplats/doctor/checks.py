@@ -47,8 +47,8 @@ def _part_boxes(
 
     ``None`` when the parts do not describe a usable box set: a missing
     ``position_bounds``, a ``child_index`` that is not a permutation of
-    ``0..n-1``, or fewer than two spatial dims (splitting needs two, so 1D data
-    is never partitioned).
+    ``0..n-1``, inconsistent bounds widths, or fewer than two spatial dims
+    (splitting needs two, so 1D data is never partitioned).
     """
     by_index: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
     names = [n for n in group.group_keys() if str(n).startswith("part_")]
@@ -70,18 +70,25 @@ def _part_boxes(
         by_index[int(index)] = (lo, hi)
     if sorted(by_index) != list(range(len(names))):
         return None
-    return [by_index[i] for i in range(len(names))]
+    boxes = [by_index[i] for i in range(len(names))]
+    if any(lo.shape != boxes[0][0].shape for lo, _ in boxes[1:]):
+        return None
+    return boxes
 
 
 def _reconstruction_axes(
     root: "zarr.Group", boxes: "List[Tuple[np.ndarray, np.ndarray]]"
 ) -> Tuple[int, ...]:
+    width = len(boxes[0][0])
+    fallback = tuple(range(min(3, width)))
     scene_dimensions = root.attrs.get("scene_dimensions")
     if scene_dimensions is not None:
         from luxar.core.dimensions import Dimensions
 
-        return tuple(Dimensions.from_dict(scene_dimensions).displayed)
-    return tuple(range(min(3, len(boxes[0][0]))))
+        displayed = Dimensions.from_dict(scene_dimensions).displayed
+        axes = tuple(axis for axis in displayed if 0 <= axis < width)
+        return axes or fallback
+    return fallback
 
 
 def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:

@@ -493,6 +493,48 @@ class TestSplitPlanesCheck:
             assert attrs["bsp_tree"]["axis"] == 3
             assert diagnose_store(path).healthy
 
+    def test_narrow_part_bounds_report_a_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _hidden_first_partition_scene(Path(tmp))
+            root = zc_open_group(str(path), mode="r+")
+            for name in root["points"].group_keys():
+                child = root["points"][name]
+                bounds = dict(child.attrs["position_bounds"])
+                bounds["min"] = bounds["min"][:3]
+                bounds["max"] = bounds["max"][:3]
+                child.attrs["position_bounds"] = bounds
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+
+            assert [finding.path for finding in report.findings] == ["points"]
+            assert report.findings[0].summary == (
+                "split planes disagree with the parts, and cannot be rebuilt"
+            )
+            assert report.findings[0].fixable
+            assert not report.healthy
+
+    def test_ragged_part_bounds_report_a_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _hidden_first_partition_scene(Path(tmp))
+            root = zc_open_group(str(path), mode="r+")
+            names = sorted(root["points"].group_keys())
+            for name in names[1:]:
+                child = root["points"][name]
+                bounds = dict(child.attrs["position_bounds"])
+                bounds["min"] = bounds["min"][:3]
+                bounds["max"] = bounds["max"][:3]
+                child.attrs["position_bounds"] = bounds
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+
+            assert [finding.path for finding in report.findings] == ["points"]
+            assert report.findings[0].summary == (
+                "split planes present but not verifiable"
+            )
+            assert report.healthy
+
     def test_a_healthy_partition_reports_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _partition_store(Path(tmp))
