@@ -1420,6 +1420,57 @@ class TestMergeOrchestrator:
             assert total_splats(child) == 8  # 2 timepoints * 4 splats
         assert total_splats(node) == total  # = 2*1*2 tiles * 4 = 16
 
+    def test_partition_merge_collects_nested_tile_fit_provenance(
+        self, tmp_path: Path
+    ) -> None:
+        """Streaming merge retains every tile stamp without inventing a root score."""
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        self._write_tiles(tiles_dir, n_t=2, n_c=2, n_k=2)
+
+        for t in range(2):
+            for c in range(2):
+                for k in range(2):
+                    path = tiles_dir / output_filename(t, c, k, 2, 2, 2)
+                    tile = GSplatData.load(path)
+                    if (t, c, k) != (1, 1, 1):
+                        tile.stats.update(
+                            psnr_db=40.0 + 4 * k + 2 * c + t,
+                            foreground_psnr_db=20.0 + 4 * k + 2 * c + t,
+                            source_shape=[4, 5, 6],
+                            source_dtype="uint16",
+                        )
+                    tile.save(path)
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=2, n_channels=2, n_tiles=2),
+            out_dir,
+            channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            verbose=False,
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        fitting = dict(root["fitting"].attrs)
+        assert "psnr_db" not in fitting
+        parts = fitting["part_provenance"]
+        assert [part["coordinate"] for part in parts] == [0.0, 1.0]
+        assert all("fit_reference" not in part for part in parts)
+
+        channels = parts[1]["fitting"]["part_provenance"]
+        assert [channel["coordinate"] for channel in channels] == [0.0, 1.0]
+        timepoints = channels[1]["fitting"]["part_provenance"]
+        assert [timepoint["coordinate"] for timepoint in timepoints] == [0.0, 1.0]
+        assert timepoints[0]["fitting"]["psnr_db"] == 46.0
+        assert "psnr_db" not in timepoints[1]["fitting"]
+        assert "foreground_psnr_db" not in timepoints[1]["fitting"]
+        assert "source_shape" not in timepoints[1]["fitting"]
+
     def test_partition_multichannel_parts_carry_colors(self, tmp_path: Path) -> None:
         """T=1, C=2, K=2 with colors → partition; each part is color-merged."""
         from luxar.gsplats.batch.manifest import BatchManifest

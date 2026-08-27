@@ -102,6 +102,29 @@ def test_non_finite_part_metrics_are_omitted_without_dropping_the_part() -> None
     assert provenance[1]["fitting"]["foreground_fraction"] == 0.25
 
 
+def test_unknown_reference_and_nested_provenance_are_preserved() -> None:
+    component = collect_part_provenance(
+        [_fit(1, psnr_db=41.5), _fit(2)],
+        values=[0, 1],
+        fit_reference=None,
+    )
+    stack = _fit(3, part_provenance=component)
+
+    provenance = collect_part_provenance(
+        [stack],
+        values=[7],
+        fit_reference=None,
+    )
+
+    assert "fit_reference" not in provenance[0]
+    assert provenance[0]["fitting"]["part_provenance"] == component
+
+    reduced = stack.filter_by(amplitude_min=0.5)
+    nested = reduced.stats["part_provenance"]
+    assert "psnr_db" not in nested[0]["fitting"]
+    assert nested[1]["fitting"] == {}
+
+
 def test_part_provenance_validates_reference_and_stack_cardinality() -> None:
     fits = [_fit(1), _fit(2)]
     with pytest.raises(ValueError, match="fit_reference.kind"):

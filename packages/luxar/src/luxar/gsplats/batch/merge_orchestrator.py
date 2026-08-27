@@ -209,6 +209,7 @@ def _build_part_for_tile(
     ``None`` for an empty/zero-splat tile (the caller skips it).
     """
     from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.merged_quality import collect_part_provenance
 
     n_t = len(t_indices)
 
@@ -232,17 +233,22 @@ def _build_part_for_tile(
             )
             if tile_path is None:
                 continue
-            tc_data.append(GSplatData.load(tile_path))
+            tc_data.append(GSplatData.load(tile_path, include_stats=True))
             tc_values.append(float(t_real))
         if not tc_data:
             continue  # this (channel, slot) is empty at every timepoint
-        if n_t > 1 and len(tc_data) > 1:
-            stacked = GSplatData.combine_as_new_dimension(
-                tc_data, values=tc_values, sigma=0.0
+        if n_t > 1:
+            timepoint_provenance = collect_part_provenance(
+                tc_data,
+                values=tc_values,
+                fit_reference=None,
             )
-        elif n_t > 1:
-            # one surviving timepoint but a 4D dataset — embed its real coord
-            stacked = tc_data[0].embed_dimension(tc_values[0], sigma=0.0)
+            stacked = GSplatData.combine_as_new_dimension(
+                tc_data,
+                values=tc_values,
+                sigma=0.0,
+                part_provenance=timepoint_provenance,
+            )
         else:
             stacked = tc_data[0]
         per_channel.append(stacked)
@@ -258,6 +264,14 @@ def _build_part_for_tile(
     # in THIS slot (some may be empty here); merge_with_channel_colors needs a
     # length match. A multi-channel dataset where only one channel survives in this
     # tile still tints that channel (its color), which is correct.
+    channel_provenance = None
+    if len(per_channel) > 1:
+        channel_provenance = collect_part_provenance(
+            per_channel,
+            values=[float(c_indices[position]) for position in kept_positions],
+            fit_reference=None,
+        )
+
     if channel_colors and len(c_indices) > 1:
         colors = [channel_colors[i] for i in kept_positions]
         part = GSplatData.merge_with_channel_colors(per_channel, colors)
@@ -265,6 +279,9 @@ def _build_part_for_tile(
         part = per_channel[0]
     else:
         part = GSplatData.concatenate(per_channel)
+
+    if channel_provenance is not None:
+        part.stats["part_provenance"] = channel_provenance
 
     if part.n_splats == 0:
         return None
@@ -901,6 +918,7 @@ def _merge_partition(
 ) -> Path:
     """Streaming tile-outer partition merge (the default, memory-safe path)."""
     from luxar.gsplats.io.save_gsplats import write_partition_streaming
+    from luxar.gsplats.merged_quality import collect_part_provenance
 
     tiles_dir = output_dir / "tiles"
     merged_dir = output_dir / "merged"
@@ -989,6 +1007,8 @@ def _merge_partition(
     # part indices by the provider once the loop has skipped its empty slots.
     slot_tree = _slot_bsp_tree(manifest, output_dir, verbose)
     kept_slots: List[int] = []
+    part_provenance: List[Dict[str, Any]] = []
+    fitting_info: Dict[str, Any] = {"part_provenance": part_provenance}
     # A per-part volume re-fit crops the source to each tile. The split planes
     # above ARE those tiles, keyed by the same slot index the loop walks, so the
     # cells come from the tree already reconstructed for ordering.
@@ -1008,6 +1028,13 @@ def _merge_partition(
                 if verbose:
                     aprint(f"  {label} {k}: empty, skipping")
                 continue
+            part_provenance.extend(
+                collect_part_provenance(
+                    [part],
+                    values=[float(k)],
+                    fit_reference=None,
+                )
+            )
             _stamp_recipe_floor(part, recipe, floor_stats)
             # Each part is a single nD splat set → a matrix-shaped tree (a leaf,
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
@@ -1040,6 +1067,7 @@ def _merge_partition(
             final_path,
             _parts,
             max_elements=0,
+            fitting_info=fitting_info,
             pipeline_info=pipeline_info,
             barrier_dims=barrier_dims,
             # Resolved after the stream, when `kept_slots` is complete.

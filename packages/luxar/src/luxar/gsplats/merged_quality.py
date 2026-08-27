@@ -218,29 +218,35 @@ def collect_part_provenance(
     datasets: Sequence[GSplatData],
     *,
     values: Sequence[float],
-    fit_reference: dict[str, Any],
+    fit_reference: Optional[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Collect JSON-safe per-fit stamps for a caller-defined stacked axis.
 
-    The caller supplies the reference classification because only it knows what
-    each fit was scored against. The returned records describe the component
-    fits; they are not a scalar quality claim for the transformed union.
+    The caller supplies the reference classification when it knows what each fit
+    was scored against; ``None`` records the contract's unknown-reference case.
+    The returned records describe the component fits; they are not a scalar
+    quality claim for the transformed union. Existing component provenance is
+    retained recursively when composed datasets are collected again.
     """
     if len(values) != len(datasets):
         raise ValueError(
             f"Number of values ({len(values)}) must match number of datasets "
             f"({len(datasets)})"
         )
-    kind = fit_reference.get("kind")
-    if kind not in _FIT_REFERENCE_KINDS:
-        allowed = ", ".join(sorted(_FIT_REFERENCE_KINDS))
-        raise ValueError(f"fit_reference.kind must be one of: {allowed}")
-    note = fit_reference.get("note")
-    if note is not None and (not isinstance(note, str) or not note.strip()):
-        raise ValueError("fit_reference.note must be a non-empty string when provided")
-    safe_reference = {"kind": kind}
-    if note is not None:
-        safe_reference["note"] = note
+    safe_reference: Optional[dict[str, Any]] = None
+    if fit_reference is not None:
+        kind = fit_reference.get("kind")
+        if kind not in _FIT_REFERENCE_KINDS:
+            allowed = ", ".join(sorted(_FIT_REFERENCE_KINDS))
+            raise ValueError(f"fit_reference.kind must be one of: {allowed}")
+        note = fit_reference.get("note")
+        if note is not None and (not isinstance(note, str) or not note.strip()):
+            raise ValueError(
+                "fit_reference.note must be a non-empty string when provided"
+            )
+        safe_reference = {"kind": kind}
+        if note is not None:
+            safe_reference["note"] = note
 
     records: list[dict[str, Any]] = []
     for coordinate, dataset in zip(values, datasets):
@@ -249,18 +255,15 @@ def collect_part_provenance(
             raise ValueError(f"stack coordinate {coordinate!r} is not a finite number")
         fitting: dict[str, Any] = {}
         for key in _FITTING_INFO_KEYS:
-            if key not in dataset.stats or key == "part_provenance":
+            if key not in dataset.stats:
                 continue
             ok, safe_value = json_safe_value(dataset.stats[key])
             if ok:
                 fitting[key] = safe_value
-        records.append(
-            {
-                "coordinate": safe_coordinate,
-                "fit_reference": dict(safe_reference),
-                "fitting": fitting,
-            }
-        )
+        record = {"coordinate": safe_coordinate, "fitting": fitting}
+        if safe_reference is not None:
+            record["fit_reference"] = dict(safe_reference)
+        records.append(record)
     return records
 
 
