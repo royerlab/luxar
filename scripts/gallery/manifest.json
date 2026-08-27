@@ -376,7 +376,7 @@
       "dataset": "datasets/demos/atp_synthase.luxar.zarr",
       "citation": "Zhou et al. 2015",
       "distance": 25,
-      "note": "distance 25: 53–55% still coverage across captures and 0/4316 border pixels across 10 poses; distance 24 reached 3/4316 at rock -10°. Distance 25 was chosen under a stricter zero-border stopping rule than the warn-only harness; fillTarget 0.6 reached 58% but cropped 248/4316 at rock -10°, so the absolute distance is retained. A zoom nudge is the same degree of freedom on the distance path and was covered by the sweep"
+      "note": "distance 25: 53\u201355% still coverage across captures and 0/4316 border pixels across 10 poses; distance 24 reached 3/4316 at rock -10\u00b0. Distance 25 was chosen under a stricter zero-border stopping rule than the warn-only harness; fillTarget 0.6 reached 58% but cropped 248/4316 at rock -10\u00b0, so the absolute distance is retained. A zoom nudge is the same degree of freedom on the distance path and was covered by the sweep"
     },
     {
       "id": "ocean",
@@ -429,7 +429,9 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_flylight_mcfo_neurons.py",
       "dataset": "datasets/demos/gsplats_3d_flylight_mcfo_neurons.luxar.zarr",
-      "citation": "Mais et al. 2024"
+      "citation": "Mais et al. 2024",
+      "fillTarget": 0.75,
+      "note": "fillTarget 0.75 reduced border-lit from 44.1% to 0.1%. At 0.95 the brighter tissue channel swamped the white neurons into a purple haze; pulling back re-metered auto-exposure by +0.98 stops and separated the neurons, red puncta and tissue again."
     },
     {
       "id": "gsplats_3d_kidney_multichannel_layers",
@@ -448,7 +450,8 @@
       "script": "demo_gsplats_3d_kidney_multichannel_toggles.py",
       "dataset": "datasets/demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr",
       "citation": "G. Buckley 2018 (scikit-image kidney)",
-      "note": "The scene authors its own opening state; regenerate the dataset with `--force` before capturing."
+      "note": "The scene authors its own opening state; regenerate the dataset with `--force` before capturing. fillTarget 0.7 reduced border-lit from 79.7% to 31.7% at 88.5% coverage. The residual is accepted: this is a flat slab whose own edges are legitimately in shot at the widest orbit pose, not a crop, so do not follow the generic warning to dolly out to 0.6.",
+      "fillTarget": 0.7
     },
     {
       "id": "gsplats_3d_opencell_map4",
@@ -816,6 +819,16 @@
       "script": "demo_gsplats_3d_drosophila_gastrulation.py",
       "dataset": "datasets/demos/gsplats_3d_drosophila_gastrulation.luxar.zarr",
       "citation": "Royer et al. 2016"
+    },
+    {
+      "id": "gsplats_3d_culling_study",
+      "title": "Splat Culling Study (Drosophila gastrulation)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_culling_study.py",
+      "dataset": "datasets/demos/gsplats_3d_culling_study.luxar.zarr",
+      "citation": "Royer et al. 2016",
+      "note": "Ten cumulative-amplitude cull levels of one Drosophila gastrulation fit stacked on a categorical Cull selector. The tile deliberately shows the DEFAULT slice, which is the uncut level: the demo's point is the comparison you make by stepping the selector, and any single culled level would misrepresent it as a picture of damage. No dimensionNav for the same reason \u2014 it only positions a still. The generic timelapse sweep was considered but rejected because its warm-up starts this 0\u20139 range at index 1, omitting the uncut reference level from the video."
     },
     {
       "id": "gsplats_3d_h2afva_stack",
