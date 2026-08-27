@@ -33,6 +33,13 @@ afterEach(() => {
 });
 
 describe('showError - ARIA Attributes', () => {
+  it('auto-dismisses transient errors by default', () => {
+    showError('Transient error');
+
+    vi.advanceTimersByTime(60_000);
+    expect(document.getElementById('luxar-error-message')).toBeNull();
+  });
+
   it('keeps non-auto-dismissing errors visible until explicitly cleared', () => {
     showError('Fatal startup error', undefined, undefined, { autoDismiss: false });
 

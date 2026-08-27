@@ -1,10 +1,10 @@
 /**
- * Error dialog — user-friendly error overlay with guidance and auto-dismiss.
+ * Error dialog — user-friendly error overlay with guidance and optional auto-dismiss.
  *
  * Replaces any existing error dialog so a new failure doesn't stack on
- * top of an old one. Dismissible by click, Escape, or auto-timeout
- * (configured via `config.ui.timings.errorAutoDismissMs`). Traps focus
- * inside the dialog while it is open (Tab/Shift+Tab can't escape).
+ * top of an old one. Dismissible by click or Escape; transient errors also
+ * auto-dismiss after `config.ui.timings.errorAutoDismissMs`. Traps focus inside
+ * the dialog while it is open (Tab/Shift+Tab can't escape).
  */
 
 import { config } from '../config';
@@ -21,6 +21,7 @@ export interface ErrorShortcutActions {
 }
 
 export interface ErrorDisplayOptions {
+  /** Whether to dismiss after the configured timeout. Defaults to true. */
   autoDismiss?: boolean;
 }
 
@@ -64,7 +65,7 @@ function releaseActiveTrap(): void {
  *
  * Any dialog from a previous call is torn down first (its auto-dismiss timer
  * cancelled and focus trap released) so failures never stack. The new dialog is
- * dismissible by click, Escape, or an auto-timeout of
+ * dismissible by click or Escape, optionally auto-dismisses after
  * `config.ui.timings.errorAutoDismissMs`, and traps keyboard focus while open.
  *
  * @param message Human-readable error text to display to the user.
