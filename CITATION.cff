@@ -28,7 +28,7 @@ keywords:
   - zarr
 # Kept in step with packages/luxar/src/luxar/__init__.py and the viewer
 # package.json by `make set-version`, and gated by `hatch run check-versions`.
-# Zero-padded CalVer, matching the git tag (v2026.06.05); note PyPI displays
+# Zero-padded CalVer, matching the `v<version>` git tag; note PyPI displays
 # the PEP 440-normalized 2026.6.5 for the same release.
 version: "2026.06.05"
 date-released: "2026-06-05"

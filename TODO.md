@@ -18,8 +18,8 @@ to ship after). Sequencing is at the bottom.
 - **R1 [LAUNCH] — Version bump (CalVer `YYYY.MM.DD`).** ✅ Mechanism already
   exists: `pyproject.toml` has `dynamic = ["version"]` sourced from
   `__version__` in `packages/luxar/src/luxar/__init__.py`, and CalVer is already
-  in use (currently `2026.06.05`). On release day, **bump that one line** to the
-  date (and the viewer `package.json` to match). Verified: `hatch build`
+  in use (currently `2026.06.05`). On release day, run `make set-version` to
+  stamp it, the viewer `package.json`, and `CITATION.cff`. Verified: `hatch build`
   produces `luxar-<version>-py3-none-any.whl`.
   - **⚠️ PEP 440 / semver caveat:** both ecosystems **strip leading zeros** from
     numeric segments, so `2026.06.29` normalizes to **`2026.6.29`** on PyPI
@@ -28,14 +28,14 @@ to ship after). Sequencing is at the bottom.
     version will display unpadded. Pick one display form and use it consistently
     in the tag, release notes, and citation so they don't visibly diverge.
   - Because the version equals the release date, **set it last** (a release-prep
-    step), not now — otherwise it goes stale. A `make set-version DATE=...`
-    helper that stamps both `pyproject.toml` and `package.json` keeps them in
-    sync.
+    step), not now — otherwise it goes stale. `make set-version DATE=...` keeps
+    the Python, viewer, and citation representations in sync.
 - **R2 [BLOCKER] — First git tag + release.** ✅ **Release tooling built** —
   `scripts/release.sh` + Make targets, tested (bash-3.2 safe, guards verified):
-  - `make set-version [DATE=YYYY.MM.DD]` — stamps `__version__` (zero-padded) +
-    viewer `package.json` (semver-normalized); you commit it via a PR (main is
-    branch-protected, `enforce_admins` on — no direct pushes).
+  - `make set-version [DATE=YYYY.MM.DD]` — stamps `__version__` and
+    `CITATION.cff` (zero-padded) + viewer `package.json` (semver-normalized); you
+    commit it via a PR (main is branch-protected, `enforce_admins` on — no
+    direct pushes).
   - `make release-check` — dry-run: runs ALL preflight (on main, clean tree, in
     sync with origin, publish.yml committed, CalVer valid, tag free, **required
     CI checks green on the main SHA**), mutates nothing.
@@ -101,8 +101,8 @@ to ship after). Sequencing is at the bottom.
     dry-run (build+pack, no secrets). `scripts/release.sh` now also checks for it
     and names it in the plan.
   - ✅ **Version sync:** `make set-version DATE=...` (`scripts/set_version.py`)
-    already stamps the viewer `package.json` (semver-normalized) alongside the
-    Python `__version__`.
+    stamps Python `__version__`, viewer `package.json` (semver-normalized), and
+    `CITATION.cff` together.
   - ⛔ **One-time npm-side setup still TODO (do at launch).** Target end-state is
     token-less **OIDC trusted publishing with provenance**, mirroring the PyPI
     setup. **Key gotcha:** npm has no "pending publisher" (unlike PyPI), so a

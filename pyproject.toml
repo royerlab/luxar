@@ -413,7 +413,7 @@ lint = [
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
 # Enforce layer direction: domain (gsplats/io/core/encoding) must not import cli.
 check-imports = "lint-imports"
-# Assert Python __version__ and viewer package.json describe the same release.
+# Assert Python, viewer, and citation metadata describe the same release.
 check-versions = "python scripts/check_version_consistency.py"
 # Regenerate the Python + TS format-contract projections from contract.yaml.
 gen-contract = "python scripts/gen_format_contract.py"
