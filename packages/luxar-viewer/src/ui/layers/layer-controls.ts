@@ -627,7 +627,7 @@ export class LayerControls {
       this.absorptionSlider.setValue(primary.absorption);
     }
 
-    // Mesh shading: seat all three thumbs on the layer's live values. Pushed
+    // Mesh appearance: seat all five thumbs on the layer's live values. Pushed
     // unconditionally, before the visibility gate below — a hidden slider still has to
     // hold the right value, or selecting a mesh layer would briefly show the previous
     // layer's numbers.
@@ -708,14 +708,13 @@ export class LayerControls {
   }
 
   /**
-   * Show the five mesh shading sliders only when they can do something.
+   * Show the five mesh appearance sliders only when they can do something.
    *
-   * TYPE-gated, which is new for this panel — every other control here is either
-   * universal or mode-gated. Mesh is the only geometry type that shades (§6.2), so on a
-   * points/lines/gsplat layer these five have no uniform to write and would be
-   * controls that visibly do nothing.
+   * All five are type-gated. The four lighting controls are additionally hidden when
+   * the material resolves to `shading="none"`, where their uniforms are compiled out.
    *
-   * `alphaCutoff` carries the mode gate ON TOP: the cutout only exists in `opaque`, so
+   * `alphaCutoff` instead carries a mode gate ON TOP: the cutout only exists in
+   * `opaque`, so
    * in any other mesh mode the threshold is read by no branch of the fragment shader.
    * The gate is on the MESH-RESOLVED mode, so a mesh in a volumetric-inherited/selected
    * mode (which a mesh resolves back to `opaque`) still shows its active cutout slider.

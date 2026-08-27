@@ -301,8 +301,9 @@ export interface LayerInfo {
    * Mesh `opaque`-mode cutout threshold (0–1) — the §6.2 `alpha_cutoff`.
    *
    * Only meaningful in `opaque`, which is a NARROWER condition than the other four
-   * (they apply in every mesh mode), so the panel gates its slider on the mode as well
-   * as the type — the same shape as absorption's volumetric gate.
+   * (they apply in every blending mode when shading is lit), so the panel gates its
+   * slider on the mode as well as the type — the same shape as absorption's
+   * volumetric gate.
    */
   alphaCutoff: number;
   /** Current display-range minimum (maps to intensity+offset in shader) */
