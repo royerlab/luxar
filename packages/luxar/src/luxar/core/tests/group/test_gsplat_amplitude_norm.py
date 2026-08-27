@@ -20,11 +20,12 @@ from luxar._zarr_compat import read_node_attrs
 from luxar.core.group.gsplats_pipeline.amplitude_norm import (
     AMPLITUDE_REFERENCE_PERCENTILE,
     NORMALIZATION_FACTOR_ATTR,
+    normalize_gsplat_data,
     normalize_node_in_place,
     resolve_factor,
 )
-from luxar.gsplats.gsplat_data import GSplatData
-from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
+from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
+from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, iter_leaves
 
 DIMS = Dimensions([Dimension(n, display=True, range=(0.0, 120.0)) for n in "XYZ"])
 
@@ -172,6 +173,43 @@ def test_substitutive_levels_share_one_factor(tmp_path):
     )
 
 
+def test_data_normalisation_updates_level_energy_stamps():
+    source_energies = (4.0e6, 9.0e6)
+    levels = []
+    for index, (peak, energy) in enumerate(zip((800.0, 200.0), source_energies)):
+        data = _data(n=1000, peak=peak, seed=index)
+        levels.append(
+            SubstitutiveLevel(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=data.centers,
+                        amplitudes=data.amplitudes,
+                        cholesky_factors=data.cholesky_factors,
+                    )
+                ],
+                stats={
+                    "reference_energy": energy,
+                    "quality": 0.75,
+                    "refine_stats": {"mse_seed": 1.0},
+                    "label": f"level-{index}",
+                },
+            )
+        )
+
+    scaled, factor = normalize_gsplat_data(GSplatData(substitutive_levels=levels), True)
+
+    assert factor is not None
+    for index, (level, source_energy) in enumerate(
+        zip(scaled.substitutive_levels, source_energies)
+    ):
+        assert level.stats["reference_energy"] == pytest.approx(
+            source_energy * factor**2
+        )
+        assert level.stats["quality"] == 0.75
+        assert "refine_stats" not in level.stats
+        assert level.stats["label"] == f"level-{index}"
+
+
 # ------------------------------------------------------- relative structure
 
 
@@ -260,6 +298,34 @@ def test_partition_gets_one_tree_wide_factor(tmp_path):
         f"parts were scaled by DIFFERENT factors, which steps at every seam: {factors}"
     )
     assert factors[0] == pytest.approx(1.0 / pooled_reference, rel=1e-3)
+
+
+def test_graft_normalisation_updates_leaf_energy_stamps():
+    source_energies = (1.0e6, 4.0e5)
+    parts = [
+        _data(n=1000, peak=peak, seed=index)
+        for index, peak in enumerate((200.0, 800.0))
+    ]
+    for index, (part, energy) in enumerate(zip(parts, source_energies)):
+        part.tree.meta["stats"] = {
+            "reference_energy": energy,
+            "quality": 0.5,
+            "refine_stats": {"mse_refit": 2.0},
+            "label": f"part-{index}",
+        }
+    node = GSplatData.partition_from_regions(parts)
+
+    factor = normalize_node_in_place(node, True)
+
+    assert factor is not None
+    for index, (leaf, source_energy) in enumerate(
+        zip(iter_leaves(node), source_energies)
+    ):
+        stats = leaf.meta["stats"]
+        assert stats["reference_energy"] == pytest.approx(source_energy * factor**2)
+        assert stats["quality"] == 0.5
+        assert "refine_stats" not in stats
+        assert stats["label"] == f"part-{index}"
 
 
 def test_graft_reference_uses_only_the_finest_lod_level():

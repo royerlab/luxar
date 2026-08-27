@@ -181,9 +181,11 @@ def normalize_gsplat_data(
     """Normalise a ``GSplatData``'s amplitudes; return it and the factor used.
 
     Rebuilds the ladder with one factor across every substitutive level, then
-    drops measured reconstruction scores invalidated by the changed amplitudes.
-    This deliberately avoids the general intensity-edit restamp path: scene
-    insertion is core API and must not import the SciPy-backed LOD builders.
+    drops top-level and per-rung reconstruction scores, rescales each level's
+    quadratic ``reference_energy``, and drops its source-volume ``refine_stats``.
+    Scale-invariant ``quality`` stays valid. This deliberately avoids the general
+    intensity-edit restamp path: scene insertion is core API and must not import
+    the SciPy-backed LOD builders. See #2229 and #2230 for that dependency boundary.
     """
     amps = np.asarray(result.amplitudes, dtype=np.float64).ravel()
     factor = resolve_factor(spec, _sample_reference(amps))
@@ -211,6 +213,10 @@ def normalize_gsplat_data(
         else scale_level(result)
     )
     scrub_measured_stats(scaled)
+    from luxar.gsplats.tree import iter_leaves
+
+    for leaf in iter_leaves(scaled.tree):
+        _scale_energy_stats(leaf.meta.get("stats"), factor)
     return scaled, factor
 
 
@@ -244,7 +250,17 @@ def normalize_node_in_place(node: "GSplatNode", spec: NormalizeSpec) -> Optional
                 amps = np.array(amps, copy=True)
                 object.__setattr__(sub, "amplitudes", amps)
             np.multiply(amps, scale, out=amps, casting="unsafe")
+        _scale_energy_stats(leaf.meta.get("stats"), factor)
     return factor
+
+
+def _scale_energy_stats(stats: object, factor: float) -> None:
+    """Keep amplitude-dependent level stamps consistent after a global scale."""
+    if not isinstance(stats, dict):
+        return
+    if "reference_energy" in stats:
+        stats["reference_energy"] = float(stats["reference_energy"]) * factor**2
+    stats.pop("refine_stats", None)
 
 
 def stamp_factor(attrs: dict, factor: Optional[float]) -> None:

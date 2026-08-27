@@ -29,6 +29,11 @@ to no normalisation because its exposure must stay shared with its siblings;
 elsewhere, and a number sets an explicit target. The factor applied is recorded
 as `amplitude_normalization_factor`.
 
+For `luxar gsplat convert`, `--intensity` and `--gamma` now describe the window
+over these normalised amplitudes. On matrix-shaped inputs, `--scale-intensity`
+continues to preserve explicitly scaled raw units by suppressing insertion
+normalisation.
+
 One factor covers the whole structure. That is the part worth stating, because
 getting it wrong is invisible until it is on screen: a coarser substitutive level
 holds merged representatives carrying combined mass, so its own percentile is

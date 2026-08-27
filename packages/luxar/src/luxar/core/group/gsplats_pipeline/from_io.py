@@ -666,18 +666,17 @@ def _graft_gsplat_node_transaction(
         raise
 
 
-def _normalize_graft_once(
+def _ensure_graft_normalized(
     node: Any,
     attrs: Dict[str, Any],
     normalize_amplitudes: NormalizeSpec,
     normalized: bool,
-) -> bool:
+) -> None:
     """Apply the one tree-wide insertion factor before graft recursion."""
     if normalized:
-        return True
+        return
     factor = normalize_node_in_place(node, normalize_amplitudes)
     stamp_amplitude_factor(attrs, factor)
-    return True
 
 
 def graft_gsplat_node(
@@ -798,7 +797,8 @@ def graft_gsplat_node(
     # prevent. Idempotence does not save us here: after a tree-wide scale a hot
     # tile's OWN p99.9 can still exceed 1.0, so ``auto`` would fire again on it
     # alone.
-    _normalized = _normalize_graft_once(node, attrs, normalize_amplitudes, _normalized)
+    _ensure_graft_normalized(node, attrs, normalize_amplitudes, _normalized)
+    _normalized = True
 
     if isinstance(node, GSplatLeaf):
         # Matrix-shaped → the normal data path. A graft preserves the file's own
