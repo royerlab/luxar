@@ -990,10 +990,16 @@ if os.environ["ROUTER_API_ERROR"] == "runs" and "/actions/runs?" in endpoint:
 if os.environ["ROUTER_API_ERROR"] == "runs-json" and "/actions/runs?" in endpoint:
     print("not-json")
     raise SystemExit(0)
+if os.environ["ROUTER_API_ERROR"] == "later-runs-json" and "status=in_progress" in endpoint:
+    print("not-json")
+    raise SystemExit(0)
 if os.environ["ROUTER_API_ERROR"] == "jobs" and "/runs/" in endpoint and "/jobs?" in endpoint:
     raise SystemExit(1)
 if os.environ["ROUTER_API_ERROR"] == "later-jobs" and "/runs/9999/jobs?" in endpoint:
     raise SystemExit(1)
+if os.environ["ROUTER_API_ERROR"] == "later-jobs-json" and "/runs/9999/jobs?" in endpoint:
+    print("not-json")
+    raise SystemExit(0)
 if os.environ["ROUTER_API_ERROR"] == "jobs-json" and "/runs/" in endpoint and "/jobs?" in endpoint:
     print("not-json")
     raise SystemExit(0)
@@ -1121,8 +1127,11 @@ def test_pick_runner_fails_api_read_toward_obsidian(
     assert label == "obsidian"
 
 
+@pytest.mark.parametrize(
+    "api_error", ["later-runs-json", "later-jobs", "later-jobs-json"]
+)
 def test_pick_runner_preserves_observed_backlog_on_later_api_failure(
-    workflow: str, tmp_path: Path
+    workflow: str, tmp_path: Path, api_error: str
 ) -> None:
     """A later failed read cannot erase backlog already observed in this scan."""
     result, label = _run_pick_runner(
@@ -1130,7 +1139,7 @@ def test_pick_runner_preserves_observed_backlog_on_later_api_failure(
         tmp_path,
         other_run_active=True,
         first_run_queued_obsidian_jobs=2,
-        api_error="later-jobs",
+        api_error=api_error,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr

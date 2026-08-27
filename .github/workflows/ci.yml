@@ -318,8 +318,13 @@ jobs:
               '.workflow_runs[]
               | select($status == "in_progress" or (.created_at | fromdateiso8601) <= $cutoff)
               | .id' 2>/dev/null) || {
-                echo "run backlog unreadable; routing to obsidian to avoid paid overflow"
-                echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                if [ "$queued_obsidian" -gt 0 ]; then
+                  echo "run backlog unreadable after finding aged backlog -> routing to ubuntu-latest"
+                  echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                else
+                  echo "run backlog unreadable; routing to obsidian to avoid paid overflow"
+                  echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                fi
                 exit 0
               }
             for run_id in $run_ids; do
