@@ -85,6 +85,7 @@ export function updateVisibleCountsInMonitor(
     number
   >;
   const byPath = new Map<string, number>();
+  let droppedElements = 0;
 
   // Manual recursion rather than THREE's `traverse`, which visits every
   // descendant regardless of visibility. Pruning at `visible === false`
@@ -111,6 +112,13 @@ export function updateVisibleCountsInMonitor(
         // Mesh `name` is the scene-graph path (set by node-factory).
         byPath.set(object.name, (byPath.get(object.name) ?? 0) + visible);
       }
+      if (visible !== undefined) {
+        const requested = (object.userData as { requestedElementCount?: number })
+          .requestedElementCount;
+        if (typeof requested === 'number' && Number.isFinite(requested)) {
+          droppedElements += Math.max(0, requested - visible);
+        }
+      }
     }
     for (const child of object.children) visit(child);
   };
@@ -119,5 +127,6 @@ export function updateVisibleCountsInMonitor(
   for (const child of rootGroup.children) visit(child);
 
   for (const t of GEOMETRY_TYPES) monitor.updateVisibleCount(t, totals[t]);
+  monitor.updateDroppedElementCount?.(droppedElements);
   monitor.updateVisibleCountsByPath(byPath);
 }

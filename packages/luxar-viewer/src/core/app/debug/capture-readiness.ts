@@ -92,6 +92,8 @@ export interface CaptureReadinessSummary {
    * the max is inert and this is simply the sum.
    */
   totalElements: number;
+  /** Elements omitted by renderer capacity clamps. */
+  totalDroppedElements: number;
   /** Number of point-cloud nodes in the scene. */
   pointCloudCount: number;
   /** Number of gsplat nodes in the scene. */
@@ -165,6 +167,7 @@ export function summarizeCaptureReadiness(
     totalLines: 0,
     totalTriangles: 0,
     totalElements: 0,
+    totalDroppedElements: 0,
     pointCloudCount: 0,
     gsplatCount: 0,
     lineCount: 0,
@@ -185,6 +188,7 @@ export function summarizeCaptureReadiness(
   const totalTriangles = finiteOrZero(state.totalTriangles);
   const summed = totalPoints + totalGSplats + totalLines + totalTriangles;
   const totalElements = Math.max(finiteOrZero(state.totalElements), summed);
+  const totalDroppedElements = finiteOrZero(state.totalDroppedElements);
 
   const counts = {
     pointCloudCount: lengthOrZero(state.pointClouds),
@@ -237,7 +241,17 @@ export function summarizeCaptureReadiness(
     totalLines,
     totalTriangles,
     totalElements,
+    totalDroppedElements,
   };
+
+  if (totalDroppedElements > 0) {
+    return {
+      ok: false,
+      reason: `${totalDroppedElements} elements were dropped by renderer capacity limits`,
+      ...totals,
+      ...counts,
+    };
+  }
 
   /**
    * The counts this call had to give up on, named: `<fields> present but not

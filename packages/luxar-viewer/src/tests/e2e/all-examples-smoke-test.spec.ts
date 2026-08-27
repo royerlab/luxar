@@ -182,6 +182,7 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       // counts. Keep this unconditional: DATASETS_ALLOW_ZERO_POINTS waives only
       // the point-specific assertion, not the requirement that geometry loaded.
       expect(state.totalElements).toBeGreaterThan(0);
+      expect(state.totalDroppedElements).toBe(0);
 
       // A strict per-node assertion is not valid: nd_points_example has a visible
       // /Reference5D node with pointCount=0 while its sibling carries all 820 points,

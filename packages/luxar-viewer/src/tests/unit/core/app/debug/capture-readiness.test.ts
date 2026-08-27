@@ -26,6 +26,7 @@ function makeState(overrides: Partial<DebugState> = {}): Partial<DebugState> {
     totalLines: 0,
     totalTriangles: 0,
     totalElements: 0,
+    totalDroppedElements: 0,
     pointClouds: [],
     gsplatMeshes: [],
     lineMeshes: [],
@@ -55,6 +56,7 @@ function expectNoNaN(summary: CaptureReadinessSummary): void {
     'totalLines',
     'totalTriangles',
     'totalElements',
+    'totalDroppedElements',
     'pointCloudCount',
     'gsplatCount',
     'lineCount',
@@ -70,6 +72,17 @@ function expectNoNaN(summary: CaptureReadinessSummary): void {
 }
 
 describe('summarizeCaptureReadiness', () => {
+  it('rejects a capture when the renderer dropped elements', () => {
+    const summary = summarizeCaptureReadiness(
+      makeState({ totalPoints: 80, totalElements: 80, totalDroppedElements: 20 })
+    );
+
+    expect(summary.ok).toBe(false);
+    expect(summary.totalDroppedElements).toBe(20);
+    expect(summary.reason).toContain('20 elements were dropped by renderer capacity limits');
+    expectNoNaN(summary);
+  });
+
   it('reports a MESH-ONLY scene as ready, with its mesh node count', () => {
     const summary = summarizeCaptureReadiness(
       makeState({

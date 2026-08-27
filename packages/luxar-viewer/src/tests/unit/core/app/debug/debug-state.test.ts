@@ -26,6 +26,7 @@ function makePointCloud(
     hasColors?: boolean;
     hasRadii?: boolean;
     hasSharpness?: boolean;
+    requestedElementCount?: number;
   } = {}
 ): THREE.Mesh {
   // Point clouds are THREE.Mesh with instanced quad geometry whose
@@ -54,6 +55,7 @@ function makePointCloud(
   const points = new THREE.Mesh(geometry);
   points.userData = {
     nodeType: 'points',
+    requestedElementCount: options.requestedElementCount,
   };
   if (options.name !== undefined) points.name = options.name;
   if (options.visible !== undefined) points.visible = options.visible;
@@ -62,7 +64,7 @@ function makePointCloud(
 
 function makeGSplatMesh(
   splatCount: number,
-  options: { name?: string; visible?: boolean } = {}
+  options: { name?: string; visible?: boolean; requestedElementCount?: number } = {}
 ): THREE.Mesh {
   const geometry = new THREE.InstancedBufferGeometry();
   geometry.instanceCount = splatCount;
@@ -70,7 +72,7 @@ function makeGSplatMesh(
   // for the count, which reads instanceCount).
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
   const mesh = new THREE.Mesh(geometry);
-  mesh.userData = { nodeType: 'gsplats' };
+  mesh.userData = { nodeType: 'gsplats', requestedElementCount: options.requestedElementCount };
   if (options.name !== undefined) mesh.name = options.name;
   if (options.visible !== undefined) mesh.visible = options.visible;
   return mesh;
@@ -78,7 +80,12 @@ function makeGSplatMesh(
 
 function makeLineMesh(
   segmentCount: number,
-  options: { name?: string; visible?: boolean; hasColormap?: boolean } = {}
+  options: {
+    name?: string;
+    visible?: boolean;
+    hasColormap?: boolean;
+    requestedElementCount?: number;
+  } = {}
 ): THREE.Mesh {
   // Lines render as THREE.Mesh + InstancedBufferGeometry (one instance
   // per segment), matching the Points/GSplats symmetry contract.
@@ -97,7 +104,7 @@ function makeLineMesh(
     defines: options.hasColormap ? { USE_COLORMAP: '' } : {},
   });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.userData = { nodeType: 'lines' };
+  mesh.userData = { nodeType: 'lines', requestedElementCount: options.requestedElementCount };
   if (options.name !== undefined) mesh.name = options.name;
   if (options.visible !== undefined) mesh.visible = options.visible;
   return mesh;
@@ -306,6 +313,32 @@ describe('computeDebugState', () => {
       expect(state.totalPoints).toBe(100);
       expect(state.totalGSplats).toBe(50);
       expect(state.totalElements).toBe(150);
+    });
+
+    it('reports requested, granted, and dropped counts for element-texture nodes', () => {
+      const scene = new THREE.Scene();
+      scene.add(makePointCloud(80, { name: 'points', requestedElementCount: 100 }));
+      scene.add(makeGSplatMesh(40, { name: 'splats', requestedElementCount: 50 }));
+      scene.add(makeLineMesh(20, { name: 'lines', requestedElementCount: 25 }));
+
+      const state = computeDebugState(makeContext(scene));
+
+      expect(state.totalDroppedElements).toBe(35);
+      expect(state.pointClouds[0]).toMatchObject({
+        requestedElementCount: 100,
+        grantedElementCount: 80,
+        droppedElementCount: 20,
+      });
+      expect(state.gsplatMeshes[0]).toMatchObject({
+        requestedElementCount: 50,
+        grantedElementCount: 40,
+        droppedElementCount: 10,
+      });
+      expect(state.lineMeshes[0]).toMatchObject({
+        requestedElementCount: 25,
+        grantedElementCount: 20,
+        droppedElementCount: 5,
+      });
     });
   });
 

@@ -214,6 +214,7 @@ export function commitLinesGeometry(
     // SUCCESS-ONLY tail (a throwing write above propagates past this
     // point, mirroring the points/gsplats twins): freshness first —
     mesh.userData.visibleSegmentCount = segmentCount;
+    mesh.userData.requestedElementCount = processed.segmentCount;
     // Append-fast-path bookkeeping: the buffer now holds this commit's
     // data in full (whether written fully or by suffix-extension), so the
     // next commit may append. A context restore clears this flag.

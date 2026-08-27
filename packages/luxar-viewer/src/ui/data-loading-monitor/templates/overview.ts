@@ -316,6 +316,18 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
       <!-- Primary metrics -->
       ${primaryMetrics}
 
+      <div class="luxar-overview-grid luxar-overview-grid--cols-1">
+        ${renderMetricCard(
+          'DROPPED ELEMENTS',
+          formatNumber(stats.droppedElements ?? 0),
+          'renderer capacity clamp',
+          (stats.droppedElements ?? 0) > 0 ? getColorClass('error') : getColorClass('success'),
+          'small',
+          'dropped-elements',
+          'Elements requested by visible points, lines, and Gaussian-splat nodes but omitted because a node exceeded the GPU element-texture capacity. Mesh is not element-texture backed.'
+        )}
+      </div>
+
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(
         { used: cacheMetrics.totalCacheMemory, limit: cacheMetrics.memoryLimit },

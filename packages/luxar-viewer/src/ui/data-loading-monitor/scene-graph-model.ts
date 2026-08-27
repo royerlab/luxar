@@ -29,6 +29,7 @@ function emptySceneGraphState(): SceneGraphState {
     nodesByType: zeroCounters(),
     totalByType: zeroCounters(),
     visibleByType: zeroCounters(),
+    droppedElements: 0,
   };
 }
 
@@ -129,6 +130,10 @@ export class SceneGraphModel {
 
   updateVisibleCount(type: GeometryTypeName, count: number): void {
     this.sceneGraphState.visibleByType[type] = count;
+  }
+
+  updateDroppedElementCount(count: number): void {
+    this.sceneGraphState.droppedElements = count;
   }
 
   updateVisibleCountsByPath(counts: ReadonlyMap<string, number>): void {

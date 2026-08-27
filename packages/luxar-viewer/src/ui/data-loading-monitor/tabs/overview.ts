@@ -42,6 +42,7 @@ export function updateOverviewTab(
   if (hasPoints) patchCount('visible-points', stats.visiblePoints, stats.datasetSize);
   if (hasLines) patchCount('visible-lines', stats.visibleSegments, stats.datasetSegments);
   if (hasGSplats) patchCount('visible-splats', stats.visibleSplats, stats.datasetSplats);
+  patchField(container, 'dropped-elements', formatNumber(stats.droppedElements ?? 0));
 
   patchField(container, 'memory-used', formatBytes(cacheMetrics.totalCacheMemory));
   patchField(container, 'query-speed', `${stats.avgQueryTime.toFixed(0)}ms`);

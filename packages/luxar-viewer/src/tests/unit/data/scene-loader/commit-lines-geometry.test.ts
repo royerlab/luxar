@@ -111,6 +111,7 @@ describe('commitLinesGeometry', () => {
     const staged: StagedLinesCommit = { path: '/lines', sourceData: makeSourceData(), processed };
     commitLinesGeometry(staged, root, null, undefined, 0);
     expect(mesh.userData.visibleSegmentCount).toBe(7);
+    expect(mesh.userData.requestedElementCount).toBe(7);
     // C6[P2][P11]: pin the actual GPU dispatch — a mutant dropping the
     // updateInstancedLinesMesh call would still pass the userData write.
     // No-pool path calls updateInstancedLinesMesh(mesh, processed).

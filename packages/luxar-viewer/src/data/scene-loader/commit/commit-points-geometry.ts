@@ -315,6 +315,7 @@ export function commitPointsGeometry(
     // propagates past this point, mirroring the gsplats twin's single
     // post-if/else tail): freshness first —
     points.userData.visiblePointCount = pointCount;
+    points.userData.requestedElementCount = data.pointCount;
     // Append-fast-path bookkeeping: the buffer now holds this commit's
     // data in full (whether written fully or by suffix-extension), so the
     // next commit may append. Only consulted on the pool path, but the

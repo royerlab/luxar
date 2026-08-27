@@ -245,6 +245,7 @@ describe('commitPointsGeometry', () => {
     expect(disposeSpy).toHaveBeenCalledTimes(1);
     expect(points.geometry).not.toBe(firstGeometry);
     expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(3);
+    expect((points.userData as { requestedElementCount: number }).requestedElementCount).toBe(3);
   });
 
   it('bakes the radius footprint into boundingBox (three-geometry invariant)', () => {
