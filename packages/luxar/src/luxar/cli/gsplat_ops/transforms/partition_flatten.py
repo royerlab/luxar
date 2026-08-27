@@ -146,9 +146,14 @@ def run_flatten_dataset(
             # `lod_kind: substitutive` / `n_substitutive_levels: 4` /
             # `lod_cutpoints: [...]` describes a tree that no longer exists (#1600).
             if stats:
+                carried_stats = stats_after_structure_change(stats)
+                if len(leaves) > 1:
+                    # Batch-merge coordinates identify spatial slots. Flattening
+                    # removes those slots, so their provenance is no longer valid.
+                    carried_stats.pop("part_provenance", None)
                 flat = GSplatData.from_additive_sublods(
                     list(flat.additive_sublods),
-                    stats=stats_after_structure_change(stats),
+                    stats=carried_stats,
                 )
             aprint(
                 f"Flattened {len(leaves)} leaf/leaves → {flat.n_splats:,} splats "
