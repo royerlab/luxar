@@ -837,6 +837,8 @@ def _bsp_tree_sah(
         the 3D form on planar data would index a non-existent third extent.
         """
         ext = np.maximum(0.0, maxs - mins)
+        if ext.shape[0] == 1:
+            return float(2.0 * ext[0])
         if ext.shape[0] == 2:
             return float(2.0 * (ext[0] + ext[1]))
         return float(2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2]))
@@ -899,12 +901,42 @@ def _bsp_tree_sah(
     )
 
 
+def _resolve_split_axes(
+    positions: NDArray, split_axes: Optional[Sequence[int]]
+) -> List[int]:
+    axes = (
+        list(range(min(3, positions.shape[1])))
+        if split_axes is None
+        else [int(axis) for axis in split_axes]
+    )
+    if not axes or len(axes) > 3:
+        raise ValueError(f"split_axes must contain 1 to 3 columns; got {axes}")
+    if len(set(axes)) != len(axes):
+        raise ValueError(f"split_axes must not contain duplicates; got {axes}")
+    if min(axes) < 0 or max(axes) >= positions.shape[1]:
+        raise ValueError(
+            f"split_axes {axes} are out of bounds for positions with "
+            f"shape {positions.shape}"
+        )
+    return axes
+
+
+def _restore_bsp_position_columns(root: BSPNode, axes: Sequence[int]) -> None:
+    if root.is_leaf:
+        return
+    assert root.axis is not None and root.left is not None and root.right is not None
+    root.axis = axes[root.axis]
+    _restore_bsp_position_columns(root.left, axes)
+    _restore_bsp_position_columns(root.right, axes)
+
+
 def spatial_bsp_tree(
     positions: NDArray,
     max_elements: int,
     *,
     rule: str = "median",
     n_candidates: int = 32,
+    split_axes: Optional[Sequence[int]] = None,
 ) -> BSPNode:
     """Build the BSP **tree** (split planes retained) for ``positions``.
 
@@ -916,13 +948,12 @@ def spatial_bsp_tree(
     (``"median"`` default / ``"midpoint"`` / ``"sah"``); ``n_candidates`` is
     forwarded to the SAH rule only.
 
-    Splits only ever fall on the first up-to-three (spatial) axes, so a
-    serialized tree's ``axis`` is always a center-column index below 3 (``0``/
-    ``1`` for 2D data, ``0``/``1``/``2`` for 3D+). The viewer maps that column
-    through ``displayDims`` to reach its own local axis — see
-    ``render-order.ts``; the two coincide only when ``displayDims == [0, 1, 2]``.
-    If any split column is not displayed, the writer warns and the viewer
-    discards the whole tree in favor of centroid ordering.
+    By default splits fall on the first up-to-three position columns. Pass
+    ``split_axes`` to choose up to three columns explicitly; serialized
+    ``axis`` values remain the original position-column indices. Scene adders
+    pass the dimensions displayed at write time so the viewer can use the tree
+    immediately. A later nD navigation change can still select a different
+    displayed triple, in which case the viewer falls back to centroid ordering.
     """
     if positions.ndim != 2:
         raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
@@ -938,20 +969,26 @@ def spatial_bsp_tree(
     if n == 0:
         raise ValueError("spatial_bsp_tree needs a non-empty positions array")
 
-    spatial = positions[:, : min(3, positions.shape[1])]
+    axes = _resolve_split_axes(positions, split_axes)
+
+    spatial = positions[:, axes]
     root = np.arange(n, dtype=np.intp)
     if rule == "median":
-        return _bsp_tree_median(spatial, max_elements, root)
-    if rule == "midpoint":
-        return _bsp_tree_midpoint(spatial, max_elements, root)
-    if rule == "sah":
+        tree = _bsp_tree_median(spatial, max_elements, root)
+    elif rule == "midpoint":
+        tree = _bsp_tree_midpoint(spatial, max_elements, root)
+    elif rule == "sah":
         if n_candidates < 2:
             raise ValueError(
                 f"n_candidates must be >= 2 (need at least one interior split); "
                 f"got {n_candidates}"
             )
-        return _bsp_tree_sah(spatial, max_elements, root, n_candidates)
-    raise ValueError(f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}")
+        tree = _bsp_tree_sah(spatial, max_elements, root, n_candidates)
+    else:
+        raise ValueError(f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}")
+
+    _restore_bsp_position_columns(tree, axes)
+    return tree
 
 
 def bsp_leaf_parts(root: BSPNode) -> List[NDArray[np.intp]]:
@@ -1179,11 +1216,14 @@ def _validate_polyline_bsp_inputs(
 
 
 def _polyline_centroids_and_sizes(
-    vertices: NDArray, polyline_indices: List[NDArray[np.intp]]
+    vertices: NDArray,
+    polyline_indices: List[NDArray[np.intp]],
+    split_axes: Optional[Sequence[int]],
 ) -> Tuple[NDArray[np.float64], NDArray[np.intp]]:
     """Return split coordinates and atomic vertex counts for each polyline."""
     n_polylines = len(polyline_indices)
-    spatial = vertices[:, : min(3, vertices.shape[1])]
+    axes = _resolve_split_axes(vertices, split_axes)
+    spatial = vertices[:, axes]
     centroids = np.zeros((n_polylines, spatial.shape[1]), dtype=np.float64)
     sizes = np.zeros(n_polylines, dtype=np.intp)
     for polyline_index, members in enumerate(polyline_indices):
@@ -1241,6 +1281,7 @@ def spatial_bsp_polyline_tree(
     max_elements: int,
     *,
     rule: str = "median",
+    split_axes: Optional[Sequence[int]] = None,
 ) -> Optional[BSPNode]:
     """Build a BSP tree over atomic polylines, capped by vertex count.
 
@@ -1269,14 +1310,19 @@ def spatial_bsp_polyline_tree(
     _validate_polyline_bsp_inputs(vertices, max_elements, rule)
     if not polyline_indices:
         return None
-    centroids, sizes = _polyline_centroids_and_sizes(vertices, polyline_indices)
-    return _polyline_bsp_node(
+    centroids, sizes = _polyline_centroids_and_sizes(
+        vertices, polyline_indices, split_axes
+    )
+    tree = _polyline_bsp_node(
         centroids,
         sizes,
         np.arange(len(polyline_indices), dtype=np.intp),
         max_elements,
         rule,
     )
+    axes = _resolve_split_axes(vertices, split_axes)
+    _restore_bsp_position_columns(tree, axes)
+    return tree
 
 
 def _flat_polyline_parts(root: Optional[BSPNode]) -> List[List[int]]:

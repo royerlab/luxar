@@ -120,10 +120,8 @@ def test_native_partition_adders_write_valid_bsp_trees(tmp_path, rule: str) -> N
             assert not serialized_bsp_tree_separates(tree, boxes)
 
 
-def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
-    tmp_path, capsys
-) -> None:
-    """Every native partition writer surfaces a tree the viewer will reject."""
+def test_native_partition_adders_split_on_displayed_columns(tmp_path, capsys) -> None:
+    """Every native partition writer emits a tree usable by the current view."""
     centers = np.array(
         [
             [-6.0, 0.0, 0.0, 0.0],
@@ -200,11 +198,26 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
             extend_to_all=[],
         )
 
+    root = zarr.open_group(str(output), mode="r")
+    for name in ("points", "lines", "mesh", "gsplats"):
+        tree = root[name].attrs["bsp_tree"]
+        axes: set[int] = set()
+
+        def collect_axes(node: dict) -> None:
+            if "part" in node:
+                return
+            axes.add(int(node["axis"]))
+            collect_axes(node["left"])
+            collect_axes(node["right"])
+
+        collect_axes(tree)
+        assert axes
+        assert axes <= {1, 2, 3}
+
     output_text = capsys.readouterr().out
     for name in ("points", "lines", "mesh", "gsplats"):
-        assert f"partition '{name}'" in output_text
-    assert output_text.count("viewer discards this bsp_tree") == 4
-    assert "displayed dimensions first" in output_text
+        assert f"partition '{name}'" not in output_text
+    assert "viewer discards this bsp_tree" not in output_text
 
 
 def test_partition_axis_warning_walks_descendant_splits(capsys) -> None:
