@@ -91,12 +91,16 @@ def _repo(tmp_path: Path) -> Path:
     )
     for filename in (
         "generate-gallery.spec.ts",
+        "orbit-axis.ts",
         "exposure-policy.ts",
         "crop-policy.ts",
     ):
         (
             tmp_path / f"packages/luxar-viewer/src/tests/screenshots/{filename}"
         ).write_text(f"// {filename}\n")
+    (tmp_path / "packages/luxar-viewer/playwright.gallery.config.ts").write_text(
+        "// gallery config\n"
+    )
     for demo_id in ("a", "b"):
         (tmp_path / f"packages/luxar/src/luxar/demos/demo_{demo_id}.py").write_text(
             "from luxar.shading import bake_ambient_occlusion\n"
@@ -216,7 +220,7 @@ def test_tile_uses_older_commit_from_still_and_video_pair(tmp_path: Path) -> Non
     assert by_id["a"].tile.committed_at.day == 21
 
 
-def test_demo_script_edit_stales_only_its_tile(tmp_path: Path) -> None:
+def test_demo_script_edit_stales_only_its_tile(tmp_path: Path, capsys) -> None:
     repo = _repo(tmp_path)
     (repo / "packages/luxar/src/luxar/demos/demo_b.py").write_text("# revised b\n")
     _commit(repo, "revise demo b", 22)
@@ -228,6 +232,11 @@ def test_demo_script_edit_stales_only_its_tile(tmp_path: Path) -> None:
     assert by_id["a"].stale_inputs == ()
     assert by_id["b"].stale_inputs == ("demo generator",)
 
+    assert stale.main(["--repo-root", str(repo)]) == 0
+    output = capsys.readouterr().out
+    assert "STALE b:" in output
+    assert "newer per-tile inputs: demo generator" in output
+
 
 def test_gallery_capture_policy_is_a_global_input(tmp_path: Path, capsys) -> None:
     repo = _repo(tmp_path)
@@ -237,10 +246,30 @@ def test_gallery_capture_policy_is_a_global_input(tmp_path: Path, capsys) -> Non
 
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
-    assert "global inputs:" in output
-    assert output.count("crop policy") == 1
+    global_header = output.splitlines()[0]
+    assert "crop policy" in global_header
+    assert output.count("newer global inputs: crop policy") == 2
     assert "STALE a" in output
     assert "STALE b" in output
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts",
+        "packages/luxar-viewer/playwright.gallery.config.ts",
+    ],
+)
+def test_gallery_capture_tracks_all_render_configuration(
+    tmp_path: Path, relative_path: str
+) -> None:
+    repo = _repo(tmp_path)
+    (repo / relative_path).write_text("// revised capture configuration\n")
+    _commit(repo, "revise capture configuration", 22)
+
+    statuses = stale.GalleryHistory(repo).tile_statuses()
+
+    assert all(status.stale_inputs == ("gallery capture",) for status in statuses)
 
 
 def test_appending_a_manifest_entry_does_not_stale_the_previous_last_entry(
@@ -258,7 +287,7 @@ def test_appending_a_manifest_entry_does_not_stale_the_previous_last_entry(
     assert by_id["b"].stale_inputs == ()
 
 
-def test_shading_docs_and_tests_do_not_mark_tiles_stale(tmp_path: Path) -> None:
+def test_shading_docs_and_tests_do_not_mark_tiles_stale(tmp_path: Path, capsys) -> None:
     repo = _repo(tmp_path)
     (repo / "packages/luxar/src/luxar/shading/README.md").write_text("docs only\n")
     (repo / "packages/luxar/src/luxar/shading/tests/test_occlusion.py").write_text(
@@ -280,6 +309,11 @@ def test_shading_docs_and_tests_do_not_mark_tiles_stale(tmp_path: Path) -> None:
     }
     assert by_id["a"].stale_inputs == ("luxar.shading",)
     assert by_id["b"].stale_inputs == ()
+
+    assert stale.main(["--repo-root", str(repo)]) == 0
+    output = capsys.readouterr().out
+    assert "luxar.shading" not in output.splitlines()[0]
+    assert "newer per-tile inputs: luxar.shading" in output
 
 
 def test_stale_findings_are_report_only(tmp_path: Path, capsys) -> None:

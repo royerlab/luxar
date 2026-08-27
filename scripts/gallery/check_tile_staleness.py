@@ -23,15 +23,17 @@ SHADING_PATHSPECS = (
     f":(exclude){SHADING_PATH.as_posix()}/tests/**",
 )
 TILES_DIR = Path("docs/images/readme/gallery")
-GLOBAL_INPUT_PATHS = {
-    "dataset generator": Path("scripts/gallery/generate_gallery_datasets.py"),
-    "gallery capture": Path(
-        "packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts"
+GLOBAL_INPUT_PATHSPECS = {
+    "dataset generator": ("scripts/gallery/generate_gallery_datasets.py",),
+    "gallery capture": (
+        "packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts",
+        "packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts",
+        "packages/luxar-viewer/playwright.gallery.config.ts",
     ),
-    "exposure policy": Path(
-        "packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts"
+    "exposure policy": (
+        "packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts",
     ),
-    "crop policy": Path("packages/luxar-viewer/src/tests/screenshots/crop-policy.ts"),
+    "crop policy": ("packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",),
 }
 
 _BLAME_HEADER = re.compile(r"^([0-9a-f]+) \d+ \d+(?: \d+)?$")
@@ -244,11 +246,10 @@ class GalleryHistory:
         entries = {entry["id"]: entry for entry in manifest["demos"]}
         ranges = manifest_entry_line_ranges(manifest_text)
         global_inputs = {
-            label: self._last_commit(path) for label, path in GLOBAL_INPUT_PATHS.items()
+            label: self._last_commit_for_pathspecs(*pathspecs)
+            for label, pathspecs in GLOBAL_INPUT_PATHSPECS.items()
         }
-        global_inputs["luxar.shading"] = self._last_commit_for_pathspecs(
-            *SHADING_PATHSPECS
-        )
+        shading_input = self._last_commit_for_pathspecs(*SHADING_PATHSPECS)
 
         statuses: list[TileStatus | UnknownStatus] = []
         for demo_id, media_paths in self._tracked_tile_media():
@@ -263,7 +264,6 @@ class GalleryHistory:
                 continue
             try:
                 inputs = dict(global_inputs)
-                global_input_labels = list(GLOBAL_INPUT_PATHS)
                 script = entry.get("script")
                 if script is not None:
                     if not isinstance(script, str):
@@ -274,11 +274,7 @@ class GalleryHistory:
                     inputs["demo generator"] = self._last_commit(script_path)
                     source = self._head_text(script_path)
                     if source is not None and imports_luxar_shading(source):
-                        global_input_labels.append("luxar.shading")
-                    else:
-                        inputs.pop("luxar.shading")
-                else:
-                    inputs.pop("luxar.shading")
+                        inputs["luxar.shading"] = shading_input
                 inputs["manifest entry"] = self._manifest_entry_commit(ranges[demo_id])
                 tile = min(
                     (self._last_commit(path) for path in media_paths),
@@ -292,7 +288,7 @@ class GalleryHistory:
                     demo_id=demo_id,
                     tile=tile,
                     inputs=inputs,
-                    global_input_labels=tuple(global_input_labels),
+                    global_input_labels=tuple(global_inputs),
                     stale_inputs=tuple(stale_inputs(tile, inputs)),
                 )
             )
@@ -311,15 +307,18 @@ def _format_status(status: TileStatus) -> str:
         for label in status.stale_inputs
         if label not in status.global_input_labels
     ]
+    stale_global = [
+        label for label in status.stale_inputs if label in status.global_input_labels
+    ]
+    details = []
+    if stale_global:
+        details.append(f"newer global inputs: {', '.join(stale_global)}")
     per_tile_details = ", ".join(
         f"{label} {_format_stamp(status.inputs[label])}" for label in stale_per_tile
     )
     if per_tile_details:
-        return (
-            f"STALE {status.demo_id}: tile {tile_stamp}; "
-            f"newer per-tile inputs: {per_tile_details}"
-        )
-    return f"STALE {status.demo_id}: tile {tile_stamp}"
+        details.append(f"newer per-tile inputs: {per_tile_details}")
+    return f"STALE {status.demo_id}: tile {tile_stamp}; {'; '.join(details)}"
 
 
 def _format_stamp(stamp: CommitStamp) -> str:
