@@ -241,7 +241,7 @@ def _recover_frame_scale(
 def _collect_frame_scale_ranges(
     node: Dict[str, Any],
     boxes: "List[Tuple[np.ndarray, np.ndarray]]",
-    overlap_floors: "Tuple[float, float, float]",
+    overlap_floors: "Tuple[float, ...]",
     ratios: Dict[int, List[float]],
     ranges: Dict[int, List[Tuple[float, float]]],
 ) -> bool:

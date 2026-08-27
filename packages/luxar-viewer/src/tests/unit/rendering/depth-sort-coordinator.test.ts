@@ -1235,6 +1235,34 @@ describe('depth-sort coordinator', () => {
     expect(parts.map((mesh) => mesh.renderOrder)).toEqual([2, 1]);
   });
 
+  it.each([
+    ['identity display dims', [0, 1, 2]],
+    ['empty display dims', []],
+    ['missing display dims accessor', undefined],
+  ] as const)('falls back when axis 3 is hidden with %s', async (_label, displayedDims) => {
+    const orderFor = async (withTree: boolean): Promise<number[]> => {
+      const coord = await loadCoordinator();
+      coord.configureDepthSort({
+        getCamera: () => cameraAt(0, 0, -1000),
+        requestRender: vi.fn(),
+        ...(displayedDims === undefined ? {} : { getDisplayDims: () => displayedDims }),
+      });
+      const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+      makePartitionWrapper(
+        withTree ? { axis: 3, split: 0, left: { part: 0 }, right: { part: 1 } } : undefined,
+        parts
+      );
+      for (const mesh of parts) {
+        coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      }
+      await flush();
+      coord.evaluateDepthSortPerFrame();
+      return parts.map((mesh) => mesh.renderOrder);
+    };
+
+    expect(await orderFor(true)).toEqual(await orderFor(false));
+  });
+
   it('falls back to the centroid heuristic when a split axis is not displayed', async () => {
     // displayDims == [1, 2] (a 2D view of 3D+ data) leaves center column 0 off
     // screen, so its split plane carries no on-screen depth information: the

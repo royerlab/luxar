@@ -129,21 +129,22 @@ function traverseBspBackToFront(
  * change at runtime (nD navigation) while the stored tree stays valid, so a
  * load-time snapshot would go stale.
  *
- * @returns A center-column → component lookup, or `null` when any split axis is
- *   not currently displayed (its plane then carries no on-screen depth
- *   information, so the caller must fall back to the centroid heuristic).
+ * @returns A center-column → component lookup, or `null` when any split axis
+ *   cannot be mapped to a displayed component. Without display metadata only
+ *   the conventional first three columns can be mapped safely.
  */
 function bspAxisToComponent(
   tree: BspTreeNode,
   displayed: readonly number[] | null | undefined
 ): readonly number[] | null {
-  // No dims yet (or a 3-displayed identity map): the naive axis === component
-  // reading is exactly right, and this is the overwhelmingly common case. Note
-  // the app-layer accessor returns an EMPTY array before dims init, which must
-  // read as "unknown" rather than as a zero-length mapping.
-  if (!displayed || displayed.length === 0) return IDENTITY_AXIS_MAP;
+  // The app-layer accessor returns an EMPTY array before dims init. Treat that
+  // as unknown: the conventional first-three mapping is usable only when every
+  // split axis actually belongs to it.
+  if (!displayed || displayed.length === 0) {
+    return bspTreeAxesAreMapped(tree, IDENTITY_AXIS_MAP) ? IDENTITY_AXIS_MAP : null;
+  }
   if (displayed.length === 3 && displayed[0] === 0 && displayed[1] === 1 && displayed[2] === 2) {
-    return IDENTITY_AXIS_MAP;
+    return bspTreeAxesAreMapped(tree, IDENTITY_AXIS_MAP) ? IDENTITY_AXIS_MAP : null;
   }
 
   // A split axis is usable only if that stored column is on screen.
