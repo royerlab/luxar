@@ -95,6 +95,7 @@ make check-demo-links  # opt-in demo click-through audit (reports only; not a ga
 make check-zenodo-live          # opt-in live Zenodo manifest-pin audit (not a gate)
 make check-external-references  # aggregate external audits (report-only, non-gating)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
+make check-gallery-staleness  # REPORT only; requires full Git history
 make format-all   # Format all code (Python, TypeScript, Rust, Go, CUDA)
 
 # Viewer
