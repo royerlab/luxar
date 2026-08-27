@@ -383,7 +383,8 @@ export interface LODGroupChild {
   failed?: boolean;
   /**
    * Set when automatic cooldown retries must remain suppressed, such as after
-   * an unreadable archive-container fault. An explicit retry clears the latch.
+   * an unreadable archive-container fault. An explicit retry, or a bounded
+   * connectivity retry, clears the latch.
    */
   permanentlyFailed?: boolean;
   /**
@@ -969,8 +970,9 @@ export class LODGroupRegistry {
    *
    * Returns ``true`` when a retry was kicked OR one is already in flight
    * (``loading``), ``false`` when no retryable lazy child with that leaf path
-   * exists. Explicit retries clear ``permanentlyFailed`` before re-kicking the
-   * child; automatic per-frame selection remains blocked while it is latched.
+   * exists. Explicit retries and bounded connectivity retries clear
+   * ``permanentlyFailed`` before re-kicking the child; automatic per-frame
+   * selection remains blocked while it is latched.
    * Fire-and-forget semantics: ``true`` means "retry started", not "retry
    * succeeded" — the thunk owns the ready/failed outcome, and a repeat
    * failure re-enters the normal cooldown cycle.
