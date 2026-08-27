@@ -4469,7 +4469,11 @@ def generate_linked_points_test() -> None:
 
 
 def generate_image_overlay_test() -> None:
-    """Scene with a Python-authored image overlay for zipped-store E2E parity."""
+    """Scene with a Python-authored image overlay for zipped-store E2E parity.
+
+    Keep the STORED archive above and DEFLATE archive below the 65,557-byte
+    end-of-directory search window asserted by zipped-store-loading.spec.ts.
+    """
     with asection("Generating Image Overlay Test"):
         output = FIXTURES_DIR / "test_image_overlay.luxar.zarr"
         rng = np.random.default_rng(1157)
