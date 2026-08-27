@@ -62,6 +62,22 @@ def _aggregate_part_source_stats(
     return aggregate
 
 
+def _elide_repeated_part_source_stats(
+    part_provenance: list[Dict[str, Any]], aggregate: Dict[str, Any]
+) -> None:
+    """Remove component source fields recoverable from a unanimous stack root."""
+    fittings = [part["fitting"] for part in part_provenance]
+    for key in ("source_shape", "source_dtype", "source_declared"):
+        if key in aggregate:
+            for fitting in fittings:
+                fitting.pop(key, None)
+    for key in ("source_voxels", "source_bytes", "source_stored_bytes"):
+        values = [fitting.get(key) for fitting in fittings]
+        if key in aggregate and values and all(value == values[0] for value in values):
+            for fitting in fittings:
+                fitting.pop(key, None)
+
+
 def _validated_part_provenance(
     part_provenance: Optional[Sequence[Dict[str, Any]]],
     datasets: Sequence["GSplatData"],
@@ -340,8 +356,10 @@ class CompositionMixin(_GSplatDataOps):
         ]
         combined = cls.concatenate(embedded)
         if safe_part_provenance is not None:
+            aggregate = _aggregate_part_source_stats(safe_part_provenance)
+            _elide_repeated_part_source_stats(safe_part_provenance, aggregate)
             combined.stats["part_provenance"] = safe_part_provenance
-            combined.stats.update(_aggregate_part_source_stats(safe_part_provenance))
+            combined.stats.update(aggregate)
         return combined
 
     def to_spatial_partition(

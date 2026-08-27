@@ -214,23 +214,11 @@ def _quality_memory_guard(
 _COMPARE_RECOURSE = "Run `luxar gsplat compare` on the written archive instead."
 
 
-def collect_part_provenance(
-    datasets: Sequence[GSplatData],
-    *,
-    values: Sequence[float],
-    fit_reference: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Collect JSON-safe per-fit stamps for a caller-defined stacked axis.
-
-    The caller supplies the reference classification because only it knows what
-    each fit was scored against. The returned records describe the component
-    fits; they are not a scalar quality claim for the transformed union.
-    """
-    if len(values) != len(datasets):
-        raise ValueError(
-            f"Number of values ({len(values)}) must match number of datasets "
-            f"({len(datasets)})"
-        )
+def _validated_fit_reference(
+    fit_reference: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    if fit_reference is None:
+        return None
     kind = fit_reference.get("kind")
     if kind not in _FIT_REFERENCE_KINDS:
         allowed = ", ".join(sorted(_FIT_REFERENCE_KINDS))
@@ -241,26 +229,53 @@ def collect_part_provenance(
     safe_reference = {"kind": kind}
     if note is not None:
         safe_reference["note"] = note
+    return safe_reference
+
+
+def _json_safe_fitting(stats: dict[str, Any]) -> dict[str, Any]:
+    fitting: dict[str, Any] = {}
+    for key in _FITTING_INFO_KEYS:
+        if key not in stats:
+            continue
+        ok, safe_value = json_safe_value(stats[key])
+        if ok:
+            fitting[key] = safe_value
+    return fitting
+
+
+def collect_part_provenance(
+    datasets: Sequence[GSplatData],
+    *,
+    values: Sequence[float],
+    fit_reference: Optional[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collect JSON-safe per-fit stamps for caller-defined component coordinates.
+
+    The caller supplies the reference classification when it knows what each fit
+    was scored against; ``None`` records the contract's unknown-reference case.
+    The returned records describe the component fits; they are not a scalar
+    quality claim for the transformed union. Existing component provenance is
+    retained recursively when composed datasets are collected again.
+    """
+    if len(values) != len(datasets):
+        raise ValueError(
+            f"Number of values ({len(values)}) must match number of datasets "
+            f"({len(datasets)})"
+        )
+    safe_reference = _validated_fit_reference(fit_reference)
 
     records: list[dict[str, Any]] = []
     for coordinate, dataset in zip(values, datasets):
         ok, safe_coordinate = json_safe_value(coordinate)
         if not ok or not isinstance(safe_coordinate, (int, float)):
             raise ValueError(f"stack coordinate {coordinate!r} is not a finite number")
-        fitting: dict[str, Any] = {}
-        for key in _FITTING_INFO_KEYS:
-            if key not in dataset.stats or key == "part_provenance":
-                continue
-            ok, safe_value = json_safe_value(dataset.stats[key])
-            if ok:
-                fitting[key] = safe_value
-        records.append(
-            {
-                "coordinate": safe_coordinate,
-                "fit_reference": dict(safe_reference),
-                "fitting": fitting,
-            }
-        )
+        record = {
+            "coordinate": safe_coordinate,
+            "fitting": _json_safe_fitting(dataset.stats),
+        }
+        if safe_reference is not None:
+            record["fit_reference"] = dict(safe_reference)
+        records.append(record)
     return records
 
 

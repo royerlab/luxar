@@ -34,6 +34,7 @@ import {
   LoaderError,
   classifyLoaderError,
 } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
+import { ArchiveFaultError } from '../../../../../cache/chunk-source';
 
 describe('loadLeafNode', () => {
   let errorSpy: MockInstance;
@@ -89,6 +90,25 @@ describe('loadLeafNode', () => {
         throw boom;
       }, '/x')
     ).rejects.toBe(boom);
+  });
+
+  it('re-throws a container fault wrapped by a LoaderError', async () => {
+    const fault = new ArchiveFaultError(
+      'Reading the archive failed after retries.',
+      'https://example.test/data.zarr.zip'
+    );
+
+    await expect(
+      loadLeafNode(() => {
+        throw new LoaderError('Network', '/points', fault);
+      }, '/points')
+    ).rejects.toBe(fault);
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Archive fault loading /points: Reading the archive failed after retries.'
+      )
+    );
   });
 
   it('logs the cause stack when one is available', async () => {
