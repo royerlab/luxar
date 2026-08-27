@@ -9,7 +9,7 @@
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
-        check-all check-typescript check-rust check-knip check-wasm-deps setup-dev \
+        check-all check-typescript check-rust check-knip check-gallery-staleness check-wasm-deps setup-dev \
         check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
