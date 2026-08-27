@@ -63,7 +63,6 @@ def _encode_ktx2(
         if quality is None
         else quality
     )
-    assert resolved_quality is not None
     limit = (0, 4) if mode == "uastc" else (1, 255)
     if (
         isinstance(resolved_quality, bool)

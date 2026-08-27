@@ -164,8 +164,7 @@ export function meshPayloadBytes(data: LoadedMeshData): number {
  * Resident bytes of one decoded texture, per arm — see {@link meshPayloadBytes}.
  *
  * MIRROR: the texture term of the byte budget in `preflight.ts`, which for the
- * `ktx2` arm is in turn kept aligned with `luxar/validation/base.py` and
- * `luxar/io/_compiler/geometry_writers/mesh.py`.
+ * `ktx2` arm is in turn kept aligned with `luxar/validation/base.py`.
  */
 function textureResidentBytes(texture: NonNullable<LoadedMeshData['texture']>): number {
   switch (texture.kind) {

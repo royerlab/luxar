@@ -989,7 +989,7 @@ export async function preflightMesh(
     arraysBytes += texture.width * texture.height * 4;
   } else if (texture?.decode === 'ktx2') {
     // Keep this 4/3 mip-chain charge aligned with validation/base.py and
-    // io/_compiler/geometry_writers/mesh.py.
+    // mesh-whole-node-loader.ts's textureResidentBytes.
     arraysBytes += Math.ceil((texture.width * texture.height * 4) / 3);
   }
 

@@ -219,15 +219,6 @@ def _write_mesh_texture_arrays(
     return meta
 
 
-def _texture_decoded_bytes(
-    encoding: str, width: int, height: int, channels: int
-) -> int:
-    if encoding == "ktx2":
-        # Same 4/3 mip-chain charge as validation/base.py and viewer preflight.ts.
-        return (width * height * 4 + 2) // 3
-    return width * height * (4 if encoding != "raw" else channels * 4)
-
-
 def validate_mesh_arrays(
     vertices: Any,
     faces: Any,
@@ -289,6 +280,7 @@ def validate_mesh_arrays(
         vertex validator can produce them.
     """
     from ....validation.base import (
+        _texture_decoded_bytes,
         validate_colors_for_writing,
         validate_faces_for_writing,
         validate_labels_for_writing,

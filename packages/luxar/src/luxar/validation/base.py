@@ -1405,6 +1405,7 @@ def _texture_decoded_bytes(
     encoding: str, width: int, height: int, channels: int
 ) -> int:
     if encoding == "ktx2":
+        # Mirror viewer preflight.ts and mesh-whole-node-loader.ts.
         return (width * height * 4 + 2) // 3
     return width * height * (4 if encoding != "raw" else max(channels, 1) * 4)
 
