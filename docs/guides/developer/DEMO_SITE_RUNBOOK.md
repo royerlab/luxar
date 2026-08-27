@@ -7,6 +7,9 @@ This is an operational document. It records the architecture, the publish
 sequence, and — most importantly — the failure modes that produce a *plausible
 wrong answer* rather than an error. No credentials appear here; they live in
 `~/.config/luxar-r2/credentials.env` on the operator's machine.
+The publishing harness named below (`gen_landing.py`, `snapshot_hashes.py`,
+`compare_snapshot.py`, and the upload script) also lives outside this
+repository on that machine.
 
 ---
 
@@ -78,6 +81,12 @@ build the changed demos
   -> audit the live site
   -> purge the superseded prefix
 ```
+
+The published corpus deliberately uses `archive` rather than the general
+object-storage `hosting` profile. On a representative live store it reduced
+the chunk count from 5,004 to 224 (22×), accepting larger partial reads in
+exchange for far fewer objects and requests. Re-measure browser traffic and
+request cost before changing that tradeoff.
 
 The page generator takes the data prefix as an argument, so pointing a wave at
 a new prefix is a parameter change, not an edit:
@@ -212,13 +221,6 @@ read. In practice the edge caches 404s too, so with a cache rule in place R2
 sees one per URL per PoP per TTL and the cost collapses. The real cost of a
 404 storm is **first-paint latency**, not the bill.
 
-### 3.7 `gh issue comment --edit-last` is account-scoped
-
-On a shared account it edits the last comment made by the *account*, not by
-your session — one agent overwrote another's comment this way. Recover with
-`gh api -X PATCH /repos/:owner/:repo/issues/comments/<id>`. For the same reason
-`gh pr list --author @me` returns the whole fleet's PRs, not yours.
-
 ---
 
 ## 4. Cloudflare configuration
@@ -262,18 +264,30 @@ Per-deployment preview URLs (`<hash>.luxar-demos.pages.dev`) cannot be
 enumerated, so **data will not load in a Pages preview deploy**. Verify against
 the canonical hostname.
 
-`AllowedHeaders` **must** include `range` — the viewer issues partial reads, and
-without it every chunk fetch fails preflight while `zarr.json` appears to work
-fine. That combination presents as an empty scene, not an error.
+Directory `.luxar.zarr` stores, including the entire published corpus, fetch
+metadata and chunks with simple GETs. They require
+`Access-Control-Allow-Origin`, but no `Range` request header or preflight.
 
-Verify with a real preflight, not a GET carrying an `Origin` header (curl does
-not enforce CORS; browsers do):
+Zipped `.zarr.zip` stores use byte-range requests. Their host must honour
+`Range`, include `range` in `AllowedHeaders`, and include `content-range` in
+`Access-Control-Expose-Headers` so the viewer can validate each partial
+response.
+
+Verify both paths. Curl does not enforce CORS, so inspect the response headers
+explicitly:
 
 ```bash
+curl -sI -H "Origin: https://luxarviewer.dev" "$DIRECTORY_URL/zarr.json"
+# want: access-control-allow-origin
+
 curl -sI -X OPTIONS -H "Origin: https://luxarviewer.dev" \
   -H "Access-Control-Request-Method: GET" \
-  -H "Access-Control-Request-Headers: range" "$URL"
+  -H "Access-Control-Request-Headers: range" "$ZIP_URL"
 # want: 204, access-control-allow-headers including "range"
+
+curl -sI -H "Origin: https://luxarviewer.dev" \
+  -H "Range: bytes=0-0" "$ZIP_URL"
+# want: 206, content-range, and access-control-expose-headers including it
 ```
 
 ### 4.4 One hostname, one Pages project
@@ -307,9 +321,9 @@ Run all of these; each catches a class the others cannot see.
 ### 5.1 Do not publish these
 
 `chromatrace_choir_umap` and `chromatrace_choir_umap_sequence` are unpublished
-research and must never reach the bucket. The publish script carries both an
-exclusion list and a hard abort guard that fails the run if their media appears
-in the upload set. Keep both — the list alone has no teeth.
+research and must never reach the bucket. The external publish script carries
+both an exclusion list and a hard abort guard that fails the run if their media
+appears in the upload set. Keep both — the list alone has no teeth.
 
 ---
 

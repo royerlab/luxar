@@ -264,20 +264,20 @@ reach. The public demo gallery at
 `demos.luxarviewer.dev <https://demos.luxarviewer.dev>`_ works exactly this
 way: 85 archives on object storage, one viewer.
 
-Two requirements, both on the host serving the data:
+Requirements on the host serving the data depend on the store shape:
 
-* **CORS.** The viewer is on a different origin, so the host must send
-  ``Access-Control-Allow-Origin``. It must also allow the ``Range`` request
-  header — Luxar issues partial reads, and without it the top-level metadata
-  loads while every chunk fetch fails preflight, which looks like an empty
-  scene rather than an error.
-* **Range requests.** The host must honour ``Range``; chunked streaming is the
-  whole point of the format.
+* **Directory ``.luxar.zarr`` stores** need CORS: the host must send
+  ``Access-Control-Allow-Origin``. Their metadata and chunks use simple GETs,
+  so byte-range support is not required.
+* **Zipped ``.zarr.zip`` stores** additionally need byte-range support. The
+  host must honour ``Range``, allow the ``Range`` request header in CORS, and
+  expose ``Content-Range`` so the viewer can validate partial responses.
 
-A plain static file host with CORS enabled satisfies both. Use this when the
-recipient just needs to *look* at the scene and you would rather send a link
-than a multi-gigabyte folder — and note the data stays wherever you put it, so
-the link is only as durable, and as private, as that host.
+A plain static file host with CORS enabled is sufficient for directory stores.
+Use this when the recipient just needs to *look* at the scene and you would
+rather send a link than a multi-gigabyte folder — and note the data stays
+wherever you put it, so the link is only as durable, and as private, as that
+host.
 
 :doc:`../guides/developer/DEMO_SITE_RUNBOOK` documents how the demo corpus is
 hosted this way, including the CORS configuration and its failure modes.
