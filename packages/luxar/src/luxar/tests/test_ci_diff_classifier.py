@@ -768,22 +768,33 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert pick_steps["pick"]["env"]["GH_TOKEN"] == "${{ github.token }}", (
         "pick-runner must authenticate gh api with the workflow token"
     )
-    checkout = pick_steps["Check out the stdlib queue scanner"]
+    checkout = pick_steps["scanner-checkout"]
+    assert checkout["continue-on-error"] is True
     assert checkout["with"] == {
         "persist-credentials": False,
         "sparse-checkout": "scripts",
     }
     assert list(pick_steps).index("guard") < list(pick_steps).index(
-        "Check out the stdlib queue scanner"
+        "scanner-checkout"
     ), "the fork guard must run before repository code is checked out"
+    assert pick_steps["checkout-fallback"]["if"] == (
+        "steps.guard.outputs.label == '' && steps.scanner-checkout.outcome != 'success'"
+    )
+    assert "label=ubuntu-latest" in pick_steps["checkout-fallback"]["run"]
+    assert pick_steps["pick"]["if"] == (
+        "steps.guard.outputs.label == '' && steps.scanner-checkout.outcome == 'success'"
+    )
 
     watchdog = jobs["queue-watchdog"]
     assert watchdog["permissions"] == {"actions": "write", "contents": "read"}
     watchdog_checkout = watchdog["steps"][0]
+    assert watchdog_checkout["continue-on-error"] is True
     assert watchdog_checkout["with"] == {
         "persist-credentials": False,
         "sparse-checkout": "scripts",
     }
+    assert "not cancelling" in watchdog["steps"][1]["run"]
+    assert watchdog["steps"][2]["if"] == ("steps.scanner-checkout.outcome == 'success'")
 
 
 def test_scheduled_ci_supplies_a_green_window_every_three_hours(
@@ -1420,7 +1431,11 @@ def _run_queue_watchdog(
 ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
     """Run the real inline watchdog against deterministic GitHub API snapshots."""
     watchdog_steps = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"]
-    watchdog = next(step["run"] for step in watchdog_steps if "run" in step)
+    watchdog = next(
+        step["run"]
+        for step in watchdog_steps
+        if step.get("name", "").startswith("Cancel the run")
+    )
     hosted_jobs = [
         _hosted_job("changes", "completed"),
         _hosted_job("pick-runner", "completed"),

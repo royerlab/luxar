@@ -243,7 +243,7 @@ jobs:
       actions: read
       contents: read
     outputs:
-      label: ${{ steps.guard.outputs.label || steps.pick.outputs.label || 'ubuntu-latest' }}
+      label: ${{ steps.guard.outputs.label || steps.checkout-fallback.outputs.label || steps.pick.outputs.label || 'ubuntu-latest' }}
     steps:
       - id: guard
         name: Keep fork code and forced-hosted runs off obsidian
@@ -269,15 +269,24 @@ jobs:
             exit 0
           fi
 
-      - name: Check out the stdlib queue scanner
+      - id: scanner-checkout
+        name: Check out the stdlib queue scanner
         if: steps.guard.outputs.label == ''
+        continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: scripts
 
+      - id: checkout-fallback
+        name: Route hosted if the queue scanner cannot be checked out
+        if: steps.guard.outputs.label == '' && steps.scanner-checkout.outcome != 'success'
+        run: |
+          echo "queue scanner checkout failed -> routing to ubuntu-latest"
+          echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+
       - id: pick
-        if: steps.guard.outputs.label == ''
+        if: steps.guard.outputs.label == '' && steps.scanner-checkout.outcome == 'success'
         name: Pick runner from obsidian capacity, activity, and backlog
         env:
           GH_TOKEN: ${{ github.token }}
@@ -380,13 +389,20 @@ jobs:
       # Credentials stay disabled; only scripts/ is materialised.
       contents: read
     steps:
-      - name: Check out the stdlib queue scanner
+      - id: scanner-checkout
+        name: Check out the stdlib queue scanner
+        continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: scripts
 
+      - name: Leave the run alone if the queue scanner cannot be checked out
+        if: steps.scanner-checkout.outcome != 'success'
+        run: echo "queue scanner checkout failed; not cancelling on a plumbing failure"
+
       - name: Cancel the run if obsidian dies while jobs are still queued
+        if: steps.scanner-checkout.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
