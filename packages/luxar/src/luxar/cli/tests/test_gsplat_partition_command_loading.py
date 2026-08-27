@@ -231,6 +231,28 @@ def test_flatten_discards_partition_slot_provenance(tmp_path: Path) -> None:
     assert "part_provenance" not in output["fitting"].attrs
 
 
+def test_flatten_preserves_single_leaf_part_provenance(tmp_path: Path) -> None:
+    import zarr
+
+    _, flat_path, _ = _write_inputs(tmp_path)
+    output_path = tmp_path / "flattened.gsplats.zarr"
+    source = zarr.open_group(str(flat_path), mode="a")
+    provenance = [
+        {"coordinate": 0.0, "fitting": {"source_bytes": 3000}},
+        {"coordinate": 1.0, "fitting": {"source_bytes": 3000}},
+    ]
+    source.require_group("fitting").attrs["part_provenance"] = provenance
+
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "flatten", str(flat_path), str(output_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    output = zarr.open_group(str(output_path), mode="r")
+    assert output["fitting"].attrs["part_provenance"] == provenance
+
+
 @pytest.mark.parametrize(
     ("case", "command_name"),
     [
