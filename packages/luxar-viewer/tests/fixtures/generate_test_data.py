@@ -91,6 +91,7 @@ FIXTURE_NAMES: list[str] = [
     "test_gsplats_rgba_uint8.luxar.zarr",
     "test_gsplats_rgba_lut.luxar.zarr",
     "test_hdr_colors.luxar.zarr",
+    "test_image_overlay.luxar.zarr",
     "test_hierarchical_transforms.luxar.zarr",
     "test_integer_colors.luxar.zarr",
     "test_labelled_partitioned_points.luxar.zarr",
@@ -4467,6 +4468,58 @@ def generate_linked_points_test() -> None:
         aprint(f"  1 linked point at the origin + {n - 1} unlabelled corners")
 
 
+def generate_image_overlay_test() -> None:
+    """Scene with a Python-authored image overlay for zipped-store E2E parity."""
+    with asection("Generating Image Overlay Test"):
+        output = FIXTURES_DIR / "test_image_overlay.luxar.zarr"
+        positions = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [-1.0, -1.0, -1.0],
+                [1.0, -1.0, 1.0],
+                [-1.0, 1.0, 1.0],
+                [1.0, 1.0, -1.0],
+            ],
+            dtype=np.float32,
+        )
+        colors = np.tile(np.array([[1.0, 0.5, 0.25]], dtype=np.float32), (5, 1))
+        radii = np.full(5, 0.1, dtype=np.float32)
+        image_bytes = bytes.fromhex(
+            "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c02"
+            "0000000b4944415478da63fcff1f0002eb01f569769f7b0000000049454e44ae426082"
+        )
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=COMPRESSOR_DISABLED,
+            float16_allowed=FLOAT16_ALLOWED,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "points",
+                positions=positions,
+                colors=colors,
+                radii=radii,
+            )
+            scene.add_image(
+                image_bytes,
+                (0.02, 0.02),
+                name="archive-image",
+                size=(0.05, 0.05),
+            )
+
+        aprint(f"  Created {output}")
+        aprint("  Python-authored 1x1 PNG overlay")
+
+
 # Label of the single hover target in test_labelled_partitioned_points. Kept as
 # a named constant because hover-tooltip.spec.ts asserts this exact string.
 MARKER_LABEL = "Origin marker"
@@ -4686,6 +4739,9 @@ def main() -> None:
         aprint("")
 
         generate_linked_points_test()
+        aprint("")
+
+        generate_image_overlay_test()
         aprint("")
 
         generate_labelled_partitioned_points_test()
