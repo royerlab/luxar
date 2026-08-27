@@ -506,8 +506,7 @@ ladder — 8 nodes, holding 3.34 M splats against the `adaptive` store's 33,632 
 paint. Its structure term is 15 first-pass and 40 converged; measured **39** at
 `archive` (local, so converged) and 62 as built. That one-request miss falsifies the
 nominal 40 floor: at least one assumed read was absent, for example a rung with
-`ordering: "none"` and therefore no `chunk_bounds` probe, or a broadcast `(1, d)`
-array shared across rungs.
+`ordering: "none"`, which short-circuits the `chunk_bounds` probe.
 
 Only the *low* end of that is a real test — the extra-chunk term can only add, so any
 excess is absorbable and 880 is not a ceiling. Like chunk regime for like, 704 nodes
