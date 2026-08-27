@@ -5,8 +5,8 @@
  * the whole file. Upstream's reader accepts that silently and hands the full
  * body back as if it were the requested window, so the zip parser reads garbage
  * at every offset and the archive looks corrupt. These tests pin the loud
- * failure instead — which matters concretely, because Python's `http.server`
- * (the Playwright fixture server) has no Range support at all.
+ * failure instead — which matters concretely because Python's plain
+ * `http.server` has no Range support at all.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
