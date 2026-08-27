@@ -193,7 +193,10 @@ export function createMeshTexture(
 
   let texture: THREE.Texture;
 
-  if (data.kind === 'bitmap') {
+  if (data.kind === 'compressed') {
+    texture = data.texture;
+    texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  } else if (data.kind === 'bitmap') {
     // The browser already produced an 8-bit RGBA surface, so the hardware sRGB
     // sampler is available and exact — no CPU pass, and no precision lost.
     texture = new THREE.Texture(data.bitmap);
@@ -249,7 +252,7 @@ export function createMeshTexture(
   texture.minFilter = minFilter;
   texture.wrapS = wrapS;
   texture.wrapT = wrapT;
-  texture.generateMipmaps = mipmaps;
+  texture.generateMipmaps = data.kind === 'compressed' ? false : mipmaps;
   // Anisotropy matters more here than for any existing texture: a globe is viewed
   // at grazing incidence near its silhouette, which is exactly where isotropic
   // mipmapping blurs along the wrong axis. Clamped to the material manager's

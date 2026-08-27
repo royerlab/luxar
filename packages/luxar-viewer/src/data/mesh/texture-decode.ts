@@ -38,7 +38,12 @@ import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
 import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import { validateMaterializedLength } from './validate';
 import type { TextureDeclaration } from './preflight';
-import type { MeshColorArray, MeshTextureData, MeshTextureEncoding } from '../../types/mesh';
+import type {
+  KTX2TextureDecoder,
+  MeshColorArray,
+  MeshTextureData,
+  MeshTextureEncoding,
+} from '../../types/mesh';
 
 /**
  * MIME type per codec encoding, taken from the DECLARED encoding rather than
@@ -55,6 +60,7 @@ const CODEC_MIME: Record<MeshTextureEncoding, string | null> = {
   png: 'image/png',
   webp: 'image/webp',
   jpeg: 'image/jpeg',
+  ktx2: 'image/ktx2',
 };
 
 /**
@@ -99,11 +105,12 @@ export async function decodeMeshTexture(
   declared: TextureDeclaration,
   decoder: ArrayDecoder,
   storeRoot: zarr.Location<zarr.Readable>,
+  decodeKTX2?: KTX2TextureDecoder,
   signal?: AbortSignal
 ): Promise<MeshTextureData> {
   const { width, height, channels } = declared;
 
-  if (declared.decode === 'codec') {
+  if (declared.decode === 'codec' || declared.decode === 'ktx2') {
     const raw = await zarr.readArray(handle, undefined, zarr.abortOptions(signal));
     const bytes = asNativeTexels(raw.data as ArrayBufferView);
     if (!(bytes instanceof Uint8Array)) {
@@ -117,6 +124,37 @@ export async function decodeMeshTexture(
         )
       );
     }
+    if (declared.decode === 'ktx2') {
+      if (!decodeKTX2) {
+        throw new LoaderError(
+          'Validation',
+          path,
+          new Error(
+            "texture encoding 'ktx2' requires GPU compressed-texture support; " +
+              "use 'raw' or 'jpeg' for a portable texture."
+          )
+        );
+      }
+      const texture = await decodeKTX2(path, new Uint8Array(bytes), {
+        width,
+        height,
+        channels: channels as 3 | 4,
+      });
+      const image = texture.image as { width?: number; height?: number } | undefined;
+      if (image?.width !== width || image?.height !== height) {
+        texture.dispose();
+        throw new LoaderError(
+          'Validation',
+          path,
+          new Error(
+            `texture decoded to ${image?.width ?? '?'}x${image?.height ?? '?'} but declares ` +
+              `${width}x${height}; refusing a declaration that would invalidate the preflight budget.`
+          )
+        );
+      }
+      return { kind: 'compressed', texture, width, height, channels: channels as 3 | 4 };
+    }
+
     // A fresh copy so the Blob owns a plain ArrayBuffer, exactly as
     // `image-label-loader.ts` does — a typed-array view over a larger buffer
     // would hand the decoder the wrong bytes.

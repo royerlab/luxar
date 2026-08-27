@@ -144,6 +144,57 @@ describe('decodeMeshTexture — encoded payloads', () => {
   });
 });
 
+describe('decodeMeshTexture — KTX2 payloads', () => {
+  const ktxDecl = decl({ encoding: 'ktx2', decode: 'ktx2', channels: 4 });
+
+  beforeEach(() => {
+    nextRead = { data: new Uint8Array([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0xbb, 0x0d]) };
+  });
+
+  it('returns the renderer-transcoded compressed texture without a bitmap decode', async () => {
+    const texture = {
+      image: { width: 4, height: 2 },
+      dispose: vi.fn(),
+    } as unknown as import('three').CompressedTexture;
+    const decodeKTX2 = vi.fn(async () => texture);
+    const result = await decodeMeshTexture(
+      PATH,
+      handle('|u1'),
+      ktxDecl,
+      newDecoder(),
+      storeRoot,
+      decodeKTX2
+    );
+    expect(result).toMatchObject({ kind: 'compressed', texture, width: 4, height: 2, channels: 4 });
+    expect(decodeKTX2).toHaveBeenCalledWith(PATH, expect.any(Uint8Array), {
+      width: 4,
+      height: 2,
+      channels: 4,
+    });
+  });
+
+  it('rejects clearly when the host did not configure a KTX2 decoder', async () => {
+    await expect(
+      decodeMeshTexture(PATH, handle('|u1'), ktxDecl, newDecoder(), storeRoot)
+    ).rejects.toThrow(/requires GPU compressed-texture support.*raw.*jpeg/);
+  });
+
+  it('disposes a transcode whose dimensions contradict the declaration', async () => {
+    const dispose = vi.fn();
+    const decodeKTX2 = vi.fn(
+      async () =>
+        ({
+          image: { width: 8, height: 8 },
+          dispose,
+        }) as unknown as import('three').CompressedTexture
+    );
+    await expect(
+      decodeMeshTexture(PATH, handle('|u1'), ktxDecl, newDecoder(), storeRoot, decodeKTX2)
+    ).rejects.toThrow(/decoded to 8x8 but declares 4x2/);
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+});
+
 describe('decodeMeshTexture — raw payloads', () => {
   const rawDecl = decl({ encoding: 'raw', decode: 'raw', width: 2, height: 2, channels: 3 });
 

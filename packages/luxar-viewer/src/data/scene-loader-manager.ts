@@ -12,6 +12,7 @@ import { SceneLoader, type SceneLoaderLODGroupRegistryFactory } from './scene-lo
 import { LoaderConfig } from './data-loader-types';
 import { UpdateProfiler } from '../profiling/update-profiler';
 import type { SceneLoaderMonitorFactory } from './scene-loader-monitor-port';
+import type { KTX2TextureDecoder } from '../types/mesh';
 
 /**
  * Manager for SceneLoader instances.
@@ -55,6 +56,7 @@ export class SceneLoaderManager {
    * wake a loop — SceneLoader treats it as a no-op.
    */
   private requestRender: (() => void) | null = null;
+  private decodeKTX2: KTX2TextureDecoder | null = null;
 
   /**
    * Private constructor to enforce singleton pattern
@@ -90,6 +92,10 @@ export class SceneLoaderManager {
    */
   setRequestRender(callback: (() => void) | null): void {
     this.requestRender = callback;
+  }
+
+  setKTX2TextureDecoder(decoder: KTX2TextureDecoder | null): void {
+    this.decodeKTX2 = decoder;
   }
 
   /**
@@ -137,7 +143,8 @@ export class SceneLoaderManager {
       id,
       this.profiler,
       this.monitorFactory,
-      this.lodGroupRegistryFactory
+      this.lodGroupRegistryFactory,
+      this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
     this.loaders.set(id, loader);
@@ -180,7 +187,8 @@ export class SceneLoaderManager {
       id,
       this.profiler,
       this.monitorFactory,
-      this.lodGroupRegistryFactory
+      this.lodGroupRegistryFactory,
+      this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
     this.loaders.set(id, loader);

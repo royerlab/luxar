@@ -111,7 +111,13 @@ import { SliceCache } from '../cache/slice-cache';
 import type { CacheBudgets } from '../cache/heap-budget';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
-import type { LoadedMeshData, MeshDataLoader, MeshMetadata, MeshViewState } from '../types/mesh';
+import type {
+  KTX2TextureDecoder,
+  LoadedMeshData,
+  MeshDataLoader,
+  MeshMetadata,
+  MeshViewState,
+} from '../types/mesh';
 import { clearCommittedData } from '../types/committed-data';
 import { releaseDepthSortNode } from '../rendering/depth-sort-coordinator';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
@@ -561,6 +567,7 @@ export class SceneLoader {
    * loaders → no-op.
    */
   private _requestRender: (() => void) | null = null;
+  private readonly decodeKTX2: KTX2TextureDecoder | null;
 
   /** Install (or clear) the render-loop wake-up callback. */
   setRequestRender(callback: (() => void) | null): void {
@@ -572,7 +579,8 @@ export class SceneLoader {
     id?: string,
     profiler?: UpdateProfiler,
     monitorFactory?: SceneLoaderMonitorFactory | null,
-    lodGroupRegistryFactory?: SceneLoaderLODGroupRegistryFactory | null
+    lodGroupRegistryFactory?: SceneLoaderLODGroupRegistryFactory | null,
+    decodeKTX2?: KTX2TextureDecoder | null
   ) {
     this.profiler = profiler ?? null;
     this.config = config;
@@ -583,6 +591,7 @@ export class SceneLoader {
     };
     this.arrayRefRegistry = new ArrayRefRegistry();
     this.lodGroupRegistry = lodGroupRegistryFactory ? lodGroupRegistryFactory(this) : null;
+    this.decodeKTX2 = decodeKTX2 ?? null;
 
     // GPU buffer pool requires Float32Array data; the geometry-update path
     // falls back to the standard route for Uint8/Uint16 attributes.
@@ -1547,6 +1556,7 @@ export class SceneLoader {
       l0Cache: this.l0Cache,
       sliceCache: this.sliceCache,
       cachingStore: this.cachingStore,
+      decodeKTX2: this.decodeKTX2,
     };
   }
 

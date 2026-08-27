@@ -22,6 +22,7 @@
  * @module types/mesh
  */
 
+import type * as THREE from 'three';
 import type { BlendingMode } from './blending';
 import type { ViewState } from '../data/data-loader-types';
 import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
@@ -68,7 +69,7 @@ export type MeshShading = 'smooth' | 'flat' | 'none';
  * not a fall-through to "probably an image", because the decode path and the
  * byte budget differ between the two arms.
  */
-export type MeshTextureEncoding = 'raw' | 'png' | 'webp' | 'jpeg';
+export type MeshTextureEncoding = 'raw' | 'png' | 'webp' | 'jpeg' | 'ktx2';
 
 /**
  * Colour space the texture's values are in.
@@ -355,7 +356,21 @@ export type MeshTextureData =
       width: number;
       height: number;
       channels: number;
+    }
+  | {
+      kind: 'compressed';
+      texture: THREE.CompressedTexture;
+      width: number;
+      height: number;
+      channels: 3 | 4;
     };
+
+/** Renderer-owned KTX2 transcode seam injected into the data loader. */
+export type KTX2TextureDecoder = (
+  path: string,
+  bytes: Uint8Array,
+  declaration: { width: number; height: number; channels: 3 | 4 }
+) => Promise<THREE.CompressedTexture>;
 
 /**
  * A whole decoded mesh, before display-space projection.

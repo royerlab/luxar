@@ -34,7 +34,7 @@ import { GSplatsProgressiveLoader } from '../../gsplats/gsplats-progressive-load
 import type { SceneNode } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
-import type { MeshDataLoader, MeshMetadata } from '../../../types/mesh';
+import type { KTX2TextureDecoder, MeshDataLoader, MeshMetadata } from '../../../types/mesh';
 import { ArrayRefRegistry } from '../../array-decoder/decoder';
 import { MAX_MESH_VERTICES } from '../../../config/constants';
 import { LoaderError } from '../nodes/load-leaf-error-dispatch';
@@ -51,6 +51,7 @@ export interface LoaderFactoryDeps {
   /** Shared SliceCache; passed to progressive loaders for per-slice reuse. */
   sliceCache: SliceCache | null;
   cachingStore: MultiLevelCachingStore | null;
+  decodeKTX2?: KTX2TextureDecoder | null;
 }
 
 /** Resolve the node's zarr location: root path uses `loc` directly. */
@@ -254,6 +255,7 @@ export function createMeshLoader(
   return new MeshWholeNodeLoader(node.path, node.attrs as unknown as MeshMetadata, nodeLoc, {
     zarrStore: deps.zarrStore,
     arrayRefRegistry: deps.arrayRefRegistry,
+    decodeKTX2: deps.decodeKTX2 ?? undefined,
   });
 }
 

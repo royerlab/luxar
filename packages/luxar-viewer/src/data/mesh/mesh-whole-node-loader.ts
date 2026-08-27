@@ -59,6 +59,7 @@ import { combineSignals } from '../../workers/worker-pool/timeout/combine-signal
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {
   LoadedMeshData,
+  KTX2TextureDecoder,
   MeshColorArray,
   MeshDataLoader,
   MeshMetadata,
@@ -72,6 +73,7 @@ export interface MeshLoaderDeps {
   zarrStore: zarr.Readable;
   /** Shared registry so an `array_ref` shared with a sibling node decodes once. */
   arrayRefRegistry: ArrayRefRegistry;
+  decodeKTX2?: KTX2TextureDecoder;
 }
 
 /** The optional arrays, mapped to the attr flag that declares each present. */
@@ -93,6 +95,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   private readonly decoder: ArrayDecoder;
   private readonly rangeLoader: RangeLoader;
   private readonly zarrStore: zarr.Readable;
+  private readonly decodeKTX2?: KTX2TextureDecoder;
 
   /** Metadata-only handles, opened once by {@link initialize}. */
   private handles: MeshArrayHandles | null = null;
@@ -181,6 +184,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     this.rangeLoader = new RangeLoader(deps.arrayRefRegistry);
     this.rangeLoader.setSignalSource(() => this.fetchSignal);
     this.zarrStore = deps.zarrStore;
+    this.decodeKTX2 = deps.decodeKTX2;
   }
 
   /**
@@ -425,6 +429,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
         pre.texture,
         this.decoder,
         storeRoot,
+        this.decodeKTX2,
         signal
       );
     }

@@ -627,11 +627,12 @@ const UNENCODED_COLOR_DTYPES = new Set([
  * `createImageBitmap` and gets back a 4-channel 8-bit surface whatever the source
  * stored — so guessing wrong means charging the wrong number against the ceiling.
  */
-export const TEXTURE_DECODE_KIND: Record<MeshTextureEncoding, 'raw' | 'codec'> = {
+export const TEXTURE_DECODE_KIND: Record<MeshTextureEncoding, 'raw' | 'codec' | 'ktx2'> = {
   raw: 'raw',
   png: 'codec',
   webp: 'codec',
   jpeg: 'codec',
+  ktx2: 'ktx2',
 };
 
 /**
@@ -661,7 +662,7 @@ export interface TextureDeclaration {
   height: number;
   channels: number;
   /** Which decode path {@link TEXTURE_DECODE_KIND} assigns this encoding. */
-  decode: 'raw' | 'codec';
+  decode: 'raw' | 'codec' | 'ktx2';
 }
 
 /**
@@ -726,6 +727,12 @@ function resolveTextureDeclaration(path: string, attrs: MeshMetadata): TextureDe
       path,
       `texture_channels is ${channels}; must be 1 (luminance), 3 (RGB) or 4 (RGBA). ` +
         'Any other count has no defined mapping onto a GPU texture format.'
+    );
+  }
+  if (encoding === 'ktx2' && channels === 1) {
+    rejectMesh(
+      path,
+      "texture_encoding 'ktx2' supports only RGB or RGBA LDR textures; use 'raw' for a single-channel texture."
     );
   }
   if (width > MAX_MESH_TEXTURE_SIZE || height > MAX_MESH_TEXTURE_SIZE) {
@@ -980,6 +987,8 @@ export async function preflightMesh(
   // `w * h * 4`. Using the declared channel count here would under-charge by 4x.
   if (texture?.decode === 'codec') {
     arraysBytes += texture.width * texture.height * 4;
+  } else if (texture?.decode === 'ktx2') {
+    arraysBytes += Math.ceil((texture.width * texture.height * 4) / 3);
   }
 
   const peakBytes = arraysBytes + maxChunkBytes;
