@@ -402,6 +402,9 @@ describe('SceneLoader', () => {
         dispose: vi.fn(),
       };
       const commitSpy = vi.spyOn(sceneLoader as any, 'updatePointsGeometry');
+      const prefetch = vi.fn();
+      const releaseShadows = vi.fn();
+      (sceneLoader as any)._slicePrefetcher = { prefetch, releaseShadows };
       const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
       loaders.clear();
       loaders.set('/fault', failingLoader);
@@ -413,12 +416,15 @@ describe('SceneLoader', () => {
       expect(notifierMocks.error).toHaveBeenCalledWith(fault.message, { persistent: true });
       expect(sceneLoader.hasFailures()).toBe(false);
       expect(commitSpy).not.toHaveBeenCalled();
+      expect(releaseShadows).toHaveBeenCalledOnce();
 
       await sceneLoader.updateView({ slicePosition: [0, 0, 1] });
+      sceneLoader.prefetchSlice({ slicePosition: [0, 0, 2] }, 5);
 
       expect(failingLoader.updateView).toHaveBeenCalledOnce();
       expect(successfulLoader.updateView).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect(prefetch).not.toHaveBeenCalled();
       expect((sceneLoader as any)._updateInProgress).toBe(false);
     });
 

@@ -424,7 +424,7 @@ export class SceneLoader {
    * slice-prefetcher.ts).
    */
   prefetchSlice(viewState: Partial<ViewState>, budgetMs: number): void {
-    if (this._disposed || !this._sceneGraph) return;
+    if (this._disposed || this._archiveFault || !this._sceneGraph) return;
     if (!this._slicePrefetcher) {
       this._slicePrefetcher = new SlicePrefetcher({
         getSceneGraph: () => this._sceneGraph,
@@ -1011,6 +1011,7 @@ export class SceneLoader {
 
       if (sweepArchiveFault) {
         this._archiveFault = sweepArchiveFault;
+        this.releasePrefetchResources();
         this.registry.clearAllFailures();
         log.error(
           Modules.SCENE_LOADER,
