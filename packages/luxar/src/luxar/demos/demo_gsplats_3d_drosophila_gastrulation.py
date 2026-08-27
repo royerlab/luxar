@@ -108,6 +108,7 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    parse_path_arg,
 )
 from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
 from luxar.gsplats.gsplat_data import GSplatData
@@ -172,11 +173,210 @@ AUTO_ROTATE_SPEED = 2.5
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
+
+#: ``--source PATH`` — the raw SiMView recording. Required for ``--recompute``:
+#: this is unpublished lab data, so there is no URL to fetch and the path has to
+#: be supplied. Everything else about the rebuild is pinned below.
+SOURCE_ARG = parse_path_arg("source")
+
+# --- the recorded recipe -----------------------------------------------------
+# Every value here is from the original run's script and log, not inferred.
+SOURCE_ARRAY_KEY = "data"
+SOURCE_TIMEPOINTS = 500  # the assertion that matters -- see RECOMPUTE_NOTES
+SOURCE_SPATIAL = (108, 1352, 532)
+TIMEPOINT = 150  # gastrulation: the cephalic furrow is forming
+SEEDS = 256_000
+PRESET = "standard"
+FLOOR = "auto"
+#: (Z, Y, X) microns per voxel. The ONLY post-fit transform.
+VOXEL_UM = (1.93, 0.40625, 0.40625)
+LOD_TARGET_MS = 200
+
+RECOMPUTE_NOTES = """\
+PICKING THE RIGHT FILE IS THE HARD PART, NOT THE FIT.
+
+A sibling recording on the same instrument -- Dme_E1_His2AvRFP_01_TL_20131204_
+140355.corrected -- has the IDENTICAL spatial grid (108, 1352, 532) and 1507
+timepoints. So every shape check except the timepoint count passes on the wrong
+file, and it was in fact picked once by name similarity; the error surfaced only
+because a human looked at the render and said "this is a later timepoint". Hence
+the assertion on shape[0] == 500 below, which is the one check that separates the
+two recordings.
+
+WHY THESE VALUES:
+
+  --seeds 256000    From a `cal` sweep, but NOT the sweep's answer. The curve is
+                    `signal_limited` with K* = 512,000 and diminishing returns
+                    flagged at 256,000; 256k is the operating point chosen. Re-run
+                    `cal` and it will say 512,000 -- that is not a contradiction.
+  --preset standard LOAD-BEARING. Omit it and `--preset` defaults to None, falls
+                    through to the fitting API's n_iters=1000, and reports
+                    converged=False at exactly the cap. The preset also supplies
+                    the post-fit cull, which took 256,000 -> 200,023 splats, so
+                    the cull is not a separate command.
+  --floor auto      Pin the PROCEDURE, never the number. `auto` is a
+                    histogram-mode estimate; the original run logged 8.02344,
+                    which is an OUTPUT. Hard-coding it would stop tracking the
+                    data.
+  --recipe stream --target-ms 200
+                    NOT `--n-lods 3`. The archive reports "3 steps", but that is
+                    an outcome: target-ms 200 at 25 Mbps and 10.3 B/splat sized
+                    the first chunk at ~60,689 splats and laddered geometrically
+                    from there. `--n-lods 3` would give equal-count breakpoints
+                    and a different first paint.
+  --scale 1.93,0.40625,0.40625
+                    The only transform. No --center, no --normalize-intensity,
+                    no --scale-intensity. Amplitude normalisation belongs at
+                    scene-insertion time, not in the archive, so the archive
+                    ships raw detector counts.
+
+SCORE BEFORE THE TRANSFORM. Once centres are in microns the archive is no longer
+comparable to the voxel-space source, and scoring across that mismatch is how a
+fabricated +16 dB "improvement" nearly got published for this exact dataset. The
+fit's own pre-transform stamp is the honest figure (41.65 / 37.07 dB foreground).
+
+EXPECT A CLOSE, NOT EXACT, SPLAT COUNT. Seeding is a fixed default_rng(42) and
+Adam is deterministic from it, but GPU reduction atomics and a different
+torch/CUDA build move the last digits, and a threshold cull turns that into a
+count difference: 200,023 here against 200,155 shipped, 0.07%. Do not chase it
+and do not pin the count -- pin a tolerance. (Contrast the decimation study,
+where --device/--seed genuinely pin the result because a merge is a clustering
+and the seed is an input; here the variation is float reduction order, which no
+flag fixes.)
+"""
 
 
 # =============================================================================
 # Data loading
 # =============================================================================
+def _luxar(*args: str) -> None:
+    """Run the shipped CLI in-process so the demo cannot drift from the tool."""
+    from luxar.cli.main import app
+
+    aprint(f"$ luxar {' '.join(args)}")
+    try:
+        app(list(args))
+    except SystemExit as exc:  # the CLI exits even on success
+        if exc.code not in (0, None):
+            raise RuntimeError(f"`luxar {' '.join(args)}` failed: exit {exc.code}")
+
+
+def _validate_source(path: Path) -> None:
+    """Refuse a plausible-looking wrong recording.
+
+    The sibling dataset shares this one's exact spatial grid and differs only in
+    timepoint count, so this assertion is the whole defence. See RECOMPUTE_NOTES.
+    """
+    import zarr
+    from zarr.storage import ZipStore
+
+    if path.suffix == ".zip":
+        root = zarr.open(store=ZipStore(str(path), mode="r"))
+    else:
+        root = zarr.open(str(path))
+
+    # Say what is wrong in OUR terms. Tested against the actual sibling
+    # recording: it has no `data` member, so indexing it raises zarr's
+    # "invalid 'fields' argument, array does not have any fields" -- which
+    # rejects the wrong file by accident and tells the reader nothing. A wrong
+    # source should fail with a sentence about sources.
+    try:
+        arr = root[SOURCE_ARRAY_KEY]
+    except Exception as exc:  # noqa: BLE001 - any zarr shape/typing complaint
+        available = ""
+        try:
+            available = ", ".join(sorted(root.array_keys())) or "(none)"
+        except Exception:  # noqa: BLE001 - a bare array has no array_keys
+            available = "(this store is a bare array, not a group)"
+        raise ValueError(
+            f"{path.name} has no {SOURCE_ARRAY_KEY!r} array; found: {available}. "
+            f"Expected the DrosophilaHistone recording, a group whose "
+            f"{SOURCE_ARRAY_KEY!r} member is (t, z, y, x). Underlying error: {exc}"
+        ) from exc
+    aprint(f"source array [{SOURCE_ARRAY_KEY}]: {arr.shape} {arr.dtype}")
+    if arr.ndim != 4:
+        raise ValueError(f"expected a 4D (t,z,y,x) array, got {arr.shape}")
+    if arr.shape[0] != SOURCE_TIMEPOINTS:
+        raise ValueError(
+            f"{path.name} has {arr.shape[0]} timepoints, expected "
+            f"{SOURCE_TIMEPOINTS}. A sibling recording on the same instrument "
+            f"has the IDENTICAL spatial grid {SOURCE_SPATIAL} and 1507 "
+            f"timepoints; this check is what tells them apart. Refusing rather "
+            f"than fitting the wrong embryo."
+        )
+    if tuple(arr.shape[1:]) != SOURCE_SPATIAL:
+        raise ValueError(
+            f"unexpected spatial grid {arr.shape[1:]}, want {SOURCE_SPATIAL}"
+        )
+    aprint("source validated: 500 timepoints on the expected grid")
+
+
+def recompute_archive(work_dir: Path) -> Path:
+    """Refit the gastrulation timepoint from the raw recording."""
+    with asection("Recomputing the gastrulation fit"):
+        aprint(RECOMPUTE_NOTES)
+        if SOURCE_ARG is None:
+            raise SystemExit(
+                "--recompute needs --source PATH pointing at the raw SiMView "
+                "recording (DrosophilaHistone.zarr.zip). It is unpublished lab "
+                "data, so there is no URL to fetch it from."
+            )
+        source = SOURCE_ARG.expanduser()
+        if not source.exists():
+            raise FileNotFoundError(f"--source does not exist: {source}")
+        _validate_source(source)
+
+        work_dir.mkdir(parents=True, exist_ok=True)
+        fit = work_dir / "droso_fit.gsplats.zarr"
+        um = work_dir / "droso_um.gsplats.zarr"
+        final = work_dir / "droso_gastrulation.gsplats.zarr"
+
+        if not fit.exists():
+            _luxar(
+                "gsplat",
+                "fit",
+                str(source),
+                str(fit),
+                "--array-key",
+                SOURCE_ARRAY_KEY,
+                "--timepoint",
+                str(TIMEPOINT),
+                "--tiling",
+                "none",
+                "--seeds",
+                str(SEEDS),
+                "--preset",
+                PRESET,
+                "--floor",
+                FLOOR,
+            )
+        # The fit stamps PSNR here, BEFORE the transform -- the only point at
+        # which this archive is comparable to its source volume.
+        if not um.exists():
+            _luxar(
+                "gsplat",
+                "transform",
+                str(fit),
+                str(um),
+                "--scale",
+                ",".join(str(v) for v in VOXEL_UM),
+            )
+        if not final.exists():
+            _luxar(
+                "gsplat",
+                "lod",
+                str(um),
+                str(final),
+                "--recipe",
+                "stream",
+                "--target-ms",
+                str(LOD_TARGET_MS),
+            )
+        aprint(f"rebuilt: {final}")
+        return final
+
+
 def resolve_data() -> Path:
     """Resolve the fitted gsplats: cache -> in-repo copy -> Zenodo.
 
@@ -397,7 +597,12 @@ def main() -> None:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    data_path = resolve_data()
+    if RECOMPUTE:
+        data_path = recompute_archive(
+            get_demos_output_dir() / "droso_gastrulation_recompute"
+        )
+    else:
+        data_path = resolve_data()
     scene_path = create_luxar_scene(data_path, output_path)
 
     if not NO_SERVE:
