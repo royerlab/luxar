@@ -138,11 +138,10 @@ import type { ArchiveFaultError } from '../cache/chunk-source';
 /**
  * Classification of a per-node load failure. The actual policy in
  * `loadLeafNode` (around `:1285-1307`) is partial-scene resilience:
- * every classified kind — including `Unexpected` — is logged, toasted
- * (severity varies by kind), and the leaf returns `null` so its
- * siblings can still render. Nothing rethrows from a classified
- * `LoaderError`. The `kind` field drives the user-visible severity
- * and message, not control flow.
+ * every classified kind — including `Unexpected` — is logged, and the
+ * leaf returns `null` so its siblings can still render. Authored archive
+ * container faults are re-thrown because they invalidate the whole store.
+ * The `kind` field drives logging and retry policy for ordinary failures.
  */
 import { initializeSceneDimensions as initializeSceneDimensionsHelper } from './scene-loader/nodes/initialize-scene-dimensions';
 import {
@@ -715,6 +714,8 @@ export class SceneLoader {
       makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       getFailedLoaderPaths: () => Array.from(this.failedLoaders.keys()),
+      getFailedLoaderReasons: () =>
+        Array.from(this.failedLoaders.values(), (info) => info.error?.message || info.kind || ''),
       getFailedLoadsProvider: () => this.getFailedLoadsProvider(),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
       drainPendingViewState: () => this.viewStateQueue.drain((state) => this.updateView(state)),

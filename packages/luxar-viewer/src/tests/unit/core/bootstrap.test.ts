@@ -549,6 +549,26 @@ describe('bootstrapStandalone', () => {
         { autoDismiss: false }
       );
     });
+
+    it('surfaces authored archive faults through wrapper causes', async () => {
+      const fault = new ArchiveFaultError(
+        'The archive became unreadable. Retry from a stable host.',
+        'https://example.test/data.zarr.zip'
+      );
+      const initError = new Error('scene loading failed', { cause: fault });
+      mocks.init.mockRejectedValueOnce(initError);
+
+      await expect(bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS })).rejects.toBe(
+        initError
+      );
+
+      expect(mocks.showError).toHaveBeenCalledWith(
+        fault.message,
+        expect.any(Function),
+        expect.any(Object),
+        { autoDismiss: false }
+      );
+    });
   });
 
   describe('user-settings precedence (URL param > stored setting > default)', () => {

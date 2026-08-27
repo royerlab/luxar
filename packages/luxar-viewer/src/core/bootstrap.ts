@@ -20,7 +20,7 @@ import { LuxarApp, type LuxarAppOptions } from './app';
 import { KeyAction } from '../input';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
-import { ArchiveFaultError } from '../cache/chunk-source';
+import { archiveFaultFrom } from '../cache/chunk-source';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { initUserSettings } from '../config/user-settings';
@@ -346,9 +346,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     await app.init(appOptions);
   } catch (error) {
     log.error(Modules.LUXAR, `Failed to start Luxar application: ${getErrorMessage(error)}`, error);
+    const archiveFault = archiveFaultFrom(error);
     showError(
-      error instanceof ArchiveFaultError
-        ? error.message
+      archiveFault
+        ? archiveFault.message
         : 'Failed to start the application. Please check the console for details.',
       shortcutForAction,
       {

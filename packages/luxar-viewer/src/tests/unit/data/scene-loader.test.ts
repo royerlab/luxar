@@ -1289,6 +1289,17 @@ describe('SceneLoader', () => {
       // The provider reads the same live failed set.
       expect(provider.getFailedPaths().sort()).toEqual(['/points/a', '/points/b']);
     });
+
+    it('supplies a classified reason when a loader throws a non-Error value', () => {
+      interface LoadSceneInternals extends FailInternals {
+        makeLoadSceneCtx(): { getFailedLoaderReasons(): string[] };
+      }
+
+      const internals = sceneLoader as unknown as LoadSceneInternals;
+      internals.registry.recordFailure('/points/a', undefined as unknown as Error);
+
+      expect(internals.makeLoadSceneCtx().getFailedLoaderReasons()).toEqual(['Unexpected']);
+    });
   });
 
   describe('kickRefinementIfIdle — refinement after deferred-group activation', () => {
