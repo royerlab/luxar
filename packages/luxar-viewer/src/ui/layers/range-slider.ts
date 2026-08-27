@@ -73,7 +73,6 @@ export class RangeSlider {
       labelRow.className = 'luxar-range-slider__label-row';
       this.labelEl = document.createElement('span');
       this.labelEl.className = 'luxar-range-slider__label';
-      this.setLabel(options.label, options.tooltip);
 
       this.lowLabel = document.createElement('span');
       this.lowLabel.className = 'luxar-range-slider__value';
@@ -95,6 +94,7 @@ export class RangeSlider {
       this.lowLabel = document.createElement('span');
       this.highLabel = document.createElement('span');
     }
+    if (options.label) this.setLabel(options.label, options.tooltip);
 
     // Track container (bounds labels + track + sliders)
     const trackRow = document.createElement('div');
