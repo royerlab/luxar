@@ -59,6 +59,54 @@ describe('SceneGraphModel', () => {
     }
   );
 
+  it('merges per-path visible counts into all four geometry types', () => {
+    // The visible-counts walk already stamps a mesh node's committed
+    // `visibleTriangleCount` into the per-path map; mesh used to be skipped
+    // here, dropping a number that had already been measured and leaving the
+    // tree's mesh badge unable to say how much of the surface the slab indexes.
+    const model = new SceneGraphModel(vi.fn());
+    const root: SceneGraphNode = {
+      path: '/',
+      name: 'Scene',
+      type: 'scene',
+      children: [
+        leaf('/points', 'points', 10),
+        leaf('/lines', 'lines', 20),
+        leaf('/splats', 'gsplats', 30),
+        leaf('/mesh', 'mesh', 40),
+      ],
+    };
+    model.setSceneGraph(root);
+    model.updateVisibleCountsByPath(
+      new Map([
+        ['/points', 1],
+        ['/lines', 2],
+        ['/splats', 3],
+        ['/mesh', 4],
+      ])
+    );
+    model.syncVisibleCountsIntoTree();
+
+    expect(model.getSceneGraphNodeByPath('/points')?.visiblePointCount).toBe(1);
+    expect(model.getSceneGraphNodeByPath('/lines')?.visibleSegmentCount).toBe(2);
+    expect(model.getSceneGraphNodeByPath('/splats')?.visibleSplatCount).toBe(3);
+    expect(model.getSceneGraphNodeByPath('/mesh')?.visibleFaceCount).toBe(4);
+  });
+
+  it('clears a stale mesh visible count when its path leaves the walk', () => {
+    // Paths absent from the latest walk reset to `undefined` — the tooltip must
+    // not keep asserting a slice-dependent count that no longer holds.
+    const model = new SceneGraphModel(vi.fn());
+    model.setSceneGraph(leaf('/mesh', 'mesh', 40));
+    model.updateVisibleCountsByPath(new Map([['/mesh', 4]]));
+    model.syncVisibleCountsIntoTree();
+    expect(model.getSceneGraphNodeByPath('/mesh')?.visibleFaceCount).toBe(4);
+
+    model.updateVisibleCountsByPath(new Map());
+    model.syncVisibleCountsIntoTree();
+    expect(model.getSceneGraphNodeByPath('/mesh')?.visibleFaceCount).toBeUndefined();
+  });
+
   it('rebuilds the path index when the root reference changes', () => {
     const model = new SceneGraphModel(vi.fn());
     const first = leaf('/points', 'points', 10);

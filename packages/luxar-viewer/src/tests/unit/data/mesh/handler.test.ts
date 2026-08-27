@@ -161,7 +161,9 @@ describe('mesh handler', () => {
 
     expect(staged?.path).toBe('/surface');
     expect(staged?.projected.visibleFaceCount).toBe(1);
-    expect(session.setMetadata).toHaveBeenCalledWith({ info: '1 faces' });
+    // The TYPED per-type counter (which sums across merged sessions), not the
+    // old free-text `info: 'N faces'` string.
+    expect(session.setMetadata).toHaveBeenCalledWith({ triangles: 1 });
   });
 
   it('threads extend_to_all so an extended mesh survives an off-slice position', async () => {

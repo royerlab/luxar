@@ -216,7 +216,7 @@ interface LevelContext {
  * Stats-badge content (element / child count + tooltip) for a tree node.
  * Shared by the initial render and the incremental badge patcher so text
  * and tooltip always agree. Per-type visible counts (after nD slicing)
- * are appended symmetrically for points / lines / gsplats when known and
+ * are appended symmetrically for all four geometry types when known and
  * different from the dataset count. Returns `null` for nodes with no
  * stats badge (leaves without counts; specialized groups, whose kind
  * badge already carries the child count).
@@ -253,13 +253,16 @@ export function nodeStatsContent(node: SceneGraphNode): { text: string; title: s
     // the tooltip exactly as they do for lines, since for a mesh both numbers are
     // interesting (the vertex:face ratio is what tells a welded surface from a soup).
     //
-    // No `visibleSuffix`: the converter has no per-node visible-face field to feed it.
-    // The per-type visible TOTAL is reported separately via `updateVisibleCount('mesh')`
-    // — see `monitor/visible-counts.ts`.
+    // `visibleSuffix` applies here as it does for the other three, from the count the
+    // visible-counts walk already measured per path (`monitor/visible-counts.ts` →
+    // `SceneGraphModel.syncVisibleCountsIntoTree`). For a mesh it reads as "how much of
+    // this surface the current nD slab indexes" rather than a streaming residency: the
+    // node is resident in full either way.
     let title = `${node.faceCount.toLocaleString()} triangles`;
     if (node.vertexCount !== undefined) {
       title += `, ${node.vertexCount.toLocaleString()} vertices`;
     }
+    title += visibleSuffix(node.visibleFaceCount, node.faceCount);
     return { text: formatNumber(node.faceCount), title };
   }
   if (node.type === 'group' && node.children.length > 0 && !node.kind) {
@@ -464,7 +467,7 @@ export function renderSceneGraphTree(
   return `
     <div class="luxar-scene-graph">
       <div class="luxar-scene-graph__header">
-        <h4 class="luxar-scene-graph__title" title="Hierarchy of scene nodes (groups, points, lines, gsplats) with per-node element counts">SCENE GRAPH</h4>
+        <h4 class="luxar-scene-graph__title" title="Hierarchy of scene nodes (groups, points, lines, gsplats, mesh) with per-node element counts">SCENE GRAPH</h4>
         ${headerStats ? `<span class="luxar-scene-graph__stats" title="${escapeHtml(headerStatsTooltip)}">${headerStats}</span>` : ''}
       </div>
       ${lodSummary ? `<div class="luxar-scene-graph__lod-summary" data-field="lod-summary" title="${escapeHtml(lodSummaryTooltip)}">${lodSummary}</div>` : ''}

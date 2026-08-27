@@ -18,6 +18,7 @@ timing panel.
 | `event-queue.ts`       | Generic `EventQueue<T>` — bounded ring buffer with non-blocking `push` and atomic `drain()` used to decouple loader event producers from the polling consumer.                                                                                                                                                                                                                                                                                                                                                                                          |
 | `polling-loop.ts`      | `PollingLoop` — restartable interval timer. Errors thrown from `onTick` are logged via `utils/log` and never stop the loop.                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `providers.ts`         | `MonitorProviderRegistry` — stateful owner of the scene-scoped provider slots and live LOD/draw-order snapshots. It remains private to the parent monitor and marks the orchestrator's structure dirty when provider changes require a repaint.                                                                                                                                                                                                                                                                                                         |
+| `headline-counts.ts`   | The shared per-geometry headline table (label, DOM field id, unit noun, presence rule) read by the Overview hero cards, their incremental patcher, and the collapsed compact badge — one source, so the three cannot disagree about which types exist or what they are called.                                                                                                                                                                                                                                                                          |
 | `scene-graph-model.ts` | `SceneGraphModel` — owns scene-graph statistics, expansion state, per-path visible counts, and the memoized path index while preserving the monitor's public facade.                                                                                                                                                                                                                                                                                                                                                                                    |
 | `timing-panel.ts`      | Renderer + in-place updater for the collapsible per-frame timing tree, fed by `profiling/update-profiler`. Module-level `expandedState` map persists collapse state across rerenders. The footer also carries the depth-sort verdict: passed `depthSortUnavailable` (from `rendering/depth-sort-coordinator::isDepthSortAvailable`) it prints `depth sort UNAVAILABLE` in place of the sort count and suppresses the "No timing data yet" empty state, so a session drawing order-dependent geometry in storage order cannot be buried by zero timings. |
 
@@ -141,8 +142,10 @@ in `timing-panel.ts`.
   `updateVisibleCountsByPath` (pushed by the SceneLoader's
   visible-counts walk, keyed by mesh `name` = scene-graph path) and are
   merged into the tree nodes so badge tooltips read
-  "N elements (M visible after slicing)" — symmetric across points /
-  lines / gsplats. The walk prunes non-visible subtrees, so nodes whose
+  "N elements (M visible after slicing)" — symmetric across all four
+  geometry types. For mesh the suffix means "how much of this surface the
+  current nD slab indexes" rather than a streaming residency, since a mesh
+  is resident in full either way. The walk prunes non-visible subtrees, so nodes whose
   path is absent from the latest map (hidden layer, switched-away
   substitutive level) have their count cleared back to unknown — the
   suffix disappears rather than showing a stale number. The same walk pushes
@@ -153,6 +156,37 @@ in `timing-panel.ts`.
 - **All user-supplied strings flow through `utils/escape-html`** before
   being interpolated into template literals (loader paths, entry
   names, recommendation messages).
+
+## Four-type parity
+
+Every surface in the panel reports all four geometry types — points, lines,
+gsplats and mesh — and each uses that type's own DRAWN-PRIMITIVE noun (points /
+segments / splats / triangles), the convention the whole monitor follows.
+
+Mesh is the type most recently brought up to parity, and where it differs it is
+because a whole-node loader genuinely differs, not because a number is missing:
+
+- **Hero cards / compact badge** — one card per type present, from
+  `headline-counts.ts`. A mesh-only scene shows `VISIBLE TRIANGLES`, not the
+  "LOADING …" placeholder.
+- **Scene-graph tree** — icons, `faceCount` badge, LOD chips, and the
+  `(M visible after slicing)` suffix.
+- **Loader list / loader totals** — mesh loaders implement the `LoaderMonitor`
+  surface (`mesh-whole-node`), so their bytes, loads and resident memory join
+  the panel's totals. Whole-node latency does not trigger the advisor's
+  chunk-size slow-load recommendation. They report NO
+  `queries` / `avgQueryTime` / `spatialIndex`: there is no spatial index and a
+  view change re-serves the resident mesh, so a query sample would be a ~0 ms
+  entry for work that never touched the store. For the same reason mesh is not
+  counted in `activeSpatialLoaders`.
+- **Performance tab** — mesh sessions aggregate into one `Mesh` row like the
+  other three (`NODE_TYPE_COUNTERS` in `timing-panel.ts`) and carry a typed
+  `triangles` count that SUMS across a multi-layer row.
+- **Memory tab** — mesh is deliberately ABSENT from the GPU-pool and
+  accumulator tables. Those are keyed by `POOLED_GEOMETRY_TYPES` (the
+  instanced-quad element-texture path); a mesh uploads its own
+  `BufferGeometry` and keeps no per-slice working set, so it has no row to
+  show there. Its resident bytes appear in the loader totals instead.
 
 ## Failed-load recovery surface
 

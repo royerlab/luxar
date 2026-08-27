@@ -394,7 +394,11 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     this.path = path;
     this.sliceCache = sliceCache ?? null;
     this.levelOffsets = levelOffsets ?? null;
-    this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path);
+    this.monitor = new ProgressiveMonitorAdapter(
+      () => this.lodLoaders,
+      path,
+      'point-spatial-index'
+    );
     this.energyTable =
       energyTable && energyTable.length === nLods && energyTable.every((e) => typeof e === 'number')
         ? (energyTable as number[])
