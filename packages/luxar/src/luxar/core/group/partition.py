@@ -415,6 +415,11 @@ def reconstruct_serialized_bsp_tree(
     At each step it scans the boxes' own faces as candidate cuts and takes the
     first that splits the set cleanly, recursing on both sides.
 
+    Recovery considers every recorded position column. For standalone gsplat
+    partitions that can include a stacked time/channel axis; the viewer safely
+    declines such a tree when that axis is not displayed, matching its fallback
+    for a missing tree rather than preventing recovery for native nD scenes.
+
     Leaves carry each box's index in ``boxes`` verbatim, so a caller can pair the
     result with :func:`prune_serialized_bsp_tree` if the part set changes.
 
@@ -428,7 +433,7 @@ def reconstruct_serialized_bsp_tree(
         return None
 
     visits = [0]
-    n_axes = min(3, len(boxes[0][0]))
+    n_axes = len(boxes[0][0])
 
     def build(items: "List[int]") -> Optional[Dict[str, Any]]:
         visits[0] += 1

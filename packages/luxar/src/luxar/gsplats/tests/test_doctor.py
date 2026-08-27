@@ -471,6 +471,24 @@ class TestSplitPlanesCheck:
             attrs = read_node_attrs(path / "points") or {}
             assert attrs["bsp_tree"] == before
 
+    def test_missing_axis_three_planes_are_recovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _hidden_first_partition_scene(Path(tmp))
+            root = zc_open_group(str(path), mode="r+")
+            del root["points"].attrs["bsp_tree"]
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+            assert [finding.severity for finding in report.findings] == ["error"]
+            assert report.findings[0].fixable
+            assert "no split planes recorded for 4 parts" in report.findings[0].summary
+
+            fixed = diagnose_store(path, fix=True)
+            assert fixed.healthy
+            attrs = read_node_attrs(path / "points") or {}
+            assert attrs["bsp_tree"]["axis"] == 3
+            assert diagnose_store(path).healthy
+
     def test_a_healthy_partition_reports_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _partition_store(Path(tmp))
