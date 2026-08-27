@@ -1,21 +1,32 @@
+/**
+ * Bounded concurrent recursion for eager scene children.
+ *
+ * @module data/scene-loader/nodes/load-children-concurrently
+ */
+
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import type { SceneNode } from '../../data-loader-types';
 import type { NodeBuildCtx } from './build-ctx';
 
-// High enough to collapse the serial network waterfall while bounding decode,
-// commit, and temporary-placeholder pressure on the main thread.
+// This is a per-parent bound: nested groups may multiply the total fan-out.
+// Eight siblings expose roughly 40 rung-array requests at one level, which
+// stays below the global 64-request fetch gate while collapsing waterfalls.
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
-export type LoadSceneChild = (
+/** Signature of the injected recursive scene-graph walker. */
+export type LoadSceneChildren = (
   node: SceneNode,
   parentThree: THREE.Object3D,
   parentLoc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
 ) => Promise<void>;
 
-interface LoadChildrenOptions {
+/** Hooks for decorating temporary slots and their flattened children. */
+export interface LoadChildrenOptions {
+  /** Configure the attached slot before its child starts loading. */
   configureSlot?: (slot: THREE.Group, child: SceneNode, index: number) => void;
+  /** Configure each loaded object immediately before it replaces the slot. */
   configureLoadedChild?: (object: THREE.Object3D, child: SceneNode, index: number) => void;
 }
 
@@ -27,17 +38,13 @@ function replaceSlot(
   const slotIndex = parent.children.indexOf(slot);
   if (slotIndex < 0) return;
 
-  const loadedChildren = [...slot.children];
+  const loadedChildren = slot.children.splice(0);
   for (const child of loadedChildren) {
     configureLoadedChild?.(child);
-    slot.remove(child);
+    child.parent = parent;
   }
-  parent.remove(slot);
-  if (loadedChildren.length === 0) return;
-
-  parent.add(...loadedChildren);
-  const appended = parent.children.splice(-loadedChildren.length, loadedChildren.length);
-  parent.children.splice(slotIndex, 0, ...appended);
+  slot.parent = null;
+  parent.children.splice(slotIndex, 1, ...loadedChildren);
 }
 
 export async function loadChildrenConcurrently(
@@ -45,7 +52,7 @@ export async function loadChildrenConcurrently(
   parentThree: THREE.Object3D,
   parentLoc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx,
-  loadChild: LoadSceneChild,
+  loadChild: LoadSceneChildren,
   options: LoadChildrenOptions = {}
 ): Promise<void> {
   // Slots reserve authored sibling order before any async work starts. They

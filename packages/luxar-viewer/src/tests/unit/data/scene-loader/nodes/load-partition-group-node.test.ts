@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 const loadSceneNodesMock = vi.fn();
 
 import { loadPartitionGroupNode } from '../../../../../data/scene-loader/nodes/load-partition-group-node';
+import { EAGER_CHILD_LOAD_CONCURRENCY } from '../../../../../data/scene-loader/nodes/load-children-concurrently';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
@@ -219,14 +220,37 @@ describe('loadPartitionGroupNode', () => {
     for (let index = releases.length - 1; index >= 0; index--) releases[index]();
     const wrapper = await loadPromise;
 
-    expect(firstWave).toBe(8);
-    expect(maxActive).toBe(8);
+    expect(firstWave).toBe(EAGER_CHILD_LOAD_CONCURRENCY);
+    expect(maxActive).toBe(EAGER_CHILD_LOAD_CONCURRENCY);
     expect(wrapper.children.map((child) => child.name)).toEqual(
       children.map((child) => child.path)
     );
     expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual(
       children.map((_, index) => index)
     );
+  });
+
+  it('stamps partition slots while their children are still loading', async () => {
+    const child = makePartNode('/partition/part_0', 'points', { child_index: 7 });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    loadSceneNodesMock.mockImplementation(async () => gate);
+    const parent = new THREE.Group();
+
+    const loadPromise = loadPartitionGroupNode(
+      makePartitionGroupNode([child]),
+      parent,
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    await Promise.resolve();
+    expect(parent.children[0].children[0].userData.partIndex).toBe(7);
+    release();
+    await loadPromise;
   });
 
   it('keeps every object from a part contiguous and stamps each with the same part index', async () => {

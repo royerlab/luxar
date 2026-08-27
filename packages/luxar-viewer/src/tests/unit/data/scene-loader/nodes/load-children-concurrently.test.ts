@@ -51,6 +51,28 @@ describe('loadChildrenConcurrently', () => {
     expect(parent.children.map((object) => object.name)).toEqual([child.path]);
   });
 
+  it('reparents loaded objects without dispatching removal events', async () => {
+    const parent = new THREE.Group();
+    const child = makeChildren(1)[0];
+    const removed = vi.fn();
+
+    await loadChildrenConcurrently(
+      [child],
+      parent,
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async (node, slot) => {
+        const object = new THREE.Group();
+        object.name = node.path;
+        object.addEventListener('removed', removed);
+        slot.add(object);
+      }
+    );
+
+    expect(removed).not.toHaveBeenCalled();
+    expect(parent.children[0].parent).toBe(parent);
+  });
+
   it('stops queued work, settles active loads, and removes slots after an unexpected error', async () => {
     const children = makeChildren(EAGER_CHILD_LOAD_CONCURRENCY + 2);
     const parent = new THREE.Group();

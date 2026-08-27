@@ -30,8 +30,7 @@ import { log, Modules } from '../../../utils/log';
 import type { SceneNode } from '../../data-loader-types';
 import type { BspTreeNode, PartitionGroupMetadata } from '../../../types/partition-group';
 import type { NodeBuildCtx } from './build-ctx';
-import type { LoadSceneChildren } from './load-lod-group-node';
-import { loadChildrenConcurrently } from './load-children-concurrently';
+import { loadChildrenConcurrently, type LoadSceneChildren } from './load-children-concurrently';
 
 interface PositionBounds {
   min: readonly number[];
