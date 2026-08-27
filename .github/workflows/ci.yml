@@ -65,8 +65,10 @@ concurrency:
   # Fresh runs all have attempt 1, so PR and push runs still coalesce by event
   # and ref exactly as before. Any rerun gets a distinct attempt number, so a
   # newer fresh run does not cancel it (including superseded PR reruns).
-  # Neither rerun path restarts queue-watchdog, so an obsidian-routed
-  # job whose runner disappears can remain queued until GitHub's 24-hour limit.
+  # Neither rerun path restarts queue-watchdog. An obsidian-routed job left
+  # undispatched after its runners disappear can remain queued until GitHub's
+  # 24-hour ceiling; one dispatched before its slot recycles can instead reach
+  # its timeout before any step starts or runner name is recorded.
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
@@ -231,9 +233,11 @@ jobs:
   # evidence, known liveness still wins. A stale publisher with no active work
   # degrades to hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
   #
-  # Freshness matters more than it looks: a job dispatched to a registered-but-
-  # offline self-hosted runner does not fail, it QUEUES — for up to 24 hours. So
-  # the failure mode this guards against is not a red CI, it is a CI that hangs.
+  # Freshness matters more than it looks: a job assigned to a registered-but-
+  # offline self-hosted label does not fail or fall back, it QUEUES for up to 24
+  # hours. So the failure mode this guards against is not a red CI, it is a CI
+  # that hangs. A leg dispatched before its slot recycles is the separate case
+  # that can reach its timeout before any step starts or runner name is recorded.
   # This check only covers the moment of routing; the `queue-watchdog` job below
   # covers the window AFTER it (box dies post-routing, jobs already queued).
   pick-runner:
@@ -384,17 +388,19 @@ jobs:
   # pick-runner's heartbeat check is a snapshot: it proves obsidian was alive
   # when the run was ROUTED, not that it survives long enough to pick the jobs
   # up. GitHub never re-evaluates `runs-on` — a job assigned to the `obsidian`
-  # label whose runners then vanish does not fail or fall back, it sits QUEUED
-  # for up to 24 hours, and job-level `timeout-minutes` only starts counting
-  # once a job is running. This job covers the first 10 minutes from the hosted
-  # side: while any obsidian-routed job is still queued it checks in-progress
-  # obsidian jobs across repository runs. If none are visible it cancels the run.
+  # label whose runners then vanish does not fall back. If it is never dispatched,
+  # it can remain queued until GitHub's 24-hour ceiling; job-level timeout has not
+  # started. If it was dispatched before its slot recycled, the timeout can run
+  # with no steps or runner name recorded and eventually cancel the required leg.
+  # This job covers the first 10 minutes from the hosted side: while any
+  # obsidian-routed job is still queued, it checks in-progress obsidian jobs across
+  # repository runs. If none are visible it cancels the run.
   # The workflow token cannot read repository-variable updates, so the publisher
   # is unavailable here; a stale GitHub `in_progress` state can therefore keep a
-  # dead runner covered. A box that dies after this window can still
-  # leave the run queued until GitHub's 24-hour timeout; set LUXAR_CI_FORCE_HOSTED=1
-  # and re-run ALL jobs to recover ("re-run failed" reuses the previous router
-  # output).
+  # dead runner covered. A box that dies after this window can still leave an
+  # undispatched leg queued until the 24-hour ceiling, or a dispatch-lost leg
+  # running down its timeout. Set LUXAR_CI_FORCE_HOSTED=1 and re-run ALL jobs to
+  # recover ("re-run failed" reuses the previous router output).
   #
   # On a push or the daily full-matrix schedule, max-parallel deliberately holds
   # one Python leg queued while two Python legs and TypeScript occupy the three
@@ -832,11 +838,15 @@ jobs:
     # `changes` job.
     if: ${{ !cancelled() }}
     runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
-    # 60, not 30: same SCHED_IDLE starvation argument as python-tests. Measured
-    # at 15.5 min alongside the xdist matrix, so 30 left under 2x — the thinnest
-    # margin of any obsidian-routed job. release-readiness keeps 30 on its
-    # GitHub-hosted runner, where SCHED_IDLE starvation does not apply.
-    timeout-minutes: 60
+    # 120, not 60: a successful TypeScript attempt ran 17m53s of real steps; at
+    # the documented 3.3x SCHED_IDLE extreme, a healthy starved run projects to
+    # roughly 59 minutes, leaving the former 60-minute budget no headroom for any
+    # pre-step dispatch latency. A dispatch-lost leg can spend the same budget
+    # without starting a step. The cost is doubled time-to-red and delayed stale
+    # repair for that leg; on the hosted fallback it also doubles hang detection
+    # and worst-case billed time. release-readiness keeps 30 because its hosted
+    # runner is not exposed to SCHED_IDLE starvation.
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: packages/luxar-viewer

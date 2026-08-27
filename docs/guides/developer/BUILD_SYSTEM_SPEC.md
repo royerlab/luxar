@@ -903,18 +903,24 @@ same species of lie as an untested 3.10 claim would be. All eight scheduled wind
 land every three hours; the seven other than 09:17 carry only the required 3.12 leg.
 On obsidian, `max-parallel: 2` prevents one run's Python matrix from monopolising all
 three shared slots; repository-wide queue order may still put other work ahead of
-that run's `typescript-tests`. The final Python leg follows. Every scheduled window
-also runs the short `release-readiness` and `wheel-viewer` checks on GitHub-hosted
-runners, and `pick-runner` routes the long Python/TypeScript legs to hosted runners
-when obsidian has no fresh capacity and either no work in flight, an aged backlog at
-the configured cap, or any aged backlog when the bounded scan cannot inspect every
-eligible run. Five of the twelve most recent daily scheduled runs (2026-08-14 to
-2026-08-25) took that billed path. Every added window therefore consumes hosted
-minutes for short jobs, while routing adds either obsidian queue depth or the long
-legs to the hosted bill. Those routed long legs alone expose roughly 200–240 hosted
-minutes/day at that observed rate; one daily pair of extra Python legs is small beside
-that baseline. (If newer interpreters ever become deliberately unsupported, the
-honest fix is a `requires-python` upper bound, not a quiet single-leg matrix.)
+that run's `typescript-tests`. The final Python leg follows. A successful TypeScript
+attempt ran 17m53s of real steps; at the documented 3.3x `SCHED_IDLE` extreme, a
+healthy starved run projects to roughly 59 minutes, leaving the former 60-minute
+budget no headroom for any pre-step dispatch latency. A dispatch-lost leg can spend
+the same budget without starting a step. `typescript-tests` now carries 120 minutes,
+at the cost of a doubled time-to-red and delayed stale repair for that leg. Every
+scheduled window also runs the short `release-readiness` and `wheel-viewer` checks on
+GitHub-hosted runners, and `pick-runner` routes the long Python/TypeScript legs to
+hosted runners when obsidian has no fresh capacity and either no work in flight, an
+aged backlog at the configured cap, or any aged backlog when the bounded scan cannot
+inspect every eligible run. Five of the twelve most recent daily scheduled runs
+(2026-08-14 to 2026-08-25) took that billed path. Every added window therefore
+consumes hosted minutes for short jobs, while routing adds either obsidian queue
+depth or the long legs to the hosted bill. Those routed long legs alone expose
+roughly 200–240 hosted minutes/day at that observed rate; one daily pair of extra
+Python legs is small beside that baseline. (If newer interpreters ever become
+deliberately unsupported, the honest fix is a `requires-python` upper bound, not a
+quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
@@ -970,15 +976,16 @@ rejected rerun is reported as a warning. A failed repaired job is terminal for t
 unless it is included in the multi-job failed-jobs rerun; otherwise recovery requires a
 manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
 later merge cannot cancel the repaired attempt. That exemption applies to ordinary PR
-reruns too, and neither rerun path restarts `queue-watchdog`; an obsidian-routed job
-can therefore remain queued until GitHub's 24-hour limit if the runner disappears. The
-repair job has only `actions: write` permission and runs on GitHub-hosted Linux;
-recovered long legs reuse their original runner-routing decision and repay work that the
-scheduled run already performed. On the multi-job path, up to four obsidian-routed long
-legs can therefore run alongside the next push run, increasing self-hosted contention.
-When the original routing decision was `ubuntu-latest`, up to eight repair windows per
-day can also add hosted-runner minutes, but only on a SHA that can otherwise block
-promotion.
+reruns too, and neither rerun path restarts `queue-watchdog`. An obsidian-routed job
+left undispatched after its runners disappear can therefore remain queued until
+GitHub's 24-hour ceiling; one dispatched before its slot recycles can instead reach its
+timeout before any step starts or runner name is recorded. The repair job has only
+`actions: write` permission and runs on GitHub-hosted Linux; recovered long legs reuse
+their original runner-routing decision and repay work that the scheduled run already
+performed. On the multi-job path, up to four long legs routed to obsidian can therefore
+run alongside the next push run, increasing self-hosted contention. When the original
+routing decision was `ubuntu-latest`, up to eight repair windows per day can also add
+hosted-runner minutes, but only on a SHA that can otherwise block promotion.
 
 ## Architecture Notes
 
