@@ -413,27 +413,26 @@ def test_build_state_uses_the_deposited_symmetry_order(
         ([("Constricted", "7R5K"), ("Dilated", "7R5J")], "7R5J/7R5K"),
     ],
 )
-def test_single_state_caption_names_the_selected_deposition(
-    states, expected_entries: str, monkeypatch: pytest.MonkeyPatch
+def test_caption_reports_the_selected_deposition_and_atom_count(
+    states, expected_entries: str
 ) -> None:
     """Captions report the selected deposition and representation's atom count."""
 
     class Scene:
-        def add_text(self, *args, **kwargs) -> None:
-            pass
+        def __init__(self) -> None:
+            self.texts = []
 
-    captured = {}
-    monkeypatch.setattr(
-        demo,
-        "add_demo_caption",
-        lambda scene, detail, citation: captured.setdefault("detail", detail),
-    )
+        def add_text(self, text, *args, **kwargs) -> None:
+            self.texts.append(text)
 
-    demo._add_annotations(Scene(), states, 1_248_480)
+    scene = Scene()
+    demo._add_annotations(scene, states, 1_248_480)
 
-    assert captured["detail"] == (
-        f"1,248,480 atoms • 808 chains • 25 nucleoporins • PDB {expected_entries}"
-    )
+    assert scene.texts == [
+        "Nuclear Pore Complex",
+        f"1,248,480 atoms • 808 chains • 25 nucleoporins • PDB {expected_entries} "
+        "• Mosalaganti et al. 2022",
+    ]
 
 
 def test_main_banner_does_not_claim_the_all_atom_count(capsys) -> None:
