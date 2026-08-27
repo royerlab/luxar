@@ -569,10 +569,29 @@ def _stats_after_content_change(
     Mutates ``result``'s own stats in place (never the caller's — see
     :func:`drop_content_scoped_stats`), for the same reasons spelled out on
     :func:`_stats_after_filter`.
+
+    LOD restamping belongs to the optional gsplats extra. Its deferred import is
+    needed only when both artifacts have substitutive levels and the source
+    ladder carries some authored metadata. The metadata test is deliberately
+    broader than the restamper's exact key guard, so it may import for a no-op
+    but can never skip a refresh that would have changed the result.
     """
     if not changed:
         return result
     scrub_measured_stats(result)
+
+    source_levels = source.substitutive_levels
+    result_levels = result.substitutive_levels
+    if (
+        not source_levels
+        or not result_levels
+        or not any(
+            level.stats or any(lod.stats for lod in level.additive_sublods)
+            for level in source_levels
+        )
+    ):
+        return result
+
     from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
 
     return refresh_reduction_lod_stats(result, source)

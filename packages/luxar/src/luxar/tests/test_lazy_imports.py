@@ -173,6 +173,9 @@ data = GSplatData(
 )
 data.save(SPLATS_PATH)
 
+scaled = data.scale_intensity(0.5)
+np.testing.assert_allclose(scaled.amplitudes, amplitudes * 0.5)
+
 translated = data.translate(np.ones(3, dtype=np.float32))
 np.testing.assert_allclose(translated.centers, centers + 1)
 transformed = data.transform(np.eye(3, dtype=np.float32) * 2)
@@ -303,7 +306,9 @@ def test_core_scene_authoring_without_gsplats_extra(tmp_path: Path) -> None:
     ...gsplats.utils.trils import split_tril`` on every call, and importing that
     pure-NumPy submodule executes a parent ``__init__`` that eagerly pulled the
     torch-only ``device`` module. ``GSplatData`` had the same shape of problem
-    one level up, behind ``luxar/gsplats/__init__.py``'s stub guard.
+    one level up, behind ``luxar/gsplats/__init__.py``'s stub guard. Content
+    edits such as ``scale_intensity`` must likewise avoid the SciPy-backed LOD
+    package when an unstamped dataset has nothing to restamp (#2229).
     """
     scene_path = tmp_path / "core_only.luxar.zarr"
     splats_path = tmp_path / "core_only.gsplats.zarr"
