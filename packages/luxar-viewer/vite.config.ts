@@ -62,7 +62,7 @@ export default defineConfig(({ command }) => ({
             },
             {
               name: 'three-ktx2',
-              test: /[\\/]three[\\/]examples[\\/]jsm[\\/](?:loaders[\\/]KTX2Loader|libs[\\/]ktx-parse)/,
+              test: /[\\/]three[\\/]examples[\\/]jsm[\\/](?:loaders[\\/]KTX2Loader|libs[\\/](?:ktx-parse|zstddec))/,
               priority: 20,
               includeDependenciesRecursively: false,
             },
