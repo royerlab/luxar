@@ -224,11 +224,10 @@ jobs:
   # an in-progress obsidian job in any repository run proves the busy box is live.
   #
   # Same-repo runs route to obsidian while the positive capacity timestamp is
-  # fresh OR another obsidian job is in progress. To keep that cost preference
-  # from growing an unbounded queue, five already-queued obsidian jobs hit the
-  # backlog cap and burst new work to GitHub-hosted. A stale publisher with
-  # no active work also degrades to hosted. LUXAR_CI_FORCE_HOSTED is the manual
-  # escape hatch.
+  # fresh OR another obsidian job is in progress. With no fresh capacity, five
+  # obsidian jobs waiting at least five minutes hit the backlog cap and burst
+  # new work to GitHub-hosted. A stale publisher with no active work also
+  # degrades to hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
   #
   # Freshness matters more than it looks: a job dispatched to a registered-but-
   # offline self-hosted runner does not fail, it QUEUES — for up to 24 hours. So
@@ -249,6 +248,7 @@ jobs:
           FORCE_HOSTED: ${{ vars.LUXAR_CI_FORCE_HOSTED }}
           GH_TOKEN: ${{ github.token }}
           HEARTBEAT: ${{ vars.LUXAR_CI_HEARTBEAT }}
+          MAX_QUEUED_OBSIDIAN: ${{ vars.LUXAR_CI_MAX_QUEUED_OBSIDIAN }}
           # Empty on push events; the `|| github.repository` makes those read
           # as same-repo, which they are.
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
@@ -285,8 +285,20 @@ jobs:
           if [ "$hb" -gt 0 ] && [ "$age" -ge -30 ] && [ "$age" -lt 180 ]; then
             capacity_fresh=1
           fi
+          if [ "$capacity_fresh" -eq 1 ]; then
+            echo "capacity heartbeat is ${age}s old -> routing to obsidian"
+            echo "label=obsidian" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           active_obsidian=0
-          max_queued_obsidian=5
+          max_queued_obsidian=${MAX_QUEUED_OBSIDIAN:-5}
+          if ! echo "$max_queued_obsidian" | grep -qE '^[1-9][0-9]*$'; then
+            max_queued_obsidian=5
+          fi
+          max_scanned_runs=10
+          scanned_runs=0
+          queue_grace_seconds=300
+          queue_cutoff=$(( now - queue_grace_seconds ))
           queued_obsidian=0
           for run_status in queued in_progress; do
             runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=${run_status}&per_page=100" \
@@ -296,7 +308,22 @@ jobs:
               echo "label=obsidian" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            for run_id in $(echo "$runs" | jq -r '.workflow_runs[].id' 2>/dev/null); do
+            run_ids=$(echo "$runs" | jq -r --arg status "$run_status" \
+              --argjson cutoff "$queue_cutoff" \
+              '.workflow_runs[]
+              | select($status == "in_progress" or (.created_at | fromdateiso8601) <= $cutoff)
+              | .id' 2>/dev/null) || {
+                echo "run backlog unreadable; routing to obsidian to avoid paid overflow"
+                echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                exit 0
+              }
+            for run_id in $run_ids; do
+              if [ "$scanned_runs" -ge "$max_scanned_runs" ]; then
+                echo "backlog scan reached its ${max_scanned_runs}-run limit with more eligible runs -> routing to ubuntu-latest"
+                echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              scanned_runs=$(( scanned_runs + 1 ))
               jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
                 2>/dev/null) || jobs=""
               if [ -z "$jobs" ]; then
@@ -304,15 +331,18 @@ jobs:
                 echo "label=obsidian" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
-              queued=$(echo "$jobs" | jq '[.jobs[] | select(.status == "queued")
-                | select(.labels | index("obsidian"))] | length' 2>/dev/null) || {
+              queued=$(echo "$jobs" | jq --argjson cutoff "$queue_cutoff" \
+                '[.jobs[] | select(.status == "queued")
+                | select(.labels | index("obsidian"))
+                | select((.created_at | fromdateiso8601) <= $cutoff)] | length' \
+                2>/dev/null) || {
                   echo "job backlog unreadable; routing to obsidian to avoid paid overflow"
                   echo "label=obsidian" >> "$GITHUB_OUTPUT"
                   exit 0
                 }
               queued_obsidian=$(( queued_obsidian + queued ))
               if [ "$queued_obsidian" -ge "$max_queued_obsidian" ]; then
-                echo "$queued_obsidian obsidian jobs are already queued -> routing to ubuntu-latest"
+                echo "at least $queued_obsidian obsidian jobs have waited ${queue_grace_seconds}s -> routing to ubuntu-latest"
                 echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
@@ -322,13 +352,8 @@ jobs:
               fi
             done
           done
-          if [ "$capacity_fresh" -eq 1 ]; then
-            echo "capacity heartbeat is ${age}s old with $queued_obsidian queued -> routing to obsidian"
-            echo "label=obsidian" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           if [ "$active_obsidian" -eq 1 ]; then
-            echo "obsidian work is in progress with $queued_obsidian queued -> routing to obsidian"
+            echo "obsidian work is in progress with $queued_obsidian aged jobs queued -> routing to obsidian"
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
             exit 0
           fi

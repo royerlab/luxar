@@ -964,6 +964,10 @@ def _run_pick_runner(
     other_run_active: bool = False,
     first_run_queued_obsidian_jobs: int = 0,
     queued_obsidian_jobs: int = 0,
+    queued_job_age_seconds: int = 600,
+    active_run_age_seconds: int = 600,
+    old_empty_runs: int = 0,
+    max_queued_obsidian: str = "",
     api_error: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     """Run the real inline router against deterministic repository activity."""
@@ -976,10 +980,16 @@ def _run_pick_runner(
 import json
 import os
 import sys
+from datetime import UTC, datetime
 
 endpoint = next((arg for arg in sys.argv if "/actions/" in arg), "")
+with open(os.environ["ROUTER_API_LOG"], "a", encoding="utf-8") as log:
+    log.write(endpoint + "\\n")
 if os.environ["ROUTER_API_ERROR"] == "runs" and "/actions/runs?" in endpoint:
     raise SystemExit(1)
+if os.environ["ROUTER_API_ERROR"] == "runs-json" and "/actions/runs?" in endpoint:
+    print("not-json")
+    raise SystemExit(0)
 if os.environ["ROUTER_API_ERROR"] == "jobs" and "/runs/" in endpoint and "/jobs?" in endpoint:
     raise SystemExit(1)
 if os.environ["ROUTER_API_ERROR"] == "jobs-json" and "/runs/" in endpoint and "/jobs?" in endpoint:
@@ -987,11 +997,9 @@ if os.environ["ROUTER_API_ERROR"] == "jobs-json" and "/runs/" in endpoint and "/
     raise SystemExit(0)
 if "/actions/runs?" in endpoint:
     if "status=queued" in endpoint:
-        run_ids = (
-            [2038]
-            if int(os.environ["ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS"]) > 0
-            else []
-        )
+        run_ids = list(range(3000, 3000 + int(os.environ["ROUTER_OLD_EMPTY_RUNS"])))
+        if int(os.environ["ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS"]) > 0:
+            run_ids.append(2038)
     else:
         run_ids = (
             [9999]
@@ -999,16 +1007,35 @@ if "/actions/runs?" in endpoint:
             or int(os.environ["ROUTER_QUEUED_OBSIDIAN_JOBS"]) > 0
             else []
         )
-    print(json.dumps({"workflow_runs": [{"id": run_id} for run_id in run_ids]}))
+    print(json.dumps({"workflow_runs": [
+        {
+            "id": run_id,
+            "created_at": datetime.fromtimestamp(
+                1000 - int(os.environ["ROUTER_ACTIVE_RUN_AGE_SECONDS"]), UTC
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if run_id == 9999
+            else "1970-01-01T00:00:00Z",
+        }
+        for run_id in run_ids
+    ]}))
 elif "/runs/" in endpoint and "/jobs?" in endpoint:
     queued = (
         os.environ["ROUTER_QUEUED_OBSIDIAN_JOBS"]
         if "/runs/9999/jobs?" in endpoint
         else os.environ["ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS"]
     )
-    jobs = [{"status": "queued", "labels": ["obsidian"]}] * int(queued)
+    created_at = datetime.fromtimestamp(
+        1000 - int(os.environ["ROUTER_QUEUED_JOB_AGE_SECONDS"]), UTC
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    jobs = [
+        {"status": "queued", "labels": ["obsidian"], "created_at": created_at}
+    ] * int(queued)
     if "/runs/9999/jobs?" in endpoint and os.environ["ROUTER_OTHER_ACTIVE"] == "1":
-        jobs.append({"status": "in_progress", "labels": ["obsidian"]})
+        jobs.append({
+            "status": "in_progress",
+            "labels": ["obsidian"],
+            "created_at": "1970-01-01T00:00:00Z",
+        })
     print(json.dumps({"jobs": jobs}))
 else:
     print(json.dumps({"jobs": []}))
@@ -1027,9 +1054,14 @@ else:
         "HEAD_REPO": head_repo,
         "FORCE_HOSTED": force_hosted,
         "HEARTBEAT": heartbeat,
+        "MAX_QUEUED_OBSIDIAN": max_queued_obsidian,
         "ROUTER_API_ERROR": api_error,
+        "ROUTER_API_LOG": str(tmp_path / "gh-calls"),
+        "ROUTER_ACTIVE_RUN_AGE_SECONDS": str(active_run_age_seconds),
         "ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS": str(first_run_queued_obsidian_jobs),
+        "ROUTER_OLD_EMPTY_RUNS": str(old_empty_runs),
         "ROUTER_OTHER_ACTIVE": "1" if other_run_active else "0",
+        "ROUTER_QUEUED_JOB_AGE_SECONDS": str(queued_job_age_seconds),
         "ROUTER_QUEUED_OBSIDIAN_JOBS": str(queued_obsidian_jobs),
     }
     result = subprocess.run(
@@ -1070,9 +1102,11 @@ def test_pick_runner_routes_same_repo_on_fresh_capacity_heartbeat(
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == expected
     assert "integer expression expected" not in result.stderr
+    if expected == "obsidian":
+        assert not (tmp_path / "gh-calls").exists()
 
 
-@pytest.mark.parametrize("api_error", ["runs", "jobs", "jobs-json"])
+@pytest.mark.parametrize("api_error", ["runs", "runs-json", "jobs", "jobs-json"])
 def test_pick_runner_fails_api_read_toward_obsidian(
     workflow: str, tmp_path: Path, api_error: str
 ) -> None:
@@ -1085,10 +1119,17 @@ def test_pick_runner_fails_api_read_toward_obsidian(
     assert label == "obsidian"
 
 
-def test_pick_runner_routes_busy_box_to_obsidian(workflow: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize("active_run_age_seconds", [10, 600])
+def test_pick_runner_routes_busy_box_to_obsidian(
+    workflow: str, tmp_path: Path, active_run_age_seconds: int
+) -> None:
     """An active obsidian job proves a zero-capacity box is live and busy."""
     result, label = _run_pick_runner(
-        workflow, tmp_path, heartbeat="0", other_run_active=True
+        workflow,
+        tmp_path,
+        heartbeat="0",
+        other_run_active=True,
+        active_run_age_seconds=active_run_age_seconds,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1096,33 +1137,68 @@ def test_pick_runner_routes_busy_box_to_obsidian(workflow: str, tmp_path: Path) 
 
 
 @pytest.mark.parametrize(
-    ("heartbeat", "queued_obsidian_jobs", "expected"),
+    ("queued_obsidian_jobs", "queued_job_age_seconds", "expected"),
     [
-        ("0", 4, "obsidian"),
-        ("0", 5, "ubuntu-latest"),
-        ("950", 4, "obsidian"),
-        ("950", 5, "ubuntu-latest"),
+        (4, 600, "obsidian"),
+        (5, 600, "ubuntu-latest"),
+        (5, 299, "obsidian"),
     ],
 )
 def test_pick_runner_caps_busy_box_backlog_at_five_jobs(
     workflow: str,
     tmp_path: Path,
-    heartbeat: str,
     queued_obsidian_jobs: int,
+    queued_job_age_seconds: int,
     expected: str,
 ) -> None:
-    """Five queued obsidian jobs hit the cap, so new work bursts hosted."""
+    """Five obsidian jobs past the grace window make new work burst hosted."""
     result, label = _run_pick_runner(
         workflow,
         tmp_path,
-        heartbeat=heartbeat,
+        heartbeat="0",
         other_run_active=True,
         first_run_queued_obsidian_jobs=2,
+        queued_job_age_seconds=queued_job_age_seconds,
         queued_obsidian_jobs=queued_obsidian_jobs - 2,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == expected
+
+
+@pytest.mark.parametrize(
+    ("max_queued_obsidian", "queued_obsidian_jobs", "expected"),
+    [("", 4, "obsidian"), ("", 5, "ubuntu-latest"), ("3", 3, "ubuntu-latest")],
+)
+def test_pick_runner_uses_configured_backlog_cap(
+    workflow: str,
+    tmp_path: Path,
+    max_queued_obsidian: str,
+    queued_obsidian_jobs: int,
+    expected: str,
+) -> None:
+    """The repository variable overrides the five-job default."""
+    result, label = _run_pick_runner(
+        workflow,
+        tmp_path,
+        other_run_active=True,
+        queued_obsidian_jobs=queued_obsidian_jobs,
+        max_queued_obsidian=max_queued_obsidian,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == expected
+
+
+def test_pick_runner_bounds_backlog_scan(workflow: str, tmp_path: Path) -> None:
+    """An old-run backlog larger than the scan budget fails toward hosted."""
+    result, label = _run_pick_runner(workflow, tmp_path, old_empty_runs=11)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == "ubuntu-latest"
+    assert "backlog scan reached its 10-run limit" in result.stdout
+    calls = (tmp_path / "gh-calls").read_text().splitlines()
+    assert len([call for call in calls if "/jobs?" in call]) == 10
 
 
 @pytest.mark.parametrize(
