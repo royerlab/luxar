@@ -19,7 +19,10 @@ from luxar.gsplats.batch.local_runner import (
     build_device_assignment,
 )
 from luxar.gsplats.batch.manifest import BatchManifest
-from luxar.gsplats.merged_quality import QUALITY_WORKERS_PER_DEVICE_ENV
+from luxar.gsplats.merged_quality import (
+    QUALITY_WORKERS_PER_DEVICE_ENV,
+    QUALITY_WORKERS_PER_HOST_ENV,
+)
 
 # ---------------------------------------------------------------------------
 # Device assignment (weighted round-robin)
@@ -46,15 +49,17 @@ def test_assignment_single_gpu() -> None:
 
 
 def test_gpu_worker_env_carries_same_device_concurrency() -> None:
-    assert _worker_env(3, {3: 4}) == {
+    assert _worker_env(3, {3: 4}, 7) == {
         "CUDA_VISIBLE_DEVICES": "3",
         QUALITY_WORKERS_PER_DEVICE_ENV: "4",
+        QUALITY_WORKERS_PER_HOST_ENV: "7",
     }
 
 
 def test_cpu_worker_env_carries_same_host_concurrency() -> None:
-    assert _worker_env(-1, {-1: 8}) == {
+    assert _worker_env(-1, {-1: 8}, 8) == {
         QUALITY_WORKERS_PER_DEVICE_ENV: "8",
+        QUALITY_WORKERS_PER_HOST_ENV: "8",
     }
 
 

@@ -40,10 +40,13 @@ _QUALITY_HOST_REFERENCE_VOLUMES = 2
 _QUALITY_DEVICE_PEAK_VOLUMES = 8
 
 #: Local ``batch-fit run`` workers share one CUDA device. Its parent records that
-#: concurrency here so each process admits only its share of sampled free host
-#: RAM and device VRAM. The single-card ``-j N`` and Slurm fan-outs do not yet
-#: set it; their per-tile scoring work is tracked by #2195.
+#: concurrency here so each process admits only its share of device VRAM.
 QUALITY_WORKERS_PER_DEVICE_ENV = "LUXAR_QUALITY_WORKERS_PER_DEVICE"
+
+#: Local ``batch-fit run`` workers across every device share the host's RAM. The
+#: single-card ``-j N`` and Slurm fan-outs do not yet set these counts; their
+#: per-tile scoring work is tracked by #2195.
+QUALITY_WORKERS_PER_HOST_ENV = "LUXAR_QUALITY_WORKERS_PER_HOST"
 
 
 def _available_ram_gb() -> "float | None":
@@ -104,11 +107,11 @@ def _quality_budget_gb() -> float:
     return value
 
 
-def _quality_worker_count() -> int:
-    """Concurrent scoring workers sharing this process's render device."""
-    raw = os.environ.get(QUALITY_WORKERS_PER_DEVICE_ENV)
+def _quality_worker_count(env_name: str, *, default: int = 1) -> int:
+    """Concurrent scoring workers sharing the named memory resource."""
+    raw = os.environ.get(env_name)
     if raw is None:
-        return 1
+        return default
     try:
         return max(1, int(raw))
     except ValueError:
@@ -140,7 +143,10 @@ def _quality_memory_guard(
         # are reported by the guarded render attempt, never raised after fitting.
         return None
 
-    workers = _quality_worker_count()
+    device_workers = _quality_worker_count(QUALITY_WORKERS_PER_DEVICE_ENV)
+    host_workers = _quality_worker_count(
+        QUALITY_WORKERS_PER_HOST_ENV, default=device_workers
+    )
     has_override = _has_usable_quality_override()
     # CPU renders and MPS unified device memory both consume host RAM at peak.
     peak_gb = (
@@ -154,10 +160,10 @@ def _quality_memory_guard(
             f"{host_budget_gb:g} GiB LUXAR_TILED_QUALITY_MAX_GB cap"
         )
     else:
-        host_budget_gb /= workers
+        host_budget_gb /= host_workers
         host_budget_description = (
             f"{host_budget_gb:g} GiB per-worker budget "
-            f"({workers} worker(s) sharing the device)"
+            f"({host_workers} worker(s) sharing the host)"
         )
     if peak_gb > host_budget_gb:
         return (
@@ -175,19 +181,19 @@ def _quality_memory_guard(
                 f"{device_budget_gb:g} GiB LUXAR_TILED_QUALITY_MAX_GB cap"
             )
         elif free_bytes is None:
-            device_budget_gb = _QUALITY_BUDGET_GB / workers
+            device_budget_gb = _QUALITY_BUDGET_GB / device_workers
             budget_description = (
                 f"{device_budget_gb:g} GiB per-worker budget "
-                f"({workers} worker(s) sharing the device)"
+                f"({device_workers} worker(s) sharing the device)"
             )
         else:
             device_budget_gb = min(
                 _QUALITY_BUDGET_GB,
-                _QUALITY_BUDGET_MEM_FRACTION * free_bytes / workers / 1024**3,
+                _QUALITY_BUDGET_MEM_FRACTION * free_bytes / device_workers / 1024**3,
             )
             budget_description = (
                 f"{device_budget_gb:g} GiB per-worker budget "
-                f"({workers} worker(s) sharing the device)"
+                f"({device_workers} worker(s) sharing the device)"
             )
         device_peak_gb = _QUALITY_DEVICE_PEAK_VOLUMES * voxel_gb
         if device_peak_gb > device_budget_gb:

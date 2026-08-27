@@ -806,7 +806,8 @@ def fit_tiled(
     rendered once against ``volume`` and scored. Scoring materializes the whole
     volume, so separate host-reference and render-device peaks are bounded by
     half the memory actually free, each held under a 24 GiB ceiling. Concurrent
-    workers sharing a device divide both default allowances.
+    concurrent local workers divide the default host allowance across the run
+    and the default device allowance across the workers on their card.
     ``LUXAR_TILED_QUALITY_MAX_GB`` overrides both budgets (``0`` declines
     outright). Over budget, or on a
     failure, it says so even when ``verbose=False``. A partition is scored by

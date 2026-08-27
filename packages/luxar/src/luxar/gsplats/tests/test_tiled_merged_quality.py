@@ -344,26 +344,27 @@ def test_cuda_quality_budget_rejects_a_small_shared_card(
 def test_cuda_quality_budget_rejects_shared_workers_on_a_small_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Each concurrent worker receives only its share of free host RAM."""
+    """Host RAM is divided across all workers, not only one card's workers."""
     import torch
 
     from luxar.gsplats import metrics
     from luxar.gsplats.utils import device as device_utils
 
     monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
-    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 4.3)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 16.0)
     monkeypatch.setattr(
         device_utils, "resolve_torch_device", lambda _device: torch.device("cuda:0")
     )
     monkeypatch.setattr(metrics, "_gpu_free_memory", lambda _device: 95 * 1024**3)
 
-    assert _quality_memory_guard((512, 512, 512), "cuda") is None
+    monkeypatch.setenv(merged_quality.QUALITY_WORKERS_PER_DEVICE_ENV, "2")
+    assert _quality_memory_guard((768, 768, 768), "cuda") is None
 
-    monkeypatch.setenv(merged_quality.QUALITY_WORKERS_PER_DEVICE_ENV, "4")
-    reason = _quality_memory_guard((512, 512, 512), "cuda")
+    monkeypatch.setenv(merged_quality.QUALITY_WORKERS_PER_HOST_ENV, "8")
+    reason = _quality_memory_guard((768, 768, 768), "cuda")
     assert reason is not None
-    assert "needs ~1.0 GiB of host memory" in reason
-    assert "0.5375 GiB per-worker budget (4 worker(s) sharing the device)" in reason
+    assert "needs ~3.4 GiB of host memory" in reason
+    assert "1 GiB per-worker budget (8 worker(s) sharing the host)" in reason
 
 
 def test_host_quality_budget_names_an_explicit_override(
