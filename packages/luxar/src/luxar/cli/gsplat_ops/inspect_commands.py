@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 import typer
 from arbol import aprint, asection
@@ -158,7 +158,7 @@ def _normalized_amplitude_cdf(amplitudes: "np.ndarray") -> "np.ndarray":
 
     sorted_amplitudes = np.sort(amplitudes)[::-1]
     cumulative = np.cumsum(sorted_amplitudes, dtype=np.float64)
-    return cumulative / cumulative[-1]
+    return cast("np.ndarray", cumulative / cumulative[-1])
 
 
 def info_dataset(
