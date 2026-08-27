@@ -71,7 +71,7 @@ def test_explicit_python_override_skips_hatch_resolution(tmp_path: Path) -> None
     command_path = _command_path(tmp_path)
     hatch_called = tmp_path / "hatch-called"
     hatch = command_path / "hatch"
-    hatch.write_text(f"#!/bin/bash\ntouch {hatch_called!s}\n")
+    hatch.write_text(f"#!/bin/bash\nprintf called > {hatch_called!s}\n")
     hatch.chmod(0o755)
     bench_python = tmp_path / "bench-python"
     bench_python.write_text("#!/bin/bash\nexit 1\n")
