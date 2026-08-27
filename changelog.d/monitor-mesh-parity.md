@@ -31,7 +31,8 @@ stacked in a single column.
 **Loader telemetry.** `MeshWholeNodeLoader` and `MeshProgressiveLoader` now
 implement the `LoaderMonitor` surface (`mesh-whole-node`), so mesh joins the
 loader list, the loader-memory and throughput totals, the load-rate and bandwidth
-windows, and the advisor's slow-load detection. The four-method shape is
+windows. Whole-node mesh latency is deliberately excluded from the advisor's
+chunk-size slow-load recommendation. The four-method shape is
 load-bearing rather than cosmetic: `connectLoaderToMonitor` duck-types the
 complete set and skipped every mesh node **without logging** — the panel simply
 had no mesh row. What is reported is a whole-node loader's honest telemetry:

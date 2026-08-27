@@ -171,7 +171,8 @@ because a whole-node loader genuinely differs, not because a number is missing:
   `(M visible after slicing)` suffix.
 - **Loader list / loader totals** — mesh loaders implement the `LoaderMonitor`
   surface (`mesh-whole-node`), so their bytes, loads and resident memory join
-  the panel's totals and the advisor's slow-load detection. They report NO
+  the panel's totals. Whole-node latency does not trigger the advisor's
+  chunk-size slow-load recommendation. They report NO
   `queries` / `avgQueryTime` / `spatialIndex`: there is no spatial index and a
   view change re-serves the resident mesh, so a query sample would be a ~0 ms
   entry for work that never touched the store. For the same reason mesh is not
