@@ -50,6 +50,7 @@ function makeInputHandler() {
   return {
     dispose: vi.fn(),
     setDatasetBrowser: vi.fn(),
+    setControlRail: vi.fn(),
   };
 }
 
@@ -324,6 +325,40 @@ describe('runDisposePipeline', () => {
 
       // browser.close → input.setDatasetBrowser(undefined) → input.dispose
       expect(order).toEqual(['browser-close', 'clear-browser-ref', 'input-dispose']);
+    });
+
+    it('clears the control-rail handle FIRST in the control-rail block', () => {
+      // The input handler holds the rail for routed-keydown notification and
+      // Escape; clearing releases the ControlRail instance itself (detached
+      // DOM, button map, overlay, hint) so a disposed-but-retained app cannot
+      // pin it. It must run before the rail's own dispose(): the block is one
+      // safeDispose closure, so a throwing dispose() would otherwise strand a
+      // half-disposed rail on the handler. The sequence is bracketed on BOTH
+      // sides so the statement cannot drift out of the block unnoticed: the
+      // preceding recordingPanel teardown catches an upstream move (into
+      // recordingPanel, overlayManager, scaleBar, animationController, …) and
+      // `input-dispose` catches a downstream one (into datasetBrowser or
+      // inputHandler).
+      const s = makeStubs();
+      const order: string[] = [];
+      s.recordingPanel.dispose.mockImplementation(() => order.push('recording-dispose'));
+      s.inputHandler.setControlRail.mockImplementation(() => order.push('clear-rail-ref'));
+      s.controlRail.dispose.mockImplementation(() => order.push('rail-dispose'));
+      s.clears.controlRail.mockImplementation(() => order.push('clear-rail-field'));
+      s.inputHandler.dispose.mockImplementation(() => order.push('input-dispose'));
+
+      runDisposePipeline(makePorts(s));
+
+      // Explicitly `undefined`, not a bare setControlRail() — the latter also
+      // satisfies toHaveBeenCalledWith(undefined), so pin the arity too.
+      expect(s.inputHandler.setControlRail.mock.calls).toEqual([[undefined]]);
+      expect(order).toEqual([
+        'recording-dispose',
+        'clear-rail-ref',
+        'rail-dispose',
+        'clear-rail-field',
+        'input-dispose',
+      ]);
     });
   });
 

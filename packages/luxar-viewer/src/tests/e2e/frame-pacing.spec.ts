@@ -25,8 +25,16 @@
  * (`pnpm test:e2e:smoke`), so both run only in the full E2E suite.
  */
 
-import { test, expect } from './fixtures';
-import { waitForLuxarReady, waitForPointsLoaded, getLuxarState, raceEvaluate } from './helpers';
+import type { Page } from '@playwright/test';
+
+import { test, expect, ALLOW_CONSOLE_ERRORS } from './fixtures';
+import {
+  waitForLuxarReady,
+  waitForPointsLoaded,
+  getLuxarState,
+  raceEvaluate,
+  captureConsoleMessages,
+} from './helpers';
 
 const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 const DATASET = 'performance_benchmark_example.luxar.zarr';
@@ -47,8 +55,14 @@ const EXPECTED_NODES = 100;
  */
 const NAV_TIMEOUT_MS = 20000;
 
-/** Budget for `initialized` to flip. */
-const READY_TIMEOUT_MS = 30000;
+/** Budget for `initialized` to flip, matching the smoke test for this fixture. */
+const READY_TIMEOUT_MS = 60000;
+
+/** Failure-only deadline for recovering viewer state after readiness times out. */
+const READINESS_STATE_PROBE_TIMEOUT_MS = 5000;
+
+/** Keep readiness failures readable even if a broken load floods the console. */
+const READINESS_CONSOLE_ERROR_LIMIT = 10;
 
 /**
  * Budget for the 100 nodes' points to be committed. `waitForPointsLoaded`
@@ -96,13 +110,47 @@ const PROBE_TIMEOUT_MS = 2000;
  */
 const MAX_ROUND_TRIP_MS = 500;
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
+async function waitForReadyWithDiagnostics(
+  page: Page,
+  timeout: number,
+  consoleErrors: string[]
+): Promise<void> {
+  try {
+    await waitForLuxarReady(page, timeout);
+  } catch (readinessError) {
+    let stateDiagnostic: string;
+    try {
+      stateDiagnostic = JSON.stringify(await getLuxarState(page, READINESS_STATE_PROBE_TIMEOUT_MS));
+    } catch (stateError) {
+      stateDiagnostic = `unavailable (${describeError(stateError)})`;
+    }
+
+    const consoleErrorTail = consoleErrors.slice(-READINESS_CONSOLE_ERROR_LIMIT);
+    const consoleDiagnostic =
+      consoleErrorTail.length > 0 ? consoleErrorTail.join('\n') : '(none captured)';
+    const originalError = describeError(readinessError);
+
+    throw new Error(
+      `Viewer readiness failed: ${originalError}\n` +
+        `Viewer state: ${stateDiagnostic}\n` +
+        `Recent console errors (${consoleErrorTail.length}/${consoleErrors.length}):\n` +
+        consoleDiagnostic,
+      readinessError instanceof Error ? { cause: readinessError } : undefined
+    );
+  }
+}
+
 test.describe('Frame pacing (#1724)', () => {
   // Every leg is bounded, and the bounds have to FIT inside the test timeout —
   // otherwise a genuine regression dies as a bare suite timeout instead of the
   // named assertion that exists to explain it. Worst case, leg by leg:
   //
   //   navigation                                        20 s
-  //   waitForLuxarReady                                 30 s
+  //   waitForLuxarReady                                 60 s
   //   waitForPointsLoaded  45 s budget + 45 s unclamped
   //                        in-flight probe              90 s
   //   content re-read (getLuxarState, bounded)          10 s
@@ -112,9 +160,9 @@ test.describe('Frame pacing (#1724)', () => {
   //   post-hold re-read                                 10 s
   //   10 probes × 2 s                                   20 s
   //                                                   ------
-  //                                                    235 s
+  //                                                    265 s
   //
-  // 300 s leaves ~65 s for the fixture setup, teardown and the per-step
+  // 300 s leaves ~35 s for the fixture setup, teardown and the per-step
   // overhead between the legs. This is what a FAILING run costs; a healthy one
   // pays only the hold plus the real settle (~15 s measured). The 90 s content
   // leg is the one number this spec cannot shrink from here:
@@ -125,13 +173,15 @@ test.describe('Frame pacing (#1724)', () => {
   test('the 100-node benchmark scene settles and leaves the control channel responsive', async ({
     page,
   }) => {
+    const consoleMessages = captureConsoleMessages(page);
+
     // `&no-opfs` for the same reason as the smoke spec: nothing here asserts
     // the L2 OPFS tier, and automated Chromium's OPFS stalls systemically
     // (10 s per op — issue #1645), starving scene readiness past the budget.
     await page.goto(`/?src=${EXAMPLES_BASE}/${DATASET}&debug&no-opfs`, {
       timeout: NAV_TIMEOUT_MS,
     });
-    await waitForLuxarReady(page, READY_TIMEOUT_MS);
+    await waitForReadyWithDiagnostics(page, READY_TIMEOUT_MS, consoleMessages.errors);
 
     // The scene must actually have its content. `initialized` flips before
     // the node chunks land, so a build whose chunk fetches all fail gives an
@@ -199,5 +249,36 @@ test.describe('Frame pacing (#1724)', () => {
         'thread is starving the CDP control channel (a non-answer is recorded as its ' +
         `${PROBE_TIMEOUT_MS} ms bound)`
     ).toBeLessThan(MAX_ROUND_TRIP_MS);
+  });
+
+  test('readiness failures report the original error, console tail, and missing state', async ({
+    page,
+  }) => {
+    test.info().annotations.push({
+      type: ALLOW_CONSOLE_ERRORS,
+      description: 'The test emits one sentinel console error to verify readiness diagnostics.',
+    });
+
+    const consoleMessages = captureConsoleMessages(page);
+    await page.setContent('<!doctype html><title>not ready</title>');
+    await page.evaluate(() => console.error('readiness diagnostic sentinel'));
+
+    let failure: unknown;
+    try {
+      await waitForReadyWithDiagnostics(page, 100, consoleMessages.errors);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    const diagnosticError = failure as Error;
+    expect(diagnosticError.message).toContain(
+      'TimeoutError: page.waitForFunction: Timeout 100ms exceeded'
+    );
+    expect(diagnosticError.message).toContain('readiness diagnostic sentinel');
+    expect(diagnosticError.message).toContain(
+      'Debug interface not ready: getState() not available'
+    );
+    expect(diagnosticError.cause).toBeInstanceOf(Error);
   });
 });

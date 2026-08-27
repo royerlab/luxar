@@ -16,7 +16,7 @@ import type {
 } from './app/embedder/events';
 import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
-import type { InputHandler } from '../input/input-handler';
+import type { InputHandler } from '../input';
 import type { RenderingControls } from '../ui/rendering-controls';
 import { showHelpOverlay } from '../ui/help-overlay';
 import type { DatasetBrowser } from '../ui/dataset-browser';
@@ -420,7 +420,7 @@ export class LuxarApp {
    */
   private applyViewerConfigState(viewerConfig: ZarrViewerConfig | undefined): void {
     applyViewerConfigStateHelper(viewerConfig, {
-      showHelp: showHelpOverlay,
+      showHelp: () => showHelpOverlay(this.inputHandler.getRegisteredShortcutBindings()),
       renderingControls: this.renderingControls,
       performanceMonitor: this.performanceMonitor,
       inputHandler: this.inputHandler,
@@ -507,10 +507,10 @@ export class LuxarApp {
   }
 
   /**
-   * Initialize GPU picking system for hover tooltips.
-   * Only activates if any scene node has labels or image labels
-   * (has_labels / has_image_labels in .zattrs).
-   * Wires up: PickingSystem → LabelLoader/ImageLabelLoader → OverlayManager.updateHoverContent.
+   * Initialize GPU picking for hover tooltips, element actions, and embedder
+   * listeners. Activates for labels, image labels, keys, link/copy templates,
+   * or pick consumers. Wires PickingSystem to the label/key loaders,
+   * ImageLabelLoader, and OverlayManager.
    */
   private async initPicking(): Promise<void> {
     const result = await initPickingImpl({

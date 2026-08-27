@@ -1017,6 +1017,12 @@ sorting is switched off (`?depthSort=0`) or the SortWorker is unavailable.
 Making `opaque` the mesh default is a deliberate asymmetry — it is the only mode that is unconditionally
 correct without sorting, and it is what a surface should look like.
 
+That asymmetry also makes Mesh the common trigger for cross-geometry depth hazards: a default-additive
+Points/Lines/GSplats node ignores the depth written by an opaque mesh, while two overlapping
+order-dependent nodes cannot be globally interleaved. The authoring rules and finalize-time diagnostics
+are specified in `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §1 under
+"Overlapping-node authoring rule".
+
 #### Where the default lives — and where it must NOT
 
 ⚠️ The mesh default must be applied **viewer-side only**, in `createMeshNode`:
@@ -1581,7 +1587,7 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 | **Spatial index** | Not merely "see §7": a chunk of faces is not independently meaningful, because the index buffer references vertices anywhere in the array — so a face chunk draws only with the whole vertex buffer resident, or after the same remap/duplicate bookkeeping the partition row describes. An efficiency cliff, not an impossibility: partial loading is achievable, it just forfeits most of the bandwidth win a chunk index exists to buy. Moot in practice as well, since the 512 MiB per-node byte budget binds first (≈22.4M vertices for a 3D float32 mesh, measured), well under §7's ≤-few-million-triangle expectation. | Mirror the lines dual-index loader over faces |
 | **`volumetric` blending** | Not about opacity — about **path length**. Emission–absorption integrates κ over the distance a ray spends inside a participating medium, and a triangle is zero-thickness, so τ = 0 however translucent the surface is. The adjacent feature that DOES make sense — volume rendering bounded by a mesh's front and back faces — is a different thing entirely and is not what this excludes. | — |
 | **Worker projection** | Measure first (§7). | — |
-| ~~**Mesh import formats** (PLY/OBJ/STL/glTF)~~ — **landed** | Independent of the node type, which is why it could ship on its own afterwards. | Shipped as `luxar mesh import` (`luxar/mesh/interop/`), mirroring `gsplat import` |
+| ~~**Mesh import formats** (PLY/OBJ/STL/VTP/glTF)~~ — **landed** | Independent of the node type, which is why it could ship on its own afterwards. | Shipped as `luxar mesh import` (`luxar/mesh/interop/`), mirroring `gsplat import`. VTK XML PolyData (`.vtp`) joined later, on the same NumPy + stdlib terms |
 | ~~**`kind=partition`**~~ — **landed** | The exclusion was bookkeeping, not correctness, and the bookkeeping is now written. | Shipped as `add_mesh(partition=…)`; see §9.2 |
 
 Two rows have been **lifted since this table was written**, for opposite reasons: one was

@@ -2,7 +2,7 @@ import { ScaleBar } from '../../../ui/scale-bar';
 import { config } from '../../../config';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
-import type { InputHandler } from '../../../input/input-handler';
+import type { InputHandler } from '../../../input';
 
 /**
  * Build a fresh {@link ScaleBar}, register its per-frame update on the

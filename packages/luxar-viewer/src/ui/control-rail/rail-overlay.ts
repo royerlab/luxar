@@ -2,7 +2,7 @@
  * RailOverlay — the flyout + panel-popover lifecycle for the control rail.
  *
  * Only one overlay is open at a time. This owns opening/closing, positioning,
- * outside-click/Escape dismissal, focus return, and chip active-state; the
+ * outside-click/routed dismissal, focus return, and chip active-state; the
  * {@link ControlRail} owns the buttons and, via the injected callbacks, the
  * button active-state refresh (which reads {@link RailOverlay.activeItem}).
  *

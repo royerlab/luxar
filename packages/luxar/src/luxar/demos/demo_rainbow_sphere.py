@@ -49,9 +49,37 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import add_demo_caption, launch_viewer
+from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.utils.paths import get_demos_output_dir
+
+# Opening framing. The default fit backs off until the whole bounding sphere is
+# comfortably inside the frame, which leaves this demo as a small ball in the
+# middle of a lot of black. It is a single decorative object, so it should
+# instead fill the canvas and spill past its edges.
+#
+# The camera distance is derived from the sphere radius rather than hardcoded so
+# it survives a change to `sphere_radius`: a sphere of radius R seen from
+# distance d subtends a half-angle asin(R/d), and the frame's own half-angle is
+# fov/2. Asking for a half-angle of 0.72 * fov (rather than the 0.5 * fov that
+# would exactly touch top and bottom) makes the sphere overflow by ~45%.
+# The solve is done AT the cinematic preset's own 35 mm lens
+# (`CINEMATIC_FOV_DEG`), so `fov` is deliberately NOT pinned on the
+# CameraConfig — deriving the distance from the preset's own constant is the
+# house convention (`demos/_cinematic_camera.py`, and the
+# `test_demos_cinematic_mode` gate).
+CAMERA_FOV_DEG = CINEMATIC_FOV_DEG
+CAMERA_OVERFLOW = 0.72  # fraction of the FULL fov the sphere's half-angle fills
+# Elevation of the camera above the equator, as a fraction of the orbit
+# distance. A little above the equator reads better than dead-on while the
+# scene auto-rotates.
+CAMERA_ELEVATION = 0.28
+
+# Auto-rotation. On by default so the sphere is already turning when the demo
+# opens; 0.25 is the viewer's own presentation speed — roughly one revolution
+# every 25 s, slow enough to read and fast enough to register immediately.
+AUTO_ROTATE_SPEED = 0.25
 
 
 def generate_rainbow_sphere(
@@ -154,9 +182,26 @@ def generate_rainbow_sphere(
             ]
         )
 
+        # Solve the orbit distance that makes the sphere overflow the frame
+        # (see CAMERA_OVERFLOW above), then lift the camera off the equator.
+        half_angle = np.radians(CAMERA_FOV_DEG * CAMERA_OVERFLOW)
+        cam_distance = float(sphere_radius / np.sin(half_angle))
+        cam_y = cam_distance * CAMERA_ELEVATION
+        cam_z = float(np.sqrt(max(cam_distance**2 - cam_y**2, 0.0)))
+        aprint(f"Camera: distance {cam_distance:.2f}, elevation {cam_y:.2f}")
+
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(cinematic_mode=True)
+                dimensions=dims,
+                viewer_config=ViewerConfig(
+                    cinematic_mode=True,
+                    auto_rotate=True,
+                    auto_rotate_speed=AUTO_ROTATE_SPEED,
+                    camera=CameraConfig(
+                        position=(0.0, cam_y, cam_z),
+                        target=(0.0, 0.0, 0.0),
+                    ),
+                ),
             )
 
             scene.add_points(
@@ -171,7 +216,12 @@ def generate_rainbow_sphere(
                 # every pixel sums dozens of them, so the authored gain has to
                 # be small for the sphere to sit in range at exposure 0 (a
                 # gain of 0.5 needed the viewer pushed down ~4.4 stops).
-                intensity=0.024,
+                # Halved from 0.024 when the opening framing moved in close: a
+                # sphere that fills the canvas sums far more hues per pixel, and
+                # at the old gain the middle of the ball washed out to pastel
+                # grey. Nothing clips at either value — this is about keeping
+                # the rainbow saturated, not about staying in range.
+                intensity=0.012,
                 layer=True,
             )
 

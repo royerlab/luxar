@@ -20,12 +20,19 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
-from ...mesh.interop import MESH_FORMATS, TriangleMesh, import_mesh
+from ...core.dimension_inference import infer_discrete_step
+from ...mesh.interop import (
+    MESH_FORMATS,
+    TriangleMesh,
+    compile_index_regex,
+    import_mesh,
+    import_mesh_directory,
+)
 
 
-def _axis_names(ndim: int) -> list[str]:
-    """Names for a 3D import. Mesh files are always 3D, so this is x/y/z."""
-    return ["x", "y", "z"][:ndim]
+def _validate_directory_index_regex(input_path: Path, index_regex: str | None) -> None:
+    if input_path.is_dir() and index_regex is not None:
+        compile_index_regex(index_regex)
 
 
 def run_import(
@@ -40,8 +47,10 @@ def run_import(
     weld: bool,
     keep_normals: bool,
     overwrite: bool,
+    pattern: str = "*.vtp",
+    index_regex: str | None = None,
 ) -> TriangleMesh:
-    """Read a mesh file and write it as a single-node Luxar scene."""
+    """Read a mesh file or indexed directory into a single-node Luxar scene."""
     from luxar import Dimension, Dimensions, LuxarZarrCompiler
     from luxar.core.viewer_config import ViewerConfig
 
@@ -61,6 +70,7 @@ def run_import(
             "normals and triangle winding untouched, so it would light and cull from "
             "the wrong side."
         )
+    _validate_directory_index_regex(input_path, index_regex)
 
     source = input_path.resolve()
     destination = output_path.resolve()
@@ -79,7 +89,20 @@ def run_import(
         shutil.rmtree(output_path) if output_path.is_dir() else output_path.unlink()
 
     with asection(f"Importing {input_path.name}"):
-        mesh = import_mesh(input_path, format=format, weld=weld)
+        mesh = (
+            import_mesh_directory(
+                input_path,
+                pattern=pattern,
+                index_regex=index_regex,
+                format=format,
+                weld=weld,
+                progress=lambda index, total, path: aprint(
+                    f"Reading {index}/{total}: {path.name}"
+                ),
+            )
+            if input_path.is_dir()
+            else import_mesh(input_path, format=format, weld=weld)
+        )
         aprint(
             f"Read {mesh.n_vertices:,} vertices / {mesh.n_faces:,} faces "
             f"({mesh.source_format})"
@@ -87,13 +110,13 @@ def run_import(
 
         vertices = mesh.vertices.astype(np.float32, copy=True)
         if scale != 1.0:
-            vertices *= scale
+            vertices[:, :3] *= scale
         if center:
             # Centre on the BOUNDING-BOX midpoint, not the vertex mean: the mean is
             # pulled toward wherever the mesh happens to be finely tessellated, which
             # for a scan with a dense region puts the model off-centre in the viewer.
-            midpoint = (vertices.min(axis=0) + vertices.max(axis=0)) * 0.5
-            vertices -= midpoint
+            midpoint = (vertices[:, :3].min(axis=0) + vertices[:, :3].max(axis=0)) * 0.5
+            vertices[:, :3] -= midpoint
             aprint(f"Centred on the bounding-box midpoint {midpoint.round(4).tolist()}")
 
         normals = mesh.normals if keep_normals else None
@@ -103,9 +126,23 @@ def run_import(
                 "to the derivative flat normal"
             )
 
-        dims = Dimensions(
-            [Dimension(n, unit=unit, display=True) for n in _axis_names(3)]
-        )
+        dimensions = []
+        for index, dimension_name in enumerate(mesh.dimension_names):
+            if index < 3:
+                dimensions.append(Dimension(dimension_name, unit=unit))
+                continue
+            coordinate = vertices[:, index]
+            dimensions.append(
+                Dimension(
+                    dimension_name,
+                    unit="frame" if dimension_name == "t" else "index",
+                    range=(float(coordinate.min()), float(coordinate.max())),
+                    step=infer_discrete_step(coordinate),
+                    display=False,
+                    discrete=True,
+                )
+            )
+        dims = Dimensions(dimensions)
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
@@ -118,8 +155,8 @@ def run_import(
                 vertices,
                 mesh.faces,
                 normals=normals,
-                # Required whenever normals are passed: in nD there is no implicit
-                # "first three dimensions", and an imported mesh is always plain 3D.
+                # Normals always describe x/y/z, including when directory imports
+                # append discrete time and channel coordinates to each vertex.
                 normal_dims=[0, 1, 2] if normals is not None else None,
                 colors=mesh.colors,
             )
@@ -146,11 +183,12 @@ def _verify(
     from luxar.io.reader import LuxarScene
 
     node = LuxarScene.load(output_path).get_mesh(name)
-    got_v, got_f = int(node.vertices.shape[0]), int(node.faces.shape[0])
-    if (got_v, got_f) != (mesh.n_vertices, mesh.n_faces):
+    got_shape = tuple(int(size) for size in node.vertices.shape)
+    got_v, got_f = got_shape[0], int(node.faces.shape[0])
+    if got_shape != mesh.vertices.shape or got_f != mesh.n_faces:
         raise RuntimeError(
-            f"Verification failed: wrote {mesh.n_vertices}/{mesh.n_faces} "
-            f"vertices/faces, read back {got_v}/{got_f}"
+            f"Verification failed: wrote vertices {mesh.vertices.shape} and "
+            f"{mesh.n_faces} faces, read back vertices {got_shape} and {got_f} faces"
         )
     # Checked because it is the one attribute with no default: normals without
     # `normal_dims` cannot be oriented, and the pair is easy to break silently.
@@ -166,8 +204,8 @@ def import_command(
     input_path: Path = typer.Argument(
         ...,
         exists=True,
-        help="Classical mesh file: .ply (ascii or binary), .obj, .stl (ascii or "
-        "binary), .gltf or .glb.",
+        help="Classical mesh file (.ply, .obj, .stl, .vtp, .gltf, .glb), or a "
+        "directory of T<number>-indexed mesh files.",
     ),
     output_path: Path = typer.Argument(..., help="Output .luxar.zarr scene."),
     format: str = typer.Option(
@@ -185,7 +223,9 @@ def import_command(
         "origin, which fights the viewer's default framing.",
     ),
     scale: float = typer.Option(
-        1.0, "--scale", help="Uniform scale applied to vertices."
+        1.0,
+        "--scale",
+        help="Uniform scale applied to spatial (x/y/z) coordinates.",
     ),
     weld: bool = typer.Option(
         True,
@@ -194,7 +234,9 @@ def import_command(
         "default because STL (always), index-free glTF, and any OBJ that indexes "
         "normals independently of positions arrive with unshared vertices, which "
         "defeat per-vertex normals and give picking a different id per corner per "
-        "triangle. Hard edges survive: they differ in normal.",
+        "triangle. Vertices no surviving triangle references are also removed. Hard "
+        "edges survive: they differ in normal. --no-weld keeps the reader-produced "
+        "vertex list unchanged.",
     ),
     keep_normals: bool = typer.Option(
         True,
@@ -205,12 +247,24 @@ def import_command(
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace an existing output."
     ),
+    pattern: str = typer.Option(
+        "*.vtp",
+        "--pattern",
+        help="File glob used when INPUT_PATH is a directory.",
+    ),
+    index_regex: str | None = typer.Option(
+        None,
+        "--index-regex",
+        help="Filename regex with named 't' and optional 'c' captures, used for "
+        "directory imports instead of T<number>/Ch<number> tokens.",
+    ),
 ) -> None:
-    """Convert a classical mesh file into a Luxar scene.
+    """Convert a mesh file or indexed directory into a Luxar scene.
 
-    Reads PLY / OBJ / STL / glTF with no extra dependencies, welds duplicate vertices,
-    fan-triangulates polygons, and writes a single-node `.luxar.zarr` you can serve
-    directly with `luxar serve`.
+    Reads PLY / OBJ / STL / VTP / glTF with no extra dependencies, welds duplicate
+    vertices, fan-triangulates polygons, and writes a single-node `.luxar.zarr` you can
+    serve directly with `luxar serve`. A directory stacks files carrying `T<number>`
+    and optional `Ch<number>` filename coordinates into hidden discrete dimensions.
 
     \b
     Examples:
@@ -218,6 +272,9 @@ def import_command(
       luxar mesh import scan.stl scan.luxar.zarr --unit mm --name Skull
       luxar mesh import model.glb model.luxar.zarr --no-center
       luxar mesh import surface.obj surface.luxar.zarr --scale 0.001 --unit m
+      luxar mesh import isosurface.vtp cell.luxar.zarr --unit um
+      luxar mesh import frames frames.luxar.zarr --pattern '*.ply'
+      luxar mesh import frames frames.luxar.zarr --index-regex 'frame_(?P<t>\\d+)'
     """
     try:
         run_import(
@@ -231,6 +288,8 @@ def import_command(
             weld=weld,
             keep_normals=keep_normals,
             overwrite=overwrite,
+            pattern=pattern,
+            index_regex=index_regex,
         )
     except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
         aprint(f"Error: {exc}")

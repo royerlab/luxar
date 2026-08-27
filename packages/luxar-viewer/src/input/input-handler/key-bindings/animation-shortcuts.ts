@@ -14,12 +14,10 @@
  * (`getSelectedDimensionIndex` returns `-1`) or when the animation
  * manager isn't constructed yet — both checks live inside the
  * handler bodies so the InputHandler can wire the registration
- * before scene load (the bindings just become no-ops until both
- * sides are ready).
+ * before scene load (the bindings decline until both sides are ready).
  *
- * Behavior is identical to the inlined `registerAnimationShortcuts`
- * — same key codes, same NAVIGATION context, same log emojis +
- * messages, same preventDefault setting.
+ * The bindings retain the inlined `registerAnimationShortcuts` key codes,
+ * NAVIGATION context, logging, and preventDefault settings.
  *
  * @module input/handlers/animation-shortcuts
  */
@@ -29,6 +27,7 @@ import type { DimensionAnimationManager } from '../../../scene/animation/dimensi
 import { InputContext, type InputContextManager } from '../context-manager';
 import { getSelectedDimensionIndex } from '../dimension-navigation/compute-step';
 import { log, Modules } from '../../../utils/log';
+import { KeyAction } from './actions';
 
 /**
  * Read-only access to the two pieces of InputHandler state the
@@ -54,51 +53,85 @@ export class AnimationShortcuts {
 
   /**
    * Register the five animation-shortcut bindings on the
-   * `NAVIGATION` context. Idempotency is the InputContextManager's
-   * responsibility — the InputHandler only ever calls this once
-   * (from `initAnimationManager()`).
+   * `NAVIGATION` context. `registerAllKeyBindings()` calls this once
+   * during InputHandler startup; the handlers decline until a scene
+   * provides a selected dimension and animation manager.
    */
   register(): void {
     // K — Toggle play/pause
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.toggleAnimation,
       key: 'k',
       handler: () => this.toggleSelectedDimensionPlayback(),
       preventDefault: true,
-      description: 'Toggle dimension animation (K)',
+      description: 'Play / pause dimension animation',
+      help: { section: 'dimensions', group: 'animation-toggle', order: 50 },
     });
 
     // Home — Jump to start
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.jumpAnimation,
+      actionParameter: 'start',
       key: 'Home',
       handler: () => this.jumpSelectedDimensionToBound('start'),
       preventDefault: true,
-      description: 'Jump to dimension start (Home)',
+      description: 'Jump to dimension start / end',
+      help: {
+        section: 'dimensions',
+        group: 'animation-bounds',
+        keys: ['Home', 'End'],
+        order: 60,
+      },
     });
 
     // End — Jump to end
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.jumpAnimation,
+      actionParameter: 'end',
       key: 'End',
       handler: () => this.jumpSelectedDimensionToBound('end'),
       preventDefault: true,
-      description: 'Jump to dimension end (End)',
+      description: 'Jump to dimension start / end',
+      help: {
+        section: 'dimensions',
+        group: 'animation-bounds',
+        keys: ['Home', 'End'],
+        order: 60,
+      },
     });
 
     // Shift+↑ — Increase speed
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.adjustAnimationSpeed,
+      actionParameter: 'increase',
       key: 'ArrowUp',
       modifiers: { shift: true },
       handler: () => this.adjustSelectedDimensionSpeed(+1),
       preventDefault: true,
-      description: 'Increase animation speed (Shift+↑)',
+      description: 'Animation speed up / down',
+      help: {
+        section: 'dimensions',
+        group: 'animation-speed',
+        keys: ['⇧', '↑ / ↓'],
+        order: 70,
+      },
     });
 
     // Shift+↓ — Decrease speed
     this.contextManager.registerBinding(InputContext.NAVIGATION, {
+      actionId: KeyAction.adjustAnimationSpeed,
+      actionParameter: 'decrease',
       key: 'ArrowDown',
       modifiers: { shift: true },
       handler: () => this.adjustSelectedDimensionSpeed(-1),
       preventDefault: true,
-      description: 'Decrease animation speed (Shift+↓)',
+      description: 'Animation speed up / down',
+      help: {
+        section: 'dimensions',
+        group: 'animation-speed',
+        keys: ['⇧', '↑ / ↓'],
+        order: 70,
+      },
     });
 
     log.success(Modules.ANIMATION, 'Animation keyboard shortcuts registered');
@@ -117,28 +150,30 @@ export class AnimationShortcuts {
     return getSelectedDimensionIndex(this.ctx.getSelectedDimension(), sceneDimsManager.getDims());
   }
 
-  private toggleSelectedDimensionPlayback(): void {
+  private toggleSelectedDimensionPlayback(): boolean {
     const dimIndex = this.resolveDimensionIndex();
     const animManager = this.ctx.getAnimationManager();
-    if (dimIndex < 0 || !animManager) return;
+    if (dimIndex < 0 || !animManager) return false;
     const isPlaying = animManager.togglePlay(dimIndex);
     log.info(Modules.ANIMATION, `Dimension ${dimIndex} ${isPlaying ? 'playing' : 'paused'}`);
+    return true;
   }
 
-  private jumpSelectedDimensionToBound(which: 'start' | 'end'): void {
+  private jumpSelectedDimensionToBound(which: 'start' | 'end'): boolean {
     const dimIndex = this.resolveDimensionIndex();
-    if (dimIndex < 0) return;
+    if (dimIndex < 0) return false;
     const ranges = sceneDimsManager.getDimensionRanges();
-    if (!ranges) return;
+    if (!ranges) return false;
     const value = which === 'start' ? ranges[dimIndex][0] : ranges[dimIndex][1];
     sceneDimsManager.setDimensionValue(dimIndex, value);
     log.info(Modules.ANIMATION, `Jumped to ${which} of dimension ${dimIndex}`);
+    return true;
   }
 
-  private adjustSelectedDimensionSpeed(direction: 1 | -1): void {
+  private adjustSelectedDimensionSpeed(direction: 1 | -1): boolean {
     const dimIndex = this.resolveDimensionIndex();
     const animManager = this.ctx.getAnimationManager();
-    if (dimIndex < 0 || !animManager) return;
+    if (dimIndex < 0 || !animManager) return false;
     if (direction > 0) {
       animManager.increaseSpeed(dimIndex);
     } else {
@@ -146,5 +181,6 @@ export class AnimationShortcuts {
     }
     const fps = animManager.getState(dimIndex)?.targetFPS;
     log.info(Modules.ANIMATION, `${direction > 0 ? 'Increased' : 'Decreased'} speed to ${fps} FPS`);
+    return true;
   }
 }

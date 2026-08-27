@@ -51,9 +51,8 @@ import pandas as pd
 import requests
 from arbol import aprint, asection
 
-from luxar.utils._umap_utils import get_categorical_color
-
 from ._dependencies import require_module
+from ._support._umap_utils import get_categorical_color
 
 # -----------------------------------------------------------------------------
 # Download
@@ -82,7 +81,7 @@ def download_file(
     Staging inside ``dest.parent`` keeps that promotion a same-filesystem
     rename.
 
-    Not :func:`luxar.utils.demos.cached_download`, which is the richer
+    Not :func:`luxar.utils.cache.cached_download`, which is the richer
     downloader (retry, resume, checksum, quarantine) but owns its destination:
     it always writes ``~/.cache/luxar/<name>/<filename>``. All three demos here
     accept a ``--cache-dir`` override and pass an explicit ``dest``, so they

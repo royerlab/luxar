@@ -204,7 +204,7 @@ class TestCatalogDownloadErrors:
             )
 
         monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
-        monkeypatch.setattr("luxar.utils.download.robust_download", _fail_download)
+        monkeypatch.setattr("luxar.demos.robust_download", _fail_download)
 
         with pytest.raises(_demo.DESICatalogDownloadError) as exc_info:
             _demo.download_catalogs()
@@ -228,7 +228,7 @@ class TestCatalogDownloadErrors:
             raise requests.ConnectionError("network unreachable")
 
         monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
-        monkeypatch.setattr("luxar.utils.download.robust_download", _fail_download)
+        monkeypatch.setattr("luxar.demos.robust_download", _fail_download)
 
         with pytest.raises(_demo.DESICatalogDownloadError) as exc_info:
             _demo.download_catalogs()
@@ -246,7 +246,7 @@ class TestCatalogDownloadErrors:
             raise ValueError("catalog size mismatch")
 
         monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
-        monkeypatch.setattr("luxar.utils.download.robust_download", _fail_download)
+        monkeypatch.setattr("luxar.demos.robust_download", _fail_download)
 
         with pytest.raises(ValueError, match="catalog size mismatch"):
             _demo.download_catalogs()

@@ -11,6 +11,14 @@ To run a demo:
 See demos/README.md for more information on creating new demos.
 """
 
+from ..utils.bundles import (
+    BundleMemberNotFound,
+    load_dataset_bundle,
+    load_precomputed_bundle,
+    load_precomputed_gsplats,
+)
+from ..utils.cache import cache_computed, cached_download
+from ..utils.colors import hsv_to_rgb, stack_colorings
 from ..utils.data_fetch import (
     LOCAL_FIT_DIRNAME,
     DatasetNotFound,
@@ -24,32 +32,32 @@ from ..utils.data_fetch import (
     load_manifest,
     local_fit_path,
 )
-from ..utils.demos import (
+from ..utils.device import detect_device, warn_if_no_cuda_gpu
+from ..utils.download import (
+    QUARANTINE_SUFFIX,
+    download_with_checksum,
+    find_quarantined_files,
+    format_quarantine_notice,
+    quarantine_file,
+    robust_download,
+    warn_if_quarantined,
+)
+from ..utils.flags import parse_demo_flags, parse_int_arg, parse_path_arg
+from ..utils.lfs import is_lfs_pointer, require_local_data
+from ..utils.payload_agreement import voxel_sampled_payload_agreement
+from ..utils.provenance import (
     BUILDER_FINGERPRINT_ATTR,
-    BundleMemberNotFound,
-    cache_computed,
-    cached_download,
+    demo_source_fingerprint,
+    print_data_provenance,
+    scene_is_current,
+)
+from ..utils.remote_zip import download_zip_member
+from ..utils.scenes import (
     create_lorenz_attractor,
     create_random_spheres,
     create_time_series_demo,
-    demo_source_fingerprint,
-    detect_device,
-    hsv_to_rgb,
-    is_lfs_pointer,
-    launch_viewer,
-    load_dataset_bundle,
-    load_precomputed_bundle,
-    load_precomputed_gsplats,
-    parse_demo_flags,
-    parse_int_arg,
-    parse_path_arg,
-    print_data_provenance,
-    require_local_data,
-    scene_is_current,
-    stack_colorings,
-    voxel_sampled_payload_agreement,
-    warn_if_no_cuda_gpu,
 )
+from ..utils.viewer import launch_viewer
 from ._caption import add_demo_caption, format_demo_caption
 from ._dependencies import (
     INSTALL_SPECS,
@@ -62,6 +70,14 @@ from ._dependencies import (
     substitutive_lod_or_flat,
     survey,
 )
+from ._support._fields import (
+    FlowField,
+    add_reference_cube_to_scene,
+    cubic_bounds,
+    rk4_step,
+    trilinear_vector,
+    unit_flow,
+)
 
 __all__ = [
     "BUILDER_FINGERPRINT_ATTR",
@@ -72,20 +88,28 @@ __all__ = [
     "DatasetUnavailable",
     "DependencySpec",
     "DependencyStatus",
+    "FlowField",
     "LocalComputeDataset",
     "MissingDependencyError",
+    "QUARANTINE_SUFFIX",
     "add_demo_caption",
+    "add_reference_cube_to_scene",
     "cache_computed",
     "cached_download",
     "create_lorenz_attractor",
     "create_random_spheres",
     "create_time_series_demo",
+    "cubic_bounds",
     "dataset_spec",
     "demo_source_fingerprint",
     "detect_device",
+    "download_with_checksum",
+    "download_zip_member",
     "ensure_dataset",
     "extras_for",
+    "find_quarantined_files",
     "format_demo_caption",
+    "format_quarantine_notice",
     "hsv_to_rgb",
     "is_installed",
     "is_lfs_pointer",
@@ -102,12 +126,18 @@ __all__ = [
     "parse_int_arg",
     "parse_path_arg",
     "print_data_provenance",
+    "quarantine_file",
     "require_local_data",
     "require_module",
+    "rk4_step",
+    "robust_download",
     "scene_is_current",
     "stack_colorings",
     "substitutive_lod_or_flat",
     "survey",
+    "trilinear_vector",
+    "unit_flow",
     "voxel_sampled_payload_agreement",
     "warn_if_no_cuda_gpu",
+    "warn_if_quarantined",
 ]

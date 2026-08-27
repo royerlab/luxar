@@ -271,8 +271,8 @@ for (const theme of THEMES) {
  *
  * The rail is the always-visible left-edge activity bar (PR #452 made
  * Navigation/Settings/Performance rail-native). It idle-dims after ~2.6s,
- * so wake it with a pointer move just before the screenshot to pin the
- * awake (full-opacity) state deterministically.
+ * so keep the pointer on a separator throughout the capture: rail hover
+ * re-arms the idle timer without raising a button tooltip.
  */
 for (const theme of THEMES) {
   test(`@visual control rail - ${theme} theme`, async ({ page }) => {
@@ -288,9 +288,10 @@ for (const theme of THEMES) {
     // bleeds through its backdrop blur, so the background must be stable).
     await page.waitForTimeout(1000);
 
-    // Wake the rail (pointer movement over the canvas brightens it) without
-    // hovering the rail itself, which would show a button tooltip.
-    await page.mouse.move(640, 360);
+    // Keep the rail awake throughout Playwright's screenshot stability loop.
+    // Hovering a separator avoids raising a button tooltip.
+    await rail.locator('.luxar-control-rail__sep').first().hover();
+    await expect(rail).toHaveClass(/is-awake/);
     await waitForNextRender(page);
 
     if (theme === 'frosted-glass') {

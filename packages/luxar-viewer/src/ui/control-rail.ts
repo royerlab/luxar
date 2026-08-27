@@ -15,7 +15,7 @@
  *   immersive canvas, and wakes on pointer movement / hover.
  * - Reflects live open/closed state per panel (active highlight).
  * - Shows a one-time first-run hint (localStorage-gated) pointing at itself;
- *   it auto-fades after a few seconds and any click/keypress dismisses it.
+ *   it auto-fades after a few seconds and any click/routed shortcut dismisses it.
  *
  * The flyout + panel-popover lifecycle lives in {@link RailOverlay}
  * (control-rail/rail-overlay.ts); this class owns the buttons, idle/collapse/fullscreen
@@ -96,13 +96,6 @@ export class ControlRail {
     // already interacting — the first-run hint has served its purpose.
     this.dismissHint();
     this.overlay.maybeCloseOnPointer(e);
-  };
-  private readonly onDocKeyDown = (e: KeyboardEvent): void => {
-    // Same for any keypress (e.g. the H the hint itself suggests).
-    this.dismissHint();
-    if (e.key === 'Escape') this.overlay.close();
-    // Keyboard shortcuts (H, N, R, …) toggle panels — refresh active-state.
-    this.scheduleRefresh();
   };
   // Any click may open/close a panel (a rail button, or a panel's own × button),
   // so refresh active-state after the interaction settles.
@@ -216,9 +209,9 @@ export class ControlRail {
     // webkit* covers Safari < 16.4.
     document.addEventListener('fullscreenchange', this.onFullscreenChange);
     document.addEventListener('webkitfullscreenchange', this.onFullscreenChange);
-    // Close the overlay on outside click / Escape.
+    // Close the overlay on outside click. Escape is routed through
+    // InputHandler/PanelCoordinator so recording/fullscreen precedence holds.
     document.addEventListener('pointerdown', this.onDocPointerDown, true);
-    document.addEventListener('keydown', this.onDocKeyDown);
     // Refresh active-state on interactions that can toggle a panel (see onDoc*).
     document.addEventListener('click', this.onDocClick);
     // Refresh on external state changes that don't originate from a click:
@@ -473,8 +466,8 @@ export class ControlRail {
     this.container.appendChild(hint);
     this.hint = hint;
     // The hint is a nudge, not a modal: if the user never interacts it fades
-    // away on its own (and any pointer/keyboard interaction dismisses it
-    // immediately — see onDocPointerDown / onDocKeyDown).
+    // away on its own (and any pointer/routed-keyboard interaction dismisses it
+    // immediately — see onDocPointerDown / handleRoutedKeyDown).
     this.hintAutoHideTimer = window.setTimeout(() => this.fadeOutHint(), HINT_AUTO_HIDE_MS);
   }
 
@@ -501,6 +494,17 @@ export class ControlRail {
     this.hint = undefined;
   }
 
+  /** Apply side effects for a keydown handled by the official input router. */
+  handleRoutedKeyDown(): void {
+    this.dismissHint();
+    this.scheduleRefresh();
+  }
+
+  /** Close the transient flyout / popover without disposing the rail. */
+  closeOverlay(): void {
+    this.overlay.close();
+  }
+
   /** Tear down listeners, timers, the overlay and the rail DOM. Idempotent. */
   dispose(): void {
     if (this.disposed) return;
@@ -514,13 +518,16 @@ export class ControlRail {
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.onFullscreenChange);
     document.removeEventListener('pointerdown', this.onDocPointerDown, true);
-    document.removeEventListener('keydown', this.onDocKeyDown);
     document.removeEventListener('click', this.onDocClick);
     window.removeEventListener('luxar-layers-changed', this.onExternalStateChange);
     window.removeEventListener('luxar-control-mode-changed', this.onExternalStateChange);
     bodyMarkerRefs = Math.max(0, bodyMarkerRefs - 1);
     if (bodyMarkerRefs === 0) document.body.classList.remove(BODY_MARKER_CLASS);
+    // Null the field, not just the DOM: a post-dispose handleRoutedKeyDown()
+    // would otherwise pass dismissHint()'s `!this.hint` guard and persist the
+    // "hint seen" flag (burning the first-run hint), and retain the element.
     this.hint?.remove();
+    this.hint = undefined;
     this.root.remove();
     this.buttons.clear();
   }

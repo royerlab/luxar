@@ -27,7 +27,7 @@ from luxar.gsplats.lod._kernels import (
     template_squared_norm_torch,
 )
 from luxar.gsplats.lod._substitutive import _TINY
-from luxar.utils.spatial_hash import BatchedSpatialHashGrid
+from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
 
 
 def _pair_merge_costs(

@@ -418,8 +418,11 @@ check-versions = "python scripts/check_version_consistency.py"
 gen-contract = "python scripts/gen_format_contract.py"
 # Assert the committed projections match format-contract/contract.yaml.
 check-contract = "python scripts/gen_format_contract.py --check"
-# Regenerate demos/data_manifest.json from the demos/data tree. Checksums come
-# from the git-LFS pointers / file bytes, so no git-lfs binary is required.
+# Regenerate demos/data_manifest.json from the demos/data tree. The per-file
+# sha256 comes from the git-LFS pointers / file bytes, so no git-lfs binary is
+# required (and CI, which checks out pointers only, can still run this). Any
+# hosted_sha256 is carried forward from the committed manifest — it describes the
+# Zenodo artifact, which has no source on disk.
 gen-data-manifest = "python scripts/gen_data_manifest.py"
 # Assert the committed demo-data manifest matches the tree.
 check-data-manifest = "python scripts/gen_data_manifest.py --check"
@@ -736,8 +739,17 @@ omit = [
     "*/tests/*",                              # test code, not shipped logic
     "*/__init__.py",                          # re-export shims
     "*/demos/*",                              # demo scripts (import-smoke-tested; main() bodies aren't a coverage target)
-    "*/utils/demos.py",                       # demo path/registry helpers
-    "*/utils/_umap_utils.py",                 # vendored UMAP helper
+    "*/luxar/utils/bundles.py",               # demo support helpers split from the former demos.py
+    "*/luxar/utils/cache.py",
+    "*/luxar/utils/colors.py",
+    "*/luxar/utils/device.py",
+    "*/luxar/utils/flags.py",
+    "*/luxar/utils/lfs.py",
+    "*/luxar/utils/payload_agreement.py",
+    "*/luxar/utils/provenance.py",
+    "*/luxar/utils/scenes.py",
+    "*/luxar/utils/viewer.py",
+    "*/luxar/utils/zip_safety.py",
     "*/gsplats/demos/*",                      # research demos (run-on-import; compile-smoke-tested only)
     "*/gsplats/models/gsplats/cuda/*",        # hardware-gated CUDA extension
     "*/gsplats/models/gsplats/metal/*",       # hardware-gated Metal extension
@@ -783,6 +795,24 @@ forbidden_modules = ["luxar.cli"]
 # the contract still catches any production domain -> CLI import.
 ignore_imports = [
     "luxar.**.tests.** -> luxar.cli.**",
+]
+
+[[tool.importlinter.contracts]]
+name = "Shared utils must not import leaf packages"
+type = "forbidden"
+source_modules = ["luxar.utils"]
+forbidden_modules = ["luxar.gsplats", "luxar.demos", "luxar.cli"]
+# Direct edges only: utils legitimately reaches gsplats through luxar.io and
+# luxar.typing_utils, which is the layering working rather than a back-edge.
+allow_indirect_imports = true
+# The device, bundles, and data_fetch exceptions can go when those dependencies
+# move. The scenes edge is permanent: the public scene helpers stay in utils.
+ignore_imports = [
+    "luxar.utils.tests.** -> luxar.**",
+    "luxar.utils.device -> luxar.gsplats.utils.device",
+    "luxar.utils.bundles -> luxar.gsplats.gsplat_data",
+    "luxar.utils.scenes -> luxar.demos.demo_lorenz",
+    "luxar.utils.data_fetch -> luxar.gsplats.gsplat_data",
 ]
 
 [tool.bandit]

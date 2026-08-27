@@ -29,9 +29,10 @@ see `test_lazy_imports.py`.
 ## Scope
 
 This directory contains package-level tests (e.g., import/export sanity, version
-checks, and the custom Hatch build-hook contract) plus tests for repository-level
-maintenance scripts that exercise the installed package. Subpackage-specific tests
-are colocated with each subpackage in their own `tests/` directories.
+checks, the custom Hatch build-hook contract, and private package-root modules)
+plus tests for repository-level maintenance scripts that exercise the installed
+package. Subpackage-specific tests are colocated with each subpackage in their own
+`tests/` directories.
 
 ## Running Tests
 

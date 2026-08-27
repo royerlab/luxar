@@ -496,16 +496,19 @@ pnpm test:with-fixtures  # Generate test fixtures, then run tests
 # Prerequisite: examples + fixtures must exist. Run once locally:
 #   make run-examples
 #   pnpm test:generate-fixtures
-# `make test-e2e` does NOT run those for you — it only installs
-# node_modules; the pre-flight aborts the run if the fixtures are absent.
+# `make test-e2e` refreshes the examples but does not generate the test
+# fixtures; the pre-flight aborts the run if those fixtures are absent.
 # E2E is currently disabled in GitHub CI (browser/GPU reliability);
 # `pnpm test:e2e:smoke` is the subset the workflow re-enable would
-# run (also useful locally for quick verification).
-pnpm test:e2e        # Run all E2E tests
-pnpm test:e2e:smoke  # Run the non-GPU smoke subset
-pnpm test:e2e:ui     # Run E2E tests with interactive UI
-pnpm test:e2e:debug  # Run E2E tests in debug mode
-pnpm test:e2e:report # Show E2E test report
+# run (also useful locally for quick verification). Visual snapshots
+# are Linux-only developer aids and are not validated by green CI.
+pnpm test:e2e               # Run all E2E tests
+pnpm test:e2e:smoke         # Run the non-GPU smoke subset
+pnpm test:e2e:visual        # Run visual tests (snapshot checks on Linux)
+pnpm test:e2e:visual:update # Refresh Linux visual baselines
+pnpm test:e2e:ui            # Run E2E tests with interactive UI
+pnpm test:e2e:debug         # Run E2E tests in debug mode
+pnpm test:e2e:report        # Show E2E test report
 
 # WASM
 pnpm build:wasm      # Build Rust WASM module

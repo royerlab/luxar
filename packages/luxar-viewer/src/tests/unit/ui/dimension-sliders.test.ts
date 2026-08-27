@@ -583,13 +583,15 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     sliders.dispose();
   });
 
-  it('wheel does not reach the window (stopPropagation guards the FOV handler)', () => {
+  it('wheel bubbles to the window after the local step is applied', () => {
     const sliders = buildSliders();
     const track = document.querySelector('.luxar-dimension-slider__track')!;
     const windowSpy = vi.fn();
     window.addEventListener('wheel', windowSpy);
+    vi.mocked(sceneDimsManager.setDimensionValue).mockClear();
     track.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
-    expect(windowSpy).not.toHaveBeenCalled();
+    expect(windowSpy).toHaveBeenCalledTimes(1);
+    expect(sceneDimsManager.setDimensionValue).toHaveBeenCalledWith(3, 6);
     window.removeEventListener('wheel', windowSpy);
     sliders.dispose();
   });
@@ -628,6 +630,21 @@ describe('DimensionSliders — wheel stepping + Step context-menu section', () =
     expect((x2 as HTMLElement).title).toContain('= 1');
     (x2 as HTMLElement).click();
     expect(stub.setStepSize).toHaveBeenCalledWith(3, 1);
+    sliders.dispose();
+  });
+
+  it('does not own document Escape while the animation context menu is open', () => {
+    const sliders = buildSliders();
+    sliders.setAnimationManager(makeAnimationManagerStub() as never);
+    document
+      .querySelector('.luxar-dimension-slider__play-btn')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+    expect(document.querySelector('.luxar-dimension-slider__context-menu')).not.toBeNull();
+    sliders.closeContextMenu();
+    expect(document.querySelector('.luxar-dimension-slider__context-menu')).toBeNull();
     sliders.dispose();
   });
 

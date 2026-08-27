@@ -29,8 +29,8 @@ class BlendingMode(str, Enum):
     * ``LUMINOUS``: ``depthTest=true``, ``depthWrite=false``.
     * ``OPAQUE``: ``depthTest=true``, ``depthWrite=true``.
     * ``NORMAL``: ``depthTest=true`` and ``depthWrite=true`` when opacity is
-      at least 0.99 for points and lines. GSplats never depth-write in normal
-      mode because coverage-alpha fragments would create occlusion halos.
+      at least 0.99 for lines and mesh. Points and GSplats never depth-write in
+      normal mode because sprite/coverage-alpha fringes create occlusion halos.
     * ``MAX``: ``depthTest=true``, ``depthWrite=false``.
     * ``VOLUMETRIC``: ``depthTest=true``, ``depthWrite=false``; requires
       back-to-front depth sorting in the viewer.

@@ -104,14 +104,14 @@ from luxar.demos import (
     add_demo_caption,
     cache_computed,
     launch_viewer,
+    quarantine_file,
     require_module,
 )
-from luxar.utils._umap_utils import (
+from luxar.demos._support._umap_utils import (
     attribute_to_color,
     build_legend_html,
     generate_all_legends,
 )
-from luxar.utils.download import quarantine_file
 from luxar.utils.paths import get_demos_output_dir
 
 _T = TypeVar("_T")
@@ -1860,6 +1860,29 @@ def _resolve_image_labels(
     return None
 
 
+def _protein_link_attrs(
+    attributes: dict,
+    category_maps: dict | None,
+    available_attrs: list[str],
+    n_points: int,
+) -> dict[str, object]:
+    """Build aligned Human Protein Atlas link attributes when names exist."""
+    if not category_maps or "protein_name" not in available_attrs:
+        return {}
+    names = category_maps.get("protein_name", [])
+    if not names:
+        return {}
+    per_cell_keys = []
+    for i in range(n_points):
+        code = int(attributes["protein_name"][i])
+        per_cell_keys.append(str(names[code]) if 0 <= code < len(names) else "")
+    return {
+        "keys": per_cell_keys * len(available_attrs),
+        "link": "https://www.proteinatlas.org/search/{hover_key}",
+        "copy": "{hover_key}",
+    }
+
+
 def create_cytoself_scene(
     output_path: Path,
     coordinates: np.ndarray,
@@ -1960,10 +1983,23 @@ def create_cytoself_scene(
                     for attr_name in available_attrs:
                         code = int(attributes[attr_name][i])
                         cats = category_maps.get(attr_name, [])
-                        name = str(cats[code]) if code < len(cats) else str(code)
+                        name = str(cats[code]) if 0 <= code < len(cats) else str(code)
                         parts.append(name)
                     per_cell_labels.append("\n".join(parts))
             labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
+
+            # Click a cell to open its protein in the Human Protein Atlas,
+            # right-click to copy the name (#1917). The Atlas rather than a gene
+            # database because this demo IS subcellular localization, and that
+            # is the page which shows it.
+            #
+            # The label joins every available attribute with newlines —
+            # localization and protein name together — so the URL needs the bare
+            # name from `keys=`. Tiled per view exactly like the labels: the
+            # protein a cell shows does not change with the active attribute.
+            link_attrs = _protein_link_attrs(
+                attributes, category_maps, available_attrs, n_points
+            )
 
             all_image_labels = _resolve_image_labels(
                 image_labels,
@@ -1982,6 +2018,7 @@ def create_cytoself_scene(
                 intensity=0.18,
                 labels=labels,
                 image_labels=all_image_labels,
+                **link_attrs,
                 layer=True,
             )
 

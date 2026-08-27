@@ -38,7 +38,7 @@ import numpy as np
 import pytest
 import zarr
 
-# ``demo_cytoself_protein_landscape`` imports ``luxar.utils._umap_utils`` at
+# ``demo_cytoself_protein_landscape`` imports the shared UMAP helpers at
 # module scope, which imports PIL. Pillow also encodes the fixture thumbnails.
 pytest.importorskip("PIL")
 
@@ -117,6 +117,52 @@ def _build(
 
 def _hover_overlays(overlays: dict[str, dict]) -> dict[str, dict]:
     return {n: a for n, a in overlays.items() if a.get("hover")}
+
+
+def _decode_keys(node: zarr.Group) -> list[str]:
+    offsets = np.asarray(node["key_offsets"][:])
+    data = np.asarray(node["key_bytes"][:])
+    return [
+        bytes(data[int(offsets[i]) : int(offsets[i + 1])]).decode("utf-8")
+        for i in range(len(offsets) - 1)
+    ]
+
+
+def test_protein_links_are_serialized_and_tiled_per_view(tmp_path: Path) -> None:
+    coordinates, attributes, category_maps = _inputs()
+    output_path = tmp_path / "cytoself_links.luxar.zarr"
+    create_cytoself_scene(
+        output_path,
+        coordinates,
+        attributes,
+        category_maps,
+        images_expected=False,
+    )
+
+    node = zarr.open_group(str(output_path), mode="r")["Images"]
+    assert node.attrs["link"] == "https://www.proteinatlas.org/search/{hover_key}"
+    assert node.attrs["copy"] == "{hover_key}"
+    assert node.attrs["has_keys"] is True
+    assert sorted(_decode_keys(node)) == sorted(["TUBB", "CDC27", "TUBB", "ACTB"] * 2)
+    assert list(node.attrs["slice_dims"]) == [0]
+
+
+def test_protein_links_are_omitted_without_category_maps(tmp_path: Path) -> None:
+    coordinates, attributes, _ = _inputs()
+    output_path = tmp_path / "cytoself_no_maps.luxar.zarr"
+    create_cytoself_scene(
+        output_path,
+        coordinates,
+        attributes,
+        None,
+        images_expected=False,
+    )
+
+    node = zarr.open_group(str(output_path), mode="r")["Images"]
+    assert "link" not in node.attrs
+    assert "copy" not in node.attrs
+    assert "has_keys" not in node.attrs
+    assert "key_offsets" not in node
 
 
 class TestHoverLayoutWithThumbnails:
@@ -311,3 +357,115 @@ class TestMainWiring:
         out = capfd.readouterr().out
         assert "localization and protein" in out
         assert "fluorescence image" not in out
+
+
+class TestProteinLinkKeys:
+    """The UniProt-ish click-through, and the code that must not become a link.
+
+    `protein_name` is a pandas categorical code, so an unannotated cell carries
+    -1. Guarding only the upper bound let `names[-1]` return the LAST protein —
+    a real one — so that cell linked confidently to the wrong page. This is the
+    regression test for the lower bound; it is here rather than beside the demo
+    because `_inputs` is the only seam that can fabricate a -1.
+    """
+
+    @staticmethod
+    def _keys(scene_path) -> list[str]:
+        root = zarr.open_group(str(scene_path), mode="r")["Images"]
+        node = root
+        if not dict(root.attrs).get("has_keys"):
+            for name in sorted(root.keys()):
+                child = root[name]
+                if hasattr(child, "attrs") and dict(child.attrs).get("has_keys"):
+                    node = child
+                    break
+        return _decode_keys(node)
+
+    def test_keys_are_the_bare_protein_name(self, tmp_path: Path) -> None:
+        coordinates, attributes, category_maps = _inputs()
+        out = tmp_path / "cytoself_keys.luxar.zarr"
+        create_cytoself_scene(
+            out,
+            coordinates,
+            attributes,
+            category_maps,
+            image_labels=None,
+            images_expected=False,
+        )
+        keys = self._keys(out)
+        # One per point per attribute view, and each is a protein name alone —
+        # the label joins localization onto it, which no search wants.
+        assert set(keys) <= set(category_maps["protein_name"])
+        assert "TUBB" in keys
+
+    def test_a_missing_code_yields_no_key_rather_than_the_last_protein(
+        self, tmp_path: Path
+    ) -> None:
+        coordinates, attributes, category_maps = _inputs()
+        # -1 is what pandas stores for an unannotated cell.
+        attributes["protein_name"] = np.array([1, -1, 1, 2], dtype=np.int32)
+        out = tmp_path / "cytoself_missing.luxar.zarr"
+        create_cytoself_scene(
+            out,
+            coordinates,
+            attributes,
+            category_maps,
+            image_labels=None,
+            images_expected=False,
+        )
+        keys = self._keys(out)
+        # The empty one suppresses that element's link. Before the lower bound
+        # it was "ACTB" — the last category — and the cell linked to a protein
+        # it has nothing to do with.
+        assert "" in keys, "a -1 code must produce an empty key"
+        # Four points, two attribute views, one unannotated point: its key is
+        # empty in each view and nothing else is.
+        assert keys.count("") == 2, keys
+        # And specifically NOT the last category, which is what the upper-bound
+        # guard used to return for -1.
+        assert keys.count("ACTB") == 2, "only the genuinely-ACTB point, per view"
+
+    def test_a_missing_code_does_not_show_the_last_protein_on_hover(
+        self, tmp_path: Path
+    ) -> None:
+        """The same -1 hazard on the LABEL side.
+
+        The key was fixed first because a wrong link navigates somewhere; but a
+        wrong label is still a confident false statement about the cell — it
+        named a real protein the cell has nothing to do with. -1 now falls to
+        the file's existing else branch, which prints the unresolvable code
+        rather than a neighbour's name.
+        """
+        coordinates, attributes, category_maps = _inputs()
+        attributes["protein_name"] = np.array([1, -1, 1, 2], dtype=np.int32)
+        out = tmp_path / "cytoself_label_missing.luxar.zarr"
+        create_cytoself_scene(
+            out,
+            coordinates,
+            attributes,
+            category_maps,
+            image_labels=None,
+            images_expected=False,
+        )
+
+        root = zarr.open_group(str(out), mode="r")["Images"]
+        node = root
+        if not dict(root.attrs).get("has_labels"):
+            for name in sorted(root.keys()):
+                child = root[name]
+                if hasattr(child, "attrs") and dict(child.attrs).get("has_labels"):
+                    node = child
+                    break
+        offsets = np.asarray(node["label_offsets"][:]).astype(int)
+        data = bytes(np.asarray(node["label_bytes"][:]).tobytes())
+        labels = [
+            data[offsets[i] : offsets[i + 1]].decode("utf-8")
+            for i in range(len(offsets) - 1)
+        ]
+
+        # "ACTB" is `names[-1]`, what the old guard produced for the -1 cell.
+        # It must appear only for the cell whose code really is 2.
+        actb_lines = sum(1 for lab in labels if "ACTB" in lab)
+        assert actb_lines == 2, f"ACTB leaked onto the unannotated cell: {labels}"
+        # And the unresolvable code is shown honestly instead.
+        assert any("-1" in lab for lab in labels), labels

@@ -19,27 +19,58 @@ export interface KeyFilterConfig {
   blockedKeys?: string[];
 }
 
+/** Normalize a binding chord to the registry's case-insensitive sorted form. */
+export function canonicalizeBindingKey(bindingKey: string): string {
+  return bindingKey.toLowerCase().split('+').sort().join('+');
+}
+
 /**
- * Decide whether a key is allowed in a context based on its filter config.
+ * Decide whether a key binding is allowed in a context based on its filter config.
  *
  * Rules (matching the existing context manager behavior):
- * - If `blockedKeys` is non-empty and contains `key`, the key is rejected.
- * - If `allowedKeys` is non-empty and does NOT contain `key`, the key is rejected.
+ * - If `blockedKeys` contains the canonical binding key, the binding is rejected.
+ * - If `allowedKeys` contains neither the base key nor canonical binding key,
+ *   the binding is rejected.
  * - Otherwise the key is allowed.
  *
  * `blockedKeys` always wins over `allowedKeys` when both are present and
  * both list the key (defense in depth).
  *
- * @param key - The key to test (use `event.key`, normalized to the case the
- *   filter arrays use; the existing manager uses lowercase consistently).
+ * Bare blocked keys do not reject modified bindings on the same key. This lets
+ * a context block bare ArrowUp for fly-control passthrough while still owning
+ * Shift+ArrowUp. Bare allowlist entries continue to admit every modifier
+ * variant so fly-control bindings such as Shift+W remain reachable.
+ *
+ * @param key - The base key to test (usually `event.key`).
  * @param config - The filter config.
+ * @param bindingKey - Canonical modifier-aware binding key. Defaults to the
+ *   normalized base key for callers that do not use modifiers.
  * @returns true if the key is allowed.
  */
-export function isKeyAllowedInContext(key: string, config: KeyFilterConfig): boolean {
-  if (config.blockedKeys && config.blockedKeys.includes(key)) {
+export function isKeyAllowedInContext(
+  key: string,
+  config: KeyFilterConfig,
+  bindingKey = key.toLowerCase()
+): boolean {
+  const normalizedKey = key.toLowerCase();
+  const normalizedBindingKey = canonicalizeBindingKey(bindingKey);
+
+  if (
+    config.blockedKeys?.some(
+      (blockedKey) => canonicalizeBindingKey(blockedKey) === normalizedBindingKey
+    )
+  ) {
     return false;
   }
-  if (config.allowedKeys && !config.allowedKeys.includes(key)) {
+  if (
+    config.allowedKeys &&
+    !config.allowedKeys.some((allowedKey) => {
+      const normalizedAllowedKey = canonicalizeBindingKey(allowedKey);
+      return (
+        normalizedAllowedKey === normalizedKey || normalizedAllowedKey === normalizedBindingKey
+      );
+    })
+  ) {
     return false;
   }
   return true;
@@ -54,9 +85,9 @@ export interface PriorityConfig {
 
 /**
  * Sort a map's entries by descending priority, optionally excluding the
- * currently-active context. Used by passthrough handling: when the active
- * context doesn't claim a key, the remaining contexts are tried in priority
- * order until one accepts it.
+ * currently-active context. Passthrough handling applies this ordering to the
+ * active context's declared fallback set; contexts outside that route are not
+ * consulted.
  *
  * Stable for equal priorities (preserves Map insertion order). A missing
  * `priority` is treated as 0.

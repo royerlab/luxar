@@ -4,13 +4,13 @@
  * Owns the priority-ordered "close everything" flow used by the
  * Escape key. The InputHandler holds a single `PanelCoordinator`
  * instance configured with the optional UI components (rendering
- * controls, dimension sliders, recording panel, debug console,
- * performance stats) plus the always-present hide helpers
+ * controls, dimension sliders, recording/layers panels, dataset browser,
+ * control rail) plus the always-present debug/performance handles and hide helpers
  * (help overlay, error toast, data-monitor).
  *
- * Behavior is identical to the inline `closeAllPanels()` /
- * `handleEscapeKey()` originals: the same close order, the same
- * recording-priority short-circuit, the same fullscreen-defer rule.
+ * Preserves the inline `closeAllPanels()` / `handleEscapeKey()` behavior:
+ * existing panels keep their relative close order, recording still wins,
+ * and fullscreen still defers to the browser.
  *
  * @module input/handlers/panel-coordinator
  */
@@ -18,50 +18,29 @@
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
 import { isDocumentFullscreen } from '../../../utils/fullscreen';
-import type { RenderingControls } from '../../../ui/rendering-controls';
-import type { RecordingPanel } from '../../../ui/recording-panel';
-import type { DimensionSliders } from '../../../ui/dimension-sliders';
-import type { DebugConsole } from '../../../ui/debug-console';
-
-// Avoid a hard dependency on Stats.js — only the visible/hide surface we
-// touch is captured here.
-interface PerformanceStatsHandle {
-  readonly visible: boolean;
-  hide(): void;
-}
-
-/**
- * Minimal close-only handle for the dataset browser. Avoids importing
- * the full `DatasetBrowser` type — the coordinator only needs to call
- * `close()`, which fires the panel's `onClose` callback and clears
- * `LuxarApp.datasetBrowser` so the `O` shortcut can reopen it.
- */
-export interface CloseableHandle {
-  close(): void;
-}
-
-/**
- * Minimal show/hide handle for the layers panel. The coordinator only
- * needs visibility-check + hide; full LayersPanel imports stay out of
- * input/.
- */
-export interface VisiblyHideableHandle {
-  isVisible(): boolean;
-  hide(): void;
-}
+import type {
+  CloseableHandle,
+  DebugConsoleHandle,
+  DimensionSlidersHandle,
+  OverlayCloseHandle,
+  PerformanceStatsHandle,
+  RecordingPanelHandle,
+  RenderingControlsHandle,
+  VisiblyHideableHandle,
+} from '../panel-capabilities';
 
 /** Optional / always-present panel handles the coordinator manages. */
 export interface PanelRefs {
   /** Always present: the debug console — owned by InputHandler from construction. */
-  debugConsole: DebugConsole;
+  debugConsole: DebugConsoleHandle;
   /** Always present: the animation controller's performance-stats handle. */
   performanceStats: PerformanceStatsHandle;
   /** Optional: rendering controls panel. */
-  renderingControls?: RenderingControls;
+  renderingControls?: RenderingControlsHandle;
   /** Optional: dimension sliders. */
-  dimensionSliders?: DimensionSliders;
+  dimensionSliders?: DimensionSlidersHandle;
   /** Optional: recording panel. */
-  recordingPanel?: RecordingPanel;
+  recordingPanel?: RecordingPanelHandle;
   /**
    * Optional: dataset browser, exposed only as a close handle so the
    * Escape path runs the panel's `close()` method (which fires
@@ -76,16 +55,16 @@ export interface PanelRefs {
    * coordinator path as other panels.
    */
   layersPanel?: VisiblyHideableHandle;
+  /** Optional: control-rail flyout / popover overlay. */
+  controlRail?: OverlayCloseHandle;
 }
 
 /**
  * Coordinator for "close all panels" and Escape-key behavior.
  *
  * Holds setter-style updaters for the panels that are wired in
- * lazily by the InputHandler (`setRenderingControls`,
- * `setDimensionSliders`, `setRecordingPanel`) — these match the
- * `setRenderingControls()` / `setDimensionSliders()` /
- * `setRecordingPanel()` setters on InputHandler. Always-present
+ * lazily by the InputHandler (rendering controls, dimension sliders,
+ * recording/layers panels, dataset browser, control rail). Always-present
  * panels (debugConsole, performanceStats) are passed at construction
  * time and never replaced.
  */
@@ -96,15 +75,15 @@ export class PanelCoordinator {
     this.refs = refs;
   }
 
-  setRenderingControls(rc: RenderingControls | undefined): void {
+  setRenderingControls(rc: RenderingControlsHandle | undefined): void {
     this.refs.renderingControls = rc;
   }
 
-  setDimensionSliders(sliders: DimensionSliders | undefined): void {
+  setDimensionSliders(sliders: DimensionSlidersHandle | undefined): void {
     this.refs.dimensionSliders = sliders;
   }
 
-  setRecordingPanel(panel: RecordingPanel | undefined): void {
+  setRecordingPanel(panel: RecordingPanelHandle | undefined): void {
     this.refs.recordingPanel = panel;
   }
 
@@ -122,23 +101,30 @@ export class PanelCoordinator {
     this.refs.layersPanel = panel;
   }
 
+  /** Set or clear the control-rail overlay close handle. */
+  setControlRail(rail: OverlayCloseHandle | undefined): void {
+    this.refs.controlRail = rail;
+  }
+
   /**
    * Close all open UI panels and overlays in priority order
    * (topmost first):
    *
    *   1. Help overlay
    *   2. Error toast
-   *   3. Dataset browser (DOM lookup by id)
-   *   4. Rendering controls
-   *   5. Data loading monitor
-   *   6. Dimension sliders
-   *   7. Debug console
-   *   8. Recording panel
-   *   9. Performance stats
+   *   3. Control-rail flyout / popover
+   *   4. Dataset browser
+   *   5. Rendering controls
+   *   6. Data loading monitor
+   *   7. Dimension-slider animation menu + panel
+   *   8. Debug console
+   *   9. Recording panel
+   *  10. Layers panel
+   *  11. Performance stats
    *
    * Each step is guarded so already-hidden panels are no-ops; the
-   * order matches the inline original byte-for-byte so any visual
-   * "topmost wins" expectation users developed survives.
+   * existing panels keep the inline original's relative order so any
+   * visual "topmost wins" expectation users developed survives.
    */
   closeAll(): void {
     // Close help overlay (usually topmost) — `hideHelpOverlay` also
@@ -147,6 +133,8 @@ export class PanelCoordinator {
 
     // Close error messages
     notifier.clearError();
+
+    this.refs.controlRail?.closeOverlay();
 
     // Close dataset browser via its own close() method so onClose fires
     // and the owner's reference (LuxarApp.datasetBrowser) is cleared;
@@ -159,8 +147,11 @@ export class PanelCoordinator {
 
     eventBus.emit('panel-hide', { panelId: 'data-monitor' });
 
-    if (this.refs.dimensionSliders?.getIsVisible()) {
-      this.refs.dimensionSliders.hide();
+    if (this.refs.dimensionSliders) {
+      this.refs.dimensionSliders.closeContextMenu();
+      if (this.refs.dimensionSliders.getIsVisible()) {
+        this.refs.dimensionSliders.hide();
+      }
     }
 
     if (this.refs.debugConsole.getIsVisible()) {

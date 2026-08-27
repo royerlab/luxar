@@ -10,8 +10,18 @@ present. It deliberately does NOT live under ``demos/data/``: that whole tree is
 excluded from the wheel and sdist (~450 MB of git-LFS payload), so a manifest
 kept there would be missing for exactly the installed users this module serves.
 
-Resolution order for a ``zenodo`` dataset (per file). The manifest sha256 is the
-authority at every step — a copy that fails it is quarantined, never returned:
+Two checksum contracts per file, because one number cannot describe both ends.
+``sha256`` is what THIS REPO ships (for a git-LFS file, literally the pointer's
+oid); the optional ``hosted_sha256`` is what the Zenodo record serves. They were
+identical by construction until a refit replaced a hosted artifact without
+touching the in-repo copy — and collapsing them into one field is what forced
+publication onto the critical path of every demo-data PR. ``hosted_sha256`` is
+usually absent, and then the two contracts are one.
+
+Resolution order for a ``zenodo`` dataset (per file). A checksum is the authority
+at every step. Bytes matching neither live contract are quarantined unless they
+match the most recent ``superseded_sha256`` and no source can replace them; the
+download leg remains strict on the hosted digest specifically:
 
     1. Local cache ``~/.cache/luxar/<dataset>/<file>``, if it verifies.
     2. In-repo git-LFS copy ``demos/data/<dir>/<file>``, where ``<dir>`` is the
@@ -31,15 +41,17 @@ cheap CPU-rebuild ones).
 A demo that builds its own stand-in for a hosted file (a local GPU refit, when
 the record is unpublished and the git-LFS object was never pulled) must NOT store
 it at ``<dataset>/<file>``: that path belongs to the manifest, and step 1 above
-quarantines anything sitting there that fails the pinned sha256 — which a local
-fit never matches. :func:`local_fit_path` gives such an artifact its own
+quarantines anything sitting there that matches neither pinned digest — which a
+local fit never does. :func:`local_fit_path` gives such an artifact its own
 namespace, ``<dataset>/local/<file>``, which the fetch never looks at (#1618).
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
 from types import TracebackType
@@ -52,9 +64,10 @@ from arbol import aprint, asection
 # NOTE: _cache_is_stale is deliberately NOT imported. Its (size, mtime) test is
 # blind to an in-place corruption of unchanged length — precisely how a
 # checksum-failing cache entry used to survive step 1 and be handed back.
-from .demos import _DEFAULT_CACHE_ROOT, _DEMOS_DATA_DIR, is_lfs_pointer
+from .cache import _DEFAULT_CACHE_ROOT
+from .lfs import _DEMOS_DATA_DIR, is_lfs_pointer
 
-#: Packaged manifest, resolved the same way ``demos._DEMOS_DATA_DIR`` is: this
+#: Packaged manifest, resolved the same way ``lfs._DEMOS_DATA_DIR`` is: this
 #: module lives in ``luxar/utils/`` and the manifest ships in ``luxar/demos/``.
 #: Anchored to ``__file__`` rather than derived from ``_DEMOS_DATA_DIR`` so it
 #: stays reachable once R17 step 4 removes the data tree.
@@ -85,8 +98,8 @@ class DatasetUnavailable(FileNotFoundError):
     Every OTHER ``FileNotFoundError`` out of this module is a fault a demo must
     NOT route around — an unknown file name requested of
     :func:`load_dataset_gsplats`, a dataset that lists no gsplat file at all, a
-    missing packaged manifest (broken install), an in-repo copy that fails its
-    pinned sha256 with no hosted fallback. Those stay plain
+    missing packaged manifest (broken install), an in-repo copy that matches
+    neither pinned digest with no hosted fallback. Those stay plain
     ``FileNotFoundError``, so ``except DatasetUnavailable`` lets them through
     instead of disguising them as a routine multi-minute refit.
 
@@ -263,7 +276,8 @@ def ensure_dataset(
         DatasetUnavailable: data is neither cached, in-repo, nor hosted yet — the
             one condition a caller may route around by building its own copy.
         FileNotFoundError: a fault, not an absence — a missing packaged manifest,
-            or an in-repo copy that fails its sha256 with no hosted fallback.
+            or an in-repo copy that matches neither pinned digest with no hosted
+            fallback.
             :class:`DatasetUnavailable` subclasses this, so catch the subclass
             when you mean "not there yet".
     """
@@ -304,10 +318,226 @@ def ensure_dataset(
     with asection(f"Ensuring dataset ({label})") if verbose else _null_ctx():
         for entry in files:
             fname = entry["name"]
-            sha = entry.get("sha256")
             dest = cache_dir / fname
-            resolved.append(_ensure_one(dest, fname, sha, lfs_dir, record, verbose))
+            resolved.append(
+                _ensure_one(
+                    dest,
+                    fname,
+                    entry.get("sha256"),
+                    lfs_dir,
+                    record,
+                    verbose,
+                    hosted_sha=entry.get("hosted_sha256"),
+                    superseded=tuple(entry.get("superseded_sha256") or ()),
+                )
+            )
     return resolved
+
+
+def _matches(path: Path, expected: Optional[str], verbose: bool) -> bool:
+    """True only on a POSITIVE checksum match.
+
+    ``verify_file_checksum`` returns True vacuously when given no expected hash,
+    so a missing digest is excluded here rather than left to a short-circuit that
+    a later edit could drop.
+    """
+    from .download import verify_file_checksum
+
+    return (
+        expected is not None
+        and path.is_file()
+        and verify_file_checksum(path, None, expected, verbose=verbose)
+    )
+
+
+def _contract_candidates(
+    sha: Optional[str], hosted_sha: Optional[str], superseded: Sequence[str] = ()
+) -> list[tuple[str, str]]:
+    """Acceptable digests in priority order, de-duplicated.
+
+    A digest repeated across roles is checked once and reported under the
+    strongest role that names it, so a pin that is simultaneously current and
+    listed as superseded never reads as out of date.
+
+    Only the LAST superseded entry is offered, even though the manifest keeps the
+    full history: the list's effect IS how far back "acceptable" reaches, and the
+    oldest entry is the likeliest to be genuinely wrong. Anything older than one
+    generation degrades to a build failure — loud and recoverable — rather than
+    to a silently stale artifact.
+    """
+    candidates: list[tuple[str, str]] = []
+    for digest, kind in (
+        (hosted_sha, "hosted"),
+        (sha, "local"),
+        *((d, "superseded") for d in list(superseded or ())[-1:]),
+    ):
+        if digest and all(digest != known for known, _ in candidates):
+            candidates.append((digest, kind))
+    return candidates
+
+
+def _accepted_contract(
+    path: Path,
+    sha: Optional[str],
+    hosted_sha: Optional[str],
+    verbose: bool,
+    superseded: Sequence[str] = (),
+) -> Optional[str]:
+    """Which contract *path* satisfies: hosted, local, superseded, or None.
+
+    Hosted is tried first so the canonical answer is the one reported when both
+    would match — which is every case where the two pins agree.
+
+    ``"superseded"`` is a deliberately WEAKER verdict: those are digests this
+    project pinned in an EARLIER generation, so bytes matching one are known-good
+    data that is merely out of date, not corruption. That distinction is the whole
+    point of recording them — without it a re-pinned dataset with no fetch route
+    is indistinguishable from a corrupt one, and the only safe response to
+    ambiguity is to quarantine, which destroys the last copy in existence. Only
+    :func:`_resolve_from_cache` may act on this verdict, and only as a last
+    resort.
+    """
+    candidates = _contract_candidates(sha, hosted_sha, superseded)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        digest, kind = candidates[0]
+        return kind if _matches(path, digest, verbose) else None
+    if not path.is_file():
+        return None
+
+    return _verdict_from_one_pass(path, candidates, verbose)
+
+
+def _verdict_from_one_pass(
+    path: Path, candidates: list[tuple[str, str]], verbose: bool
+) -> Optional[str]:
+    """Hash *path* ONCE and report which candidate it matches, if any.
+
+    Used when more than one digest is acceptable, so the file is not read once
+    per candidate.
+    """
+    with asection(f"Verifying {path.name}") if verbose else _null_ctx():
+        if verbose:
+            aprint("Computing SHA256...")
+        state = hashlib.sha256()
+        with open(path, "rb") as file:
+            for chunk in iter(lambda: file.read(8192 * 128), b""):
+                state.update(chunk)
+        actual = state.hexdigest()
+
+        for digest, kind in candidates:
+            if actual == digest:
+                if verbose:
+                    aprint(f"✓ SHA256 verified ({kind}): {actual}")
+                return kind
+
+        if verbose:
+            # Keep the historical labels: "hosted:" / "in-repo:" name the
+            # CONTRACT rather than the internal verdict string, and the existing
+            # reporting test reads them.
+            aprint("❌ SHA256 mismatch!")
+            label = {
+                "hosted": "hosted:",
+                "local": "in-repo:",
+                "superseded": "superseded:",
+            }
+            for digest, kind in candidates:
+                aprint(f"   Expected {label[kind]:<12s}{digest}")
+            aprint(f"   {'Actual:':<21s}{actual}")
+        return None
+
+
+def _resolve_from_cache(
+    dest: Path,
+    fname: str,
+    sha: Optional[str],
+    hosted_sha: Optional[str],
+    unverifiable: bool,
+    verbose: bool,
+    superseded: Sequence[str] = (),
+    irreplaceable: bool = False,
+    source_remedy: str = "",
+) -> Optional[Path]:
+    """Step 1: reuse the cached copy, or quarantine it and return None.
+
+    Returning None carries the invariant the rest of ``_ensure_one`` depends on:
+    ``dest`` does not exist, so nothing wrong can be trusted or promoted in its
+    place (``robust_download`` would otherwise resume onto stale bytes).
+    """
+    from .download import quarantine_file
+
+    if not dest.exists():
+        return None
+    if not dest.is_file():
+        raise IsADirectoryError(
+            f"Cache entry {dest} exists but is not a regular file; remove it "
+            "(or run 'luxar demo cache clear') and retry."
+        )
+    if unverifiable and not is_lfs_pointer(dest):
+        # Unverifiable: a pending-upload entry, or a manifest predating the
+        # checksum. Reuse it — but say so. Silence is how corruption lives.
+        if verbose:
+            aprint(f"✓ Cached (UNVERIFIED — no sha256 in manifest): {fname}")
+        return dest
+    accepted = _accepted_contract(dest, sha, hosted_sha, verbose, superseded)
+    if accepted == "superseded":
+        # Known-good bytes from an earlier generation. Keep them ONLY when there
+        # is nothing better to be had: quarantining here would destroy the last
+        # copy in existence and leave the dataset unobtainable, which is how a
+        # re-pin bricked a hosted-only demo (see the changelog). When any route
+        # to the current bytes exists we fall through and take it instead.
+        if irreplaceable:
+            aprint(
+                f"⚠️  Using a SUPERSEDED copy of {fname}: it matches a digest this "
+                "project pinned previously, and no current copy is immediately "
+                f"available. {source_remedy} The record is not published. It is "
+                "out of date, not corrupt."
+            )
+            return dest
+        if verbose:
+            aprint(f"↻ Cached copy of {fname} is superseded; fetching the current one")
+    elif accepted:
+        _report_contract(
+            accepted, "✓ Cached (sha256 verified):", fname, sha, hosted_sha, verbose
+        )
+        return dest
+    quarantine_file(
+        dest,
+        reason=(
+            "unpulled git-LFS pointer"
+            if is_lfs_pointer(dest)
+            else "matches neither the in-repo nor the hosted sha256 (corrupt, "
+            "or superseded by a data update)"
+        ),
+        verbose=verbose,
+    )
+    return None
+
+
+def _report_contract(
+    kind: str,
+    prefix: str,
+    fname: str,
+    sha: Optional[str],
+    hosted_sha: Optional[str],
+    verbose: bool,
+) -> None:
+    """One line about which contract was satisfied, when it is worth saying.
+
+    Only a DIVERGENCE is worth a remark: a hosted pin equal to the local one is
+    the majority case, and narrating it would train people to ignore the notice.
+    """
+    if not verbose:
+        return
+    divergent = hosted_sha is not None and sha is not None and hosted_sha != sha
+    if kind == "local" and divergent:
+        aprint(
+            f"{prefix} {fname} matches the in-repo sha256, but the record "
+            "hosts a newer build (hosted_sha256 differs)"
+        )
+    else:
+        aprint(f"{prefix} {fname}")
 
 
 def _ensure_one(
@@ -317,12 +547,48 @@ def _ensure_one(
     lfs_dir: Path,
     record: Manifest,
     verbose: bool,
+    hosted_sha: Optional[str] = None,
+    superseded: Sequence[str] = (),
 ) -> Path:
     """Resolve one file: cache → in-repo LFS → Zenodo, checksum-authoritative.
 
-    The manifest sha256 is the only authority at every step:
+    TWO checksum contracts, because one number can no longer describe both ends.
+    ``sha`` (manifest ``sha256``) is what the REPO ships — for a git-LFS file it
+    is literally the pointer's oid. ``hosted_sha`` (``hosted_sha256``) is what
+    the RECORD serves. They were identical by construction until a refit replaced
+    the hosted artifact without touching the in-repo copy, and collapsing them
+    into one field is what forced Zenodo publication onto the critical path of
+    every demo-data PR: truthful hosted pins made the in-repo fallback fail its
+    own checksum, so the payloads had to be deleted in the same change, so the
+    record had to be published first.
 
-    * a cached file that fails it is QUARANTINED and never reused. The previous
+    ``hosted_sha`` is optional and usually absent; when it is, the two contracts
+    are one and the behaviour is exactly as before.
+
+    Bytes already in hand prefer the two live contracts in order — hosted
+    (canonical, silent), then local (usable, with a one-line notice that the
+    record holds something newer). A cached copy matching the most recent
+    ``superseded_sha256`` is a third, weaker verdict: it is reused only when no
+    in-repo copy or download route can replace it, and is reported as out of
+    date. Both legs that can supply live bytes have to agree on the live
+    contracts: the cache slot is keyed on
+    ``(dataset, variant, basename)`` and nothing else, with no record of which
+    source filled it, so a cache leg stricter than the leg that wrote it would
+    quarantine its own copy and re-make it on every single run.
+
+    Only the DOWNLOAD leg is strict, and strictly on the hosted digest: bytes
+    arriving from the record must be the record's bytes.
+
+    One consequence worth stating: while an in-repo payload is present it wins
+    over a newer hosted artifact, so a checkout with a stale LFS object keeps
+    serving the older generation (loudly). That is the intended trade — it is
+    what lets the pins be truthful while the payloads are still in the tree — and
+    it ends when the payloads are removed.
+
+    The checksum authority at every step:
+
+    * a cached file matching neither live contract is QUARANTINED unless it
+      matches the newest superseded digest and is irreplaceable. The previous
       version fell through to step 2 instead, where a (size, mtime) staleness
       test could not see an in-place corruption and returned the bad file;
     * a copy taken from the in-repo git-LFS tree is verified AFTER copying, so
@@ -336,65 +602,74 @@ def _ensure_one(
     not exist, so nothing wrong can be trusted or promoted in its place.
     """
     from .atomic_copy import atomic_copy_file
-    from .download import download_with_checksum, quarantine_file, verify_file_checksum
+    from .download import download_with_checksum, quarantine_file
 
-    def _verified(path: Path) -> bool:
-        """True only on a POSITIVE checksum match.
-
-        ``verify_file_checksum`` returns True vacuously when given no expected
-        hash, so ``sha is None`` is excluded here rather than left to a
-        short-circuit that a later edit could drop.
-        """
-        return (
-            sha is not None
-            and path.is_file()
-            and verify_file_checksum(path, None, sha, verbose=verbose)
-        )
+    # The record's bytes if we know them, else the only digest we have.
+    download_sha = hosted_sha or sha
+    unverifiable = sha is None and hosted_sha is None
 
     # ── 1. Local cache ──────────────────────────────────────────────────────
-    if dest.exists():
-        if not dest.is_file():
-            raise IsADirectoryError(
-                f"Cache entry {dest} exists but is not a regular file; remove it "
-                "(or run 'luxar demo cache clear') and retry."
-            )
-        if sha is None and not is_lfs_pointer(dest):
-            # Unverifiable: a pending-upload entry, or a manifest predating the
-            # checksum. Reuse it — but say so. Silence is how corruption lives.
-            if verbose:
-                aprint(f"✓ Cached (UNVERIFIED — no sha256 in manifest): {fname}")
-            return dest
-        if _verified(dest):
-            if verbose:
-                aprint(f"✓ Cached (sha256 verified): {fname}")
-            return dest
-        quarantine_file(
-            dest,
-            reason=(
-                "unpulled git-LFS pointer"
-                if is_lfs_pointer(dest)
-                else "does not match the manifest sha256 (corrupt, or superseded "
-                "by a data update)"
-            ),
-            verbose=verbose,
+    # Decide UP FRONT whether the current bytes are obtainable at all, because
+    # the cache leg's quarantine is irreversible and must not fire on a file it
+    # cannot replace. This is the ordering bug that bricked a hosted-only demo:
+    # the old flow quarantined first and discovered "no source" afterwards.
+    # Same shape as #854, where a quarantine on a stale EXPECTATION destroyed a
+    # good file and looped; there the fix was to stop quarantining, and here the
+    # superseded list is what lets us tell "out of date" from "corrupt".
+    lfs_file = lfs_dir / fname
+    has_repo_copy = lfs_file.is_file() and not is_lfs_pointer(lfs_file)
+    url = zenodo_file_url(record, fname)
+    irreplaceable = not has_repo_copy and not url
+    if lfs_file.exists():
+        source_remedy = "In a source checkout, run `git lfs pull`."
+    elif not _DEMOS_DATA_DIR.exists():
+        source_remedy = (
+            "This installed package ships no demo payloads. If this archive has "
+            "an in-repo copy, use a source checkout and run `git lfs pull`."
         )
+    else:
+        source_remedy = "This archive is hosted-only and has no in-repo Git LFS copy."
+
+    cached = _resolve_from_cache(
+        dest,
+        fname,
+        sha,
+        hosted_sha,
+        unverifiable,
+        verbose,
+        superseded=superseded,
+        irreplaceable=irreplaceable,
+        source_remedy=source_remedy,
+    )
+    if cached is not None:
+        return cached
 
     # INVARIANT from here on: `dest` does not exist.
 
     # ── 2. In-repo git-LFS copy (the migration fallback) ────────────────────
-    lfs_file = lfs_dir / fname
     inrepo_is_bad = False
-    if lfs_file.is_file() and not is_lfs_pointer(lfs_file):
+    if has_repo_copy:
         if verbose:
             aprint(f"Copying {fname} from packaged data to cache")
         # Atomic: a Ctrl-C mid-copy must not leave a truncated file under the
         # canonical name for the next run to quarantine and re-fetch.
         atomic_copy_file(lfs_file, dest)
-        if sha is None or _verified(dest):
+        if unverifiable:
+            return dest
+        accepted = _accepted_contract(dest, sha, hosted_sha, verbose)
+        if accepted:
+            _report_contract(
+                accepted,
+                "✓ Copied from packaged data:",
+                fname,
+                sha,
+                hosted_sha,
+                verbose,
+            )
             return dest
         # The copy is wrong. Hash the SOURCE to apportion blame — this second
         # pass only ever runs on this failure path.
-        source_ok = _verified(lfs_file)
+        source_ok = _accepted_contract(lfs_file, sha, hosted_sha, verbose) is not None
         quarantine_file(dest, reason="sha256 mismatch after copy", verbose=verbose)
         if source_ok:
             raise RuntimeError(
@@ -408,35 +683,40 @@ def _ensure_one(
         # dirty the tree and break the manifest/disk consistency test.
         inrepo_is_bad = True
         aprint(
-            f"⚠️  In-repo copy of {fname} does not match the manifest sha256 "
-            f"({lfs_file}). Re-pull it ('git lfs pull'), or regenerate the "
-            "manifest (make gen-data-manifest) if the data changed."
+            f"⚠️  In-repo copy of {fname} matches neither the in-repo nor the "
+            f"hosted sha256 ({lfs_file}). Re-pull it ('git lfs pull'), or "
+            "regenerate the manifest (make gen-data-manifest) if the data "
+            "changed."
         )
 
     # ── 3. Zenodo (only once the record URL is populated) ───────────────────
-    url = zenodo_file_url(record, fname)
     if url:
         if verbose:
             aprint(f"↓ Fetching {fname} from Zenodo")
         # `dest` is absent by the invariant above, so robust_download starts at
         # byte 0 instead of resuming onto (appending to) a stale file.
-        return download_with_checksum(url, dest, expected_sha256=sha)
+        # Strictly the hosted digest: bytes from the record must be the
+        # record's bytes, whatever the in-repo copy happens to be.
+        return download_with_checksum(url, dest, expected_sha256=download_sha)
 
     if inrepo_is_bad:
         # Deliberately NOT `DatasetUnavailable`: the bytes are RIGHT THERE and
         # wrong. That is a broken checkout or a stale manifest, and a demo that
         # swallowed it would present a repo fault as a routine refit.
         raise FileNotFoundError(
-            f"{fname} is present in-repo but fails its manifest sha256, and the "
-            "dataset has no Zenodo URL yet — there is no good copy to fall back "
-            "to. Re-pull the LFS object, or regenerate the manifest if the data "
-            "was intentionally updated."
+            f"{fname} is present in-repo but matches neither its in-repo nor its "
+            "hosted sha256, and the dataset has no Zenodo URL yet — there is no "
+            "good copy to fall back to. Re-pull the LFS object, or regenerate the "
+            "manifest if the data was intentionally updated."
         )
     raise DatasetUnavailable(
         f"{fname} is not cached (any cached copy failed its checksum and was "
-        "quarantined), not present in-repo (git lfs pull), and the demo-data "
-        "manifest builds no Zenodo URL for it yet — its record has no id, or is "
-        "still an unpublished draft."
+        "quarantined), not available from the in-repo Git LFS copy, and the "
+        "demo-data manifest builds no Zenodo URL for it yet — its record has no "
+        f"id, or is still an unpublished draft. {source_remedy} Publish the "
+        "record and populate its manifest "
+        "URL, or rerun the demo with --recompute when that demo provides a build "
+        "path."
     )
 
 
@@ -476,11 +756,11 @@ def local_fit_path(
     The split exists because ``<name>/<filename>`` — with no ``local/`` in it —
     is the path :func:`ensure_dataset` resolves for that manifest entry, and step
     1 of :func:`_ensure_one` treats whatever it finds there as a candidate copy
-    of the HOSTED file: it hashes it against the manifest sha256 and QUARANTINES
-    it on a mismatch. A local fit is a different artifact that happens to answer
-    the same need, so it can never match that hash. Storing one under the hosted
-    name therefore guarantees it is destroyed by the next fetch, and the demo
-    refits from scratch on every single launch (#1618/#1672).
+    of the manifest file: it hashes it against both pinned digests and
+    QUARANTINES it when neither matches. A local fit is a different artifact that
+    happens to answer the same need, so it can never match either digest. Storing
+    one under the manifest name therefore guarantees it is destroyed by the next
+    fetch, and the demo refits from scratch on every single launch (#1618/#1672).
 
     Nothing under ``local/`` is ever hashed, quarantined or overwritten by the
     fetch — the cache dir is shared, the two namespaces are not.
@@ -667,7 +947,7 @@ def load_dataset_gsplats(
     manifest: Optional[Manifest] = None,
     verbose: bool = True,
 ) -> Optional[list[Any]]:
-    """Manifest-driven stand-in for :func:`luxar.utils.demos.load_precomputed_gsplats`.
+    """Manifest-driven stand-in for :func:`luxar.utils.bundles.load_precomputed_gsplats`.
 
     Same contract as the helper it is meant to replace — a list of ``GSplatData``
     in the requested order, or ``None`` when the caller must build the data
@@ -706,7 +986,7 @@ def load_dataset_gsplats(
         * **Bundle datasets.** ``gsplats_celegans`` ships one outer zip holding
           many per-frame files; the manifest addresses the bundle, not its
           members. That demo stays on
-          :func:`~luxar.utils.demos.load_precomputed_bundle`. (``gsplats_zebrafish``
+          :func:`~luxar.utils.bundles.load_precomputed_bundle`. (``gsplats_zebrafish``
           was one until it moved to a single stacked 4D archive, which this
           function serves.)
         * **Runtime-computed file lists** that are not manifest entries. A

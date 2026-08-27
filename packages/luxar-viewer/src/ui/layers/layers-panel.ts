@@ -35,6 +35,7 @@ import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LayerApplyEngine } from './layer-apply';
 import { LayerControls } from './layer-controls';
+import { ALWAYS_GLOBAL_KEYS } from '../help-overlay/type-to-filter';
 
 export { applyColorAdjustments, isColormapActive, type LuxarMaterial } from './luxar-material';
 
@@ -47,6 +48,21 @@ const EYE_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.2A11.3 11.3 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3 3.9M6.5 6.5C3.6 8.4 2 12 2 12s3.5 7 10 7c1.4 0 2.7-.3 3.9-.7"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+
+const PANEL_CONTROL_KEYS: ReadonlySet<string> = new Set([
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ContextMenu',
+  'End',
+  'Enter',
+  'F10',
+  'Home',
+  'PageDown',
+  'PageUp',
+  ' ',
+]);
 
 /**
  * Per-row load-failure glyph — a warning triangle in the same stroke SVG
@@ -685,6 +701,12 @@ export class LayersPanel {
     panel.style.zIndex = String(config.ui.zIndex.layersPanel);
     panel.style.display = 'none'; // Hidden by default
     this.panelEl = panel;
+    this.events.on(panel, 'keydown', (e) => {
+      const key = (e as KeyboardEvent).key;
+      // Keep keys owned by panel controls from also triggering viewer shortcuts.
+      // Unrelated scene shortcuts still work because this panel is non-modal.
+      if (PANEL_CONTROL_KEYS.has(key)) e.stopPropagation();
+    });
 
     // Header
     const header = document.createElement('div');
@@ -743,9 +765,9 @@ export class LayersPanel {
       // Contain ordinary typing (the help filter's convention). The built-in
       // dispatcher already ignores shortcuts while a text input has focus
       // (context-manager → isTypingInInput), so this is belt-and-braces for
-      // document-level listeners outside it (host pages, embeds). Tab keeps
-      // bubbling for focus traversal; empty Escape falls through above.
-      if (key !== 'Escape' && key !== 'Tab') e.stopPropagation();
+      // document-level listeners outside it (host pages, embeds). Empty Escape
+      // falls through above; Tab is inert here but shared with modal focus traps.
+      if (!ALWAYS_GLOBAL_KEYS.has(key)) e.stopPropagation();
     });
     filterWrap.appendChild(filterIcon);
     filterWrap.appendChild(filterInput);

@@ -35,7 +35,8 @@ WHAT THIS DEMO SHOWS
   all the chromatin Dip-C reconstructed for this cell (chr1-22 + X, both copies
   -- 46 chromosomes), which is why isolating one copy without the scaffold used
   to hide half of what is actually there.
-- Hover a strand to read its chromosome and genomic coordinate.
+- Hover a strand to read its chromosome and genomic coordinate; click a bead
+  to open its hg19 locus in the UCSC Genome Browser.
 
 DATA SOURCE & CITATION
 ----------------------
@@ -43,7 +44,8 @@ Tan, L., Xing, D., Chang, C.-H., Li, H., & Xie, X. S. (2018).
     "Three-dimensional genome structures of single diploid human cells."
     Science, 361(6405), 924–928. DOI: 10.1126/science.aat5641
 Data: GEO accession GSE117876 (``GSE117876_RAW.tar``), GM12878 / PBMC single
-    cells. Dip-C tools & ``.3dg`` format: https://github.com/tanlongzhi/dip-c
+    cells; human coordinates use the hg19 assembly. Dip-C tools & ``.3dg``
+    format: https://github.com/tanlongzhi/dip-c
 
 SELF-CONTAINED / CACHING
 ------------------------
@@ -357,7 +359,7 @@ def _extract_one_3dg(tar_path: Path) -> list[str]:
 
 def build_from_geo() -> list[dict]:
     """Download the GEO archive, extract one cell, build + cache the polylines."""
-    from luxar.utils.download import robust_download
+    from luxar.demos import robust_download
 
     with asection("Downloading Dip-C data from GEO (GSE117876, 4.7 GB)"):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -408,6 +410,18 @@ def load_or_build_polylines(recompute: bool) -> list[dict]:
 
 HAPLOTYPE_NAMES = ["Maternal", "Paternal"]
 
+# Dip-C's GM12878 SNP coordinates fit hg19; sampled maxima on six of eight
+# chromosomes exceed hg38. The shipped beads agree: 13 of 23 chromosomes extend
+# past hg38, while only chr7 exceeds hg19, by 1.3 kb. Keep the assembly explicit
+# rather than inferring it from the species at link time.
+GENOME_ASSEMBLY = "hg19"
+
+# Dip-C samples this structure at an approximately 20 kb bead pitch, so link to
+# one bead-wide browser window centered on the selected bead. UCSC ranges are
+# 1-based and inclusive.
+BEAD_PITCH_BP = 20_000
+UCSC_WINDOW_BP = BEAD_PITCH_BP
+
 #: Colour of the always-visible "all DNA" scaffold. Deliberately neutral grey
 #: and slightly cool, so it never competes with a chromosome hue: every
 #: chromosome colour in this demo is saturated, and a scaffold with any hue of
@@ -421,10 +435,21 @@ def _position_gradient(base: np.ndarray, n: int) -> np.ndarray:
     return (base[None, :] * t).astype(np.float32)
 
 
+def _ucsc_region(chrom: str, position: int | float) -> str:
+    """Return an exact-width UCSC region containing one Dip-C bead.
+
+    Windows crossing a chromosome end are left for UCSC to clip.
+    """
+    center = int(position)
+    start = max(1, center - UCSC_WINDOW_BP // 2)
+    end = start + UCSC_WINDOW_BP - 1
+    return f"chr{chrom}:{start}-{end}"
+
+
 def _haplotype_geometry(
     polys: list[dict],
     hap_slot: int,
-) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str], np.ndarray]:
     """Pack one haplotype's chromosome polylines into indexed line geometry.
 
     Each bead is authored ONCE (unique per-vertex arrays) and connectivity is an
@@ -441,11 +466,14 @@ def _haplotype_geometry(
     constant along an arm, so both endpoints of every edge share the same slot
     and an edge is wholly in- or out-of-slice when the viewer scrubs the
     non-displayed haplotype dimension. Returns ``(vertices(M,4), colors(M,3),
-    labels[M], edges(E,2))`` with edge indices local to the returned vertices.
+    labels[M], keys[M], edges(E,2))`` with edge indices local to the returned
+    vertices. Keys are hg19 UCSC regions; haplotype stays in the visible label
+    because the linear reference-browser destination is the same for both copies.
     """
     vparts: list[np.ndarray] = []
     cparts: list[np.ndarray] = []
     labels: list[str] = []
+    keys: list[str] = []
     eparts: list[np.ndarray] = []
     offset = 0
     for p in polys:
@@ -467,11 +495,13 @@ def _haplotype_geometry(
             f"chr{p['chrom']}:{mb:.1f} Mb ({HAPLOTYPE_NAMES[p['haplotype']]})"
             for mb in pos_mb
         )
+        keys.extend(_ucsc_region(p["chrom"], pos) for pos in p["positions"])
     if not vparts:
         # Every arm degenerate (<2 beads) — np.concatenate([]) would raise.
         return (
             np.empty((0, 4), dtype=np.float32),
             np.empty((0, 3), dtype=np.float32),
+            [],
             [],
             np.empty((0, 2), dtype=np.uint32),
         )
@@ -479,6 +509,7 @@ def _haplotype_geometry(
         np.concatenate(vparts),
         np.concatenate(cparts),
         labels,
+        keys,
         np.concatenate(eparts),
     )
 
@@ -519,16 +550,20 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
             vparts: list[np.ndarray] = []
             cparts: list[np.ndarray] = []
             labels: list[str] = []
+            keys: list[str] = []
             eparts: list[np.ndarray] = []
             vertex_offset = 0
             for hap in range(len(HAPLOTYPE_NAMES)):
                 polys = [p for p in polylines if p["haplotype"] == hap]
                 if not polys:
                     continue
-                verts, colors, labs, edges = _haplotype_geometry(polys, hap)
+                verts, colors, labs, browser_keys, edges = _haplotype_geometry(
+                    polys, hap
+                )
                 vparts.append(verts)
                 cparts.append(colors)
                 labels.extend(labs)
+                keys.extend(browser_keys)
                 # Shift this haplotype's edge indices into the concatenated
                 # vertex block so both genome copies batch into ONE node.
                 eparts.append((edges + vertex_offset).astype(np.uint32))
@@ -591,6 +626,11 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                     widths=0.006,
                     colors=all_colors,
                     labels=labels,
+                    keys=keys,
+                    link=(
+                        "https://genome.ucsc.edu/cgi-bin/hgTracks?"
+                        f"db={GENOME_ASSEMBLY}&position={{hover_key}}"
+                    ),
                     indices=all_edges,
                     line_type="indexed",
                     sharpness=0.5,

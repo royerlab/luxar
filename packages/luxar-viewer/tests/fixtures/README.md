@@ -36,13 +36,16 @@ its data — individual specs do not need their own existence guards.
 
 ```bash
 # Preferred — from packages/luxar-viewer/:
-pnpm test:generate-fixtures       # runs both scripts in order
+pnpm test:generate-fixtures       # runs both generators, verifies outputs, and records input stamps
 pnpm test:with-fixtures           # generate then run unit tests
 pnpm test                         # global-setup regenerates missing/stale ones automatically
 
-# Equivalent direct invocations (from repo root):
+# Generator-only direct invocations (from repo root):
 hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 hatch run fixtures:python packages/luxar-viewer/tests/fixtures/generate_expectations.py
+
+# Then record the input stamps (from packages/luxar-viewer/):
+pnpm exec tsx tools/fixture-freshness.ts
 ```
 
 The first of these commands creates a dedicated Hatch environment of roughly
@@ -53,12 +56,12 @@ may occupy disk until the fixture environment is removed with
 `src/tests/global-setup.ts` runs once before the Vitest suite, detects
 missing `test_*.zarr` archives or an out-of-date `roundtrip_expectations.json`
 (staleness is deliberately NOT an mtime check — a content digest of the
-generators and the encoder sources they write through is recorded next to the
+generators and all production Luxar Python sources is recorded next to the
 fixtures and compared on each run), and re-runs the relevant generator. The
 expectations file is regenerated whenever any fixture or either generator
-script has changed. Playwright's pre-flight only checks that the fixtures are
-PRESENT, so after editing a generator run `pnpm test` or
-`pnpm test:generate-fixtures` before `pnpm test:e2e`.
+script has changed. Playwright applies the same freshness check but does not
+run the minute-long generator; stale fixtures fail fast with the
+`pnpm test:generate-fixtures` command.
 
 ## Fixture matrix
 

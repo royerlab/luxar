@@ -132,7 +132,7 @@ Runnalls reduction, but with an efficient incremental implementation.
   discarded on pop. After a merge, only the `O(k)` edges from the new
   cluster to the union of the two parents' neighbours are recomputed.
   Candidate neighbours come from a spatial-hash kNN graph
-  (`luxar.utils.spatial_hash.BatchedSpatialHashGrid`, `k = min(8, n)`),
+  (`luxar.gsplats.spatial_hash.BatchedSpatialHashGrid`, `k = min(8, n)`),
   rebuilt only if the heap drains before the target; a disconnected
   residue is force-merged by Euclidean nearest-neighbour to guarantee
   progress. Roughly `O(N·k·log(N·k))` vs. the former `O(N²·k)` full
@@ -159,7 +159,7 @@ Runnalls reduction, but with an efficient incremental implementation.
   `kwise_moment_match_torch`, `l2_optimal_amplitude_torch`,
   `template_squared_norm_torch`).
 - `luxar.io.ordering` — `morton_encode_nd`, `normalize_coords_to_grid`.
-- `luxar.utils.spatial_hash` — `BatchedSpatialHashGrid` (greedy kNN graph).
+- `luxar.gsplats.spatial_hash` — `BatchedSpatialHashGrid` (greedy kNN graph).
 
 **External:** `numpy`, `torch`.
 

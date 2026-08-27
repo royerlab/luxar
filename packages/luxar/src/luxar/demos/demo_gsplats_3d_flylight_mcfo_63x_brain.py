@@ -255,6 +255,24 @@ CAMERA_FOV = CINEMATIC_FOV_DEG
 CAMERA_FILL = 0.92
 CAMERA_ASPECT = 1.4
 
+# Reference cage. MCFO labels only a handful of neurons out of a whole brain, so
+# the scene is mostly empty and there is no cue for how big the specimen is,
+# where the edges of the imaged stack are, or how much of the black is "no
+# label" rather than "outside the data". A faint box around the stack bounds,
+# ruled at round micron intervals, supplies all three.
+#
+# Drawn ADDITIVE at low opacity on purpose: additive never occludes the neurons
+# behind it, so the cage can cross the specimen without hiding any of it, and at
+# this opacity it reads as a faint scaffold rather than as scene content. The
+# grid lines are half the width and about a third the radiance of the box edges,
+# so the bounds stay legible as the outer shape.
+GRID_STEP_UM = 100.0  # ruling interval — "decimal" in the data's own units
+BOX_WIDTH_UM = 0.9  # ~1.5 px at the authored framing
+GRID_WIDTH_UM = 0.45  # ~1 px — the "thin" of a thin grid
+BOX_RGB = (0.42, 0.54, 0.72)
+GRID_RGB = (0.14, 0.19, 0.27)
+CAGE_OPACITY = 0.18
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
@@ -294,6 +312,80 @@ def resolve_data() -> Path:
 # =============================================================================
 # Scene construction
 # =============================================================================
+def reference_cage(bmin, bmax, step=GRID_STEP_UM):
+    """Box edges plus a ruled grid over the six faces of the stack bounds.
+
+    One node rather than two: the box and the grid are the same object to a
+    reader, and per-vertex widths and colours are enough to keep the bounds
+    reading as the stronger of the two.
+
+    Grid lines sit at absolute multiples of ``step`` — 100, 200, 300 um and so
+    on in the scene's own coordinates — not at fractions of the extent, so the
+    spacing means a fixed physical distance and stays comparable if the bounds
+    ever change. A face whose extent is shorter than one step simply gets no
+    interior rules on that axis.
+
+    Returns:
+        ``(vertices, widths, colors)`` for ``line_type="segments"`` — consecutive
+        PAIRS of rows are independent segments. Segments rather than an indexed
+        polyline because nothing here is a connected path: 12 box edges and a set
+        of disjoint rules, none of which share a joint that would benefit from a
+        shared vertex.
+    """
+    lo = np.asarray(bmin, dtype=np.float64)
+    hi = np.asarray(bmax, dtype=np.float64)
+
+    verts: list[tuple[float, float, float]] = []
+    is_box: list[bool] = []
+
+    def seg(a, b, box):
+        verts.append(tuple(float(v) for v in a))
+        verts.append(tuple(float(v) for v in b))
+        is_box.append(box)
+
+    # --- 12 box edges -----------------------------------------------------
+    for axis in range(3):
+        u, v = [d for d in range(3) if d != axis]
+        for cu in (lo[u], hi[u]):
+            for cv in (lo[v], hi[v]):
+                a = np.empty(3)
+                b = np.empty(3)
+                a[u] = b[u] = cu
+                a[v] = b[v] = cv
+                a[axis], b[axis] = lo[axis], hi[axis]
+                seg(a, b, True)
+
+    # --- ruled grid on each of the six faces -------------------------------
+    def rules(step_axis, run_axis, face_axis, face_value):
+        """Lines parallel to ``run_axis``, spaced along ``step_axis``, on one face."""
+        first = np.ceil(lo[step_axis] / step) * step
+        for t in np.arange(first, hi[step_axis] + 1e-9, step):
+            if t <= lo[step_axis] + 1e-9 or t >= hi[step_axis] - 1e-9:
+                continue  # coincides with a box edge — do not double-draw
+            a = np.empty(3)
+            b = np.empty(3)
+            a[step_axis] = b[step_axis] = t
+            a[face_axis] = b[face_axis] = face_value
+            a[run_axis], b[run_axis] = lo[run_axis], hi[run_axis]
+            seg(a, b, False)
+
+    for face_axis in range(3):
+        u, v = [d for d in range(3) if d != face_axis]
+        for face_value in (lo[face_axis], hi[face_axis]):
+            rules(u, v, face_axis, face_value)
+            rules(v, u, face_axis, face_value)
+
+    vertices = np.asarray(verts, dtype=np.float32)
+    box_mask = np.repeat(np.asarray(is_box, dtype=bool), 2)  # per VERTEX
+    widths = np.where(box_mask, BOX_WIDTH_UM, GRID_WIDTH_UM).astype(np.float32)
+    colors = np.where(
+        box_mask[:, None],
+        np.asarray(BOX_RGB, dtype=np.float32),
+        np.asarray(GRID_RGB, dtype=np.float32),
+    ).astype(np.float32)
+    return vertices, widths, colors
+
+
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
     """Build the 3D scene from the pre-fitted, levelled, physically-scaled gsplats."""
     with asection("Creating FlyLight MCFO whole-brain scene"):
@@ -375,6 +467,29 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     intensity=1.0 / span,
                     offset=-DISPLAY_LO / span,
                     gamma=1.0,
+                    layer=True,
+                )
+
+            with asection("Adding the reference cage"):
+                cage_v, cage_w, cage_c = reference_cage(bmin, bmax)
+                aprint(
+                    f"Cage: {len(cage_v) // 2} segments, {GRID_STEP_UM:.0f} um rules"
+                )
+                scene.add_lines(
+                    "bounds & grid",
+                    vertices=cage_v,
+                    widths=cage_w,
+                    colors=cage_c,
+                    # Consecutive PAIRS are independent segments; a polyline
+                    # would join the end of one box edge to the start of the
+                    # next and draw diagonals across the specimen.
+                    line_type="segments",
+                    dim_order=["X", "Y", "Z"],
+                    # Additive so the cage never occludes a neuron behind it —
+                    # it can cross the brain without hiding any of it.
+                    blending_mode="additive",
+                    opacity=CAGE_OPACITY,
+                    sharpness=0.8,
                     layer=True,
                 )
 

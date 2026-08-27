@@ -721,7 +721,7 @@ RECOMPUTE = FLAGS["recompute"]
 KEEP_STALE = FLAGS["keep_stale"]
 
 #: Identifies the builder that wrote a scene; folded into the build marker
-#: so a source change invalidates it just as a flag change does (#1957).
+#: so builder or Luxar writer changes invalidate it just as flag changes do.
 FINGERPRINT: Final = demo_source_fingerprint(__file__)
 N_POINTS = parse_int_arg("n-points", DEFAULT_N_POINTS)
 N_PARTS = parse_int_arg("n-parts", 0)  # 0 -> derived from N_POINTS
@@ -2935,7 +2935,7 @@ def _build_params() -> Dict[str, Any]:
         "marginal_cap": MARGINAL_CELL_CAP,
         "joint_cap": JOINT_CELL_CAP,
         # The marker already catches a FLAG change (--n-points and friends);
-        # this catches a SOURCE change, which is the other way a scene on disk
+        # this catches a PRODUCER change, which is the other way a scene on disk
         # goes stale. #1957 was reported against a scene whose bug had been
         # fixed weeks earlier, because nothing noticed the builder had moved on.
         "builder": FINGERPRINT,

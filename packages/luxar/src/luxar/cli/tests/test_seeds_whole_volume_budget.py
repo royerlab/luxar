@@ -27,6 +27,7 @@ from luxar.cli.gsplat_ops.fitting.fit_utils import (
     announce_seed_split_lower_bound,
     split_seeds_across_tiles,
 )
+from luxar.cli.tests._testing import normalized_cli_output
 from luxar.gsplats.fit_tiled_gsplats import count_nonempty_tiles
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tiling import compute_tile_specs
@@ -732,6 +733,8 @@ def test_cli_zero_seeds_still_rejected_when_tiled(tmp_path: Path) -> None:
         # fmt: on
     )
 
-    assert whole.exit_code != 0, whole.output
-    assert tiled.exit_code != 0, tiled.output
-    assert "seeds as int must be positive" in tiled.output
+    whole_output = normalized_cli_output(whole)
+    tiled_output = normalized_cli_output(tiled)
+    assert whole.exit_code != 0, whole_output
+    assert tiled.exit_code != 0, tiled_output
+    assert "seeds as int must be positive" in tiled_output

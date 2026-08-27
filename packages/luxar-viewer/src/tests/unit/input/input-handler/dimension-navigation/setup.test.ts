@@ -6,10 +6,9 @@
  * unregistration symmetry)" claim — clearDimensionUI must
  * symmetrically tear down what initDimensionSliders builds.
  *
- * Strategy: mock the two trust-boundary collaborators that take a
- * real THREE.js scene (sceneDimsManager + the loader's
- * updateSceneForDimensions). Drive each setup function with a fake
- * ctx and assert observable state transitions.
+ * Strategy: mock the trust-boundary collaborators that take a real
+ * THREE.js scene. Drive each setup function with a fake ctx and assert
+ * observable lifecycle transitions and initial-load error handling.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -58,36 +57,21 @@ vi.mock('../../../../../scene/animation/dimension-animation-manager', () => ({
   })),
 }));
 
-// AnimationShortcuts.register registers bindings — stub so the test
-// observes the lifecycle, not the register-all internals (those are
-// covered separately in key-bindings/register-all.test.ts).
-vi.mock('../../../../../input/input-handler/key-bindings/animation-shortcuts', () => ({
-  AnimationShortcuts: vi.fn().mockImplementation(() => ({
-    register: vi.fn(),
-  })),
-}));
-
 import {
   clearDimensionUI,
-  updateAllNDNodes,
   initAnimationManager,
   initDimensionSliders,
   type DimNavSetupCtx,
 } from '../../../../../input/input-handler/dimension-navigation/setup';
 import { sceneDimsManager } from '../../../../../scene/scene-dims-manager';
-import {
-  updateSceneForDimensions,
-  prefetchSceneForDimensions,
-  releasePrefetchResources,
-} from '../../../../../data';
+import { updateSceneForDimensions } from '../../../../../data';
 import { DimensionAnimationManager } from '../../../../../scene/animation/dimension-animation-manager';
-import { AnimationShortcuts } from '../../../../../input/input-handler/key-bindings/animation-shortcuts';
-import type { DimensionSliders } from '../../../../../ui/dimension-sliders';
+import type { DimensionSlidersHandle } from '../../../../../input/input-handler/panel-capabilities';
 
 function makeCtx(overrides: Partial<DimNavSetupCtx> = {}): DimNavSetupCtx {
   let selectedDimension = 0;
   let animManager: DimensionAnimationManager | undefined;
-  let sliders: DimensionSliders | undefined;
+  let sliders: DimensionSlidersHandle | undefined;
   let listener: (() => Promise<void>) | undefined;
 
   const panelCoordinator = {
@@ -104,7 +88,6 @@ function makeCtx(overrides: Partial<DimNavSetupCtx> = {}): DimNavSetupCtx {
     sceneManager,
     animationController: { startAnimation: vi.fn() } as never,
     dimensionSlidersFactory: undefined,
-    contextManager: { registerBinding: vi.fn() } as never,
     panelCoordinator,
     recordingPanel: undefined,
     getSelectedDimension: () => selectedDimension,
@@ -136,7 +119,6 @@ beforeEach(() => {
   (sceneDimsManager.reset as ReturnType<typeof vi.fn>).mockReset();
   (updateSceneForDimensions as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
   (DimensionAnimationManager as unknown as ReturnType<typeof vi.fn>).mockClear();
-  (AnimationShortcuts as unknown as ReturnType<typeof vi.fn>).mockClear();
 });
 
 describe('clearDimensionUI', () => {
@@ -203,116 +185,12 @@ describe('clearDimensionUI', () => {
   });
 });
 
-describe('updateAllNDNodes', () => {
-  it('no-ops when sceneDimsManager.getDims returns null (no scene loaded)', async () => {
-    (sceneDimsManager.getDims as ReturnType<typeof vi.fn>).mockReturnValue(null);
-    const ctx = makeCtx();
-    await updateAllNDNodes(ctx);
-    expect(updateSceneForDimensions).not.toHaveBeenCalled();
-  });
-
-  it('forwards dims + scene to the loader and kicks the animation loop', async () => {
-    const dims = { ndim: 4, displayed: [0, 1, 2], currentStep: [0, 0, 0, 5], metadata: undefined };
-    (sceneDimsManager.getDims as ReturnType<typeof vi.fn>).mockReturnValue(dims);
-    const startAnimation = vi.fn();
-    const ctx = makeCtx({
-      animationController: { startAnimation } as never,
-    });
-    await updateAllNDNodes(ctx);
-    // 3rd arg: loaderId (undefined); 4th: playback frame-budget opts (no
-    // budget outside animation playback → { frameBudgetMs: undefined }).
-    expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
-      frameBudgetMs: undefined,
-    });
-    expect(startAnimation).toHaveBeenCalledTimes(1);
-  });
-
-  describe('t+1 shadow prefetch trigger', () => {
-    const dims = {
-      ndim: 4,
-      displayed: [0, 1, 2],
-      currentStep: [0, 0, 0, 5],
-      metadata: undefined,
-    };
-
-    function makePlayingAnim(over: Record<string, unknown> = {}) {
-      return {
-        dispose: vi.fn(),
-        getFrameBudgetMs: vi.fn(() => 60),
-        isAnyPlaying: vi.fn(() => true),
-        getPlayingDimIndices: vi.fn(() => [3]),
-        peekNextValue: vi.fn(() => 6),
-        ...over,
-      } as never;
-    }
-
-    beforeEach(() => {
-      (sceneDimsManager.getDims as ReturnType<typeof vi.fn>).mockReturnValue(dims);
-      (prefetchSceneForDimensions as ReturnType<typeof vi.fn>).mockClear();
-      (releasePrefetchResources as ReturnType<typeof vi.fn>).mockClear();
-    });
-
-    it('while playing: prefetches the PEEKED next dims with the frame budget', async () => {
-      const ctx = makeCtx();
-      ctx.setAnimationManager(makePlayingAnim());
-      await updateAllNDNodes(ctx);
-
-      expect(prefetchSceneForDimensions).toHaveBeenCalledTimes(1);
-      const [predictedDims, , loaderId, opts] = (
-        prefetchSceneForDimensions as ReturnType<typeof vi.fn>
-      ).mock.calls[0];
-      expect(predictedDims.currentStep).toEqual([0, 0, 0, 6]); // peeked t+1
-      expect(dims.currentStep).toEqual([0, 0, 0, 5]); // REAL dims untouched
-      expect(loaderId).toBeUndefined();
-      expect(opts).toEqual({ budgetMs: 60 });
-      expect(releasePrefetchResources).not.toHaveBeenCalled();
-    });
-
-    it('not playing: releases prefetch resources and does not prefetch', async () => {
-      const ctx = makeCtx();
-      ctx.setAnimationManager(
-        makePlayingAnim({ isAnyPlaying: vi.fn(() => false), getFrameBudgetMs: vi.fn(() => null) })
-      );
-      await updateAllNDNodes(ctx);
-      expect(prefetchSceneForDimensions).not.toHaveBeenCalled();
-      expect(releasePrefetchResources).toHaveBeenCalledTimes(1);
-    });
-
-    it("peek returned null for every playing dim ('once' at boundary): no prefetch fired", async () => {
-      const ctx = makeCtx();
-      ctx.setAnimationManager(makePlayingAnim({ peekNextValue: vi.fn(() => null) }));
-      await updateAllNDNodes(ctx);
-      expect(prefetchSceneForDimensions).not.toHaveBeenCalled();
-    });
-
-    it('no animation manager at all: silently releases (idempotent path)', async () => {
-      const ctx = makeCtx();
-      await updateAllNDNodes(ctx);
-      expect(prefetchSceneForDimensions).not.toHaveBeenCalled();
-      expect(releasePrefetchResources).toHaveBeenCalledTimes(1);
-    });
-  });
-});
-
 describe('initAnimationManager', () => {
   it('constructs the animation manager exactly once (idempotent)', () => {
     const ctx = makeCtx();
     initAnimationManager(ctx);
     initAnimationManager(ctx); // second call should not re-construct
     expect(DimensionAnimationManager).toHaveBeenCalledTimes(1);
-  });
-
-  it('registers AnimationShortcuts after constructing the manager', () => {
-    const ctx = makeCtx();
-    initAnimationManager(ctx);
-    expect(AnimationShortcuts).toHaveBeenCalledTimes(1);
-  });
-
-  it('does NOT re-register shortcuts on the second call', () => {
-    const ctx = makeCtx();
-    initAnimationManager(ctx);
-    initAnimationManager(ctx);
-    expect(AnimationShortcuts).toHaveBeenCalledTimes(1);
   });
 });
 

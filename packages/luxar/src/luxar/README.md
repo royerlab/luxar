@@ -23,6 +23,28 @@ Core Luxar Python package and public API exports.
 | `utils/` | Array utilities, download helpers, path management |
 | `tests/` | Top-level test suite |
 
+## Package-Root Modules
+
+### `_process.py`
+
+Deterministic teardown for long-lived child processes. It owns the lifecycle of
+the subprocess trees `luxar demo run` spawns so Ctrl-C, SIGTERM, or SIGHUP never
+orphans a `luxar serve` process on its port.
+
+**Key Functions:**
+- `run_child_process()`: Spawn a command, wait for it, and tear it and its whole
+  process group down on every exit path via SIGINT → SIGTERM → SIGKILL; the
+  optional `on_spawn` hook receives the child PID, which is also the process
+  group ID when isolated
+- `terminate_process_group()`: Apply the same escalation to a group discovered
+  after the fact; returns True only once the group is provably finished — an
+  unreaped zombie counts as gone, while `EPERM` never does
+- `can_kill_process_groups()`: Report whether POSIX process-group signalling is
+  available
+- `proc_table()`: Return best-effort `(pid, pgid, state, command)` rows from
+  `/proc`, with a `ps` fallback on POSIX systems such as macOS; an empty result
+  means the process table is unknown, not that nothing is running
+
 ## Key Exports
 
 See `__init__.py` for the full public API. Primary classes:

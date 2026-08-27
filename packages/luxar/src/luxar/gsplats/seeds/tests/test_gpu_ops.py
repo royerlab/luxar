@@ -259,14 +259,46 @@ class TestGPUMemoryChecks:
 
     def test_check_gpu_memory_cpu_always_true(self):
         """CPU device should always pass memory check."""
-        V = np.random.rand(1000, 1000, 1000)
+        V = np.zeros((1, 1, 1))
         assert check_gpu_memory(V, "cpu", "sobel") is True
 
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_check_gpu_memory_small_volume_true(self):
+    def test_check_gpu_memory_small_volume_true(self, monkeypatch):
         """Small volumes should pass memory check."""
-        V = np.random.rand(100, 100, 100)
+        requested_device_ids = []
+
+        def get_device_properties(device_id):
+            requested_device_ids.append(device_id)
+            return type("Props", (), {"total_memory": 8 * 1024**3})()
+
+        monkeypatch.setattr(torch.cuda, "get_device_properties", get_device_properties)
+        V = np.zeros((64, 64, 64))
         assert check_gpu_memory(V, "cuda", "sobel") is True
+        assert requested_device_ids == [0]
+
+    def test_check_gpu_memory_insufficient_warns_and_returns_false(self, monkeypatch):
+        """Oversized volumes should warn and fall back for an indexed device."""
+        requested_device_ids = []
+
+        def get_device_properties(device_id):
+            requested_device_ids.append(device_id)
+            return type("Props", (), {"total_memory": 8 * 1024**3})()
+
+        monkeypatch.setattr(torch.cuda, "get_device_properties", get_device_properties)
+        V = np.broadcast_to(np.zeros(1), (10_000, 10_000, 10_000))
+
+        with pytest.warns(RuntimeWarning, match="GPU memory insufficient"):
+            assert check_gpu_memory(V, "cuda:3", "sobel") is False
+
+        assert requested_device_ids == [3]
+
+    def test_check_gpu_memory_query_failure_assumes_sufficient(self, monkeypatch):
+        """Unavailable device properties should leave OOM handling to the operation."""
+
+        def raise_query_error(device_id):
+            raise RuntimeError(f"cannot query cuda:{device_id}")
+
+        monkeypatch.setattr(torch.cuda, "get_device_properties", raise_query_error)
+        assert check_gpu_memory(np.zeros((1, 1, 1)), "cuda:2", "sobel") is True
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")

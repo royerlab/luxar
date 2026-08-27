@@ -38,7 +38,7 @@ sections/
 - **[data-loading/](data-loading/README.md)** — composite section that bundles five sub-slices (`spatial`, `network`, `memory`, `monitor`, `performance`) into a single `DataLoadingConfig`; dispatches per-sub-section validation.
 - **[depth-sort/](depth-sort/README.md)** — gsplat depth-sort scheduling (depth-sorting Phase 3): the master `enabled` switch (URL escape hatch `?depthSort=0`) and the camera-motion re-sort thresholds (`angleThresholdDeg`, `translationFraction`), and the SortWorker startup deadline (`workerInitTimeoutMs`).
 - **[dimension-animation/](dimension-animation/README.md)** — defaults and presets for FPS-based playback through dimension ranges, including loop mode (`once` / `loop` / `bounce`), direction, frame-time floors, and target-vs-actual FPS feedback.
-- **[input/](input/README.md)** — default adjustment sensitivity, the global keyboard shortcut map, the fly-mode movement key set, and the dimension-navigation keys.
+- **[input/](input/README.md)** — default adjustment sensitivity and the global keyboard shortcut map.
 - **[rendering-controls/](rendering-controls/README.md)** — the single source of truth for user-adjustable rendering settings: camera FOV/clipping, bloom, global EOG, anti-aliasing, tone mapping, vignette, detector noise, lens distortion, navigation mode, and adaptive-DPR toggles.
 - **[scene/](scene/README.md)** — canvas background color, default fit-to-bounds framing ratio, and a forward-compatible `ShaderConfig` placeholder reserved for future per-geometry shader knobs.
 - **[ui/](ui/README.md)** — z-index layering, timing constants for transient UI, loading-spinner geometry, debug-console panel/style settings, the scale-bar overlay, and per-component border-radius/padding tokens.

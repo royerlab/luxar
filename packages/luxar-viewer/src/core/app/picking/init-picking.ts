@@ -39,10 +39,10 @@ export interface InitPickingPorts {
     sel: { nodeName: string; elementIndex: number; hitNodeName: string } | null
   ) => void;
   /**
-   * Whether an embedder `selection` listener currently exists. Read at
-   * init time to provision the picking pipeline even for label-less
-   * datasets, and read LIVE inside the shouldPick gate so pick renders
-   * only run while someone consumes them.
+   * Whether an embedder `selection` listener currently exists. Read at init
+   * time to provision the picking pipeline even for datasets with no
+   * per-element string/image channel, and read LIVE inside the shouldPick gate
+   * so pick renders only run while someone consumes them.
    */
   hasSelectionConsumer?: () => boolean;
   /**
@@ -52,9 +52,9 @@ export interface InitPickingPorts {
    * Separate from {@link hasSelectionConsumer} because the two answer
    * different questions and are read at different times, but they are OR'd
    * for both provisioning and gating: a host that subscribes ONLY to
-   * `element-click`, on a scene with no labels and no interaction templates,
-   * would otherwise get a viewer that never picks and therefore an event that
-   * never fires — with nothing to indicate why.
+   * `element-click`, on a scene with no per-element string channels and no
+   * interaction templates, would otherwise get a viewer that never picks and
+   * therefore an event that never fires — with nothing to indicate why.
    */
   hasElementActionConsumer?: () => boolean;
   /**
@@ -123,9 +123,9 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // Re-init: tear down listeners from any previous picking session.
   // Usually already done up-front by `loadDataset` (see
   // disposePickingSession) — this defensive re-run (idempotent) covers
-  // callers that reach init directly, and runs before the no-labels
+  // callers that reach init directly, and runs before the no-consumers
   // early-return so we don't leak listeners from the previous session
-  // if this re-init ends up with no labels in the new scene. Subsequent
+  // if this re-init ends up with no pick consumers in the new scene. Subsequent
   // listener registrations below all funnel through the same
   // `pickingEvents` EventGroup, so a future `dispose()` (or the next
   // initPicking call) removes them in one shot.
@@ -186,10 +186,11 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
       log.warning(Modules.APP, `Invalid link template on node "${nodeName}": ${rejection}`);
     }
   }
-  // Provision picking when the scene declares labels, declares an interaction
-  // template, OR an embedder `selection` listener exists at load time. Without
-  // any of those there is no consumer, so skip the pick-mesh/GPU overhead
-  // entirely (keeps the bench-only synthetic scenes free of picking cost).
+  // Provision picking when the scene declares a per-element string/image
+  // channel, declares an interaction template, or an embedder selection /
+  // element-action listener exists at load time. Without any of those there is
+  // no consumer, so skip the pick-mesh/GPU overhead entirely (keeps the
+  // bench-only synthetic scenes free of picking cost).
   const wantsSelection =
     (ports.hasSelectionConsumer?.() ?? false) || (ports.hasElementActionConsumer?.() ?? false);
   if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyKeys && !hasAnyInteraction && !wantsSelection) {
@@ -212,9 +213,10 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     };
   }
 
-  // Create label loaders from the scene loader's zarr store. The loaders
-  // (tooltip content) need the store; selection events do not — so a
-  // missing store only aborts when labels were the sole reason to pick.
+  // Create content loaders from the scene loader's zarr store. The current
+  // missing-store gate aborts when declared channels / interaction templates
+  // are the only reasons to pick; embedder selection / element-action consumers
+  // keep consumer-backed picking active without one.
   const store = sceneLoader.zarrStore;
   let labelLoader: LabelLoader | undefined;
   let imageLabelLoader: ImageLabelLoader | undefined;
@@ -237,8 +239,8 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   }
 
   // Create picking system with result callback. The handler closure
-  // lives in `pick-result-handler.ts` so its branch logic (null /
-  // label-only / image-only / both / neither / fetch reject /
+  // lives in `pick-result-handler.ts` so its branch logic (null / any
+  // combination of label/key/image content / no content / fetch reject /
   // missing loaders) can be unit-tested with stub ports.
   // Retains the settled pick so a click can act on it without a fresh
   // (asynchronous, user-activation-spending) GPU readback. Session-scoped:

@@ -21,11 +21,12 @@
  * outside (e.g. by ui-cleanup).
  */
 
-import { config } from '../config';
 import { trapFocus } from './help-overlay/focus-trap';
-import { installTypeToFilter } from './help-overlay/type-to-filter';
+import { ALWAYS_GLOBAL_KEYS, installTypeToFilter } from './help-overlay/type-to-filter';
 import { getViewerContainer } from '../utils/viewer-container';
 import { RAIL_ICONS } from './control-rail/icons';
+import type { RegisteredShortcutBindings, ShortcutHelpSectionId } from '../types/shortcut-help';
+import { config } from '../config';
 
 const UI_CONFIG = config.ui;
 
@@ -36,59 +37,43 @@ let activeHelpTypeToFilterRelease: (() => void) | null = null;
 
 /** One shortcut row: chip text(s) + what they do. */
 interface HelpEntry {
-  /** Key/gesture chips, rendered as <kbd> (e.g. ['V'] or ['⇧', 'Wheel']). */
   keys: string[];
   label: string;
+  order: number;
 }
 
 interface HelpSection {
+  id?: ShortcutHelpSectionId;
   title: string;
-  /** Stroke SVG icon (rail icon set) shown beside the section title. */
   icon: string;
-  /** Optional muted context line under the title (e.g. how to enter a mode). */
   note?: string;
   entries: HelpEntry[];
 }
 
-/**
- * The shortcut reference. Maintained by hand alongside the key bindings in
- * input/input-handler/key-bindings/ — keep the two in sync when bindings
- * change.
- */
 const HELP_SECTIONS: HelpSection[] = [
   {
+    id: 'basics',
     title: 'Basics',
     icon: RAIL_ICONS.navOrbit,
     entries: [
-      { keys: ['Drag'], label: 'Pan camera' },
-      { keys: ['Right drag'], label: 'Rotate view' },
-      { keys: ['⇧', 'Drag'], label: 'Rotate view (alternative)' },
-      { keys: ['Wheel'], label: 'Zoom in / out' },
-      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
-      { keys: ['Click'], label: 'Open the hovered element link' },
-      { keys: ['Right click'], label: 'Actions for the hovered element' },
-      { keys: ['Space'], label: 'Toggle fullscreen' },
-      { keys: ['F'], label: 'Fit scene (recenter camera)' },
-      { keys: ['V'], label: 'View mode: orbit / fly / ortho' },
-      { keys: ['O'], label: 'Toggle dataset browser' },
-      { keys: ['H'], label: 'Toggle this help' },
-      { keys: ['Esc'], label: 'Exit fullscreen / close panels' },
+      { keys: ['Drag'], label: 'Pan camera', order: 1 },
+      { keys: ['Right drag'], label: 'Rotate view', order: 2 },
+      { keys: ['⇧', 'Drag'], label: 'Rotate view (alternative)', order: 3 },
+      { keys: ['Wheel'], label: 'Zoom in / out', order: 4 },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis', order: 5 },
+      { keys: ['Click'], label: 'Open the hovered element link', order: 6 },
+      { keys: ['Right click'], label: 'Actions for the hovered element', order: 7 },
     ],
   },
   {
+    id: 'fly',
     title: 'Fly mode',
     icon: RAIL_ICONS.navFly,
     note: 'Press V until the fly icon shows',
     entries: [
-      { keys: ['W', 'A', 'S', 'D'], label: 'Move forward / left / back / right' },
-      { keys: ['⌥', 'W / S'], label: 'Move up / down' },
-      { keys: ['⇧'], label: 'Hold for 2× speed boost' },
-      { keys: ['↑ ↓ ← →'], label: 'Look around' },
-      { keys: ['Q / E'], label: 'Roll left / right' },
-      { keys: ['Drag'], label: 'Strafe (pan camera)' },
-      { keys: ['Right drag'], label: 'Free look' },
-      { keys: ['Wheel'], label: 'Move forward / backward' },
-      { keys: ['I'], label: 'Toggle inertial mode (smooth coasting)' },
+      { keys: ['Drag'], label: 'Strafe (pan camera)', order: 70 },
+      { keys: ['Right drag'], label: 'Free look', order: 80 },
+      { keys: ['Wheel'], label: 'Move forward / backward', order: 90 },
     ],
   },
   {
@@ -96,49 +81,53 @@ const HELP_SECTIONS: HelpSection[] = [
     icon: RAIL_ICONS.navOrtho,
     note: 'Press V until the grid icon shows — 2D viewing, no rotation',
     entries: [
-      { keys: ['Drag'], label: 'Pan camera' },
-      { keys: ['Wheel'], label: 'Zoom in / out' },
-      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis' },
+      { keys: ['Drag'], label: 'Pan camera', order: 1 },
+      { keys: ['Wheel'], label: 'Zoom in / out', order: 2 },
+      { keys: ['⇧', 'Wheel'], label: 'Roll around the view axis', order: 3 },
     ],
   },
   {
+    id: 'dimensions',
     title: 'nD navigation',
     icon: RAIL_ICONS.dims,
     entries: [
       {
-        keys: ['1 – 9'],
-        label: 'Select a non-displayed dimension (panel header shows target)',
+        keys: ['Wheel'],
+        label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)',
+        order: 30,
       },
-      { keys: ['[', ']'], label: 'Step along the selected dimension' },
-      { keys: ['Wheel'], label: 'On a slider: step (⇧ fine, ⌃ coarse, ⌃⇧ extra-fine)' },
-      { keys: ['N'], label: 'Dimension sliders panel' },
-      { keys: ['K'], label: 'Play / pause dimension animation' },
-      { keys: ['Home', 'End'], label: 'Jump to dimension start / end' },
-      { keys: ['⇧', '↑ / ↓'], label: 'Animation speed up / down' },
     ],
   },
   {
+    id: 'panels',
     title: 'Panels & tools',
     icon: RAIL_ICONS.settings,
     entries: [
-      { keys: ['R'], label: 'Rendering controls' },
-      { keys: ['L'], label: 'Layers panel' },
-      { keys: ['N'], label: 'Dimension sliders' },
-      { keys: ['M'], label: 'Data monitor (mini / expanded / off)' },
-      { keys: ['P'], label: 'Performance monitor' },
-      { keys: ['T'], label: 'Recording panel (screenshot / video)' },
-      { keys: ['G'], label: 'Quick screenshot' },
-      { keys: ['B'], label: 'Scale bar' },
-      { keys: ['J'], label: 'Colormap legend' },
-      { keys: ['U'], label: 'Overlays' },
-      { keys: ['C'], label: 'Cinematic mode (bloom / noise / vignette / lens)' },
-      { keys: ['Ctrl/⌘', 'Wheel'], label: 'Adjust field of view (perspective)' },
-      { keys: ['Ctrl', 'L'], label: 'Debug console' },
-      { keys: ['Ctrl', '⇧', 'S'], label: 'Export viewer state to clipboard' },
-      { keys: ['⇧', 'F10'], label: 'Context menu for the hovered element' },
+      { keys: ['Ctrl/⌘', 'Wheel'], label: 'Adjust field of view (perspective)', order: 115 },
     ],
   },
 ];
+
+function getRegisteredHelpEntries(
+  bindings: RegisteredShortcutBindings
+): Map<ShortcutHelpSectionId, HelpEntry[]> {
+  const entries = new Map<ShortcutHelpSectionId, HelpEntry[]>();
+  const groups = new Set<string>();
+  for (const contextBindings of bindings.values()) {
+    for (const binding of contextBindings) {
+      if (!binding.help || groups.has(binding.help.group)) continue;
+      groups.add(binding.help.group);
+      const sectionEntries = entries.get(binding.help.section) ?? [];
+      sectionEntries.push({
+        keys: binding.help.keys ? [...binding.help.keys] : [binding.shortcutLabel ?? binding.key],
+        label: binding.description,
+        order: binding.help.order,
+      });
+      entries.set(binding.help.section, sectionEntries);
+    }
+  }
+  return entries;
+}
 
 /** Closing prose tips (no key chips). */
 const HELP_TIPS: string[] = [
@@ -156,7 +145,7 @@ const HELP_TIPS: string[] = [
  * click-outside-to-dismiss handler (the delay avoids catching the same click
  * that opened it); {@link hideHelpOverlay} tears both down.
  */
-export function showHelpOverlay() {
+export function showHelpOverlay(bindings: RegisteredShortcutBindings) {
   // Prevent opening multiple overlays - if one exists, do nothing
   const existingHelp = document.getElementById('luxar-help-overlay');
   if (existingHelp) {
@@ -212,6 +201,8 @@ export function showHelpOverlay() {
   const controlsList = document.createElement('div');
   controlsList.className = 'luxar-help-overlay__sections';
 
+  const registeredEntries = getRegisteredHelpEntries(bindings);
+
   for (const section of HELP_SECTIONS) {
     const sectionEl = document.createElement('section');
     sectionEl.className = 'luxar-help-overlay__section';
@@ -231,7 +222,12 @@ export function showHelpOverlay() {
       sectionEl.appendChild(note);
     }
 
-    for (const entry of section.entries) {
+    const entries = [
+      ...section.entries,
+      ...(section.id ? (registeredEntries.get(section.id) ?? []) : []),
+    ].sort((a, b) => a.order - b.order);
+
+    for (const entry of entries) {
       const row = document.createElement('div');
       row.className = 'luxar-help-overlay__row';
 
@@ -310,7 +306,7 @@ export function showHelpOverlay() {
       applyHelpFilter();
       return;
     }
-    if (e.key !== 'Escape' && e.key !== 'Tab') e.stopPropagation();
+    if (!ALWAYS_GLOBAL_KEYS.has(e.key)) e.stopPropagation();
   });
 
   // Add footer note

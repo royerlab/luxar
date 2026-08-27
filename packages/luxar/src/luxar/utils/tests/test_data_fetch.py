@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import runpy
+import shutil
 import sys
 from pathlib import Path
 
@@ -160,6 +161,26 @@ def test_present_zenodo_files_have_checksums():
                 f"{name}/{f['name']}: {sha!r} is not a lowercase hex sha256"
             )
             assert f.get("bytes"), f"{name}/{f['name']}: missing byte size"
+            # `hosted_sha256` is OPTIONAL — present only where the hosted
+            # artifact differs from the in-repo copy — but when present it is a
+            # download contract and gets the same shape check. A malformed one
+            # would reject every download of a file that is actually fine.
+            hosted = f.get("hosted_sha256")
+            if hosted is not None:
+                assert len(hosted) == 64 and all(
+                    c in "0123456789abcdef" for c in hosted
+                ), f"{name}/{f['name']}: {hosted!r} is not a lowercase hex sha256"
+            # `hosted_bytes` travels with it so the digest and size preserve a
+            # complete description of the hosted artifact as a pair.
+            hosted_bytes = f.get("hosted_bytes")
+            if hosted_bytes is not None:
+                assert isinstance(hosted_bytes, int) and hosted_bytes > 0, (
+                    f"{name}/{f['name']}: hosted_bytes {hosted_bytes!r} is not a "
+                    "positive int"
+                )
+                assert hosted is not None, (
+                    f"{name}/{f['name']}: hosted_bytes without hosted_sha256"
+                )
 
 
 def _file_lists(dataset: dict) -> list[tuple[str, list[dict]]]:
@@ -196,7 +217,7 @@ def test_pending_upload_flag_matches_the_file_lists():
 
 
 def test_h2afva_has_light_default_and_full_variant():
-    """The 11.4 GB timelapse ships as an opt-in; the demo default is the light cut."""
+    """The 9.3 GB timelapse ships as an opt-in; the demo default is the light cut."""
     variants = load_manifest()["datasets"]["h2afva"]["variants"]
     assert set(variants) == {"51tp", "253tp"}
     assert variants["51tp"]["default"] is True
@@ -665,7 +686,7 @@ def test_a_bad_in_repo_copy_is_a_fault_not_an_absence(fake_repo):
     Every demo that falls back to a multi-minute refit when its manifest fetch
     comes up empty catches this narrowly — eleven of them ``except
     DatasetUnavailable``, and ``nexrad_supercell`` that plus
-    :class:`~luxar.utils.demos.BundleMemberNotFound`, the bundle-side routable
+    :class:`~luxar.utils.bundles.BundleMemberNotFound`, the bundle-side routable
     absence (its per-frame member names carry ``--dbz-floor`` and friends, so a
     non-default run legitimately asks the shipped bundle for frames it cannot
     hold). This must not be one of the things any of them swallow: it would
@@ -777,6 +798,60 @@ def test_corrupt_cache_without_a_source_raises_and_still_quarantines(
     assert find_quarantined_files(good)
 
 
+def test_unpulled_lfs_pointer_names_the_available_remedies(fake_repo):
+    """An unhydrated source checkout must name Git LFS and fallback remedies."""
+    manifest, cache = fake_repo
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.write_text(
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "unpublished draft" in message
+    assert "publish the record" in message.lower()
+    assert "--recompute" in message
+    assert "git lfs pull" in message
+
+
+def test_hosted_only_archive_does_not_recommend_git_lfs(fake_repo):
+    """An archive absent from the repository cannot be hydrated with Git LFS."""
+    manifest, cache = fake_repo
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.unlink()
+
+    with pytest.raises(DatasetUnavailable) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "hosted-only" in message
+    assert "unpublished draft" in message
+    assert "git lfs pull" not in message
+
+
+def test_installed_package_recommends_source_checkout_git_lfs(fake_repo):
+    """A wheel has no data tree, even when the source checkout has the archive."""
+    manifest, cache = fake_repo
+    shutil.rmtree(data_fetch._DEMOS_DATA_DIR)
+
+    with pytest.raises(DatasetUnavailable) as exc_info:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(exc_info.value)
+    assert "installed package ships no demo payloads" in message
+    assert "source checkout" in message
+    assert "git lfs pull" in message
+    assert "hosted-only" not in message
+
+
 def test_inrepo_source_failing_its_own_checksum_is_never_used(fake_repo):
     """A bad packaged copy is reported, never loaded, and never renamed.
 
@@ -788,7 +863,11 @@ def test_inrepo_source_failing_its_own_checksum_is_never_used(fake_repo):
     payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
     payload.write_bytes(b"toy-splat-BYTES")  # same length, different content
 
-    with pytest.raises(FileNotFoundError, match="fails its manifest sha256"):
+    # Names BOTH contracts: the point is that neither the in-repo digest nor a
+    # hosted one accepted these bytes, so there is nothing to fall back to.
+    with pytest.raises(
+        FileNotFoundError, match="matches neither its in-repo nor its hosted sha256"
+    ):
         ensure_dataset(
             "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
         )
@@ -1238,8 +1317,9 @@ def _write_bundle(path: Path, members: dict[str, bytes]) -> None:
             zf.writestr(name, blob)
 
 
+@pytest.mark.parametrize("hosted_mode", ["agree", "diverge", "hosted_only"])
 def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, hosted_mode
 ):
     """The bundle is checksum-verified, then its members are extracted and loaded.
 
@@ -1247,7 +1327,7 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     unit that is actually downloaded -- gets verified. Members are covered by
     verifying the container, so they are not pinned individually.
     """
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles
 
     inner = {
         "frame0.gsplats.zarr.zip": b"PK-not-really",
@@ -1258,6 +1338,8 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     bundle = lfs_dir / "b.gsplats.zarr.zip"
     _write_bundle(bundle, inner)
     sha = hashlib.sha256(bundle.read_bytes()).hexdigest()
+    local_sha = None if hosted_mode == "hosted_only" else sha
+    hosted_sha = sha if hosted_mode in {"agree", "hosted_only"} else "f" * 64
 
     manifest = {
         "schema_version": 1,
@@ -1271,8 +1353,9 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
                 "files": [
                     {
                         "name": "b.gsplats.zarr.zip",
-                        "sha256": sha,
+                        "hosted_sha256": hosted_sha,
                         "bytes": bundle.stat().st_size,
+                        **({"sha256": local_sha} if local_sha is not None else {}),
                     }
                 ],
             }
@@ -1285,9 +1368,9 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
         loaded.append((bp, kwargs))
         return list(fn)
 
-    monkeypatch.setattr(demos_utils, "_extract_bundle_and_load", _spy)
+    monkeypatch.setattr(bundles, "_extract_bundle_and_load", _spy)
 
-    out = demos_utils.load_dataset_bundle(
+    out = bundles.load_dataset_bundle(
         "bundle_ds",
         "b.gsplats.zarr.zip",
         list(inner),
@@ -1302,14 +1385,88 @@ def test_load_dataset_bundle_verifies_the_outer_zip_then_extracts(
     assert loaded[0][0].read_bytes() == bundle.read_bytes()
     # The extracted frames are keyed on the digest that was just verified, not on
     # a (size, mtime) guess a same-size re-upload could reproduce.
-    assert loaded[0][1]["stamp"] == f"sha256:{sha}"
+    expected_stamp = (
+        f"sha256:{sha}+{hosted_sha}" if hosted_mode == "diverge" else f"sha256:{sha}"
+    )
+    assert loaded[0][1]["stamp"] == expected_stamp
+
+
+def test_load_dataset_bundle_refreshes_frames_after_superseded_bundle_is_replaced(
+    tmp_path, monkeypatch
+):
+    """A superseded extraction must not inherit the current bundle's stamp."""
+    from luxar.gsplats import gsplat_data
+    from luxar.utils import bundles
+
+    monkeypatch.setattr(
+        gsplat_data.GSplatData,
+        "load",
+        classmethod(lambda cls, path, **kwargs: path.read_bytes()),
+    )
+
+    cache_root = tmp_path / "cache"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    bundle_name = "b.gsplats.zarr.zip"
+    frame_name = "frame0.gsplats.zarr.zip"
+    cached_bundle = cache_root / "bundle_ds" / bundle_name
+    cached_bundle.parent.mkdir(parents=True)
+    _write_bundle(cached_bundle, {frame_name: b"old-frame"})
+    old_digest = hashlib.sha256(cached_bundle.read_bytes()).hexdigest()
+
+    current_bundle = tmp_path / "current.zip"
+    _write_bundle(current_bundle, {frame_name: b"current-frame-is-longer"})
+    current_digest = hashlib.sha256(current_bundle.read_bytes()).hexdigest()
+    manifest = {
+        "schema_version": 1,
+        "records": {"r": {"published": False}},
+        "datasets": {
+            "bundle_ds": {
+                "bucket": "zenodo",
+                "record": "r",
+                "license": "cc0-1.0",
+                "dir": "bundle_ds",
+                "files": [
+                    {
+                        "name": bundle_name,
+                        "sha256": current_digest,
+                        "bytes": current_bundle.stat().st_size,
+                        "superseded_sha256": [old_digest],
+                    }
+                ],
+            }
+        },
+    }
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
+
+    assert bundles.load_dataset_bundle(
+        "bundle_ds",
+        bundle_name,
+        [frame_name],
+        cache_root=cache_root,
+        manifest=manifest,
+        verbose=False,
+    ) == [b"old-frame"]
+
+    repo_bundle = repo_root / "bundle_ds" / bundle_name
+    repo_bundle.parent.mkdir()
+    repo_bundle.write_bytes(current_bundle.read_bytes())
+
+    assert bundles.load_dataset_bundle(
+        "bundle_ds",
+        bundle_name,
+        [frame_name],
+        cache_root=cache_root,
+        manifest=manifest,
+        verbose=False,
+    ) == [b"current-frame-is-longer"]
 
 
 def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
     tmp_path, monkeypatch
 ):
     """Naming a bundle the manifest does not list must raise, not fetch something else."""
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles
 
     lfs_dir = tmp_path / "repo" / "bundle_ds"
     lfs_dir.mkdir(parents=True)
@@ -1336,7 +1493,7 @@ def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
     }
     monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", tmp_path / "repo")
     with pytest.raises(FileNotFoundError, match="not a manifest file"):
-        demos_utils.load_dataset_bundle(
+        bundles.load_dataset_bundle(
             "bundle_ds",
             "wrong.zip",
             ["f.gsplats.zarr.zip"],
@@ -1348,7 +1505,7 @@ def test_load_dataset_bundle_rejects_a_bundle_that_is_not_a_manifest_file(
 
 def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
     """A non-hosted dataset hands control back so the demo builds it itself."""
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles
 
     manifest = {
         "schema_version": 1,
@@ -1363,7 +1520,7 @@ def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
         },
     }
     assert (
-        demos_utils.load_dataset_bundle(
+        bundles.load_dataset_bundle(
             "lc", "b.zip", ["f.zip"], manifest=manifest, verbose=False
         )
         is None
@@ -1371,10 +1528,10 @@ def test_load_dataset_bundle_returns_none_for_a_local_compute_dataset():
 
 
 def test_load_dataset_bundle_honours_recompute():
-    from luxar.utils import demos as demos_utils
+    from luxar.utils import bundles
 
     assert (
-        demos_utils.load_dataset_bundle(
+        bundles.load_dataset_bundle(
             "anything", "b.zip", ["f.zip"], recompute=True, verbose=False
         )
         is None
@@ -1479,3 +1636,715 @@ def test_every_shipped_record_agrees_with_its_published_flag():
             assert url, f"{name}: reachable per its flags but builds no URL"
         else:
             assert url is None, f"{name}: unpublished draft, but the leg is live"
+
+
+# ---------------------------------------------------------------------------
+# Two checksum contracts (`sha256` = the repo's copy, `hosted_sha256` = the
+# record's). These are the cases that exist only once the two can disagree — the
+# state a refit creates, and the one that used to force Zenodo publication onto
+# the critical path of every demo-data PR.
+# ---------------------------------------------------------------------------
+
+_HOSTED_ONLY = "f" * 64  # a plausible digest that describes no local bytes
+
+
+def _diverge(manifest: dict, dataset: str = "gsplats_toy") -> dict:
+    """Pin a hosted digest that disagrees with the in-repo one. Returns the entry."""
+    entry = manifest["datasets"][dataset]["files"][0]
+    entry["hosted_sha256"] = _HOSTED_ONLY
+    return entry
+
+
+def test_a_divergent_hosted_pin_still_resolves_from_the_repo(fake_repo):
+    """The whole point: truthful hosted pins must not break a working checkout.
+
+    Before the split there was one field, so pinning the refit's digest made the
+    in-repo fallback fail its own checksum — which is why the payloads had to be
+    deleted in the same PR, which is why the record had to be published first.
+    """
+    manifest, cache = fake_repo
+    _diverge(manifest)
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    assert path.read_bytes() == b"toy-splat-bytes"
+    assert find_quarantined_files(path) == []
+
+
+def test_a_divergent_pin_does_not_churn_the_cache_on_the_second_call(fake_repo):
+    """The second call is the real test — the cache slot has no provenance.
+
+    ``dest`` is keyed on (dataset, variant, basename) and nothing else, with no
+    record of which source filled it. A cache leg stricter than the leg that
+    wrote it would quarantine its own copy and re-copy it every single run.
+    """
+    manifest, cache = fake_repo
+    _diverge(manifest)
+
+    (first,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    stat_before = first.stat()
+    (second,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert second == first
+    assert second.read_bytes() == b"toy-splat-bytes"
+    assert find_quarantined_files(second) == [], "cache churned on a divergent pin"
+    assert second.stat().st_mtime == stat_before.st_mtime, "file was rewritten"
+
+
+def test_a_divergent_pin_is_reported_not_silently_accepted(
+    fake_repo, capsys, monkeypatch
+):
+    """Serving the older generation is allowed, but it has to be said out loud."""
+    manifest, cache = fake_repo
+    _diverge(manifest)
+    real_sha256 = hashlib.sha256
+    hash_passes = 0
+
+    def _counting_sha256(*args, **kwargs):
+        nonlocal hash_passes
+        hash_passes += 1
+        return real_sha256(*args, **kwargs)
+
+    monkeypatch.setattr(hashlib, "sha256", _counting_sha256)
+
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=True)
+
+    out = capsys.readouterr().out
+    assert hash_passes == 1, out
+    assert "SHA256 mismatch" not in out, out
+    assert "hosted_sha256 differs" in out, out
+
+
+def test_agreeing_pins_report_nothing_unusual(fake_repo, capsys):
+    """A hosted pin EQUAL to the local one is the 16-dataset majority case.
+
+    It must be indistinguishable from having no hosted pin at all, or the notice
+    becomes noise that trains people to ignore it.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    entry["hosted_sha256"] = entry["sha256"]
+
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=True)
+
+    out = capsys.readouterr().out
+    assert "hosted_sha256 differs" not in out, out
+
+
+def test_the_download_leg_is_strict_on_the_hosted_digest(fake_repo, monkeypatch):
+    """Bytes from the record must be the RECORD's bytes.
+
+    Accepting either contract is for bytes already in hand. A download verified
+    against the in-repo digest would happily store the wrong artifact.
+    """
+    manifest, cache = fake_repo
+    entry = _diverge(manifest)
+    manifest["records"]["cc-by"]["base_url"] = "https://example.invalid/files"
+    # No in-repo copy, so step 3 is the only leg left.
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    seen: dict[str, object] = {}
+
+    def _fake_download(url, output_path, expected_sha256=None, **kw):
+        seen["expected"] = expected_sha256
+        Path(output_path).write_bytes(b"hosted-bytes")
+        return Path(output_path)
+
+    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _fake_download)
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=False)
+
+    assert seen["expected"] == entry["hosted_sha256"], (
+        "the download leg must verify against the hosted digest, not the in-repo one"
+    )
+
+
+def test_bytes_matching_neither_contract_are_still_quarantined(fake_repo, capsys):
+    """Widening acceptance to two digests must not widen it to anything.
+
+    The corruption case is what the quarantine exists for, and a two-contract
+    check that accepted a third thing would be worse than the one-contract check
+    it replaced.
+    """
+    manifest, cache = fake_repo
+    _diverge(manifest)
+    (good,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    _corrupt_in_place_preserving_stat(good)
+
+    (repaired,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=True
+    )
+
+    out = capsys.readouterr().out
+    assert "SHA256 mismatch" in out
+    assert "Expected hosted:" in out
+    assert "Expected in-repo:" in out
+    assert repaired.read_bytes() == b"toy-splat-bytes"
+    assert [p.name for p in find_quarantined_files(good)] == [good.name + ".corrupt"]
+
+
+def test_a_divergent_pin_on_a_variant_needs_no_extra_plumbing(fake_repo):
+    """Variants resolve through the same single loop, so they inherit this.
+
+    ``resolve_variant`` returns the same file-entry shape either way — worth
+    pinning, because h2afva (the dataset the refit actually diverged) declares
+    its files only under ``variants``.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["toy_ts"]["variants"]["full"]["files"][0]
+    entry["hosted_sha256"] = _HOSTED_ONLY
+
+    (path,) = ensure_dataset(
+        "toy_ts", variant="full", manifest=manifest, cache_root=cache, verbose=False
+    )
+    assert path.read_bytes() == b"full-timelapse-bytes"
+    assert find_quarantined_files(path) == []
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_a_hosted_pin_survives_regeneration_when_the_data_is_visible(
+    tmp_path, monkeypatch
+):
+    """The generator cannot DERIVE a hosted digest, so it must carry it forward.
+
+    This is the silent-loss case: a dataset whose data dir is visible has its
+    entries rebuilt from disk, so a hand-added ``hosted_sha256`` would evaporate
+    on the next ``make gen-data-manifest`` — while a dataset with no dir on disk
+    kept its own, because those keep the committed list whole. A field that
+    survives in some rows and vanishes in others is worse than one that never
+    worked at all.
+    """
+    mod = _load_generator()
+    data = tmp_path / "data" / "gsplats_kidney"
+    data.mkdir(parents=True)
+    (data / "kidney_ch0.gsplats.zarr.zip").write_bytes(b"kidney-bytes")
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+
+    hosted = "b" * 64
+    committed = {
+        "datasets": {
+            "gsplats_kidney": {
+                "files": [
+                    {
+                        "name": "kidney_ch0.gsplats.zarr.zip",
+                        "sha256": "a" * 64,  # deliberately NOT the on-disk digest
+                        "bytes": 1,
+                        "hosted_sha256": hosted,
+                        "hosted_bytes": 4242,
+                    }
+                ]
+            }
+        }
+    }
+    entry = mod.build(committed, prune=False)["datasets"]["gsplats_kidney"]["files"][0]
+
+    assert entry["hosted_sha256"] == hosted, "hosted pin lost on regeneration"
+    # The SIZE has to survive too so the hosted artifact remains fully
+    # described by a paired digest and size.
+    assert entry["hosted_bytes"] == 4242, "hosted size lost on regeneration"
+    # The local digest is still re-derived from disk — that is the whole point of
+    # the split, and it must not be frozen along with the hosted one.
+    assert entry["sha256"] == hashlib.sha256(b"kidney-bytes").hexdigest()
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_regeneration_adds_no_hosted_key_where_there_was_none(tmp_path, monkeypatch):
+    """Absent must stay absent, or the drift gate reddens for every dataset.
+
+    ``--check`` is a whole-file byte comparison, and
+    ``test_regeneration_preserves_entries_when_the_data_is_gone`` asserts an
+    exact dict equality — an unconditional ``hosted_sha256: None`` would fail
+    both for all 30 datasets at once.
+    """
+    mod = _load_generator()
+    data = tmp_path / "data" / "gsplats_kidney"
+    data.mkdir(parents=True)
+    (data / "kidney_ch0.gsplats.zarr.zip").write_bytes(b"kidney-bytes")
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+
+    # The committed pin must MATCH the bytes on disk here. A mismatch is a
+    # legitimate pin change, which now records the outgoing digest as
+    # `superseded_sha256` — correct behaviour, but a different subject than the
+    # one this test is about, and conflating them would make the assertion below
+    # untestable.
+    committed = {
+        "datasets": {
+            "gsplats_kidney": {
+                "files": [
+                    {
+                        "name": "kidney_ch0.gsplats.zarr.zip",
+                        "sha256": hashlib.sha256(b"kidney-bytes").hexdigest(),
+                        "bytes": len(b"kidney-bytes"),
+                    }
+                ]
+            }
+        }
+    }
+    entry = mod.build(committed, prune=False)["datasets"]["gsplats_kidney"]["files"][0]
+    assert "hosted_sha256" not in entry
+    assert "superseded_sha256" not in entry, "an unchanged pin recorded history"
+    assert list(entry) == ["name", "sha256", "bytes"], "entry key order changed"
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_a_hosted_pin_survives_regeneration_on_a_variant(tmp_path, monkeypatch):
+    """Variants take a separate code path, and h2afva is the diverged dataset.
+
+    Its files are declared only under ``variants``, so a carry-forward that
+    covered only the flat list would miss the one dataset this exists for.
+    """
+    mod = _load_generator()
+    base = tmp_path / "data" / "h2afva" / "253tp"
+    base.mkdir(parents=True)
+    (base / "big.gsplats.zarr.zip").write_bytes(b"big-bytes")
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setitem(
+        mod.DATASETS,
+        "h2afva",
+        {"bucket": "zenodo", "record": "h2afva", "variants": {"253tp": {}}},
+    )
+
+    hosted = "c" * 64
+    committed = {
+        "datasets": {
+            "h2afva": {
+                "variants": {
+                    "253tp": {
+                        "files": [
+                            {
+                                "name": "big.gsplats.zarr.zip",
+                                "sha256": "a" * 64,
+                                "bytes": 1,
+                                "hosted_sha256": hosted,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    built = mod.build(committed, prune=False)["datasets"]["h2afva"]
+    assert built["variants"]["253tp"]["files"][0]["hosted_sha256"] == hosted
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_a_mixed_dataset_gets_hosted_pins_only_where_it_had_them(tmp_path, monkeypatch):
+    """One file diverged, its sibling did not — the real Visible Human shape.
+
+    Guards the seam the two single-shape tests both miss: with SOME hosted pin
+    present the carry-forward runs, so a lookup that cannot distinguish "no pin
+    for this file" from "no pins at all" stamps ``hosted_sha256: None`` onto the
+    sibling. That reddens the byte-exact drift gate, and a null download contract
+    would reject a file that is perfectly fine.
+    """
+    mod = _load_generator()
+    data = tmp_path / "data" / "gsplats_visible_human_head"
+    data.mkdir(parents=True)
+    (data / "vh_head.gsplats.zarr.zip").write_bytes(b"fit-bytes")
+    (data / "vh_head_colors.npz").write_bytes(b"colour-bytes")
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+
+    hosted = "d" * 64
+    committed = {
+        "datasets": {
+            "gsplats_visible_human_head": {
+                "files": [
+                    {
+                        "name": "vh_head.gsplats.zarr.zip",
+                        "sha256": "a" * 64,
+                        "bytes": 1,
+                        "hosted_sha256": hosted,
+                    },
+                    {"name": "vh_head_colors.npz", "sha256": "b" * 64, "bytes": 1},
+                ]
+            }
+        }
+    }
+    built = mod.build(committed, prune=False)["datasets"]
+    entries = {e["name"]: e for e in built["gsplats_visible_human_head"]["files"]}
+
+    assert entries["vh_head.gsplats.zarr.zip"]["hosted_sha256"] == hosted
+    assert "hosted_sha256" not in entries["vh_head_colors.npz"], (
+        "a file with no hosted pin was stamped with one"
+    )
+
+
+def test_a_hosted_only_pin_is_still_enforced(fake_repo, monkeypatch):
+    """``sha256`` absent but ``hosted_sha256`` present must NOT read as unverifiable.
+
+    A reachable state: a ``pending_upload`` row's pin has always described the
+    hosted artifact (there is nothing on disk to hash), so moving it to
+    ``hosted_sha256`` leaves no local digest. If "unverifiable" were keyed on
+    ``sha256`` alone, that row would accept any bytes at all — turning a row we
+    know the digest of into the one row we check least.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    entry["hosted_sha256"] = entry.pop("sha256")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"wrong-bytes-XXX")  # same length as the real payload
+
+    with pytest.raises(DatasetUnavailable):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+    assert [p.name for p in find_quarantined_files(dest)] == [dest.name + ".corrupt"]
+
+
+def test_a_hosted_only_pin_accepts_the_bytes_it_describes(fake_repo, monkeypatch):
+    """The other half: correct bytes under a hosted-only pin are reused, not rejected."""
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    entry["hosted_sha256"] = entry.pop("sha256")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    assert path == dest
+    assert find_quarantined_files(dest) == []
+
+
+# ---------------------------------------------------------------------------
+# `superseded_sha256`: a re-pin must never brick a dataset
+#
+# #1734 re-pinned `gsplats_3d_drosophila_gastrulation` to the bytes its Zenodo
+# record holds. Every existing cache held the previous generation, there is no
+# in-repo copy, and the record is an unpublished draft — so the cache was
+# quarantined as a mismatch and the demo became unbuildable by anyone. Ten of
+# thirty datasets are hosted-only, so this was a class, not an incident.
+#
+# Same shape as #854, where `cached_download` quarantined a COMPLETE file
+# against a stale `expected_size` and re-downloaded it forever. There the fix
+# was to stop quarantining. Here a digest mismatch is ambiguous — corrupt and
+# superseded look identical — so the previous digests are recorded to tell them
+# apart, and only then is the quarantine relaxed.
+# ---------------------------------------------------------------------------
+
+
+def _pin_superseded(manifest, dataset="gsplats_toy", digests=()):
+    entry = manifest["datasets"][dataset]["files"][0]
+    entry["superseded_sha256"] = list(digests)
+    return entry
+
+
+def test_a_superseded_cache_is_kept_when_nothing_can_replace_it(fake_repo, monkeypatch):
+    """The droso case exactly: re-pinned, no in-repo copy, record unpublished.
+
+    Quarantining here destroys the last copy in existence and leaves the dataset
+    unobtainable. Keeping it is the only outcome that is not strictly worse.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    # Seed the cache with the OLD generation, then re-pin to a new one.
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["sha256"] = "9" * 64
+    entry["superseded_sha256"] = [old_digest]
+    # No in-repo copy, and no Zenodo URL: irreplaceable.
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path == dest
+    assert path.read_bytes() == b"toy-splat-bytes"
+    assert find_quarantined_files(dest) == [], "the last copy was destroyed"
+
+
+def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys):
+    """An unpulled current copy is obtainable by hydrating its LFS pointer."""
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["sha256"] = "9" * 64
+    entry["superseded_sha256"] = [old_digest]
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / dest.name
+    payload.write_text(
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path == dest
+    notice = capsys.readouterr().out
+    assert "git lfs pull" in notice
+    assert "hosted-only" not in notice
+
+
+def test_a_superseded_cache_is_replaced_when_a_route_exists(fake_repo, monkeypatch):
+    """Keeping it is a LAST resort, not a preference.
+
+    If the current bytes are obtainable, the superseded copy must lose — otherwise
+    a stale cache would pin a machine to an old generation forever.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["superseded_sha256"] = [old_digest]
+    # Re-pin to whatever the in-repo copy hashes to, so step 2 is a live route.
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.write_bytes(b"NEWER-generation")
+    entry["sha256"] = _sha256(payload)
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path.read_bytes() == b"NEWER-generation", "kept a superseded copy anyway"
+    assert [p.name for p in find_quarantined_files(dest)] == [dest.name + ".corrupt"]
+
+
+def test_a_superseded_cache_is_replaced_when_zenodo_is_reachable(
+    fake_repo, monkeypatch
+):
+    """A live download route also makes the superseded cache replaceable."""
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["superseded_sha256"] = [old_digest]
+    entry["sha256"] = hashlib.sha256(b"NEWER-generation").hexdigest()
+    manifest["records"]["cc-by"]["base_url"] = "https://example.invalid/files"
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    def _fake_download(url, output_path, expected_sha256=None, **kw):
+        Path(output_path).write_bytes(b"NEWER-generation")
+        return Path(output_path)
+
+    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _fake_download)
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path.read_bytes() == b"NEWER-generation", "kept a superseded copy anyway"
+    assert [p.name for p in find_quarantined_files(dest)] == [dest.name + ".corrupt"]
+
+
+def test_corrupt_bytes_are_still_quarantined_even_when_irreplaceable(
+    fake_repo, monkeypatch
+):
+    """The relaxation must not become "accept anything when stuck".
+
+    Bytes matching NO recorded digest are corruption, and serving them would be
+    worse than failing. This is why the previous digests had to be recorded
+    rather than the checksum simply loosened.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    entry["superseded_sha256"] = ["a" * 64]  # names something else entirely
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"corrupted-bytes")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    with pytest.raises(DatasetUnavailable):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+    assert [p.name for p in find_quarantined_files(dest)] == [dest.name + ".corrupt"]
+
+
+def test_using_a_superseded_copy_is_announced(fake_repo, monkeypatch, capsys):
+    """Serving out-of-date data silently is how a stale tile gets published."""
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    old_digest = entry["sha256"]
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["sha256"] = "9" * 64
+    entry["superseded_sha256"] = [old_digest]
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=False)
+
+    out = capsys.readouterr().out
+    assert "SUPERSEDED" in out, out
+    assert "not corrupt" in out, out
+
+
+def test_the_superseded_verdict_ranks_below_both_contracts(fake_repo):
+    """A digest that is current must never be reported as superseded."""
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    current = _sha256(payload)
+    # The same digest named as BOTH current and superseded: current must win.
+    assert (
+        data_fetch._accepted_contract(payload, current, None, False, [current])
+        == "local"
+    )
+    assert (
+        data_fetch._accepted_contract(payload, None, current, False, [current])
+        == "hosted"
+    )
+
+
+def test_only_the_most_recent_generation_is_accepted(fake_repo, monkeypatch):
+    """The manifest keeps the whole history; acceptance reaches back exactly one.
+
+    The list's effect IS how far back "acceptable" reaches, and the oldest entry
+    is the likeliest to be genuinely wrong. Anything older than one generation
+    degrades to a build failure — loud and recoverable — rather than to a
+    silently stale artifact.
+    """
+    manifest, cache = fake_repo
+    entry = manifest["datasets"]["gsplats_toy"]["files"][0]
+    ancient = entry["sha256"]  # what the cache actually holds
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"toy-splat-bytes")
+    entry["sha256"] = "9" * 64
+    # Two generations of history: the cached bytes are the OLDER one.
+    entry["superseded_sha256"] = [ancient, "8" * 64]
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    with pytest.raises(DatasetUnavailable):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    # Reachable again the moment that digest becomes the most recent entry.
+    entry["superseded_sha256"] = ["8" * 64, ancient]
+    dest.write_bytes(b"toy-splat-bytes")
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    assert path.read_bytes() == b"toy-splat-bytes"
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_a_changed_pin_records_the_outgoing_digest(tmp_path, monkeypatch):
+    """The generator must capture history at the moment it is still knowable.
+
+    When a visible in-repo pin changes, the outgoing digest is what every
+    existing cache holds. If regeneration does not record it while those bytes
+    are available, the information is gone and a re-pin can strand every cache.
+    """
+    mod = _load_generator()
+    data = tmp_path / "data" / "gsplats_kidney"
+    data.mkdir(parents=True)
+    (data / "kidney_ch0.gsplats.zarr.zip").write_bytes(b"NEW-generation")
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+
+    outgoing = hashlib.sha256(b"OLD-generation").hexdigest()
+    committed = {
+        "datasets": {
+            "gsplats_kidney": {
+                "files": [
+                    {
+                        "name": "kidney_ch0.gsplats.zarr.zip",
+                        "sha256": outgoing,
+                        "bytes": len(b"OLD-generation"),
+                    }
+                ]
+            }
+        }
+    }
+    entry = mod.build(committed, prune=False)["datasets"]["gsplats_kidney"]["files"][0]
+
+    assert entry["sha256"] == hashlib.sha256(b"NEW-generation").hexdigest()
+    assert entry["superseded_sha256"] == [outgoing]
+
+    # Idempotent: regenerating again must not duplicate the entry.
+    again = mod.build(
+        {"datasets": {"gsplats_kidney": {"files": [entry]}}}, prune=False
+    )["datasets"]["gsplats_kidney"]["files"][0]
+    assert again["superseded_sha256"] == [outgoing], "history duplicated on re-run"
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_a_reverted_pin_moves_the_outgoing_digest_to_the_end(tmp_path, monkeypatch):
+    """The newest superseded generation must remain the final history entry."""
+    mod = _load_generator()
+    data = tmp_path / "data" / "gsplats_kidney"
+    data.mkdir(parents=True)
+    payload = data / "kidney_ch0.gsplats.zarr.zip"
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+
+    def _regenerate(previous, generation):
+        payload.write_bytes(generation)
+        return mod.build(previous, prune=False)["datasets"]["gsplats_kidney"]["files"][
+            0
+        ]
+
+    digest_a = hashlib.sha256(b"A").hexdigest()
+    digest_b = hashlib.sha256(b"B").hexdigest()
+    initial = {
+        "datasets": {
+            "gsplats_kidney": {
+                "files": [
+                    {
+                        "name": payload.name,
+                        "sha256": digest_a,
+                        "bytes": 1,
+                    }
+                ]
+            }
+        }
+    }
+
+    pin_b = _regenerate(initial, b"B")
+    pin_a = _regenerate({"datasets": {"gsplats_kidney": {"files": [pin_b]}}}, b"A")
+    pin_c = _regenerate({"datasets": {"gsplats_kidney": {"files": [pin_a]}}}, b"C")
+
+    assert pin_b["superseded_sha256"] == [digest_a]
+    assert pin_a["superseded_sha256"] == [digest_a, digest_b]
+    assert pin_c["superseded_sha256"] == [digest_b, digest_a]
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_a_hosted_only_repin_history_must_be_authored_before_regeneration(
+    tmp_path, monkeypatch
+):
+    """Without bytes on disk, regeneration cannot discover the outgoing pin."""
+    mod = _load_generator()
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "data")
+    repinned = {
+        "datasets": {
+            "gsplats_3d_drosophila_gastrulation": {
+                "files": [
+                    {
+                        "name": "droso_gastrulation.gsplats.zarr.zip",
+                        "sha256": "b" * 64,
+                        "bytes": 2,
+                    }
+                ]
+            }
+        }
+    }
+
+    entry = mod.build(repinned, prune=False)["datasets"][
+        "gsplats_3d_drosophila_gastrulation"
+    ]["files"][0]
+
+    assert (
+        entry == repinned["datasets"]["gsplats_3d_drosophila_gastrulation"]["files"][0]
+    )
+    assert "superseded_sha256" not in entry
