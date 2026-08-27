@@ -49,7 +49,7 @@
 
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
-import { ArchiveFaultError } from '../../../cache/chunk-source';
+import { archiveFaultFrom } from '../../../cache/chunk-source';
 import { log, Modules } from '../../../utils/log';
 import { loadGSplatsNodeCheap, loadGSplatsNodeExpensive } from './load-gsplats-node';
 import { loadPointsNodeCheap, loadPointsNodeExpensive } from './load-points-node';
@@ -73,16 +73,6 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
   min: [] as readonly number[],
   max: [] as readonly number[],
 };
-
-function containsArchiveFault(error: unknown): boolean {
-  let current: unknown = error;
-  for (let depth = 0; depth < 8; depth++) {
-    if (current instanceof ArchiveFaultError) return true;
-    if (!(current instanceof Error)) return false;
-    current = current.cause;
-  }
-  return false;
-}
 
 /**
  * Build a deferred (lazy) ``LODGroupChild`` from an already cheap-attached
@@ -147,7 +137,7 @@ function attachLazyChild(
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;
-        if (containsArchiveFault(error)) {
+        if (archiveFaultFrom(error) !== undefined) {
           entryChild.permanentlyFailed = true;
           entryChild.failedTick = undefined;
         }
