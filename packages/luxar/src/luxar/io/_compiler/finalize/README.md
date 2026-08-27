@@ -316,12 +316,14 @@ to its author-facing owner: the first geometry node or `kind=lod` /
 and warning names and deduplication use that owner so implementation-level LOD
 chunks and partition parts report once as the node the author wrote. Candidate
 pairs are sweep-pruned on a displayed axis, and repeated pairwise hits are rolled
-up into connected overlap clusters. Each warning lists at most five owners,
+up into connected overlap clusters. Each diagnosis lists at most five owners,
 orders containers first and marks them, then reports how many participants were
-omitted. Same-geometry, same-mode clusters lead with the appearance-preserving
-remedy: merge the geometry and use `partition={"max_elements": N}`. That remedy
-is available to Points, Lines, Mesh, and Gaussian Splats. Heterogeneous geometry
-or blend-mode clusters instead say that merging cannot preserve the authored
+omitted. One shared advice block follows all cluster diagnoses instead of
+repeating invariant remedies per cluster. Same-geometry, same-mode, same-opacity
+clusters can merge their geometry and use `partition={"max_elements": N}` while
+preserving placement and appearance. That remedy is available to Points, Lines,
+Mesh, and Gaussian Splats. Clusters with differing geometry, blend modes, or
+effective opacities instead say that merging cannot preserve the authored
 material and fall back to the mode/bounds choices. Additive blending remains an
 order-independent option for an emissive medium, but changes surface appearance.
 

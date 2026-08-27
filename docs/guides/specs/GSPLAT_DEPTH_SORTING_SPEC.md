@@ -30,13 +30,14 @@ Related reading: `docs/archive/developer-archive/SPARKJS_ANALYSIS.md` (historica
 Depth sorting is exact only within one node. Cross-node `renderOrder` uses BSP
 partition order where available and a mean-view-z approximation otherwise, so
 two spatially overlapping `normal`/`volumetric` nodes can exchange relative
-order as the camera moves. For nodes with the same geometry type and blend mode,
-merge them into one node and pass `partition={"max_elements": N}`: disjoint BSP
-cells can then be ordered exactly back-to-front while preserving placement and
-appearance. This authoring path is available to Points, Lines, Mesh, and Gaussian
-Splats. Put the displayed dimensions first to keep exact BSP ordering. If the
-geometry types or modes differ, merging cannot preserve the authored material;
-use `additive` only for an emissive medium, or separate the bounds.
+order as the camera moves. For nodes with the same geometry type, blend mode, and
+effective opacity, merge them into one node and pass
+`partition={"max_elements": N}`: disjoint BSP cells can then be ordered exactly
+back-to-front while preserving placement and appearance. This authoring path is
+available to Points, Lines, Mesh, and Gaussian Splats. Put the displayed
+dimensions first to keep exact BSP ordering. If the geometry types, modes, or
+opacities differ, merging cannot preserve the authored material; use `additive`
+only for an emissive medium, or separate the bounds.
 
 That escape hatch must not be used against depth-writing geometry. `additive`
 is the only mode that ignores the depth buffer, so it paints through `opaque`
