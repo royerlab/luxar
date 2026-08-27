@@ -229,6 +229,50 @@ describe('loadPartitionGroupNode', () => {
     );
   });
 
+  it('keeps every object from a part contiguous and stamps each with the same part index', async () => {
+    const children = [
+      makePartNode('/partition/part_a', 'points', { child_index: 7 }),
+      makePartNode('/partition/part_b', 'points', { child_index: 3 }),
+    ];
+    const releases: Array<() => void> = [];
+    const gates = children.map(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      const index = children.indexOf(child);
+      await gates[index];
+      for (const suffix of ['first', 'second']) {
+        const object = new THREE.Group();
+        object.name = `${child.path}/${suffix}`;
+        parentThree.add(object);
+      }
+    });
+
+    const loadPromise = loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+    await Promise.resolve();
+    releases[1]();
+    await Promise.resolve();
+    releases[0]();
+    const wrapper = await loadPromise;
+
+    expect(wrapper.children.map((child) => child.name)).toEqual([
+      '/partition/part_a/first',
+      '/partition/part_a/second',
+      '/partition/part_b/first',
+      '/partition/part_b/second',
+    ]);
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([7, 7, 3, 3]);
+  });
+
   it('all children stay visible after load (no LOD-style selector)', async () => {
     attachStubChildren();
     const ctx = makeCtx();
