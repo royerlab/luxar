@@ -571,6 +571,10 @@ def warn_if_over_element_cap(
         enabled: False to suppress a redundant child warning when its parent
             checks the aggregate count.
 
+    Warns:
+        ElementCapacityWarning: If a supported geometry node exceeds the
+            conservative viewer capacity floor.
+
     Returns:
         True if a warning was emitted.
     """
