@@ -84,6 +84,23 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
 
+#: Authored reduction-LOD stamp keys shared with
+#: :func:`luxar.gsplats.lod.restamp._has_ladder_stamps`. They live in core
+#: ``_data`` so this module can mirror ``refresh_reduction_lod_stats``' guard
+#: without importing the optional LOD package.
+_REDUCTION_LOD_LEVEL_STATS_KEYS = (
+    "quality",
+    "reference_energy",
+    "n_splats_total",
+    "refine_stats",
+)
+_REDUCTION_LOD_RUNG_STATS_KEYS = (
+    "energy_fraction_cum",
+    "lod_n_splats",
+    "lod_cumulative_n",
+)
+
+
 #: Source-provenance ``stats`` keys that describe the REGION the splats
 #: represent. A bbox crop keeps only part of that region, so carrying them over
 #: would make ``gsplat info`` quote a compression ratio (and an occupancy) for a
@@ -569,10 +586,49 @@ def _stats_after_content_change(
     Mutates ``result``'s own stats in place (never the caller's — see
     :func:`drop_content_scoped_stats`), for the same reasons spelled out on
     :func:`_stats_after_filter`.
+
+    LOD restamping belongs to the optional gsplats extra; the shared helper
+    keeps that deferred dependency boundary in one place.
     """
     if not changed:
         return result
     scrub_measured_stats(result)
+
+    return _refresh_reduction_lod_stats_if_needed(result, source)
+
+
+def _needs_reduction_lod_restamp(
+    result: _GSplatDataOps, source: _GSplatDataOps
+) -> bool:
+    """Whether a rewrite has authored LOD stamps to refresh.
+
+    This mirrors ``refresh_reduction_lod_stats``' first guard exactly, across
+    every substitutive level, without importing the optional LOD package.
+    """
+
+    source_levels = source.substitutive_levels
+    result_levels = result.substitutive_levels
+    return bool(
+        source_levels
+        and result_levels
+        and any(
+            any(key in level.stats for key in _REDUCTION_LOD_LEVEL_STATS_KEYS)
+            or any(
+                any(key in lod.stats for key in _REDUCTION_LOD_RUNG_STATS_KEYS)
+                for lod in level.additive_sublods
+            )
+            for level in source_levels
+        )
+    )
+
+
+def _refresh_reduction_lod_stats_if_needed(
+    result: "GSplatData", source: _GSplatDataOps
+) -> "GSplatData":
+    """Refresh authored LOD stamps without loading the extra for unstamped data."""
+    if not _needs_reduction_lod_restamp(result, source):
+        return result
+
     from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
 
     return refresh_reduction_lod_stats(result, source)
