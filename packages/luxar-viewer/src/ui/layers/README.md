@@ -7,7 +7,7 @@ Napari-inspired per-layer control panel for Luxar scenes.
 The Layers panel exposes scene graph nodes marked with `layer=True` (set in the Python API) as controllable layers in the viewer. Data nodes (`points`, `lines`, `gsplats`, `mesh`) and container `group` nodes may both be exposed as layers; for groups, controls apply to every data descendant. Specialized groups (`kind: 'lod'`, `kind: 'partition'`) appear under their resolved `display_type` rather than as `group`, and carry an extra badge (and, for LOD groups, an inline level selector). Each layer provides:
 
 - **Visibility toggle** (eye icon) — initial state taken from the node's `visible` attr (default `true`)
-- **Display range** / **Colour range** [min, max] — maps scalar data or direct RGB input, respectively, to the full output range through the shader intensity/offset uniforms
+- **Display range** / **Colour range** [min, max] — windows scalar data across the colormap or maps direct RGB input to the full output range, respectively
 - **Gamma** correction
 - **Opacity**
 - **Blending mode** (additive, volumetric, normal, max, opaque, luminous)
@@ -142,12 +142,17 @@ The UI shows one [min, max] slider with mode-specific wording:
 - **Display range** for a colormapped layer is a scalar data window mapped across the colormap.
 - **Colour range** for a direct-colour layer is the input RGB window mapped to the full output range. It is a live gain/offset control, not a report of the layer's data extents.
 
-Both modes map internally to the existing shader uniforms:
+For direct colours, the window maps to the existing shader gain/offset uniforms:
 
 ```
 intensity = 1 / (max - min)
 offset    = -min / (max - min)
 ```
+
+For colormapped layers, the window instead controls the LUT lookup through
+`uScalarMin` / `uScalarScale`; the post-LUT colour gain and offset stay at the
+identity so the window is not applied twice. Gain/offset remain the internal
+composition currency used to recover and propagate the window.
 
 ### Which window a layer STARTS at
 
