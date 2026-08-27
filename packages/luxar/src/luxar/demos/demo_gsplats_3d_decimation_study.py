@@ -127,6 +127,7 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    parse_path_arg,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
@@ -174,6 +175,135 @@ LEVELS = [
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
+
+#: ``--parent PATH`` — the tp234 fit the levels are derived from. Optional: with
+#: no flag the parent is fetched via ``ensure_dataset`` like any other demo
+#: dataset. It exists because the parent is a lab fit rather than a public
+#: download, so a rebuild from scratch has to be able to name a local copy.
+PARENT_ARG = parse_path_arg("parent")
+
+#: Reduction fractions, coarsest LAST, matched to LEVELS[1:].
+#: `merge` (substitutive) NOT `prefix`: at these ratios merging beats deleting by
+#: 3-4 dB because it conserves mass instead of discarding it. Verified against
+#: the shipped files rather than assumed -- see RECOMPUTE_NOTES below.
+DECIMATION_FRACTIONS = [0.25, 0.10, 0.05]
+
+RECOMPUTE_NOTES = """\
+Derived, not fitted: no source volume and no GPU are needed, only the tp234
+parent. Chain, with every step verified against the shipped archives:
+
+    tp234 parent   1,653,405 splats, 41 spatial tiles   (a kind=partition)
+      flatten   ->  h2afva_full, single flat leaf, SAME count
+      decimate  ->  quarter / tenth / twentieth at -f 0.25 / 0.10 / 0.05,
+                    method=merge, device=cpu
+
+`--device cpu` is explicit, not incidental: on Apple silicon the merge warns
+"MPS backend lacks float64 support; falling back to CPU", and a run that silently
+picks a different device gives a slightly different count. Measured: -f 0.10 gave
+165,271 against the shipped 165,276, a 5-splat (0.003%) difference.
+
+NOT REPRODUCED HERE: the shipped files went through a further encoding pass --
+every family member differs in size between the 2026-08-12 build and the pinned
+record copy (full 18,070,045 -> 17,812,123; twentieth 1,036,456 -> 1,010,680),
+which is the v3/3.4 reencode. Byte-identity with the shipped archives is
+therefore NOT expected from this path; splat counts and quality are.
+"""
+
+
+# =============================================================================
+# Recompute (--recompute): rebuild the four levels from the tp234 parent
+# =============================================================================
+def _luxar(*args: str) -> None:
+    """Run the shipped CLI in-process, so the demo cannot drift from it.
+
+    Driving the CLI rather than the Python API deliberately: the CLI is what the
+    documented recipe names, and a demo that reimplements the reduction can
+    silently diverge from the tool everyone else uses.
+    """
+    from luxar.cli.main import app
+
+    aprint(f"$ luxar {' '.join(args)}")
+    try:
+        app(list(args))
+    except SystemExit as exc:  # the CLI exits even on success
+        if exc.code not in (0, None):
+            raise RuntimeError(f"`luxar {' '.join(args)}` failed: exit {exc.code}")
+
+
+def _resolve_parent() -> Path:
+    """The tp234 fit: an explicit --parent, else the shipped stack dataset."""
+    if PARENT_ARG is not None:
+        parent = PARENT_ARG.expanduser()
+        if not parent.exists():
+            raise FileNotFoundError(f"--parent does not exist: {parent}")
+        aprint(f"parent from --parent: {parent}")
+        return parent
+    aprint("no --parent given; resolving the shipped tp234 stack")
+    (parent,) = ensure_dataset("gsplats_3d_h2afva_stack")
+    return parent
+
+
+def recompute_levels(work_dir: Path) -> list[Path]:
+    """Rebuild all four levels; returns them in LEVELS order.
+
+    Writes into ``work_dir`` and returns directory stores (not zips) -- the
+    scene builder loads either, and zipping is a packaging step that belongs to
+    whoever publishes, not to a rebuild.
+    """
+    with asection("Recomputing decimation levels"):
+        aprint(RECOMPUTE_NOTES)
+        parent = _resolve_parent()
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Flatten the partition into the single flat leaf the study needs.
+        #    Every level here must be ONE leaf: the demo's whole point is that
+        #    what you see is the splats named in the selector, with no LOD tree
+        #    swapping content in behind the camera.
+        full = work_dir / LEVELS[0]["file"].replace(".zip", "")
+        if not full.exists():
+            _luxar("gsplat", "flatten", str(parent), str(full))
+
+        out = [full]
+        for level, fraction in zip(LEVELS[1:], DECIMATION_FRACTIONS):
+            dest = work_dir / level["file"].replace(".zip", "")
+            if not dest.exists():
+                _luxar(
+                    "gsplat",
+                    "decimate",
+                    str(full),
+                    str(dest),
+                    "-f",
+                    str(fraction),
+                    "-m",
+                    "merge",
+                    # Both explicit for reproducibility, not decoration. On
+                    # Apple silicon the merge warns "MPS backend lacks float64
+                    # support; falling back to CPU", so the device that runs it
+                    # depends on the machine unless pinned -- and a merge is a
+                    # clustering, so an unpinned seed makes two rebuilds of the
+                    # same input differ. Together they make a rebuild
+                    # comparable to the previous one, which is the whole point
+                    # of being able to rebuild.
+                    "--device",
+                    "cpu",
+                    "--seed",
+                    "0",
+                )
+            out.append(dest)
+
+        # Report the counts against what the labels claim. A level whose count
+        # drifts far from its label makes the on-screen "25% / 411K / 41.7 dB"
+        # a lie, and the label is the only thing telling a viewer what they are
+        # looking at.
+        for level, path in zip(LEVELS, out):
+            node, _stats = load_gsplat_node(str(path))
+            got = int(node.n_splats)
+            want = level["splats"]
+            drift = abs(got - want) / max(want, 1)
+            flag = "ok" if drift < 0.01 else "DRIFT"
+            aprint(f"  [{flag}] {path.name}: {got:,} splats (label says {want:,})")
+        return out
 
 
 # =============================================================================
@@ -319,7 +449,10 @@ def main() -> None:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    level_paths = resolve_data()
+    if RECOMPUTE:
+        level_paths = recompute_levels(get_demos_output_dir() / "decimation_recompute")
+    else:
+        level_paths = resolve_data()
     scene_path = create_luxar_scene(level_paths, output_path)
 
     if not NO_SERVE:
