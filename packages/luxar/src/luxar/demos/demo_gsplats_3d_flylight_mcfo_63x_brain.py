@@ -99,11 +99,12 @@ PIPELINE (how the hosted refit was produced; re-run with ``--recompute``):
     8. ``gsplat transform --rotate-y 90`` (face-on), then a SECOND call for
        ``--scale 0.19,0.19,0.38``: one invocation applies ``--scale`` BEFORE
        ``--rotate-*``, which would put the axial pitch on a lateral axis.
-    9. ``gsplat transform --rotate-z 48.84`` -> level. The specimen sits
+    9. ``gsplat transform --rotate-z 48.71`` -> level. The specimen sits
        diagonally on the imaging canvas (the canvas is square because it is the
        union of five square tile positions, not because the brain is). The
        angle is the amplitude-weighted principal axis of the splat cloud in the
-       view plane; levelling takes the bounding box from 483 x 508 to 663 x 303
+       view plane and is recomputed for each fit. On the bundled fallback, the
+       analogous levelling takes the bounding box from 483 x 508 to 663 x 303
        um, so the viewer frames the brain instead of empty corners.
 
     The shipped centres are therefore in micrometres about an arbitrary origin

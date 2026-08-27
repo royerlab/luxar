@@ -1080,6 +1080,30 @@ def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None
     assert gen._stale_characteristics(manifest) == []
 
 
+def test_flylight_recovered_figures_yield_to_a_pinned_archive_read(gen: Any) -> None:
+    key = "gsplats_flylight_mcfo_63x/flylight_mcfo_63x.gsplats.zarr.zip"
+    existing = {key: gen.load_characteristics()[key]}
+    pinned_digest = existing[key]["measured_sha256"]
+    measured = {
+        key: {
+            "n_splats": 660_035,
+            "ndim": 3,
+            "format_version": "3.4",
+            "topology": "adaptive",
+            "measured_from": "repo",
+            "measured_sha256": pinned_digest,
+        }
+    }
+
+    retained, rejected = gen._retain_preferred_measurements(
+        measured, existing, {key: pinned_digest}
+    )
+
+    assert (retained, rejected) == (0, 0)
+    assert measured[key]["topology"] == "adaptive"
+    assert measured[key]["measured_from"] == "repo"
+
+
 def test_every_committed_measurement_names_a_manifest_archive(gen: Any) -> None:
     manifest = json.loads(gen.MANIFEST.read_text())
     manifest_keys = {
