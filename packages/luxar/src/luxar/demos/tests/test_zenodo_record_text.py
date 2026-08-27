@@ -1104,7 +1104,9 @@ def test_flylight_recovered_figures_yield_to_a_pinned_archive_read(gen: Any) -> 
     assert measured[key]["measured_from"] == "repo"
 
 
-def test_source_derived_figures_survive_a_pinned_stampless_read(gen: Any) -> None:
+def test_source_derived_figures_fill_only_missing_pinned_archive_stamps(
+    gen: Any,
+) -> None:
     key = "gsplats_3d_h2afva_decimation/h2afva_full.gsplats.zarr.zip"
     existing = {key: gen.load_characteristics()[key]}
     pinned_digest = "p" * 64
@@ -1114,7 +1116,7 @@ def test_source_derived_figures_survive_a_pinned_stampless_read(gen: Any) -> Non
             "ndim": 3,
             "format_version": "3.4",
             "topology": "single level",
-            "psnr_db": None,
+            "psnr_db": 12.34,
             "foreground_psnr_db": None,
             "source_bytes": None,
             "measured_from": "staged",
@@ -1127,7 +1129,7 @@ def test_source_derived_figures_survive_a_pinned_stampless_read(gen: Any) -> Non
     )
 
     assert (retained, rejected) == (1, 0)
-    assert measured[key]["psnr_db"] == 63.66
+    assert measured[key]["psnr_db"] == 12.34
     assert measured[key]["foreground_psnr_db"] == 48.93
     assert measured[key]["source_bytes"] == 3_414_163_456
     assert measured[key]["n_splats"] == 999_999
