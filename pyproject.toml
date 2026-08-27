@@ -96,6 +96,10 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/royerlab/luxar"
 Documentation = "https://royerlab.github.io/luxar/"
+# PyPI renders these in the project sidebar. The demo gallery is the fastest
+# way for someone reading the page to find out whether this does what they want.
+"Live Demos" = "https://demos.luxarviewer.dev"
+"Hosted Viewer" = "https://luxarviewer.dev"
 Repository = "https://github.com/royerlab/luxar.git"
 "Bug Tracker" = "https://github.com/royerlab/luxar/issues"
 Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"
