@@ -219,8 +219,7 @@ function deriveMeshShadingFromDescendants(node: SceneNode): MeshShadingMode {
     if (found !== undefined && found !== 'none') return;
     if (isLayerEnabled(candidate.attrs.layer)) return;
     if (candidate.type === 'mesh') {
-      const shading = resolve(candidate);
-      if (shading !== 'none' || found === undefined) found = shading;
+      found = resolve(candidate);
       return;
     }
     candidate.children?.forEach(visit);

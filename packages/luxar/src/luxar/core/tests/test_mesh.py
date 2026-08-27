@@ -3458,7 +3458,8 @@ def test_shading_none_is_never_a_default(tmp_path) -> None:
 def test_unknown_shading_still_names_every_arm(tmp_path) -> None:
     """A typo'd `shading` must advertise the new third arm, not just the old two."""
     store = tmp_path / "bad_shading.luxar.zarr"
-    with pytest.raises(ValueError, match="'smooth', 'flat' or 'none'"):
+    expected = f"shading must be one of {VALID_SHADING_MODES}, got 'phong'"
+    with pytest.raises(ValueError, match=re.escape(expected)):
         with LuxarZarrCompiler(store) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_mesh("m", _V, _F, shading="phong")
