@@ -1884,7 +1884,8 @@ export class LODGroupRegistry {
    * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag clears and the load
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
-   * ``permanentlyFailed`` children bypass that cooldown and remain latched.
+   * ``permanentlyFailed`` children never enter that cooldown — they stay
+   * latched until an explicit or connectivity retry clears the flag.
    */
   private kickDeferredLoad(child: LODGroupChild): void {
     if (!child.ensureLoaded || child.loading || child.permanentlyFailed) return;

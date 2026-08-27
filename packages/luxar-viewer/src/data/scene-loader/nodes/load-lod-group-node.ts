@@ -81,8 +81,9 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
  * pool, and/or drop depth-sort state). Shared between the gsplats, points, lines
  * and mesh defer paths so the ready/failed/loading state machine and the
  * abort-discard error handling live in exactly one place. Container-wide
- * archive faults additionally latch the child as permanently failed so the
- * per-frame registry cannot retry a dataset already known to be unreadable.
+ * archive faults additionally latch retry-addressable leaf children as
+ * permanently failed so the per-frame registry cannot retry a dataset already
+ * known to be unreadable.
  *
  * **Lazy LEAF levels never join the per-slice update sweep.** ``runExpensive``
  * commits independently and the registry — not the sweep — drives their reload
@@ -137,7 +138,8 @@ function attachLazyChild(
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;
-        if (archiveFaultFrom(error) !== undefined) {
+        // Anonymous group placeholders cannot be reached by retryLazyChildByLeafPath.
+        if (entryChild.object.name && archiveFaultFrom(error) !== undefined) {
           entryChild.permanentlyFailed = true;
           entryChild.failedTick = undefined;
         }
