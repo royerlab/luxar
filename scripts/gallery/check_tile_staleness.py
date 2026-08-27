@@ -279,6 +279,32 @@ class GalleryHistory:
             for demo_id, paths in sorted(by_demo.items())
         ]
 
+    def _demo_code_inputs(
+        self,
+        demo_id: str,
+        script: Any,
+        shading_input: CommitStamp,
+    ) -> dict[str, CommitStamp]:
+        if script is None:
+            return {}
+        if not isinstance(script, str):
+            raise StalenessError(
+                f"manifest script for {demo_id!r} is not a string or null"
+            )
+        script_path = DEMOS_DIR / script
+        inputs = {"demo generator": self._last_commit(script_path)}
+        source = self._head_text(script_path)
+        if source is None:
+            return inputs
+        for module in direct_demo_helper_modules(source):
+            helper_path = DEMOS_DIR.joinpath(*module.split(".")).with_suffix(".py")
+            if self._head_text(helper_path) is None:
+                raise StalenessError(f"demo helper {module!r} is not tracked at HEAD")
+            inputs[f"demo helper {module}"] = self._last_commit(helper_path)
+        if imports_luxar_shading(source):
+            inputs["luxar.shading"] = shading_input
+        return inputs
+
     def report(self) -> GalleryReport:
         self._require_full_history()
         for label, pathspecs in GLOBAL_INPUT_PATHSPECS.items():
@@ -307,29 +333,13 @@ class GalleryHistory:
                 continue
             try:
                 inputs = dict(global_inputs)
-                script = entry.get("script")
-                if script is not None:
-                    if not isinstance(script, str):
-                        raise StalenessError(
-                            f"manifest script for {demo_id!r} is not a string or null"
-                        )
-                    script_path = DEMOS_DIR / script
-                    inputs["demo generator"] = self._last_commit(script_path)
-                    source = self._head_text(script_path)
-                    if source is not None:
-                        for module in direct_demo_helper_modules(source):
-                            helper_path = DEMOS_DIR.joinpath(
-                                *module.split(".")
-                            ).with_suffix(".py")
-                            if self._head_text(helper_path) is None:
-                                raise StalenessError(
-                                    f"demo helper {module!r} is not tracked at HEAD"
-                                )
-                            inputs[f"demo helper {module}"] = self._last_commit(
-                                helper_path
-                            )
-                        if imports_luxar_shading(source):
-                            inputs["luxar.shading"] = shading_input
+                inputs.update(
+                    self._demo_code_inputs(
+                        demo_id,
+                        entry.get("script"),
+                        shading_input,
+                    )
+                )
                 inputs["manifest entry"] = self._manifest_entry_commit(ranges[demo_id])
                 tile = min(
                     (self._last_commit(path) for path in media_paths),
