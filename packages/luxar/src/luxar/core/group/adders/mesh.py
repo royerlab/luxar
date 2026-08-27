@@ -1612,7 +1612,6 @@ def _add_mesh_partition(
         resolve_partition_spec,
         spatial_bsp_tree,
         warn_if_oversized_single_part,
-        warn_if_partition_axes_not_displayed,
     )
 
     # Same vocabulary as the sibling adders — and for a mesh ``max_elements``
@@ -1666,10 +1665,6 @@ def _add_mesh_partition(
     )
     if len(face_parts) <= 1:
         return None
-
-    warn_if_partition_axes_not_displayed(
-        vert_arr.shape[1], group._find_scene().dimensions.displayed, name
-    )
 
     parts = split_mesh_by_faces(faces2d, face_parts)
 

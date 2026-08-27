@@ -520,12 +520,6 @@ def add_points_partition_wrapper_impl(
     # classify it up front instead of letting the length test gather it.
     uniform_color = is_broadcast_color(colors)
 
-    from ..partition import warn_if_partition_axes_not_displayed
-
-    warn_if_partition_axes_not_displayed(
-        pos_arr.shape[1], group._find_scene().dimensions.displayed, name
-    )
-
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     if wrapper_coverage_fraction is not None:
         wrapper_attrs["coverage_fraction"] = wrapper_coverage_fraction

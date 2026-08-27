@@ -83,6 +83,7 @@ from .lod.group import resolve_display_type
 
 if TYPE_CHECKING:
     from ..node import Node
+    from .group import Group
 
 
 #: Sentinel-typed alias for the value vocabulary of the ``partition=`` kwarg.
@@ -380,12 +381,15 @@ def prune_serialized_bsp_tree(
 
 
 def persist_pruned_bsp_tree(
-    node: "Node", tree: Optional[Dict[str, Any]], keep: Iterable[int]
+    node: "Group", tree: Optional[Dict[str, Any]], keep: Iterable[int]
 ) -> None:
     """Persist ``tree`` after dropping regions that produced no child node."""
     serialized_tree = prune_serialized_bsp_tree(tree, keep)
     if serialized_tree is not None:
         node._persist_attr("bsp_tree", serialized_tree)
+        warn_if_partition_axes_not_displayed(
+            serialized_tree, node._find_scene().dimensions.displayed, node.name
+        )
 
 
 #: Node-visit budget for :func:`reconstruct_serialized_bsp_tree`. The search
@@ -1003,22 +1007,30 @@ def warn_if_partition_needs_more_dims(ndim: int, name: str) -> bool:
 
 
 def warn_if_partition_axes_not_displayed(
-    ndim: int, displayed_dims: Sequence[int], name: str
+    tree: Dict[str, Any], displayed_dims: Sequence[int], name: str
 ) -> None:
-    """Warn when a persisted BSP may split on an undisplayed data column.
+    """Warn when a committed multi-part BSP splits on an undisplayed column.
 
-    Native scene partitions split only on the first up-to-three position
-    columns, while the viewer can traverse a split only when that stored column
-    is currently displayed. Surface the mismatch after a real multi-part tree
-    has been built, so a request that falls through to one leaf stays quiet.
+    Call only after a real >1-part tree is committed. The result is exact for
+    the display configuration in force at write time; the viewer repeats the
+    check because nD navigation can later select a different displayed triple.
     """
-    split_columns = set(range(min(3, ndim)))
+    split_columns: set[int] = set()
+
+    def collect_axes(node: Dict[str, Any]) -> None:
+        if "part" in node:
+            return
+        split_columns.add(int(node["axis"]))
+        collect_axes(node["left"])
+        collect_axes(node["right"])
+
+    collect_axes(tree)
     undisplayed = sorted(split_columns.difference(displayed_dims))
     if undisplayed:
         aprint(
-            f"  ⚠️  partition '{name}' can write bsp_tree splits on undisplayed "
-            f"position column(s) {undisplayed}; the viewer will discard this "
-            "bsp_tree if any split uses them and fall back to centroid ordering. "
+            f"  ⚠️  partition '{name}' splits on undisplayed position column(s) "
+            f"{undisplayed}; the viewer will discard this bsp_tree and fall back "
+            "to centroid ordering. "
             "Put the displayed dimensions first to keep exact BSP ordering."
         )
 

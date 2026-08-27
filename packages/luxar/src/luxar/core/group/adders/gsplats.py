@@ -324,12 +324,6 @@ def add_gsplats_partition_wrapper_impl(
     )
     uniform_color = is_broadcast_color(colors)
 
-    from ..partition import warn_if_partition_axes_not_displayed
-
-    warn_if_partition_axes_not_displayed(
-        ctr_arr.shape[1], group._find_scene().dimensions.displayed, name
-    )
-
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
 

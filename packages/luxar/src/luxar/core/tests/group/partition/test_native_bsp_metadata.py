@@ -125,23 +125,23 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
     """Every native partition writer surfaces a tree the viewer will reject."""
     centers = np.array(
         [
-            [0.0, -6.0, 0.0, 0.0],
-            [1.0, -2.0, 0.0, 0.0],
-            [0.0, 2.0, 0.0, 0.0],
-            [1.0, 6.0, 0.0, 0.0],
+            [-6.0, 0.0, 0.0, 0.0],
+            [-2.0, 0.1, 0.0, 0.0],
+            [2.0, 0.0, 0.0, 0.0],
+            [6.0, 0.1, 0.0, 0.0],
         ],
         dtype=np.float32,
     )
     line_vertices = np.array(
         [
-            [0.0, -6.2, 0.0, 0.0],
-            [0.0, -5.8, 0.0, 0.0],
-            [1.0, -2.2, 0.0, 0.0],
-            [1.0, -1.8, 0.0, 0.0],
-            [0.0, 1.8, 0.0, 0.0],
-            [0.0, 2.2, 0.0, 0.0],
-            [1.0, 5.8, 0.0, 0.0],
-            [1.0, 6.2, 0.0, 0.0],
+            [-6.2, 0.0, 0.0, 0.0],
+            [-5.8, 0.0, 0.0, 0.0],
+            [-2.2, 0.1, 0.0, 0.0],
+            [-1.8, 0.1, 0.0, 0.0],
+            [1.8, 0.0, 0.0, 0.0],
+            [2.2, 0.0, 0.0, 0.0],
+            [5.8, 0.1, 0.0, 0.0],
+            [6.2, 0.1, 0.0, 0.0],
         ],
         dtype=np.float32,
     )
@@ -149,10 +149,10 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
     mesh_vertices = np.array(
         [
             point
-            for state, center in ((0.0, -6.0), (1.0, -2.0), (0.0, 2.0), (1.0, 6.0))
+            for state, center in ((-6.0, 0.0), (-2.0, 0.1), (2.0, 0.0), (6.0, 0.1))
             for point in (
-                (state, center - 0.2, -0.2, 0.0),
-                (state, center + 0.2, -0.2, 0.0),
+                (state - 0.2, center, -0.2, 0.0),
+                (state + 0.2, center, -0.2, 0.0),
                 (state, center, 0.2, 0.0),
             )
         ],
@@ -207,7 +207,7 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
 
 
 def test_partition_axis_warning_has_no_false_positive(tmp_path, capsys) -> None:
-    """Displayed-first and unsplit partitions do not emit the diagnostic."""
+    """Displayed-only split axes and unsplit partitions stay quiet."""
     positions = np.array(
         [
             [-6.0, 0.0, 0.0, 0.0],
@@ -245,6 +245,14 @@ def test_partition_axis_warning_has_no_false_positive(tmp_path, capsys) -> None:
             "unsplit",
             positions[:, [3, 0, 1, 2]],
             partition={"max_elements": 10},
+            extend_to_all=[],
+        )
+    with LuxarZarrCompiler(tmp_path / "hidden-small.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=hidden_first)
+        scene.add_points(
+            "hidden-small",
+            positions[:, [3, 0, 1, 2]],
+            partition={"max_elements": 1},
             extend_to_all=[],
         )
 

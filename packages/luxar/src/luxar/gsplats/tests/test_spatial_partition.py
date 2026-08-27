@@ -242,6 +242,43 @@ def test_partition_file_grafts_into_a_scene():
         assert _bsp_leaf_order(dict(root.attrs["bsp_tree"])) == list(range(n_parts))
 
 
+def test_partition_file_graft_warns_for_undisplayed_split_axis(capsys):
+    """A stored standalone tree is checked when scene display dims become known."""
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+    centers = np.zeros((80, 3), dtype=np.float32)
+    centers[:40, 0] = np.linspace(-10.0, -1.0, 40)
+    centers[40:, 0] = np.linspace(1.0, 10.0, 40)
+    chol = np.zeros((80, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    data = GSplatData(
+        centers=centers,
+        amplitudes=np.ones(80, dtype=np.float32),
+        cholesky_factors=chol,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "part.gsplats.zarr"
+        write_gsplats_tree(
+            part, data.to_spatial_partition(max_elements=40), ordering="none"
+        )
+
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        dimensions = Dimensions(
+            [
+                Dimension("state", display=False),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+            ]
+        )
+        with LuxarZarrCompiler(scene_path) as compiler:
+            scene = compiler.create_scene(dimensions=dimensions)
+            scene.add_gsplats_from_file(name="g", path=part)
+
+    output = capsys.readouterr().out
+    assert "partition 'g' splits on undisplayed position column(s) [0]" in output
+    assert "viewer will discard this bsp_tree" in output
+
+
 @pytest.mark.parametrize("nested", [False, True], ids=["flat-parts", "lod-parts"])
 def test_partition_graft_recovers_missing_bsp_tree_from_disjoint_parts(
     nested: bool, capsys: pytest.CaptureFixture[str]

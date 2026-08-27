@@ -672,12 +672,6 @@ def add_lines_partition_wrapper_impl(
     if line_type == "indexed" and (indices is None or np.asarray(indices).size == 0):
         raise ValueError("Indexed requires at least 2 indices")
 
-    from ..partition import warn_if_partition_axes_not_displayed
-
-    warn_if_partition_axes_not_displayed(
-        vert_arr.shape[1], group._find_scene().dimensions.displayed, name
-    )
-
     parent_node = parent or group
     wrapper = parent_node.add_partition_group(
         name=name,
