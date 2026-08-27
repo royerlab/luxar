@@ -1399,12 +1399,25 @@ describe('MeshWholeNodeLoader — monitor telemetry', () => {
   });
 
   it('counts the ONE fetch, its triangles and its decoded bytes', async () => {
-    const attrs = meshAttrs({ has_normals: true, normal_dims: [0, 1, 2], has_scalars: true });
+    const attrs = meshAttrs({
+      has_normals: true,
+      normal_dims: [0, 1, 2],
+      has_scalars: true,
+      has_uvs: true,
+      has_texture: true,
+      texture_encoding: 'raw',
+      texture_width: 2,
+      texture_height: 1,
+      texture_channels: 4,
+      texture_color_space: 'srgb',
+    });
     const store = buildStore(
       attrs,
       tetArrays({
         normals: { shape: [4, 3], dtype: '<f4', data: new Array(12).fill(0.5) },
         scalars: { shape: [4], dtype: '<f4', data: [1, 2, 3, 4] },
+        uvs: { shape: [4, 2], dtype: '<f4', data: [0, 0, 1, 0, 0, 1, 1, 1] },
+        texture: { shape: [1, 2, 4], dtype: '|u1', data: [1, 2, 3, 4, 5, 6, 7, 8] },
       })
     );
     const loader = makeLoader(store, attrs);
@@ -1418,12 +1431,13 @@ describe('MeshWholeNodeLoader — monitor telemetry', () => {
     // what actually distinguishes the arrays).
     expect(m.elementsLoaded).toBe(4);
     // Decoded bytes: 12 float32 vertices + 12 uint32 faces + 12 float32
-    // normals + 4 float32 scalars = 48 + 48 + 48 + 16.
-    expect(m.bytesLoaded).toBe(160);
+    // normals + 4 float32 scalars + 8 float32 UVs + 8 uint8 texels
+    // = 48 + 48 + 48 + 16 + 32 + 8.
+    expect(m.bytesLoaded).toBe(200);
     // Resident memory adds the projection scratch the loader keeps for the
     // node's life: position (4*3 float32 = 48) + mask (4 uint8) + faceScratch
     // (4*3 uint32 = 48).
-    expect(m.memoryUsed).toBe(160 + 48 + 4 + 48);
+    expect(m.memoryUsed).toBe(200 + 48 + 4 + 48);
     // No spatial query ran, so the panel's QUERY SPEED average gets no sample.
     expect(m.queries).toBe(0);
     expect(m.avgQueryTime).toBe(0);

@@ -130,6 +130,7 @@ export function meshPayloadBytes(data: LoadedMeshData): number {
   bytes += data.normals?.byteLength ?? 0;
   bytes += data.colors?.byteLength ?? 0;
   bytes += data.scalars?.byteLength ?? 0;
+  bytes += data.uvs?.byteLength ?? 0;
   const texture = data.texture;
   if (texture) {
     bytes +=
