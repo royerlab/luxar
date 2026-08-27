@@ -818,6 +818,16 @@ def _bsp_tree_midpoint(
     )
 
 
+def _box_boundary_measure(mins: NDArray, maxs: NDArray) -> float:
+    """SAH cost proxy: length/perimeter/surface area for a 1D/2D/3D box."""
+    ext = np.maximum(0.0, maxs - mins)
+    if ext.shape[0] == 1:
+        return float(2.0 * ext[0])
+    if ext.shape[0] == 2:
+        return float(2.0 * (ext[0] + ext[1]))
+    return float(2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2]))
+
+
 def _bsp_tree_sah(
     spatial: NDArray,
     max_elements: int,
@@ -825,21 +835,6 @@ def _bsp_tree_sah(
     n_candidates: int,
 ) -> BSPNode:
     """SAH-split BSP tree recursion (see :func:`sah_bsp_partition`)."""
-
-    def surface_area(mins: NDArray, maxs: NDArray) -> float:
-        """SAH cost proxy: the measure of the box boundary.
-
-        SAH weights a child by the probability a random ray hits it, which is
-        proportional to the box's boundary measure — surface area
-        ``2(xy + xz + yz)`` in 3D, but **perimeter** ``2(x + y)`` in 2D. Using
-        the 3D form on planar data would index a non-existent third extent.
-        """
-        ext = np.maximum(0.0, maxs - mins)
-        if ext.shape[0] == 1:
-            return float(2.0 * ext[0])
-        if ext.shape[0] == 2:
-            return float(2.0 * (ext[0] + ext[1]))
-        return float(2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2]))
 
     if indices.size <= max_elements:
         return BSPNode(indices=indices)
@@ -869,9 +864,9 @@ def _bsp_tree_sah(
             right_mins = mins.copy()
             right_maxs = maxs.copy()
             right_mins[axis] = pos
-            score = n_left * surface_area(
+            score = n_left * _box_boundary_measure(
                 left_mins, left_maxs
-            ) + n_right * surface_area(right_mins, right_maxs)
+            ) + n_right * _box_boundary_measure(right_mins, right_maxs)
             if score < best_score:
                 best_score = score
                 best_axis = axis
