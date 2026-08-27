@@ -3,6 +3,23 @@ Luxar Documentation
 
 Welcome to Luxar's documentation! Luxar is a high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes containing points, lines, Gaussian splats, and triangle meshes. Luxar delivers visualization performance limited only by your graphics card, display resolution, and network bandwidth—not by software constraints.
 
+.. admonition:: See it running before you install anything
+   :class: tip
+
+   `demos.luxarviewer.dev <https://demos.luxarviewer.dev>`_ hosts all 85 bundled
+   demos as live, interactive scenes — real compiled archives streamed from
+   object storage, not videos.
+
+   The viewer is also deployed on its own at
+   `luxarviewer.dev <https://luxarviewer.dev>`_ and takes any reachable scene as
+   a URL parameter, so you can point it at your own compiled archive::
+
+      https://luxarviewer.dev/?src=https://example.org/path/to/scene.luxar.zarr
+
+   The host serving that URL needs to allow cross-origin reads. See
+   :doc:`guides/developer/DEMO_SITE_RUNBOOK` for how the demo corpus itself is
+   hosted.
+
 Quick Start
 -----------
 
