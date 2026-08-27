@@ -31,7 +31,7 @@ Three ideas carry most of the design:
 install. Or open your own data in the hosted viewer:
 [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
 
-[Live Demos](https://demos.luxarviewer.dev) | [Docs](https://royerlab.github.io/luxar/) | [Quick Start](#quick-start) | [Volume Rendering](#volume-rendering-with-gaussian-splats) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
+[Live Demos](https://demos.luxarviewer.dev) | [Docs Site](https://royerlab.github.io/luxar/) | [Quick Start](#quick-start) | [Volume Rendering](#volume-rendering-with-gaussian-splats) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
 
 ---
 
