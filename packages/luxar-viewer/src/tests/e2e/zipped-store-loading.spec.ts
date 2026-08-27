@@ -112,7 +112,11 @@ test('a host that ignores Range shows a persistent actionable failure', async ({
 
   const archiveBytes = zipSync(collectArchiveEntries(fixturePath), { level: 0 });
   const archiveURL = `${dataBaseURL}/range-ignored.luxar.zarr.zip`;
+  const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.route(archiveURL, async (route) => {
     await route.fulfill({
@@ -128,6 +132,9 @@ test('a host that ignores Range shows a persistent actionable failure', async ({
 
   await page.goto(`/?src=${encodeURIComponent(archiveURL)}&debug`);
 
+  await expect
+    .poll(() => consoleErrors.join('\n'), { timeout: 10_000 })
+    .toMatch(/honours HTTP Range requests/);
   const message = page.locator('#luxar-error-message-text');
   await expect(message).toContainText(/honours HTTP Range requests/);
   expect(pageErrors).toEqual([]);
