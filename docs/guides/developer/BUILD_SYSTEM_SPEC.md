@@ -1000,7 +1000,10 @@ performed. The backlog walk enqueues every repairable commit in one pass; a mult
 candidate can add up to four long obsidian-routed legs alongside the next push run, so
 the total burst scales with the outstanding `main..GITHUB_SHA` gap. When the original
 routing decision was `ubuntu-latest`, the same backlog-sized burst adds hosted-runner
-minutes, but only for commits that can otherwise block promotion.
+minutes, but only for commits that can otherwise block promotion. Reruns execute the
+workflow definition from their original SHA, so commits predating the run-id key retain
+the older attempt-only collision behavior; the scheduled SHA itself carries the new
+policy and provides the forward promotion candidate that clears that rollout backlog.
 
 ## Architecture Notes
 
