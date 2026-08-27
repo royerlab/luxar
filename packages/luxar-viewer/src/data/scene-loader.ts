@@ -1131,7 +1131,7 @@ export class SceneLoader {
    * boolean, so the first run's ``finally`` would clear it mid-flight and
    * ``isLoadPassInProgress()`` would report a load pass for the whole remaining
    * drain.
-  */
+   */
   kickRefinementIfIdle(): void {
     if (this._disposed || this._archiveFault) return;
     if (!this.anyLoaderHasMoreLODs()) return;
@@ -1177,7 +1177,7 @@ export class SceneLoader {
    * `data/gsplats/lod-refinement.ts`. The full timing semantics — rAF
    * yield per pass, cancellation hand-off on pending view-state, and
    * lock release on normal completion — live in that module.
-  */
+   */
   private async scheduleGSplatsRefinement(): Promise<void> {
     if (this._disposed || this._archiveFault) return;
 
