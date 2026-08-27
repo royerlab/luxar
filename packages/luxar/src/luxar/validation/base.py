@@ -1484,10 +1484,11 @@ def validate_texture_for_writing(
             "re-indexes vertices, but the image is node-level)",
         )
     # A texture can sit inside the per-axis limit and still be unloadable. An
-    # encoded payload decodes to a 4-channel bitmap regardless of what it stored,
-    # so the charge is w * h * 4; a raw one decodes to its own value count at
-    # 4 bytes each. Keep the KTX2 formula aligned with viewer preflight and the
-    # mesh writer's aggregate-budget calculation.
+    # Browser bitmap codecs decode to a 4-channel surface regardless of what they
+    # stored, so their charge is w * h * 4; a raw texture decodes to its own value
+    # count at 4 bytes each. KTX2 remains GPU-compressed and carries a full mip
+    # chain, so keep its 4/3 formula aligned with viewer preflight and the mesh
+    # writer's aggregate-budget calculation.
     if encoding == "ktx2":
         decoded_bytes = (res_w * res_h * 4 + 2) // 3
     else:
@@ -1499,9 +1500,9 @@ def validate_texture_for_writing(
             f"{decoded_bytes / (1024 * 1024):.0f} MiB, over the {budget_mib} MiB "
             "per-node budget every viewer admits a mesh under",
             "Resample the texture, or split the surface across several mesh "
-            "nodes — each node gets its own budget. Note an ENCODED texture is "
-            "charged at 4 bytes per pixel whatever it stored, because a decoded "
-            "bitmap is always 4-channel",
+            "nodes — each node gets its own budget. Bitmap codecs are charged at "
+            "4 bytes per pixel after decode; KTX2 is charged for a compressed "
+            "4/3-size mip chain",
         )
     # A disagreement is refused rather than silently preferring one source: the
     # viewer spends the DECLARED numbers, so a mismatch is exactly the case where

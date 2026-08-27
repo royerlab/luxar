@@ -3338,6 +3338,25 @@ def test_ktx2_encoder_defaults_to_uastc_and_preserves_rgba_input(
     )
 
 
+def test_ktx2_encoder_writes_rgb_as_binary_ppm(monkeypatch) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["source"] = Path(command[-1]).read_bytes()
+        Path(command[-2]).write_bytes(b"ktx2")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
+    rgb = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+    texture_writer._encode_ktx2(rgb, "uastc", None, "srgb")
+    header, pixels = seen["source"].split(b"255\n", 1)
+    assert header == b"P6\n3 2\n"
+    assert np.array_equal(np.frombuffer(pixels, dtype=np.uint8).reshape(rgb.shape), rgb)
+
+
 def test_ktx2_encoder_missing_binary_has_actionable_fallback(monkeypatch) -> None:
     from luxar.io._compiler.dataset_writers import texture as texture_writer
 

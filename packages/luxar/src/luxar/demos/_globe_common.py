@@ -1354,8 +1354,10 @@ def build_earth(
         n_lat: Latitude divisions.
         texture_width: Basemap width to fetch; halved per axis into ``tiles``.
         tiles: Longitude bands, each its own node. See :func:`add_textured_globe`.
-        fmt: Basemap codec; defaults to GPU-compressed ``ktx2``.
-        quality: Basemap codec quality; defaults to UASTC level 2 for KTX2.
+        fmt: Basemap codec; defaults to portable ``webp``. Select ``ktx2``
+            explicitly for GPU-compressed UASTC authoring.
+        quality: Basemap codec quality; defaults to 90 for bitmap codecs and
+            UASTC level 2 for KTX2.
         shading: ``smooth`` | ``flat`` | ``none``.
         relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
         basemap: Supply the RGB array directly instead of fetching it — for a demo

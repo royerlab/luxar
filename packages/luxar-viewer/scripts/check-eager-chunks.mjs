@@ -27,7 +27,7 @@ const DIST = join(import.meta.dirname, '..', 'dist');
 const ASSETS = join(DIST, 'assets');
 
 /** Chunk-name stems that must never be reachable eagerly from the entry. */
-const LAZY_ONLY = ['three-webgpu'];
+const LAZY_ONLY = ['three-webgpu', 'three-ktx2'];
 
 const failures = [];
 const notes = [];
@@ -183,4 +183,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`✅ three-webgpu is lazy (${notes.join('; ')})`);
+console.log(`✅ lazy-only chunks remain deferred (${notes.join('; ')})`);

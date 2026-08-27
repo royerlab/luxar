@@ -66,11 +66,15 @@ export function createKTX2TextureDecoder(
     });
     const image = texture.image as { depth?: number } | undefined;
     const isUncompressedFallback = (texture.format as number) === RGBAFormat;
-    if (isUncompressedFallback || (image?.depth ?? 1) > 1) {
+    const isCubeTexture = (texture as THREE.CompressedTexture & { isCubeTexture?: boolean })
+      .isCubeTexture;
+    if (isUncompressedFallback || isCubeTexture || (image?.depth ?? 1) > 1) {
       texture.dispose();
       const reason = isUncompressedFallback
         ? 'would fall back to an uncompressed RGBA8 texture'
-        : `contains ${image?.depth ?? '?'} layers but mesh textures require one 2D image`;
+        : isCubeTexture
+          ? 'is a cubemap but mesh textures require one 2D image'
+          : `contains ${image?.depth ?? '?'} layers but mesh textures require one 2D image`;
       throw new Error(
         `${path}: texture encoding 'ktx2' ${reason}. ` +
           "Use 'raw' or 'jpeg' for a portable texture."
