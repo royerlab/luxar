@@ -366,6 +366,42 @@ def test_main_lists_without_fetching(harness: ModuleType, capsys) -> None:
     assert "dormant" in out
 
 
+def test_an_explicitly_named_skip_is_a_failure(harness: ModuleType, capsys) -> None:
+    """Asking for a dataset by name and getting no answer is not a pass.
+
+    This is the fails-open shape a tolerant skip branch creates: at teardown
+    someone runs the harness on one dataset, reads exit 0, and deletes the only
+    copy — having verified nothing. Every record is dormant today, so this is
+    also the path they would actually take.
+    """
+    assert harness.main(["gsplats_kidney"]) == 1
+    err = capsys.readouterr().err
+    assert "NOT verified" in err
+    assert "asked for them by name" in err
+
+
+def test_allow_skip_is_the_only_way_to_tolerate_it(harness: ModuleType, capsys) -> None:
+    assert harness.main(["gsplats_kidney", "--allow-skip"]) == 0
+
+
+def test_require_verified_fails_when_nothing_was_verified(
+    harness: ModuleType, capsys
+) -> None:
+    """The teardown gate: demand a count rather than trusting a green exit."""
+    assert harness.main(["--require-verified", "1"]) == 1
+    assert "0 dataset(s) verified" in capsys.readouterr().err
+
+
+def test_a_bare_all_skipped_run_says_so_rather_than_implying_success(
+    harness: ModuleType, capsys
+) -> None:
+    """Exit 0 is correct while nothing is published — silence would not be."""
+    assert harness.main([]) == 0
+    out = capsys.readouterr().out
+    assert "nothing was actually verified" in out
+    assert "NOT evidence any payload is safe to remove" in out
+
+
 def test_main_rejects_an_unknown_dataset(harness: ModuleType, capsys) -> None:
     assert harness.main(["no_such_dataset"]) == 2
     assert "unknown dataset" in capsys.readouterr().err

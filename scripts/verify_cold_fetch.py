@@ -253,6 +253,23 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--keep", action="store_true", help="keep the throwaway caches for inspection"
     )
     parser.add_argument(
+        "--require-verified",
+        type=int,
+        metavar="N",
+        help=(
+            "fail unless at least N datasets actually verified. Use this at "
+            "teardown: a run that skips everything otherwise exits 0."
+        ),
+    )
+    parser.add_argument(
+        "--allow-skip",
+        action="store_true",
+        help=(
+            "tolerate a skip on an explicitly named dataset (exploration only; "
+            "never when deciding whether a payload can be removed)"
+        ),
+    )
+    parser.add_argument(
         "--cache-root",
         type=Path,
         help="directory for throwaway caches (default: system temporary directory)",
@@ -276,6 +293,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     known = hosted_datasets(manifest)
+    explicit = bool(args.datasets)
     names = args.datasets or known
     unknown = [n for n in names if n not in manifest.get("datasets", {})]
     if unknown:
@@ -324,6 +342,35 @@ def main(argv: Optional[list[str]] = None) -> int:
             file=sys.stderr,
         )
         return 1
+
+    # A tolerant skip branch is the same fails-open shape as a bad guard: it turns
+    # "we could not check" into a clean exit, and the caller reads exit 0 as
+    # permission to delete the only copy. So a skip is a pass only when nobody
+    # asked for that dataset by name.
+    if skipped and explicit and not args.allow_skip:
+        print(
+            f"\nerror: {skipped} explicitly requested dataset(s) were NOT verified "
+            "— you asked for them by name and got no answer. This is not a pass. "
+            "Pass --allow-skip only when exploring, never when deciding whether a "
+            "payload can be removed.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.require_verified is not None and checked < args.require_verified:
+        print(
+            f"\nerror: {checked} dataset(s) verified, --require-verified "
+            f"{args.require_verified} demanded.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if checked == 0:
+        print(
+            "NOTE: nothing was actually verified — every target was skipped. "
+            "That is expected while no record is published, and is NOT evidence "
+            "any payload is safe to remove."
+        )
     return 0
 
 
