@@ -201,7 +201,9 @@ function deriveMeshAttrFromDescendants(node: SceneNode, attr: string): number | 
  * A mesh leaf resolves directly. Specialized mesh groups carry the appearance attrs
  * on their leaves, so walk owned descendants while stopping at nested layer rows. A
  * malformed mixed group remains controllable when any descendant is lit; only an
- * all-unlit layer hides the four lighting sliders.
+ * all-unlit layer hides the four lighting sliders. The resolver intentionally receives
+ * raw `has_normals`: only its `none` arm is authoritative here, while the material's
+ * smooth/flat choice remains view-dependent on `normal_dims` matching `displayDims`.
  */
 function deriveMeshShadingFromDescendants(node: SceneNode): MeshShadingMode {
   const resolve = (candidate: SceneNode): MeshShadingMode =>
@@ -295,7 +297,10 @@ export interface LayerInfo {
   specular: number;
   /** Mesh specular highlight exponent (> 0). */
   shininess: number;
-  /** Resolved mesh shading mode; only `none` makes the lighting controls inert. */
+  /**
+   * Mesh shading capability for the layer controls. Only `none` is authoritative;
+   * smooth versus flat ignores the material's view-dependent normal-frame check.
+   */
   shading: MeshShadingMode;
   /**
    * Mesh `opaque`-mode cutout threshold (0–1) — the §6.2 `alpha_cutoff`.

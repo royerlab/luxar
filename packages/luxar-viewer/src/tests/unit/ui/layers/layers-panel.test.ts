@@ -1482,6 +1482,43 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     return { panel, calls };
   }
 
+  function mountPartitionMeshLayer(shadings: Array<'flat' | 'none'>): LayersPanel {
+    const children = shadings.map((shading, index) => ({
+      name: `part_${index}`,
+      path: `/surface/part_${index}`,
+      type: 'mesh',
+      attrs: { type: 'mesh', shading, has_normals: true },
+      children: [],
+    }));
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'surface',
+          path: '/surface',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'mesh' },
+          children,
+        },
+      ],
+    } as unknown as SceneNode;
+    const rootGroup = new THREE.Group();
+    for (const child of children) {
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      mesh.name = child.path;
+      rootGroup.add(mesh);
+    }
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/surface', 'single');
+    return panel;
+  }
+
   it('mesh shading sliders: shown for a mesh layer and hidden for every other type', () => {
     // TYPE-gated, which is new for this panel — every other control here is universal
     // or mode-gated. Mesh is the only SHADED geometry type, so on a points layer these
@@ -1564,44 +1601,28 @@ describe('LayersPanel — blend select drives the leaf material', () => {
   });
 
   it('partitioned unlit mesh derives shading from its leaves', () => {
-    const graph = {
-      name: 'root',
-      path: '/',
-      type: 'group',
-      attrs: {},
-      children: [
-        {
-          name: 'surface',
-          path: '/surface',
-          type: 'group',
-          attrs: { layer: true, kind: 'partition', display_type: 'mesh' },
-          children: [
-            {
-              name: 'part_0',
-              path: '/surface/part_0',
-              type: 'mesh',
-              attrs: { type: 'mesh', shading: 'none', has_normals: true },
-              children: [],
-            },
-          ],
-        },
-      ],
-    } as unknown as SceneNode;
-    const rootGroup = new THREE.Group();
-    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
-    mesh.name = '/surface/part_0';
-    rootGroup.add(mesh);
-
-    const panel = new LayersPanel(container, animationController);
-    panel.initFromScene(rootGroup, graph);
-    panel.show();
-    panel.layerState.select('/surface', 'single');
+    const panel = mountPartitionMeshLayer(['none']);
 
     expect(panel.layerState.getLayer('/surface')!.shading).toBe('none');
     for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
       expect(findControlGroup(container, label)!.style.display, `${label} on partition`).toBe(
         'none'
       );
+    }
+  });
+
+  it.each([
+    ['none', 'flat'],
+    ['flat', 'none'],
+  ] as const)('mixed partition stays lit for child order %s, %s', (...shadings) => {
+    const panel = mountPartitionMeshLayer([...shadings]);
+
+    expect(panel.layerState.getLayer('/surface')!.shading).toBe('flat');
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
+      expect(
+        findControlGroup(container, label)!.style.display,
+        `${label} on mixed partition`
+      ).not.toBe('none');
     }
   });
 
