@@ -86,9 +86,14 @@ def manifest_entry_line_ranges(text: str) -> dict[str, LineRange]:
         demo_id = entry["id"]
         if demo_id in ranges:
             raise StalenessError(f"duplicate gallery manifest id: {demo_id}")
+        start_line = text.count("\n", 0, start) + 1
+        stop_line = text.count("\n", 0, cursor) + 1
+        closing_line_start = text.rfind("\n", 0, cursor - 1) + 1
+        if text[closing_line_start:cursor].strip() == "}":
+            stop_line -= 1
         ranges[demo_id] = LineRange(
-            start=text.count("\n", 0, start) + 1,
-            stop=text.count("\n", 0, cursor) + 1,
+            start=start_line,
+            stop=max(start_line, stop_line),
         )
     return ranges
 

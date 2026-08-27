@@ -43,23 +43,33 @@ def _commit(repo: Path, message: str, day: int) -> None:
     _git(repo, "commit", "-m", message, day=day)
 
 
-def _write_manifest(repo: Path, title_b: str = "B") -> None:
+def _write_manifest(repo: Path, title_b: str = "B", include_c: bool = False) -> None:
+    demos = [
+        {
+            "id": "a",
+            "title": "A",
+            "script": "demo_a.py",
+            "dataset": "datasets/demos/a.luxar.zarr",
+        },
+        {
+            "id": "b",
+            "title": title_b,
+            "script": "demo_b.py",
+            "dataset": "datasets/demos/b.luxar.zarr",
+        },
+    ]
+    if include_c:
+        demos.append(
+            {
+                "id": "c",
+                "title": "C",
+                "script": "demo_c.py",
+                "dataset": "datasets/demos/c.luxar.zarr",
+            }
+        )
     manifest = {
         "$comment": "synthetic gallery manifest",
-        "demos": [
-            {
-                "id": "a",
-                "title": "A",
-                "script": "demo_a.py",
-                "dataset": "datasets/demos/a.luxar.zarr",
-            },
-            {
-                "id": "b",
-                "title": title_b,
-                "script": "demo_b.py",
-                "dataset": "datasets/demos/b.luxar.zarr",
-            },
-        ],
+        "demos": demos,
     }
     path = repo / "scripts/gallery/manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -154,6 +164,21 @@ def test_manifest_history_is_entry_specific_and_shading_affects_all_tiles(
         "luxar.shading",
         "manifest entry",
     )
+
+
+def test_appending_a_manifest_entry_does_not_stale_the_previous_last_entry(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _write_manifest(repo, include_c=True)
+    (repo / "packages/luxar/src/luxar/demos/demo_c.py").write_text("# demo c\n")
+    _commit(repo, "add c", 22)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ()
 
 
 def test_shading_docs_and_tests_do_not_mark_tiles_stale(tmp_path: Path) -> None:
