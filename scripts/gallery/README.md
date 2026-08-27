@@ -18,7 +18,7 @@ the best for the README gallery (TODO **R19**).
 | `../../packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts` | Which **signed world axis** the rock revolves about, derived from the camera's own up-vector, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-orbit-axis.test.ts`). |
 | `../../packages/luxar-viewer/playwright.gallery.config.ts` | Playwright config (GPU flags, viewer + data servers, video recording). |
 | `score_exposure.py` | Offline scorer for the captured stills: flags `OVER` (blown highlights) and `FLAT` (narrow, uniformly over-exposed). Hand-synced with `exposure-policy.ts`. |
-| `tests/` | Unit tests for the Python gallery tools, including real temporary Git histories for tile-staleness comparisons. On the default Python suite. |
+| `tests/` | Unit tests for the Python gallery tools, including real temporary Git histories for tile-staleness comparisons and a `score_exposure.py` parity test that pins its mirrored thresholds to `exposure-policy.ts`. On the default Python suite. |
 
 ## Usage
 
