@@ -1215,6 +1215,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
             layer: true,
             type: 'points',
             has_scalars: true,
+            intensity: 2.4,
+            offset: 0,
             scalar_data_range: [0.0001, 0.02],
           },
           children: [],
@@ -1228,6 +1230,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     panel.layerState.select('/cloud', 'single');
 
     const rangeLabel = container.querySelector('.luxar-range-slider__label') as HTMLElement;
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(1 / 2.4, 6);
     expect(rangeLabel.textContent).toBe('Colour range');
     expect(rangeLabel.title).toBe(
       "Input RGB values in this range are mapped to the full output range. This controls colour gain and offset, not the layer's data extents."
