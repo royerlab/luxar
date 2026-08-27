@@ -1002,9 +1002,10 @@ timeout before any step starts or runner name is recorded. The repair job has on
 `actions: write` and `contents: read` permissions and runs on GitHub-hosted Linux;
 recovered long legs reuse their original runner-routing decision and repay work that
 the scheduled run already performed. A multi-job candidate can add up to four long
-obsidian-routed legs alongside the next push run; when the original routing decision
-was `ubuntu-latest`, it also adds hosted-runner minutes. Do not widen the two-candidate
-cap before #2217 bounds jobs queued behind a live but saturated self-hosted runner.
+obsidian-routed legs alongside the next push run, so the two-candidate cap permits up
+to eight per window; when the original routing decision was `ubuntu-latest`, it also
+adds hosted-runner minutes. Do not widen the two-candidate cap before #2217 bounds jobs
+queued behind a live but saturated self-hosted runner.
 Reruns execute the workflow definition from their original SHA, so commits predating
 the run-id key retain the older attempt-only collision behavior; the scheduled SHA
 itself carries the new policy and provides the forward promotion candidate that clears
