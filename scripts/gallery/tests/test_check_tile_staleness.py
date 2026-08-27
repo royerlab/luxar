@@ -175,11 +175,20 @@ def test_media_flags_use_inclusive_warning_and_limit_boundaries() -> None:
     )
 
 
-def test_missing_media_blob_is_reported_as_staleness_error(tmp_path: Path) -> None:
+def test_missing_media_blob_is_reported_as_staleness_error(
+    tmp_path: Path, capsys
+) -> None:
     repo = _repo(tmp_path)
+    media_path = Path("docs/images/readme/gallery/a.webm")
+    object_id = _git(repo, "rev-parse", f"HEAD:{media_path.as_posix()}")
+    (repo / ".git/objects" / object_id[:2] / object_id[2:]).unlink()
 
-    with pytest.raises(stale.StalenessError, match="Git object is unavailable"):
-        stale.GalleryHistory(repo)._small_blob_contents(["0" * 40])
+    message = f"Git object is unavailable: {object_id} ({media_path})"
+    with pytest.raises(stale.StalenessError, match=re.escape(message)):
+        stale.GalleryHistory(repo).report()
+
+    assert stale.main(["--repo-root", str(repo)]) == 2
+    assert capsys.readouterr().err.strip() == f"ERROR: {message}"
 
 
 def test_manifest_line_ranges_isolate_each_demo_entry() -> None:
@@ -531,9 +540,9 @@ def test_media_sizes_use_committed_lfs_metadata_and_remain_report_only(
     assert "a.webm 20.00 MiB (20,971,520 bytes) [WARNING]" in output
     assert "b.webm 25.00 MiB (26,214,400 bytes) [OVER LIMIT]" in output
     assert "a.webp 0.00 MiB (2,048 bytes)" not in output
-    assert output.index("25.00 MiB (26,214,400 bytes)  b.webm") < output.index(
-        "20.00 MiB (20,971,520 bytes)  a.webm"
-    )
+    assert output.index(
+        "25.00 MiB (26,214,400 bytes)  b.webm [OVER LIMIT]"
+    ) < output.index("20.00 MiB (20,971,520 bytes)  a.webm")
     assert "Gallery media: 45.00 MiB total across 4 files" in output
     assert (
         "Gallery media limits: 1 warning (20.00 MiB <= size < 25.00 MiB), "

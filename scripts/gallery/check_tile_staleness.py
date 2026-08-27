@@ -355,6 +355,10 @@ class GalleryHistory:
             _, object_type, object_id, size_text = metadata.split()
             path = Path(path_text)
             if object_type == "blob" and path.suffix in {".webp", ".webm"}:
+                if not size_text.isdigit():
+                    raise StalenessError(
+                        f"Git object is unavailable: {object_id} ({path})"
+                    )
                 entries.append((path, object_id, int(size_text)))
         small_blobs = self._small_blob_contents(
             [
