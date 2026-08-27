@@ -12,12 +12,7 @@ import {
   renderProgressBar,
 } from './primitives';
 import { headlineTooltip, presentHeadlineCounts } from '../headline-counts';
-import {
-  formatBytes,
-  formatNumber,
-  getCacheMemoryColorClass,
-  networkSummary,
-} from './format';
+import { formatBytes, formatNumber, getCacheMemoryColorClass, networkSummary } from './format';
 
 /**
  * Map LoaderType identifier to its short display label / item-unit pair.
