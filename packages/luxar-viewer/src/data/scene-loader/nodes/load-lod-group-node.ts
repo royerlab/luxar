@@ -60,20 +60,7 @@ import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-regi
 import type { LODGroupMetadata, LODGroupSelectorMode } from '../../../types/lod-group';
 import { supportsLod } from '../../../types/geometry-capabilities';
 import type { NodeBuildCtx } from './build-ctx';
-
-/**
- * Signature of the recursive scene-graph walker. Injected at the
- * call site to break the otherwise-cyclic import with
- * `load-scene-nodes.ts` — the recursion is genuine (lod_group
- * children may themselves be groups or further lod_groups) but a
- * static back-reference would fail the dep-cruiser cycle check.
- */
-export type LoadSceneChildren = (
-  node: SceneNode,
-  parentThree: THREE.Object3D,
-  parentLoc: zarr.Location<zarr.Readable>,
-  ctx: NodeBuildCtx
-) => Promise<void>;
+import type { LoadSceneChildren } from './load-children-concurrently';
 
 /**
  * Default raw bounds for a malformed / missing ``position_bounds``

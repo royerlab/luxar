@@ -30,7 +30,7 @@ import { log, Modules } from '../../../utils/log';
 import type { SceneNode } from '../../data-loader-types';
 import type { BspTreeNode, PartitionGroupMetadata } from '../../../types/partition-group';
 import type { NodeBuildCtx } from './build-ctx';
-import type { LoadSceneChildren } from './load-lod-group-node';
+import { loadChildrenConcurrently, type LoadSceneChildren } from './load-children-concurrently';
 
 interface PositionBounds {
   min: readonly number[];
@@ -265,7 +265,7 @@ function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeValidati
  * The recursion handle is passed in (not imported) to break what would
  * otherwise be a cyclic dependency with ``load-scene-nodes.ts`` — the
  * dep-cruiser check rejects static back-references. Same pattern as
- * ``load-lod-group-node.ts``.
+ * ``load-children-concurrently.ts``.
  *
  * No registry needed — Partition has no per-frame decision to make. THREE's
  * per-mesh frustum culling handles per-part culling automatically once
@@ -302,21 +302,14 @@ export async function loadPartitionGroupNode(
     return partitionGroup;
   }
 
-  for (let i = 0; i < sceneChildren.length; i++) {
-    const child = sceneChildren[i];
-    const childLoc = parentLoc.resolve(child.path.slice(1));
-    const before = partitionGroup.children.length;
-    await loadChildren(child, partitionGroup, childLoc, ctx);
-    // Tag the part's THREE object(s) with their part index (the on-disk
-    // `child_index`, falling back to load order) so the depth-sort coordinator
-    // can map a part's render mesh back to a `bsp_tree` leaf for exact
-    // back-to-front ordering. A part subtree may add >1 object (e.g. a per-part
-    // lod group) — tag them all.
-    const partIndex = partIndexForChild(child, i);
-    for (let j = before; j < partitionGroup.children.length; j++) {
-      partitionGroup.children[j].userData.partIndex = partIndex;
-    }
-  }
+  await loadChildrenConcurrently(sceneChildren, partitionGroup, parentLoc, ctx, loadChildren, {
+    configureSlot: (slot, child, index) => {
+      slot.userData.partIndex = partIndexForChild(child, index);
+    },
+    configureLoadedChild: (object, child, index) => {
+      object.userData.partIndex = partIndexForChild(child, index);
+    },
+  });
 
   // Stash the BSP split-plane tree (when present) for the coordinator's exact
   // back-to-front part ordering; absent for streamed grid/content merges, where

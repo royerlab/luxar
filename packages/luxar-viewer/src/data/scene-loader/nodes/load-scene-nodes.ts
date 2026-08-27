@@ -19,6 +19,7 @@ import { geometryDescriptorFor } from '../geometry-descriptors';
 import { loadLodGroupNode } from './load-lod-group-node';
 import { loadPartitionGroupNode } from './load-partition-group-node';
 import type { NodeBuildCtx } from './build-ctx';
+import { loadChildrenConcurrently } from './load-children-concurrently';
 
 /**
  * Walk the scene-graph rooted at `node` and load every leaf via the
@@ -70,10 +71,6 @@ export async function loadSceneNodes(
 
     parentThree.add(group);
 
-    // Load children
-    for (const child of node.children) {
-      const childLoc = parentLoc.resolve(child.path.slice(1));
-      await loadSceneNodes(child, group, childLoc, ctx);
-    }
+    await loadChildrenConcurrently(node.children, group, parentLoc, ctx, loadSceneNodes);
   }
 }
