@@ -133,8 +133,8 @@ from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
     parse_path_arg,
+    run_luxar_cli,
 )
-from luxar.demos._support.runtime.cli import run_luxar_cli
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir

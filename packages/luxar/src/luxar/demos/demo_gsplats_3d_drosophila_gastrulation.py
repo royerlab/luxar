@@ -115,9 +115,9 @@ from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
     parse_path_arg,
+    run_luxar_cli,
 )
 from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
-from luxar.demos._support.runtime.cli import run_luxar_cli
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import GSplatNode, center_bounds, is_matrix_shaped, iter_leaves

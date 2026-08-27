@@ -1,11 +1,13 @@
 """Helpers for demos that rebuild data through the shipped CLI."""
 
+from importlib import import_module
+
 from arbol import aprint
 
 
 def run_luxar_cli(*args: str) -> None:
     """Run the Luxar CLI in-process and translate a failing exit."""
-    from luxar.cli.main import app
+    app = import_module("luxar.cli.main").app
 
     aprint(f"$ luxar {' '.join(args)}")
     try:
