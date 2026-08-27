@@ -58,9 +58,8 @@ and choose a scene from the viewer's dataset browser.
 For a `.luxar.zarr.zip`, serve its containing directory rather than passing the
 archive itself, which fails with `Data mount root must be a directory`. The
 server advertises and honours the HTTP byte ranges the viewer uses to read
-members without extracting the archive. Zipped scenes are read-only, and image
-overlays inside them are skipped. The viewer has no browser local-file or
-drag-and-drop opening path for any scene format.
+members without extracting the archive. Zipped scenes are read-only. The viewer
+has no browser local-file or drag-and-drop opening path for any scene format.
 
 `luxar export` also requires a directory store; passing an archive fails with
 `Invalid zarr store: Path is not a directory`. Its exported preview server does

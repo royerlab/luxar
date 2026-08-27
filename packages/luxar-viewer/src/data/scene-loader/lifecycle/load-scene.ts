@@ -430,8 +430,10 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const overlayConfigs = await loadOverlayConfigs(zarrStore, rootLoc);
   if (overlayConfigs.length > 0) {
     rootGroup.userData.overlayConfigs = overlayConfigs;
-    // Store base URL for image fetching
+    // Store both directory-URL and opaque-file access for image overlays.
     rootGroup.userData.zarrBaseUrl = ctx.normalizeURL(url);
+    rootGroup.userData.readOverlayFile = async (path: string) =>
+      zarrStore.get(path as zarr.AbsolutePath);
   }
 
   // Post-load monitor-tab provider wiring (extracted to
