@@ -7,14 +7,14 @@ and about how far you can go before it starts to matter.
 
 The subject is the same frame as the ``gsplats_3d_drosophila_gastrulation``
 demo — timepoint 150 of a SiMView light-sheet recording of a *Drosophila*
-embryo at gastrulation, fitted to **200,155 splats**. Ten cull levels of that
-one fit are stacked on a categorical ``Cull`` dimension, so picking an entry
-swaps the level **in place at a fixed camera**. That matters more than it
-sounds: side by side, the eye has to carry a memory across a gap and small
-differences vanish. Stacked, stepping the selector is a flicker test, and a
-flicker test is the only way a volumetric difference this subtle is visible at
-all. Every level is a single flat leaf — no partition, no LOD tree — so what you
-see is exactly the splats the selector names.
+embryo at gastrulation. Ten cull levels of that one fit are stacked on a
+categorical ``Cull`` dimension, so picking an entry swaps the level **in place
+at a fixed camera**. That matters more than it sounds: side by side, the eye has
+to carry a memory across a gap and small differences vanish. Stacked, stepping
+the selector is a flicker test, and a flicker test is the only way a volumetric
+difference this subtle is visible at all. Every level is a single flat leaf —
+no partition, no LOD tree — so what you see is exactly the splats the selector
+names.
 
 ================================================================================
 WHAT "CUMULATIVE RETENTION" MEANS
@@ -33,7 +33,9 @@ of dim, diffuse splats models background and out-of-focus haze. Cumulative
 culling removes the tail first, in amplitude order — which is very nearly the
 same order as "least visible first".
 
-MEASURED ON THIS FIT (an excerpt of the table the overlay reprints):
+MEASURED ON THE SUPERSEDED PRE-REFIT ARCHIVE GENERATION
+(an excerpt of its 200,155-splat table; the runtime overlay is recomputed from
+whichever archive is loaded):
 
     retention    splats   % kept     size   vs the raw stack
       1.000     200,155    100.0%   1.97 MB       75:1
@@ -45,14 +47,14 @@ MEASURED ON THIS FIT (an excerpt of the table the overlay reprints):
 amplitude given up is spread across the dimmest splats in the scene rather than
 concentrated anywhere you are looking.
 
-One caveat this fit itself illustrates. The shipped archive has ALREADY been
-culled once — the fitter's own post-fit pass took it from 256,000 seeds to
-200,155 — so its dim tail is partly gone before this study starts, and each
-retention here keeps more than it would on a raw fit. On an unculled fit of the
-same specimen, ``retention=0.999`` alone removes 23% of the splats for one
-thousandth of the light. So the numbers above are a *lower* bound on what
-culling can recover, not an upper one, and a fit that has never been culled has
-much more slack than this table suggests.
+One caveat the measured archive generation itself illustrates. Its fitter's
+post-fit pass had ALREADY culled 256,000 seeds to 200,155 splats, so its dim tail
+was partly gone before this study started and each retention kept more than it
+would on a raw fit. On an unculled fit of the same specimen,
+``retention=0.999`` alone removes 23% of the splats for one thousandth of the
+light. So the numbers above are a *lower* bound on what culling can recover, not
+an upper one, and a fit that has never been culled has much more slack than this
+table suggests.
 
 ================================================================================
 WHY THIS IS NOT A FREE LUNCH, AND HOW TO TELL
@@ -174,9 +176,9 @@ RAW_BYTES = int(np.prod(RAW_SHAPE)) * RAW_ITEMSIZE  # 155,361,024
 # `add_gsplats_from_data` (one factor for the whole stacked node), which is what
 # makes these opacity/absorption values portable numbers rather than magic
 # constants. See core/group/gsplats_pipeline/amplitude_norm.py.
-# The carried 5 / 512 / 798 values are the sibling demo's measured archive
-# minimum / p99.9 reference / maximum detector counts; this pure-scale transfer
-# is approximate because that demo's earlier manual normalization subtracts 5.
+# The carried 5 / 512 / 798 values came from the sibling demo's earlier archive
+# generation (minimum / p99.9 reference / maximum detector counts). This
+# pure-scale transfer is approximate because its manual normalization subtracts 5.
 GSPLAT_OPACITY = 0.41 * (512.0 - 5.0) / (798.0 - 5.0)
 GSPLAT_ABSORPTION = 0.57
 DISPLAY_WINDOW_TOP = 0.737 * (798.0 - 5.0) / (512.0 - 5.0)
@@ -269,6 +271,17 @@ def level_label(row: dict) -> str:
     )
 
 
+def scene_description(base_splats: int) -> str:
+    """Describe the culling study using the fit loaded for this build."""
+    return (
+        "Ten cumulative-amplitude cull levels of one Drosophila "
+        f"gastrulation fit ({base_splats:,} splats), stacked on a Cull selector so "
+        "they swap in place at a fixed camera. Culling removes the dimmest "
+        "splats first, which on this data is background haze rather than "
+        "nuclei. Press 1 then [ / ] to step the selector."
+    )
+
+
 # =============================================================================
 # Scene
 # =============================================================================
@@ -328,13 +341,7 @@ def create_luxar_scene(output_path: Path) -> Path:
                 ),
             )
             scene.attrs["title"] = "GSplats: What Does Culling Actually Remove?"
-            scene.attrs["description"] = (
-                "Ten cumulative-amplitude cull levels of one Drosophila "
-                "gastrulation fit (200,155 splats), stacked on a Cull selector so "
-                "they swap in place at a fixed camera. Culling removes the dimmest "
-                "splats first, which on this data is background haze rather than "
-                "nuclei. Press 1 then [ / ] to step the selector."
-            )
+            scene.attrs["description"] = scene_description(rows[0]["splats"])
 
             scene.add_gsplats_from_data(
                 name="drosophila_nuclei",
