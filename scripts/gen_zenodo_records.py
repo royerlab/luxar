@@ -16,10 +16,10 @@ Measurement is separate from rendering because the archives are LEAVING the
 repository. Reading them at render time meant the text could only be generated
 on a machine holding ~400 MB of demo data, and on a partial checkout it reported
 "no PSNR" for archives whose hosted copies are stamped — publishing an absent
-figure for data that has one. The committed measurements carry a
-``measured_sha256`` so ``--check`` can say when a figure was taken from bytes the
-manifest no longer pins, which is the drift a refit causes. Source-derived figures
-may retain their own provenance note after a later pinned archive read supplies that
+figure for data that has one. Digest-backed archive measurements carry a
+``measured_sha256`` so ``--check`` can say when the bytes read by ``--refresh`` are
+no longer pinned, which is the drift a refit causes. Source-derived figures may
+retain their own provenance note after a later pinned archive read supplies that
 digest.
 
 ``quality_note`` is internal provenance and is never rendered. ``quality_caveat``
@@ -604,7 +604,7 @@ def refresh_characteristics(
                     "scripts/gen_zenodo_records.py --refresh. Committed so the "
                     "record text does not require holding the archives, which are "
                     "hosted on Zenodo rather than in this repository. "
-                    "measured_sha256 records WHICH bytes each figure came from; "
+                    "measured_sha256 records WHICH archive bytes refresh read; "
                     "--check reports any non-null digest that no longer matches "
                     "the manifest pin. A null digest means the figures were "
                     "recovered from the stated source rather than archive bytes; "
