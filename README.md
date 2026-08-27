@@ -31,7 +31,7 @@ Three ideas carry most of the design:
 install. Or open your own data in the hosted viewer:
 [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
 
-[Live Demos](https://demos.luxarviewer.dev) | [Quick Start](#quick-start) | [Volume Rendering](#volume-rendering-with-gaussian-splats) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
+[Live Demos](https://demos.luxarviewer.dev) | [Docs](https://royerlab.github.io/luxar/) | [Quick Start](#quick-start) | [Volume Rendering](#volume-rendering-with-gaussian-splats) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
 
 ---
 
@@ -889,10 +889,13 @@ layout and how to add a new skill.
 
 | Document | Description |
 |----------|-------------|
+| **[Documentation site](https://royerlab.github.io/luxar/)** | Tutorials, guides, format specs, and the generated Python + TypeScript API reference |
 | **[Live demo gallery](https://demos.luxarviewer.dev)** | 85 demos as interactive scenes in the browser |
 | **[Hosted viewer](https://luxarviewer.dev)** | Open any reachable scene: `luxarviewer.dev/?src=<url>` |
 | [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md) | How the two sites above are hosted and published |
 | [Python Package README](packages/luxar/README.md) | Full Python API documentation |
+| [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md) | Navigating a scene: camera, nD slicing, panels, keyboard |
+| [CLI Reference](docs/guides/user/CLI_REFERENCE.md) | Every `luxar` command and flag |
 | [Viewer README](packages/luxar-viewer/README.md) | Viewer features and configuration |
 | [Zarr Format Spec](docs/guides/user/LUXAR_ZARR_FORMAT.md) | Complete data format specification |
 | [HDR Guide](docs/guides/user/HDR_GUIDE.md) | HDR color workflow |
