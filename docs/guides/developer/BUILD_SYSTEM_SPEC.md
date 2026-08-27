@@ -921,9 +921,17 @@ leg really ran the interpreter it claims, rather than whatever pipx picked — t
 defect behind issue #839, where all three legs silently ran the same version.
 
 The router bounds that queue/cost tradeoff after fresh capacity has been ruled out.
-It scans at most ten eligible queued/in-progress runs and counts only obsidian jobs
-that have waited at least five minutes. When fewer than ten runs are eligible, five
-aged jobs by default send new work to GitHub-hosted runners;
+Both `pick-runner` and `queue-watchdog` use the stdlib-only
+`scripts/ci_queue_scan.py` helper as the single definition of visible, queued and
+running obsidian work. Each job sparse-checks out `scripts/` with credentials
+disabled; the fork guard remains ahead of checkout, so untrusted fork code is never
+fetched before the hosted-only decision. Policy stays outside the helper: the router
+fails unreadable scans toward obsidian until backlog evidence exists, while the
+watchdog treats an unreadable liveness scan as a reason not to cancel.
+
+The router scans at most ten eligible queued/in-progress runs and counts only
+obsidian jobs that have waited at least five minutes. When fewer than ten runs are
+eligible, five aged jobs by default send new work to GitHub-hosted runners;
 `LUXAR_CI_MAX_QUEUED_OBSIDIAN` overrides that validated cap. Reaching the scan bound
 instead routes hosted after finding any aged backlog; without backlog evidence,
 known obsidian liveness still wins.

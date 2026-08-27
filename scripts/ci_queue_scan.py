@@ -9,7 +9,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any, Sequence, cast
 
 
 class ApiError(RuntimeError):
@@ -40,10 +40,10 @@ def parse_timestamp(value: str) -> float:
 def _object_list(payload: object, key: str) -> list[dict[str, Any]]:
     if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
         raise ValueError(f"payload must contain a {key!r} list")
-    values = payload[key]
+    values = cast(list[object], payload[key])
     if not all(isinstance(value, dict) for value in values):
         raise ValueError(f"payload {key!r} entries must be objects")
-    return values
+    return cast(list[dict[str, Any]], values)
 
 
 def classify_jobs(payload: object, *, queued_before: float | None = None) -> ScanResult:
