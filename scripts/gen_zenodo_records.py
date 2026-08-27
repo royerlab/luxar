@@ -216,7 +216,9 @@ def _read_part_provenance(value: Any, *, root_kind: Any) -> Optional[dict[str, A
     return {
         "frames": None if root_kind == "partition" or nested else len(value),
         "quality_quotable": quotable,
-        "source_bytes": _total(fittings, "source_bytes"),
+        "source_bytes": (
+            None if root_kind == "partition" else _total(fittings, "source_bytes")
+        ),
         "psnr_db": _span(fittings, "psnr_db") if quotable else None,
         "foreground_psnr_db": (
             _span(fittings, "foreground_psnr_db") if quotable else None

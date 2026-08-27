@@ -359,6 +359,7 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         info = gen._read_archive(path)
 
         assert info["frames"] is None
+        assert info["source_bytes"] is None
 
     def test_nested_single_part_is_not_reported_as_one_frame(
         self, gen: Any, tmp_path: Path
