@@ -63,6 +63,7 @@ vi.mock('../../../../../data/scene-loader/nodes/load-mesh-node', () => ({
 }));
 
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
+import { ArchiveFaultError } from '../../../../../cache/chunk-source';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
@@ -903,6 +904,30 @@ describe('loadLodGroupNode — lazy level loading', () => {
     deferred.ensureLoaded!();
     await vi.waitFor(() => expect(deferred.failed).toBe(true));
 
+    expect(deferred.ready).toBe(false);
+    expect(deferred.loading).toBe(false);
+  });
+
+  it('latches a wrapped archive fault as a permanent lazy-level failure', async () => {
+    attachStubChildren();
+    const archiveFault = new ArchiveFaultError('archive is no longer readable', '/scene.zip');
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(
+      new Error('lazy level load failed', { cause: archiveFault })
+    );
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.failed).toBe(true));
+
+    expect(deferred.permanentlyFailed).toBe(true);
     expect(deferred.ready).toBe(false);
     expect(deferred.loading).toBe(false);
   });

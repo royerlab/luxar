@@ -382,6 +382,11 @@ export interface LODGroupChild {
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
+   * Set when the failure is terminal for this dataset, such as an unreadable
+   * archive container. The registry never clears or retries this failure.
+   */
+  permanentlyFailed?: boolean;
+  /**
    * Registry tick when ``failed`` was first observed. Drives the
    * transient-failure retry cooldown (``FAILED_RETRY_FRAMES``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
@@ -392,7 +397,8 @@ export interface LODGroupChild {
   /**
    * Idempotent fire-and-forget loader for a lazy child. Kicks the
    * deferred geometry load; on success sets ``ready=true`` and clears
-   * ``loading``; on failure sets ``failed=true`` and clears ``loading``.
+   * ``loading``; on failure sets ``failed=true`` and clears ``loading``. A
+   * terminal dataset failure may additionally set ``permanentlyFailed``.
    * Must not touch ``object.visible`` — the registry owns the swap.
    */
   ensureLoaded?: () => void;
@@ -1872,9 +1878,10 @@ export class LODGroupRegistry {
    * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag clears and the load
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
+   * ``permanentlyFailed`` children bypass that cooldown and remain latched.
    */
   private kickDeferredLoad(child: LODGroupChild): void {
-    if (!child.ensureLoaded || child.loading) return;
+    if (!child.ensureLoaded || child.loading || child.permanentlyFailed) return;
     if (child.failed) {
       if (child.failedTick == null) {
         // First frame we observe the failure — start the cooldown clock.

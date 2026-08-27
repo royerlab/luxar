@@ -49,6 +49,7 @@
 
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
+import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { log, Modules } from '../../../utils/log';
 import { loadGSplatsNodeCheap, loadGSplatsNodeExpensive } from './load-gsplats-node';
 import { loadPointsNodeCheap, loadPointsNodeExpensive } from './load-points-node';
@@ -73,13 +74,25 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
   max: [] as readonly number[],
 };
 
+function containsArchiveFault(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 8; depth++) {
+    if (current instanceof ArchiveFaultError) return true;
+    if (!(current instanceof Error)) return false;
+    current = current.cause;
+  }
+  return false;
+}
+
 /**
  * Build a deferred (lazy) ``LODGroupChild`` from an already cheap-attached
  * placeholder. Geometry-agnostic: the caller supplies ``runExpensive`` (fetch +
  * commit) and an optional ``releaseLoaded`` (return GPU buffers to the evictable
  * pool, and/or drop depth-sort state). Shared between the gsplats, points, lines
  * and mesh defer paths so the ready/failed/loading state machine and the
- * abort-discard error handling live in exactly one place.
+ * abort-discard error handling live in exactly one place. Container-wide
+ * archive faults additionally latch the child as permanently failed so the
+ * per-frame registry cannot retry a dataset already known to be unreadable.
  *
  * **Lazy LEAF levels never join the per-slice update sweep.** ``runExpensive``
  * commits independently and the registry — not the sweep — drives their reload
@@ -134,6 +147,10 @@ function attachLazyChild(
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;
+        if (containsArchiveFault(error)) {
+          entryChild.permanentlyFailed = true;
+          entryChild.failedTick = undefined;
+        }
         log.warning(
           Modules.SCENE_LOADER,
           `lod_group lazy level ${child.path} failed to load: ${String(error)}`
@@ -151,8 +168,10 @@ function attachLazyChild(
       timeLodStageSync('lazy:release', releaseLoaded);
       entryChild.ready = false;
       entryChild.loading = false;
-      entryChild.failed = false;
-      entryChild.failedTick = undefined;
+      if (!entryChild.permanentlyFailed) {
+        entryChild.failed = false;
+        entryChild.failedTick = undefined;
+      }
     };
   }
   return entryChild;
