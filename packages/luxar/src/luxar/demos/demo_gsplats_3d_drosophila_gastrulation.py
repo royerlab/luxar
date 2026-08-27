@@ -42,11 +42,12 @@ VOXEL CALIBRATION (why the Z scale is what it is):
     (195 um axial vs 190 um lateral) — i.e. the section really is circular.
 
 PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here):
-    1. Extract timepoint 150 of the 500-timepoint recording.
+    1. Extract timepoint 150 from ``DrosophilaHistone.zarr.zip [data]``, the
+       500-timepoint recording.
     2. Calibrate K* by Noise2Self blind-spot cross-validation (``gsplat cal``):
        the curve is ``signal_limited`` (K* = 512,000) with diminishing returns
        flagged at 256,000 — the operating point used here.
-    3. ``gsplat fit --tiling none --seeds 256000`` -> 200,155 splats.
+    3. ``gsplat fit --tiling none --seeds 256000`` -> 200,023 splats.
        (The recorded run pinned ``--tiling none``, which at the time was
        required: ``--seeds`` was then applied *per tile*, so auto-tiling this
        stack into 21 tiles multiplied the calibrated budget by 21. Since #1556
@@ -54,7 +55,8 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
        across its tiles, so the pin is no longer needed to keep the budget
        honest — it is kept here only because it is what actually produced the
        numbers below.)
-    4. Quality vs the original volume: **39.89 dB PSNR, 0.911 SSIM**.
+    4. Quality vs the original volume: **41.65 dB PSNR**, **37.07 dB foreground
+       PSNR**. SSIM was not re-measured for this refit.
     5. ``gsplat transform --scale 1.93,0.40625,0.40625`` -> physical microns.
     6. ``gsplat lod --recipe stream --target-ms 200`` -> progressive ladder.
 

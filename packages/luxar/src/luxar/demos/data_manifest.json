@@ -430,8 +430,11 @@
           "name": "flylight_mcfo_63x.gsplats.zarr.zip",
           "sha256": "167461b170c40295cba791616e480b8d80de39df6b532f06bb2c877b7f5b382d",
           "bytes": 8150095,
-          "hosted_sha256": "1356c696ec346c313215d647561b983f86dfe9844c10620e6b2fb528a74d6201",
-          "hosted_bytes": 8163618
+          "hosted_sha256": "74fbe3a7b3ebcb344df21fdab4be6b54d557d8358b91b748cf1eb8c648e5d3fb",
+          "hosted_bytes": 7650636,
+          "superseded_sha256": [
+            "1356c696ec346c313215d647561b983f86dfe9844c10620e6b2fb528a74d6201"
+          ]
         }
       ]
     },
@@ -548,10 +551,11 @@
       "files": [
         {
           "name": "droso_gastrulation.gsplats.zarr.zip",
-          "sha256": "7e0b6ba49d763e298d833d80b1cff11134480c6b3d8a2b392e63d4a745eae68b",
-          "bytes": 2286979,
+          "sha256": "2ea85b379fdea7465ae16260a51f4bdd674c1336ba9222a28a213fcc3fca57c1",
+          "bytes": 2151371,
           "superseded_sha256": [
-            "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af"
+            "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af",
+            "7e0b6ba49d763e298d833d80b1cff11134480c6b3d8a2b392e63d4a745eae68b"
           ]
         }
       ]
