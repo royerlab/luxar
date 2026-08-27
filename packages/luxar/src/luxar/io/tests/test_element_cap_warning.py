@@ -146,14 +146,19 @@ def test_the_warning_displays_once_through_arbol() -> None:
         [
             sys.executable,
             "-c",
+            "import tempfile\n"
             "import warnings\n"
+            "import numpy as np\n"
+            "from luxar.typing_utils.constants import ELEMENT_TEXELS_PER_ELEMENT\n"
+            "ELEMENT_TEXELS_PER_ELEMENT['points'] = 4096\n"
+            "from luxar import Dimensions, LuxarZarrCompiler\n"
             "from luxar.io import ElementCapacityWarning\n"
-            "from luxar.io._compiler.node_common import warn_if_over_element_cap\n"
-            "from luxar.utils.arbol_warnings import arbol_warnings\n"
             "with warnings.catch_warnings():\n"
             "    warnings.simplefilter('always', ElementCapacityWarning)\n"
-            "    with arbol_warnings():\n"
-            "        warn_if_over_element_cap('lines', 11_440_000, '/currents')\n",
+            "    with tempfile.TemporaryDirectory() as temp_dir:\n"
+            "        with LuxarZarrCompiler(f'{temp_dir}/scene.luxar.zarr') as compiler:\n"
+            "            scene = compiler.create_scene(dimensions=Dimensions.default_3d())\n"
+            "            scene.add_points('flat', np.zeros((5_000, 3), dtype=np.float32))\n",
         ],
         check=True,
         capture_output=True,
@@ -161,7 +166,7 @@ def test_the_warning_displays_once_through_arbol() -> None:
     )
     output = result.stdout
     assert output.count("⚠️") == 1
-    assert "ElementCapacityWarning: '/currents' holds 11,440,000 segments" in output
+    assert "ElementCapacityWarning: '/flat' holds 5,000 points" in output
 
 
 def test_gsplat_warning_names_both_supported_remedies() -> None:

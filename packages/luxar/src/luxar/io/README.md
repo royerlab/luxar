@@ -79,6 +79,8 @@ with (
 - Filterable oversized-node diagnostics via
   `luxar.io.ElementCapacityWarning` (for example, promote them with
   `warnings.simplefilter("error", ElementCapacityWarning)` in build checks).
+  Install that filter in-process; Python startup `-W` / `PYTHONWARNINGS`
+  filters cannot resolve this package warning category before imports run.
   A broad `warnings.simplefilter("error")` around compilation also promotes
   these diagnostics and will fail if any node exceeds the conservative cap.
 - Single-file `.zip` output with a normalized inner store name, published after successful finalization
