@@ -111,11 +111,31 @@ const OPTIONAL_ARRAYS = [
  * bytes are the Cache tab's job, which measures them at the store boundary
  * where every tier can be attributed.
  *
- * A `bitmap` texture is charged `w * h * 4` because an `ImageBitmap` is always
- * 4-channel 8-bit once decoded regardless of the source codec — the same charge
- * `preflight.ts` budgets it at, so the admission gate and the telemetry cannot
- * disagree about what a textured mesh costs. Textures dominate this figure when
- * present: an 8192² basemap is 268 MB against a few MB of geometry.
+ * The texture arms are branched exhaustively rather than as
+ * `raw`-or-everything-else, so a fourth arm is a compile error here instead of
+ * a silently mischarged one:
+ *   - `raw` — the materialized surface itself.
+ *   - `bitmap` — `w * h * 4`, because an `ImageBitmap` is always 4-channel
+ *     8-bit once decoded regardless of the source codec.
+ *   - `compressed` — `ceil(w * h * 4 / 3)`: a KTX2 payload stays
+ *     GPU-compressed at ~1 byte per texel and the `4/3` covers its mip chain.
+ *     Charging it `w * h * 4` like a bitmap would overstate a transcoded
+ *     basemap by 3x, which is the whole point of using KTX2. Conservative on
+ *     hardware Basis transcodes to an RGB-only target at half a byte per
+ *     texel, which is deliberate: the charge stays device-independent and
+ *     agrees with the admission budget, which cannot know the GPU either.
+ *
+ * The two encoded arms use the same figures as the decoded-surface term
+ * `preflight.ts` adds for them, so the admission gate and the telemetry cannot
+ * disagree about what a texture expands to. This is NOT an equality of totals:
+ * preflight is a PEAK ADMISSION number (stored bytes plus what they decode to
+ * plus the largest single chunk, all coexisting) and charges every array
+ * including the texture handle in its own loop, while this is a RESIDENT one.
+ * Only the surface term is shared, and it is the term worth keeping in step —
+ * it is the one that varies by three-fold between codecs.
+ *
+ * Textures dominate this figure when present: an 8192² basemap is 268 MB as a
+ * bitmap (89 MB compressed) against a few MB of geometry.
  *
  * Charged PER NODE, so an array two nodes share through an `array_ref` (the two
  * halves of a partitioned globe sharing one basemap) is counted once for each —
@@ -134,18 +154,26 @@ export function meshPayloadBytes(data: LoadedMeshData): number {
   bytes += data.scalars?.byteLength ?? 0;
   bytes += data.uvs?.byteLength ?? 0;
   const texture = data.texture;
-  if (texture) bytes += meshTextureBytes(texture);
+  if (texture) {
+    bytes += textureResidentBytes(texture);
+  }
   return bytes;
 }
 
-function meshTextureBytes(texture: MeshTextureData): number {
+/**
+ * Resident bytes of one decoded texture, per arm — see {@link meshPayloadBytes}.
+ *
+ * MIRROR: the texture term of the byte budget in `preflight.ts`, which for the
+ * `ktx2` arm is in turn kept aligned with `luxar/validation/base.py` and
+ * `luxar/io/_compiler/geometry_writers/mesh.py`.
+ */
+function textureResidentBytes(texture: NonNullable<LoadedMeshData['texture']>): number {
   switch (texture.kind) {
     case 'raw':
       return texture.pixels.byteLength;
     case 'bitmap':
       return texture.width * texture.height * 4;
     case 'compressed':
-      // Must match the device-independent KTX2 residency charge in preflight.ts.
       return Math.ceil((texture.width * texture.height * 4) / 3);
   }
 }
