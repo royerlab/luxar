@@ -858,11 +858,14 @@ may quote a bare component dB range only when **every** entry says
 `acquisition`; `preprocessed`, `synthetic`, and unknown records remain useful
 provenance but are not scores against the published acquisition. Non-finite
 fields are omitted from that entry rather than shortening the list. When every
-entry records the same source grid and dtype, the stack also carries
+entry records the same source grid and dtype, a composition that creates a
+stacked axis also carries
 `source_shape = [parts, *part_shape]` in source-array order (stack first, unlike
 the appended center column), the shared `source_dtype`, unanimous
 `source_declared`, and sums of `source_voxels`, `source_bytes`, and
-`source_stored_bytes` at the root. Values inside each `fitting` record describe
+`source_stored_bytes` at the root. Source fields recoverable from that unanimous
+root aggregate may be omitted from component records; differing per-component
+values remain explicit. Values inside each `fitting` record describe
 the component as fitted; a caller may subsequently filter or normalize the
 splats before stacking, so per-part counts need not sum to the archived root
 count. The current record does not identify which center column holds its
@@ -870,6 +873,25 @@ coordinate, so a later rewrite can scrub stale fitting/source fields but cannot
 generically remove records for coordinates eliminated wholesale. After such a
 rewrite, the list length is provenance cardinality from stack time, not a
 surviving-frame count; re-stack the rewritten components to refresh it.
+Flattening a partition discards its slot-keyed record because those spatial part
+coordinates no longer exist in the resulting leaf, even when only one part
+survives.
+
+Composition may nest the same record recursively in an entry's `fitting` block.
+`batch-fit merge` uses this for its multi-level fan-in: root entries are spatial
+partition parts; a channel level appears only when multiple channels are selected,
+and a timepoint level appears only when multiple timepoints are selected. Records
+are therefore one to three levels deep, with timepoints directly under a part when
+only one channel is selected. Coordinates at each level are the real slot, channel,
+or timepoint indices. Because the batch manifest does not state what preprocessing
+preceded the selected input array, these generated records omit `fit_reference`
+(unknown) rather than claiming acquisition scores.
+An unstamped tile remains present without quality or source keys in its `fitting`
+dictionary, so a mixed store re-merged after a partial re-fit is explicit rather
+than silently partial. The root `fitting/part_provenance` list is the canonical
+home for this nested batch record; streamed `part_<i>` `lod_stats` do not repeat
+it. A one-slot merge still records coordinate `0.0` there and does not promote
+the tile's component quality to an unqualified root scalar.
 
 On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
 of the finest surviving parts, after each part's post-fit cull, measured on that

@@ -56,7 +56,36 @@ _IMPORTANT_FITTING_KEYS = (
 )
 
 
-def _print_fitting_value(key: str, value: Any) -> None:
+def _part_provenance_depth(records: list[Any]) -> int:
+    depth = 1
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        fitting = record.get("fitting")
+        nested = fitting.get("part_provenance") if isinstance(fitting, dict) else None
+        if isinstance(nested, list):
+            depth = max(depth, 1 + _part_provenance_depth(nested))
+    return depth
+
+
+def _print_fitting_value(
+    key: str, value: Any, *, show_full_provenance: bool = False
+) -> None:
+    if (
+        key == "part_provenance"
+        and isinstance(value, list)
+        and not show_full_provenance
+    ):
+        depth = _part_provenance_depth(value)
+        if depth == 3:
+            suffix = ", nested channels × timepoints"
+        elif depth > 1:
+            suffix = f", nested component records ({depth} levels)"
+        else:
+            suffix = ""
+        part_word = "part" if len(value) == 1 else "parts"
+        aprint(f"  {key}: {len(value)} {part_word}{suffix}")
+        return
     if isinstance(value, float):
         aprint(f"  {key}: {value:.6f}")
     else:
@@ -175,6 +204,11 @@ def info_dataset(
     bins: int = typer.Option(
         40, "--bins", "-b", help="Number of bins for histograms", min=10, max=100
     ),
+    full_provenance: bool = typer.Option(
+        False,
+        "--full-provenance",
+        help="Print the complete nested fitting/part_provenance record",
+    ),
 ) -> None:
     """Show detailed information about a Gaussian splat dataset.
 
@@ -197,10 +231,14 @@ def info_dataset(
         # More detailed histograms
         luxar gsplat info dataset.gsplats.zarr.zip --bins 60
 
+        # Print the complete nested per-part fitting record
+        luxar gsplat info dataset.gsplats.zarr.zip --full-provenance
+
     Args:
         path: Path to .gsplats.zarr or compressed archive
         show_histograms: Whether to display ASCII histograms
         bins: Number of bins for histogram plots
+        full_provenance: Whether to print the complete nested component record
     """
     try:
         import numpy as np
@@ -227,7 +265,7 @@ def info_dataset(
                     aprint(f"❌ {load_exc}")
                     raise typer.Exit(1) from None
                 # Valid v3.0 partition/nested tree → report its shape.
-                _print_gsplat_tree_summary(path)
+                _print_gsplat_tree_summary(path, show_full_provenance=full_provenance)
                 return
             n_splats = len(data.amplitudes)
             ndim = data.centers.shape[1]
@@ -353,7 +391,11 @@ def info_dataset(
             displayed_keys = set()
             for key in _IMPORTANT_FITTING_KEYS:
                 if key in data.stats:
-                    _print_fitting_value(key, data.stats[key])
+                    _print_fitting_value(
+                        key,
+                        data.stats[key],
+                        show_full_provenance=full_provenance,
+                    )
                     displayed_keys.add(key)
 
             # Display remaining metadata. The source-volume block above already
@@ -373,7 +415,13 @@ def info_dataset(
                         "provenance",
                     ]:
                         value = data.stats[key]
-                        if isinstance(value, (dict, list)):
+                        if key == "part_provenance":
+                            _print_fitting_value(
+                                key,
+                                value,
+                                show_full_provenance=full_provenance,
+                            )
+                        elif isinstance(value, (dict, list)):
                             aprint(
                                 f"  {key}: {type(value).__name__} with {len(value)} items"
                             )
@@ -980,7 +1028,9 @@ def _print_normalization_block(root: Any) -> None:
         aprint(f"  {key}: {value}")
 
 
-def _print_gsplat_tree_summary(path: Path) -> None:
+def _print_gsplat_tree_summary(
+    path: Path, *, show_full_provenance: bool = False
+) -> None:
     """Report the node-tree shape of a partition / nested .gsplats.zarr.
 
     These have no flat ``GSplatData`` (``gsplat info``'s normal path), so we
@@ -1043,10 +1093,18 @@ def _print_gsplat_tree_summary(path: Path) -> None:
             displayed_keys = set()
             for key in _IMPORTANT_FITTING_KEYS:
                 if key in fitting:
-                    _print_fitting_value(key, fitting[key])
+                    _print_fitting_value(
+                        key,
+                        fitting[key],
+                        show_full_provenance=show_full_provenance,
+                    )
                     displayed_keys.add(key)
             for key in sorted(set(fitting) - displayed_keys):
-                _print_fitting_value(key, fitting[key])
+                _print_fitting_value(
+                    key,
+                    fitting[key],
+                    show_full_provenance=show_full_provenance,
+                )
         _print_normalization_block(root)
     finally:
         if tmp is not None and tmp.exists():

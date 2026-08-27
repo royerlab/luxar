@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import typer
 from arbol import aprint, asection
 
 from ..encoding import _resolve_encoding_mode
+
+if TYPE_CHECKING:
+    from luxar.gsplats.tree import GSplatNode
+
+
+def _contains_partition(node: "GSplatNode") -> bool:
+    from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
+
+    if isinstance(node, GSplatPartition):
+        return True
+    if isinstance(node, GSplatLodGroup):
+        return any(_contains_partition(child) for child in node.children)
+    return False
 
 
 def run_partition_dataset(
@@ -146,9 +159,14 @@ def run_flatten_dataset(
             # `lod_kind: substitutive` / `n_substitutive_levels: 4` /
             # `lod_cutpoints: [...]` describes a tree that no longer exists (#1600).
             if stats:
+                carried_stats = stats_after_structure_change(stats)
+                if _contains_partition(node):
+                    # Batch-merge coordinates identify spatial slots. Flattening
+                    # removes those slots, so their provenance is no longer valid.
+                    carried_stats.pop("part_provenance", None)
                 flat = GSplatData.from_additive_sublods(
                     list(flat.additive_sublods),
-                    stats=stats_after_structure_change(stats),
+                    stats=carried_stats,
                 )
             aprint(
                 f"Flattened {len(leaves)} leaf/leaves → {flat.n_splats:,} splats "
