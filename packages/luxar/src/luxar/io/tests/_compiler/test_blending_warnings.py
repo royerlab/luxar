@@ -536,7 +536,7 @@ def test_each_additive_offender_warns_only_once(capsys) -> None:
     assert capsys.readouterr().out.count("⚠️") == 1
 
 
-def test_each_sorted_offender_warns_only_once(capsys) -> None:
+def test_sorted_overlap_cluster_warns_once_with_every_remedy(capsys) -> None:
     root = _root()
     _leaf(
         root,
@@ -560,7 +560,42 @@ def test_each_sorted_offender_warns_only_once(capsys) -> None:
 
     output = capsys.readouterr().out
     assert output.count("⚠️") == 1
-    assert "'envelope'" in output
+    assert "'envelope' (normal)" in output
+    for index in range(3):
+        assert f"'contained_{index}' (normal)" in output
+    assert 'partition={"max_elements": N}' in output
+    assert "first three position columns" in output
+    assert "emissive medium" in output
+    assert "changes surface appearance" in output
+    assert output.index("partition=") < output.index("additive")
+
+
+def test_disconnected_sorted_overlap_clusters_warn_separately(capsys) -> None:
+    root = _root()
+    for prefix, offset in (("left", 0.0), ("right", 20.0)):
+        _leaf(
+            root,
+            f"{prefix}_outer",
+            "points",
+            minimum=[offset, 0.0, 0.0],
+            maximum=[offset + 10.0, 10.0, 10.0],
+            blending_mode="normal",
+        )
+        _leaf(
+            root,
+            f"{prefix}_inner",
+            "points",
+            minimum=[offset + 1.0, 1.0, 1.0],
+            maximum=[offset + 2.0, 2.0, 2.0],
+            blending_mode="volumetric",
+        )
+
+    warn_overlapping_blending(root)
+
+    warnings = [line for line in capsys.readouterr().out.splitlines() if "⚠️" in line]
+    assert len(warnings) == 2
+    assert all("left_" in warning for warning in warnings[:1])
+    assert all("right_" in warning for warning in warnings[1:])
 
 
 def test_world_transforms_decide_overlap(capsys) -> None:

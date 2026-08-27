@@ -127,6 +127,34 @@ def _candidate_pairs(
             yield left, right
 
 
+def _warn_sorted_overlap_clusters(
+    neighbors: dict[str, set[str]], modes: dict[str, set[str]]
+) -> None:
+    warned: set[str] = set()
+    for start in sorted(neighbors):
+        if start in warned:
+            continue
+        cluster: set[str] = set()
+        pending = [start]
+        while pending:
+            path = pending.pop()
+            if path in cluster:
+                continue
+            cluster.add(path)
+            pending.extend(neighbors[path] - cluster)
+        warned.update(cluster)
+        participants = ", ".join(
+            f"'{path}' ({'/'.join(sorted(modes[path]))})" for path in sorted(cluster)
+        )
+        aprint(
+            f"  ⚠️  overlapping order-dependent nodes {participants} have view-dependent "
+            'cross-node order; merge them into one node and pass partition={"max_elements": N}, '
+            "with displayed dimensions in the first three position columns, to order disjoint "
+            "BSP cells back-to-front. For an emissive medium, additive blending is "
+            "order-independent but changes surface appearance; otherwise separate their bounds."
+        )
+
+
 def warn_overlapping_blending(
     store: zarr.Group, world_leaves: list[WorldBoundsLeaf] | None = None
 ) -> None:
@@ -139,7 +167,8 @@ def warn_overlapping_blending(
         world_leaves = collect_world_bounds(store)
     leaves = [_effective_leaf(leaf) for leaf in world_leaves]
     warned_additive: set[str] = set()
-    warned_sorted: set[str] = set()
+    sorted_neighbors: dict[str, set[str]] = {}
+    sorted_modes: dict[str, set[str]] = {}
     for left, right in _candidate_pairs(leaves, displayed_dimensions):
         if left.owner_path == right.owner_path:
             continue
@@ -171,11 +200,9 @@ def warn_overlapping_blending(
             and _internally_sorted(right)
             and (_contains(left.leaf, right.leaf) or _contains(right.leaf, left.leaf))
         ):
-            if left.owner_path in warned_sorted or right.owner_path in warned_sorted:
-                continue
-            warned_sorted.update((left.owner_path, right.owner_path))
-            aprint(
-                f"  ⚠️  overlapping order-dependent nodes '{left.owner_path}' ({left.mode}) "
-                f"and '{right.owner_path}' ({right.mode}) have view-dependent cross-node "
-                "order; make one node additive or separate their bounds."
-            )
+            sorted_neighbors.setdefault(left.owner_path, set()).add(right.owner_path)
+            sorted_neighbors.setdefault(right.owner_path, set()).add(left.owner_path)
+            sorted_modes.setdefault(left.owner_path, set()).add(left.mode)
+            sorted_modes.setdefault(right.owner_path, set()).add(right.mode)
+
+    _warn_sorted_overlap_clusters(sorted_neighbors, sorted_modes)

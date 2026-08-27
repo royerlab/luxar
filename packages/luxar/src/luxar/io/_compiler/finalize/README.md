@@ -316,8 +316,11 @@ to its author-facing owner: the first geometry node or `kind=lod` /
 and warning names and deduplication use that owner so implementation-level LOD
 chunks and partition parts report once as the node the author wrote. Candidate
 pairs are sweep-pruned on a displayed axis, and repeated pairwise hits are rolled
-up when either owner was already reported so enveloping nodes cannot flood the
-log.
+up into connected overlap clusters so each warning names every participating
+owner without flooding the log. The primary remedy is to merge the geometry and
+partition it spatially, with displayed dimensions in the first three position
+columns; additive blending is identified as an order-independent option for an
+emissive medium that changes surface appearance.
 
 ### `validation.prune_childless_wrappers(store) -> None`
 
