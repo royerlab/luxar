@@ -97,7 +97,7 @@ def _manifest(base_url: str | None, *, sha: str, hosted_sha: str | None = None) 
     if hosted_sha is not None:
         entry["hosted_sha256"] = hosted_sha
         entry["hosted_bytes"] = len(PAYLOAD)
-    record: dict[str, Any] = {"published": base_url is None and False or True}
+    record: dict[str, Any] = {"published": base_url is not None}
     if base_url:
         record["base_url"] = base_url
     return {
@@ -108,6 +108,34 @@ def _manifest(base_url: str | None, *, sha: str, hosted_sha: str | None = None) 
                 "record": "test-record",
                 "dir": "thing",
                 "files": [entry],
+            }
+        },
+    }
+
+
+def _variant_manifest(base_url: str) -> dict[str, Any]:
+    def entry(name: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "sha256": _digest(PAYLOAD),
+            "hosted_sha256": _digest(PAYLOAD),
+            "bytes": len(PAYLOAD),
+            "hosted_bytes": len(PAYLOAD),
+        }
+
+    return {
+        "records": {
+            "test-record": {"published": True, "base_url": base_url},
+        },
+        "datasets": {
+            "thing": {
+                "bucket": "zenodo",
+                "record": "test-record",
+                "dir": "thing",
+                "variants": {
+                    "light": {"default": True, "files": [entry("light.zip")]},
+                    "full": {"default": False, "files": [entry("full.zip")]},
+                },
             }
         },
     }
@@ -125,7 +153,7 @@ def test_a_healthy_origin_passes(harness: ModuleType, origin, tmp_path: Path) ->
     (served / "thing.zarr.zip").write_bytes(PAYLOAD)
     manifest = _manifest(base_url, sha=_digest(PAYLOAD), hosted_sha=_digest(PAYLOAD))
 
-    ok, detail = harness.verify("thing", manifest, keep=False)
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert ok, detail
     assert detail.startswith("OK")
     assert "hosted" in detail
@@ -140,7 +168,7 @@ def test_a_soft_404_is_caught(harness: ModuleType, origin, tmp_path: Path) -> No
     base_url, _served = origin
     manifest = _manifest(base_url, sha=_digest(PAYLOAD), hosted_sha=_digest(PAYLOAD))
 
-    ok, detail = harness.verify("thing", manifest, keep=False)
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert not ok, f"a soft-404 must not pass, got: {detail}"
     assert detail.startswith("FAIL")
 
@@ -151,9 +179,28 @@ def test_wrong_bytes_are_caught(harness: ModuleType, origin, tmp_path: Path) -> 
     (served / "thing.zarr.zip").write_bytes(PAYLOAD + b"drift")
     manifest = _manifest(base_url, sha=_digest(PAYLOAD), hosted_sha=_digest(PAYLOAD))
 
-    ok, detail = harness.verify("thing", manifest, keep=False)
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert not ok, f"a digest mismatch must not pass, got: {detail}"
     assert detail.startswith("FAIL")
+
+
+def test_the_harness_digest_backstop_rejects_wrong_resolver_output(
+    harness: ModuleType,
+    origin,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_url, _served = origin
+    manifest = _manifest(base_url, sha=_digest(PAYLOAD), hosted_sha=_digest(PAYLOAD))
+    wrong_path = tmp_path / "thing.zarr.zip"
+    wrong_path.write_bytes(b"resolver returned unchecked bytes")
+    monkeypatch.setattr(
+        harness.data_fetch, "ensure_dataset", lambda *args, **kwargs: [wrong_path]
+    )
+
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
+    assert not ok
+    assert "sha256" in detail
 
 
 def test_a_record_serving_the_repo_copy_is_caught(
@@ -179,7 +226,7 @@ def test_a_record_serving_the_repo_copy_is_caught(
         base_url, sha=_digest(repo_bytes), hosted_sha=_digest(hosted_bytes)
     )
 
-    ok, detail = harness.verify("thing", manifest, keep=False)
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert not ok, f"a record serving the repo copy must not pass: {detail}"
     assert detail.startswith("FAIL")
 
@@ -200,7 +247,7 @@ def test_a_superseded_generation_on_the_record_is_caught(
         _digest(old_bytes)
     ]
 
-    ok, detail = harness.verify("thing", manifest, keep=False)
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert not ok, f"a superseded build on the record must not pass: {detail}"
 
 
@@ -221,7 +268,7 @@ def test_an_in_repo_copy_cannot_rescue_a_broken_origin(
     (in_repo / "thing" / "thing.zarr.zip").write_bytes(PAYLOAD)
     monkeypatch.setattr(harness.data_fetch, "_DEMOS_DATA_DIR", in_repo)
 
-    ok, detail = harness.verify("thing", manifest, keep=False)
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert not ok, f"the in-repo copy must not satisfy the check, got: {detail}"
 
 
@@ -244,7 +291,7 @@ def test_a_dormant_record_skips_rather_than_failing(harness: ModuleType) -> None
     manifest = _manifest(None, sha=_digest(PAYLOAD))
     manifest["records"]["test-record"] = {"published": False, "zenodo_record": "1"}
 
-    ok, detail = harness.verify("thing", manifest, keep=False)
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert ok
     assert detail.startswith("SKIP")
 
@@ -271,7 +318,7 @@ def test_a_file_with_no_declared_digest_fails(
     manifest = _manifest(base_url, sha=_digest(PAYLOAD))
     del manifest["datasets"]["thing"]["files"][0]["sha256"]
 
-    ok, detail = harness.verify("thing", manifest, keep=False)
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
     assert not ok
     assert "no digest" in detail
 
@@ -289,10 +336,11 @@ def test_every_shipped_dataset_is_currently_dormant(harness: ModuleType) -> None
     which is exactly the moment someone should be forced to think about it.
     """
     manifest = harness.data_fetch.load_manifest()
+    targets = harness.verification_targets(manifest, harness.hosted_datasets(manifest))
     reachable = [
-        name
-        for name in harness.hosted_datasets(manifest)
-        if harness.is_reachable(manifest, name)
+        harness.target_label(name, variant)
+        for name, variant in targets
+        if harness.is_reachable(manifest, name, variant)
     ]
     assert reachable == [], (
         "a dataset became reachable: run `hatch run python "
@@ -307,8 +355,8 @@ def test_the_manifest_parses_and_declares_hosted_datasets(harness: ModuleType) -
     assert len(names) > 10
     assert "gsplats_kidney" in names
     # Every hosted dataset must be resolvable end to end by the harness.
-    for name in names:
-        assert isinstance(harness.is_reachable(manifest, name), bool)
+    for name, variant in harness.verification_targets(manifest, names):
+        assert isinstance(harness.is_reachable(manifest, name, variant), bool)
 
 
 def test_main_lists_without_fetching(harness: ModuleType, capsys) -> None:
@@ -321,6 +369,63 @@ def test_main_lists_without_fetching(harness: ModuleType, capsys) -> None:
 def test_main_rejects_an_unknown_dataset(harness: ModuleType, capsys) -> None:
     assert harness.main(["no_such_dataset"]) == 2
     assert "unknown dataset" in capsys.readouterr().err
+
+
+def test_main_checks_every_variant_and_labels_each_row(
+    harness: ModuleType,
+    origin,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    base_url, served = origin
+    (served / "light.zip").write_bytes(PAYLOAD)
+    manifest = _variant_manifest(base_url)
+    monkeypatch.setattr(harness.data_fetch, "load_manifest", lambda: manifest)
+
+    assert harness.main(["thing"]) == 1
+    captured = capsys.readouterr()
+    assert "thing:light" in captured.out
+    assert "thing:full" in captured.out
+    assert "1 failed" in captured.out
+
+
+def test_main_returns_one_and_prints_the_payload_warning(
+    harness: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    manifest = _manifest(None, sha=_digest(PAYLOAD))
+    monkeypatch.setattr(harness.data_fetch, "load_manifest", lambda: manifest)
+    monkeypatch.setattr(
+        harness, "verify", lambda *args, **kwargs: (False, "FAIL  test failure", None)
+    )
+
+    assert harness.main(["thing"]) == 1
+    stderr = capsys.readouterr().err
+    assert "Do NOT" in stderr
+    assert "remove its in-repo payload" in stderr
+
+
+def test_cache_root_and_kept_path_are_reported_after_the_result(
+    harness: ModuleType,
+    origin,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    base_url, served = origin
+    (served / "thing.zarr.zip").write_bytes(PAYLOAD)
+    manifest = _manifest(base_url, sha=_digest(PAYLOAD), hosted_sha=_digest(PAYLOAD))
+    monkeypatch.setattr(harness.data_fetch, "load_manifest", lambda: manifest)
+    cache_root = tmp_path / "large-disk"
+
+    assert harness.main(["thing", "--keep", "--cache-root", str(cache_root)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    result_index = next(i for i, line in enumerate(lines) if line.startswith("thing"))
+    kept_index = next(i for i, line in enumerate(lines) if "kept:" in line)
+    kept_path = Path(lines[kept_index].split("kept:", 1)[1].strip())
+    assert result_index < kept_index
+    assert kept_path.parent == cache_root
+    assert kept_path.exists()
+    harness.shutil.rmtree(kept_path)
 
 
 def test_json_manifest_is_valid(harness: ModuleType) -> None:

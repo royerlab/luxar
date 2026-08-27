@@ -372,8 +372,9 @@ to ship after). Sequencing is at the bottom.
     **permanent** (no self-delete; files immutable — edits become new versions).
     So: (1) rehearse on **`sandbox.zenodo.org`** first — a published Sandbox record
     serves files over the identical `/records/<id>/files/<name>?download=1` URL, so
-    point a record's `base_url` there, fetch + checksum-verify via
-    `ensure_dataset`, and only then repeat against production — a
+    point a record's `base_url` there, run `make check-cold-fetch` so every
+    variant is fetched with both the cache and in-repo copy hidden, and only then
+    repeat against production — a
     `ZENODO_SANDBOX_TOKEN` is needed to *create* that Sandbox record, not to
     download from it (the fetch leg is unauthenticated: `zenodo_file_url` builds a
     plain public URL and no code reads a Zenodo token today);

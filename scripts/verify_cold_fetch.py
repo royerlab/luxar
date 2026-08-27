@@ -60,6 +60,7 @@ Usage
 -----
     python scripts/verify_cold_fetch.py                    # every reachable dataset
     python scripts/verify_cold_fetch.py gsplats_kidney     # named datasets
+    python scripts/verify_cold_fetch.py --cache-root /data # put large temp caches here
     python scripts/verify_cold_fetch.py --list             # what would be attempted
 
 Exit codes: 0 everything checked passed, 1 a verification failed, 2 a usage or
@@ -102,7 +103,29 @@ def hosted_datasets(manifest: dict[str, Any]) -> list[str]:
     )
 
 
-def is_reachable(manifest: dict[str, Any], name: str) -> bool:
+def variants_for(spec: dict[str, Any]) -> list[Optional[str]]:
+    """Every variant to verify, or one unqualified target for flat datasets."""
+    variants = spec.get("variants")
+    return list(variants) if variants else [None]
+
+
+def target_label(name: str, variant: Optional[str]) -> str:
+    return f"{name}:{variant}" if variant else name
+
+
+def verification_targets(
+    manifest: dict[str, Any], names: list[str]
+) -> list[tuple[str, Optional[str]]]:
+    return [
+        (name, variant)
+        for name in names
+        for variant in variants_for(manifest["datasets"][name])
+    ]
+
+
+def is_reachable(
+    manifest: dict[str, Any], name: str, variant: Optional[str] = None
+) -> bool:
     """Whether the hosted leg would produce a URL at all.
 
     Mirrors ``zenodo_file_url``'s own gating rather than reimplementing it, so a
@@ -110,7 +133,7 @@ def is_reachable(manifest: dict[str, Any], name: str) -> bool:
     """
     spec = manifest["datasets"][name]
     record = manifest.get("records", {}).get(spec.get("record"), {})
-    files, _ = data_fetch.resolve_variant(name, spec, None)
+    files, _ = data_fetch.resolve_variant(name, spec, variant)
     if not files:
         return False
     return data_fetch.zenodo_file_url(record, files[0]["name"]) is not None
@@ -127,57 +150,91 @@ def expected_digest(entry: dict[str, Any]) -> tuple[Optional[str], str]:
     return None, "none declared"
 
 
-def verify(name: str, manifest: dict[str, Any], keep: bool) -> tuple[bool, str]:
+def _check_digests(files: list[dict[str, Any]], paths: list[Path]) -> Optional[str]:
+    by_name = {path.name: path for path in paths}
+    for entry in files:
+        path = by_name.get(entry["name"])
+        if path is None or not path.exists():
+            return f"FAIL  {entry['name']}: not produced"
+        wanted, contract = expected_digest(entry)
+        if wanted is None:
+            return f"FAIL  {entry['name']}: manifest declares no digest"
+        got = sha256_of(path)
+        if got != wanted:
+            return (
+                f"FAIL  {entry['name']}: sha256 {got[:16]}… != "
+                f"{contract} {wanted[:16]}… "
+                f"({path.stat().st_size} bytes fetched)"
+            )
+    return None
+
+
+def _temporary_dir(prefix: str, cache_root: Optional[Path]) -> Path:
+    if cache_root is not None:
+        cache_root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=cache_root))
+
+
+def verify(
+    name: str,
+    manifest: dict[str, Any],
+    keep: bool,
+    *,
+    variant: Optional[str] = None,
+    cache_root: Optional[Path] = None,
+) -> tuple[bool, str, Optional[Path]]:
     """Fetch *name* into a throwaway cache with no in-repo copy, and check it."""
     spec = manifest["datasets"][name]
-    files, _ = data_fetch.resolve_variant(name, spec, None)
+    if spec.get("bucket") != "zenodo":
+        return True, "SKIP  not redistributable (local-compute dataset)", None
+    files, _ = data_fetch.resolve_variant(name, spec, variant)
     if not files:
-        return True, "SKIP  no files declared (pending upload)"
-    if not is_reachable(manifest, name):
-        return True, "SKIP  hosting dormant (no base_url, record unpublished)"
+        return True, "SKIP  no files declared (pending upload)", None
+    if not is_reachable(manifest, name, variant):
+        return True, "SKIP  hosting dormant (no base_url, record unpublished)", None
 
     # `data_fetch` imports this from `.lfs`, so under --no-implicit-reexport
     # mypy cannot see it as an attribute even though it is one at runtime.
     original_lfs_dir = data_fetch._DEMOS_DATA_DIR  # type: ignore[attr-defined]
-    cache_dir = Path(tempfile.mkdtemp(prefix=f"luxar-coldfetch-{name}-"))
-    empty_lfs = Path(tempfile.mkdtemp(prefix="luxar-no-inrepo-"))
+    label = target_label(name, variant)
+    cache_dir = _temporary_dir(f"luxar-coldfetch-{label}-", cache_root)
+    empty_lfs = _temporary_dir("luxar-no-inrepo-", cache_root)
+    kept_path = cache_dir if keep else None
     try:
         # Requirement 2: the in-repo leg must not be able to satisfy this.
         data_fetch._DEMOS_DATA_DIR = empty_lfs  # type: ignore[attr-defined]
         try:
             paths = data_fetch.ensure_dataset(
-                name, cache_root=cache_dir, manifest=manifest, verbose=False
+                name,
+                variant=variant,
+                cache_root=cache_dir,
+                manifest=manifest,
+                verbose=False,
             )
         except data_fetch.DatasetUnavailable as exc:
-            return False, f"FAIL  nothing obtainable without the in-repo copy: {exc}"
+            return (
+                False,
+                f"FAIL  nothing obtainable without the in-repo copy: {exc}",
+                kept_path,
+            )
         except data_fetch.LocalComputeDataset as exc:
-            return True, f"SKIP  not redistributable: {exc}"
+            return True, f"SKIP  not redistributable: {exc}", kept_path
         except Exception as exc:  # noqa: BLE001 - report, do not mask
-            return False, f"FAIL  {type(exc).__name__}: {exc}"
+            return False, f"FAIL  {type(exc).__name__}: {exc}", kept_path
 
-        by_name = {p.name: p for p in paths}
-        for entry in files:
-            path = by_name.get(entry["name"])
-            if path is None or not path.exists():
-                return False, f"FAIL  {entry['name']}: not produced"
-            wanted, contract = expected_digest(entry)
-            if wanted is None:
-                return False, f"FAIL  {entry['name']}: manifest declares no digest"
-            got = sha256_of(path)
-            if got != wanted:
-                return False, (
-                    f"FAIL  {entry['name']}: sha256 {got[:16]}… != "
-                    f"{contract} {wanted[:16]}… "
-                    f"({path.stat().st_size} bytes fetched)"
-                )
+        failure = _check_digests(files, paths)
+        if failure is not None:
+            return False, failure, kept_path
         digests = ", ".join(sorted({expected_digest(e)[1] for e in files}))
-        return True, f"OK    {len(files)} file(s) verified against {digests} sha256"
+        return (
+            True,
+            f"OK    {len(files)} file(s) verified against {digests} sha256",
+            kept_path,
+        )
     finally:
         data_fetch._DEMOS_DATA_DIR = original_lfs_dir  # type: ignore[attr-defined]
         shutil.rmtree(empty_lfs, ignore_errors=True)
-        if keep:
-            print(f"      kept: {cache_dir}")
-        else:
+        if not keep:
             shutil.rmtree(cache_dir, ignore_errors=True)
 
 
@@ -194,6 +251,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--keep", action="store_true", help="keep the throwaway caches for inspection"
     )
+    parser.add_argument(
+        "--cache-root",
+        type=Path,
+        help="directory for throwaway caches (default: system temporary directory)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -209,27 +271,34 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"error: unknown dataset(s): {', '.join(unknown)}", file=sys.stderr)
         return 2
 
+    targets = verification_targets(manifest, names)
     if args.list:
-        for name in names:
-            state = "reachable" if is_reachable(manifest, name) else "dormant"
-            print(f"{name:<40} {state}")
+        for name, variant in targets:
+            state = "reachable" if is_reachable(manifest, name, variant) else "dormant"
+            print(f"{target_label(name, variant):<40} {state}")
         return 0
 
     failures = 0
     skipped = 0
-    for name in names:
-        ok, detail = verify(name, manifest, args.keep)
-        print(f"{name:<40} {detail}")
+    for name, variant in targets:
+        ok, detail, kept_path = verify(
+            name,
+            manifest,
+            args.keep,
+            variant=variant,
+            cache_root=args.cache_root,
+        )
+        print(f"{target_label(name, variant):<40} {detail}")
+        if kept_path is not None:
+            print(f"      kept: {kept_path}")
         if not ok:
             failures += 1
         elif detail.startswith("SKIP"):
             skipped += 1
 
-    checked = len(names) - skipped - failures
+    checked = len(targets) - skipped - failures
     print()
-    print(
-        f"cold fetch: {checked} verified, {skipped} skipped (dormant), {failures} failed"
-    )
+    print(f"cold fetch: {checked} verified, {skipped} skipped, {failures} failed")
     if failures:
         print(
             "\nA failure here means a stranger cannot obtain this dataset. Do NOT\n"
