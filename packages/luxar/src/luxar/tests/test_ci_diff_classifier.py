@@ -962,6 +962,7 @@ def _run_pick_runner(
     heartbeat: str = "0",
     force_hosted: str = "0",
     other_run_active: bool = False,
+    active_job_label: str = "obsidian",
     first_run_queued_obsidian_jobs: int = 0,
     first_run_age_seconds: int = 600,
     queued_obsidian_jobs: int = 0,
@@ -1049,7 +1050,7 @@ elif "/runs/" in endpoint and "/jobs?" in endpoint:
     if "/runs/9999/jobs?" in endpoint and os.environ["ROUTER_OTHER_ACTIVE"] == "1":
         jobs.append({
             "status": "in_progress",
-            "labels": ["obsidian"],
+            "labels": [os.environ["ROUTER_ACTIVE_JOB_LABEL"]],
             "created_at": "1970-01-01T00:00:00Z",
         })
     print(json.dumps({"jobs": jobs}))
@@ -1073,6 +1074,7 @@ else:
         "MAX_QUEUED_OBSIDIAN": max_queued_obsidian,
         "ROUTER_API_ERROR": api_error,
         "ROUTER_API_LOG": str(tmp_path / "gh-calls"),
+        "ROUTER_ACTIVE_JOB_LABEL": active_job_label,
         "ROUTER_ACTIVE_RUN_AGE_SECONDS": str(active_run_age_seconds),
         "ROUTER_FIRST_RUN_AGE_SECONDS": str(first_run_age_seconds),
         "ROUTER_FIRST_RUN_QUEUED_OBSIDIAN_JOBS": str(first_run_queued_obsidian_jobs),
@@ -1290,6 +1292,21 @@ def test_pick_runner_ignores_hosted_queue_depth(workflow: str, tmp_path: Path) -
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == "obsidian"
+
+
+def test_pick_runner_ignores_hosted_in_progress_jobs(
+    workflow: str, tmp_path: Path
+) -> None:
+    """Only an in-progress obsidian job proves the self-hosted box is live."""
+    result, label = _run_pick_runner(
+        workflow,
+        tmp_path,
+        other_run_active=True,
+        active_job_label="ubuntu-latest",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == "ubuntu-latest"
 
 
 @pytest.mark.parametrize(
