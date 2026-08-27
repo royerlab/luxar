@@ -103,19 +103,9 @@ def main(argv: list[str]) -> int:
     if cff is not None:
         original_cff = cff
         released = version.replace(".", "-")
-        cff, n_ver = re.subn(
-            r"^version:[^\S\r\n]*.*$",
-            f'version: "{version}"',
-            cff,
-            count=1,
-            flags=re.MULTILINE,
-        )
-        cff, n_date = re.subn(
-            r"^date-released:[^\S\r\n]*.*$",
-            f'date-released: "{released}"',
-            cff,
-            count=1,
-            flags=re.MULTILINE,
+        cff, n_ver = CFF_VERSION_LINE_RE.subn(f'version: "{version}"', cff, count=1)
+        cff, n_date = CFF_DATE_LINE_RE.subn(
+            f'date-released: "{released}"', cff, count=1
         )
         assert n_ver == 1 and n_date == 1
         CITATION.write_text(cff)

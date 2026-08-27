@@ -149,6 +149,7 @@ def test_reports_a_citation_missing_its_stampable_lines(
 
 def test_stamps_citation_lines_without_spaces_after_colons(
     set_version_module: ModuleType,
+    check_module: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -156,6 +157,8 @@ def test_stamps_citation_lines_without_spaces_after_colons(
     paths["citation"].write_text(
         "cff-version: 1.2.0\nversion:2026.06.05\ndate-released:2026-06-05\n"
     )
+    _point_at(check_module, paths, tmp_path, monkeypatch)
+    assert check_module.main() == 0
     _point_at(set_version_module, paths, tmp_path, monkeypatch)
 
     assert set_version_module.main(["set_version.py", "2026.09.15"]) == 0
