@@ -60,3 +60,12 @@ export function formatGalleryCaptureMetrics(
     `dropped=${totalDroppedElements}`
   );
 }
+
+export function galleryDroppedElementsWarning(
+  demoId: string,
+  totalDroppedElements: number
+): string | undefined {
+  return totalDroppedElements > 0
+    ? `[${demoId}] renderer dropped ${totalDroppedElements} elements at capacity limits`
+    : undefined;
+}

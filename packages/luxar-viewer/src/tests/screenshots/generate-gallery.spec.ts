@@ -86,6 +86,7 @@ import {
   checkGalleryMediaSize,
   formatGalleryCaptureMetrics,
   formatMediaSize,
+  galleryDroppedElementsWarning,
   summarizeGalleryMedia,
   type GalleryMediaFile,
 } from './gallery-media-reporting';
@@ -1403,6 +1404,8 @@ for (const demo of DEMOS) {
     console.log(
       `[${demo.id}] ${formatGalleryCaptureMetrics(coverageMeasurement, totalDroppedElements)}`
     );
+    const droppedWarning = galleryDroppedElementsWarning(demo.id, totalDroppedElements);
+    if (droppedWarning) console.warn(droppedWarning);
     if (coverageMeasurement) {
       const underfill = evaluateUnderfill({ demoId: demo.id, measurement: coverageMeasurement });
       if (underfill.underfilled) console.warn(underfill.message);

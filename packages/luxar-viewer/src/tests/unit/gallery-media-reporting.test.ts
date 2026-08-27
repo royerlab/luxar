@@ -4,6 +4,7 @@ import {
   GALLERY_MEDIA_WARNING_BYTES,
   checkGalleryMediaSize,
   formatGalleryCaptureMetrics,
+  galleryDroppedElementsWarning,
   summarizeGalleryMedia,
   type GalleryMediaFile,
 } from '../screenshots/gallery-media-reporting';
@@ -50,5 +51,9 @@ describe('gallery media reporting', () => {
     expect(formatGalleryCaptureMetrics(null, 0)).toBe(
       'final coverage=unmeasured final lit=unmeasured dropped=0'
     );
+    expect(galleryDroppedElementsWarning('truncated', 37)).toBe(
+      '[truncated] renderer dropped 37 elements at capacity limits'
+    );
+    expect(galleryDroppedElementsWarning('complete', 0)).toBeUndefined();
   });
 });
