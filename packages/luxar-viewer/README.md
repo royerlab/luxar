@@ -97,6 +97,7 @@ except `shortcutForAction()`, which returns `undefined` until input is available
 ```ts
 // Dataset
 await app.switchDataset('https://example.com/other.zarr'); // reload in place
+const fault = app.getDatasetFault(); // terminal post-load fault, or null
 
 // nD dimensions
 const dims = app.getDimensions(); // { ndim, displayed, currentStep, metadata, ranges } (cloned)
@@ -142,6 +143,7 @@ const helpKey = app.shortcutForAction('help.toggle');
 ```ts
 const off = app.on('dataset-loaded', ({ src }) => console.log('loaded', src));
 app.on('dataset-error', ({ src, error }) => console.error(src, error));
+app.on('dataset-fault', ({ src, error }) => console.error(src, error));
 app.on('dimensions-changed', (dims) => updateMyUI(dims));
 app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex, hitNodeName } | null
 app.on('element-click', (event) => console.log(event));
