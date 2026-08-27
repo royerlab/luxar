@@ -251,8 +251,9 @@ count is comfortable (180), but the largest clip sits at **24.87 MiB** —
 the gallery harness checks every PNG, WebP and WebM immediately after it is
 written. It warns at 20 MiB, fails at the 25 MiB boundary, and prints the total
 plus the five largest files at the end of the run. Treat a warning as a prompt
-to choose a deliberate per-demo encoding adjustment; do not silently trade
-quality for size with an automatic re-encode loop.
+to choose a deliberate encoding adjustment with `WEBM_CRF` or `WEBP_QUALITY`
+in `generate-gallery.spec.ts`, then recapture and inspect the affected demos;
+do not silently trade quality for size with an automatic re-encode loop.
 
 ### 4.3 CORS on the R2 bucket
 

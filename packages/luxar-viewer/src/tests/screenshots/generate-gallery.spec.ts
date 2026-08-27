@@ -550,6 +550,19 @@ async function measureCoverageOrNull(
   }
 }
 
+/** Failure-tolerant final renderer-capacity diagnostic. */
+async function measureDroppedElementsOrZero(page: any, demoId: string): Promise<number> {
+  try {
+    return await page.evaluate(() => {
+      const value = (window as any).__luxarDebug?.getState?.()?.totalDroppedElements;
+      return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+    });
+  } catch (error) {
+    console.warn(`[${demoId}] dropped-elements measurement skipped:`, error);
+    return 0;
+  }
+}
+
 /**
  * Dolly until the subject fills ~FILL_TARGET of the frame. Closed-loop on the
  * measured (outlier-robust) coverage, so it works whether the starting pose
@@ -1251,17 +1264,29 @@ function convertFramesToWebp(framesDir: string, output: string): void {
   );
 }
 
-function recordGalleryMedia(demoId: string, filePath: string): GalleryMediaFile {
+function statGalleryMedia(demoId: string, filePath: string): GalleryMediaFile | null {
+  const stats = fs.statSync(filePath, { throwIfNoEntry: false });
+  if (!stats) return null;
   const extension = path.extname(filePath).slice(1) as GalleryMediaFile['extension'];
-  const media = {
+  return {
     demoId,
     extension,
     fileName: path.basename(filePath),
-    sizeBytes: fs.statSync(filePath).size,
+    sizeBytes: stats.size,
   };
+}
+
+function recordGalleryMedia(demoId: string, filePath: string): GalleryMediaFile {
+  const media = statGalleryMedia(demoId, filePath);
+  if (!media) throw new Error(`[${demoId}] encoded media is missing: ${filePath}`);
+  try {
+    const { warning } = checkGalleryMediaSize(media);
+    if (warning) console.warn(warning);
+  } catch (error) {
+    fs.rmSync(filePath, { force: true });
+    throw error;
+  }
   capturedMedia.push(media);
-  const { warning } = checkGalleryMediaSize(media);
-  if (warning) console.warn(warning);
   return media;
 }
 
@@ -1395,10 +1420,7 @@ for (const demo of DEMOS) {
     // Failure-tolerant for the same reason as the orbit samples.
     const coverageMeasurement = await measureCoverageOrNull(page, stillShot, demo.id);
     const stillSample = await measureBorderLitOrNull(page, stillShot, 'still', demo.id);
-    const totalDroppedElements = await page.evaluate(() => {
-      const value = (window as any).__luxarDebug?.getState?.()?.totalDroppedElements;
-      return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
-    });
+    const totalDroppedElements = await measureDroppedElementsOrZero(page, demo.id);
     await page.close();
 
     console.log(
@@ -1489,15 +1511,26 @@ for (const demo of DEMOS) {
 test('Gallery summary', async () => {
   console.log('\n======== Gallery capture complete ========');
   console.log(`Output: ${OUTPUT_DIR}`);
+  const checkedMediaFiles = new Set(capturedMedia.map((media) => media.fileName));
+  const allMedia: GalleryMediaFile[] = [];
   for (const demo of DEMOS) {
-    const png = fs.existsSync(path.join(OUTPUT_DIR, `${demo.id}.png`));
-    const webp = fs.existsSync(path.join(OUTPUT_DIR, `${demo.id}.webp`));
-    const webm = fs.existsSync(path.join(OUTPUT_DIR, `${demo.id}.webm`));
+    const png = statGalleryMedia(demo.id, path.join(OUTPUT_DIR, `${demo.id}.png`));
+    const webp = statGalleryMedia(demo.id, path.join(OUTPUT_DIR, `${demo.id}.webp`));
+    const webm = statGalleryMedia(demo.id, path.join(OUTPUT_DIR, `${demo.id}.webm`));
+    const demoMedia = [png, webp, webm].filter(
+      (media): media is GalleryMediaFile => media !== null
+    );
+    allMedia.push(...demoMedia);
+    for (const media of demoMedia) {
+      if (checkedMediaFiles.has(media.fileName)) continue;
+      const { warning } = checkGalleryMediaSize(media);
+      if (warning) console.warn(warning);
+    }
     console.log(
       `  ${png ? '[png]' : '[---]'} ${webp ? '[webp]' : '[----]'} ${webm ? '[webm]' : '[----]'} ${demo.id}`
     );
   }
-  const mediaSummary = summarizeGalleryMedia(capturedMedia);
+  const mediaSummary = summarizeGalleryMedia(allMedia);
   console.log(mediaSummary.totalLine);
   if (mediaSummary.largestLines.length > 0) {
     console.log('Largest media:');
