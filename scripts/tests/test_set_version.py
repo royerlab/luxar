@@ -116,7 +116,17 @@ def test_zero_padding_is_preserved_where_it_matters(
 
 
 @pytest.mark.parametrize(
-    "bad", ["2026.6.5", "2026-06-05", "v2026.06.05", "1.2.3", "2026.06", ""]
+    "bad",
+    [
+        "2026.6.5",
+        "2026-06-05",
+        "v2026.06.05",
+        "1.2.3",
+        "2026.06",
+        "2026.02.31",
+        "2026.13.01",
+        "",
+    ],
 )
 def test_rejects_non_calver(
     set_version_module: ModuleType,
@@ -126,10 +136,10 @@ def test_rejects_non_calver(
 ) -> None:
     paths = _checkout(tmp_path)
     _point_at(set_version_module, paths, tmp_path, monkeypatch)
-    before = paths["init"].read_text()
+    before = {name: path.read_text() for name, path in paths.items()}
 
     assert set_version_module.main(["set_version.py", bad]) == 2
-    assert paths["init"].read_text() == before, "a rejected version must write nothing"
+    assert {name: path.read_text() for name, path in paths.items()} == before
 
 
 def test_reports_a_citation_missing_its_stampable_lines(

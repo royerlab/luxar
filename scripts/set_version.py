@@ -46,6 +46,14 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
+    try:
+        datetime.date.fromisoformat(version.replace(".", "-"))
+    except ValueError:
+        print(
+            f"error: '{version}' is not CalVer YYYY.MM.DD (zero-padded, e.g. 2026.06.29)",
+            file=sys.stderr,
+        )
+        return 2
 
     cff = CITATION.read_text() if CITATION.exists() else None
     if cff is not None and (
