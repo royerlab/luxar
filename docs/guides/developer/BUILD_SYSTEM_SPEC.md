@@ -923,6 +923,8 @@ The router bounds that queue/cost tradeoff after fresh capacity has been ruled o
 It scans at most ten eligible queued/in-progress runs and counts only obsidian jobs
 that have waited at least five minutes. Five aged jobs by default send new work to
 GitHub-hosted runners; `LUXAR_CI_MAX_QUEUED_OBSIDIAN` overrides that validated cap.
+Reaching the scan bound also routes hosted when any aged backlog has been observed;
+without backlog evidence, known obsidian liveness still wins.
 Raising a long-leg timeout for queue tolerance also raises its worst-case hosted bill,
 so the cap deliberately limits how often those larger budgets burst onto paid runners.
 Router decisions are concurrent snapshots, so a burst can still overshoot the cap
