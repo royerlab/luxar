@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
 
 import numpy as np
 
+from luxar.gsplats._data.filtering import (
+    _REDUCTION_LOD_LEVEL_STATS_KEYS,
+    _REDUCTION_LOD_RUNG_STATS_KEYS,
+)
 from luxar.utils.lod_methods import is_reveal_method
 
 if TYPE_CHECKING:
@@ -200,16 +204,10 @@ def _refresh_recipe_ladder(
 
 
 def _has_ladder_stamps(level: "SubstitutiveLevel") -> bool:
-    if any(
-        key in level.stats
-        for key in ("quality", "reference_energy", "n_splats_total", "refine_stats")
-    ):
+    if any(key in level.stats for key in _REDUCTION_LOD_LEVEL_STATS_KEYS):
         return True
     return any(
-        any(
-            key in lod.stats
-            for key in ("energy_fraction_cum", "lod_n_splats", "lod_cumulative_n")
-        )
+        any(key in lod.stats for key in _REDUCTION_LOD_RUNG_STATS_KEYS)
         for lod in level.additive_sublods
     )
 
