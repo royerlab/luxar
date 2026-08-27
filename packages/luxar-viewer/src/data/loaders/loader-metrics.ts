@@ -1,6 +1,6 @@
 /**
- * Pure helpers for the spatial-index loader's metric bookkeeping,
- * shared across the points / lines / gsplats facades.
+ * Pure helpers for loader metric bookkeeping, shared across the points / lines /
+ * gsplats spatial facades and the mesh whole-node loader.
  *
  * Originally lived in `data/points/`; hoisted to `data/loaders/` once
  * lines and gsplats grew the same monitor surface. The moving-average
@@ -8,7 +8,8 @@
  * in isolation, without a zarr store.
  *
  * `elementsLoaded` is the geometry-neutral throughput counter: it records
- * points for the points facade, vertices for lines, and splats for gsplats.
+ * points for the points facade, vertices for lines, splats for gsplats, and
+ * triangles for mesh.
  *
  * @module data/loaders/loader-metrics
  */
@@ -21,10 +22,10 @@ import type {
 } from '../../types/data-monitor-types';
 
 /**
- * The zeroed initial {@link LoaderMetrics} record every spatial-index loader
- * starts from — one factory instead of three near-identical constructor
- * blocks. `elementsLoaded` / `visibleElements` are the geometry-neutral
- * counters (points / vertices-or-segments / splats).
+ * The zeroed initial {@link LoaderMetrics} record every monitored loader starts
+ * from — one factory instead of near-identical constructor blocks.
+ * `elementsLoaded` / `visibleElements` are the geometry-neutral counters
+ * (points / vertices-or-segments / splats / triangles).
  */
 export function makeInitialLoaderMetrics(type: LoaderType, path: string): LoaderMetrics {
   return {

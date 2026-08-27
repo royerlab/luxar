@@ -50,17 +50,7 @@ function ladder(levels: MeshWholeNodeLoader[]): MeshProgressiveLoader {
 
 function meshData(vertexOffset = 0): LoadedMeshData {
   return {
-    vertices: new Float32Array([
-      vertexOffset,
-      0,
-      0,
-      vertexOffset + 1,
-      0,
-      0,
-      vertexOffset,
-      1,
-      0,
-    ]),
+    vertices: new Float32Array([vertexOffset, 0, 0, vertexOffset + 1, 0, 0, vertexOffset, 1, 0]),
     faces: new Uint32Array([0, 1, 2]),
     normals: null,
     colors: null,

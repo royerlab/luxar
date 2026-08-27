@@ -245,7 +245,10 @@ const NODE_TYPE_COUNTERS = {
 } as const satisfies Record<AggregatedNodeType, keyof TimingMetadata>;
 
 /** Row order in the panel — geometry types first, then anything unrecognized. */
-const NODE_TYPE_ORDER: readonly NodeType[] = ['Points', 'Lines', 'GSplats', 'Mesh', 'Unknown'];
+const NODE_TYPE_ORDER = [
+  ...(Object.keys(NODE_TYPE_COUNTERS) as AggregatedNodeType[]),
+  'Unknown',
+] as const satisfies readonly NodeType[];
 
 /**
  * Extract node type from entry name (optimized - checks first char).
