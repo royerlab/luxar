@@ -491,19 +491,6 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
     return output_path
 
 
-def _time_column(node) -> np.ndarray:
-    """Every stored time coordinate, pooled across leaves and ladder rungs."""
-    from luxar.gsplats.tree import iter_leaves
-
-    return np.concatenate(
-        [
-            np.asarray(sub.centers)[:, 3]
-            for leaf in iter_leaves(node)
-            for sub in leaf.additive_sublods
-        ]
-    )
-
-
 # =============================================================================
 # Main
 # =============================================================================
