@@ -52,18 +52,19 @@ function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: stri
  * Template for loader list item
  */
 export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
-  const statusColorClass = metrics.queries > 0 ? getColorClass('success') : getColorClass('muted');
+  const statusColorClass =
+    metrics.queries > 0 || metrics.loads > 0 ? getColorClass('success') : getColorClass('muted');
   const { label, unit } = loaderDisplay(metrics.type);
 
   return `
     <div class="luxar-loader-item" title="A loader is the component that streams one layer's data from the zarr store into the viewer — this one serves the ${escapeHtml(label)} layer at ${escapeHtml(path)}">
       <div class="luxar-loader-item__header">
-        <span class="luxar-loader-item__path ${statusColorClass}" title="Path of this layer inside the dataset (green = has answered queries this session, grey = idle so far)">${escapeHtml(path)}</span>
+        <span class="luxar-loader-item__path ${statusColorClass}" title="Path of this layer inside the dataset (green = has loaded data or answered queries this session, grey = idle so far)">${escapeHtml(path)}</span>
         <span class="luxar-loader-item__status" title="Geometry type this loader streams (points, lines, gsplats, or mesh)">${escapeHtml(label)}</span>
       </div>
       <div class="luxar-loader-item__metrics">
         <span title="Elements from this layer currently on screen (inside the active nD slice)">${metrics.visibleElements.toLocaleString()} ${escapeHtml(unit)}</span>
-        <span title="CPU memory this loader currently holds for loaded chunks and index data">${formatBytes(metrics.memoryUsed)}</span>
+        <span title="CPU memory this loader currently holds for loaded data and supporting structures">${formatBytes(metrics.memoryUsed)}</span>
       </div>
     </div>
   `;

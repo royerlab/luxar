@@ -165,4 +165,24 @@ describe('renderLoaderItem — mesh rows', () => {
     expect(html).toContain('300 tris');
     expect(html).not.toContain('pts');
   });
+
+  it('shows a loaded whole-node mesh as active with loader-neutral tooltips', () => {
+    const html = renderLoaderItem('/surface', {
+      type: 'mesh-whole-node',
+      path: '/surface',
+      queries: 0,
+      loads: 1,
+      errors: 0,
+      elementsLoaded: 900,
+      bytesLoaded: 1024,
+      visibleElements: 300,
+      avgQueryTime: 0,
+      avgLoadTime: 12,
+      memoryUsed: 2048,
+    });
+    expect(html).toContain('luxar-loader-item__path luxar-color--success');
+    expect(html).toContain('green = has loaded data or answered queries this session');
+    expect(html).toContain('CPU memory this loader currently holds for loaded data');
+    expect(html).not.toContain('loaded chunks and index data');
+  });
 });
