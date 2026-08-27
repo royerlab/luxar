@@ -112,11 +112,12 @@ test('a host that ignores Range fails loudly without initializing an empty scene
 
   const archiveBytes = zipSync(collectArchiveEntries(fixturePath), { level: 0 });
   const archiveURL = `${dataBaseURL}/range-ignored.luxar.zarr.zip`;
-  const startupErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
   page.on('console', (message) => {
-    if (message.type() === 'error') startupErrors.push(message.text());
+    if (message.type() === 'error') consoleErrors.push(message.text());
   });
-  page.on('pageerror', (error) => startupErrors.push(error.message));
+  page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.route(archiveURL, async (route) => {
     await route.fulfill({
       status: 200,
@@ -132,8 +133,9 @@ test('a host that ignores Range fails loudly without initializing an empty scene
   await page.goto(`/?src=${encodeURIComponent(archiveURL)}&debug`);
 
   await expect
-    .poll(() => startupErrors.join('\n'), { timeout: 10_000 })
+    .poll(() => consoleErrors.join('\n'), { timeout: 10_000 })
     .toMatch(/honours HTTP Range requests/);
+  expect(pageErrors).toEqual([]);
   expect(
     await page.evaluate(() => ({
       initialized: window.__luxarDebug?.app.initialized,
