@@ -197,7 +197,7 @@ def test_gsplat_info_handles_partition_file():
         info_dataset(p, show_histograms=False, bins=40)
 
 
-def test_partition_file_grafts_into_a_scene():
+def test_partition_file_grafts_into_a_scene(capsys):
     """A kind=partition .gsplats.zarr embeds into a scene as the identical
     kind=partition subtree. Regression: convert/add_gsplats_from_file used to
     crash on a partition root because GSplatData.load can't represent it. The
@@ -240,6 +240,7 @@ def test_partition_file_grafts_into_a_scene():
         # drop everything but max_elements/position_bounds.
         assert "bsp_tree" in root.attrs, "grafted partition wrapper lost bsp_tree"
         assert _bsp_leaf_order(dict(root.attrs["bsp_tree"])) == list(range(n_parts))
+        assert "viewer discards this bsp_tree" not in capsys.readouterr().out
 
 
 def test_partition_file_graft_warns_for_undisplayed_split_axis(capsys):
@@ -276,7 +277,7 @@ def test_partition_file_graft_warns_for_undisplayed_split_axis(capsys):
 
     output = capsys.readouterr().out
     assert "partition 'g' splits on undisplayed position column(s) [0]" in output
-    assert "viewer will discard this bsp_tree" in output
+    assert "viewer discards this bsp_tree" in output
 
 
 @pytest.mark.parametrize("nested", [False, True], ids=["flat-parts", "lod-parts"])

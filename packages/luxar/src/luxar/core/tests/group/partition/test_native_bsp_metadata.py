@@ -12,6 +12,7 @@ from luxar.core.group.partition import (
     serialized_bsp_leaf_labels,
     serialized_bsp_tree_separates,
     serialized_bsp_tree_straddles_centers,
+    warn_if_partition_axes_not_displayed,
 )
 from luxar.io.compiler import LuxarZarrCompiler
 
@@ -202,8 +203,63 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
     output_text = capsys.readouterr().out
     for name in ("points", "lines", "mesh", "gsplats"):
         assert f"partition '{name}'" in output_text
-    assert output_text.count("viewer will discard this bsp_tree") == 4
+    assert output_text.count("viewer discards this bsp_tree") == 4
     assert "displayed dimensions first" in output_text
+
+
+def test_partition_axis_warning_walks_descendant_splits(capsys) -> None:
+    """A hidden descendant axis cannot be masked by a displayed root split."""
+    tree = {
+        "axis": 1,
+        "split": 0.0,
+        "left": {"part": 0},
+        "right": {
+            "axis": 0,
+            "split": 1.0,
+            "left": {"part": 1},
+            "right": {"part": 2},
+        },
+    }
+
+    warn_if_partition_axes_not_displayed(tree, [1, 2, 3], "nested")
+
+    output = capsys.readouterr().out
+    assert "partition 'nested' splits on undisplayed position column(s) [0]" in output
+
+
+def test_add_partition_group_warns_for_hidden_descendant_axis(tmp_path, capsys) -> None:
+    """Hand-built partition groups run the same exact BSP-axis diagnostic."""
+    tree = {
+        "axis": 1,
+        "split": 0.0,
+        "left": {"part": 0},
+        "right": {
+            "axis": 0,
+            "split": 1.0,
+            "left": {"part": 1},
+            "right": {"part": 2},
+        },
+    }
+    dimensions = Dimensions(
+        [
+            Dimension("state", display=False, discrete=True),
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+        ]
+    )
+
+    with LuxarZarrCompiler(tmp_path / "manual-partition.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
+        scene.add_partition_group(
+            "manual",
+            display_type="points",
+            max_elements=10,
+            bsp_tree=tree,
+        )
+
+    output = capsys.readouterr().out
+    assert "partition 'manual' splits on undisplayed position column(s) [0]" in output
 
 
 def test_partition_axis_warning_has_no_false_positive(tmp_path, capsys) -> None:
@@ -256,7 +312,7 @@ def test_partition_axis_warning_has_no_false_positive(tmp_path, capsys) -> None:
             extend_to_all=[],
         )
 
-    assert "viewer will discard this bsp_tree" not in capsys.readouterr().out
+    assert "viewer discards this bsp_tree" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("geometry", ["points", "gsplats"])
@@ -342,4 +398,4 @@ def test_line_partition_prunes_and_renumbers_an_empty_region(tmp_path, capsys) -
     stored_tree = group.attrs["bsp_tree"]
     assert serialized_bsp_leaf_labels(stored_tree) == [0, 1]
     assert serialized_bsp_tree_separates(stored_tree, _part_boxes(group))
-    assert "viewer will discard this bsp_tree" not in capsys.readouterr().out
+    assert "viewer discards this bsp_tree" not in capsys.readouterr().out

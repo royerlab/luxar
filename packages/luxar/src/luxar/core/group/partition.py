@@ -28,8 +28,8 @@ This module hosts:
   native geometry adders, plus :func:`bsp_leaf_parts` for their shared
   left-first leaf flattening.
 * :func:`persist_pruned_bsp_tree` — the shared writer-side step that drops
-  unwritten regions, renumbers the surviving ``child_index`` labels, and stores
-  the result on a partition wrapper.
+  unwritten regions, renumbers the surviving ``child_index`` labels, stores the
+  result on a scene-attached partition wrapper, and diagnoses hidden split axes.
 * :func:`median_bsp_partition` / :func:`midpoint_bsp_partition` /
   :func:`sah_bsp_partition`, plus the median/midpoint polyline wrappers —
   flat-list conveniences retained as parity oracles for the tree builders.
@@ -383,7 +383,7 @@ def prune_serialized_bsp_tree(
 def persist_pruned_bsp_tree(
     node: "Group", tree: Optional[Dict[str, Any]], keep: Iterable[int]
 ) -> None:
-    """Persist ``tree`` after dropping regions that produced no child node."""
+    """Persist and diagnose ``tree`` on a scene-attached partition wrapper."""
     serialized_tree = prune_serialized_bsp_tree(tree, keep)
     if serialized_tree is not None:
         node._persist_attr("bsp_tree", serialized_tree)
@@ -1031,8 +1031,8 @@ def warn_if_partition_axes_not_displayed(
     if undisplayed:
         aprint(
             f"  ⚠️  partition '{name}' splits on undisplayed position column(s) "
-            f"{undisplayed}; the viewer will discard this bsp_tree and fall back "
-            "to centroid ordering. "
+            f"{undisplayed}; under this scene's displayed dimensions the viewer "
+            "discards this bsp_tree and falls back to centroid ordering. "
             "Put the displayed dimensions first to keep exact BSP ordering."
         )
 
