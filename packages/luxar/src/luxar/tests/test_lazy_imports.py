@@ -175,6 +175,12 @@ data.save(SPLATS_PATH)
 
 scaled = data.scale_intensity(0.5)
 np.testing.assert_allclose(scaled.amplitudes, amplitudes * 0.5)
+filtered = data.filter_by(amplitude_min=1.0)
+assert 0 < filtered.n_splats < N
+cropped = data.slice_by([slice(0, 5), slice(0, 5), slice(0, 5)])
+assert 0 < cropped.n_splats < N
+embedded = data.embed_dimension(5.0)
+np.testing.assert_allclose(embedded.centers[:, -1], 5.0)
 
 translated = data.translate(np.ones(3, dtype=np.float32))
 np.testing.assert_allclose(translated.centers, centers + 1)
@@ -200,6 +206,7 @@ GSplatData(additive_sublods=[sublod(32), sublod(N)]).save(LADDER_PATH)
 loaded_ladder = GSplatData.load(LADDER_PATH)
 assert loaded_ladder.n_additive_sublods == 2
 assert loaded_ladder.n_substitutive == 1
+assert loaded_ladder.additive_prefix(0).n_splats == 32
 
 GSplatData(
     substitutive_levels=[

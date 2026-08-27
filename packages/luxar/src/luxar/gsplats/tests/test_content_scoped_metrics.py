@@ -810,6 +810,47 @@ def test_intensity_restamps_when_only_a_coarse_level_changes() -> None:
     assert "quality" not in coarse.stats
 
 
+@pytest.mark.parametrize(
+    ("level_stats", "lod_stats"),
+    [
+        pytest.param({}, {}, id="empty"),
+        pytest.param({"quality": 0.9}, {}, id="level-stamp"),
+        pytest.param({}, {"energy_fraction_cum": 1.0}, id="rung-stamp"),
+        pytest.param(
+            {"reference_energy": 1.0},
+            {"lod_cumulative_n": 2},
+            id="both-stamps",
+        ),
+        pytest.param({"label": "fine"}, {"note": "keep"}, id="other-metadata"),
+    ],
+)
+def test_restamp_prefilter_is_weaker_than_exact_stamp_guard(
+    level_stats: Dict[str, Any], lod_stats: Dict[str, Any]
+) -> None:
+    from luxar.gsplats._data.filtering import _needs_reduction_lod_restamp
+    from luxar.gsplats.lod.restamp import _has_ladder_stamps
+
+    source_lod = _fitted(2).additive_sublods[0]
+    source = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=source_lod.centers,
+                        amplitudes=source_lod.amplitudes,
+                        cholesky_factors=source_lod.cholesky_factors,
+                        stats=lod_stats,
+                    )
+                ],
+                stats=level_stats,
+            )
+        ]
+    )
+    level = source.substitutive_levels[0]
+
+    assert not _has_ladder_stamps(level) or _needs_reduction_lod_restamp(source, source)
+
+
 def test_nonfinite_energy_is_reset_and_fraction_is_removed() -> None:
     source = _replace_level_amplitudes(_pyramid(), 0, [np.inf, 0.7, 0.4, 0.2])
     out = source.scale_intensity(0.5)

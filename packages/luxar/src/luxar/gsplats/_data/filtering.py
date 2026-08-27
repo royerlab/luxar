@@ -570,26 +570,44 @@ def _stats_after_content_change(
     :func:`drop_content_scoped_stats`), for the same reasons spelled out on
     :func:`_stats_after_filter`.
 
-    LOD restamping belongs to the optional gsplats extra. Its deferred import is
-    needed only when both artifacts have substitutive levels and the source
-    ladder carries some authored metadata. The metadata test is deliberately
-    broader than the restamper's exact key guard, so it may import for a no-op
-    but can never skip a refresh that would have changed the result.
+    LOD restamping belongs to the optional gsplats extra; the shared helper
+    keeps that deferred dependency boundary in one place.
     """
     if not changed:
         return result
     scrub_measured_stats(result)
 
+    return _refresh_reduction_lod_stats_if_needed(result, source)
+
+
+def _needs_reduction_lod_restamp(
+    result: _GSplatDataOps, source: _GSplatDataOps
+) -> bool:
+    """Whether a rewrite may have authored LOD stamps to refresh.
+
+    A non-empty metadata dict subsumes every stamp-key family the restamper can
+    recognize. This prefilter is therefore deliberately weaker than its exact
+    guard: it may import for a no-op, but cannot skip a refresh that would have
+    changed the result.
+    """
+
     source_levels = source.substitutive_levels
     result_levels = result.substitutive_levels
-    if (
-        not source_levels
-        or not result_levels
-        or not any(
+    return bool(
+        source_levels
+        and result_levels
+        and any(
             level.stats or any(lod.stats for lod in level.additive_sublods)
             for level in source_levels
         )
-    ):
+    )
+
+
+def _refresh_reduction_lod_stats_if_needed(
+    result: "GSplatData", source: _GSplatDataOps
+) -> "GSplatData":
+    """Refresh authored LOD stamps without loading the extra for unstamped data."""
+    if not _needs_reduction_lod_restamp(result, source):
         return result
 
     from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats

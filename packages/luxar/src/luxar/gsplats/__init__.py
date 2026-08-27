@@ -23,17 +23,20 @@ stack included — plus the purely geometric ``translate`` / ``transform`` /
 covers core scene authoring: a core-only install can build, write and read back
 a ``.gsplats.zarr``.
 
-Content-EDITING still needs the extra, and raises a bare
-``ModuleNotFoundError`` rather than the friendly install hint, because the
+Most content editing is also core-only. An edit whose source ladder carries
+authored LOD stamps must load the extra to recompute them, and raises a bare
+``ModuleNotFoundError`` rather than the friendly install hint because the
 exception bypasses the stub guard. Which root is missing depends on the route:
 
 * ``'scipy'``, reached through ``luxar.gsplats.lod`` (whose ``lod/additive.py``
-  imports ``scipy.sparse``) when stats are recomputed — the intensity ops
+  imports ``scipy.sparse``) when authored ladder stats are recomputed after the
+  intensity ops
   (``scale_intensity`` / ``normalize_intensity`` / ``clamp_intensity`` /
   ``affine_intensity``), a ``filter`` / ``filter_by`` that actually removes
   splats, the heuristic ``cull`` methods ``cumulative`` /
   ``amplitude_percentile`` / ``combined`` (hence a bare ``cull()``, whose
-  ``auto`` resolves to ``cumulative``), and
+  ``auto`` resolves to ``cumulative``), ``embed_dimension``, a strict
+  ``additive_prefix`` view, and
   ``add_gsplats_from_data(..., additive_lod={...})``, which BUILDS a ladder —
   unlike ``add_points(..., additive_lod=...)``, which does not go through
   ``lod`` and works core-only.
@@ -41,8 +44,9 @@ exception bypasses the stub guard. Which root is missing depends on the route:
   ``error_budget`` / ``redundancy``, and therefore an ``auto`` handed a
   ``target`` or a ``shape``.
 
-An operation that removes nothing (an all-passing filter, a ``cull`` whose
-retention keeps every splat) short-circuits before either import and works.
+Those rewrites work core-only on unstamped data. An operation that removes nothing
+(an all-passing filter, a ``cull`` whose retention keeps every splat)
+short-circuits before either import regardless of stamps.
 """
 
 from __future__ import annotations
