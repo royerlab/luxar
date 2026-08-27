@@ -968,11 +968,11 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
       const deferred = reg.get('/lod')!.children[1];
       deferred.ensureLoaded!();
-      await vi.waitFor(() => expect(deferred.loading).toBe(false));
+      await vi.waitFor(() => expect(deferred.failed).toBe(true));
 
       expect(deferred.object.name).toBe('');
       expect(deferred.release).toBeUndefined();
-      expect(deferred.failed).toBe(true);
+      expect(deferred.loading).toBe(false);
       expect(deferred.permanentlyFailed).not.toBe(true);
       expect(reg.retryLazyChildByLeafPath('')).toBe(false);
       expect(reg.retryLazyChildByLeafPath('/lod/child_1')).toBe(false);
@@ -980,7 +980,8 @@ describe('loadLodGroupNode — lazy level loading', () => {
       reg.setSelectorMode('/lod', { lockLevel: 1 });
       reg.evaluatePerFrame();
       for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
-      await vi.waitFor(() => expect(deferred.loading).toBe(false));
+      await vi.waitFor(() => expect(deferred.failed).toBe(true));
+      expect(deferred.loading).toBe(false);
 
       const attempts = loadSceneNodesMock.mock.calls.filter(
         ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
