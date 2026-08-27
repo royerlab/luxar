@@ -104,12 +104,16 @@ describe('updateOverviewTab — mesh parity', () => {
 
   it('drops the " total" suffix once a second type appears', () => {
     const container = paint(['visible-points', 'visible-triangles']);
+    // The dropped-element card sits in the same grid and is patched
+    // unconditionally: a mixed points+mesh scene must keep it live, not freeze
+    // it at its first-paint value because a second type showed up.
+    container.insertAdjacentHTML('beforeend', '<span data-field="dropped-elements"></span>');
     const stats = {
       datasetSize: 100,
       visiblePoints: 10,
       datasetTriangles: 4000,
       visibleTriangles: 1000,
-      droppedElements: 0,
+      droppedElements: 5000,
       avgQueryTime: 0,
       queriesPerSecond: 0,
     } as GlobalStats;
@@ -121,5 +125,66 @@ describe('updateOverviewTab — mesh parity', () => {
     expect(container.querySelector('[data-field="visible-triangles-sub"]')?.textContent).toBe(
       '25.0% of 4.0K'
     );
+    expect(container.querySelector('[data-field="dropped-elements"]')?.textContent).toBe('5.0K');
+  });
+
+  it('clears the dropped-element error color once the count returns to zero', () => {
+    // The recovery direction: a card that went red on one dataset must clear
+    // when a switch brings the count back to 0, which is the whole point of
+    // having a colored dropped-element card.
+    const container = paint(['visible-points']);
+    container.insertAdjacentHTML(
+      'beforeend',
+      '<span data-field="dropped-elements" class="luxar-color--error"></span>'
+    );
+    const stats = {
+      datasetSize: 100,
+      visiblePoints: 10,
+      droppedElements: 0,
+      avgQueryTime: 0,
+      queriesPerSecond: 0,
+    } as GlobalStats;
+
+    expect(updateOverviewTab(container, stats, CACHE, vi.fn())).toBe(true);
+    const dropped = container.querySelector('[data-field="dropped-elements"]');
+    expect(dropped?.textContent).toBe('0');
+    expect(dropped?.classList.contains('luxar-color--success')).toBe(true);
+    expect(dropped?.classList.contains('luxar-color--error')).toBe(false);
+  });
+
+  it('clears a dimmed count card once its elements scroll into view', () => {
+    // Presence is `total > 0 || visible > 0`, so a mesh sliced fully out is
+    // painted dimmed. When the slider moves, the count must not appear in a
+    // still-greyed card.
+    const container = paint(['visible-triangles']);
+    const triangles = container.querySelector('[data-field="visible-triangles"]') as HTMLElement;
+    triangles.className = 'luxar-color--dimmed';
+    const stats = {
+      datasetTriangles: 4000,
+      visibleTriangles: 1000,
+      droppedElements: 0,
+      avgQueryTime: 0,
+      queriesPerSecond: 0,
+    } as GlobalStats;
+
+    expect(updateOverviewTab(container, stats, CACHE, vi.fn())).toBe(true);
+    expect(triangles.textContent).toBe('1.0K');
+    expect(triangles.classList.contains('luxar-color--dimmed')).toBe(false);
+  });
+
+  it('dims a count card whose type is sliced fully out', () => {
+    const container = paint(['visible-triangles']);
+    const stats = {
+      datasetTriangles: 4000,
+      visibleTriangles: 0,
+      droppedElements: 0,
+      avgQueryTime: 0,
+      queriesPerSecond: 0,
+    } as GlobalStats;
+
+    expect(updateOverviewTab(container, stats, CACHE, vi.fn())).toBe(true);
+    const triangles = container.querySelector('[data-field="visible-triangles"]');
+    expect(triangles?.textContent).toBe('0');
+    expect(triangles?.classList.contains('luxar-color--dimmed')).toBe(true);
   });
 });

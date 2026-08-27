@@ -32,6 +32,27 @@ describe('renderOverviewContent — dropped elements', () => {
     expect(html).toContain('partition oversized nodes');
     expect(html).toContain('Split the dataset into multiple nodes or partition it');
   });
+
+  it('renders the card green when nothing was dropped', () => {
+    const html = renderOverviewContent(
+      {
+        datasetSize: 100,
+        visiblePoints: 80,
+        datasetSegments: 0,
+        visibleSegments: 0,
+        datasetSplats: 0,
+        visibleSplats: 0,
+        droppedElements: 0,
+        avgQueryTime: 0,
+        queriesPerSecond: 0,
+      } as GlobalStats,
+      { totalCacheMemory: 0, memoryLimit: 1 } as CacheMetrics
+    );
+
+    expect(html).toContain('DROPPED ELEMENTS');
+    expect(html).toContain('luxar-color--success');
+    expect(html).not.toContain('luxar-color--error');
+  });
 });
 
 describe('renderSecondaryMetrics — requests served', () => {
@@ -137,6 +158,9 @@ describe('renderOverviewContent — per-type hero cards', () => {
     ]) {
       expect(html).toContain(`data-field="${field}"`);
     }
+    // The dropped-element card is independent of which types are present: a
+    // mixed scene must still get it, so the patcher has a field to keep live.
+    expect(html).toContain('data-field="dropped-elements"');
     // The wrapping grid, not a fixed column count: `--cols-3` was emitted for
     // years with no CSS rule behind it, so three cards silently stacked.
     expect(html).toContain('luxar-overview-grid--auto');
