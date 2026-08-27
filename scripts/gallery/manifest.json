@@ -376,7 +376,7 @@
       "dataset": "datasets/demos/atp_synthase.luxar.zarr",
       "citation": "Zhou et al. 2015",
       "distance": 25,
-      "note": "distance 25: 53–55% still coverage across captures and 0/4316 border pixels across 10 poses; distance 24 reached 3/4316 at rock -10°. Distance 25 was chosen under a stricter zero-border stopping rule than the warn-only harness; fillTarget 0.6 reached 58% but cropped 248/4316 at rock -10°, so the absolute distance is retained. A zoom nudge is the same degree of freedom on the distance path and was covered by the sweep"
+      "note": "distance 25: 53\u201355% still coverage across captures and 0/4316 border pixels across 10 poses; distance 24 reached 3/4316 at rock -10\u00b0. Distance 25 was chosen under a stricter zero-border stopping rule than the warn-only harness; fillTarget 0.6 reached 58% but cropped 248/4316 at rock -10\u00b0, so the absolute distance is retained. A zoom nudge is the same degree of freedom on the distance path and was covered by the sweep"
     },
     {
       "id": "ocean",
@@ -816,6 +816,16 @@
       "script": "demo_gsplats_3d_drosophila_gastrulation.py",
       "dataset": "datasets/demos/gsplats_3d_drosophila_gastrulation.luxar.zarr",
       "citation": "Royer et al. 2016"
+    },
+    {
+      "id": "gsplats_3d_culling_study",
+      "title": "Splat Culling Study (Drosophila gastrulation)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_culling_study.py",
+      "dataset": "datasets/demos/gsplats_3d_culling_study.luxar.zarr",
+      "citation": "Royer et al. 2016",
+      "note": "Ten cumulative-amplitude cull levels of one Drosophila gastrulation fit stacked on a categorical Cull selector. The tile deliberately shows the DEFAULT slice, which is the uncut level: the demo's point is the comparison you make by stepping the selector, and any single culled level would misrepresent it as a picture of damage. No dimensionNav for the same reason -- the harness uses it to position a still, not to sweep."
     },
     {
       "id": "gsplats_3d_h2afva_stack",
