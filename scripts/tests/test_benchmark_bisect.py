@@ -21,9 +21,14 @@ def _command_path(tmp_path: Path) -> Path:
     return command_path
 
 
-def _run_script(cwd: Path, command_path: Path) -> subprocess.CompletedProcess[str]:
+def _run_script(
+    cwd: Path, command_path: Path, bench_python: str | None = None
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env.pop("LUXAR_BENCH_PYTHON", None)
+    if bench_python is None:
+        env.pop("LUXAR_BENCH_PYTHON", None)
+    else:
+        env["LUXAR_BENCH_PYTHON"] = bench_python
     env["PATH"] = str(command_path)
     return subprocess.run(
         ["/bin/bash", str(SCRIPT)],
@@ -60,3 +65,21 @@ def test_hatch_environment_is_resolved_from_repo_root(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert hatch_cwd.read_text() == str(REPO_ROOT)
     assert f"Hatch Python not found at {missing_env}/bin/python" in result.stdout
+
+
+def test_explicit_python_override_skips_hatch_resolution(tmp_path: Path) -> None:
+    command_path = _command_path(tmp_path)
+    hatch_called = tmp_path / "hatch-called"
+    hatch = command_path / "hatch"
+    hatch.write_text(f"#!/bin/bash\ntouch {hatch_called!s}\n")
+    hatch.chmod(0o755)
+    bench_python = tmp_path / "bench-python"
+    bench_python.write_text("#!/bin/bash\nexit 1\n")
+    bench_python.chmod(0o755)
+
+    result = _run_script(tmp_path, command_path, str(bench_python))
+
+    assert result.returncode == 1
+    assert f"Python: {bench_python}" in result.stdout
+    assert "PyTorch CUDA not available" in result.stdout
+    assert not hatch_called.exists()
