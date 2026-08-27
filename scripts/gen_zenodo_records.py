@@ -196,8 +196,8 @@ def _span(frames: list[dict[str, Any]], key: str) -> Optional[tuple[float, float
     return (min(values), max(values))  # type: ignore[type-var]
 
 
-def _read_part_provenance(value: Any) -> Optional[dict[str, Any]]:
-    """Aggregate a stacked store's component fits without inventing a mean."""
+def _read_part_provenance(value: Any, *, root_kind: Any) -> Optional[dict[str, Any]]:
+    """Aggregate component fits without mistaking nested parts for frames."""
     if not isinstance(value, list) or not value:
         return None
     fittings: list[dict[str, Any]] = []
@@ -210,8 +210,11 @@ def _read_part_provenance(value: Any) -> Optional[dict[str, Any]]:
         quotable &= (
             isinstance(reference, dict) and reference.get("kind") == "acquisition"
         )
+    nested = any(
+        isinstance(fitting.get("part_provenance"), list) for fitting in fittings
+    )
     return {
-        "frames": len(value),
+        "frames": None if root_kind == "partition" or nested else len(value),
         "quality_quotable": quotable,
         "source_bytes": _total(fittings, "source_bytes"),
         "psnr_db": _span(fittings, "psnr_db") if quotable else None,
@@ -291,7 +294,9 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     ):
         return None
     fit = _attrs(zf, root, "fitting/")
-    part_info = _read_part_provenance(fit.get("part_provenance"))
+    part_info = _read_part_provenance(
+        fit.get("part_provenance"), root_kind=root_attrs.get("kind")
+    )
     n_splats = _as_int(root_attrs.get("n_splats"))
     groups = {
         n[len(root) :].rsplit("/", 1)[0]

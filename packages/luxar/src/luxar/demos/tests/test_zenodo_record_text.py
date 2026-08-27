@@ -56,21 +56,20 @@ def _write_frame(
     psnr: float | None = 40.0,
     source_bytes: int | None = 1_000_000,
     gsplats: bool = True,
+    kind: str | None = None,
     part_provenance: list[dict[str, Any]] | None = None,
 ) -> None:
     """One single-store `.gsplats.zarr.zip`, as a bundle's frames are."""
     root = f"{path.name.split('.')[0]}.gsplats.zarr"
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr(f"{root}/.zgroup", json.dumps({"zarr_format": 2}))
-        zf.writestr(
-            f"{root}/.zattrs",
-            json.dumps(
-                {
-                    "format_type": "gsplats_zarr" if gsplats else "luxar_zarr",
-                    "n_splats": n_splats,
-                }
-            ),
-        )
+        root_attrs = {
+            "format_type": "gsplats_zarr" if gsplats else "luxar_zarr",
+            "n_splats": n_splats,
+        }
+        if kind is not None:
+            root_attrs["kind"] = kind
+        zf.writestr(f"{root}/.zattrs", json.dumps(root_attrs))
         zf.writestr(f"{root}/fitting/.zgroup", json.dumps({"zarr_format": 2}))
         fitting = {}
         if psnr is not None:
@@ -344,6 +343,42 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         assert info["psnr_db"] is None
         assert info["foreground_psnr_db"] is None
         assert info["quality_quotable"] is False
+
+    def test_partition_parts_are_not_reported_as_frames(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "partition.gsplats.zarr.zip"
+        _write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            kind="partition",
+            part_provenance=self._parts(None),
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] is None
+
+    def test_nested_single_part_is_not_reported_as_one_frame(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "single-part-timelapse.gsplats.zarr.zip"
+        _write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            part_provenance=[
+                {
+                    "coordinate": 0.0,
+                    "fitting": {"part_provenance": self._parts(None)},
+                }
+            ],
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] is None
 
     def test_check_does_not_demand_scores_classified_as_unquotable(
         self, gen: Any, monkeypatch: pytest.MonkeyPatch
