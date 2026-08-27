@@ -224,12 +224,12 @@ jobs:
   # an in-progress obsidian job in any repository run proves the busy box is live.
   #
   # Same-repo runs route to obsidian while the positive capacity timestamp is
-  # fresh OR another obsidian job is in progress. With no fresh capacity, five
-  # obsidian jobs waiting at least five minutes hit the backlog cap and burst
-  # new work to GitHub-hosted. The scan stops after ten eligible runs and also
-  # routes hosted if it has already found aged backlog; without that evidence,
-  # known liveness still wins. A stale publisher with no active work degrades to
-  # hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
+  # fresh OR another obsidian job is in progress. With no fresh capacity and
+  # fewer than ten eligible runs, five obsidian jobs waiting at least five
+  # minutes hit the backlog cap and burst new work to GitHub-hosted. At the
+  # ten-run scan bound, any aged obsidian backlog routes hosted; without that
+  # evidence, known liveness still wins. A stale publisher with no active work
+  # degrades to hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
   #
   # Freshness matters more than it looks: a job dispatched to a registered-but-
   # offline self-hosted runner does not fail, it QUEUES — for up to 24 hours. So
@@ -374,7 +374,7 @@ jobs:
             done
           done
           if [ "$active_obsidian" -eq 1 ]; then
-            echo "obsidian work is in progress with $queued_obsidian aged jobs queued -> routing to obsidian"
+            echo "obsidian work is in progress with at least $queued_obsidian aged jobs queued -> routing to obsidian"
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
             exit 0
           fi
