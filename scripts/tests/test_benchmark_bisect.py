@@ -83,3 +83,19 @@ def test_explicit_python_override_skips_hatch_resolution(tmp_path: Path) -> None
     assert f"Python: {bench_python}" in result.stdout
     assert "PyTorch CUDA not available" in result.stdout
     assert not hatch_called.exists()
+
+
+def test_python_override_supports_spaces_in_path(tmp_path: Path) -> None:
+    command_path = _command_path(tmp_path)
+    invoked = tmp_path / "python-invoked"
+    bench_python = tmp_path / "Application Support" / "hatch" / "bin" / "python"
+    bench_python.parent.mkdir(parents=True)
+    bench_python.write_text(f"#!/bin/bash\nprintf invoked > {invoked!s}\nexit 1\n")
+    bench_python.chmod(0o755)
+
+    result = _run_script(tmp_path, command_path, str(bench_python))
+
+    assert result.returncode == 1
+    assert f"Python: {bench_python}" in result.stdout
+    assert "PyTorch CUDA not available" in result.stdout
+    assert invoked.read_text() == "invoked"

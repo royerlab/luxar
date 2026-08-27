@@ -66,12 +66,12 @@ if [ ! -f "${HATCH_PYTHON}" ]; then
     exit 1
 fi
 
-if ! ${HATCH_PYTHON} -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+if ! "${HATCH_PYTHON}" -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
     echo "ERROR: PyTorch CUDA not available"
     exit 1
 fi
 
-echo "GPU: $(${HATCH_PYTHON} -c 'import torch; print(torch.cuda.get_device_name(0))')"
+echo "GPU: $("${HATCH_PYTHON}" -c 'import torch; print(torch.cuda.get_device_name(0))')"
 echo ""
 
 # Track results
@@ -123,7 +123,7 @@ for entry in "${COMMITS[@]}"; do
     # Build CUDA extension
     echo "  Building CUDA extension..."
     BUILD_START=$(date +%s)
-    if ! ${HATCH_PYTHON} "${WORKTREE}/${BUILD_SCRIPT_REL}" > "${WORKTREE}/build.log" 2>&1; then
+    if ! "${HATCH_PYTHON}" "${WORKTREE}/${BUILD_SCRIPT_REL}" > "${WORKTREE}/build.log" 2>&1; then
         echo "  ERROR: CUDA build failed. See ${WORKTREE}/build.log"
         cat "${WORKTREE}/build.log" | tail -20
         git -C "${REPO_ROOT}" worktree remove --force "${WORKTREE}" 2>/dev/null || true
@@ -152,7 +152,7 @@ for entry in "${COMMITS[@]}"; do
     # Run benchmark
     echo "  Running benchmarks..."
     BENCH_START=$(date +%s)
-    if ! ${HATCH_PYTHON} "${BENCHMARK_SCRIPT}" "${WORKTREE}" "${SHA}" "${OUTPUT_JSON}" 2>&1; then
+    if ! "${HATCH_PYTHON}" "${BENCHMARK_SCRIPT}" "${WORKTREE}" "${SHA}" "${OUTPUT_JSON}" 2>&1; then
         echo "  ERROR: Benchmark failed"
         FAILED=$((FAILED + 1))
         if [ ! -f "${OUTPUT_JSON}" ]; then
