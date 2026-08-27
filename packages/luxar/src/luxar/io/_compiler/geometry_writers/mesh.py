@@ -56,6 +56,9 @@ from ..node_common import (
 #: independent triangles is a normal test fixture, not an authoring mistake.
 _AUTHORING_LINT_MIN_FACES = 8
 
+#: Accepted shading values, public so the core read type can stay pinned to the writer.
+VALID_SHADING_MODES = ("smooth", "flat", "none")
+
 
 def _is_unwelded(faces: NDArray[np.integer], n_vertices: int) -> bool:
     """Whether the mesh looks like independent triangles rather than a surface.
@@ -135,8 +138,10 @@ def _validate_mesh_metadata(shading: Optional[str], double_sided: Any) -> None:
     """Validate mesh metadata that directly controls viewer rendering."""
     # A typo must not reach zarr: an unrecognised shading value would silently
     # take the stored-normal path.
-    if shading is not None and shading not in ("smooth", "flat", "none"):
-        raise ValueError(f"shading must be 'smooth', 'flat' or 'none', got {shading!r}")
+    if shading is not None and shading not in VALID_SHADING_MODES:
+        raise ValueError(
+            f"shading must be one of {VALID_SHADING_MODES}, got {shading!r}"
+        )
     if not isinstance(double_sided, bool):
         raise ValueError(
             f"double_sided must be a bool, got {type(double_sided).__name__}"

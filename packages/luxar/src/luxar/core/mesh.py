@@ -12,7 +12,7 @@ from .datanode import DataNode
 if TYPE_CHECKING:
     from ..io.writer import ZarrWriterProtocol
 
-ShadingMode = Literal["smooth", "flat"]
+ShadingMode = Literal["smooth", "flat", "none"]
 
 
 class Mesh(DataNode):
@@ -137,7 +137,7 @@ class Mesh(DataNode):
 
     @property
     def shading(self) -> ShadingMode:
-        """Get the shading mode ('smooth' or 'flat')."""
+        """Get the shading mode ('smooth', 'flat', or 'none')."""
         return cast(ShadingMode, str(self._metadata.get("shading", "flat")))
 
     @property

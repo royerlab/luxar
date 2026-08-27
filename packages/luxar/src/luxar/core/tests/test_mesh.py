@@ -9,6 +9,7 @@ must be refused from. The pure validators live in
 from __future__ import annotations
 
 import re
+from typing import get_args
 
 import numpy as np
 import pytest
@@ -16,8 +17,9 @@ import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import create_array
-from luxar.core.mesh import Mesh
+from luxar.core.mesh import Mesh, ShadingMode
 from luxar.io import LuxarScene, MeshData
+from luxar.io._compiler.geometry_writers.mesh import VALID_SHADING_MODES
 
 # A welded tetrahedron: 4 vertices, 4 faces, every vertex shared by 3 faces.
 _V = np.array(
@@ -82,6 +84,7 @@ def test_n_elements_counts_vertices_not_faces(tmp_path) -> None:
             "explicit_flat_overrides_normals",
         ),
         ({"shading": "smooth"}, "smooth", "explicit_smooth_without_normals_kept"),
+        ({"shading": "none"}, "none", "explicit_unlit_kept"),
     ],
 )
 def test_shading_resolution(tmp_path, kwargs, expected_shading, test_id) -> None:
@@ -95,6 +98,11 @@ def test_shading_resolution(tmp_path, kwargs, expected_shading, test_id) -> None
     store = _write(tmp_path, name=test_id, **kwargs)
     node = zarr.open_group(store, mode="r")[test_id]
     assert dict(node.attrs)["shading"] == expected_shading
+
+
+def test_shading_mode_type_matches_the_writer_contract() -> None:
+    """The public read type must cover every shading value the writer accepts."""
+    assert set(get_args(ShadingMode)) == set(VALID_SHADING_MODES)
 
 
 def test_double_sided_defaults_true_and_round_trips_false(tmp_path) -> None:
@@ -3450,7 +3458,8 @@ def test_shading_none_is_never_a_default(tmp_path) -> None:
 def test_unknown_shading_still_names_every_arm(tmp_path) -> None:
     """A typo'd `shading` must advertise the new third arm, not just the old two."""
     store = tmp_path / "bad_shading.luxar.zarr"
-    with pytest.raises(ValueError, match="'smooth', 'flat' or 'none'"):
+    expected = f"shading must be one of {VALID_SHADING_MODES}, got 'phong'"
+    with pytest.raises(ValueError, match=re.escape(expected)):
         with LuxarZarrCompiler(store) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_mesh("m", _V, _F, shading="phong")
