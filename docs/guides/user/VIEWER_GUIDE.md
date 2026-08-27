@@ -80,7 +80,7 @@ Choose an archive for distribution, not speed: it turns a scene with potentially
 hundreds of thousands of hosted objects into one artifact to upload, download, or
 attach to a paper. On the benchmark fixture, a first archive load used about 39%
 more requests and 48–60% more bytes than the directory form, adding 1–7% to time
-to first render. A warm revisit needed only 4 requests and about 88 kB, so the
+to first render. A warm revisit needed only 4–6 requests and about 88 kB, so the
 extra cost is concentrated in the cold load.
 
 ---

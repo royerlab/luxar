@@ -5,7 +5,8 @@
  * catches the routing failure where an archive can reach `initialized` with an
  * empty scene. This spec packages an existing generated fixture, loads both
  * forms through the normal E2E data server, and requires identical element
- * counts.
+ * counts. The DEFLATE fixture is smaller than unzipit's end-of-directory search
+ * window, so it is retained in one read; the STORED case covers windowed reads.
  */
 
 import { fileURLToPath } from 'url';

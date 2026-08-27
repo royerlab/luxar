@@ -65,12 +65,11 @@ ceiling that differs from what was sized prints as
 
 Four workers is still the ceiling — the binding resource is the Python dataset
 server on port 9000, not the GPU — and the count is that ceiling scaled by the
-box's free fraction,
-`clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands are fractions of the
-box: 4 while at least 7/8 of it is free, 3 down to 5/8, 2 down to 3/8, 1 below
-that — on 16 cores, 4 up to load 2, 3 up to load 6, 2 up to load 10, then 1. An
-**idle** box of any size keeps the ceiling, so this only ever backs off under
-load. Measured on a 16-core box at a 1-minute load of 12–24,
+box's free fraction, `clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands
+are fractions of the box: 4 while at least 7/8 of it is free, 3 down to 5/8, 2
+down to 3/8, 1 below that — on 16 cores, 4 up to load 2, 3 up to load 6, 2 up to
+load 10, then 1. An **idle** box of any size keeps the ceiling, so this only ever
+backs off under load. Measured on a 16-core box at a 1-minute load of 12–24,
 `dimension-animation.spec.ts` failed 15 of 21 tests at four workers and passed
 21 of 21 at one, every failure a bare action timeout with the element already
 visible/enabled/stable. Only those two counts were measured — 16 cores at load

@@ -273,9 +273,9 @@ test.describe('First-Time User Experience', () => {
     await expect(browser).toBeVisible({ timeout: 5000 });
 
     // The search bar renders once a listing produced entries. The E2E data
-    // server always emits an HTML listing, so this is a
-    // hard requirement, not a "skip if the server can't list" — skipping here
-    // would silently retire the only E2E coverage of this behaviour.
+    // server always emits an HTML listing, so this is a hard requirement, not a
+    // "skip if the server can't list" — skipping here would silently retire the
+    // only E2E coverage of this behaviour.
     const searchBar = page.locator('#luxar-dataset-browser-search-bar');
     await expect(searchBar).toBeVisible({ timeout: 5000 });
 

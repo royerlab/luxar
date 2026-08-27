@@ -52,13 +52,12 @@ without guessing at the cause (`--workers=N`, `--ui`, a watch session and
 
 Four workers remains the ceiling — the binding resource is the Python dataset
 server on port 9000, not the GPU — and the count is that ceiling scaled by the
-box's free fraction,
-`clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands are fractions of the
-box, so they hold at any size: 4 while at least 7/8 of it is free, 3 down to 5/8,
-2 down to 3/8, 1 below that. On 16 cores that is 4 up to load 2, 3 up to load 6,
-2 up to load 10, then 1. An **idle** box of any size keeps the ceiling, so the
-sizing only ever backs off under load. On a workstation shared with CI runner
-slots that matters a lot: at a 1-minute load of 12–24 on 16 cores,
+box's free fraction, `clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands
+are fractions of the box, so they hold at any size: 4 while at least 7/8 of it is
+free, 3 down to 5/8, 2 down to 3/8, 1 below that. On 16 cores that is 4 up to load
+2, 3 up to load 6, 2 up to load 10, then 1. An **idle** box of any size keeps the
+ceiling, so the sizing only ever backs off under load. On a workstation shared
+with CI runner slots that matters a lot: at a 1-minute load of 12–24 on 16 cores,
 `dimension-animation.spec.ts` failed 15 of 21 tests at four workers and passed
 21 of 21 at one, every failure a wall-clock action timeout
 (`page.click: Timeout 10000ms exceeded`, element already visible/enabled/stable)
