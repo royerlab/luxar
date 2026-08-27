@@ -14,7 +14,11 @@ import type { NodeBuildCtx } from './build-ctx';
 // stays below the global 64-request fetch gate while collapsing waterfalls.
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
-/** Signature of the injected recursive scene-graph walker. */
+/**
+ * Signature of the recursive scene-graph walker. Injected at the call site to
+ * break the otherwise-cyclic import with `load-scene-nodes.ts`; a static
+ * back-reference would fail the dep-cruiser cycle check.
+ */
 export type LoadSceneChildren = (
   node: SceneNode,
   parentThree: THREE.Object3D,

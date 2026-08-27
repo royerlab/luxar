@@ -265,7 +265,7 @@ function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeValidati
  * The recursion handle is passed in (not imported) to break what would
  * otherwise be a cyclic dependency with ``load-scene-nodes.ts`` — the
  * dep-cruiser check rejects static back-references. Same pattern as
- * ``load-lod-group-node.ts``.
+ * ``load-children-concurrently.ts``.
  *
  * No registry needed — Partition has no per-frame decision to make. THREE's
  * per-mesh frustum culling handles per-part culling automatically once
