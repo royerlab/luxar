@@ -23,26 +23,32 @@ stack included — plus the purely geometric ``translate`` / ``transform`` /
 covers core scene authoring: a core-only install can build, write and read back
 a ``.gsplats.zarr``.
 
-Content-EDITING still needs the extra, and raises a bare
-``ModuleNotFoundError`` rather than the friendly install hint, because the
+Most content editing is also core-only. An edit whose source ladder carries
+authored LOD stamps must load the extra to recompute them, and raises a bare
+``ModuleNotFoundError`` rather than the friendly install hint because the
 exception bypasses the stub guard. Which root is missing depends on the route:
 
 * ``'scipy'``, reached through ``luxar.gsplats.lod`` (whose ``lod/additive.py``
-  imports ``scipy.sparse``) when stats are recomputed — the intensity ops
+  imports ``scipy.sparse``) when authored ladder stats are recomputed after the
+  intensity ops
   (``scale_intensity`` / ``normalize_intensity`` / ``clamp_intensity`` /
   ``affine_intensity``), a ``filter`` / ``filter_by`` that actually removes
-  splats, the heuristic ``cull`` methods ``cumulative`` /
+  splats, a ``slice_by`` that crops, the heuristic ``cull`` methods ``cumulative`` /
   ``amplitude_percentile`` / ``combined`` (hence a bare ``cull()``, whose
-  ``auto`` resolves to ``cumulative``), and
-  ``add_gsplats_from_data(..., additive_lod={...})``, which BUILDS a ladder —
-  unlike ``add_points(..., additive_lod=...)``, which does not go through
-  ``lod`` and works core-only.
+  ``auto`` resolves to ``cumulative``), ``embed_dimension``, and a strict
+  ``additive_prefix`` view.
 * ``'torch'``, imported earlier still — the rendering-based ``cull`` methods
   ``error_budget`` / ``redundancy``, and therefore an ``auto`` handed a
   ``target`` or a ``shape``.
 
+Building a ladder with ``add_gsplats_from_data(..., additive_lod={...})`` also
+needs ``'scipy'`` regardless of source stamps. Unlike
+``add_points(..., additive_lod=...)``, that route goes through ``lod``.
+
+The stamp-driven rewrites in the first bullet work core-only on unstamped data.
 An operation that removes nothing (an all-passing filter, a ``cull`` whose
-retention keeps every splat) short-circuits before either import and works.
+retention keeps every splat) short-circuits before either import regardless of
+stamps.
 """
 
 from __future__ import annotations

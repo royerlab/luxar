@@ -10,7 +10,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from .base import _GSplatDataOps, _readonly, _readonly_opt, _readonly_sublod
-from .filtering import drop_content_scoped_stats
+from .filtering import (
+    _refresh_reduction_lod_stats_if_needed,
+    drop_content_scoped_stats,
+)
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import (
@@ -123,9 +126,7 @@ class LODViewsMixin(_GSplatDataOps):
         )
         if level + 1 < n:
             drop_content_scoped_stats(view.stats)
-            from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
-
-            view = refresh_reduction_lod_stats(view, self)
+            view = _refresh_reduction_lod_stats_if_needed(view, self)
         return view
 
     def flattened(self) -> "GSplatData":

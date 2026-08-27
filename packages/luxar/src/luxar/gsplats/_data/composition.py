@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, 
 import numpy as np
 
 from .base import _concat_additive_levels, _GSplatDataOps
+from .filtering import _refresh_reduction_lod_stats_if_needed
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData, SubstitutiveLevel
@@ -548,7 +549,6 @@ class CompositionMixin(_GSplatDataOps):
             >>> data_4d = data_3d.embed_dimension(time_values, sigma=0.5)
         """
         from luxar.gsplats.gsplat_data import AdditiveSubLOD
-        from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
         from luxar.gsplats.utils.trils import embed_cholesky_packed
 
         # A 0-d numpy array is semantically a scalar; unwrap it so the
@@ -578,7 +578,7 @@ class CompositionMixin(_GSplatDataOps):
             out = self._map_substitutive(
                 lambda lvl: lvl.embed_dimension(scalar_value, sigma)
             )
-            return refresh_reduction_lod_stats(out, self)
+            return _refresh_reduction_lod_stats_if_needed(out, self)
 
         is_scalar = np.isscalar(values)
         values_arr: Optional[np.ndarray] = None
@@ -611,7 +611,7 @@ class CompositionMixin(_GSplatDataOps):
             )
 
         out = self._map_additive(_embed_lod)
-        return refresh_reduction_lod_stats(out, self)
+        return _refresh_reduction_lod_stats_if_needed(out, self)
 
     @classmethod
     def merge_with_channel_colors(
