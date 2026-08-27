@@ -315,6 +315,8 @@ def validate_image_input(
     Raises:
         ValueError: If image cannot be processed
     """
+    fmt = validate_image_format(fmt)
+
     # Pre-encoded inputs keep their actual format rather than being relabelled.
     if isinstance(image, bytes):
         return image, _detect_encoded_image_format(image)
@@ -338,8 +340,6 @@ def validate_image_input(
                 f"the {detected_fmt} payload"
             )
         return image_bytes, detected_fmt
-
-    fmt = validate_image_format(fmt)
 
     # Try PIL Image
     try:

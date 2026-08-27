@@ -213,7 +213,7 @@ class TestValidateImageInput:
 
     def test_invalid_format(self):
         with pytest.raises(ValueError, match="format"):
-            validate_image_input(np.zeros((4, 4, 3), dtype=np.uint8), fmt="bmp")
+            validate_image_input(b"\x89PNG", fmt="bmp")
 
     def test_unsupported_type(self):
         with pytest.raises(ValueError, match="Cannot process"):
