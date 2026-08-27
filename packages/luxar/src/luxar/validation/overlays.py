@@ -44,6 +44,13 @@ VALID_TRANSITIONS: Set[str] = {"none", "fade"}
 # Valid image storage formats
 VALID_IMAGE_FORMATS: Set[str] = {"png", "jpeg", "webp"}
 
+_IMAGE_SUFFIX_FORMATS = {
+    ".jpeg": "jpeg",
+    ".jpg": "jpeg",
+    ".png": "png",
+    ".webp": "webp",
+}
+
 # Font presets
 FONT_PRESETS: Set[str] = {"sans", "serif", "mono"}
 
@@ -299,27 +306,38 @@ def validate_image_input(
     PIL Image, or anything imageio can read.
 
     Args:
-        image: Image data in any supported format
-        fmt: Target encoding format ('png', 'jpeg', 'webp')
+        image: Image data in any supported format. Pre-encoded bytes and path
+            payloads must be PNG, JPEG, or WebP; a recognized path extension
+            must match the payload.
+        fmt: Target encoding format for decoded inputs ('png', 'jpeg', 'webp')
 
     Returns:
         Tuple of (encoded_bytes, format_string)
 
     Raises:
-        ValueError: If image cannot be processed
+        ValueError: If the image cannot be processed, a pre-encoded payload is
+            unsupported, or a recognized path extension contradicts its payload.
     """
     fmt = validate_image_format(fmt)
 
-    # Already bytes — assume pre-encoded
+    # Pre-encoded inputs keep their actual format rather than being relabelled.
     if isinstance(image, bytes):
-        return image, fmt
+        return image, _detect_encoded_image_format(image)
 
-    # File path — read the file
+    # Recognized file suffixes must agree with the payload format.
     if isinstance(image, (str, Path)):
         path = Path(image)
         if not path.exists():
             raise ValueError(f"Image file not found: {path}")
-        return path.read_bytes(), fmt
+        image_bytes = path.read_bytes()
+        detected_fmt = _detect_encoded_image_format(image_bytes, context=path)
+        suffix_fmt = _IMAGE_SUFFIX_FORMATS.get(path.suffix.lower())
+        if suffix_fmt is not None and suffix_fmt != detected_fmt:
+            raise ValueError(
+                f"Image file extension '{path.suffix}' does not match "
+                f"the {detected_fmt} payload"
+            )
+        return image_bytes, detected_fmt
 
     # Try PIL Image
     try:
@@ -351,6 +369,23 @@ def validate_image_input(
         f"Cannot process image of type {type(image).__name__}. "
         f"Supported: str/Path, bytes, numpy array, PIL Image, or imageio-compatible."
     )
+
+
+def _detect_encoded_image_format(
+    image: bytes,
+    context: Optional[Path] = None,
+) -> str:
+    """Detect a supported encoded image format from its signature."""
+    if image.startswith(b"\x89PNG"):
+        return "png"
+    if image.startswith(b"\xff\xd8"):
+        return "jpeg"
+    if image.startswith(b"RIFF") and image[8:12] == b"WEBP":
+        return "webp"
+    message = "Unsupported encoded image format. Expected PNG, JPEG, or WebP payload."
+    if context is None:
+        raise ValueError(message)
+    raise ValueError(f"{message.removesuffix('.')}: {context}")
 
 
 def _pil_to_bytes(image: Any, fmt: str) -> bytes:
