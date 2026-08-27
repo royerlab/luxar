@@ -378,6 +378,12 @@ export interface GSplatsUserData {
   /** Currently visible splat count after nD slicing (updated on view change) */
   visibleSplatCount?: number;
 
+  /** Elements requested by the latest successful commit, before the GPU capacity clamp. */
+  requestedElementCount?: number;
+
+  /** Elements omitted by the latest successful commit's GPU capacity clamp. */
+  droppedElementCount?: number;
+
   /**
    * The ``SceneLoader._updateVersion`` this mesh's committed geometry was
    * loaded for. Written by ``commitGSplatsGeometry`` on every commit and read

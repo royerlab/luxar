@@ -138,6 +138,7 @@ export interface SceneLoaderMonitorPort {
   setSceneGraph(root: SceneGraphNode): void;
   forceUpdate(): void;
   updateVisibleCount(type: GeometryTypeName, count: number): void;
+  updateDroppedElementCount(count: number): void;
   /**
    * Per-node visible counts after nD slicing, keyed by scene-graph path
    * (mesh `name`). Drives the "(N visible after slicing)" suffix in the

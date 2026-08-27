@@ -38,6 +38,8 @@ describe('SceneGraphModel', () => {
     };
 
     model.setSceneGraph(root);
+    model.updateDroppedElementCount(9);
+    model.setSceneGraph(root);
 
     const state = model.getSceneGraph();
     expect(state.root).toBe(root);
@@ -45,6 +47,7 @@ describe('SceneGraphModel', () => {
     expect(state.nodesByType).toEqual({ points: 1, lines: 0, gsplats: 2, mesh: 1 });
     expect(state.totalByType).toEqual({ points: 10, lines: 0, gsplats: 80, mesh: 12 });
     expect(state.visibleByType).toEqual(state.totalByType);
+    expect(state.droppedElements).toBe(0);
   });
 
   it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5])(

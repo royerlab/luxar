@@ -303,7 +303,6 @@ import io
 import ntpath
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -318,10 +317,10 @@ from luxar.demos import (
     add_demo_caption,
     launch_viewer,
     parse_demo_flags,
-    require_module,
     warn_if_no_cuda_gpu,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.demos._h5j import decode_h5j_channel, reference_channel_index
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
@@ -838,89 +837,6 @@ def fetch_sample(sample: str) -> Path:
 # =============================================================================
 # Reference (neuropil) channel — FlyLight H5J
 # =============================================================================
-
-
-def reference_channel_index(h5j_path: Path) -> int:
-    """Index of the reference channel, read from the file's own ``channel_spec``.
-
-    Do not hard-code this. ``channel_spec`` is a per-sample string like
-    ``sssr`` (three signal channels then the reference); other releases carry
-    different counts, and assuming index 3 would silently decode a *signal*
-    channel as if it were the neuropil — a plausible-looking but wrong scene.
-    """
-    h5py = require_module("h5py")
-    with h5py.File(h5j_path, "r") as f:
-        spec = f.attrs["channel_spec"].decode()
-    if "r" not in spec:
-        raise RuntimeError(
-            f"{h5j_path.name} has channel_spec {spec!r} with no reference "
-            "channel, so there is no neuropil to render."
-        )
-    return spec.index("r")
-
-
-def decode_h5j_channel(h5j_path: Path, channel: int) -> np.ndarray:
-    """Decode one channel of an H5J stack to a (Z, Y, X) uint8 volume.
-
-    H5J stores each channel as an HEVC video stream inside a 1-D uint8 HDF5
-    dataset. Frames are padded up to the codec's block size (``pad_right`` /
-    ``pad_bottom``), so decoded frames must be cropped back to the stated size.
-    """
-    h5py = require_module("h5py")
-
-    with h5py.File(h5j_path, "r") as f:
-        grp = f["Channels"]
-        w = int(grp.attrs["width"][0])
-        h = int(grp.attrs["height"][0])
-        n = int(grp.attrs["frames"][0])
-        pad_r = int(grp.attrs["pad_right"][0])
-        pad_b = int(grp.attrs["pad_bottom"][0])
-        spec = f.attrs["channel_spec"].decode()
-        blob = grp[f"Channel_{channel}"][:].tobytes()
-
-    ew, eh = w + pad_r, h + pad_b
-    aprint(f"channel {channel} of spec {spec!r}: {w}x{h}x{n} (encoded {ew}x{eh})")
-
-    stream = h5j_path.with_suffix(f".ch{channel}.hevc")
-    stream.write_bytes(blob)
-    try:
-        proc = subprocess.run(  # noqa: S603 - fixed argv, path from our cache
-            [
-                "ffmpeg",
-                "-v",
-                "error",
-                "-i",
-                str(stream),
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "gray",
-                "-",
-            ],
-            capture_output=True,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg failed: {proc.stderr.decode()[:500]}")
-        raw = np.frombuffer(proc.stdout, dtype=np.uint8)
-    finally:
-        stream.unlink(missing_ok=True)
-
-    # Refuse a short or ragged decode rather than silently returning a
-    # thinner volume: the neuropil would then span a different physical extent
-    # from the neurons and the merged scene would be misregistered — a much
-    # harder thing to notice than an exception here.
-    expected = n * ew * eh
-    if raw.size != expected:
-        raise RuntimeError(
-            f"H5J channel {channel} decoded to {raw.size} bytes, expected "
-            f"{expected} ({n} frames of {ew}x{eh}). The stream is truncated or "
-            "ffmpeg dropped frames; the neuropil would be misregistered "
-            "against the neurons."
-        )
-
-    vol = raw.reshape(n, eh, ew)[:, :h, :w]
-    aprint(f"  decoded {n} frames -> {vol.shape}, mean={vol.mean():.2f}")
-    return vol
 
 
 def _atomic_write(path: Path, payload: bytes) -> None:

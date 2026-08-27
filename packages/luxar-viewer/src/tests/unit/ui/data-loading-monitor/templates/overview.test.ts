@@ -10,6 +10,30 @@ import {
 } from '../../../../../ui/data-loading-monitor/templates/overview';
 import type { CacheMetrics, GlobalStats } from '../../../../../types/data-monitor-types';
 
+describe('renderOverviewContent — dropped elements', () => {
+  it('renders a red card with the partition remedy when elements were dropped', () => {
+    const html = renderOverviewContent(
+      {
+        datasetSize: 100,
+        visiblePoints: 80,
+        datasetSegments: 0,
+        visibleSegments: 0,
+        datasetSplats: 0,
+        visibleSplats: 0,
+        droppedElements: 20,
+        avgQueryTime: 0,
+        queriesPerSecond: 0,
+      } as GlobalStats,
+      { totalCacheMemory: 0, memoryLimit: 1 } as CacheMetrics
+    );
+
+    expect(html).toContain('DROPPED ELEMENTS');
+    expect(html).toContain('luxar-color--error');
+    expect(html).toContain('partition oversized nodes');
+    expect(html).toContain('Split the dataset into multiple nodes or partition it');
+  });
+});
+
 describe('renderSecondaryMetrics — requests served', () => {
   const memory = { used: 0, limit: 1000 };
   const querySpeed = { avgTime: 0, perSec: 0 };
@@ -58,6 +82,7 @@ function statsWith(over: Partial<GlobalStats> = {}): GlobalStats {
     visibleSplats: 0,
     datasetTriangles: 0,
     visibleTriangles: 0,
+    droppedElements: 0,
     totalQueries: 0,
     totalLoads: 0,
     avgQueryTime: 0,

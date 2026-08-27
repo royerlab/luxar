@@ -36,6 +36,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -759,11 +760,62 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     )
 
     pick_runner = jobs["pick-runner"]
-    assert pick_runner["permissions"] == {"actions": "read"}, (
-        "pick-runner needs only actions:read to inspect repository run activity"
+    assert pick_runner["permissions"] == {"actions": "read", "contents": "read"}, (
+        "pick-runner needs actions:read plus read-only access to its scanner"
     )
-    assert pick_runner["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}", (
+    pick_steps = {
+        step.get("id", step.get("name")): step for step in pick_runner["steps"]
+    }
+    assert pick_steps["pick"]["env"]["GH_TOKEN"] == "${{ github.token }}", (
         "pick-runner must authenticate gh api with the workflow token"
+    )
+    checkout = pick_steps["scanner-checkout"]
+    assert checkout["continue-on-error"] is True
+    assert checkout["with"] == {
+        "persist-credentials": False,
+        "sparse-checkout": "scripts",
+    }
+    assert list(pick_steps).index("guard") < list(pick_steps).index(
+        "scanner-checkout"
+    ), "the fork guard must run before repository code is checked out"
+    assert pick_steps["checkout-fallback"]["if"] == (
+        "steps.guard.outputs.label == '' && steps.scanner-checkout.outcome != 'success'"
+    )
+    assert "label=ubuntu-latest" in pick_steps["checkout-fallback"]["run"]
+    assert pick_steps["pick"]["if"] == (
+        "steps.guard.outputs.label == '' && steps.scanner-checkout.outcome == 'success'"
+    )
+
+    watchdog = jobs["queue-watchdog"]
+    assert watchdog["if"] == "needs.pick-runner.outputs.label == 'obsidian'"
+    assert watchdog["permissions"] == {"actions": "write", "contents": "read"}
+    watchdog_checkout = watchdog["steps"][0]
+    assert watchdog_checkout["continue-on-error"] is True
+    assert watchdog_checkout["with"] == {
+        "persist-credentials": False,
+        "sparse-checkout": "scripts",
+    }
+    assert "not cancelling" in watchdog["steps"][1]["run"]
+    assert watchdog["steps"][2]["if"] == ("steps.scanner-checkout.outcome == 'success'")
+
+
+def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
+    """Every dynamically routed job needs headroom for obsidian starvation."""
+    jobs = yaml.safe_load(workflow)["jobs"]
+    routed_timeouts = {
+        name: job.get("timeout-minutes")
+        for name, job in jobs.items()
+        if "pick-runner.outputs.label" in str(job.get("runs-on", ""))
+    }
+    assert routed_timeouts, "CI must keep at least one job behind pick-runner"
+    insufficient = {
+        name: timeout
+        for name, timeout in routed_timeouts.items()
+        if not isinstance(timeout, int) or timeout < 120
+    }
+    assert not insufficient, (
+        "every pick-runner-routed job needs at least 120 minutes of timeout "
+        f"headroom; under-budget jobs: {insufficient}"
     )
 
 
@@ -998,9 +1050,12 @@ def _run_pick_runner(
     old_empty_runs: int = 0,
     max_queued_obsidian: str = "",
     api_error: str = "",
+    scanner_error: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     """Run the real inline router against deterministic repository activity."""
-    router = yaml.safe_load(workflow)["jobs"]["pick-runner"]["steps"][0]["run"]
+    steps = yaml.safe_load(workflow)["jobs"]["pick-runner"]["steps"]
+    guard = next(step["run"] for step in steps if step.get("id") == "guard")
+    router = next(step["run"] for step in steps if step.get("id") == "pick")
     output_path = tmp_path / "github-output"
 
     fake_gh = tmp_path / "gh"
@@ -1067,14 +1122,27 @@ elif "/runs/" in endpoint and "/jobs?" in endpoint:
         1000 - int(os.environ["ROUTER_QUEUED_JOB_AGE_SECONDS"]), UTC
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
     jobs = [
-        {"status": "queued", "labels": ["obsidian"], "created_at": created_at}
-    ] * int(queued)
+        {
+            "name": f"queued-{index}",
+            "status": "queued",
+            "labels": ["obsidian"],
+            "created_at": created_at,
+        }
+        for index in range(int(queued))
+    ]
     if "/runs/9999/jobs?" in endpoint:
         jobs.extend([
-            {"status": "queued", "labels": ["ubuntu-latest"], "created_at": created_at}
-        ] * int(os.environ["ROUTER_QUEUED_HOSTED_JOBS"]))
+            {
+                "name": f"hosted-{index}",
+                "status": "queued",
+                "labels": ["ubuntu-latest"],
+                "created_at": created_at,
+            }
+            for index in range(int(os.environ["ROUTER_QUEUED_HOSTED_JOBS"]))
+        ])
     if "/runs/9999/jobs?" in endpoint and os.environ["ROUTER_OTHER_ACTIVE"] == "1":
         jobs.append({
+            "name": "active",
             "status": "in_progress",
             "labels": [os.environ["ROUTER_ACTIVE_JOB_LABEL"]],
             "created_at": "1970-01-01T00:00:00Z",
@@ -1089,6 +1157,17 @@ else:
     fake_date = tmp_path / "date"
     fake_date.write_text("#!/bin/sh\necho 1000\n", encoding="utf-8")
     fake_date.chmod(0o755)
+    fake_python = tmp_path / "python3"
+    fake_python.write_text(
+        """#!/bin/sh
+case "$SCANNER_ERROR:$*" in
+  scan:*scripts/ci_queue_scan.py*scan*|all:*scripts/ci_queue_scan.py*) exit 1 ;;
+esac
+exec "$REAL_PYTHON" "$@"
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
 
     env = os.environ | {
         "PATH": f"{tmp_path}:{os.environ['PATH']}",
@@ -1109,7 +1188,22 @@ else:
         "ROUTER_QUEUED_JOB_AGE_SECONDS": str(queued_job_age_seconds),
         "ROUTER_QUEUED_HOSTED_JOBS": str(queued_hosted_jobs),
         "ROUTER_QUEUED_OBSIDIAN_JOBS": str(queued_obsidian_jobs),
+        "REAL_PYTHON": sys.executable,
+        "SCANNER_ERROR": scanner_error,
     }
+    guard_result = subprocess.run(
+        ["bash", "-e", "-c", guard],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+        env=env,
+        cwd=REPO,
+    )
+    if output_path.exists():
+        match = re.search(r"^label=(.+)$", output_path.read_text(), re.MULTILINE)
+        if match:
+            return guard_result, match.group(1)
     result = subprocess.run(
         ["bash", "-e", "-c", router],
         text=True,
@@ -1117,6 +1211,7 @@ else:
         check=False,
         timeout=10,
         env=env,
+        cwd=REPO,
     )
     label = ""
     if output_path.exists():
@@ -1163,6 +1258,17 @@ def test_pick_runner_fails_api_read_toward_obsidian(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == "obsidian"
+
+
+def test_pick_runner_fails_helper_crash_toward_obsidian(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A broken scanner must preserve the router's unpaid fail-safe."""
+    result, label = _run_pick_runner(workflow, tmp_path, scanner_error="scan")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == "obsidian"
+    assert "helper activity unreadable" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -1371,9 +1477,15 @@ def _run_queue_watchdog(
     job_api_error: bool = False,
     own_job_api_error_call: int = 0,
     other_job_api_error_call: int = 0,
+    scanner_error: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
     """Run the real inline watchdog against deterministic GitHub API snapshots."""
-    watchdog = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"][0]["run"]
+    watchdog_steps = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"]
+    watchdog = next(
+        step["run"]
+        for step in watchdog_steps
+        if step.get("name", "").startswith("Cancel the run")
+    )
     hosted_jobs = [
         _hosted_job("changes", "completed"),
         _hosted_job("pick-runner", "completed"),
@@ -1467,6 +1579,17 @@ print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
         command = tmp_path / name
         command.write_text(body, encoding="utf-8")
         command.chmod(0o755)
+    fake_python = tmp_path / "python3"
+    fake_python.write_text(
+        """#!/bin/sh
+case "$SCANNER_ERROR:$*" in
+  scan:*scripts/ci_queue_scan.py*scan*|classify:*scripts/ci_queue_scan.py*classify*|all:*scripts/ci_queue_scan.py*) exit 1 ;;
+esac
+exec "$REAL_PYTHON" "$@"
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
 
     env = os.environ | {
         "PATH": f"{tmp_path}:{os.environ['PATH']}",
@@ -1486,6 +1609,8 @@ print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
         "WATCHDOG_DATE_COUNTER": str(date_counter_path),
         "WATCHDOG_DATE_STEP": str(date_step),
         "WATCHDOG_CANCELLED": str(cancel_path),
+        "REAL_PYTHON": sys.executable,
+        "SCANNER_ERROR": scanner_error,
     }
     result = subprocess.run(
         ["bash", "-e", "-c", watchdog],
@@ -1494,6 +1619,7 @@ print(1000 + call * int(os.environ["WATCHDOG_DATE_STEP"]))
         check=False,
         timeout=30,
         env=env,
+        cwd=REPO,
     )
     calls = (
         int(counter_path.read_text(encoding="utf-8") or "0")
@@ -1689,6 +1815,25 @@ def test_queue_watchdog_retries_unparseable_jobs_response(
     assert not cancelled
 
 
+def test_queue_watchdog_retries_when_classifier_crashes(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A broken classifier must not retire or cancel the watchdog."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        [queued],
+        date_step=60,
+        scanner_error="classify",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls > 1
+    assert "not parseable; retrying" in result.stdout
+    assert not cancelled
+
+
 def test_queue_watchdog_accepts_cross_run_activity_when_every_job_is_queued(
     workflow: str, tmp_path: Path
 ) -> None:
@@ -1740,6 +1885,26 @@ def test_queue_watchdog_fails_liveness_reads_open(
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == 4
     assert expected_message in result.stdout
+    assert not cancelled
+
+
+def test_queue_watchdog_fails_liveness_helper_crash_open(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A broken repository scanner must never contribute cancellation evidence."""
+    queued = [_obsidian_job("python-tests (3.12)", "queued")]
+    result, calls, cancelled = _run_queue_watchdog(
+        workflow,
+        tmp_path,
+        [queued],
+        date_step=30,
+        scanner_error="scan",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls >= 3
+    assert "run liveness unreadable" in result.stdout
+    assert "cancelling the run" not in result.stdout
     assert not cancelled
 
 

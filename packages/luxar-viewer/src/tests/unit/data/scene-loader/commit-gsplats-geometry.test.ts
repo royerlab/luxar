@@ -98,6 +98,7 @@ describe('commitGSplatsGeometry', () => {
     root.add(mesh);
     commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
+    expect((mesh.userData as { requestedElementCount: number }).requestedElementCount).toBe(11);
     expect(mockUpdateInstancedMesh).toHaveBeenCalledTimes(1);
     // Non-pool commits rebind uSplatTex too (rebuilds swap in a fresh
     // mesh-owned texture).
@@ -552,6 +553,8 @@ describe('commitGSplatsGeometry — capacity-clamp consistency', () => {
     commitGSplatsGeometry(makeStaged(100), root, null, undefined, V);
 
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(16);
+    expect((mesh.userData as { requestedElementCount: number }).requestedElementCount).toBe(100);
+    expect((mesh.userData as { droppedElementCount: number }).droppedElementCount).toBe(84);
     expect(mockNoteDepthSortCommit).toHaveBeenCalledWith(mesh, expect.any(Float32Array), 16);
     // The non-pool GPU dispatch carries the clamped count too — every
     // consumer downstream of the commit sees ONE consistent count.

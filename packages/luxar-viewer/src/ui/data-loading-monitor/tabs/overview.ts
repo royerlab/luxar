@@ -7,7 +7,7 @@
 
 import type { CacheMetrics, GlobalStats } from '../../../types/data-monitor-types';
 import { formatBytes, formatNumber, getCacheMemoryColorClass } from '../templates/format';
-import { countColorClass } from '../templates/primitives';
+import { countColorClass, getColorClass } from '../templates/primitives';
 import { patchField, updateColorClass } from './dom-helpers';
 import { presentHeadlineCounts } from '../headline-counts';
 
@@ -44,6 +44,18 @@ export function updateOverviewTab(
     patchField(container, `${c.field}-sub`, `${percent}% of ${formatNumber(c.total)}${suffix}`);
     const element = container.querySelector(`[data-field="${c.field}"]`);
     if (element) updateColorClass(element as HTMLElement, countColorClass(c.visible));
+  }
+
+  // Dropped-element card: its own field, patched unconditionally (it is
+  // rendered whenever the overview grid is painted, independent of which
+  // geometry types are present).
+  const droppedElement = container.querySelector('[data-field="dropped-elements"]');
+  patchField(container, 'dropped-elements', formatNumber(stats.droppedElements));
+  if (droppedElement) {
+    updateColorClass(
+      droppedElement as HTMLElement,
+      stats.droppedElements > 0 ? getColorClass('error') : getColorClass('success')
+    );
   }
 
   patchField(container, 'memory-used', formatBytes(cacheMetrics.totalCacheMemory));

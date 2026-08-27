@@ -33,6 +33,7 @@ describe('aggregateGlobalStats', () => {
       sceneGraph: {
         totalByType: { points: 10, lines: 20, gsplats: 30, mesh: 40 },
         visibleByType: { points: 1, lines: 2, gsplats: 3, mesh: 4 },
+        droppedElements: 7,
       },
       recommendations: [],
     });
@@ -42,6 +43,7 @@ describe('aggregateGlobalStats', () => {
     expect(result.avgQueryTime).toBe(5);
     expect(result.queriesPerSecond).toBe(7.5);
     expect(result.datasetSplats).toBe(30);
+    expect(result.droppedElements).toBe(7);
   });
 
   it('keeps all-loader and spatial-loader LOD excesses independent across repeated calls', () => {
@@ -58,6 +60,7 @@ describe('aggregateGlobalStats', () => {
       sceneGraph: {
         totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
         visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+        droppedElements: 0,
       },
       recommendations: [],
     };
@@ -84,6 +87,7 @@ describe('aggregateGlobalStats — mesh projection', () => {
       sceneGraph: {
         totalByType: { points: 10, lines: 20, gsplats: 30, mesh: 40 },
         visibleByType: { points: 1, lines: 2, gsplats: 3, mesh: 4 },
+        droppedElements: 0,
       },
       recommendations: [],
     });
@@ -108,6 +112,7 @@ describe('aggregateGlobalStats — mesh projection', () => {
       sceneGraph: {
         totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
         visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+        droppedElements: 0,
       },
       recommendations: [],
     });

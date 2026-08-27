@@ -28,8 +28,8 @@ This module hosts:
   native geometry adders, plus :func:`bsp_leaf_parts` for their shared
   left-first leaf flattening.
 * :func:`persist_pruned_bsp_tree` — the shared writer-side step that drops
-  unwritten regions, renumbers the surviving ``child_index`` labels, and stores
-  the result on a partition wrapper.
+  unwritten regions, renumbers the surviving ``child_index`` labels, stores the
+  result on a scene-attached partition wrapper, and diagnoses hidden split axes.
 * :func:`median_bsp_partition` / :func:`midpoint_bsp_partition` /
   :func:`sah_bsp_partition`, plus the median/midpoint polyline wrappers —
   flat-list conveniences retained as parity oracles for the tree builders.
@@ -83,6 +83,7 @@ from .lod.group import resolve_display_type
 
 if TYPE_CHECKING:
     from ..node import Node
+    from .group import Group
 
 
 #: Sentinel-typed alias for the value vocabulary of the ``partition=`` kwarg.
@@ -380,12 +381,15 @@ def prune_serialized_bsp_tree(
 
 
 def persist_pruned_bsp_tree(
-    node: "Node", tree: Optional[Dict[str, Any]], keep: Iterable[int]
+    node: "Group", tree: Optional[Dict[str, Any]], keep: Iterable[int]
 ) -> None:
-    """Persist ``tree`` after dropping regions that produced no child node."""
+    """Persist and diagnose ``tree`` on a scene-attached partition wrapper."""
     serialized_tree = prune_serialized_bsp_tree(tree, keep)
     if serialized_tree is not None:
         node._persist_attr("bsp_tree", serialized_tree)
+        warn_if_partition_axes_not_displayed(
+            serialized_tree, node._find_scene().dimensions.displayed, node.name
+        )
 
 
 #: Node-visit budget for :func:`reconstruct_serialized_bsp_tree`. The search
@@ -917,6 +921,8 @@ def spatial_bsp_tree(
     ``1`` for 2D data, ``0``/``1``/``2`` for 3D+). The viewer maps that column
     through ``displayDims`` to reach its own local axis — see
     ``render-order.ts``; the two coincide only when ``displayDims == [0, 1, 2]``.
+    If any split column is not displayed, the writer warns and the viewer
+    discards the whole tree in favor of centroid ordering.
     """
     if positions.ndim != 2:
         raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
@@ -1000,6 +1006,35 @@ def warn_if_partition_needs_more_dims(ndim: int, name: str) -> bool:
         )
         return False
     return True
+
+
+def warn_if_partition_axes_not_displayed(
+    tree: Dict[str, Any], displayed_dims: Sequence[int], name: str
+) -> None:
+    """Warn when a committed multi-part BSP splits on an undisplayed column.
+
+    Call only after a real >1-part tree is committed. The result is exact for
+    the display configuration in force at write time; the viewer repeats the
+    check because nD navigation can later select a different displayed triple.
+    """
+    split_columns: set[int] = set()
+
+    def collect_axes(node: Dict[str, Any]) -> None:
+        if "part" in node:
+            return
+        split_columns.add(int(node["axis"]))
+        collect_axes(node["left"])
+        collect_axes(node["right"])
+
+    collect_axes(tree)
+    undisplayed = sorted(split_columns.difference(displayed_dims))
+    if undisplayed:
+        aprint(
+            f"  ⚠️  partition '{name}' splits on undisplayed position column(s) "
+            f"{undisplayed}; under this scene's displayed dimensions the viewer "
+            "discards this bsp_tree and falls back to centroid ordering. "
+            "Put the displayed dimensions first to keep exact BSP ordering."
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────

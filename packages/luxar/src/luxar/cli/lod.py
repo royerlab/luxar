@@ -475,6 +475,13 @@ def lod_recipe(
         adaptive   tiles where EVERY tile picks     largest scenes, locally
                    its own detail level             adaptive detail
 
+    Scale is not the only axis. When first paint is request-constrained, the
+    recipe is picked by how many levels and tiles the viewer fetches EAGERLY,
+    not by N: overview defers its whole fine branch behind a selector, while
+    tiles and adaptive load every part at once. Measured on one 1.58 GiB 4D
+    timelapse, an adaptive build (44 parts) needed ~18x more requests to first
+    paint than the same data as one stacked leaf with a stream ladder.
+
     (Renamed 2026-07: additive->stream, substitutive/pyramid->levels,
     partitioned->tiles, multiscale->overview, mosaic->adaptive.)
 

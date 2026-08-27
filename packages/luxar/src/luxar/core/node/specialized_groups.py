@@ -103,7 +103,6 @@ def add_partition_group_impl(
             **attrs,
         )
         aprint(f"✓ Child kind=partition group '{name}' added successfully.")
-        return child
     except Exception as e:
         aprint(
             f"Failed to add child kind=partition group '{name}' to "
@@ -112,3 +111,12 @@ def add_partition_group_impl(
         raise ValueError(
             f"Could not create child kind=partition group '{name}': {e}"
         ) from e
+
+    bsp_tree = attrs.get("bsp_tree")
+    if bsp_tree is not None:
+        from ..group.partition import warn_if_partition_axes_not_displayed
+
+        warn_if_partition_axes_not_displayed(
+            bsp_tree, child._find_scene().dimensions.displayed, child.name
+        )
+    return child

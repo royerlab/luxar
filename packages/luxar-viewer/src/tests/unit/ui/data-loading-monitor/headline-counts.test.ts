@@ -31,6 +31,7 @@ function statsWith(over: Partial<GlobalStats> = {}): GlobalStats {
     visibleSplats: 0,
     datasetTriangles: 0,
     visibleTriangles: 0,
+    droppedElements: 0,
     totalQueries: 0,
     totalLoads: 0,
     avgQueryTime: 0,

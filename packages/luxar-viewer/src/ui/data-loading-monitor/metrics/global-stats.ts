@@ -18,7 +18,7 @@ export interface AggregateGlobalStatsParams {
   loaders: ReadonlyMap<string, unknown>;
   lodStates: ReadonlyMap<string, LODProgressState>;
   rates: { queriesPerSec: number };
-  sceneGraph: Pick<SceneGraphState, 'totalByType' | 'visibleByType'>;
+  sceneGraph: Pick<SceneGraphState, 'totalByType' | 'visibleByType' | 'droppedElements'>;
   recommendations: Recommendation[];
 }
 
@@ -122,6 +122,7 @@ export function aggregateGlobalStats({
     visibleSplats: visibleByType.gsplats,
     datasetTriangles: totalByType.mesh,
     visibleTriangles: visibleByType.mesh,
+    droppedElements: sceneGraph.droppedElements,
     totalQueries,
     totalLoads,
     avgQueryTime: totalQueries > 0 ? totalQueryTime / totalQueries : 0,

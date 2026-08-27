@@ -26,6 +26,7 @@ function makeState(overrides: Partial<DebugState> = {}): Partial<DebugState> {
     totalLines: 0,
     totalTriangles: 0,
     totalElements: 0,
+    totalDroppedElements: 0,
     pointClouds: [],
     gsplatMeshes: [],
     lineMeshes: [],
@@ -55,6 +56,7 @@ function expectNoNaN(summary: CaptureReadinessSummary): void {
     'totalLines',
     'totalTriangles',
     'totalElements',
+    'totalDroppedElements',
     'pointCloudCount',
     'gsplatCount',
     'lineCount',
@@ -70,6 +72,28 @@ function expectNoNaN(summary: CaptureReadinessSummary): void {
 }
 
 describe('summarizeCaptureReadiness', () => {
+  it('rejects a capture when the renderer dropped elements', () => {
+    const summary = summarizeCaptureReadiness(
+      makeState({ totalPoints: 80, totalElements: 80, totalDroppedElements: 20 })
+    );
+
+    expect(summary.ok).toBe(false);
+    expect(summary.totalDroppedElements).toBe(20);
+    expect(summary.reason).toContain('20 elements were dropped by renderer capacity limits');
+    expectNoNaN(summary);
+  });
+
+  it('reports dropped elements together with unreadable totals', () => {
+    const summary = summarizeCaptureReadiness(
+      makeState({ totalPoints: Infinity, totalDroppedElements: 20 })
+    );
+
+    expect(summary.ok).toBe(false);
+    expect(summary.reason).toContain('20 elements were dropped by renderer capacity limits');
+    expect(summary.reason).toContain('totalPoints present but not finite');
+    expectNoNaN(summary);
+  });
+
   it('reports a MESH-ONLY scene as ready, with its mesh node count', () => {
     const summary = summarizeCaptureReadiness(
       makeState({
@@ -94,7 +118,17 @@ describe('summarizeCaptureReadiness', () => {
       makeState({
         totalLines: 5000,
         totalElements: 5000,
-        lineMeshes: [{ name: 'tracks', segmentCount: 5000, visible: true, hasColormap: true }],
+        lineMeshes: [
+          {
+            name: 'tracks',
+            segmentCount: 5000,
+            visible: true,
+            hasColormap: true,
+            requestedElementCount: 5000,
+            grantedElementCount: 5000,
+            droppedElementCount: 0,
+          },
+        ],
       })
     );
 
@@ -119,11 +153,28 @@ describe('summarizeCaptureReadiness', () => {
             hasColors: true,
             hasRadii: false,
             hasSharpness: false,
+            requestedElementCount: 100,
+            grantedElementCount: 100,
+            droppedElementCount: 0,
           },
         ],
         gsplatMeshes: [
-          { name: 'splats_a', splatCount: 150, visible: true },
-          { name: 'splats_b', splatCount: 100, visible: true },
+          {
+            name: 'splats_a',
+            splatCount: 150,
+            visible: true,
+            requestedElementCount: 150,
+            grantedElementCount: 150,
+            droppedElementCount: 0,
+          },
+          {
+            name: 'splats_b',
+            splatCount: 100,
+            visible: true,
+            requestedElementCount: 100,
+            grantedElementCount: 100,
+            droppedElementCount: 0,
+          },
         ],
       })
     );
@@ -283,6 +334,9 @@ describe('summarizeCaptureReadiness', () => {
             hasColors: true,
             hasRadii: false,
             hasSharpness: false,
+            requestedElementCount: 100,
+            grantedElementCount: 100,
+            droppedElementCount: 0,
           },
         ],
       })

@@ -7,7 +7,7 @@ describe('updateOverviewTab', () => {
   it('patches values before invoking the badge callback', () => {
     const container = document.createElement('div');
     container.innerHTML =
-      '<span data-field="visible-points"></span><span data-field="visible-points-sub"></span><span data-field="memory-used"></span><span data-field="query-speed"></span><span data-field="query-rate"></span><span data-field="network-bytes"></span><span data-field="network-detail"></span><div class="luxar-secondary-metrics"><div class="luxar-progress-bar__fill"></div></div>';
+      '<span data-field="visible-points"></span><span data-field="visible-points-sub"></span><span data-field="dropped-elements" class="luxar-color--success"></span><span data-field="memory-used"></span><span data-field="query-speed"></span><span data-field="query-rate"></span><span data-field="network-bytes"></span><span data-field="network-detail"></span><div class="luxar-secondary-metrics"><div class="luxar-progress-bar__fill"></div></div>';
     const stats = {
       datasetSize: 100,
       visiblePoints: 25,
@@ -15,6 +15,7 @@ describe('updateOverviewTab', () => {
       visibleSegments: 0,
       datasetSplats: 0,
       visibleSplats: 0,
+      droppedElements: 5000,
       avgQueryTime: 12,
       queriesPerSecond: 3,
     } as GlobalStats;
@@ -27,6 +28,10 @@ describe('updateOverviewTab', () => {
     expect(container.querySelector('[data-field="visible-points-sub"]')?.textContent).toBe(
       '25.0% of 100 total'
     );
+    const dropped = container.querySelector('[data-field="dropped-elements"]');
+    expect(dropped?.textContent).toBe('5.0K');
+    expect(dropped?.classList.contains('luxar-color--error')).toBe(true);
+    expect(dropped?.classList.contains('luxar-color--success')).toBe(false);
     expect(badges).toHaveBeenCalledOnce();
   });
 
@@ -65,6 +70,7 @@ describe('updateOverviewTab — mesh parity', () => {
     const stats = {
       datasetTriangles: 4000,
       visibleTriangles: 1000,
+      droppedElements: 0,
       avgQueryTime: 0,
       queriesPerSecond: 0,
     } as GlobalStats;
@@ -86,6 +92,7 @@ describe('updateOverviewTab — mesh parity', () => {
       visiblePoints: 10,
       datasetTriangles: 4000,
       visibleTriangles: 1000,
+      droppedElements: 0,
       avgQueryTime: 0,
       queriesPerSecond: 0,
     } as GlobalStats;
@@ -102,6 +109,7 @@ describe('updateOverviewTab — mesh parity', () => {
       visiblePoints: 10,
       datasetTriangles: 4000,
       visibleTriangles: 1000,
+      droppedElements: 0,
       avgQueryTime: 0,
       queriesPerSecond: 0,
     } as GlobalStats;

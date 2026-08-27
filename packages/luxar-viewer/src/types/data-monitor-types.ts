@@ -240,6 +240,8 @@ export interface GlobalStats {
   // Dataset metrics - Mesh
   datasetTriangles: number; // Total triangles (faces) in all mesh datasets
   visibleTriangles: number; // Currently visible/rendered triangles — triangles the active nD slice indexes
+  /** Elements omitted by renderer capacity clamps across visible texture-backed nodes. */
+  droppedElements: number;
   totalQueries: number;
   totalLoads: number;
   avgQueryTime: number;
@@ -643,6 +645,8 @@ export interface SceneGraphState {
   totalByType: GeometryCounters;
   /** Currently visible elements per type (after nD clipping / progressive LOD) */
   visibleByType: GeometryCounters;
+  /** Elements omitted by renderer capacity clamps across visible texture-backed nodes. */
+  droppedElements: number;
 }
 
 /**
