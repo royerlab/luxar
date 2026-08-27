@@ -41,7 +41,7 @@ VOXEL CALIBRATION (why the Z scale is what it is):
     ~500 x 180 um; and after scaling, the two cross-sectional axes agree to 2.5%
     (195 um axial vs 190 um lateral) — i.e. the section really is circular.
 
-PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here):
+PIPELINE (how the bundled gsplats were produced and ``--recompute`` rebuilds them):
     1. Extract timepoint 150 from ``DrosophilaHistone.zarr.zip [data]``, the
        500-timepoint recording.
     2. Calibrate K* by Noise2Self blind-spot cross-validation (``gsplat cal``):
@@ -61,8 +61,10 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
     6. ``gsplat lod --recipe stream --target-ms 200`` -> progressive ladder.
 
 USAGE:
-    python demo_gsplats_3d_drosophila_gastrulation.py [--no-serve] [--serve-only]
+    python demo_gsplats_3d_drosophila_gastrulation.py [--recompute] --source PATH [--no-serve] [--serve-only]
 
+    --recompute:   Rebuild the archive from the raw recording.
+    --source PATH: Raw DrosophilaHistone Zarr recording for --recompute.
     --no-serve:    Build the scene but don't launch the viewer.
     --serve-only:  Skip the build, just serve the already-built scene.
 
@@ -98,7 +100,9 @@ DEMO_META = {
     },
 }
 
+import shutil
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
@@ -113,6 +117,7 @@ from luxar.demos import (
     parse_path_arg,
 )
 from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
+from luxar.demos._support.runtime.cli import run_luxar_cli
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import GSplatNode, center_bounds, is_matrix_shaped, iter_leaves
@@ -242,28 +247,14 @@ EXPECT A CLOSE, NOT EXACT, SPLAT COUNT. Seeding is a fixed default_rng(42) and
 Adam is deterministic from it, but GPU reduction atomics and a different
 torch/CUDA build move the last digits, and a threshold cull turns that into a
 count difference: 200,023 here against 200,155 shipped, 0.07%. Do not chase it
-and do not pin the count -- pin a tolerance. (Contrast the decimation study,
-where --device/--seed genuinely pin the result because a merge is a clustering
-and the seed is an input; here the variation is float reduction order, which no
-flag fixes.)
+and do not pin the count -- pin a tolerance. The variation is float reduction
+order, which no flag fixes.
 """
 
 
 # =============================================================================
 # Data loading
 # =============================================================================
-def _luxar(*args: str) -> None:
-    """Run the shipped CLI in-process so the demo cannot drift from the tool."""
-    from luxar.cli.main import app
-
-    aprint(f"$ luxar {' '.join(args)}")
-    try:
-        app(list(args))
-    except SystemExit as exc:  # the CLI exits even on success
-        if exc.code not in (0, None):
-            raise RuntimeError(f"`luxar {' '.join(args)}` failed: exit {exc.code}")
-
-
 def _validate_source(path: Path) -> None:
     """Refuse a plausible-looking wrong recording.
 
@@ -274,9 +265,36 @@ def _validate_source(path: Path) -> None:
     from zarr.storage import ZipStore
 
     if path.suffix == ".zip":
-        root = zarr.open(store=ZipStore(str(path), mode="r"))
-    else:
-        root = zarr.open(str(path))
+        try:
+            store = ZipStore(str(path), mode="r")
+        except Exception as exc:  # noqa: BLE001 - normalize storage errors
+            raise ValueError(
+                f"Could not read {path.name} as a Zarr recording. Expected the "
+                f"DrosophilaHistone recording. Underlying error: {exc}"
+            ) from exc
+        with store:
+            try:
+                root = zarr.open(store=store, mode="r")
+            except Exception as exc:  # noqa: BLE001 - normalize zarr errors
+                raise ValueError(
+                    f"Could not read {path.name} as a Zarr recording. Expected the "
+                    f"DrosophilaHistone recording. Underlying error: {exc}"
+                ) from exc
+            _validate_source_root(root, path)
+        return
+
+    try:
+        root = zarr.open(str(path), mode="r")
+    except Exception as exc:  # noqa: BLE001 - normalize zarr errors
+        raise ValueError(
+            f"Could not read {path.name} as a Zarr recording. Expected the "
+            f"DrosophilaHistone recording. Underlying error: {exc}"
+        ) from exc
+    _validate_source_root(root, path)
+
+
+def _validate_source_root(root: Any, path: Path) -> None:
+    """Validate an open source root while its backing store is alive."""
 
     # Say what is wrong in OUR terms. Tested against the actual sibling
     # recording: it has no `data` member, so indexing it raises zarr's
@@ -329,52 +347,51 @@ def recompute_archive(work_dir: Path) -> Path:
             raise FileNotFoundError(f"--source does not exist: {source}")
         _validate_source(source)
 
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         fit = work_dir / "droso_fit.gsplats.zarr"
         um = work_dir / "droso_um.gsplats.zarr"
         final = work_dir / "droso_gastrulation.gsplats.zarr"
 
-        if not fit.exists():
-            _luxar(
-                "gsplat",
-                "fit",
-                str(source),
-                str(fit),
-                "--array-key",
-                SOURCE_ARRAY_KEY,
-                "--timepoint",
-                str(TIMEPOINT),
-                "--tiling",
-                "none",
-                "--seeds",
-                str(SEEDS),
-                "--preset",
-                PRESET,
-                "--floor",
-                FLOOR,
-            )
+        run_luxar_cli(
+            "gsplat",
+            "fit",
+            str(source),
+            str(fit),
+            "--array-key",
+            SOURCE_ARRAY_KEY,
+            "--timepoint",
+            str(TIMEPOINT),
+            "--tiling",
+            "none",
+            "--seeds",
+            str(SEEDS),
+            "--preset",
+            PRESET,
+            "--floor",
+            FLOOR,
+        )
         # The fit stamps PSNR here, BEFORE the transform -- the only point at
         # which this archive is comparable to its source volume.
-        if not um.exists():
-            _luxar(
-                "gsplat",
-                "transform",
-                str(fit),
-                str(um),
-                "--scale",
-                ",".join(str(v) for v in VOXEL_UM),
-            )
-        if not final.exists():
-            _luxar(
-                "gsplat",
-                "lod",
-                str(um),
-                str(final),
-                "--recipe",
-                "stream",
-                "--target-ms",
-                str(LOD_TARGET_MS),
-            )
+        run_luxar_cli(
+            "gsplat",
+            "transform",
+            str(fit),
+            str(um),
+            "--scale",
+            ",".join(str(v) for v in VOXEL_UM),
+        )
+        run_luxar_cli(
+            "gsplat",
+            "lod",
+            str(um),
+            str(final),
+            "--recipe",
+            "stream",
+            "--target-ms",
+            str(LOD_TARGET_MS),
+        )
         aprint(f"rebuilt: {final}")
         return final
 

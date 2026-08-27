@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import zarr
+from zarr.storage import ZipStore
 
 from luxar.encoding import ArrayDecoder, EncodingMode
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
@@ -30,6 +31,90 @@ def _load_demo_module(name: str = "_luxar_demo_drosophila_gastrulation_for_tests
 
 
 _demo = _load_demo_module()
+
+
+def _write_source(path: Path, shape: tuple[int, ...]) -> None:
+    root = zarr.open_group(str(path), mode="w")
+    root.create_array("data", shape=shape, chunks=(1,) * len(shape), dtype="u1")
+
+
+def test_validate_source_accepts_directory_and_zip_without_writing(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "recording.zarr"
+    _write_source(directory, (500, 108, 1352, 532))
+    directory_files = sorted(
+        path.relative_to(directory) for path in directory.rglob("*")
+    )
+
+    archive = tmp_path / "recording.zarr.zip"
+    with ZipStore(str(archive), mode="w") as store:
+        root = zarr.group(store=store)
+        root.create_array(
+            "data", shape=(500, 108, 1352, 532), chunks=(1, 1, 1, 1), dtype="u1"
+        )
+    archive_bytes = archive.read_bytes()
+
+    _demo._validate_source(directory)
+    _demo._validate_source(archive)
+
+    assert (
+        sorted(path.relative_to(directory) for path in directory.rglob("*"))
+        == directory_files
+    )
+    assert archive.read_bytes() == archive_bytes
+
+
+def test_validate_source_rejects_sibling_and_bare_store(tmp_path: Path) -> None:
+    sibling = tmp_path / "sibling.zarr"
+    _write_source(sibling, (1507, 108, 1352, 532))
+    with pytest.raises(ValueError, match="1507 timepoints, expected 500"):
+        _demo._validate_source(sibling)
+
+    bare = tmp_path / "bare.zarr"
+    zarr.open_array(str(bare), mode="w", shape=(500, 108, 1352, 532), dtype="u1")
+    with pytest.raises(ValueError, match="bare array, not a group"):
+        _demo._validate_source(bare)
+
+
+def test_validate_source_rejects_non_zarr_directory_without_writing(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "not-a-recording"
+    source.mkdir()
+    readme = source / "README.txt"
+    readme.write_text("not zarr", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Expected the DrosophilaHistone recording"):
+        _demo._validate_source(source)
+
+    assert list(source.iterdir()) == [readme]
+
+
+def test_recompute_requires_source_and_rebuilds_every_stage(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "recording.zarr"
+    _write_source(source, (500, 108, 1352, 532))
+    work_dir = tmp_path / "recompute"
+    commands: list[tuple[str, ...]] = []
+
+    def fake_luxar(*args: str) -> None:
+        commands.append(args)
+        Path(args[3]).mkdir(parents=True)
+
+    monkeypatch.setattr(_demo, "SOURCE_ARG", None)
+    with pytest.raises(SystemExit, match="--recompute needs --source PATH"):
+        _demo.recompute_archive(work_dir)
+
+    monkeypatch.setattr(_demo, "SOURCE_ARG", source)
+    monkeypatch.setattr(_demo, "run_luxar_cli", fake_luxar)
+    _demo.recompute_archive(work_dir)
+    commands.clear()
+
+    _demo.recompute_archive(work_dir)
+
+    assert [command[1] for command in commands] == ["fit", "transform", "lod"]
 
 
 def _sublod(amplitudes: np.ndarray, *, marker: str) -> AdditiveSubLOD:

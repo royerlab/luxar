@@ -65,13 +65,17 @@ The shipped levels use ``merge-levels`` (the winner in the range that matters).
 
 REPRODUCING IT:
 
-    # decimate (Python: luxar.gsplats.lod.substitutive.make_substitutive_lod)
-    luxar gsplat lod flat.gsplats.zarr out.gsplats.zarr --recipe levels -K 10 -L 1
+    luxar gsplat flatten parent.gsplats.zarr flat.gsplats.zarr
+    luxar gsplat decimate flat.gsplats.zarr quarter.gsplats.zarr \
+        -f 0.25 -m merge --device cpu
+    # Repeat at -f 0.10 and -f 0.05 for the other shipped levels.
     # score against the source volume
-    luxar gsplat compare out.gsplats.zarr orig_tp234.npy --device cuda
+    luxar gsplat compare quarter.gsplats.zarr orig_tp234.npy --device cuda
 
-  ``compare`` reports GLOBAL PSNR; the foreground figures above come from the
-  same render with the MSE restricted to the Otsu-masked voxels.
+  The shipped bytes were produced by this flatten + direct merge-decimation
+  recipe. ``--recompute`` is the supported rebuild and reproduces their counts
+  within 0.02%. ``compare`` reports GLOBAL PSNR; the foreground figures above
+  come from the same render with the MSE restricted to Otsu-masked voxels.
 
 DATA SOURCE & CITATIONS:
     Royer lab, CZ Biohub San Francisco (zebrahub). ``h2afva/fused``, timepoint
@@ -83,7 +87,7 @@ DATA SOURCE & CITATIONS:
     of the two numbers).
 
 USAGE:
-    python demo_gsplats_3d_decimation_study.py [--no-serve] [--serve-only]
+    python demo_gsplats_3d_decimation_study.py [--recompute] [--parent PATH] [--no-serve] [--serve-only]
 
 OUTPUT:
     - Scene saved to:  datasets/demos/gsplats_3d_decimation_study.luxar.zarr
@@ -115,6 +119,7 @@ DEMO_META = {
     },
 }
 
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -129,6 +134,7 @@ from luxar.demos import (
     parse_demo_flags,
     parse_path_arg,
 )
+from luxar.demos._support.runtime.cli import run_luxar_cli
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
 from luxar.utils.paths import get_demos_output_dir
@@ -198,10 +204,11 @@ parent. Chain, with every step verified against the shipped archives:
       decimate  ->  quarter / tenth / twentieth at -f 0.25 / 0.10 / 0.05,
                     method=merge, device=cpu
 
-`--device cpu` is explicit, not incidental: on Apple silicon the merge warns
-"MPS backend lacks float64 support; falling back to CPU", and a run that silently
-picks a different device gives a slightly different count. Measured: -f 0.10 gave
-165,271 against the shipped 165,276, a 5-splat (0.003%) difference.
+`--device cpu` pins CUDA-capable hosts to the CPU path used for the recorded
+rebuild; `auto` otherwise prefers CUDA when available. MPS already falls back to
+CPU, so the explicit flag only silences that warning there. The measured CPU run
+at -f 0.10 gave 165,271 splats against the shipped 165,276 (0.003%). No
+CPU-versus-CUDA count comparison was made.
 
 NOT REPRODUCED HERE: the shipped files went through a further encoding pass --
 every family member differs in size between the 2026-08-12 build and the pinned
@@ -214,23 +221,6 @@ therefore NOT expected from this path; splat counts and quality are.
 # =============================================================================
 # Recompute (--recompute): rebuild the four levels from the tp234 parent
 # =============================================================================
-def _luxar(*args: str) -> None:
-    """Run the shipped CLI in-process, so the demo cannot drift from it.
-
-    Driving the CLI rather than the Python API deliberately: the CLI is what the
-    documented recipe names, and a demo that reimplements the reduction can
-    silently diverge from the tool everyone else uses.
-    """
-    from luxar.cli.main import app
-
-    aprint(f"$ luxar {' '.join(args)}")
-    try:
-        app(list(args))
-    except SystemExit as exc:  # the CLI exits even on success
-        if exc.code not in (0, None):
-            raise RuntimeError(f"`luxar {' '.join(args)}` failed: exit {exc.code}")
-
-
 def _resolve_parent() -> Path:
     """The tp234 fit: an explicit --parent, else the shipped stack dataset."""
     if PARENT_ARG is not None:
@@ -254,6 +244,8 @@ def recompute_levels(work_dir: Path) -> list[Path]:
     with asection("Recomputing decimation levels"):
         aprint(RECOMPUTE_NOTES)
         parent = _resolve_parent()
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. Flatten the partition into the single flat leaf the study needs.
@@ -261,42 +253,30 @@ def recompute_levels(work_dir: Path) -> list[Path]:
         #    what you see is the splats named in the selector, with no LOD tree
         #    swapping content in behind the camera.
         full = work_dir / LEVELS[0]["file"].replace(".zip", "")
-        if not full.exists():
-            _luxar("gsplat", "flatten", str(parent), str(full))
+        run_luxar_cli("gsplat", "flatten", str(parent), str(full))
 
         out = [full]
-        for level, fraction in zip(LEVELS[1:], DECIMATION_FRACTIONS):
+        for level, fraction in zip(LEVELS[1:], DECIMATION_FRACTIONS, strict=True):
             dest = work_dir / level["file"].replace(".zip", "")
-            if not dest.exists():
-                _luxar(
-                    "gsplat",
-                    "decimate",
-                    str(full),
-                    str(dest),
-                    "-f",
-                    str(fraction),
-                    "-m",
-                    "merge",
-                    # Both explicit for reproducibility, not decoration. On
-                    # Apple silicon the merge warns "MPS backend lacks float64
-                    # support; falling back to CPU", so the device that runs it
-                    # depends on the machine unless pinned -- and a merge is a
-                    # clustering, so an unpinned seed makes two rebuilds of the
-                    # same input differ. Together they make a rebuild
-                    # comparable to the previous one, which is the whole point
-                    # of being able to rebuild.
-                    "--device",
-                    "cpu",
-                    "--seed",
-                    "0",
-                )
+            run_luxar_cli(
+                "gsplat",
+                "decimate",
+                str(full),
+                str(dest),
+                "-f",
+                str(fraction),
+                "-m",
+                "merge",
+                "--device",
+                "cpu",
+            )
             out.append(dest)
 
         # Report the counts against what the labels claim. A level whose count
         # drifts far from its label makes the on-screen "25% / 411K / 41.7 dB"
         # a lie, and the label is the only thing telling a viewer what they are
         # looking at.
-        for level, path in zip(LEVELS, out):
+        for level, path in zip(LEVELS, out, strict=True):
             node, _stats = load_gsplat_node(str(path))
             got = int(node.n_splats)
             want = level["splats"]
