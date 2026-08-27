@@ -108,16 +108,13 @@ export function updateVisibleCountsInMonitor(
           break;
         }
       }
-      if (visible !== undefined && object.name) {
-        // Mesh `name` is the scene-graph path (set by node-factory).
-        byPath.set(object.name, (byPath.get(object.name) ?? 0) + visible);
-      }
       if (visible !== undefined) {
-        const requested = (object.userData as { requestedElementCount?: number })
-          .requestedElementCount;
-        if (typeof requested === 'number' && Number.isFinite(requested)) {
-          droppedElements += Math.max(0, requested - visible);
+        if (object.name) {
+          // Mesh `name` is the scene-graph path (set by node-factory).
+          byPath.set(object.name, (byPath.get(object.name) ?? 0) + visible);
         }
+        droppedElements +=
+          (object.userData as { droppedElementCount?: number }).droppedElementCount ?? 0;
       }
     }
     for (const child of object.children) visit(child);

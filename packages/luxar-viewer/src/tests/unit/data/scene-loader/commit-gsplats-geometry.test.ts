@@ -554,6 +554,7 @@ describe('commitGSplatsGeometry — capacity-clamp consistency', () => {
 
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(16);
     expect((mesh.userData as { requestedElementCount: number }).requestedElementCount).toBe(100);
+    expect((mesh.userData as { droppedElementCount: number }).droppedElementCount).toBe(84);
     expect(mockNoteDepthSortCommit).toHaveBeenCalledWith(mesh, expect.any(Float32Array), 16);
     // The non-pool GPU dispatch carries the clamped count too — every
     // consumer downstream of the commit sees ONE consistent count.

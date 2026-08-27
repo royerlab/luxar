@@ -254,6 +254,8 @@ export function commitGSplatsGeometry(
     if (isGSplatsUserData(mesh.userData)) {
       mesh.userData.visibleSplatCount = splatCount;
       mesh.userData.requestedElementCount = processed.splatCount;
+      mesh.userData.droppedElementCount = processed.splatCount - splatCount;
+      mesh.userData.droppedElementCount = processed.splatCount - splatCount;
       // Append-fast-path bookkeeping (depth-sorting Phase 4 Stage 2): record
       // the truncate baked into the GPU texels and mark the GPU prefix intact.
       // A full rewrite re-establishes both, so the next commit may append; a

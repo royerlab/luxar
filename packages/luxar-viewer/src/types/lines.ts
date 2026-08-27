@@ -518,6 +518,12 @@ export interface LinesUserData {
   /** Elements requested by the latest successful commit, before the GPU capacity clamp. */
   requestedElementCount?: number;
 
+  /** Elements omitted by the latest successful commit's GPU capacity clamp. */
+  droppedElementCount?: number;
+
+  /** Elements omitted by the latest successful commit's GPU capacity clamp. */
+  droppedElementCount?: number;
+
   /**
    * True when the GPU interleaved buffer holds the exact data of the last
    * commit — i.e. the append fast path may skip re-uploading the prefix.

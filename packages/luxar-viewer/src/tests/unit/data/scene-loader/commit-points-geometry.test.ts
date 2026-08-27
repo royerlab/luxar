@@ -967,6 +967,7 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
       expect((points.userData as { requestedElementCount: number }).requestedElementCount).toBe(
         100
       );
+      expect((points.userData as { droppedElementCount: number }).droppedElementCount).toBe(88);
       const [, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
         THREE.Mesh,
         () => Float32Array,

@@ -139,7 +139,10 @@ export interface DebugState {
    */
   totalTriangles: number;
   totalElements: number;
-  /** Elements omitted by per-node element-texture capacity clamps. Mesh is not texture-backed. */
+  /**
+   * Elements omitted by per-node element-texture capacity clamps across ALL nodes,
+   * including hidden nodes and every substitutive-LOD level. Mesh is not texture-backed.
+   */
   totalDroppedElements: number;
   pointClouds: PointCloudInfo[];
   gsplatMeshes: GSplatMeshInfo[];
@@ -312,7 +315,10 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
           : (visiblePointCount ?? 0);
       const requestedElementCount =
         (object.userData as { requestedElementCount?: number }).requestedElementCount ?? pointCount;
-      const droppedElementCount = Math.max(0, requestedElementCount - pointCount);
+      // Production nodes are created empty and stamped at commit. The fallback
+      // covers synthetic debug/test nodes created directly with geometry data.
+      const droppedElementCount =
+        (object.userData as { droppedElementCount?: number }).droppedElementCount ?? 0;
       totalDroppedElements += droppedElementCount;
       totalPoints += pointCount;
       // Per-point data lives in the point texture (fixed 3-texel layout;
@@ -343,7 +349,8 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       const splatCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
       const requestedElementCount =
         (object.userData as { requestedElementCount?: number }).requestedElementCount ?? splatCount;
-      const droppedElementCount = Math.max(0, requestedElementCount - splatCount);
+      const droppedElementCount =
+        (object.userData as { droppedElementCount?: number }).droppedElementCount ?? 0;
       totalDroppedElements += droppedElementCount;
       totalGSplats += splatCount;
       gsplatMeshes.push({
@@ -366,7 +373,8 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       const requestedElementCount =
         (object.userData as { requestedElementCount?: number }).requestedElementCount ??
         segmentCount;
-      const droppedElementCount = Math.max(0, requestedElementCount - segmentCount);
+      const droppedElementCount =
+        (object.userData as { droppedElementCount?: number }).droppedElementCount ?? 0;
       totalDroppedElements += droppedElementCount;
       totalLines += segmentCount;
       // ShaderMaterial (GLSL) and NodeMaterial (TSL) both expose

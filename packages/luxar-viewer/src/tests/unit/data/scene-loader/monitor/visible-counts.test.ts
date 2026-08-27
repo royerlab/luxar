@@ -59,11 +59,11 @@ describe('updateVisibleCountsInMonitor', () => {
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('mesh', 640);
   });
 
-  it('reports dropped elements from requested minus granted counts', () => {
+  it('reports commit-stamped dropped elements', () => {
     const monitor = makeMonitor();
     const root = new THREE.Group();
-    root.add(meshWith({ nodeType: 'points', visiblePointCount: 80, requestedElementCount: 100 }));
-    root.add(meshWith({ nodeType: 'lines', visibleSegmentCount: 40, requestedElementCount: 50 }));
+    root.add(meshWith({ nodeType: 'points', visiblePointCount: 80, droppedElementCount: 20 }));
+    root.add(meshWith({ nodeType: 'lines', visibleSegmentCount: 40, droppedElementCount: 10 }));
     root.add(meshWith({ nodeType: 'mesh', visibleTriangleCount: 12 }));
 
     updateVisibleCountsInMonitor(root, monitor);
