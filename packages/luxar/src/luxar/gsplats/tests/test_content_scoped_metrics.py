@@ -824,7 +824,7 @@ def test_intensity_restamps_when_only_a_coarse_level_changes() -> None:
         pytest.param({"label": "fine"}, {"note": "keep"}, id="other-metadata"),
     ],
 )
-def test_restamp_prefilter_is_weaker_than_exact_stamp_guard(
+def test_restamp_prefilter_matches_exact_stamp_guard(
     level_stats: Dict[str, Any], lod_stats: Dict[str, Any]
 ) -> None:
     from luxar.gsplats._data.filtering import _needs_reduction_lod_restamp
@@ -848,7 +848,7 @@ def test_restamp_prefilter_is_weaker_than_exact_stamp_guard(
     )
     level = source.substitutive_levels[0]
 
-    assert not _has_ladder_stamps(level) or _needs_reduction_lod_restamp(source, source)
+    assert _needs_reduction_lod_restamp(source, source) == _has_ladder_stamps(level)
 
 
 def test_nonfinite_energy_is_reset_and_fraction_is_removed() -> None:

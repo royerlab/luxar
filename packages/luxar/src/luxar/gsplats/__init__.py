@@ -33,9 +33,9 @@ exception bypasses the stub guard. Which root is missing depends on the route:
   intensity ops
   (``scale_intensity`` / ``normalize_intensity`` / ``clamp_intensity`` /
   ``affine_intensity``), a ``filter`` / ``filter_by`` that actually removes
-  splats, the heuristic ``cull`` methods ``cumulative`` /
+  splats, a ``slice_by`` that crops, the heuristic ``cull`` methods ``cumulative`` /
   ``amplitude_percentile`` / ``combined`` (hence a bare ``cull()``, whose
-  ``auto`` resolves to ``cumulative``), ``embed_dimension``, a strict
+  ``auto`` resolves to ``cumulative``), ``embed_dimension``, and a strict
   ``additive_prefix`` view.
 * ``'torch'``, imported earlier still — the rendering-based ``cull`` methods
   ``error_budget`` / ``redundancy``, and therefore an ``auto`` handed a

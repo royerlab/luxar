@@ -84,6 +84,19 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
 
+_REDUCTION_LOD_LEVEL_STATS_KEYS = (
+    "quality",
+    "reference_energy",
+    "n_splats_total",
+    "refine_stats",
+)
+_REDUCTION_LOD_RUNG_STATS_KEYS = (
+    "energy_fraction_cum",
+    "lod_n_splats",
+    "lod_cumulative_n",
+)
+
+
 #: Source-provenance ``stats`` keys that describe the REGION the splats
 #: represent. A bbox crop keeps only part of that region, so carrying them over
 #: would make ``gsplat info`` quote a compression ratio (and an occupancy) for a
@@ -583,13 +596,7 @@ def _stats_after_content_change(
 def _needs_reduction_lod_restamp(
     result: _GSplatDataOps, source: _GSplatDataOps
 ) -> bool:
-    """Whether a rewrite may have authored LOD stamps to refresh.
-
-    A non-empty metadata dict subsumes every stamp-key family the restamper can
-    recognize. This prefilter is therefore deliberately weaker than its exact
-    guard: it may import for a no-op, but cannot skip a refresh that would have
-    changed the result.
-    """
+    """Whether a rewrite has authored LOD stamps to refresh."""
 
     source_levels = source.substitutive_levels
     result_levels = result.substitutive_levels
@@ -597,7 +604,11 @@ def _needs_reduction_lod_restamp(
         source_levels
         and result_levels
         and any(
-            level.stats or any(lod.stats for lod in level.additive_sublods)
+            any(key in level.stats for key in _REDUCTION_LOD_LEVEL_STATS_KEYS)
+            or any(
+                any(key in lod.stats for key in _REDUCTION_LOD_RUNG_STATS_KEYS)
+                for lod in level.additive_sublods
+            )
             for level in source_levels
         )
     )

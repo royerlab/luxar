@@ -169,17 +169,21 @@ assert GSplatData.__module__ == "luxar.gsplats.gsplat_data", (
     f"GSplatData resolved to a stub in {GSplatData.__module__}"
 )
 data = GSplatData(
-    centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky
+    centers=centers,
+    amplitudes=amplitudes,
+    cholesky_factors=cholesky,
+    stats={"psnr_db": 31.0, "iterations": 2000, "n_splats": N},
 )
 data.save(SPLATS_PATH)
+loaded_data = GSplatData.load(SPLATS_PATH)
 
-scaled = data.scale_intensity(0.5)
-np.testing.assert_allclose(scaled.amplitudes, amplitudes * 0.5)
-filtered = data.filter_by(amplitude_min=1.0)
+scaled = loaded_data.scale_intensity(0.5)
+np.testing.assert_allclose(scaled.amplitudes, loaded_data.amplitudes * 0.5)
+filtered = loaded_data.filter_by(amplitude_min=1.0)
 assert 0 < filtered.n_splats < N
-cropped = data.slice_by([slice(0, 5), slice(0, 5), slice(0, 5)])
+cropped = loaded_data.slice_by([slice(0, 5), slice(0, 5), slice(0, 5)])
 assert 0 < cropped.n_splats < N
-embedded = data.embed_dimension(5.0)
+embedded = loaded_data.embed_dimension(5.0)
 np.testing.assert_allclose(embedded.centers[:, -1], 5.0)
 
 translated = data.translate(np.ones(3, dtype=np.float32))
