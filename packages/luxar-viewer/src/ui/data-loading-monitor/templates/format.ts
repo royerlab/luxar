@@ -21,6 +21,11 @@ export function formatBytes(bytes: number): string {
   return bytes.toFixed(0) + 'B';
 }
 
+/**
+ * Format the network summary shared by the initial Overview render and live updates.
+ * Cumulative bytes span all cache tiers so the card remains informative on warm reloads;
+ * providers predating that counter fall back to network bytes.
+ */
 export function networkSummary(network: CacheMetrics['network']): {
   dataLoaded: string;
   detail: string;
