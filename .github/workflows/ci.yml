@@ -766,13 +766,14 @@ jobs:
     # `changes` job.
     if: ${{ !cancelled() }}
     runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
-    # 120, not 60: a self-hosted timeout can start at dispatch, before the first
-    # step. The observed ~20 min pre-step delay plus a conservative ~51 min bound
-    # for the ~15.5 min TypeScript run at the documented 3.3x SCHED_IDLE extreme
-    # does not fit 60. The cost is doubled time-to-red and delayed stale repair for
-    # a dispatch-lost leg; on the hosted fallback it also doubles hang detection
-    # and worst-case billed time. release-readiness keeps 30 because its hosted
-    # runner is not exposed to SCHED_IDLE starvation.
+    # 120, not 60: a successful TypeScript attempt ran 17m53s of real steps; at
+    # the documented 3.3x SCHED_IDLE extreme, a healthy starved run projects to
+    # ~59 min, leaving the former budget no headroom for any pre-step dispatch
+    # latency. A dispatch-lost leg can spend the same budget without starting a
+    # step. The cost is doubled time-to-red and delayed stale repair for that leg;
+    # on the hosted fallback it also doubles hang detection and worst-case billed
+    # time. release-readiness keeps 30 because its hosted runner is not exposed to
+    # SCHED_IDLE starvation.
     timeout-minutes: 120
     defaults:
       run:
