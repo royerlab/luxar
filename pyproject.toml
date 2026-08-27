@@ -95,7 +95,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/royerlab/luxar"
-Documentation = "https://luxar.readthedocs.io/"
+Documentation = "https://royerlab.github.io/luxar/"
 Repository = "https://github.com/royerlab/luxar.git"
 "Bug Tracker" = "https://github.com/royerlab/luxar/issues"
 Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"

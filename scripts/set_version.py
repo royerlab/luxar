@@ -3,7 +3,7 @@
 
 Updates the single source of truth — ``__version__`` in
 ``packages/luxar/src/luxar/__init__.py`` — and keeps the viewer's
-``package.json`` in sync. Because ``main`` is branch-protected, this only edits
+``package.json`` and the root ``CITATION.cff`` in sync. Because ``main`` is branch-protected, this only edits
 files locally; commit the change on a branch and open a PR, then tag the release
 with ``make release`` once it has merged with CI green.
 
@@ -15,6 +15,8 @@ Note on formats:
     * Python/PyPI (PEP 440) and the git tag use the zero-padded form (2026.06.29).
     * npm/semver forbids leading zeros, so package.json gets the normalized form
       (2026.6.29). They refer to the same release; this divergence is expected.
+    * CITATION.cff carries the zero-padded form, matching the git tag, plus a
+      ``date-released`` derived from the same date.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 INIT = REPO / "packages/luxar/src/luxar/__init__.py"
 PKG_JSON = REPO / "packages/luxar-viewer/package.json"
+CITATION = REPO / "CITATION.cff"
 
 CALVER_RE = re.compile(r"^\d{4}\.\d{2}\.\d{2}$")
 
@@ -76,6 +79,42 @@ def main(argv: list[str]) -> int:
     else:
         print(
             f"warning: {PKG_JSON.relative_to(REPO)} not found; skipped viewer version",
+            file=sys.stderr,
+        )
+
+    # --- CITATION.cff (zero-padded, plus the release date) ---
+    # Not merely cosmetic: this is what a citation manager and Zenodo read, and
+    # nothing else stamps it — before this it was a launch-day hand-edit that the
+    # release runbook never mentioned. `check_version_consistency.py` gates it.
+    if CITATION.exists():
+        cff = CITATION.read_text()
+        released = version.replace(".", "-")
+        cff, n_ver = re.subn(
+            r"^version: .*$", f'version: "{version}"', cff, count=1, flags=re.MULTILINE
+        )
+        cff, n_date = re.subn(
+            r"^date-released: .*$",
+            f'date-released: "{released}"',
+            cff,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if n_ver != 1 or n_date != 1:
+            print(
+                f"error: {CITATION.name} is missing a 'version:' or 'date-released:' "
+                "line to stamp — add them (see check_version_consistency.py)",
+                file=sys.stderr,
+            )
+            return 1
+        old_cff = CITATION.read_text()
+        CITATION.write_text(cff)
+        print(
+            f"{'updated' if cff != old_cff else 'unchanged'}: "
+            f"{CITATION.relative_to(REPO)} -> {version} ({released})"
+        )
+    else:
+        print(
+            f"warning: {CITATION.name} not found; skipped citation version",
             file=sys.stderr,
         )
 

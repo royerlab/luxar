@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Assert the Python and viewer versions describe the same release.
+"""Assert the Python, viewer and citation versions describe the same release.
 
-The Python ``__version__`` (CalVer, zero-padded ``YYYY.MM.DD``) and the viewer
-``package.json`` version (semver-normalized, leading zeros stripped) are two
-representations of ONE release. ``scripts/set_version.py`` writes both; this
+The Python ``__version__`` (CalVer, zero-padded ``YYYY.MM.DD``), the viewer
+``package.json`` version (semver-normalized, leading zeros stripped) and
+``CITATION.cff`` (zero-padded, plus a ``date-released`` derived from the same
+date) are three representations of ONE release. ``scripts/set_version.py`` writes both; this
 script is the gate that keeps them from drifting — run in CI, ``hatch run
 check``, and the release preflight.
 
@@ -21,8 +22,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 INIT = REPO / "packages/luxar/src/luxar/__init__.py"
 PKG_JSON = REPO / "packages/luxar-viewer/package.json"
+CITATION = REPO / "CITATION.cff"
 
 CALVER_RE = re.compile(r'^__version__ = "([^"]*)"', re.MULTILINE)
+# Quotes are optional in YAML, so accept both spellings rather than assuming ours.
+CFF_VERSION_RE = re.compile(r'^version:\s*"?([^"\s]+)"?\s*$', re.MULTILINE)
+CFF_DATE_RE = re.compile(r'^date-released:\s*"?([^"\s]+)"?\s*$', re.MULTILINE)
 
 
 def _normalize_semver(calver: str) -> str:
@@ -65,7 +70,43 @@ def main() -> int:
         )
         return 1
 
-    print(f"versions consistent: Python {py_version} == viewer {viewer_version}")
+    # --- CITATION.cff: zero-padded version + a date-released derived from it ---
+    # Cheap to check and easy to forget: nothing else reads this file, so drift
+    # here is invisible until a citation manager or Zenodo shows the wrong year.
+    try:
+        cff_text = CITATION.read_text()
+    except OSError as exc:
+        print(f"error: cannot read {CITATION}: {exc}", file=sys.stderr)
+        return 2
+    m_ver = CFF_VERSION_RE.search(cff_text)
+    m_date = CFF_DATE_RE.search(cff_text)
+    if not m_ver or not m_date:
+        print(
+            f"error: {CITATION.name} needs both a 'version:' and a 'date-released:' "
+            "line for the release gate to check them",
+            file=sys.stderr,
+        )
+        return 2
+    cff_version, cff_date = m_ver.group(1), m_date.group(1)
+    expected_date = py_version.replace(".", "-")
+    if cff_version != py_version or cff_date != expected_date:
+        print(
+            "Version mismatch between Python package and CITATION.cff:\n"
+            f"  Python  __version__      = {py_version!r}\n"
+            f"  CITATION.cff version     = {cff_version!r}  "
+            f"(expected {py_version!r})\n"
+            f"  CITATION.cff date-released = {cff_date!r}  "
+            f"(expected {expected_date!r})\n"
+            "They must describe the same release. Run "
+            f"`make set-version {py_version}` to sync, then commit.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"versions consistent: Python {py_version} == viewer {viewer_version} "
+        f"== citation {cff_version} ({cff_date})"
+    )
     return 0
 
 
