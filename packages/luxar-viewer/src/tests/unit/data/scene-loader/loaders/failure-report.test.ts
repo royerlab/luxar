@@ -114,11 +114,7 @@ describe('reportLoadOutcome', () => {
     expect(reportLoadOutcome(['/a', '/lazy'], ['/a'])).toBe('total');
     expect(notifierMocks.toast).toHaveBeenCalledTimes(1);
     expect(notifierMocks.toast).toHaveBeenCalledWith(
-      expect.stringContaining('No details were provided.'),
-      expect.any(Number)
-    );
-    expect(notifierMocks.toast).not.toHaveBeenCalledWith(
-      expect.stringContaining('console'),
+      expect.stringContaining('See the console for details.'),
       expect.any(Number)
     );
     // The count matches the listed paths (the failed set), not the registered

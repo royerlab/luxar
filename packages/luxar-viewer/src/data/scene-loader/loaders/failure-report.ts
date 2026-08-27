@@ -98,7 +98,9 @@ export function reportLoadOutcome(
     );
     notifier.toast(
       `Scene failed to load: all ${failedPaths.length} data node(s) failed. ` +
-        (firstFailureReason ? `First error: ${firstFailureReason}` : 'No details were provided.'),
+        (firstFailureReason
+          ? `First error: ${firstFailureReason}`
+          : 'See the console for details.'),
       TOTAL_FAILURE_TOAST_MS
     );
     return 'total';
