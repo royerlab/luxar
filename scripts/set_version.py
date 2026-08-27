@@ -3,9 +3,10 @@
 
 Updates the single source of truth — ``__version__`` in
 ``packages/luxar/src/luxar/__init__.py`` — and keeps the viewer's
-``package.json`` and the root ``CITATION.cff`` in sync. Because ``main`` is branch-protected, this only edits
-files locally; commit the change on a branch and open a PR, then tag the release
-with ``make release`` once it has merged with CI green.
+``package.json`` and the root ``CITATION.cff`` in sync. Because ``main`` is
+branch-protected, this only edits files locally; commit the change on a branch
+and open a PR, then tag the release with ``make release`` once it has merged
+with CI green.
 
 Usage:
     python scripts/set_version.py            # today, zero-padded YYYY.MM.DD
@@ -33,6 +34,8 @@ PKG_JSON = REPO / "packages/luxar-viewer/package.json"
 CITATION = REPO / "CITATION.cff"
 
 CALVER_RE = re.compile(r"^\d{4}\.\d{2}\.\d{2}$")
+CFF_VERSION_LINE_RE = re.compile(r"^version:[^\S\r\n]*.*$", re.MULTILINE)
+CFF_DATE_LINE_RE = re.compile(r"^date-released:[^\S\r\n]*.*$", re.MULTILINE)
 
 
 def main(argv: list[str]) -> int:
@@ -43,6 +46,17 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
+
+    cff = CITATION.read_text() if CITATION.exists() else None
+    if cff is not None and (
+        not CFF_VERSION_LINE_RE.search(cff) or not CFF_DATE_LINE_RE.search(cff)
+    ):
+        print(
+            f"error: {CITATION.name} is missing a 'version:' or 'date-released:' "
+            "line to stamp — add them (see check_version_consistency.py)",
+            file=sys.stderr,
+        )
+        return 1
 
     # --- Python __version__ (zero-padded, authoritative) ---
     text = INIT.read_text()
@@ -86,30 +100,27 @@ def main(argv: list[str]) -> int:
     # Not merely cosmetic: this is what a citation manager and Zenodo read, and
     # nothing else stamps it — before this it was a launch-day hand-edit that the
     # release runbook never mentioned. `check_version_consistency.py` gates it.
-    if CITATION.exists():
-        cff = CITATION.read_text()
+    if cff is not None:
+        original_cff = cff
         released = version.replace(".", "-")
         cff, n_ver = re.subn(
-            r"^version: .*$", f'version: "{version}"', cff, count=1, flags=re.MULTILINE
+            r"^version:[^\S\r\n]*.*$",
+            f'version: "{version}"',
+            cff,
+            count=1,
+            flags=re.MULTILINE,
         )
         cff, n_date = re.subn(
-            r"^date-released: .*$",
+            r"^date-released:[^\S\r\n]*.*$",
             f'date-released: "{released}"',
             cff,
             count=1,
             flags=re.MULTILINE,
         )
-        if n_ver != 1 or n_date != 1:
-            print(
-                f"error: {CITATION.name} is missing a 'version:' or 'date-released:' "
-                "line to stamp — add them (see check_version_consistency.py)",
-                file=sys.stderr,
-            )
-            return 1
-        old_cff = CITATION.read_text()
+        assert n_ver == 1 and n_date == 1
         CITATION.write_text(cff)
         print(
-            f"{'updated' if cff != old_cff else 'unchanged'}: "
+            f"{'updated' if cff != original_cff else 'unchanged'}: "
             f"{CITATION.relative_to(REPO)} -> {version} ({released})"
         )
     else:

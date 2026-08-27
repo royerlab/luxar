@@ -4,9 +4,9 @@
 The Python ``__version__`` (CalVer, zero-padded ``YYYY.MM.DD``), the viewer
 ``package.json`` version (semver-normalized, leading zeros stripped) and
 ``CITATION.cff`` (zero-padded, plus a ``date-released`` derived from the same
-date) are three representations of ONE release. ``scripts/set_version.py`` writes both; this
-script is the gate that keeps them from drifting — run in CI, ``hatch run
-check``, and the release preflight.
+date) are three representations of ONE release. ``scripts/set_version.py``
+writes all three; this script is the gate that keeps them from drifting — run
+in CI, ``hatch run check``, and the release preflight.
 
 Exit code 0 if consistent, 1 if they disagree (with a clear diff), 2 on a
 read/parse error.
@@ -25,14 +25,21 @@ PKG_JSON = REPO / "packages/luxar-viewer/package.json"
 CITATION = REPO / "CITATION.cff"
 
 CALVER_RE = re.compile(r'^__version__ = "([^"]*)"', re.MULTILINE)
-# Quotes are optional in YAML, so accept both spellings rather than assuming ours.
-CFF_VERSION_RE = re.compile(r'^version:\s*"?([^"\s]+)"?\s*$', re.MULTILINE)
-CFF_DATE_RE = re.compile(r'^date-released:\s*"?([^"\s]+)"?\s*$', re.MULTILINE)
+CFF_VERSION_RE = re.compile(r"^version:[^\S\r\n]*(.*?)[^\S\r\n]*$", re.MULTILINE)
+CFF_DATE_RE = re.compile(r"^date-released:[^\S\r\n]*(.*?)[^\S\r\n]*$", re.MULTILINE)
 
 
 def _normalize_semver(calver: str) -> str:
     """Strip zero-padding so ``2026.06.05`` -> ``2026.6.5`` (npm/semver form)."""
     return ".".join(str(int(p)) for p in calver.split("."))
+
+
+def _cff_scalar(match: re.Match[str]) -> str:
+    """Return a simple YAML scalar without an inline comment or quotes."""
+    value = match.group(1).split("#", 1)[0].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
 
 
 def main() -> int:
@@ -87,7 +94,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    cff_version, cff_date = m_ver.group(1), m_date.group(1)
+    cff_version, cff_date = _cff_scalar(m_ver), _cff_scalar(m_date)
     expected_date = py_version.replace(".", "-")
     if cff_version != py_version or cff_date != expected_date:
         print(

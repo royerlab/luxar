@@ -63,11 +63,16 @@ def _checkout(tmp_path: Path, version: str = "2026.06.05") -> dict[str, Path]:
     return {"init": init, "pkg_json": pkg_json, "citation": citation}
 
 
-def _point_at(module: ModuleType, paths: dict[str, Path], tmp_path: Path) -> None:
-    module.REPO = tmp_path
-    module.INIT = paths["init"]
-    module.PKG_JSON = paths["pkg_json"]
-    module.CITATION = paths["citation"]
+def _point_at(
+    module: ModuleType,
+    paths: dict[str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(module, "REPO", tmp_path)
+    monkeypatch.setattr(module, "INIT", paths["init"])
+    monkeypatch.setattr(module, "PKG_JSON", paths["pkg_json"])
+    monkeypatch.setattr(module, "CITATION", paths["citation"])
 
 
 # --------------------------------------------------------------------------- #
@@ -76,10 +81,12 @@ def _point_at(module: ModuleType, paths: dict[str, Path], tmp_path: Path) -> Non
 
 
 def test_stamps_all_three_representations(
-    set_version_module: ModuleType, tmp_path: Path
+    set_version_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _checkout(tmp_path)
-    _point_at(set_version_module, paths, tmp_path)
+    _point_at(set_version_module, paths, tmp_path, monkeypatch)
 
     assert set_version_module.main(["set_version.py", "2026.09.15"]) == 0
 
@@ -92,11 +99,13 @@ def test_stamps_all_three_representations(
 
 
 def test_zero_padding_is_preserved_where_it_matters(
-    set_version_module: ModuleType, tmp_path: Path
+    set_version_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A single-digit month/day is the case the two spellings diverge on."""
     paths = _checkout(tmp_path)
-    _point_at(set_version_module, paths, tmp_path)
+    _point_at(set_version_module, paths, tmp_path, monkeypatch)
 
     assert set_version_module.main(["set_version.py", "2026.01.02"]) == 0
 
@@ -110,10 +119,13 @@ def test_zero_padding_is_preserved_where_it_matters(
     "bad", ["2026.6.5", "2026-06-05", "v2026.06.05", "1.2.3", "2026.06", ""]
 )
 def test_rejects_non_calver(
-    set_version_module: ModuleType, tmp_path: Path, bad: str
+    set_version_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bad: str,
 ) -> None:
     paths = _checkout(tmp_path)
-    _point_at(set_version_module, paths, tmp_path)
+    _point_at(set_version_module, paths, tmp_path, monkeypatch)
     before = paths["init"].read_text()
 
     assert set_version_module.main(["set_version.py", bad]) == 2
@@ -121,19 +133,43 @@ def test_rejects_non_calver(
 
 
 def test_reports_a_citation_missing_its_stampable_lines(
-    set_version_module: ModuleType, tmp_path: Path
+    set_version_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Silently skipping would reintroduce exactly the drift this closes."""
     paths = _checkout(tmp_path)
     paths["citation"].write_text('cff-version: 1.2.0\ntitle: "Luxar"\n')
-    _point_at(set_version_module, paths, tmp_path)
+    _point_at(set_version_module, paths, tmp_path, monkeypatch)
+    before = {name: path.read_text() for name, path in paths.items()}
 
     assert set_version_module.main(["set_version.py", "2026.09.15"]) == 1
+    assert {name: path.read_text() for name, path in paths.items()} == before
 
 
-def test_is_idempotent(set_version_module: ModuleType, tmp_path: Path) -> None:
+def test_stamps_citation_lines_without_spaces_after_colons(
+    set_version_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     paths = _checkout(tmp_path)
-    _point_at(set_version_module, paths, tmp_path)
+    paths["citation"].write_text(
+        "cff-version: 1.2.0\nversion:2026.06.05\ndate-released:2026-06-05\n"
+    )
+    _point_at(set_version_module, paths, tmp_path, monkeypatch)
+
+    assert set_version_module.main(["set_version.py", "2026.09.15"]) == 0
+    assert 'version: "2026.09.15"' in paths["citation"].read_text()
+    assert 'date-released: "2026-09-15"' in paths["citation"].read_text()
+
+
+def test_is_idempotent(
+    set_version_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _checkout(tmp_path)
+    _point_at(set_version_module, paths, tmp_path, monkeypatch)
 
     assert set_version_module.main(["set_version.py", "2026.09.15"]) == 0
     once = {k: p.read_text() for k, p in paths.items()}
@@ -147,59 +183,81 @@ def test_is_idempotent(set_version_module: ModuleType, tmp_path: Path) -> None:
 
 
 def test_gate_passes_on_a_consistent_checkout(
-    check_module: ModuleType, tmp_path: Path
+    check_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _checkout(tmp_path)
-    _point_at(check_module, paths, tmp_path)
+    _point_at(check_module, paths, tmp_path, monkeypatch)
     assert check_module.main() == 0
 
 
 def test_gate_catches_a_stale_viewer_version(
-    check_module: ModuleType, tmp_path: Path
+    check_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _checkout(tmp_path)
     paths["pkg_json"].write_text(json.dumps({"version": "2026.5.1"}) + "\n")
-    _point_at(check_module, paths, tmp_path)
+    _point_at(check_module, paths, tmp_path, monkeypatch)
     assert check_module.main() == 1
 
 
 def test_gate_catches_a_stale_citation_version(
-    check_module: ModuleType, tmp_path: Path
+    check_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _checkout(tmp_path)
     cff = paths["citation"].read_text().replace("2026.06.05", "2026.05.01")
     paths["citation"].write_text(cff)
-    _point_at(check_module, paths, tmp_path)
+    _point_at(check_module, paths, tmp_path, monkeypatch)
     assert check_module.main() == 1
 
 
 def test_gate_catches_a_date_that_disagrees_with_the_version(
-    check_module: ModuleType, tmp_path: Path
+    check_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The subtle one: right version, wrong release date."""
     paths = _checkout(tmp_path)
     cff = paths["citation"].read_text().replace("2026-06-05", "2026-06-06")
     paths["citation"].write_text(cff)
-    _point_at(check_module, paths, tmp_path)
+    _point_at(check_module, paths, tmp_path, monkeypatch)
     assert check_module.main() == 1
 
 
 def test_gate_reports_a_citation_missing_its_fields(
-    check_module: ModuleType, tmp_path: Path
+    check_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _checkout(tmp_path)
     paths["citation"].write_text('cff-version: 1.2.0\ntitle: "Luxar"\n')
-    _point_at(check_module, paths, tmp_path)
+    _point_at(check_module, paths, tmp_path, monkeypatch)
     assert check_module.main() == 2
 
 
-def test_gate_accepts_unquoted_yaml(check_module: ModuleType, tmp_path: Path) -> None:
-    """Quotes are optional in YAML; the gate must not depend on our spelling."""
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "cff-version: 1.2.0\nversion: 2026.06.05\ndate-released: 2026-06-05\n",
+        "cff-version: 1.2.0\nversion: '2026.06.05'\ndate-released: '2026-06-05'\n",
+        'cff-version: 1.2.0\nversion: "2026.06.05"  # tag v2026.06.05\n'
+        'date-released: "2026-06-05"\n',
+    ],
+)
+def test_gate_accepts_valid_yaml_scalar_spellings(
+    check_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    citation: str,
+) -> None:
+    """The gate must accept ordinary YAML quoting and inline comments."""
     paths = _checkout(tmp_path)
-    paths["citation"].write_text(
-        "cff-version: 1.2.0\nversion: 2026.06.05\ndate-released: 2026-06-05\n"
-    )
-    _point_at(check_module, paths, tmp_path)
+    paths["citation"].write_text(citation)
+    _point_at(check_module, paths, tmp_path, monkeypatch)
     assert check_module.main() == 0
 
 
