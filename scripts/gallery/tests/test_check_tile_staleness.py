@@ -70,6 +70,7 @@ def _repo(tmp_path: Path) -> Path:
         "scripts/gallery",
         "packages/luxar/src/luxar/demos",
         "packages/luxar/src/luxar/shading",
+        "packages/luxar/src/luxar/shading/tests",
         "docs/images/readme/gallery",
     ):
         (tmp_path / relative).mkdir(parents=True, exist_ok=True)
@@ -152,6 +153,29 @@ def test_manifest_history_is_entry_specific_and_shading_affects_all_tiles(
     assert by_id["b"].stale_inputs == (
         "luxar.shading",
         "manifest entry",
+    )
+
+
+def test_shading_docs_and_tests_do_not_mark_tiles_stale(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / "packages/luxar/src/luxar/shading/README.md").write_text("docs only\n")
+    (repo / "packages/luxar/src/luxar/shading/tests/test_occlusion.py").write_text(
+        "# tests only\n"
+    )
+    _commit(repo, "document shading", 22)
+
+    assert all(
+        not status.stale_inputs for status in stale.GalleryHistory(repo).tile_statuses()
+    )
+
+    (repo / "packages/luxar/src/luxar/shading/occlusion.py").write_text(
+        "# revised shading\n"
+    )
+    _commit(repo, "revise shading", 23)
+
+    assert all(
+        status.stale_inputs == ("luxar.shading",)
+        for status in stale.GalleryHistory(repo).tile_statuses()
     )
 
 

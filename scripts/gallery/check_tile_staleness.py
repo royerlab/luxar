@@ -17,6 +17,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = Path("scripts/gallery/manifest.json")
 DEMOS_DIR = Path("packages/luxar/src/luxar/demos")
 SHADING_PATH = Path("packages/luxar/src/luxar/shading")
+SHADING_PATHSPECS = (
+    f"{SHADING_PATH.as_posix()}/*.py",
+    f":(exclude){SHADING_PATH.as_posix()}/tests/**",
+)
 TILES_PATHSPEC = "docs/images/readme/gallery/*.webp"
 
 _BLAME_HEADER = re.compile(r"^([0-9a-f^]+) \d+ \d+(?: \d+)?$")
@@ -118,12 +122,15 @@ class GalleryHistory:
                 "gallery tile staleness requires full Git history; fetch with --unshallow first"
             )
 
-    def _last_commit(self, path: Path) -> CommitStamp:
-        output = self._git("log", "-1", "--format=%H%x00%cI", "--", path.as_posix())
+    def _last_commit_for_pathspecs(self, *pathspecs: str) -> CommitStamp:
+        output = self._git("log", "-1", "--format=%H%x00%cI", "--", *pathspecs)
         if not output:
-            raise StalenessError(f"no commit history for {path.as_posix()}")
+            raise StalenessError(f"no commit history for {', '.join(pathspecs)}")
         sha, committed_at = output.split("\0", 1)
         return CommitStamp(sha=sha, committed_at=datetime.fromisoformat(committed_at))
+
+    def _last_commit(self, path: Path) -> CommitStamp:
+        return self._last_commit_for_pathspecs(path.as_posix())
 
     def _manifest_entry_commit(self, line_range: LineRange) -> CommitStamp:
         output = self._git(
@@ -166,7 +173,7 @@ class GalleryHistory:
         manifest = json.loads(manifest_text)
         entries = {entry["id"]: entry for entry in manifest["demos"]}
         ranges = manifest_entry_line_ranges(manifest_text)
-        shading = self._last_commit(SHADING_PATH)
+        shading = self._last_commit_for_pathspecs(*SHADING_PATHSPECS)
 
         statuses: list[TileStatus] = []
         for tile_path in self._tracked_tiles():
@@ -200,14 +207,21 @@ class GalleryHistory:
 
 
 def _format_status(status: TileStatus) -> str:
-    tile_date = status.tile.committed_at.date().isoformat()
+    tile_stamp = _format_stamp(status.tile)
     if not status.stale_inputs:
-        return f"CURRENT {status.demo_id}: tile {tile_date}"
+        return f"CURRENT {status.demo_id}: tile {tile_stamp}"
     details = ", ".join(
-        f"{label} {status.inputs[label].committed_at.date().isoformat()}"
+        f"{label} {_format_stamp(status.inputs[label])}"
         for label in status.stale_inputs
     )
-    return f"STALE {status.demo_id}: tile {tile_date}; newer inputs: {details}"
+    return f"STALE {status.demo_id}: tile {tile_stamp}; newer inputs: {details}"
+
+
+def _format_stamp(stamp: CommitStamp) -> str:
+    timestamp = stamp.committed_at.astimezone(timezone.utc).isoformat(
+        timespec="seconds"
+    )
+    return f"{timestamp.replace('+00:00', 'Z')} ({stamp.sha[:8]})"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
