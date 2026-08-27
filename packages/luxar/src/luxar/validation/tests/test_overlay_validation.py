@@ -160,9 +160,18 @@ class TestValidateImageInput:
         assert fmt == "png"
 
     def test_bytes_with_format(self):
-        data, fmt = validate_image_input(b"\xff\xd8", fmt="jpeg")
+        data, fmt = validate_image_input(b"\xff\xd8", fmt="png")
         assert data == b"\xff\xd8"
         assert fmt == "jpeg"
+
+    def test_webp_bytes_detected(self):
+        data, fmt = validate_image_input(b"RIFF\x04\x00\x00\x00WEBP")
+        assert data == b"RIFF\x04\x00\x00\x00WEBP"
+        assert fmt == "webp"
+
+    def test_unsupported_bytes_rejected(self):
+        with pytest.raises(ValueError, match="encoded image format"):
+            validate_image_input(b"not an image")
 
     def test_numpy_rgb(self):
         arr = np.zeros((4, 4, 3), dtype=np.uint8)
@@ -186,10 +195,17 @@ class TestValidateImageInput:
         assert len(data) > 0
 
     def test_file_path(self, tmp_path):
-        test_file = tmp_path / "test.bin"
-        test_file.write_bytes(b"fake image data")
+        test_file = tmp_path / "test.jpg"
+        test_file.write_bytes(b"\xff\xd8")
         data, fmt = validate_image_input(str(test_file))
-        assert data == b"fake image data"
+        assert data == b"\xff\xd8"
+        assert fmt == "jpeg"
+
+    def test_file_suffix_must_match_payload(self, tmp_path):
+        test_file = tmp_path / "test.png"
+        test_file.write_bytes(b"\xff\xd8")
+        with pytest.raises(ValueError, match="extension.*payload"):
+            validate_image_input(test_file)
 
     def test_nonexistent_file(self):
         with pytest.raises(ValueError, match="not found"):
@@ -197,7 +213,7 @@ class TestValidateImageInput:
 
     def test_invalid_format(self):
         with pytest.raises(ValueError, match="format"):
-            validate_image_input(b"data", fmt="bmp")
+            validate_image_input(np.zeros((4, 4, 3), dtype=np.uint8), fmt="bmp")
 
     def test_unsupported_type(self):
         with pytest.raises(ValueError, match="Cannot process"):

@@ -44,6 +44,13 @@ VALID_TRANSITIONS: Set[str] = {"none", "fade"}
 # Valid image storage formats
 VALID_IMAGE_FORMATS: Set[str] = {"png", "jpeg", "webp"}
 
+_IMAGE_SUFFIX_FORMATS = {
+    ".jpeg": "jpeg",
+    ".jpg": "jpeg",
+    ".png": "png",
+    ".webp": "webp",
+}
+
 # Font presets
 FONT_PRESETS: Set[str] = {"sans", "serif", "mono"}
 
@@ -300,7 +307,7 @@ def validate_image_input(
 
     Args:
         image: Image data in any supported format
-        fmt: Target encoding format ('png', 'jpeg', 'webp')
+        fmt: Target encoding format for decoded inputs ('png', 'jpeg', 'webp')
 
     Returns:
         Tuple of (encoded_bytes, format_string)
@@ -308,18 +315,31 @@ def validate_image_input(
     Raises:
         ValueError: If image cannot be processed
     """
-    fmt = validate_image_format(fmt)
-
-    # Already bytes — assume pre-encoded
+    # Pre-encoded inputs keep their actual format rather than being relabelled.
     if isinstance(image, bytes):
-        return image, fmt
+        return image, _detect_encoded_image_format(image)
 
-    # File path — read the file
+    # File paths must declare the same supported format as their payload.
     if isinstance(image, (str, Path)):
         path = Path(image)
         if not path.exists():
             raise ValueError(f"Image file not found: {path}")
-        return path.read_bytes(), fmt
+        image_bytes = path.read_bytes()
+        detected_fmt = _detect_encoded_image_format(image_bytes)
+        suffix_fmt = _IMAGE_SUFFIX_FORMATS.get(path.suffix.lower())
+        if suffix_fmt is None:
+            raise ValueError(
+                f"Unsupported image file extension '{path.suffix or '<none>'}'. "
+                f"Must be one of: {sorted(_IMAGE_SUFFIX_FORMATS)}"
+            )
+        if suffix_fmt != detected_fmt:
+            raise ValueError(
+                f"Image file extension '{path.suffix}' does not match "
+                f"the {detected_fmt} payload"
+            )
+        return image_bytes, detected_fmt
+
+    fmt = validate_image_format(fmt)
 
     # Try PIL Image
     try:
@@ -350,6 +370,19 @@ def validate_image_input(
     raise ValueError(
         f"Cannot process image of type {type(image).__name__}. "
         f"Supported: str/Path, bytes, numpy array, PIL Image, or imageio-compatible."
+    )
+
+
+def _detect_encoded_image_format(image: bytes) -> str:
+    """Detect a supported encoded image format from its signature."""
+    if image.startswith(b"\x89PNG"):
+        return "png"
+    if image.startswith(b"\xff\xd8"):
+        return "jpeg"
+    if image.startswith(b"RIFF") and image[8:12] == b"WEBP":
+        return "webp"
+    raise ValueError(
+        "Unsupported encoded image format. Expected PNG, JPEG, or WebP payload."
     )
 
 

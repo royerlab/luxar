@@ -476,7 +476,9 @@ class Scene(Group):
             anchor: Anchor point for positioning (default 'top-left').
             blend_mode: CSS blend mode: 'normal', 'multiply', 'screen',
                 'overlay', 'additive', or 'difference' (default 'normal').
-            format: Image encoding format: 'png', 'jpeg', 'webp' (default 'png').
+            format: Encoding format for array/PIL inputs: 'png', 'jpeg', or
+                'webp' (default 'png'). Pre-encoded bytes and paths retain their
+                detected format.
             visible_range: Optional dimension-based visibility filter.
             transition: Transition type: 'none' or 'fade' (default 'none').
             transition_duration: Transition duration in seconds (default 0.3).
