@@ -1190,11 +1190,17 @@ def generate_nuclear_pore_complex(
         Total atoms written across all states.
 
     Raises:
-        ValueError: On an unknown ``split``, or if the written atom count does
-            not match the input — which is how a node-key collision (writing the
-            same atoms into two nodes) is caught rather than shipped.
+        ValueError: On an unknown option, or if the written atom count does not
+            match the input — which is how a node-key collision (writing the same
+            atoms into two nodes) is caught rather than shipped.
     """
     wanted = _select_states(which_states)
+    _atom_name_filter(representation)
+    if color_by not in {"module", "nucleoporin", "element", "protomer"}:
+        raise ValueError(f"unknown colour scheme {color_by!r}")
+    if split not in {"none", "nucleoporin"}:
+        raise ValueError(f"unknown split {split!r}; expected none|nucleoporin")
+
     with asection("Reading the deposited NPC protomers"):
         aprint("Mosalaganti et al. Science 2022 — the reference whole-NPC model")
         states = [
@@ -1214,10 +1220,8 @@ def generate_nuclear_pore_complex(
             )
             if split == "none":
                 total, n_nodes = add_npc_node(scene, states)
-            elif split == "nucleoporin":
-                total, n_nodes = add_nucleoporin_nodes(scene, states)
             else:
-                raise ValueError(f"unknown split {split!r}; expected none|nucleoporin")
+                total, n_nodes = add_nucleoporin_nodes(scene, states)
             _add_annotations(scene, wanted, len(states[0]["positions"]))
         expected = sum(len(state["positions"]) for state in states)
         if total != expected:

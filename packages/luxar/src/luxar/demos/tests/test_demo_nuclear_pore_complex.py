@@ -201,10 +201,11 @@ def _fake_states(n_states: int, n_atoms: int = 12):
                 "colors": np.full((n_atoms, 3), 0.5, dtype=np.float32),
                 "radii": np.full(n_atoms, 0.17, dtype=np.float32),
                 "keys": np.array(
-                    ["m\x00a"] * (n_atoms // 2) + ["m\x00b"] * (n_atoms // 2)
+                    ["m\x00a"] * (n_atoms // 2) + ["m\x00b"] * (n_atoms // 2),
+                    dtype=object,
                 ),
-                "modules": np.array(["inner_ring"] * n_atoms),
-                "nups": np.array(["nup160"] * n_atoms),
+                "modules": np.array(["inner_ring"] * n_atoms, dtype=object),
+                "nups": np.array(["nup160"] * n_atoms, dtype=object),
                 "elements": np.array(["C"] * n_atoms),
                 "protomer": np.repeat(np.arange(2), n_atoms // 2),
                 "n_fold": 2,
@@ -270,8 +271,8 @@ def test_van_der_waals_radii_are_true_scale() -> None:
 @pytest.mark.parametrize("color_by", ["module", "nucleoporin", "element", "protomer"])
 def test_all_color_schemes_cover_real_assignment_keys(color_by: str) -> None:
     """Every documented colour scheme accepts the arrays produced by a real state."""
-    modules = np.array(["cytoplasmic_ring", "central_channel"])
-    nucleoporins = np.array(["nup160", "nup58_p45"])
+    modules = np.array(["cytoplasmic_ring", "central_channel"], dtype=object)
+    nucleoporins = np.array(["nup160", "nup58_p45"], dtype=object)
     elements = np.array(["C", "O"])
     protomer = np.array([0, 1])
 
@@ -487,6 +488,38 @@ def test_unknown_state_is_rejected() -> None:
     """A typo'd --state fails with the accepted values listed."""
     with pytest.raises(ValueError, match="unknown state"):
         demo._select_states("relaxed")
+
+
+@pytest.mark.parametrize(
+    "representation,color_by,split,message",
+    [
+        ("sidechain", "module", "none", "unknown representation"),
+        ("all", "modules", "none", "unknown colour scheme"),
+        ("all", "module", "module", "unknown split"),
+    ],
+)
+def test_generate_rejects_bad_options_before_loading(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    representation: str,
+    color_by: str,
+    split: str,
+    message: str,
+) -> None:
+    """Option typos fail before downloading or expanding either deposition."""
+
+    def fail_if_called(*args: object, **kwargs: object) -> None:
+        pytest.fail("build_state must not run before all options are validated")
+
+    monkeypatch.setattr(demo, "build_state", fail_if_called)
+
+    with pytest.raises(ValueError, match=message):
+        demo.generate_nuclear_pore_complex(
+            tmp_path / "scene.luxar.zarr",
+            representation=representation,
+            color_by=color_by,
+            split=split,
+        )
 
 
 @pytest.mark.parametrize(
