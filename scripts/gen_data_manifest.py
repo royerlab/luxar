@@ -110,6 +110,34 @@ RECORDS = {
         "base_url": None,
         "published": False,
     },
+    # Its OWN record rather than a 33rd file on `cc-by`, decided by Loic on
+    # 2026-08-26. The deciding argument was attribution granularity: on a mixed
+    # record "Keller, DataCollector" is one name among four attached to nothing
+    # in particular, while here he is the data collector *of this recording*.
+    #
+    # The shipped single frame in `cc-by` IS frame 150 of this same recording,
+    # so one recording spans two DOIs. That is deliberate and handled by a
+    # cross-reference in both descriptions rather than by co-location — moving
+    # the existing file would break its pins.
+    #
+    # PUBLICATION GATE, beyond the standing never-publish rule: this record
+    # additionally waits on a conversation with Philipp J. Keller, whose imaging
+    # it is, and which as of 2026-08-26 had not happened. Loic confirmed that and
+    # chose the sequencing: upload to the draft, gate the publish. An upload here
+    # implies no consent to publish. Recorded in the repo on purpose — Zenodo's
+    # `notes` and `description` are both PUBLISHED metadata, so an internal
+    # process gate written there would ship with the record.
+    "droso-timelapse": {
+        "title": (
+            "Drosophila melanogaster embryogenesis: a 500-timepoint "
+            "light-sheet timelapse as Gaussian splats"
+        ),
+        "license": "cc-by-4.0",
+        "zenodo_doi": "10.5281/zenodo.22118695",
+        "zenodo_record": "22118695",
+        "base_url": None,
+        "published": False,
+    },
 }
 
 # Curated per-dataset metadata. `dir` is the demos/data subdir (or "" for
