@@ -200,8 +200,9 @@ The host must call `update()` each frame before rendering, `resize()` after a
 viewport or camera-projection change, and pass `requestRender` if it renders
 on demand rather than continuously. `renderOrder` defaults to 10 and is stamped
 onto every nested Luxar Group; host transparent groups should use explicit
-lower/higher values. After restoring a WebGL context, rebuild the host renderer
-and post-processing first, then call `handleContextRestored()`.
+lower/higher values. On WebGL context loss, call `handleContextLost()` so Luxar
+backs off its GPU budget; after rebuilding the host renderer and post-processing,
+call `handleContextRestored()`.
 
 nD navigation coalesces, so a host can drive it from a slider at frame rate:
 

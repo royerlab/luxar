@@ -115,9 +115,23 @@ vi.mock('../../../rendering/material-manager', () => ({
 }));
 
 vi.mock('../../../rendering/renderer-capabilities', () => ({
-  createRendererCapabilities: () => ({ backend: 'webgl' }),
+  createRendererCapabilities: () => ({ backend: 'webgl', apiSurface: 'webgl2' }),
+  isWebGLRenderer: (renderer: { isWebGLRenderer?: boolean }) => renderer.isWebGLRenderer === true,
 }));
-vi.mock('../../../rendering/gpu-byte-budget', () => ({ getGpuByteBudget: () => 1024 }));
+const reduceGpuByteBudgetForContextLoss = vi.fn();
+vi.mock('../../../rendering/gpu-byte-budget', () => ({
+  getGpuByteBudget: () => 1024,
+  reduceGpuByteBudgetForContextLoss: () => reduceGpuByteBudgetForContextLoss(),
+}));
+
+const configureBlendModeProgramWarmup = vi.fn();
+const warmSceneBlendModePrograms = vi.fn(async (_root: THREE.Object3D) => {});
+const clearBlendModeProgramWarmup = vi.fn();
+vi.mock('../../../rendering/webgl-blend-warmup', () => ({
+  configureBlendModeProgramWarmup: (...a: unknown[]) => configureBlendModeProgramWarmup(...a),
+  warmSceneBlendModePrograms: (root: THREE.Object3D) => warmSceneBlendModePrograms(root),
+  clearBlendModeProgramWarmup: () => clearBlendModeProgramWarmup(),
+}));
 
 const configureDepthSort = vi.fn();
 const setDepthSortEnabled = vi.fn();
@@ -144,6 +158,7 @@ import { LuxarLayer, type LuxarLayerOptions } from '../../../core/layer/luxar-la
 
 function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOptions {
   const renderer = {
+    isWebGLRenderer: true,
     getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
   } as unknown as LuxarLayerOptions['renderer'];
   return {
@@ -196,6 +211,18 @@ describe('LuxarLayer', () => {
     it('warms the depth-sort worker while the page is still idle', () => {
       new LuxarLayer(makeOptions());
       expect(warmUpDepthSortWorker).toHaveBeenCalled();
+    });
+
+    it('configures blend-program warm-up against the host WebGL pipeline', async () => {
+      const options = makeOptions();
+      const layer = new LuxarLayer(options);
+      await layer.load('http://example.test/scene.zarr');
+      expect(configureBlendModeProgramWarmup).toHaveBeenCalledWith({
+        enabled: true,
+        renderer: options.renderer,
+        camera: expect.any(THREE.Camera),
+        targetScene: options.scene,
+      });
     });
 
     it('skips depth-sort wiring when disabled', () => {
@@ -359,8 +386,23 @@ describe('LuxarLayer', () => {
 
       const lazyPartition = new THREE.Group();
       lodGroup.add(lazyPartition);
+      const commit = setRequestRender.mock.calls[0][0] as () => void;
+      commit();
       layer.update();
       expect(lazyPartition.renderOrder).toBe(42);
+    });
+
+    it('warms reachable blend programs after the first slice commits', async () => {
+      const root = new THREE.Group();
+      loadSceneMock.mockResolvedValueOnce(root);
+      const layer = new LuxarLayer(makeOptions());
+
+      await layer.load('http://example.test/scene.zarr');
+
+      expect(warmSceneBlendModePrograms).toHaveBeenCalledWith(root);
+      expect(updateSceneForDimensionsMock.mock.invocationCallOrder[0]).toBeLessThan(
+        warmSceneBlendModePrograms.mock.invocationCallOrder[0]
+      );
     });
 
     it('waits for and cleans up a load before tearing down globals', async () => {
@@ -412,6 +454,30 @@ describe('LuxarLayer', () => {
         (sceneLoaderStub.lodGroupRegistry.evaluatePerFrame as ReturnType<typeof vi.fn>).mock
           .invocationCallOrder[0]
       );
+    });
+
+    it('only re-stamps render order after a geometry commit', async () => {
+      const root = new THREE.Group();
+      const traverse = vi.spyOn(root, 'traverse');
+      loadSceneMock.mockResolvedValueOnce(root);
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+      traverse.mockClear();
+
+      layer.update();
+      expect(traverse).not.toHaveBeenCalled();
+
+      const lazyGroup = new THREE.Group();
+      root.add(lazyGroup);
+      const commit = setRequestRender.mock.calls[0][0] as () => void;
+      commit();
+      layer.update();
+      expect(traverse).toHaveBeenCalledTimes(1);
+      expect(lazyGroup.renderOrder).toBe(10);
+
+      traverse.mockClear();
+      layer.update();
+      expect(traverse).not.toHaveBeenCalled();
     });
 
     it('is a no-op after dispose', async () => {
@@ -533,6 +599,18 @@ describe('LuxarLayer', () => {
       await expect(layer.setDimensionValue(3, 2)).resolves.toBeUndefined();
     });
 
+    it('settles callers and the drain when a slice update rejects', async () => {
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+      updateSceneForDimensionsMock.mockRejectedValueOnce(new Error('slice fetch failed'));
+
+      const update = layer.setDimensionValue(3, 1);
+
+      await expect(update).resolves.toBeUndefined();
+      await expect(layer.awaitDimensionUpdate()).resolves.toBeUndefined();
+      await expect(layer.setDimensionValue(3, 2)).resolves.toBeUndefined();
+    });
+
     it('deep-clones metadata and ranges returned to the host', async () => {
       const categories = ['a', 'b'];
       const range: [number, number] = [1, 12];
@@ -556,6 +634,17 @@ describe('LuxarLayer', () => {
   });
 
   describe('context restoration', () => {
+    it('backs off the GPU budget and clears stale warm-up programs on context loss', () => {
+      const requestRender = vi.fn();
+      const layer = new LuxarLayer(makeOptions({ requestRender }));
+
+      layer.handleContextLost();
+
+      expect(clearBlendModeProgramWarmup).toHaveBeenCalledTimes(1);
+      expect(reduceGpuByteBudgetForContextLoss).toHaveBeenCalledTimes(1);
+      expect(requestRender).not.toHaveBeenCalled();
+    });
+
     it('rebuilds layer-owned materials, geometry, registrations, and camera uniforms', async () => {
       const requestRender = vi.fn();
       const attribute = new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3);
@@ -665,6 +754,21 @@ describe('LuxarLayer', () => {
       expect(layer.getBounds()).toBeNull();
     });
 
+    it('preserves a hidden state across initial load and dataset switches', async () => {
+      const first = new THREE.Group();
+      const second = new THREE.Group();
+      loadSceneMock.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+      const layer = new LuxarLayer(makeOptions());
+
+      layer.setVisible(false);
+      await layer.load('http://example.test/a.zarr');
+      await layer.load('http://example.test/b.zarr');
+
+      expect(first.visible).toBe(false);
+      expect(second.visible).toBe(false);
+      expect(layer.isVisible()).toBe(false);
+    });
+
     it('measures world bounds from the loaded root', async () => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
       loadSceneMock.mockImplementation(async () => {
@@ -687,7 +791,9 @@ describe('LuxarLayer', () => {
       const requestRender = vi.fn();
       new LuxarLayer(makeOptions({ requestRender }));
 
-      expect(setRequestRender).toHaveBeenCalledWith(requestRender);
+      const loaderCommit = setRequestRender.mock.calls[0][0] as () => void;
+      loaderCommit();
+      expect(requestRender).toHaveBeenCalledTimes(1);
 
       // A commit that repaints goes through the registry's own callback, so it
       // has to be threaded too — not just handed to the manager.
@@ -695,12 +801,12 @@ describe('LuxarLayer', () => {
         deps: { requestRender: () => void };
       };
       factory({ currentViewVersion: 1 }).deps.requestRender();
-      expect(requestRender).toHaveBeenCalled();
+      expect(requestRender).toHaveBeenCalledTimes(2);
     });
 
-    it('is not registered when the host renders continuously', () => {
+    it('still tracks geometry commits when the host renders continuously', () => {
       new LuxarLayer(makeOptions());
-      expect(setRequestRender).not.toHaveBeenCalled();
+      expect(setRequestRender).toHaveBeenCalledWith(expect.any(Function));
     });
   });
 
@@ -899,12 +1005,31 @@ describe('LuxarLayer', () => {
       );
     });
 
+    it('awaits an in-flight dimension update before destroying its loader', async () => {
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+      let release!: () => void;
+      updateSceneForDimensionsMock.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (release = resolve))
+      );
+      const update = layer.setDimensionValue(3, 1);
+
+      const disposing = layer.dispose();
+      await Promise.resolve();
+      expect(destroyAllAsync).not.toHaveBeenCalled();
+
+      release();
+      await Promise.all([update, disposing]);
+      expect(destroyAllAsync).toHaveBeenCalledTimes(1);
+    });
+
     it('is idempotent', async () => {
       const layer = new LuxarLayer(makeOptions());
       await layer.load('http://example.test/scene.zarr');
       await layer.dispose();
       await layer.dispose();
       expect(disposeWorkerPool).toHaveBeenCalledTimes(1);
+      expect(clearBlendModeProgramWarmup).toHaveBeenCalledTimes(1);
     });
 
     it('keeps tearing down after a step throws', async () => {

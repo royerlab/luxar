@@ -104,7 +104,8 @@ layer.setExposure(0.5); // half the scene's authored exposure; 1 = as authored
 ```
 
 `setVisible` toggles `visible` on the root rather than detaching it, so
-re-showing is instant and costs no refetch.
+re-showing is instant and costs no refetch. The setting survives initial load
+and later dataset switches.
 
 `setExposure` scales the _authored_ opacity, not the live value, so the result
 does not depend on how a slider was dragged, and it is re-applied as geometry
@@ -129,6 +130,7 @@ authored it, and the host's is a different one.
 | `awaitDimensionUpdate()`           | Resolve once no slice update is in flight                         |
 | `setVisible(v)` / `isVisible()`    | Show/hide without discarding caches                               |
 | `setExposure(m)` / `getExposure()` | Scale exposure relative to authored                               |
+| `handleContextLost()`              | Back off the Luxar GPU budget after WebGL context loss            |
 | `handleContextRestored()`          | Rebuild Luxar resources after host WebGL context recovery         |
 | `dispose()`                        | Async full teardown of Luxar in the page                          |
 
@@ -147,9 +149,11 @@ authored it, and the host's is a different one.
   later. Three.js compares that Group key before per-mesh `renderOrder`, so host
   transparent groups should use explicit lower/higher values rather than rely on
   insertion order.
-- **WebGL context restoration.** The host owns the canvas event and must reset
-  its renderer / post-processing first, then call `handleContextRestored()` so
-  Luxar rebuilds its materials, geometry uploads, and loader registrations.
+- **WebGL context recovery.** The host owns the canvas events. Call
+  `handleContextLost()` on loss so Luxar drops warm-up programs and reduces its
+  GPU-resident byte budget, then reset the renderer / post-processing and call
+  `handleContextRestored()` so Luxar rebuilds materials, geometry uploads,
+  loader registrations, and blend-program warm-up state.
 
 ## Limits
 

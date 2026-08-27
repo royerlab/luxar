@@ -41,8 +41,9 @@
  * - Draw order for its *own* geometry. Luxar stamps the configured
  *   `renderOrder` onto every Group it owns; host transparent groups should use
  *   explicit lower/higher values rather than rely on insertion order.
- * - Calling {@link LuxarLayer.handleContextRestored} after the host restores a
- *   WebGL context and rebuilds its own renderer / post-processing resources.
+ * - Calling {@link LuxarLayer.handleContextLost} when WebGL context loss is
+ *   reported, then {@link LuxarLayer.handleContextRestored} after rebuilding
+ *   its own renderer / post-processing resources.
  *
  * ## A scene's post/camera/UI config does NOT apply in layer mode
  *
@@ -96,8 +97,16 @@ import { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { sceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
 import type { FadeableMaterial } from '../../scene/lod-fade';
 import { materialManager } from '../../rendering/material-manager';
-import { createRendererCapabilities } from '../../rendering/renderer-capabilities';
-import { getGpuByteBudget } from '../../rendering/gpu-byte-budget';
+import { createRendererCapabilities, isWebGLRenderer } from '../../rendering/renderer-capabilities';
+import {
+  getGpuByteBudget,
+  reduceGpuByteBudgetForContextLoss,
+} from '../../rendering/gpu-byte-budget';
+import {
+  clearBlendModeProgramWarmup,
+  configureBlendModeProgramWarmup,
+  warmSceneBlendModePrograms,
+} from '../../rendering/webgl-blend-warmup';
 import {
   configureDepthSort,
   setDepthSortEnabled,
@@ -213,6 +222,8 @@ export class LuxarLayer {
   // whose geometry streams in over time converges on one exposure, and so the
   // authored value is never lost to repeated scaling.
   private exposure = 1;
+  private visible = true;
+  private renderOrderDirty = false;
   private readonly authoredOpacity = new WeakMap<THREE.Material, number>();
   private readonly appliedExposure = new WeakMap<THREE.Material, number>();
   // nD update coalescing. A scrubbing host outruns the loader by ~30x, so
@@ -296,6 +307,7 @@ export class LuxarLayer {
 
     this.options.scene.add(root);
     this.rootGroup = root;
+    root.visible = this.visible;
     this.applyRenderOrder();
     // A placement declared before the scene arrived applies now. Hosts derive
     // the matrix from their own metadata, which resolves on a schedule
@@ -310,6 +322,8 @@ export class LuxarLayer {
     const dims = sceneDimsManager.getDims();
     if (dims) await updateSceneForDimensions(dims, root, LOADER_ID);
     this.applyRenderOrder();
+    this.configureBlendWarmup();
+    await warmSceneBlendModePrograms(root);
 
     log.info(Modules.LUXAR, `Layer loaded: ${src}`);
     return root;
@@ -330,7 +344,7 @@ export class LuxarLayer {
     // Scene / LOD / partition groups may attach lazily after load(). Three.js
     // replaces the transparent group-order key at every Group boundary, so a
     // newly attached default-zero group would otherwise nullify the option.
-    this.applyRenderOrder();
+    if (this.renderOrderDirty) this.applyRenderOrder();
     // Geometry streams in and LOD swaps mint materials after setExposure() ran,
     // so a non-default exposure has to be re-asserted. Skipped entirely at the
     // authored exposure, which is the common case.
@@ -443,12 +457,14 @@ export class LuxarLayer {
 
   private startDimDrain(): void {
     let resolveDrain!: () => void;
-    let rejectDrain!: (reason: unknown) => void;
-    this.inFlightDimUpdate = new Promise<void>((resolve, reject) => {
+    this.inFlightDimUpdate = new Promise<void>((resolve) => {
       resolveDrain = resolve;
-      rejectDrain = reject;
     });
-    void this.drainDimUpdates().then(resolveDrain, rejectDrain);
+    void this.drainDimUpdates()
+      .catch((error) => {
+        log.error(Modules.LUXAR, 'LuxarLayer dimension update failed', error);
+      })
+      .then(resolveDrain);
   }
 
   /**
@@ -466,10 +482,12 @@ export class LuxarLayer {
         const claimed = this.dimWaiters;
         this.dimWaiters = [];
 
-        const dims = sceneDimsManager.getDims();
-        if (dims) await updateSceneForDimensions(dims, this.rootGroup, LOADER_ID);
-
-        for (const resolve of claimed) resolve();
+        try {
+          const dims = sceneDimsManager.getDims();
+          if (dims) await updateSceneForDimensions(dims, this.rootGroup, LOADER_ID);
+        } finally {
+          for (const resolve of claimed) resolve();
+        }
       }
     } finally {
       this.inFlightDimUpdate = null;
@@ -528,6 +546,7 @@ export class LuxarLayer {
    * keeps running, so LOD state stays current for whenever it comes back.
    */
   setVisible(visible: boolean): void {
+    this.visible = visible;
     if (this.rootGroup) this.rootGroup.visible = visible;
   }
 
@@ -644,6 +663,29 @@ export class LuxarLayer {
     root.traverse((object) => {
       if ((object as THREE.Group).isGroup) object.renderOrder = renderOrder;
     });
+    this.renderOrderDirty = false;
+  }
+
+  private handleGeometryCommit(): void {
+    this.renderOrderDirty = true;
+    this.options.requestRender?.();
+  }
+
+  private configureBlendWarmup(): void {
+    const renderer = isWebGLRenderer(this.options.renderer) ? this.options.renderer : null;
+    configureBlendModeProgramWarmup({
+      enabled: renderer !== null,
+      renderer,
+      camera: this.options.getCamera(),
+      targetScene: this.options.scene,
+    });
+  }
+
+  /** Back off Luxar's GPU budget after a host WebGL context-loss event. */
+  handleContextLost(): void {
+    if (this.disposed) return;
+    clearBlendModeProgramWarmup();
+    reduceGpuByteBudgetForContextLoss();
   }
 
   /**
@@ -657,6 +699,8 @@ export class LuxarLayer {
     markSceneResourcesDirtyForContextRestore(this.rootGroup);
     this.resize();
     getSceneLoader(LOADER_ID)?.nodeFactory.rebuildAfterContextRestore(this.rootGroup);
+    this.configureBlendWarmup();
+    void warmSceneBlendModePrograms(this.rootGroup);
     this.options.requestRender?.();
   }
 
@@ -694,12 +738,14 @@ export class LuxarLayer {
         // must continue and destroy any loader registered before the failure.
       }
     }
+    if (this.inFlightDimUpdate) await this.inFlightDimUpdate;
 
     if (this.rootGroup) {
       this.options.scene.remove(this.rootGroup);
       this.rootGroup = null;
     }
     this.pendingMatrix = null;
+    clearBlendModeProgramWarmup();
 
     // Same three-tier ordering LuxarApp uses: dimension state and the loader
     // (which holds worker references) before the pools that serve them, so no
@@ -753,12 +799,10 @@ export class LuxarLayer {
           getEnergyCompEnabled: () => lodEnergyComp,
           getForceFinestLOD: () => lodFinest,
           registerMaterial: (material) => materialManager.register(material),
-          requestRender: () => this.options.requestRender?.(),
+          requestRender: () => this.handleGeometryCommit(),
         })
     );
-    if (this.options.requestRender) {
-      SceneLoaderManager.getInstance().setRequestRender(this.options.requestRender);
-    }
+    SceneLoaderManager.getInstance().setRequestRender(() => this.handleGeometryCommit());
   }
 
   private installDepthSort(): void {
