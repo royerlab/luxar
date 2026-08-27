@@ -276,6 +276,7 @@ def recompute_levels(work_dir: Path) -> list[Path]:
         # drifts far from its label makes the on-screen "25% / 411K / 41.7 dB"
         # a lie, and the label is the only thing telling a viewer what they are
         # looking at.
+        drifted = []
         for level, path in zip(LEVELS, out, strict=True):
             node, _stats = load_gsplat_node(str(path))
             got = int(node.n_splats)
@@ -283,6 +284,14 @@ def recompute_levels(work_dir: Path) -> list[Path]:
             drift = abs(got - want) / max(want, 1)
             flag = "ok" if drift < 0.01 else "DRIFT"
             aprint(f"  [{flag}] {path.name}: {got:,} splats (label says {want:,})")
+            if drift >= 0.01:
+                drifted.append(f"{path.name}: {got:,} instead of {want:,}")
+        if drifted:
+            details = "; ".join(drifted)
+            raise ValueError(
+                "--parent does not reproduce the counts behind the shipped labels "
+                f"({details}); expected the tp234 h2afva fit, got {parent}"
+            )
         return out
 
 
