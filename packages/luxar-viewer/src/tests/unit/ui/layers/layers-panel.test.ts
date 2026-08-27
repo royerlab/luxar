@@ -1431,7 +1431,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
   function mountMeshLayer(
     container: HTMLElement,
     animationController: AnimationController,
-    blendingMode = 'opaque'
+    blendingMode = 'opaque',
+    attrs: Record<string, unknown> = {}
   ) {
     const calls = {
       ambient: vi.fn(),
@@ -1472,10 +1473,50 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     rootGroup.add(mesh);
 
     const panel = new LayersPanel(container, animationController);
-    panel.initFromScene(rootGroup, makeLayeredSceneGraph('mesh', { blending_mode: blendingMode }));
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', { blending_mode: blendingMode, ...attrs })
+    );
     panel.show();
     panel.layerState.select('/cloud', 'single');
     return { panel, calls };
+  }
+
+  function mountPartitionMeshLayer(shadings: Array<'flat' | 'none'>): LayersPanel {
+    const children = shadings.map((shading, index) => ({
+      name: `part_${index}`,
+      path: `/surface/part_${index}`,
+      type: 'mesh',
+      attrs: { type: 'mesh', shading, has_normals: true },
+      children: [],
+    }));
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'surface',
+          path: '/surface',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'mesh' },
+          children,
+        },
+      ],
+    } as unknown as SceneNode;
+    const rootGroup = new THREE.Group();
+    for (const child of children) {
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      mesh.name = child.path;
+      rootGroup.add(mesh);
+    }
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/surface', 'single');
+    return panel;
   }
 
   it('mesh shading sliders: shown for a mesh layer and hidden for every other type', () => {
@@ -1540,6 +1581,49 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     select.value = 'opaque';
     select.dispatchEvent(new Event('change', { bubbles: true }));
     expect(cutoff.style.display).not.toBe('none');
+  });
+
+  it('unlit mesh hides the four inert lighting controls but keeps Alpha cutoff', () => {
+    // `none` wins even when stored normals exist. The panel must use the same
+    // resolved shading rule as the material rather than treating normals as proof
+    // that the four lighting uniforms are active.
+    mountMeshLayer(container, animationController, 'opaque', {
+      shading: 'none',
+      has_normals: true,
+    });
+
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
+      expect(findControlGroup(container, label)!.style.display, `${label} on unlit mesh`).toBe(
+        'none'
+      );
+    }
+    expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
+  });
+
+  it('partitioned unlit mesh derives shading from its leaves', () => {
+    const panel = mountPartitionMeshLayer(['none']);
+
+    expect(panel.layerState.getLayer('/surface')!.shading).toBe('none');
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
+      expect(findControlGroup(container, label)!.style.display, `${label} on partition`).toBe(
+        'none'
+      );
+    }
+  });
+
+  it.each([
+    ['none', 'flat'],
+    ['flat', 'none'],
+  ] as const)('mixed partition stays lit for child order %s, %s', (...shadings) => {
+    const panel = mountPartitionMeshLayer([...shadings]);
+
+    expect(panel.layerState.getLayer('/surface')!.shading).toBe('flat');
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
+      expect(
+        findControlGroup(container, label)!.style.display,
+        `${label} on mixed partition`
+      ).not.toBe('none');
+    }
   });
 
   it('dragging each mesh slider reaches its material setter with the slider value', () => {
