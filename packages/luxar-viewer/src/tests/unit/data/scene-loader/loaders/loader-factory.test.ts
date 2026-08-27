@@ -692,7 +692,11 @@ describe('createProgressiveMeshLoader', () => {
   }
 
   it('builds one whole-node loader per additive subgroup', async () => {
-    await createProgressiveMeshLoader(meshLadderNode({}), 3, {}, makeDeps());
+    const decodeKTX2 = Object.assign(vi.fn(), { dispose: vi.fn() });
+    await createProgressiveMeshLoader(meshLadderNode({}), 3, {}, {
+      ...makeDeps(),
+      decodeKTX2,
+    });
 
     expect(meshCtorArgs).toHaveLength(3);
     expect(meshCtorArgs.map((args) => args[0])).toEqual([
@@ -703,6 +707,9 @@ describe('createProgressiveMeshLoader', () => {
     expect(meshProgressiveCtorArgs).toHaveLength(1);
     expect(meshProgressiveCtorArgs[0][1]).toBe(3);
     expect(meshProgressiveCtorArgs[0][2]).toBe('/surf');
+    for (const args of meshCtorArgs) {
+      expect(args[3]).toMatchObject({ decodeKTX2 });
+    }
   });
 
   it('clears the label flags on every sub-LOD', async () => {

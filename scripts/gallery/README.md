@@ -10,6 +10,7 @@ the best for the README gallery (TODO **R19**).
 |------|------|
 | `manifest.json` | **Single source of truth** — the demo list + per-demo capture hints. Consumed by both the dataset generator and the capture spec. Add a demo here and nothing else needs editing. |
 | `generate_gallery_datasets.py` | Generates each demo's `.luxar.zarr` under `datasets/demos/` (idempotent; skips ones already present; best-effort). A demo whose `DEMO_META` declares machine-local `local_data` (`manual-file` / `kaggle-auth` / `git-lfs`) is still run, but a **positive non-zero exit status** is reported in the soft `manual-data` bucket instead of failing the build — for `git-lfs`, only while one of the payload files named by its manifest caches is missing or still an unpulled pointer. A `timeout`, a `no-output` or a death by signal (negative return code) stays hard. Two cases remain hard on a cold checkout: `arxiv_papers_kaggle` can exhaust the per-demo timeout during its ~30 GB download, and cacheless `cellxgene_census_umap` has no manifest cache key through which to probe its LFS payload. A demo listed in `UNBUILDABLE_IDS` is the third disposition: it is **never spawned at all** and lands in the soft `unbuildable` bucket, for a demo whose shipped input is known-broken and whose fallback would blow the timeout. The list is empty today (`gsplats_3d_visible_human_head` was removed once its colors sidecar was regenerated, #1670) and is meant to stay that way — delete an entry as soon as its input is fixed. |
+| `check_tile_staleness.py` | Report-only check for committed README still/video pairs older than the gallery dataset/capture policies, their manifest-listed demo generator and directly imported private helpers, applicable `luxar.shading` production code, or their own manifest entry. Uses entry-specific blame so editing one demo does not mark every tile stale. |
 | `../../packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts` | Playwright capture: auto-center + fill-to-frame, auto-exposure, orbit, still + video. |
 | `../../packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts` | The auto-exposure **decision** + its tuning constants, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-exposure-policy.test.ts`). |
 | `../../packages/luxar-viewer/src/tests/screenshots/crop-policy.ts` | The under-fill and border-lit (**cropped subject**) verdicts + warning floors, split out of the spec so they are unit-testable without a browser (`src/tests/unit/gallery-{underfill,crop}-policy.test.ts`). |
@@ -17,7 +18,7 @@ the best for the README gallery (TODO **R19**).
 | `../../packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts` | Which **signed world axis** the rock revolves about, derived from the camera's own up-vector, split out of the spec so it is unit-testable without a browser (`src/tests/unit/gallery-orbit-axis.test.ts`). |
 | `../../packages/luxar-viewer/playwright.gallery.config.ts` | Playwright config (GPU flags, viewer + data servers, video recording). |
 | `score_exposure.py` | Offline scorer for the captured stills: flags `OVER` (blown highlights) and `FLAT` (narrow, uniformly over-exposed). Hand-synced with `exposure-policy.ts`. |
-| `tests/` | Unit tests for `score_exposure.py`, incl. a parity test that pins its mirrored thresholds to the ones in `exposure-policy.ts`. On the default Python suite. |
+| `tests/` | Unit tests for the Python gallery tools, including real temporary Git histories for tile-staleness comparisons and a `score_exposure.py` parity test that pins its mirrored thresholds to `exposure-policy.ts`. On the default Python suite. |
 
 ## Usage
 
@@ -33,12 +34,31 @@ make generate-gallery ONLY=desi_galaxies    # a subset
 # Under the hood (from packages/luxar-viewer/):
 GALLERY_ONLY=lorenz pnpm gallery
 GALLERY_ONLY=readme pnpm gallery             # root README media already on disk
+
+# Report committed README tiles whose narrow render inputs are newer
+make check-gallery-staleness
 ```
 
 Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
 **gitignored** — it's a review staging area. Once you pick the winners, copy
 them into `docs/images/readme/` (which **is** committed) and wire them into the
 README gallery table.
+
+`make check-gallery-staleness` is intentionally non-gating: it prints `STALE`
+rows and still exits zero, because refreshing media is a reviewed batch action.
+For each demo it takes the older commit from the committed `.webp`/`.webm` pair,
+then compares that timestamp with the gallery dataset generator; the capture
+spec together with its orbit-axis helper and Playwright gallery config; the
+exposure and crop policies; the manifest-listed demo generator and its directly
+imported private `luxar.demos` helpers; and the lines of that demo's own manifest
+object. Production `luxar.shading` history applies only when the committed demo
+module imports it; shading tests/docs remain excluded.
+Global inputs are printed once above the rows, while per-demo failures print
+`UNKNOWN` and do not hide the rest of the report. All reads use committed
+`HEAD`, so an in-progress manifest edit cannot create a fake commit timestamp.
+The first version intentionally does not inspect external dataset pins or
+machine-local/LFS payload contents. The check refuses shallow clones rather than
+silently producing incomplete history; run it from a full checkout.
 
 ## How capture works
 

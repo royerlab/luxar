@@ -43,6 +43,7 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     shadeExponent: MESH_DEFAULTS.shadeExponent,
     specular: MESH_DEFAULTS.specular,
     shininess: MESH_DEFAULTS.shininess,
+    shading: 'flat',
     alphaCutoff: MESH_DEFAULTS.alphaCutoff,
     displayMin: 0,
     displayMax: 1,

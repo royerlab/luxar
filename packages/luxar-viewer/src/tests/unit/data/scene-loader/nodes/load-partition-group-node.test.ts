@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 const loadSceneNodesMock = vi.fn();
 
 import { loadPartitionGroupNode } from '../../../../../data/scene-loader/nodes/load-partition-group-node';
+import { EAGER_CHILD_LOAD_CONCURRENCY } from '../../../../../data/scene-loader/nodes/load-children-concurrently';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
@@ -178,6 +179,122 @@ describe('loadPartitionGroupNode', () => {
       '/partition/part_1',
       '/partition/part_2',
     ]);
+  });
+
+  it('loads parts with bounded concurrency while preserving authored order and indices', async () => {
+    const children = Array.from({ length: 10 }, (_, index) =>
+      makePartNode(`/partition/part_${index}`, 'points', { child_index: index })
+    );
+    const releases: Array<() => void> = [];
+    const gates = children.map(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+    let active = 0;
+    let maxActive = 0;
+    let started = 0;
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      const index = children.indexOf(child);
+      started++;
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await gates[index];
+      const object = new THREE.Group();
+      object.name = child.path;
+      parentThree.add(object);
+      active--;
+    });
+
+    const loadPromise = loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    await Promise.resolve();
+    const firstWave = started;
+    for (let index = releases.length - 1; index >= 0; index--) releases[index]();
+    const wrapper = await loadPromise;
+
+    expect(firstWave).toBe(EAGER_CHILD_LOAD_CONCURRENCY);
+    expect(maxActive).toBe(EAGER_CHILD_LOAD_CONCURRENCY);
+    expect(wrapper.children.map((child) => child.name)).toEqual(
+      children.map((child) => child.path)
+    );
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual(
+      children.map((_, index) => index)
+    );
+  });
+
+  it('stamps partition slots while their children are still loading', async () => {
+    const child = makePartNode('/partition/part_0', 'points', { child_index: 7 });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    loadSceneNodesMock.mockImplementation(async () => gate);
+    const parent = new THREE.Group();
+
+    const loadPromise = loadPartitionGroupNode(
+      makePartitionGroupNode([child]),
+      parent,
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    await Promise.resolve();
+    expect(parent.children[0].children[0].userData.partIndex).toBe(7);
+    release();
+    await loadPromise;
+  });
+
+  it('keeps every object from a part contiguous and stamps each with the same part index', async () => {
+    const children = [
+      makePartNode('/partition/part_a', 'points', { child_index: 7 }),
+      makePartNode('/partition/part_b', 'points', { child_index: 3 }),
+    ];
+    const releases: Array<() => void> = [];
+    const gates = children.map(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      const index = children.indexOf(child);
+      await gates[index];
+      for (const suffix of ['first', 'second']) {
+        const object = new THREE.Group();
+        object.name = `${child.path}/${suffix}`;
+        parentThree.add(object);
+      }
+    });
+
+    const loadPromise = loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+    await Promise.resolve();
+    releases[1]();
+    await Promise.resolve();
+    releases[0]();
+    const wrapper = await loadPromise;
+
+    expect(wrapper.children.map((child) => child.name)).toEqual([
+      '/partition/part_a/first',
+      '/partition/part_a/second',
+      '/partition/part_b/first',
+      '/partition/part_b/second',
+    ]);
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([7, 7, 3, 3]);
   });
 
   it('all children stay visible after load (no LOD-style selector)', async () => {

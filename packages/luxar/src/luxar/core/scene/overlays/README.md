@@ -49,9 +49,10 @@ as `validate_font` / `validate_text_align` for text, `validate_image_input` for
 images, and `sanitize_html` for HTML). Every overlay records a `z_index` equal
 to its insertion order (`len(scene._overlays)`).
 
-`add_image_impl` additionally encodes the input image to bytes via
-`validate_image_input`, stores the filename as `image_file`, and passes the raw
-bytes through to `write_overlay` for on-disk persistence.
+`add_image_impl` additionally normalizes the input to encoded bytes and a
+matching storage format via `validate_image_input`, stores the filename as
+`image_file`, and passes the raw bytes through to `write_overlay` for on-disk
+persistence.
 
 ### `internals.py` — naming and persistence
 

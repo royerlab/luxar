@@ -367,7 +367,11 @@ export async function createProgressiveMeshLoader(
         `${node.path === '/' ? '' : node.path}/additive_${i}`,
         lodAttrsComposed,
         lodLoc,
-        { zarrStore: deps.zarrStore, arrayRefRegistry: deps.arrayRefRegistry }
+        {
+          zarrStore: deps.zarrStore,
+          arrayRefRegistry: deps.arrayRefRegistry,
+          decodeKTX2: deps.decodeKTX2 ?? undefined,
+        }
       )
     );
   }

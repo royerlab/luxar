@@ -431,6 +431,20 @@ describe('nodeStatsContent — per-type element counts in the scene tree', () =>
     expect(nodeStatsContent(node({ type: 'mesh' }))).toBeNull();
   });
 
+  it('appends the visible-triangle count when the slab indexes only part of it', () => {
+    // The fourth member of the visible-suffix family: mesh used to be the one
+    // type whose per-node visible count was measured and then not shown.
+    const r = nodeStatsContent(
+      node({ type: 'mesh', faceCount: 1200, vertexCount: 640, visibleFaceCount: 300 })
+    );
+    expect(r!.title).toContain('300 visible after slicing');
+  });
+
+  it('omits the suffix when every triangle is indexed', () => {
+    const r = nodeStatsContent(node({ type: 'mesh', faceCount: 1200, visibleFaceCount: 1200 }));
+    expect(r!.title).not.toContain('visible');
+  });
+
   it('still reports the other three types in their own units', () => {
     // Anti-vacuity for the arm order: adding the mesh branch must not shadow these.
     expect(nodeStatsContent(node({ type: 'gsplats', splatCount: 5 }))!.title).toContain(

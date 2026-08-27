@@ -72,9 +72,8 @@ http://localhost:5173/?src=http://127.0.0.1:8000/scene.luxar.zarr.zip
 The data server must support HTTP byte ranges and return `206 Partial Content`.
 `luxar serve` provides the required behavior. Archives are read-only: commands
 that update an existing store in place refuse them, so write to a directory or
-new archive instead. Image overlays stored inside an archive are currently
-skipped. The viewer has no browser local-file or drag-and-drop opening path for
-any scene format; serve the scene over HTTP instead.
+new archive instead. The viewer has no browser local-file or drag-and-drop
+opening path for any scene format; serve the scene over HTTP instead.
 
 Choose an archive for distribution, not speed: it turns a scene with potentially
 hundreds of thousands of hosted objects into one artifact to upload, download, or

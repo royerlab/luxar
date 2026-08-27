@@ -17,7 +17,13 @@ import { log, Modules } from '../../utils/log';
 // use and re-exported below so every existing `./layer-state` consumer keeps
 // working unchanged.
 import { computeUniforms, computeDisplayRange } from '../../rendering/display-range';
-import { MESH_DEFAULTS, resolveMeshBlendingMode } from '../../rendering/materials/mesh/appearance';
+import {
+  MESH_DEFAULTS,
+  resolveMeshBlendingMode,
+  type MeshShadingMode,
+} from '../../rendering/materials/mesh/appearance';
+import { resolveMeshShading } from '../../rendering/node-factory/create-mesh-node';
+import type { MeshMetadata } from '../../types/mesh';
 
 /**
  * Geometry type of a layer.
@@ -190,6 +196,39 @@ function deriveMeshAttrFromDescendants(node: SceneNode, attr: string): number | 
 }
 
 /**
+ * Resolve the effective mesh shading for a layer row.
+ *
+ * A mesh leaf resolves directly. Specialized mesh groups carry the appearance attrs
+ * on their leaves, so walk owned descendants while stopping at nested layer rows. A
+ * malformed mixed group remains controllable when any descendant is lit; only an
+ * all-unlit layer hides the four lighting sliders. The resolver intentionally receives
+ * raw `has_normals`: only its `none` arm is authoritative here, while the material's
+ * smooth/flat choice remains view-dependent on `normal_dims` matching `displayDims`.
+ */
+function deriveMeshShadingFromDescendants(node: SceneNode): MeshShadingMode {
+  const resolve = (candidate: SceneNode): MeshShadingMode =>
+    resolveMeshShading(
+      candidate.attrs as unknown as MeshMetadata,
+      candidate.attrs.has_normals === true
+    );
+
+  if (node.type === 'mesh') return resolve(node);
+
+  let found: MeshShadingMode | undefined;
+  const visit = (candidate: SceneNode): void => {
+    if (found !== undefined && found !== 'none') return;
+    if (isLayerEnabled(candidate.attrs.layer)) return;
+    if (candidate.type === 'mesh') {
+      found = resolve(candidate);
+      return;
+    }
+    candidate.children?.forEach(visit);
+  };
+  node.children?.forEach(visit);
+  return found ?? 'flat';
+}
+
+/**
  * The display window a layer starts at — i.e. what `[displayMin, displayMax]`
  * the panel pushes into the material before the user touches anything.
  *
@@ -258,11 +297,17 @@ export interface LayerInfo {
   /** Mesh specular highlight exponent (> 0). */
   shininess: number;
   /**
+   * Mesh shading capability for the layer controls. Only `none` is authoritative;
+   * smooth versus flat ignores the material's view-dependent normal-frame check.
+   */
+  shading: MeshShadingMode;
+  /**
    * Mesh `opaque`-mode cutout threshold (0–1) — the §6.2 `alpha_cutoff`.
    *
    * Only meaningful in `opaque`, which is a NARROWER condition than the other four
-   * (they apply in every mesh mode), so the panel gates its slider on the mode as well
-   * as the type — the same shape as absorption's volumetric gate.
+   * (they apply in every blending mode when shading is lit), so the panel gates its
+   * slider on the mode as well as the type — the same shape as absorption's
+   * volumetric gate.
    */
   alphaCutoff: number;
   /** Current display-range minimum (maps to intensity+offset in shader) */
@@ -599,6 +644,7 @@ export class LayerStateManager {
             deriveMeshAttrFromDescendants(node, 'shade_exponent') ?? MESH_DEFAULTS.shadeExponent,
           specular: deriveMeshAttrFromDescendants(node, 'specular') ?? MESH_DEFAULTS.specular,
           shininess: deriveMeshAttrFromDescendants(node, 'shininess') ?? MESH_DEFAULTS.shininess,
+          shading: deriveMeshShadingFromDescendants(node),
           alphaCutoff:
             deriveMeshAttrFromDescendants(node, 'alpha_cutoff') ?? MESH_DEFAULTS.alphaCutoff,
           displayMin,

@@ -92,6 +92,7 @@ FIXTURE_NAMES: list[str] = [
     "test_gsplats_rgba_lut.luxar.zarr",
     "test_hdr_colors.luxar.zarr",
     "test_hierarchical_transforms.luxar.zarr",
+    "test_image_overlay.luxar.zarr",
     "test_integer_colors.luxar.zarr",
     "test_labelled_partitioned_points.luxar.zarr",
     "test_labelled_points.luxar.zarr",
@@ -4467,6 +4468,91 @@ def generate_linked_points_test() -> None:
         aprint(f"  1 linked point at the origin + {n - 1} unlabelled corners")
 
 
+def generate_image_overlay_test() -> None:
+    """Scene with a Python-authored image overlay for zipped-store E2E parity.
+
+    Keep the STORED archive above and DEFLATE archive below the 65,557-byte
+    end-of-directory search window asserted by zipped-store-loading.spec.ts.
+    """
+    with asection("Generating Image Overlay Test"):
+        output = FIXTURES_DIR / "test_image_overlay.luxar.zarr"
+        rng = np.random.default_rng(1157)
+        positions = rng.normal(0.0, 0.35, (1200, 3)).astype(np.float32)
+        line_t = np.linspace(0.0, 4 * np.pi, 200)
+        line_vertices = np.column_stack(
+            [
+                0.8 + 0.25 * np.cos(line_t),
+                0.25 * np.sin(line_t),
+                line_t / (4 * np.pi) - 0.5,
+            ]
+        ).astype(np.float32)
+        splat_centers = np.column_stack(
+            [
+                np.linspace(-0.4, 0.4, 40),
+                np.full(40, 0.7),
+                np.zeros(40),
+            ]
+        ).astype(np.float32)
+        splat_cholesky = np.zeros((40, 6), dtype=np.float32)
+        splat_cholesky[:, 0] = 0.06
+        splat_cholesky[:, 2] = 0.06
+        splat_cholesky[:, 5] = 0.06
+        colors = rng.random((len(positions), 3), dtype=np.float32)
+        radii = np.full(len(positions), 0.02, dtype=np.float32)
+        image_bytes = bytes.fromhex(
+            "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c02"
+            "0000000b4944415478da63fcff1f0002eb01f569769f7b0000000049454e44ae426082"
+        )
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=COMPRESSOR_DISABLED,
+            float16_allowed=FLOAT16_ALLOWED,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "points",
+                positions=positions,
+                colors=colors,
+                radii=radii,
+            )
+            scene.add_lines(
+                "lines",
+                vertices=line_vertices,
+                widths=0.02,
+                colors=np.tile([0.2, 0.9, 0.4], (len(line_vertices), 1)).astype(
+                    np.float32
+                ),
+                line_type="polyline",
+            )
+            scene.add_gsplats(
+                "gsplats",
+                splat_centers,
+                amplitudes=np.full(40, 1.0, dtype=np.float32),
+                cholesky_factors=splat_cholesky,
+                colors=np.tile([0.4, 0.6, 1.0], (40, 1)).astype(np.float32),
+            )
+            scene.add_image(
+                image_bytes,
+                (0.02, 0.02),
+                name="archive-image",
+                size=(0.05, 0.05),
+            )
+
+        aprint(f"  Created {output}")
+        aprint(
+            "  1200 points, 200 line vertices, 40 splats, and a Python-authored 1x1 PNG"
+        )
+
+
 # Label of the single hover target in test_labelled_partitioned_points. Kept as
 # a named constant because hover-tooltip.spec.ts asserts this exact string.
 MARKER_LABEL = "Origin marker"
@@ -4686,6 +4772,9 @@ def main() -> None:
         aprint("")
 
         generate_linked_points_test()
+        aprint("")
+
+        generate_image_overlay_test()
         aprint("")
 
         generate_labelled_partitioned_points_test()

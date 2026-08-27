@@ -47,7 +47,11 @@ export class LoadingAdvisor {
         break;
 
       case 'load':
-        if (event.data.latency && event.data.latency > this.thresholds.highLoadTime) {
+        if (
+          event.loader !== 'mesh-whole-node' &&
+          event.data.latency &&
+          event.data.latency > this.thresholds.highLoadTime
+        ) {
           this.addSlowLoadRecommendation(event);
         }
         break;
