@@ -285,10 +285,10 @@ def test_empty_partition_uses_the_canonical_writer_error(
         assert "spatial_bsp_tree" not in str(exc.value)
 
 
-def test_line_partition_prunes_and_renumbers_an_empty_region(tmp_path) -> None:
-    """A skipped line region cannot leave the stored tree naming stale children."""
+def test_line_partition_prunes_and_renumbers_an_empty_region(tmp_path, capsys) -> None:
+    """A skipped line region cannot leave stale children or axis diagnostics."""
     vertices = np.array(
-        [[-2.2, 0.0], [-1.8, 0.0], [1.8, 0.0], [2.2, 0.0]],
+        [[0.0, -2.2, 0.0], [0.0, -1.8, 0.0], [0.0, 1.8, 0.0], [0.0, 2.2, 0.0]],
         dtype=np.float32,
     )
     bsp_tree = {
@@ -296,7 +296,7 @@ def test_line_partition_prunes_and_renumbers_an_empty_region(tmp_path) -> None:
         "split": -4.0,
         "left": {"part": 0},
         "right": {
-            "axis": 0,
+            "axis": 1,
             "split": 0.0,
             "left": {"part": 1},
             "right": {"part": 2},
@@ -305,7 +305,15 @@ def test_line_partition_prunes_and_renumbers_an_empty_region(tmp_path) -> None:
 
     output = tmp_path / "pruned-lines.luxar.zarr"
     with LuxarZarrCompiler(output) as compiler:
-        scene = compiler.create_scene(dimensions=Dimensions.default_2d())
+        scene = compiler.create_scene(
+            dimensions=Dimensions(
+                [
+                    Dimension("state", display=False, categories=["only"]),
+                    Dimension("x", display=True),
+                    Dimension("y", display=True),
+                ]
+            )
+        )
         add_lines_partition_wrapper_impl(
             scene,
             name="lines",
@@ -334,3 +342,4 @@ def test_line_partition_prunes_and_renumbers_an_empty_region(tmp_path) -> None:
     stored_tree = group.attrs["bsp_tree"]
     assert serialized_bsp_leaf_labels(stored_tree) == [0, 1]
     assert serialized_bsp_tree_separates(stored_tree, _part_boxes(group))
+    assert "viewer will discard this bsp_tree" not in capsys.readouterr().out
