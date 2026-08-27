@@ -63,10 +63,12 @@ export function warnFailedLoaders(failedPaths: readonly string[]): void {
  * @param registeredPaths Scene paths that registered a loader — the attempted
  *   set. A failed lazy LOD level may fail WITHOUT registering, so grade totality
  *   against this set, not a count.
+ * @param failureReasons Recorded failure messages in encounter order.
  */
 export function reportLoadOutcome(
   failedPaths: readonly string[],
-  registeredPaths: readonly string[]
+  registeredPaths: readonly string[],
+  failureReasons: readonly string[] = []
 ): LoadOutcome {
   if (failedPaths.length === 0) {
     log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
@@ -84,6 +86,7 @@ export function reportLoadOutcome(
   const allRegisteredFailed =
     registeredPaths.length > 0 && registeredPaths.every((p) => failedSet.has(p));
   if (allRegisteredFailed) {
+    const firstFailureReason = failureReasons.find((reason) => reason.trim().length > 0);
     // Count the FAILED set, not the registered one: an unregistered lazy-level
     // failure can ride along in `failedPaths`, and a count that disagrees with
     // the listed paths reads as a bug. In this branch every listed path failed
@@ -94,7 +97,7 @@ export function reportLoadOutcome(
     );
     notifier.toast(
       `Scene failed to load: all ${failedPaths.length} data node(s) failed. ` +
-        'See the console for details.',
+        (firstFailureReason ? `First error: ${firstFailureReason}` : 'No details were provided.'),
       TOTAL_FAILURE_TOAST_MS
     );
     return 'total';

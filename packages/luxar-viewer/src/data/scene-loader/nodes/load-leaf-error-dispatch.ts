@@ -21,6 +21,7 @@
  */
 
 import type * as THREE from 'three';
+import { archiveFaultFrom } from '../../../cache/chunk-source';
 import { log, Modules } from '../../../utils/log';
 
 export type LoaderErrorKind = 'Network' | 'Decode' | 'Validation' | 'Unexpected';
@@ -92,6 +93,8 @@ export async function loadLeafNode<T extends THREE.Object3D>(
     return await load();
   } catch (error) {
     if (!(error instanceof LoaderError)) throw error;
+    const archiveFault = archiveFaultFrom(error);
+    if (archiveFault) throw archiveFault;
     const causeStack = error.cause instanceof Error ? error.cause.stack : undefined;
     switch (error.kind) {
       case 'Network':

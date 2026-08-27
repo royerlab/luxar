@@ -79,13 +79,23 @@ describe('reportLoadOutcome', () => {
   });
 
   it('escalates to an error plus one toast when every node failed', () => {
-    expect(reportLoadOutcome(['/a', '/b', '/c'], ['/a', '/b', '/c'])).toBe('total');
+    expect(
+      reportLoadOutcome(
+        ['/a', '/b', '/c'],
+        ['/a', '/b', '/c'],
+        ['HTTP 503 Service Unavailable', 'HTTP 503 Service Unavailable']
+      )
+    ).toBe('total');
 
     expect(logSpy.error).toHaveBeenCalledWith(expect.stringContaining('all 3 node(s) failed'));
     expect(logSpy.success).not.toHaveBeenCalled();
     expect(notifierMocks.toast).toHaveBeenCalledTimes(1);
     expect(notifierMocks.toast).toHaveBeenCalledWith(
-      expect.stringContaining('Scene failed to load'),
+      expect.stringMatching(/Scene failed to load.*HTTP 503 Service Unavailable/),
+      expect.any(Number)
+    );
+    expect(notifierMocks.toast).not.toHaveBeenCalledWith(
+      expect.stringContaining('See the console for details'),
       expect.any(Number)
     );
   });

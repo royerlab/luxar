@@ -708,6 +708,8 @@ export class SceneLoader {
       makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       getFailedLoaderPaths: () => Array.from(this.failedLoaders.keys()),
+      getFailedLoaderReasons: () =>
+        Array.from(this.failedLoaders.values(), (info) => info.error.message),
       getFailedLoadsProvider: () => this.getFailedLoadsProvider(),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
       drainPendingViewState: () => this.viewStateQueue.drain((state) => this.updateView(state)),
