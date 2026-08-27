@@ -944,7 +944,7 @@ def build_state(entry: str, representation: str, cache_dir: str) -> Dict[str, An
         cache_dir: ``cached_download`` namespace.
 
     Returns:
-        Dict with ``positions`` (nm), ``elements``, ``modules``, ``nodes``,
+        Dict with ``positions`` (nm), ``elements``, ``keys``, ``modules``,
         ``nups``, ``protomer`` and ``radii``, each covering the full ring, plus
         its integer ``n_fold`` symmetry order.
     """
@@ -963,8 +963,9 @@ def build_state(entry: str, representation: str, cache_dir: str) -> Dict[str, An
         "positions": ring,
         "elements": np.tile(table.elements, n_fold),
         "keys": np.tile(np.asarray(keys), n_fold),
-        "modules": np.tile(np.array([key.split(KEY_SEP)[0] for key in keys]), n_fold),
-        "nodes": np.tile(np.array([key.split(KEY_SEP)[1] for key in keys]), n_fold),
+        "modules": np.tile(
+            np.array([key.split(KEY_SEP)[0] for key in keys], dtype=object), n_fold
+        ),
         "nups": np.tile(nucleoporins, n_fold),
         "protomer": np.repeat(np.arange(n_fold, dtype=np.int32), n_pro),
         "radii": np.tile(element_radii(table.elements), n_fold),

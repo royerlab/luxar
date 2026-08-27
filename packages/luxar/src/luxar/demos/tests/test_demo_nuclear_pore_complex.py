@@ -401,6 +401,8 @@ def test_build_state_uses_the_deposited_symmetry_order(
     assert len(state["positions"]) == 6
     assert list(state["protomer"]) == [0, 0, 0, 1, 1, 1]
     assert list(state["nups"]) == ["elys", "elys", "ndc1"] * 2
+    assert state["modules"].dtype == object
+    assert "nodes" not in state
 
 
 @pytest.mark.parametrize(
