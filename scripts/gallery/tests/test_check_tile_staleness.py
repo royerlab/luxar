@@ -360,6 +360,23 @@ def test_renamed_configured_input_is_rejected(
         stale.GalleryHistory(repo).report()
 
 
+def test_shading_guard_requires_production_file(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _git(
+        repo,
+        "mv",
+        "packages/luxar/src/luxar/shading/occlusion.py",
+        "packages/luxar/src/luxar/shading/tests/occlusion.py",
+    )
+    _commit(repo, "move shading implementation under tests", 22)
+
+    with pytest.raises(
+        stale.StalenessError,
+        match=r"luxar\.shading.*no tracked files at HEAD",
+    ):
+        stale.GalleryHistory(repo).report()
+
+
 def test_staged_configured_input_rename_does_not_affect_committed_report(
     tmp_path: Path,
 ) -> None:
@@ -374,6 +391,24 @@ def test_staged_configured_input_rename_does_not_affect_committed_report(
     assert all(
         not status.stale_inputs for status in stale.GalleryHistory(repo).tile_statuses()
     )
+
+
+def test_staged_replacement_does_not_hide_committed_input_rename(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    original = Path("packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts")
+    renamed = original.with_name("orbit-axis-renamed.ts")
+    _git(repo, "mv", original.as_posix(), renamed.as_posix())
+    _commit(repo, "rename configured input", 22)
+    (repo / original).write_text("// staged replacement\n")
+    _git(repo, "add", original.as_posix())
+
+    with pytest.raises(
+        stale.StalenessError,
+        match=rf"gallery capture.*no tracked files at HEAD.*{re.escape(original.as_posix())}",
+    ):
+        stale.GalleryHistory(repo).report()
 
 
 def test_appending_a_manifest_entry_does_not_stale_the_previous_last_entry(
