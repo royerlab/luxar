@@ -5,11 +5,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showError, clearError } from '../../../ui/error-overlay';
 
+let focusSpy: ReturnType<typeof vi.spyOn>;
+
 // Mock DOM environment
 beforeEach(() => {
   document.body.innerHTML = '';
   vi.useFakeTimers();
-  vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(() => {});
+  focusSpy = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -49,6 +51,17 @@ describe('showError - auto-dismiss', () => {
     expect(document.getElementById('luxar-error-message-text')?.textContent).toBe(
       'Fatal startup error'
     );
+  });
+});
+
+describe('showError - focus', () => {
+  it('focuses persistent dismiss controls without scrolling or scheduling trap focus', () => {
+    showError('Fatal startup error', undefined, undefined, { autoDismiss: false });
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    expect(focusSpy.mock.instances[0]).toBe(document.querySelector('.luxar-error-dialog__dismiss'));
+    expect(focusSpy.mock.calls[0]?.[0]).toEqual({ preventScroll: true });
   });
 });
 
