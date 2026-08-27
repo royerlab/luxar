@@ -173,7 +173,8 @@ DEMO_META = {
     "description": (
         "The complete human NPC — 4.9M atoms, 808 chains, 25 nucleoporins "
         "(PDB 7R5J/7R5K) assembled with the deposition's own C8 operators; "
-        "constricted↔dilated scrubbable, one layer per nucleoporin copy."
+        "constricted↔dilated scrubbable in one BSP-partitioned layer; "
+        "--split=nucleoporin adds per-nucleoporin layers."
     ),
     "category": "structural",
     "geometry": "points",
@@ -195,7 +196,7 @@ import gzip
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 from arbol import aprint, asection
@@ -532,7 +533,7 @@ def expand_eightfold(
     return ((expanded - centre) * 0.1).astype(np.float32)
 
 
-def symmetrize(values: np.ndarray, n_fold: int = 8) -> np.ndarray:
+def symmetrize(values: np.ndarray, n_fold: int) -> np.ndarray:
     """Average a per-atom scalar across the ``n_fold`` symmetry mates.
 
     The occlusion grid is axis-aligned and so is not itself eight-fold
@@ -593,7 +594,7 @@ CHAIN_ASSIGNMENTS: Tuple[Tuple[str, Optional[frozenset], str, str], ...] = (
         "RanBP2",
         frozenset({"00", "01", "02", "03", "04"}),
         "cytoplasmic_filaments",
-        "nup358",
+        "filaments",
     ),
     ("Nup214", frozenset({"V0"}), "cytoplasmic_filaments", "export_platform"),
     ("Nup88", frozenset({"W0"}), "cytoplasmic_filaments", "export_platform"),
@@ -605,8 +606,8 @@ CHAIN_ASSIGNMENTS: Tuple[Tuple[str, Optional[frozenset], str, str], ...] = (
     ("Nup93", frozenset({"A6"}), "nuclear_ring", "linker"),
     ("Nup205", frozenset({"C4"}), "nuclear_ring", "linker"),
     # --- ELYS: nuclear ring ONLY. Its absence cytoplasmically is real biology.
-    ("ELYS", frozenset({"T0"}), "nuclear_ring", "elys_inner"),
-    ("ELYS", frozenset({"T1"}), "nuclear_ring", "elys_outer"),
+    ("ELYS", frozenset({"T0"}), "nuclear_ring", "inner"),
+    ("ELYS", frozenset({"T1"}), "nuclear_ring", "outer"),
     # --- inner ring, the module that dilates
     ("Nup205", frozenset({"C0", "C1"}), "inner_ring", "core"),
     ("NUP188", frozenset({"B0", "B1"}), "inner_ring", "core"),
@@ -620,7 +621,7 @@ CHAIN_ASSIGNMENTS: Tuple[Tuple[str, Optional[frozenset], str, str], ...] = (
     ("p58/p45", frozenset({"I0", "I1", "I2", "I3"}), "central_channel", "fg"),
     ("Nup98", frozenset({"U2", "U3", "U4", "U5", "U6"}), "central_channel", "fg"),
     # --- membrane ring: gp210's lumenal ring plus the transmembrane nups
-    ("glycoprotein 210", None, "membrane_ring", "gp210_lumenal"),
+    ("glycoprotein 210", None, "membrane_ring", "lumenal"),
     ("NDC1", frozenset({"E0", "E1"}), "membrane_ring", "transmembrane"),
     ("Aladin", frozenset({"40", "41"}), "membrane_ring", "transmembrane"),
 )
@@ -701,25 +702,26 @@ def assign_chain(description: str, chain: str) -> Tuple[str, str, str]:
 KEY_SEP = "\x00"
 
 
-def node_keys(table: ProtomerTable) -> np.ndarray:
-    """Compute the per-atom ``module<sep>nucleoporin_copy`` node key.
+def node_keys(table: ProtomerTable) -> Tuple[np.ndarray, np.ndarray]:
+    """Compute per-atom node keys and nucleoporin slugs.
 
     Args:
         table: The parsed protomer.
 
     Returns:
-        ``(N,)`` array of composite keys, one per atom. Split on :data:`KEY_SEP`
-        to recover ``(module, node_name)``.
+        Two ``(N,)`` arrays: composite ``module<sep>nucleoporin_copy`` keys and
+        bare nucleoporin slugs.
     """
-    cache: Dict[Tuple[str, str], str] = {}
-    out = np.empty(len(table.positions), dtype=object)
+    cache: Dict[Tuple[str, str], Tuple[str, str]] = {}
+    keys = np.empty(len(table.positions), dtype=object)
+    nucleoporins = np.empty(len(table.positions), dtype=object)
     for i, (desc, chain) in enumerate(zip(table.nucleoporin, table.chain)):
         pair = (desc, chain)
         if pair not in cache:
             module, slug, copy = assign_chain(desc, chain)
-            cache[pair] = f"{module}{KEY_SEP}{slug}_{copy}"
-        out[i] = cache[pair]
-    return out
+            cache[pair] = f"{module}{KEY_SEP}{slug}_{copy}", slug
+        keys[i], nucleoporins[i] = cache[pair]
+    return keys, nucleoporins
 
 
 # =============================================================================
@@ -792,57 +794,21 @@ def element_radii(elements: np.ndarray) -> np.ndarray:
     return radii
 
 
-def _apply_burial_shading(
-    colors: np.ndarray, positions: np.ndarray, radii: np.ndarray
-) -> np.ndarray:
-    """Darken atoms by how enclosed they are, and report the range.
-
-    Ambient occlusion over a sphere of directions is a close correlate of an
-    atom's **burial** — the fraction of directions from which solvent could
-    reach it — so the darkening tracks a real biophysical property. It is a
-    correlate and not a measurement: a solvent-accessible surface area wants a
-    probe rolled over the van der Waals surface (Shrake-Rupley), not a density
-    integral, so nothing downstream should read these numbers as SASA.
-
-    No normals are passed. An all-atom NPC is not a thin shell but a filled
-    volume many atoms thick, so there is no surface orientation to face and the
-    full sphere is the right reading. It is also what lets :func:`symmetrize`
-    make the result exactly eight-fold symmetric.
-
-    Args:
-        colors: ``(N, 3)`` float32 linear-light colours.
-        positions: ``(N, 3)`` atom positions in nm.
-        radii: ``(N,)`` per-atom radii; cubed to weight big atoms as more matter.
-
-    Returns:
-        ``(N, 3)`` float32 colours, occlusion-multiplied.
-    """
-    occlusion = bake_ambient_occlusion(
-        positions,
-        mass=(radii.astype(np.float64) ** 3),
-        radius=AO_RADIUS_NM,
-        grid_cells=AO_GRID_CELLS,
-        strength=AO_STRENGTH,
-    )
-    normalized = occlusion / max(float(occlusion.max()), 1e-6)
-    aprint(
-        f"✓ Burial shading (ambient occlusion, r={AO_RADIUS_NM} nm): "
-        f"raw [{occlusion.min():.3f}, {occlusion.max():.3f}] "
-        f"-> normalized [{normalized.min():.3f}, 1.000]"
-    )
-    return (colors * normalized[:, None]).astype(np.float32)
-
-
 def base_colors(
-    color_by: str, modules: np.ndarray, elements: np.ndarray, protomer: np.ndarray
+    color_by: str,
+    modules: np.ndarray,
+    nucleoporins: np.ndarray,
+    elements: np.ndarray,
+    protomer: np.ndarray,
 ) -> np.ndarray:
     """Build the unshaded per-atom colour array for a colouring scheme.
 
     Args:
         color_by: ``"module"``, ``"nucleoporin"``, ``"element"`` or ``"protomer"``.
         modules: ``(N,)`` structural-module names.
+        nucleoporins: ``(N,)`` bare nucleoporin slugs.
         elements: ``(N,)`` element symbols.
-        protomer: ``(N,)`` protomer index 0-7.
+        protomer: ``(N,)`` protomer index.
 
     Returns:
         ``(N, 3)`` float32 linear-light colours.
@@ -852,11 +818,11 @@ def base_colors(
     if color_by == "element":
         return _lookup_colors(elements, CPK_COLORS, (0.9, 0.9, 0.9))
     if color_by == "protomer":
-        return _hue_wheel(protomer.astype(np.int64), 8)
+        return _hue_wheel(protomer.astype(np.int64), int(protomer.max()) + 1)
     if color_by == "nucleoporin":
         slugs = sorted(set(NUP_SLUG.values()))
         index = {s: i for i, s in enumerate(slugs)}
-        return _hue_wheel(np.array([index[s] for s in modules]), len(slugs))
+        return _hue_wheel(np.array([index[s] for s in nucleoporins]), len(slugs))
     raise ValueError(f"unknown colour scheme {color_by!r}")
 
 
@@ -959,7 +925,8 @@ def _hue_wheel(index: np.ndarray, n: int) -> np.ndarray:
 #: two-state scene is 9,874,128 atoms, so a single unpartitioned node would
 #: silently drop ~4.3M of them. Every part must stay well under the clamp.
 #:
-#: 500k gives ~20 parts: few enough that first paint stays request-cheap (each
+#: 500k gives 32 parts for the two-state all-atom scene: few enough that first
+#: paint stays request-cheap (each
 #: node is ~1 request), small enough for useful frustum culling.
 MAX_ELEMENTS_PER_PART = 500_000
 
@@ -968,9 +935,7 @@ MAX_ELEMENTS_PER_PART = 500_000
 ATOM_SHARPNESS = 0.85
 
 
-def build_state(
-    entry: str, representation: str, cache_dir: str
-) -> Dict[str, np.ndarray]:
+def build_state(entry: str, representation: str, cache_dir: str) -> Dict[str, Any]:
     """Download, parse and eight-fold-expand one conformational state.
 
     Args:
@@ -980,13 +945,15 @@ def build_state(
 
     Returns:
         Dict with ``positions`` (nm), ``elements``, ``modules``, ``nodes``,
-        ``protomer`` and ``radii``, each covering the full 8-fold ring.
+        ``nups``, ``protomer`` and ``radii``, each covering the full ring, plus
+        its integer ``n_fold`` symmetry order.
     """
     url = f"https://files.rcsb.org/download/{entry}.cif.gz"
     path = cached_download(url, cache_dir, f"{entry}.cif.gz")
     table = read_protomer(Path(path), atom_filter=representation)
-    keys = node_keys(table)
+    keys, nucleoporins = node_keys(table)
     n_pro = len(table.positions)
+    n_fold = len(table.operators)
     aprint(
         f"✓ {entry}: {n_pro:,} atoms, {len(set(table.chain))} chains, "
         f"{len(set(table.nucleoporin))} nucleoporins in the protomer"
@@ -994,16 +961,18 @@ def build_state(
     ring = expand_eightfold(table.positions, table.operators)
     return {
         "positions": ring,
-        "elements": np.tile(table.elements, 8),
-        "keys": np.tile(np.asarray(keys), 8),
-        "modules": np.tile(np.array([k.split(KEY_SEP)[0] for k in keys]), 8),
-        "nodes": np.tile(np.array([k.split(KEY_SEP)[1] for k in keys]), 8),
-        "protomer": np.repeat(np.arange(8, dtype=np.int32), n_pro),
-        "radii": np.tile(element_radii(table.elements), 8),
+        "elements": np.tile(table.elements, n_fold),
+        "keys": np.tile(np.asarray(keys), n_fold),
+        "modules": np.tile(np.array([key.split(KEY_SEP)[0] for key in keys]), n_fold),
+        "nodes": np.tile(np.array([key.split(KEY_SEP)[1] for key in keys]), n_fold),
+        "nups": np.tile(nucleoporins, n_fold),
+        "protomer": np.repeat(np.arange(n_fold, dtype=np.int32), n_pro),
+        "radii": np.tile(element_radii(table.elements), n_fold),
+        "n_fold": n_fold,
     }
 
 
-def shade_states(states: List[Dict[str, np.ndarray]], color_by: str) -> None:
+def shade_states(states: List[Dict[str, Any]], color_by: str) -> None:
     """Bake burial shading into each state's colours, in place.
 
     Occlusion is computed per state — the two conformations must never occlude
@@ -1023,13 +992,14 @@ def shade_states(states: List[Dict[str, np.ndarray]], color_by: str) -> None:
             grid_cells=AO_GRID_CELLS,
             strength=AO_STRENGTH,
         )
-        occlusions.append(symmetrize(raw))
+        occlusions.append(symmetrize(raw, state["n_fold"]))
     peak = max(float(o.max()) for o in occlusions)
     for state, occlusion in zip(states, occlusions):
         shade = occlusion / max(peak, 1e-6)
         rgb = base_colors(
             color_by,
-            state["nodes"] if color_by == "nucleoporin" else state["modules"],
+            state["modules"],
+            state["nups"],
             state["elements"],
             state["protomer"],
         )
@@ -1041,7 +1011,7 @@ def shade_states(states: List[Dict[str, np.ndarray]], color_by: str) -> None:
 
 
 def stack_node(
-    states: List[Dict[str, np.ndarray]], key: str
+    states: List[Dict[str, Any]], key: str
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Gather one node's atoms across every state into stacked arrays.
 
@@ -1070,7 +1040,7 @@ def stack_node(
 
 
 def stack_all(
-    states: List[Dict[str, np.ndarray]],
+    states: List[Dict[str, Any]],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Gather EVERY atom of every state into one set of stacked arrays.
 
@@ -1122,7 +1092,7 @@ def scene_dimensions(n_states: int) -> Dimensions:
     return Dimensions(dims)
 
 
-def add_npc_node(scene, states: List[Dict[str, np.ndarray]]) -> Tuple[int, int]:
+def add_npc_node(scene, states: List[Dict[str, Any]]) -> Tuple[int, int]:
     """Add the whole complex as ONE BSP-partitioned Points node.
 
     This is the correct-by-default layout: see :data:`MAX_ELEMENTS_PER_PART` for
@@ -1154,9 +1124,7 @@ def add_npc_node(scene, states: List[Dict[str, np.ndarray]]) -> Tuple[int, int]:
     return len(positions), 1
 
 
-def add_nucleoporin_nodes(
-    scene, states: List[Dict[str, np.ndarray]]
-) -> Tuple[int, int]:
+def add_nucleoporin_nodes(scene, states: List[Dict[str, Any]]) -> Tuple[int, int]:
     """Add one Points node per nucleoporin copy, grouped by structural module.
 
     OPT-IN (``--split=nucleoporin``), and deliberately not the default. It turns
@@ -1191,11 +1159,7 @@ def add_nucleoporin_nodes(
                 blending_mode="normal",
                 opacity=1.0,
                 intensity=1.0,
-                partition=(
-                    {"max_elements": MAX_ELEMENTS_PER_PART}
-                    if len(positions) > MAX_ELEMENTS_PER_PART
-                    else None
-                ),
+                partition={"max_elements": MAX_ELEMENTS_PER_PART},
             )
             total_atoms += len(positions)
             n_nodes += 1
@@ -1253,7 +1217,7 @@ def generate_nuclear_pore_complex(
                 total, n_nodes = add_nucleoporin_nodes(scene, states)
             else:
                 raise ValueError(f"unknown split {split!r}; expected none|nucleoporin")
-            _add_annotations(scene, len(states))
+            _add_annotations(scene, wanted)
         expected = sum(len(state["positions"]) for state in states)
         if total != expected:
             raise ValueError(
@@ -1288,7 +1252,7 @@ def _select_states(which_states: str) -> List[Tuple[str, str]]:
 
 
 def _report_geometry(
-    states: List[Dict[str, np.ndarray]], wanted: List[Tuple[str, str]]
+    states: List[Dict[str, Any]], wanted: List[Tuple[str, str]]
 ) -> None:
     """Print the assembled dimensions, measured rather than quoted.
 
@@ -1307,12 +1271,12 @@ def _report_geometry(
         )
 
 
-def _add_annotations(scene, n_states: int) -> None:
+def _add_annotations(scene, states: Sequence[Tuple[str, str]]) -> None:
     """Add the title and caption overlays.
 
     Args:
         scene: The scene to annotate.
-        n_states: Number of states, which changes the caption.
+        states: Selected ``(label, pdb_id)`` pairs, which determine the caption.
     """
     scene.add_text(
         "Nuclear Pore Complex",
@@ -1324,8 +1288,8 @@ def _add_annotations(scene, n_states: int) -> None:
     )
     detail = (
         "4.9M atoms • 808 chains • 25 nucleoporins • PDB 7R5J/7R5K"
-        if n_states > 1
-        else "4.9M atoms • 808 chains • 25 nucleoporins • PDB 7R5J"
+        if len(states) > 1
+        else f"4.9M atoms • 808 chains • 25 nucleoporins • PDB {states[0][1]}"
     )
     add_demo_caption(scene, detail, DEMO_META.get("citation"))
 
@@ -1342,7 +1306,7 @@ def _parse_args(argv: Sequence[str]) -> Dict[str, str]:
         argv: Argument list, excluding the program name.
 
     Returns:
-        Mapping with ``state``, ``representation`` and ``color`` keys.
+        Mapping with ``state``, ``representation``, ``color`` and ``split`` keys.
     """
     options = {
         "state": "both",
@@ -1393,7 +1357,11 @@ def main() -> None:
         aprint("  - +z is the CYTOPLASM (RanBP2 fibrils); -z the NUCLEOPLASM (ELYS)")
         if options["state"] == "both":
             aprint("  - Press '1' then '[' / ']' to scrub constricted <-> dilated")
-        aprint("  - Press L for the Layers panel: one row per nucleoporin copy")
+        if options["split"] == "nucleoporin":
+            aprint("  - Press L for the Layers panel: one row per nucleoporin copy")
+        else:
+            aprint("  - Press L for the Layers panel: one BSP-partitioned NPC row")
+            aprint("    Re-run with --split=nucleoporin for per-nucleoporin rows")
         aprint("")
         launch_viewer(output_path)
     aprint("Cleanup complete")

@@ -71,4 +71,4 @@ so the two conformations never occlude each other, but normalized across both so
 not step the brightness; each atom is then averaged with its seven symmetry mates, making the
 shading exactly eight-fold symmetric as the geometry is.
 
-The scene is 55.5 MB and builds in about 48 seconds.
+The scene is 55.5 MB; build time depends strongly on CPU and storage performance.

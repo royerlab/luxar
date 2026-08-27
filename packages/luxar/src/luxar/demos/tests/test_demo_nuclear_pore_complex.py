@@ -203,6 +203,11 @@ def _fake_states(n_states: int, n_atoms: int = 12):
                 "keys": np.array(
                     ["m\x00a"] * (n_atoms // 2) + ["m\x00b"] * (n_atoms // 2)
                 ),
+                "modules": np.array(["inner_ring"] * n_atoms),
+                "nups": np.array(["nup160"] * n_atoms),
+                "elements": np.array(["C"] * n_atoms),
+                "protomer": np.repeat(np.arange(2), n_atoms // 2),
+                "n_fold": 2,
             }
         )
     return states
@@ -262,27 +267,51 @@ def test_van_der_waals_radii_are_true_scale() -> None:
     assert radii[4] == pytest.approx(demo.DEFAULT_VDW_NM)
 
 
-def test_burial_shading_varies_without_changing_hue(
+@pytest.mark.parametrize("color_by", ["module", "nucleoporin", "element", "protomer"])
+def test_all_color_schemes_cover_real_assignment_keys(color_by: str) -> None:
+    """Every documented colour scheme accepts the arrays produced by a real state."""
+    modules = np.array(["cytoplasmic_ring", "central_channel"])
+    nucleoporins = np.array(["nup160", "nup58_p45"])
+    elements = np.array(["C", "O"])
+    protomer = np.array([0, 1])
+
+    colors = demo.base_colors(color_by, modules, nucleoporins, elements, protomer)
+
+    assert colors.shape == (2, 3)
+    assert colors.dtype == np.float32
+    assert np.isfinite(colors).all()
+    assert not np.array_equal(colors[0], colors[1])
+
+
+def test_shade_states_normalizes_across_states_and_restores_symmetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Occlusion is a scalar multiplier, so a categorical colour keeps its hue."""
-    rng = np.random.default_rng(5)
-    positions = rng.normal(size=(800, 3))
-    positions /= np.linalg.norm(positions, axis=1, keepdims=True)
-    positions *= rng.random((800, 1)) ** (1.0 / 3.0)
-    radii = np.full(len(positions), 0.12, dtype=np.float32)
+    """Production shading shares one peak and makes symmetry mates identical."""
     base = np.array([0.7, 0.35, 0.15], dtype=np.float32)
-    colors = np.tile(base, (len(positions), 1))
-    monkeypatch.setattr(demo, "AO_GRID_CELLS", 32)
-    monkeypatch.setattr(demo, "AO_RADIUS_NM", 0.5)
+    monkeypatch.setitem(demo.MODULE_COLORS, "inner_ring", tuple(base))
+    raw_occlusions = iter(
+        [
+            np.array([1.0, 2.0, 3.0, 4.0]),
+            np.array([2.0, 4.0, 6.0, 8.0]),
+        ]
+    )
+    monkeypatch.setattr(
+        demo, "bake_ambient_occlusion", lambda *args, **kwargs: next(raw_occlusions)
+    )
+    states = _fake_states(2, n_atoms=4)
 
-    shaded = demo._apply_burial_shading(colors, positions, radii)
-    scale = shaded / base[None, :]
+    demo.shade_states(states, "module")
 
-    assert float(scale[:, 0].max()) == pytest.approx(1.0, abs=1e-6)
-    assert float(scale[:, 0].min()) < 0.9
-    np.testing.assert_allclose(scale[:, 1], scale[:, 0], atol=1e-6)
-    np.testing.assert_allclose(scale[:, 2], scale[:, 0], atol=1e-6)
+    first_scale = states[0]["colors"] / base[None, :]
+    second_scale = states[1]["colors"] / base[None, :]
+    np.testing.assert_allclose(first_scale[:, 0], [1 / 3, 1 / 2, 1 / 3, 1 / 2])
+    np.testing.assert_allclose(second_scale[:, 0], [2 / 3, 1, 2 / 3, 1])
+    np.testing.assert_allclose(
+        first_scale[:, 1:], np.repeat(first_scale[:, :1], 2, axis=1)
+    )
+    np.testing.assert_allclose(
+        second_scale[:, 1:], np.repeat(second_scale[:, :1], 2, axis=1)
+    )
 
 
 def test_module_colors_cover_every_assigned_module() -> None:
@@ -356,6 +385,47 @@ def test_reads_atoms_names_and_operators(tmp_path) -> None:
     assert table.nucleoporin[2] == "Nucleoporin NDC1"
     assert len(table.operators) == 2
     np.testing.assert_allclose(table.operators[0][0], np.eye(3))
+
+
+def test_build_state_uses_the_deposited_symmetry_order(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every expanded array and the shading contract use the operator count."""
+    path = tmp_path / "mini.cif"
+    path.write_text(MINIMAL_CIF)
+    monkeypatch.setattr(demo, "cached_download", lambda *args: path)
+
+    state = demo.build_state("TEST", "all", "test")
+
+    assert state["n_fold"] == 2
+    assert len(state["positions"]) == 6
+    assert list(state["protomer"]) == [0, 0, 0, 1, 1, 1]
+    assert list(state["nups"]) == ["elys", "elys", "ndc1"] * 2
+
+
+@pytest.mark.parametrize(
+    "states,expected_entry",
+    [([("Constricted", "7R5K")], "7R5K"), ([("Dilated", "7R5J")], "7R5J")],
+)
+def test_single_state_caption_names_the_selected_deposition(
+    states, expected_entry: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single-state scene never labels 7R5K coordinates as 7R5J."""
+
+    class Scene:
+        def add_text(self, *args, **kwargs) -> None:
+            pass
+
+    captured = {}
+    monkeypatch.setattr(
+        demo,
+        "add_demo_caption",
+        lambda scene, detail, citation: captured.setdefault("detail", detail),
+    )
+
+    demo._add_annotations(Scene(), states)
+
+    assert captured["detail"].endswith(f"PDB {expected_entry}")
 
 
 @pytest.mark.parametrize(
