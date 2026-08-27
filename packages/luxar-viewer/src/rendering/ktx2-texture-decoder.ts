@@ -76,6 +76,9 @@ export function createKTX2TextureDecoder(
       if (loaderPending === pending) loaderPending = null;
       throw error;
     }
+    if (disposed) {
+      throw new Error(`${path}: KTX2 decoder was disposed before parsing began`);
+    }
     const texture = await new Promise<THREE.CompressedTexture>((resolve, reject) => {
       activeLoader.parse(new Uint8Array(bytes).buffer, resolve, reject);
     });

@@ -11,6 +11,7 @@ import type { Renderer } from '../../../rendering/renderer-capabilities';
 const loaderState = vi.hoisted(() => ({
   texture: null as import('three').CompressedTexture | null,
   dispose: vi.fn(),
+  parse: vi.fn(),
   constructed: 0,
 }));
 
@@ -30,6 +31,7 @@ vi.mock('three/examples/jsm/loaders/KTX2Loader.js', async (importOriginal) => {
         resolve: (texture: import('three').CompressedTexture) => void,
         reject: (error: unknown) => void
       ) {
+        loaderState.parse();
         if (bytes.byteLength > 1) return super.parse(bytes, resolve, reject);
         if (!loaderState.texture) throw new Error('test texture not configured');
         resolve(loaderState.texture);
@@ -60,6 +62,7 @@ describe('createKTX2TextureDecoder', () => {
   beforeEach(() => {
     loaderState.texture = null;
     loaderState.dispose.mockClear();
+    loaderState.parse.mockClear();
     loaderState.constructed = 0;
   });
 
@@ -172,6 +175,18 @@ describe('createKTX2TextureDecoder', () => {
 
     await expect(decode('mesh/texture', new Uint8Array(1))).rejects.toThrow(/disposed/i);
     expect(loaderState.constructed).toBe(1);
+  });
+
+  it('rejects an in-flight decode before parsing when the decoder is disposed', async () => {
+    loaderState.texture = compressedTexture();
+    const decode = createKTX2TextureDecoder(supportedRenderer());
+    await decode('mesh/texture-0', new Uint8Array(1));
+
+    const pending = decode('mesh/texture-1', new Uint8Array(1));
+    decode.dispose();
+
+    await expect(pending).rejects.toThrow(/disposed before parsing began/i);
+    expect(loaderState.parse).toHaveBeenCalledOnce();
   });
 });
 
