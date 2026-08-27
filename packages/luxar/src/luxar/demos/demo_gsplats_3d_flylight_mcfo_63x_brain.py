@@ -628,7 +628,8 @@ def levelling_angle_deg(node) -> float:
 
     The angle is the amplitude-weighted principal axis of the splat cloud in the
     view plane. It is DATA-DERIVED and moves with any refit, so it must be
-    recomputed rather than carried as a constant (the shipped run used 48.84).
+    recomputed rather than carried as a constant (the bundled fallback used
+    48.84; the hosted refit used 48.71).
     """
     from luxar.gsplats.tree import iter_leaves
 
@@ -758,7 +759,10 @@ def recompute_archive() -> Path:
             node, _ = load_gsplat_node(str(scaled))
             angle = levelling_angle_deg(node)
             bmin, bmax = center_bounds(node)
-            aprint(f"levelling angle {angle:.2f} deg (shipped run: 48.84)")
+            aprint(
+                f"levelling angle {angle:.2f} deg "
+                "(bundled fallback: 48.84; hosted refit: 48.71)"
+            )
             _luxar(
                 "gsplat",
                 "transform",
@@ -772,7 +776,7 @@ def recompute_archive() -> Path:
             ext = np.round(np.asarray(lmax) - np.asarray(lmin), 0)
             aprint(
                 f"bbox {np.round(np.asarray(bmax) - np.asarray(bmin), 0)} -> {ext} um "
-                "(shipped run levelled 483x508 -> 663x303x167)"
+                "(bundled fallback levelled 483x508 -> 663x303x167)"
             )
             wide = np.sort(ext)[-2:]
             if wide[1] / max(wide[0], 1.0) < 1.5:
