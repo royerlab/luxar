@@ -855,13 +855,18 @@ class TestConvertCommand:
     def test_convert_with_scale_intensity(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        raw = tmp_path / "raw.gsplats.zarr"
+        raw_data = GSplatData.load(sample_gsplats).scale_intensity(1000.0)
+        raw_data.save(raw)
         out = tmp_path / "scene.luxar.zarr"
         result = runner.invoke(
             app,
             [
                 "gsplat",
                 "convert",
-                str(sample_gsplats),
+                str(raw),
                 str(out),
                 "--scale-intensity",
                 "0.5",
@@ -870,7 +875,10 @@ class TestConvertCommand:
         assert result.exit_code == 0, (
             f"convert --scale-intensity failed: {result.stdout}"
         )
-        assert out.exists()
+        attrs = read_node_attrs(out / "gsplats")
+        expected_hi = float(np.percentile(raw_data.amplitudes * 0.5, 99.9))
+        assert attrs["amplitude_data_range"][1] == pytest.approx(expected_hi, rel=1e-3)
+        assert "amplitude_normalization_factor" not in attrs
 
     def test_convert_scene_has_valid_structure(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path

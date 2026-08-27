@@ -28,12 +28,26 @@ result), then the additive axis (uniform across levels).
 ```
 gsplats_pipeline/
 ├── __init__.py        # package docstring only (no re-exports)
+├── amplitude_norm.py  # one insertion-time amplitude scale per structure
 ├── from_data.py       # add_gsplats_from_data_impl — top-level dispatch
 ├── from_io.py         # add_gsplats_from_file_impl / add_gsplats_from_volume_impl
 └── lod_dispatch.py    # add_gsplats_as_lod_group_impl / add_gsplats_multi_lod_impl
 ```
 
 ## Entry points
+
+### `amplitude_norm.py` — insertion-time amplitude normalization
+
+The public data, file, and volume doors normalize fitted raw-unit amplitudes
+before writing a scene. ``True`` / ``"auto"`` maps a robust p99.9 reference to
+1.0 only when it exceeds 1.0, ``False`` opts out, and a positive number sets an
+explicit target. A child inserted directly into a ``kind=lod`` or
+``kind=partition`` group defaults to no normalization because its exposure must
+stay shared with its siblings; whole structures still use one pooled factor.
+Partition parts share one pooled reference; substitutive LOD groups contribute
+only their finest child to that reference, while the resolved factor still
+scales every level and additive rung. Applied factors are stamped as
+``amplitude_normalization_factor``.
 
 ### `from_data.py` — `add_gsplats_from_data_impl(group, *, name, result, ...)`
 

@@ -15,6 +15,9 @@ _PUBLISHED_STACKS = {
     "demo_gsplats_4d_zebrafish_timelapse.py": "preprocessed",
 }
 _EXEMPT_STACKS = {
+    "demo_gsplats_3d_culling_study.py": (
+        "categorical cull views derived from one fit, not independently fitted parts"
+    ),
     "demo_quantum_orbitals.py": "not published as a Zenodo gsplat archive",
 }
 

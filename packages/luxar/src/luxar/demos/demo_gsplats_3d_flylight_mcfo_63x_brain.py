@@ -266,6 +266,11 @@ VOXEL_UM = (0.19, 0.19, 0.38)
 # that moves only the max is not a reason to touch it.
 DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
 
+# These values were tuned against the archive's raw amplitude units. The scene
+# therefore opts out of insertion-time amplitude normalisation below; otherwise
+# the archive's p99.9 ~= 79 scale would dim both radiance and optical depth by
+# that factor while leaving this window and opacity unchanged.
+
 # Splat count of the hosted refit. The bundled fallback is an older generation,
 # so runtime descriptions and captions derive their count from whichever archive
 # is actually loaded. This pin remains as a cross-check against the committed
@@ -954,6 +959,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 scene.add_gsplats_from_file(
                     name="mcfo_neurons",
                     path=str(data_path),
+                    normalize_amplitudes=False,
                     # `volumetric` — emission–absorption. The neurons are sparse
                     # but the brain is 167 um deep, so additive summing along the
                     # ray saturates every dense arbor to white and the MCFO hues,
