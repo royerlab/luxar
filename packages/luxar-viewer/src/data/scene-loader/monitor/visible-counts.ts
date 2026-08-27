@@ -1,11 +1,12 @@
 /**
  * Aggregate per-mesh `visiblePointCount` / `visibleSegmentCount` /
- * `visibleSplatCount` and `droppedElementCount` userData (points + lines +
- * gsplats, symmetrically) across the scene graph and report the totals to the
- * data-loading monitor. Called once per update cycle after the
- * points/lines/gsplats commits so the monitor's HUD shows the post-clipping (and
- * post-progressive-refinement) visible counts rather than the raw loaded
- * counts.
+ * `visibleSplatCount` / `visibleTriangleCount` userData across the scene graph —
+ * all four geometry types, symmetrically — together with `droppedElementCount`
+ * (points + lines + gsplats only: mesh is not element-texture backed, so it has
+ * no capacity clamp to drop against), and report the totals to the
+ * data-loading monitor. Called once per update cycle after the geometry commits
+ * so the monitor's HUD shows the post-clipping (and post-progressive-refinement)
+ * visible counts rather than the raw loaded counts.
  *
  * Alongside the totals, a per-path map (mesh `name` is the scene-graph
  * path) is pushed via `updateVisibleCountsByPath` so the monitor's

@@ -360,6 +360,68 @@ describe('DataLoadingMonitor', () => {
     });
   });
 
+  describe('compact badge — geometry summary', () => {
+    /**
+     * Drive one paint of the collapsed badge and return its geometry row.
+     *
+     * `visible` is applied AFTER the scene graph, because `setSceneGraph`
+     * seeds the visible counters from the dataset totals — the same order the
+     * SceneLoader uses (snapshot, then the visible-counts walk).
+     */
+    function badgeGeoms(
+      root: SceneGraphNode,
+      visible: Partial<Record<string, number>> = {}
+    ): string {
+      monitor.setSceneGraph(root);
+      for (const [type, count] of Object.entries(visible)) {
+        monitor.updateVisibleCount(type as 'points' | 'mesh', count!);
+      }
+      monitor.show();
+      const geoms = container.querySelector('.luxar-monitor-compact__geoms');
+      expect(geoms).not.toBeNull();
+      return geoms!.textContent ?? '';
+    }
+
+    const meshLeaf = (path: string, faces: number): SceneGraphNode => ({
+      path,
+      name: path.slice(1),
+      type: 'mesh',
+      children: [],
+      faceCount: faces,
+    });
+
+    it('reports a mesh-only scene in triangles, not as "0 pts"', () => {
+      // The badge kept its own three-type list, so a mesh-only scene fell
+      // through to the "nothing loaded yet" points placeholder and reported
+      // 0 pts for a scene with 36.9K triangles on screen.
+      const text = badgeGeoms(meshLeaf('/surface', 1200), { mesh: 900 });
+      expect(text).toContain('900 tris');
+      expect(text).not.toContain('pts');
+    });
+
+    it('lists mesh alongside the other types present', () => {
+      const text = badgeGeoms(
+        {
+          path: '/',
+          name: 'Scene',
+          type: 'scene',
+          children: [
+            { path: '/cloud', name: 'cloud', type: 'points', children: [], pointCount: 500 },
+            meshLeaf('/surface', 1200),
+          ],
+        },
+        { points: 500, mesh: 900 }
+      );
+      expect(text).toContain('500 pts');
+      expect(text).toContain('900 tris');
+    });
+
+    it('keeps the points placeholder when the scene is empty', () => {
+      const text = badgeGeoms({ path: '/', name: 'Scene', type: 'scene', children: [] });
+      expect(text).toContain('0 pts');
+    });
+  });
+
   describe('LOD loader-count collapse (Fix 4)', () => {
     const spatialLoader = (path: string): LoaderMonitor => ({
       addEventListener: vi.fn(),

@@ -233,6 +233,74 @@ describe('renderHierarchicalTimingPanel', () => {
     expect(html).toContain('50 segs');
   });
 
+  it('aggregates MESH nodes into one row, like the other three types', () => {
+    // Mesh was not a recognized node type, so its per-node sessions fell
+    // through the aggregator's `Unknown` pass-through: two mesh layers rendered
+    // as two rows named after their paths, while two points layers collapsed
+    // into one "Points · 2 nodes" row with a summed count.
+    const root = makeEntry({
+      count: 1,
+      children: [
+        {
+          name: 'Mesh (/earth/globe)',
+          lastMs: 9,
+          avgMs: 8,
+          count: 1,
+          children: [],
+          metadata: { triangles: 1200 },
+        },
+        {
+          name: 'Mesh (/earth/clouds)',
+          lastMs: 4,
+          avgMs: 3,
+          count: 1,
+          children: [],
+          metadata: { triangles: 800 },
+        },
+      ],
+    });
+    const html = renderHierarchicalTimingPanel(root);
+
+    expect(html).toContain('2.0K tris'); // 1200 + 800, summed like pts/segs/splats
+    expect(html).toContain('2 nodes');
+    // Collapsed into the type row — the per-node names are gone.
+    expect(html).not.toContain('/earth/globe');
+    expect(html).not.toContain('/earth/clouds');
+  });
+
+  it('keeps each type reporting only its own element noun', () => {
+    // Anti-vacuity for the table lookup: a mesh row must not pick up a points
+    // count, nor a points row a triangle count.
+    const root = makeEntry({
+      count: 1,
+      children: [
+        {
+          name: 'Mesh (/surface)',
+          lastMs: 9,
+          avgMs: 8,
+          count: 1,
+          children: [],
+          // A hostile metadata bag carrying BOTH counters.
+          metadata: { triangles: 1200, points: 999 },
+        },
+        {
+          name: 'Points (/cloud)',
+          lastMs: 4,
+          avgMs: 3,
+          count: 1,
+          children: [],
+          metadata: { points: 500, triangles: 777 },
+        },
+      ],
+    });
+    const html = renderHierarchicalTimingPanel(root);
+
+    expect(html).toContain('1.2K tris');
+    expect(html).toContain('500 pts');
+    expect(html).not.toContain('999');
+    expect(html).not.toContain('777');
+  });
+
   it('renders nested children when parent is expanded by default (depth < 2)', () => {
     const root = makeEntry({
       count: 1,

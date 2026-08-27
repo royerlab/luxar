@@ -61,7 +61,11 @@ import type {
   MeshDataLoader,
   MeshViewState,
 } from '../../types/mesh';
-import type { MeshWholeNodeLoader } from './mesh-whole-node-loader';
+import {
+  meshPayloadBytes,
+  meshProjectionBytes,
+  type MeshWholeNodeLoader,
+} from './mesh-whole-node-loader';
 import type { MeshPreflightResult } from './preflight';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
@@ -74,6 +78,12 @@ import { assertColorLayout } from '../loaders';
 import { MESH_DECODE_BUDGET_BYTES } from '../../config/constants';
 import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import { log, Modules, LogEmoji } from '../../utils/log';
+import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
+import type {
+  LoaderMetrics,
+  MonitorEventListener,
+  QueryInfo,
+} from '../../types/data-monitor-types';
 
 /** The empty payload a ladder with no committed level hands back. */
 function emptyMeshData(): LoadedMeshData {
@@ -338,11 +348,20 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   private _concatCache: { lodCount: number; result: LoadedMeshData } | null = null;
   /** Per-pass playback budget from the CURRENT `updateView`; null outside playback. */
   private _frameBudgetMs: number | null = null;
+  /** Monitor telemetry, rolled up over the levels — see the surface below. */
+  private readonly monitor: ProgressiveMonitorAdapter;
+  /**
+   * Triangles the current slice indexes, as reported by the commit
+   * (`recordVisibleElements`). Node-level, so it cannot come from the per-level
+   * roll-up — see {@link getMetrics}.
+   */
+  private _visibleTriangles = 0;
 
   constructor(lodLoaders: MeshWholeNodeLoader[], nLods: number, path: string) {
     this.lodLoaders = lodLoaders;
     this.nLods = nLods;
     this.path = path;
+    this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path, 'mesh-whole-node');
   }
 
   get hasMoreLODs(): boolean {
@@ -690,11 +709,58 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     }
   }
 
+  // ---- LoaderMonitor surface (delegated to ProgressiveMonitorAdapter) ----
+  // Lets `connectLoaderToMonitor` wire the reveal ladder to the data monitor as
+  // ONE loader keyed by this node's path — the adapter re-paths each level's
+  // events, so the `additive_<i>` sub-loaders stay an implementation detail
+  // instead of appearing as N separate rows. Same wiring as the three sibling
+  // progressive loaders.
+
+  addEventListener(listener: MonitorEventListener): void {
+    this.monitor.addEventListener(listener);
+  }
+
+  removeEventListener(listener: MonitorEventListener): void {
+    this.monitor.removeEventListener(listener);
+  }
+
+  /** Always empty — no level runs spatial queries (see `MeshWholeNodeLoader`). */
+  getActiveQueries(): QueryInfo[] {
+    return this.monitor.getActiveQueries();
+  }
+
+  getMetrics(): LoaderMetrics {
+    // `visibleElements` is OVERRIDDEN rather than summed, unlike every other
+    // counter here. The commit reports the visible-triangle count to the loader
+    // it finds in `userData` — this wrapper, not the levels — so the per-level
+    // values are all 0 and their sum would be too. It is a node-level fact
+    // anyway: the committed surface is the revealed prefix's concatenation, not
+    // a quantity each level owns a share of.
+    const metrics = this.monitor.getMetrics();
+    const concatMemory =
+      this._concatCache && this._concatCache.lodCount > 1
+        ? meshPayloadBytes(this._concatCache.result) + meshProjectionBytes(this._concatCache.result)
+        : 0;
+    return {
+      ...metrics,
+      visibleElements: this._visibleTriangles,
+      memoryUsed: metrics.memoryUsed + concatMemory,
+    };
+  }
+
+  /** See `MeshWholeNodeLoader.recordVisibleElements`. */
+  recordVisibleElements(triangles: number): void {
+    this._visibleTriangles = triangles;
+  }
+
   dispose(): void {
     this._disposed = true;
     for (const loader of this.lodLoaders) loader.dispose();
     this.lodLoaders = [];
     this.loadedLODs = [];
     this._concatCache = null;
+    // Nothing is on screen for this node any more; the cumulative counters live
+    // on the (now-disposed) levels and go with them.
+    this._visibleTriangles = 0;
   }
 }

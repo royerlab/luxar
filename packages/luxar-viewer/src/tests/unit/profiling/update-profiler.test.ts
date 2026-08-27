@@ -704,6 +704,25 @@ describe('UpdateProfiler — same-update summing (per-update sequence)', () => {
     expect(child.metadata?.cacheMisses).toBe(6);
   });
 
+  it('sums the mesh triangle count across same-update merges', () => {
+    // Mesh reported its count as a free-text `info: 'N faces'` string, which is
+    // LAST-WRITE on merge: an aggregated row covering three mesh layers showed
+    // only whichever finished last. A typed counter sums like its siblings.
+    const profiler = new UpdateProfiler();
+    profiler.beginUpdate();
+
+    const a = profiler.beginTopLevel('Mesh');
+    a.setMetadata({ triangles: 1200 });
+    a.end();
+    const b = profiler.beginTopLevel('Mesh');
+    b.setMetadata({ triangles: 800 });
+    b.end();
+
+    profiler.endUpdate();
+
+    expect(findChild(profiler.getTimings(), 'Mesh')!.metadata?.triangles).toBe(2000);
+  });
+
   it('applies ONE EMA sample per update against the pre-update base', () => {
     const profiler = new UpdateProfiler();
 
