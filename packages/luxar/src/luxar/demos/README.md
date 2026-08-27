@@ -311,13 +311,19 @@ Visualizes the complete ATP Synthase rotary motor structure with F1 catalytic he
 ---
 
 #### demo_nuclear_pore_complex.py - Nuclear Pore Complex
-Downloads real Nup107-160 subcomplex structure from PDB and applies perfect 8-fold rotational symmetry to visualize the nuclear gateway.
+The complete human NPC at atomic resolution: **4,937,064 atoms, 808 protein chains, 25 distinct nucleoporins**, assembled from the PDB deposition's *own* eight-fold symmetry operators and scrubbable between the constricted and dilated conformational states.
+
+Uses PDB **7R5J** (dilated) / **7R5K** (constricted) — Mosalaganti et al., *Science* 2022, the reference whole-NPC model. Each entry deposits one C8 protomer (101 chains, 617,133 atoms) plus the eight operators that generate its declared `808-meric` biological assembly, so nothing about the radius, orientation or spacing is invented here. Measured on the assembled result: outer diameter 149.9 nm (constricted) / 159.7 nm (dilated), central channel 41.1 / 53.1 nm, axial height 72.2 / 76.5 nm. Atoms carry true van der Waals radii — no visibility fudge factor.
+
+Six structural modules, every chain assigned by a curated table that the test suite refuses to let drift: cytoplasmic filaments (RanBP2/Nup358 x40, the Nup214-Nup88-p62 export platform), cytoplasmic ring and nuclear ring (32 Y-complexes = 16 + 16, two concentric rings per face, ELYS nuclear-only), inner ring (Nup205/188/93/155/35), membrane ring (gp210 x64, NDC1, ALADIN), and the central channel FG nucleoporins. Absent and documented as such: the nuclear basket (Tpr/Nup153/Nup50), most FG repeat regions, and the membrane itself.
 
 **Run**: `luxar demo run nuclear_pore_complex`
 
-**Requires**: Internet access (downloads PDB structure).
+**Options**: `--state=both|dilated|constricted`, `--color=module|nucleoporin|element|protomer`, `--representation=all|backbone|calpha`, `--split=none|nucleoporin`.
 
-**Demonstrates**: PDB structure download and parsing, all-atom rendering (`--representation=calpha` for a C-alpha backbone trace instead), 8-fold rotational symmetry application, van der Waals radii for atomic sizes, CPK element colors (`--color=spoke` for one color per spoke), depth-sorted `normal` blending for surface-like atomic structures, `layer=True` for live blending / opacity / display-range control in the Layers panel (press **L**; the absorption slider appears once the layer is switched to `volumetric`).
+**Requires**: Internet access (~28 MB of mmCIF from RCSB).
+
+**Demonstrates**: mmCIF parsing and biological-assembly expansion from deposited `_pdbx_struct_oper_list` operators; a 9.87M-element Points scene as **one** BSP-partitioned node — the NPC's subunits are concave and interpenetrate, so splitting by protein has no valid draw order while splitting by space does, and the recorded `bsp_tree` gives the viewer an exact Fuchs-Kedem-Naylor back-to-front traversal even with the camera inside the channel (the partition is also what keeps every part under the 5,591,040-element per-node texture clamp); a hidden **categorical** `state` axis placed **last** so `displayDims == [0, 1, 2]` and the BSP split columns stay displayed; symmetry-averaged baked ambient occlusion (`luxar.shading`) as a burial cue; depth-sorted `normal` blending for surface-like atomic structure; `layer=True` for live control in the Layers panel (press **L**).
 
 ---
 
