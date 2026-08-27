@@ -239,6 +239,28 @@ def test_capacity_warnings_fail_example_generation(tmp_path: Path) -> None:
     assert not (output_dir / run_examples.MARKER_NAME).exists()
 
 
+def test_example_bootstrap_preserves_direct_execution_semantics(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    output = output_dir / "one_example.luxar.zarr"
+    examples = repo / "packages/luxar/examples"
+    (examples / "_helper.py").write_text("VALUE = 'fresh'\n")
+    _write_example(
+        repo,
+        "one",
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from _helper import VALUE\n"
+        "assert Path(sys.argv[0]) == Path(__file__)\n"
+        f"output = Path({str(output)!r})\n"
+        "output.mkdir(parents=True)\n"
+        "(output / 'zarr.json').write_text(VALUE)\n",
+    )
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    assert (output / "zarr.json").read_text() == "fresh"
+
+
 def test_successful_rebuild_without_outputs_preserves_previous_fixtures(
     tmp_path: Path,
 ) -> None:

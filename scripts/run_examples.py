@@ -29,12 +29,14 @@ _WARNING_ERROR_BOOTSTRAP = """
 import runpy
 import sys
 import warnings
+from pathlib import Path
 
 from luxar.io import ElementCapacityWarning
 
 warnings.simplefilter("error", ElementCapacityWarning)
 script = sys.argv[1]
 sys.argv = sys.argv[1:]
+sys.path[0] = str(Path(script).resolve().parent)
 runpy.run_path(script, run_name="__main__")
 """
 
