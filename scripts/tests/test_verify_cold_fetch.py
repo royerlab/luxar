@@ -449,6 +449,12 @@ def test_non_hosted_datasets_are_labelled_as_not_hosted(
     assert harness.main(["--list", "thing"]) == 0
     assert capsys.readouterr().out.splitlines() == [f"{'thing':<40} not hosted"]
 
+    assert harness.main(["thing"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "1 not hosted" in captured.out
+    assert "nothing was actually verified" not in captured.out
+
 
 def test_main_checks_every_variant_and_labels_each_row(
     harness: ModuleType,

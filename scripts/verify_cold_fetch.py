@@ -290,7 +290,7 @@ def _result_exit_code(
         )
         return 1
 
-    if checked == 0:
+    if checked == 0 and skipped:
         print(
             "NOTE: nothing was actually verified — every target was skipped. "
             "That is expected while no record is published, and is NOT evidence "
@@ -371,6 +371,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     failures = 0
     skipped = 0
+    not_hosted = 0
     for name, variant in targets:
         ok, detail, kept_path = verify(
             name,
@@ -384,12 +385,17 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"      kept: {kept_path}")
         if not ok:
             failures += 1
+        elif manifest["datasets"][name].get("bucket") != "zenodo":
+            not_hosted += 1
         elif detail.startswith("SKIP"):
             skipped += 1
 
-    checked = len(targets) - skipped - failures
+    checked = len(targets) - skipped - not_hosted - failures
     print()
-    print(f"cold fetch: {checked} verified, {skipped} skipped, {failures} failed")
+    summary = f"cold fetch: {checked} verified, {skipped} skipped"
+    if not_hosted:
+        summary += f", {not_hosted} not hosted"
+    print(f"{summary}, {failures} failed")
     return _result_exit_code(
         failures=failures,
         skipped=skipped,
