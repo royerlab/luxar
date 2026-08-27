@@ -120,6 +120,8 @@ import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import { LoaderRegistry } from './scene-loader/loaders/loader-registry';
 import { warnFailedLoaders } from './scene-loader/loaders/failure-report';
+import { notifier } from '../utils/cross-layer/notifier';
+import type { ArchiveFaultError } from '../cache/chunk-source';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -251,6 +253,7 @@ export class SceneLoader {
   // Serialized update queue: prevents concurrent updateView calls from corrupting shared buffers
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
+  private _archiveFault: ArchiveFaultError | null = null;
   /**
    * True for the duration of a progressive-LOD refinement run
    * (`scheduleGSplatsRefinement`).
@@ -807,12 +810,14 @@ export class SceneLoader {
   private async runLoaderUpdates<TLoader, TStaged>(
     loaders: Map<string, TLoader>,
     loaderType: 'Points' | 'Lines' | 'GSplats' | 'Mesh',
-    updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>
+    updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>,
+    onArchiveFault: (fault: ArchiveFaultError) => void
   ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
     return runLoaderUpdatesHelper(loaders, loaderType, updateFn, {
       profiler: this.profiler,
       viewStateQueue: this.viewStateQueue,
       registry: this.registry,
+      onArchiveFault,
     });
   }
 
@@ -834,7 +839,7 @@ export class SceneLoader {
     // isActive-return exit hands off via noopReleaseLock, and
     // scheduleGSplatsRefinement early-returns on `_disposed`, so no later
     // resolvePassWaiters runs). Resolve-only, never reject (matches dispose()).
-    if (this._disposed) return;
+    if (this._disposed || this._archiveFault) return;
 
     // Foreground passes deliberately do NOT abort the background slice
     // prefetch. The foreground now commits from the SliceCache without
@@ -896,6 +901,10 @@ export class SceneLoader {
     // the geometry commit below.
     const updateController = new AbortController();
     this._updateAbortController = updateController;
+    let sweepArchiveFault: ArchiveFaultError | undefined;
+    const onArchiveFault = (fault: ArchiveFaultError): void => {
+      sweepArchiveFault ??= fault;
+    };
 
     try {
       // Playback frame budget is a PER-PASS directive, never persisted:
@@ -964,24 +973,32 @@ export class SceneLoader {
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       });
 
-      const pointsTask = this.runLoaderUpdates(this.loaders, pointsLabel, (path, loader, session) =>
-        pointsLoadAndStage(path, loader, session, pointsCtx)
+      const pointsTask = this.runLoaderUpdates(
+        this.loaders,
+        pointsLabel,
+        (path, loader, session) => pointsLoadAndStage(path, loader, session, pointsCtx),
+        onArchiveFault
       );
 
       const linesTask = this.runLoaderUpdates(
         this.linesLoaders,
         linesLabel,
-        (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx)
+        (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx),
+        onArchiveFault
       );
 
       const gsplatsTask = this.runLoaderUpdates(
         this.gsplatLoaders,
         gsplatsLabel,
-        (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx)
+        (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx),
+        onArchiveFault
       );
 
-      const meshTask = this.runLoaderUpdates(this.meshLoaders, meshLabel, (path, loader, session) =>
-        meshLoadAndStage(path, loader, session, meshCtx)
+      const meshTask = this.runLoaderUpdates(
+        this.meshLoaders,
+        meshLabel,
+        (path, loader, session) => meshLoadAndStage(path, loader, session, meshCtx),
+        onArchiveFault
       );
 
       // Wait for ALL loaders to complete (load + process)
@@ -991,6 +1008,16 @@ export class SceneLoader {
         gsplatsTask,
         meshTask,
       ]);
+
+      if (sweepArchiveFault) {
+        this._archiveFault = sweepArchiveFault;
+        this.registry.clearAllFailures();
+        log.error(
+          Modules.SCENE_LOADER,
+          `Archive fault during view update: ${sweepArchiveFault.message}`
+        );
+        notifier.error(sweepArchiveFault.message, { persistent: true });
+      }
 
       // S6: predictive prefetch now lives inside each loader-task
       // branch (Points / Lines / GSplats) and uses the per-node
@@ -1009,6 +1036,7 @@ export class SceneLoader {
         // commits so a stale/partial frame never reaches the GPU; profiler
         // sessions are still ended inside runAtomicCommit regardless.
         signal: updateController.signal,
+        discard: sweepArchiveFault !== undefined,
         updatePointsGeometry: (path, data, session) =>
           this.updatePointsGeometry(path, data, session),
         commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
@@ -1020,7 +1048,7 @@ export class SceneLoader {
       // superseded update committed nothing (and its loaders may have aborted
       // mid-attribute) — skip the monitor refresh and the failed-loader
       // warning; the winning update runs both with correct state.
-      if (!updateController.signal.aborted) {
+      if (!updateController.signal.aborted && !sweepArchiveFault) {
         // Update monitor with total visible segments across all lines nodes
         this.updateVisibleCountsInMonitor();
 
@@ -1033,19 +1061,25 @@ export class SceneLoader {
 
       // Decide what runs next — pending state, GSplats refinement, or
       // lock release. Implementation in scene-loader/update-view/queue-next.ts.
-      queueNext({
-        viewStateQueue: this.viewStateQueue,
-        pointsLoaders: this.loaders,
-        linesLoaders: this.linesLoaders,
-        gsplatLoaders: this.gsplatLoaders,
-        meshLoaders: this.meshLoaders,
-        updateView: (state) => this.updateView(state),
-        setUpdateInProgress: (v) => {
-          this._updateInProgress = v;
-        },
-        scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
-        resolvePassWaiters: () => this.resolvePassWaiters(),
-      });
+      if (this._archiveFault) {
+        this.viewStateQueue.takePending();
+        this.resolvePassWaiters();
+        this._updateInProgress = false;
+      } else {
+        queueNext({
+          viewStateQueue: this.viewStateQueue,
+          pointsLoaders: this.loaders,
+          linesLoaders: this.linesLoaders,
+          gsplatLoaders: this.gsplatLoaders,
+          meshLoaders: this.meshLoaders,
+          updateView: (state) => this.updateView(state),
+          setUpdateInProgress: (v) => {
+            this._updateInProgress = v;
+          },
+          scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
+          resolvePassWaiters: () => this.resolvePassWaiters(),
+        });
+      }
     }
   }
 

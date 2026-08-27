@@ -171,11 +171,16 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // .showHelp etc. without importing the ui/ helper modules directly —
   // that's what keeps the dependency-cruiser layer order clean.
   setNotifierBackend({
-    showError: (message) =>
-      showError(message, shortcutForAction, {
-        datasetBrowser: KeyAction.toggleDatasetBrowser,
-        help: KeyAction.toggleHelp,
-      }),
+    showError: (message, options) =>
+      showError(
+        message,
+        shortcutForAction,
+        {
+          datasetBrowser: KeyAction.toggleDatasetBrowser,
+          help: KeyAction.toggleHelp,
+        },
+        options?.persistent ? { autoDismiss: false } : undefined
+      ),
     showToast,
     showHelpOverlay,
     hideHelpOverlay,

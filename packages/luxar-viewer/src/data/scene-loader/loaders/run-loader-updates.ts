@@ -13,6 +13,7 @@ import type { UpdateProfiler, UpdateSession } from '../../../profiling/update-pr
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { LoaderRegistry } from './loader-registry';
 import { isAbortError } from '../../loaders/abort-error';
+import { archiveFaultFrom, type ArchiveFaultError } from '../../../cache/chunk-source';
 
 const NOOP_SESSION: UpdateSession = {
   begin: () => NOOP_SESSION,
@@ -34,8 +35,10 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     profiler: UpdateProfiler | null;
     viewStateQueue: ViewStateQueue;
     registry: Pick<LoaderRegistry, 'failedLoaders' | 'recordFailure'>;
+    onArchiveFault: (fault: ArchiveFaultError) => void;
   }
 ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
+  let archiveFault: ArchiveFaultError | undefined;
   const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
     // Open a top-level session per node and keep it alive across the
     // atomic commit stage so the per-node "Update Buffers" child entry
@@ -59,6 +62,12 @@ export async function runLoaderUpdates<TLoader, TStaged>(
         return { staged: null, session };
       }
 
+      const fault = archiveFaultFrom(error);
+      if (fault) {
+        archiveFault ??= fault;
+        return { staged: null, session };
+      }
+
       // Predictive prefetch is keyed by the previous successful
       // derived view-state for this path. If the demand update
       // fails, discard that baseline so the next success
@@ -78,5 +87,7 @@ export async function runLoaderUpdates<TLoader, TStaged>(
       return { staged: null, session };
     }
   });
-  return Promise.all(tasks);
+  const results = await Promise.all(tasks);
+  if (archiveFault) ctx.onArchiveFault(archiveFault);
+  return results;
 }

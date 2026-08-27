@@ -29,6 +29,7 @@ import * as THREE from 'three';
 import { getPointTexture } from '../../../rendering/point-geometry';
 import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import * as zarr from 'zarrita';
+import { ArchiveFaultError } from '../../../cache/chunk-source';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -98,11 +99,12 @@ vi.mock('../../../rendering/depth-sort-coordinator', async (importOriginal) => {
 // warning. Mock the notifier so the test can assert toast() was called.
 const notifierMocks = vi.hoisted(() => ({
   toast: vi.fn(),
+  error: vi.fn(),
 }));
 vi.mock('../../../utils/cross-layer/notifier', () => ({
   notifier: {
     toast: notifierMocks.toast,
-    error: vi.fn(),
+    error: notifierMocks.error,
     showHelp: vi.fn(),
     hideHelp: vi.fn(),
     showLoading: vi.fn(),
@@ -380,6 +382,44 @@ describe('SceneLoader', () => {
       // Should track the failure
       expect(sceneLoader.hasFailures()).toBe(true);
       expect(sceneLoader.getFailedLoaders().size).toBe(1);
+    });
+
+    it('surfaces an archive fault once and preserves the last committed frame', async () => {
+      const fault = new ArchiveFaultError(
+        'The archive URL has expired. Refresh the page with a new URL.',
+        'https://example.test/scene.zip'
+      );
+      const failingLoader = {
+        updateView: vi.fn().mockRejectedValue(new Error('loader wrapper', { cause: fault })),
+        dispose: vi.fn(),
+      };
+      const successfulLoader = {
+        updateView: vi.fn().mockResolvedValue({
+          pointCount: 1,
+          positions: new Float32Array([1, 2, 3]),
+          metadata: { loadedPoints: 1 },
+        }),
+        dispose: vi.fn(),
+      };
+      const commitSpy = vi.spyOn(sceneLoader as any, 'updatePointsGeometry');
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      loaders.clear();
+      loaders.set('/fault', failingLoader);
+      loaders.set('/cached-success', successfulLoader);
+
+      await sceneLoader.updateView({ displayDims: [0, 1, 2] });
+
+      expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect(notifierMocks.error).toHaveBeenCalledWith(fault.message, { persistent: true });
+      expect(sceneLoader.hasFailures()).toBe(false);
+      expect(commitSpy).not.toHaveBeenCalled();
+
+      await sceneLoader.updateView({ slicePosition: [0, 0, 1] });
+
+      expect(failingLoader.updateView).toHaveBeenCalledOnce();
+      expect(successfulLoader.updateView).toHaveBeenCalledOnce();
+      expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect((sceneLoader as any)._updateInProgress).toBe(false);
     });
 
     it('routes the updateView call through the loader even for empty results (loader decides skip)', async () => {
