@@ -1004,7 +1004,7 @@ def test_green_schedule_repairs_every_unpromoted_commit(
     workflow: str, tmp_path: Path
 ) -> None:
     result, calls = _run_cancelled_push_repair(
-        workflow, tmp_path, candidate_shas=("older", "deadbeef")
+        workflow, tmp_path, candidate_shas=("older", "missing", "deadbeef")
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1012,6 +1012,7 @@ def test_green_schedule_repairs_every_unpromoted_commit(
         "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs",
         "repos/royerlab/luxar/actions/jobs/31/rerun",
     ]
+    assert "No completed push CI run found for missing" in result.stdout
 
 
 def test_green_schedule_ignores_older_cancelled_push_attempt(

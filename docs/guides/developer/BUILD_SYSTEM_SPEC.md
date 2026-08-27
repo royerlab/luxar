@@ -996,10 +996,11 @@ timeout before any step starts or runner name is recorded. The repair job has on
 `actions: write` and `contents: read` permissions and runs on GitHub-hosted Linux;
 recovered long legs reuse
 their original runner-routing decision and repay work that the scheduled run already
-performed. On the multi-job path, up to four long legs routed to obsidian can therefore
-run alongside the next push run, increasing self-hosted contention. When the original
-routing decision was `ubuntu-latest`, up to eight repair windows per day can also add
-hosted-runner minutes, but only on a SHA that can otherwise block promotion.
+performed. The backlog walk enqueues every repairable commit in one pass; a multi-job
+candidate can add up to four long obsidian-routed legs alongside the next push run, so
+the total burst scales with the outstanding `main..GITHUB_SHA` gap. When the original
+routing decision was `ubuntu-latest`, the same backlog-sized burst adds hosted-runner
+minutes, but only for commits that can otherwise block promotion.
 
 ## Architecture Notes
 
