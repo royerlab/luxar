@@ -141,6 +141,16 @@ describe('showError - ARIA Attributes', () => {
   });
 });
 
+describe('showError - dismissal', () => {
+  it('dismisses the dialog when Escape is pressed', () => {
+    showError('Test error', undefined, undefined, { autoDismiss: false });
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+    expect(document.getElementById('luxar-error-message')).toBeNull();
+  });
+});
+
 describe('clearError', () => {
   it('should remove error message', () => {
     showError('Test error');

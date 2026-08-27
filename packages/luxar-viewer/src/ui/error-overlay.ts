@@ -45,6 +45,7 @@ const UI_CONFIG = config.ui;
 // at module scope so all teardown paths can clear them.
 let autoDismissTimerId: ReturnType<typeof setTimeout> | null = null;
 let activeReleaseTrap: (() => void) | null = null;
+let activeEscapeHandler: ((event: KeyboardEvent) => void) | null = null;
 
 function clearAutoDismissTimer(): void {
   if (autoDismissTimerId !== null) {
@@ -57,6 +58,13 @@ function releaseActiveTrap(): void {
   if (activeReleaseTrap !== null) {
     activeReleaseTrap();
     activeReleaseTrap = null;
+  }
+}
+
+function removeActiveEscapeHandler(): void {
+  if (activeEscapeHandler !== null) {
+    document.removeEventListener('keydown', activeEscapeHandler);
+    activeEscapeHandler = null;
   }
 }
 
@@ -87,6 +95,7 @@ export function showError(
   // stay pending in test environments using fake timers).
   clearAutoDismissTimer();
   releaseActiveTrap();
+  removeActiveEscapeHandler();
   const existingError = document.getElementById('luxar-error-message');
   if (existingError) {
     existingError.remove();
@@ -185,6 +194,7 @@ export function showError(
   const dismissError = () => {
     clearAutoDismissTimer();
     releaseActiveTrap();
+    removeActiveEscapeHandler();
     errorDiv.remove();
   };
 
@@ -192,6 +202,13 @@ export function showError(
   errorDiv.addEventListener('click', () => {
     dismissError();
   });
+
+  activeEscapeHandler = (event) => {
+    if (event.key === 'Escape') {
+      dismissError();
+    }
+  };
+  document.addEventListener('keydown', activeEscapeHandler);
 
   // Auto-dismiss after configured timeout. Timer id is stored at module
   // scope so dismissError()/clearError()/a replacement showError() can
@@ -223,6 +240,7 @@ export function showError(
 export function clearError() {
   clearAutoDismissTimer();
   releaseActiveTrap();
+  removeActiveEscapeHandler();
   const errorDiv = document.getElementById('luxar-error-message');
   if (errorDiv) {
     errorDiv.remove();
