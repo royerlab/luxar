@@ -81,6 +81,7 @@ def _repo(tmp_path: Path) -> Path:
         "packages/luxar/src/luxar/demos",
         "packages/luxar/src/luxar/shading",
         "packages/luxar/src/luxar/shading/tests",
+        "packages/luxar-viewer/src/tests/screenshots",
         "docs/images/readme/gallery",
     ):
         (tmp_path / relative).mkdir(parents=True, exist_ok=True)
@@ -88,13 +89,24 @@ def _repo(tmp_path: Path) -> Path:
     (tmp_path / "scripts/gallery/generate_gallery_datasets.py").write_text(
         "# generator\n"
     )
+    for filename in (
+        "generate-gallery.spec.ts",
+        "exposure-policy.ts",
+        "crop-policy.ts",
+    ):
+        (
+            tmp_path / f"packages/luxar-viewer/src/tests/screenshots/{filename}"
+        ).write_text(f"// {filename}\n")
     for demo_id in ("a", "b"):
         (tmp_path / f"packages/luxar/src/luxar/demos/demo_{demo_id}.py").write_text(
-            f"# demo {demo_id}\n"
+            "from luxar.shading import bake_ambient_occlusion\n"
+            if demo_id == "a"
+            else "# demo b\n"
         )
-        (tmp_path / f"docs/images/readme/gallery/{demo_id}.webp").write_text(
-            f"tile {demo_id}\n"
-        )
+        for suffix in ("webp", "webm"):
+            (tmp_path / f"docs/images/readme/gallery/{demo_id}.{suffix}").write_text(
+                f"tile {demo_id}.{suffix}\n"
+            )
     (tmp_path / "packages/luxar/src/luxar/shading/occlusion.py").write_text(
         "# shading\n"
     )
@@ -105,9 +117,10 @@ def _repo(tmp_path: Path) -> Path:
     _commit(tmp_path, "initial", 20)
 
     for demo_id in ("a", "b"):
-        (tmp_path / f"docs/images/readme/gallery/{demo_id}.webp").write_text(
-            f"fresh tile {demo_id}\n"
-        )
+        for suffix in ("webp", "webm"):
+            (tmp_path / f"docs/images/readme/gallery/{demo_id}.{suffix}").write_text(
+                f"fresh tile {demo_id}.{suffix}\n"
+            )
     _commit(tmp_path, "capture tiles", 21)
     return tmp_path
 
@@ -138,7 +151,7 @@ def test_manifest_line_ranges_isolate_each_demo_entry() -> None:
     assert '"id": "b"' in "\n".join(lines[ranges["b"].start - 1 : ranges["b"].stop])
 
 
-def test_manifest_history_is_entry_specific_and_shading_affects_all_tiles(
+def test_manifest_history_is_entry_specific_and_shading_only_affects_importers(
     tmp_path: Path,
 ) -> None:
     repo = _repo(tmp_path)
@@ -160,10 +173,60 @@ def test_manifest_history_is_entry_specific_and_shading_affects_all_tiles(
 
     by_id = {status.demo_id: status for status in history.tile_statuses()}
     assert by_id["a"].stale_inputs == ("luxar.shading",)
-    assert by_id["b"].stale_inputs == (
-        "luxar.shading",
-        "manifest entry",
-    )
+    assert by_id["b"].stale_inputs == ("manifest entry",)
+
+
+def test_uncommitted_manifest_edit_does_not_affect_committed_report(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _write_manifest(repo, title_b="uncommitted edit")
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ()
+
+
+def test_tile_uses_older_commit_from_still_and_video_pair(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / "docs/images/readme/gallery/a.webp").write_text("new still only\n")
+    _commit(repo, "replace still only", 22)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+
+    assert by_id["a"].tile.committed_at.day == 21
+
+
+def test_demo_script_edit_stales_only_its_tile(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / "packages/luxar/src/luxar/demos/demo_b.py").write_text("# revised b\n")
+    _commit(repo, "revise demo b", 22)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+
+    assert by_id["a"].stale_inputs == ()
+    assert by_id["b"].stale_inputs == ("demo generator",)
+
+
+def test_gallery_capture_policy_is_a_global_input(tmp_path: Path, capsys) -> None:
+    repo = _repo(tmp_path)
+    crop_policy = repo / "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts"
+    crop_policy.write_text("// revised crop policy\n")
+    _commit(repo, "revise crop policy", 22)
+
+    assert stale.main(["--repo-root", str(repo)]) == 0
+    output = capsys.readouterr().out
+    assert "global inputs:" in output
+    assert "crop policy" in output
+    assert "STALE a" in output
+    assert "STALE b" in output
 
 
 def test_appending_a_manifest_entry_does_not_stale_the_previous_last_entry(
@@ -198,24 +261,57 @@ def test_shading_docs_and_tests_do_not_mark_tiles_stale(tmp_path: Path) -> None:
     )
     _commit(repo, "revise shading", 23)
 
-    assert all(
-        status.stale_inputs == ("luxar.shading",)
-        for status in stale.GalleryHistory(repo).tile_statuses()
-    )
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+    assert by_id["a"].stale_inputs == ("luxar.shading",)
+    assert by_id["b"].stale_inputs == ()
 
 
 def test_stale_findings_are_report_only(tmp_path: Path, capsys) -> None:
     repo = _repo(tmp_path)
-    (repo / "packages/luxar/src/luxar/shading/occlusion.py").write_text(
-        "# revised shading\n"
-    )
-    _commit(repo, "revise shading", 22)
+    crop_policy = repo / "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts"
+    crop_policy.write_text("// revised crop policy\n")
+    _commit(repo, "revise crop policy", 22)
 
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
     assert "STALE a" in output
     assert "STALE b" in output
     assert "2 stale, 0 current" in output
+
+
+def test_bad_rows_are_reported_unknown_without_hiding_other_tiles(
+    tmp_path: Path, capsys
+) -> None:
+    repo = _repo(tmp_path)
+    (repo / "docs/images/readme/gallery/zzz.webp").write_text("unknown still\n")
+    (repo / "docs/images/readme/gallery/zzz.webm").write_text("unknown video\n")
+    _commit(repo, "add unmatched media", 22)
+
+    assert stale.main(["--repo-root", str(repo)]) == 0
+    output = capsys.readouterr().out
+    assert "UNKNOWN zzz: committed tile 'zzz' has no manifest entry" in output
+    assert "CURRENT a" in output
+    assert "CURRENT b" in output
+    assert "0 stale, 2 current, 1 unknown" in output
+
+
+def test_uncommitted_demo_script_is_an_unknown_row(tmp_path: Path, capsys) -> None:
+    repo = _repo(tmp_path)
+    _write_manifest(repo, include_c=True)
+    for suffix in ("webp", "webm"):
+        (repo / f"docs/images/readme/gallery/c.{suffix}").write_text(
+            f"tile c.{suffix}\n"
+        )
+    _commit(repo, "add c manifest and media", 22)
+    (repo / "packages/luxar/src/luxar/demos/demo_c.py").write_text("# uncommitted\n")
+
+    assert stale.main(["--repo-root", str(repo)]) == 0
+    output = capsys.readouterr().out
+    assert "UNKNOWN c: no commit history for" in output
+    assert "CURRENT a" in output
+    assert "CURRENT b" in output
 
 
 def test_shallow_history_is_rejected_instead_of_misreported(tmp_path: Path) -> None:

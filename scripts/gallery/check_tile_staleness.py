@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -21,9 +22,22 @@ SHADING_PATHSPECS = (
     f"{SHADING_PATH.as_posix()}/*.py",
     f":(exclude){SHADING_PATH.as_posix()}/tests/**",
 )
-TILES_PATHSPEC = "docs/images/readme/gallery/*.webp"
+TILES_PATHSPECS = (
+    "docs/images/readme/gallery/*.webp",
+    "docs/images/readme/gallery/*.webm",
+)
+GLOBAL_INPUT_PATHS = {
+    "dataset generator": Path("scripts/gallery/generate_gallery_datasets.py"),
+    "gallery capture": Path(
+        "packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts"
+    ),
+    "exposure policy": Path(
+        "packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts"
+    ),
+    "crop policy": Path("packages/luxar-viewer/src/tests/screenshots/crop-policy.ts"),
+}
 
-_BLAME_HEADER = re.compile(r"^([0-9a-f^]+) \d+ \d+(?: \d+)?$")
+_BLAME_HEADER = re.compile(r"^([0-9a-f]+) \d+ \d+(?: \d+)?$")
 
 
 class StalenessError(RuntimeError):
@@ -47,7 +61,20 @@ class TileStatus:
     demo_id: str
     tile: CommitStamp
     inputs: dict[str, CommitStamp]
+    global_input_labels: tuple[str, ...]
     stale_inputs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class UnknownStatus:
+    demo_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class GalleryReport:
+    global_inputs: dict[str, CommitStamp]
+    statuses: tuple[TileStatus | UnknownStatus, ...]
 
 
 def stale_inputs(tile: CommitStamp, inputs: dict[str, CommitStamp]) -> list[str]:
@@ -98,6 +125,28 @@ def manifest_entry_line_ranges(text: str) -> dict[str, LineRange]:
     return ranges
 
 
+def imports_luxar_shading(source: str) -> bool:
+    """Return whether a demo directly imports the public shading package."""
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(
+                alias.name == "luxar.shading" or alias.name.startswith("luxar.shading.")
+                for alias in node.names
+            ):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "luxar.shading" or (
+                node.module is not None and node.module.startswith("luxar.shading.")
+            ):
+                return True
+            if node.module == "luxar" and any(
+                alias.name == "shading" for alias in node.names
+            ):
+                return True
+    return False
+
+
 class GalleryHistory:
     """Read the narrow Git history inputs that can invalidate committed gallery tiles."""
 
@@ -142,6 +191,7 @@ class GalleryHistory:
             "blame",
             "--line-porcelain",
             f"-L{line_range.start},{line_range.stop}",
+            "HEAD",
             "--",
             MANIFEST_PATH.as_posix(),
         )
@@ -150,7 +200,7 @@ class GalleryHistory:
         for line in output.splitlines():
             header = _BLAME_HEADER.match(line)
             if header:
-                current_sha = header.group(1).lstrip("^")
+                current_sha = header.group(1)
             elif line.startswith("committer-time ") and current_sha:
                 timestamp = int(line.removeprefix("committer-time "))
                 stamps.append(
@@ -165,61 +215,123 @@ class GalleryHistory:
             )
         return max(stamps, key=lambda stamp: stamp.committed_at)
 
-    def _tracked_tiles(self) -> list[Path]:
-        output = self._git("ls-files", "--", TILES_PATHSPEC)
-        tiles = [Path(line) for line in output.splitlines() if line]
-        if not tiles:
-            raise StalenessError("no committed README gallery tiles found")
-        return sorted(tiles)
+    def _head_text(self, path: Path) -> str | None:
+        result = subprocess.run(
+            ["git", "show", f"HEAD:{path.as_posix()}"],
+            cwd=self.repo_root,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout
+        if (
+            "does not exist in 'HEAD'" in result.stderr
+            or "exists on disk" in result.stderr
+        ):
+            return None
+        raise StalenessError(
+            f"git show HEAD:{path.as_posix()} failed: {result.stderr.strip()}"
+        )
 
-    def tile_statuses(self) -> list[TileStatus]:
+    def _tracked_tile_media(self) -> list[tuple[str, tuple[Path, ...]]]:
+        output = self._git("ls-files", "--", *TILES_PATHSPECS)
+        media = [Path(line) for line in output.splitlines() if line]
+        if not media:
+            raise StalenessError("no committed README gallery tiles found")
+        by_demo: dict[str, list[Path]] = {}
+        for path in media:
+            by_demo.setdefault(path.stem, []).append(path)
+        return [
+            (demo_id, tuple(sorted(paths)))
+            for demo_id, paths in sorted(by_demo.items())
+        ]
+
+    def report(self) -> GalleryReport:
         self._require_full_history()
-        manifest_text = (self.repo_root / MANIFEST_PATH).read_text()
+        manifest_text = self._git("show", f"HEAD:{MANIFEST_PATH.as_posix()}")
         manifest = json.loads(manifest_text)
         entries = {entry["id"]: entry for entry in manifest["demos"]}
         ranges = manifest_entry_line_ranges(manifest_text)
-        shading = self._last_commit_for_pathspecs(*SHADING_PATHSPECS)
+        global_inputs = {
+            label: self._last_commit(path) for label, path in GLOBAL_INPUT_PATHS.items()
+        }
+        global_inputs["luxar.shading"] = self._last_commit_for_pathspecs(
+            *SHADING_PATHSPECS
+        )
 
-        statuses: list[TileStatus] = []
-        for tile_path in self._tracked_tiles():
-            demo_id = tile_path.stem
+        statuses: list[TileStatus | UnknownStatus] = []
+        for demo_id, media_paths in self._tracked_tile_media():
             entry: dict[str, Any] | None = entries.get(demo_id)
             if entry is None or demo_id not in ranges:
-                raise StalenessError(
-                    f"committed tile {demo_id!r} has no manifest entry"
-                )
-            inputs = {
-                "luxar.shading": shading,
-            }
-            script = entry.get("script")
-            if script is not None:
-                if not isinstance(script, str):
-                    raise StalenessError(
-                        f"manifest script for {demo_id!r} is not a string or null"
+                statuses.append(
+                    UnknownStatus(
+                        demo_id=demo_id,
+                        reason=f"committed tile {demo_id!r} has no manifest entry",
                     )
-                inputs["demo generator"] = self._last_commit(DEMOS_DIR / script)
-            inputs["manifest entry"] = self._manifest_entry_commit(ranges[demo_id])
-            tile = self._last_commit(tile_path)
+                )
+                continue
+            try:
+                inputs = dict(global_inputs)
+                global_input_labels = list(GLOBAL_INPUT_PATHS)
+                script = entry.get("script")
+                if script is not None:
+                    if not isinstance(script, str):
+                        raise StalenessError(
+                            f"manifest script for {demo_id!r} is not a string or null"
+                        )
+                    script_path = DEMOS_DIR / script
+                    inputs["demo generator"] = self._last_commit(script_path)
+                    source = self._head_text(script_path)
+                    if source is not None and imports_luxar_shading(source):
+                        global_input_labels.append("luxar.shading")
+                    else:
+                        inputs.pop("luxar.shading")
+                else:
+                    inputs.pop("luxar.shading")
+                inputs["manifest entry"] = self._manifest_entry_commit(ranges[demo_id])
+                tile = min(
+                    (self._last_commit(path) for path in media_paths),
+                    key=lambda stamp: stamp.committed_at,
+                )
+            except (SyntaxError, StalenessError) as exc:
+                statuses.append(UnknownStatus(demo_id=demo_id, reason=str(exc)))
+                continue
             statuses.append(
                 TileStatus(
                     demo_id=demo_id,
                     tile=tile,
                     inputs=inputs,
+                    global_input_labels=tuple(global_input_labels),
                     stale_inputs=tuple(stale_inputs(tile, inputs)),
                 )
             )
-        return statuses
+        return GalleryReport(global_inputs=global_inputs, statuses=tuple(statuses))
+
+    def tile_statuses(self) -> list[TileStatus | UnknownStatus]:
+        return list(self.report().statuses)
 
 
 def _format_status(status: TileStatus) -> str:
     tile_stamp = _format_stamp(status.tile)
     if not status.stale_inputs:
         return f"CURRENT {status.demo_id}: tile {tile_stamp}"
-    details = ", ".join(
-        f"{label} {_format_stamp(status.inputs[label])}"
+    stale_global = [
+        label for label in status.stale_inputs if label in status.global_input_labels
+    ]
+    stale_per_tile = [
+        label
         for label in status.stale_inputs
+        if label not in status.global_input_labels
+    ]
+    details: list[str] = []
+    if stale_global:
+        details.append(f"newer global inputs: {', '.join(stale_global)}")
+    per_tile_details = ", ".join(
+        f"{label} {_format_stamp(status.inputs[label])}" for label in stale_per_tile
     )
-    return f"STALE {status.demo_id}: tile {tile_stamp}; newer inputs: {details}"
+    if per_tile_details:
+        details.append(f"newer per-tile inputs: {per_tile_details}")
+    return f"STALE {status.demo_id}: tile {tile_stamp}; {'; '.join(details)}"
 
 
 def _format_stamp(stamp: CommitStamp) -> str:
@@ -234,16 +346,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     args = parser.parse_args(argv)
     try:
-        statuses = GalleryHistory(args.repo_root).tile_statuses()
+        report = GalleryHistory(args.repo_root).report()
     except (OSError, KeyError, json.JSONDecodeError, StalenessError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    for status in statuses:
-        print(_format_status(status))
-    stale_count = sum(bool(status.stale_inputs) for status in statuses)
+    global_details = "; ".join(
+        f"{label} {_format_stamp(stamp)}"
+        for label, stamp in report.global_inputs.items()
+    )
+    print(f"global inputs: {global_details}\n")
+    for status in report.statuses:
+        if isinstance(status, UnknownStatus):
+            print(f"UNKNOWN {status.demo_id}: {status.reason}")
+        else:
+            print(_format_status(status))
+    known_statuses = [
+        status for status in report.statuses if isinstance(status, TileStatus)
+    ]
+    unknown_count = len(report.statuses) - len(known_statuses)
+    stale_count = sum(bool(status.stale_inputs) for status in known_statuses)
     print(
-        f"\nGallery tile staleness: {stale_count} stale, {len(statuses) - stale_count} current"
+        f"\nGallery tile staleness: {stale_count} stale, "
+        f"{len(known_statuses) - stale_count} current, {unknown_count} unknown"
     )
     print(
         "Report only — inspect stale tiles and regenerate them when their render changed."
