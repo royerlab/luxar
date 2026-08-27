@@ -594,8 +594,12 @@ def test_disconnected_sorted_overlap_clusters_warn_separately(capsys) -> None:
 
     warnings = [line for line in capsys.readouterr().out.splitlines() if "⚠️" in line]
     assert len(warnings) == 2
-    assert all("left_" in warning for warning in warnings[:1])
-    assert all("right_" in warning for warning in warnings[1:])
+    assert "left_inner" in warnings[0]
+    assert "left_outer" in warnings[0]
+    assert "right_" not in warnings[0]
+    assert "right_inner" in warnings[1]
+    assert "right_outer" in warnings[1]
+    assert "left_" not in warnings[1]
 
 
 def test_world_transforms_decide_overlap(capsys) -> None:

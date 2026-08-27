@@ -127,24 +127,41 @@ def _candidate_pairs(
             yield left, right
 
 
-def _warn_sorted_overlap_clusters(
-    neighbors: dict[str, set[str]], modes: dict[str, set[str]]
+def _cluster_root(parents: dict[str, str], path: str) -> str:
+    root = path
+    while parents[root] != root:
+        root = parents[root]
+    while path != root:
+        parent = parents[path]
+        parents[path] = root
+        path = parent
+    return root
+
+
+def _merge_sorted_overlap(
+    parents: dict[str, str],
+    modes: dict[str, set[str]],
+    left: _BlendLeaf,
+    right: _BlendLeaf,
 ) -> None:
-    warned: set[str] = set()
-    for start in sorted(neighbors):
-        if start in warned:
-            continue
-        cluster: set[str] = set()
-        pending = [start]
-        while pending:
-            path = pending.pop()
-            if path in cluster:
-                continue
-            cluster.add(path)
-            pending.extend(neighbors[path] - cluster)
-        warned.update(cluster)
+    for node in (left, right):
+        parents.setdefault(node.owner_path, node.owner_path)
+        modes.setdefault(node.owner_path, set()).add(node.mode)
+    left_root = _cluster_root(parents, left.owner_path)
+    right_root = _cluster_root(parents, right.owner_path)
+    if left_root != right_root:
+        parents[max(left_root, right_root)] = min(left_root, right_root)
+
+
+def _warn_sorted_overlap_clusters(
+    parents: dict[str, str], modes: dict[str, set[str]]
+) -> None:
+    clusters: dict[str, list[str]] = {}
+    for path in sorted(parents):
+        clusters.setdefault(_cluster_root(parents, path), []).append(path)
+    for cluster in sorted(clusters.values()):
         participants = ", ".join(
-            f"'{path}' ({'/'.join(sorted(modes[path]))})" for path in sorted(cluster)
+            f"'{path}' ({'/'.join(sorted(modes[path]))})" for path in cluster
         )
         aprint(
             f"  ⚠️  overlapping order-dependent nodes {participants} have view-dependent "
@@ -167,7 +184,7 @@ def warn_overlapping_blending(
         world_leaves = collect_world_bounds(store)
     leaves = [_effective_leaf(leaf) for leaf in world_leaves]
     warned_additive: set[str] = set()
-    sorted_neighbors: dict[str, set[str]] = {}
+    sorted_parents: dict[str, str] = {}
     sorted_modes: dict[str, set[str]] = {}
     for left, right in _candidate_pairs(leaves, displayed_dimensions):
         if left.owner_path == right.owner_path:
@@ -200,9 +217,6 @@ def warn_overlapping_blending(
             and _internally_sorted(right)
             and (_contains(left.leaf, right.leaf) or _contains(right.leaf, left.leaf))
         ):
-            sorted_neighbors.setdefault(left.owner_path, set()).add(right.owner_path)
-            sorted_neighbors.setdefault(right.owner_path, set()).add(left.owner_path)
-            sorted_modes.setdefault(left.owner_path, set()).add(left.mode)
-            sorted_modes.setdefault(right.owner_path, set()).add(right.mode)
+            _merge_sorted_overlap(sorted_parents, sorted_modes, left, right)
 
-    _warn_sorted_overlap_clusters(sorted_neighbors, sorted_modes)
+    _warn_sorted_overlap_clusters(sorted_parents, sorted_modes)
