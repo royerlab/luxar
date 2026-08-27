@@ -945,6 +945,8 @@ elif "/actions/runs?" in endpoint:
         print("900")
     elif "head_sha=older" in endpoint:
         print("901")
+    elif "head_sha=oldest" in endpoint:
+        print("902")
 elif "/runs/900/jobs?" in endpoint:
     print(json.dumps([{"jobs": [
         {"id": 21, "name": "python-tests (3.12)", "conclusion": "cancelled"},
@@ -960,6 +962,14 @@ elif "/runs/901/jobs?" in endpoint:
         {"id": 33, "name": "typescript-tests", "conclusion": "success"},
         {"id": 34, "name": "release-readiness", "conclusion": "success"},
         {"id": 35, "name": "wheel-viewer", "conclusion": "success"},
+    ]}]))
+elif "/runs/902/jobs?" in endpoint:
+    print(json.dumps([{"jobs": [
+        {"id": 41, "name": "wheel-viewer", "conclusion": "cancelled"},
+        {"id": 42, "name": "python-tests (3.12)", "conclusion": "success"},
+        {"id": 43, "name": "typescript-tests", "conclusion": "success"},
+        {"id": 44, "name": "release-readiness", "conclusion": "success"},
+        {"id": 45, "name": "docs-quality", "conclusion": "success"},
     ]}]))
 else:
     raise SystemExit(f"unexpected endpoint: {endpoint}")
@@ -1004,11 +1014,13 @@ def test_green_schedule_reruns_all_latest_cancelled_required_push_jobs(
     ]
 
 
-def test_green_schedule_repairs_every_unpromoted_commit(
+def test_green_schedule_caps_repairs_at_two_newest_candidates(
     workflow: str, tmp_path: Path
 ) -> None:
     result, calls = _run_cancelled_push_repair(
-        workflow, tmp_path, candidate_shas=("older", "missing", "deadbeef")
+        workflow,
+        tmp_path,
+        candidate_shas=("oldest", "older", "missing", "deadbeef"),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1017,6 +1029,7 @@ def test_green_schedule_repairs_every_unpromoted_commit(
         "repos/royerlab/luxar/actions/jobs/31/rerun",
     ]
     assert "No completed push CI run found for missing" in result.stdout
+    assert "Repair cap reached; older candidates intentionally skipped" in result.stdout
 
 
 def test_green_schedule_ignores_older_cancelled_push_attempt(
