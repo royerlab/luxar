@@ -20,6 +20,7 @@ from typing import Any, Dict, FrozenSet, Optional
 
 import numpy as np
 import zarr
+from arbol import aprint
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
@@ -586,7 +587,7 @@ def warn_if_over_element_cap(
         if geometry_type == "gsplats"
         else "Split it with partition=dict(max_elements=...)"
     )
-    warnings.warn(
+    message = (
         f"'{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
         f"{geometry_type} node can render on a 4096-class GPU. If the whole "
         f"node is committed at once, such a GPU can silently drop the tail — "
@@ -594,10 +595,10 @@ def warn_if_over_element_cap(
         f"order, that tail is one contiguous region, so it looks like a "
         f"clean-edged hole in the data (#1957). An nD node sliced on a "
         f"non-displayed dimension commits only its current slice. {remedy} "
-        f"to render everywhere.",
-        ElementCapacityWarning,
-        stacklevel=2,
+        f"to render everywhere."
     )
+    aprint(f"⚠️  {message}")
+    warnings.warn(message, ElementCapacityWarning, stacklevel=1)
     return True
 
 
