@@ -127,23 +127,23 @@ def test_native_partition_adders_split_on_displayed_columns(
     """Every native partition writer emits a tree usable by the current view."""
     centers = np.array(
         [
-            [-6.0, 0.0, 0.0, 0.0],
-            [-2.0, 0.1, 0.0, 0.0],
-            [2.0, 0.0, 0.0, 0.0],
-            [6.0, 0.1, 0.0, 0.0],
+            [0.0, 0.0, 0.0, -6.0],
+            [0.1, 0.0, 0.0, -2.0],
+            [0.0, 0.0, 0.0, 2.0],
+            [0.1, 0.0, 0.0, 6.0],
         ],
         dtype=np.float32,
     )
     line_vertices = np.array(
         [
-            [-6.2, 0.0, 0.0, 0.0],
-            [-5.8, 0.0, 0.0, 0.0],
-            [-2.2, 0.1, 0.0, 0.0],
-            [-1.8, 0.1, 0.0, 0.0],
-            [1.8, 0.0, 0.0, 0.0],
-            [2.2, 0.0, 0.0, 0.0],
-            [5.8, 0.1, 0.0, 0.0],
-            [6.2, 0.1, 0.0, 0.0],
+            [0.0, 0.0, 0.0, -6.2],
+            [0.0, 0.0, 0.0, -5.8],
+            [0.1, 0.0, 0.0, -2.2],
+            [0.1, 0.0, 0.0, -1.8],
+            [0.0, 0.0, 0.0, 1.8],
+            [0.0, 0.0, 0.0, 2.2],
+            [0.1, 0.0, 0.0, 5.8],
+            [0.1, 0.0, 0.0, 6.2],
         ],
         dtype=np.float32,
     )
@@ -151,11 +151,11 @@ def test_native_partition_adders_split_on_displayed_columns(
     mesh_vertices = np.array(
         [
             point
-            for state, center in ((-6.0, 0.0), (-2.0, 0.1), (2.0, 0.0), (6.0, 0.1))
+            for state, center in ((0.0, -6.0), (0.1, -2.0), (0.0, 2.0), (0.1, 6.0))
             for point in (
-                (state - 0.2, center, -0.2, 0.0),
-                (state + 0.2, center, -0.2, 0.0),
-                (state, center, 0.2, 0.0),
+                (state - 0.02, -0.2, 0.0, center),
+                (state + 0.02, -0.2, 0.0, center),
+                (state, 0.2, 0.0, center),
             )
         ],
         dtype=np.float32,
@@ -163,7 +163,7 @@ def test_native_partition_adders_split_on_displayed_columns(
     mesh_faces = np.arange(12, dtype=np.uint32).reshape(4, 3)
     dimensions = Dimensions(
         [
-            Dimension("state", display=False, spatial=True, range=(-6.2, 6.2)),
+            Dimension("state", display=False, spatial=True, range=(-0.02, 0.12)),
             Dimension("x", display=True),
             Dimension("y", display=True),
             Dimension("z", display=True),
@@ -219,6 +219,7 @@ def test_native_partition_adders_split_on_displayed_columns(
         collect_axes(tree)
         assert axes
         assert axes <= {1, 2, 3}
+        assert 3 in axes
 
     output_text = capsys.readouterr().out
     for name in ("points", "lines", "mesh", "gsplats"):
