@@ -25,7 +25,7 @@ from luxar.core.group.gsplats_pipeline.amplitude_norm import (
     resolve_factor,
 )
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
-from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, iter_leaves
+from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
 
 DIMS = Dimensions([Dimension(n, display=True, range=(0.0, 120.0)) for n in "XYZ"])
 
@@ -37,6 +37,21 @@ def _data(n: int = 2000, peak: float = 800.0, seed: int = 0) -> GSplatData:
         centers=(rng.random((n, 3)).astype(np.float32) * 100.0),
         amplitudes=(rng.random(n).astype(np.float32) ** 2 * peak),
         cholesky_factors=np.tile(np.array([2, 0, 2, 0, 0, 2], np.float32), (n, 1)),
+    )
+
+
+def _ladder_data(n: int, peak: float, seed: int) -> GSplatData:
+    data = _data(n=n, peak=peak, seed=seed)
+    split = n // 2
+    return GSplatData(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=data.centers[start:stop],
+                amplitudes=data.amplitudes[start:stop],
+                cholesky_factors=data.cholesky_factors[start:stop],
+            )
+            for start, stop in ((0, split), (split, n))
+        ]
     )
 
 
@@ -173,20 +188,14 @@ def test_substitutive_levels_share_one_factor(tmp_path):
     )
 
 
-def test_data_normalisation_updates_level_energy_stamps():
+def test_data_normalisation_updates_level_energy_stamps(tmp_path):
     source_energies = (4.0e6, 9.0e6)
     levels = []
     for index, (peak, energy) in enumerate(zip((800.0, 200.0), source_energies)):
-        data = _data(n=1000, peak=peak, seed=index)
+        data = _ladder_data(n=1000, peak=peak, seed=index)
         levels.append(
             SubstitutiveLevel(
-                additive_sublods=[
-                    AdditiveSubLOD(
-                        centers=data.centers,
-                        amplitudes=data.amplitudes,
-                        cholesky_factors=data.cholesky_factors,
-                    )
-                ],
+                additive_sublods=list(data.additive_sublods),
                 stats={
                     "reference_energy": energy,
                     "quality": 0.75,
@@ -197,17 +206,19 @@ def test_data_normalisation_updates_level_energy_stamps():
         )
 
     scaled, factor = normalize_gsplat_data(GSplatData(substitutive_levels=levels), True)
-
     assert factor is not None
-    for index, (level, source_energy) in enumerate(
-        zip(scaled.substitutive_levels, source_energies)
-    ):
-        assert level.stats["reference_energy"] == pytest.approx(
-            source_energy * factor**2
-        )
-        assert level.stats["quality"] == 0.75
+    for index, level in enumerate(scaled.substitutive_levels):
         assert "refine_stats" not in level.stats
         assert level.stats["label"] == f"level-{index}"
+
+    out = _build(tmp_path, scaled, normalize_amplitudes=False)
+
+    for index, source_energy in enumerate(reversed(source_energies)):
+        attrs = read_node_attrs(out / "g" / f"child_{index}")
+        stats = attrs["level_stats"]
+        assert stats["reference_energy"] == pytest.approx(source_energy * factor**2)
+        assert stats["quality"] == 0.75
+        assert "refine_stats" not in stats
 
 
 # ------------------------------------------------------- relative structure
@@ -300,10 +311,12 @@ def test_partition_gets_one_tree_wide_factor(tmp_path):
     assert factors[0] == pytest.approx(1.0 / pooled_reference, rel=1e-3)
 
 
-def test_graft_normalisation_updates_leaf_energy_stamps():
+def test_graft_normalisation_updates_leaf_energy_stamps(tmp_path):
+    from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+
     source_energies = (1.0e6, 4.0e5)
     parts = [
-        _data(n=1000, peak=peak, seed=index)
+        _ladder_data(n=1000, peak=peak, seed=index)
         for index, peak in enumerate((200.0, 800.0))
     ]
     for index, (part, energy) in enumerate(zip(parts, source_energies)):
@@ -315,17 +328,21 @@ def test_graft_normalisation_updates_leaf_energy_stamps():
         }
     node = GSplatData.partition_from_regions(parts)
 
-    factor = normalize_node_in_place(node, True)
+    out = tmp_path / "energy-stamps.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=DIMS)
+        graft_gsplat_node(scene, name="g", node=node)
 
-    assert factor is not None
-    for index, (leaf, source_energy) in enumerate(
-        zip(iter_leaves(node), source_energies)
-    ):
-        stats = leaf.meta["stats"]
+    for index, source_energy in enumerate(source_energies):
+        attrs = read_node_attrs(out / "g" / f"part_{index}")
+        factor = attrs[NORMALIZATION_FACTOR_ATTR]
+        stats = attrs["level_stats"]
         assert stats["reference_energy"] == pytest.approx(source_energy * factor**2)
         assert stats["quality"] == 0.5
         assert "refine_stats" not in stats
-        assert stats["label"] == f"part-{index}"
+    for index, leaf in enumerate(node.children):
+        assert "refine_stats" not in leaf.meta["stats"]
+        assert leaf.meta["stats"]["label"] == f"part-{index}"
 
 
 def test_graft_reference_uses_only_the_finest_lod_level():
