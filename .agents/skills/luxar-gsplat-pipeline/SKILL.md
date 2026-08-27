@@ -332,6 +332,7 @@ An index into the measured sections, not a substitute for them.
 | Elongated streak artifacts | lower `max_eccentricity` — no `fit` flag, set it in a `--config` YAML (`--dump-config` writes a template). It only starts binding once the fit is converged, and there it measured 2.65 dB (`references/cli-options.md`) |
 | Result far bigger than needed | `decimate --target N` / `-f 0.1`, or `cull --target vol.npy -p 95` — not a lower `--cull-retention` and a refit |
 | Boxy steps at tile boundaries | suspect the SOURCE (mosaic seams, coverage count), not the fit — measure the artefact's period first |
+| First paint costs hundreds of requests | you picked a partition recipe on byte size — "First paint cost" under "Choosing a LOD recipe"; prefer `overview`, or raise `--max-elements` |
 | Fit is slow, exploring | `--preset draft` (2,000 iters) for the search, one `hifi` run at the end |
 
 `--seed-method` matters on structure the default misses. `auto` draws on the same
@@ -384,7 +385,8 @@ Each of these has burned a whole fit cycle. Check them before you launch a long 
 
 ## Choosing a LOD recipe (`lod --recipe`)
 
-Recipes are scale-ordered — pick by element count `N`:
+Recipes are scale-ordered — pick by element count `N`, then check "First paint
+cost" below, which overrides this ordering when first paint is request-constrained:
 
 | Recipe | What it builds | Use when |
 | --- | --- | --- |
@@ -411,6 +413,41 @@ N ≤ 5000, else the cheap O(N log N) `self_energy` for large N. Override with
 `--method` if you want to force one. For `levels`/`overview`/`adaptive`,
 `--coarsen-dims` lists center-column indices coarsening may merge over (the rest
 become hard barriers — e.g. a time or channel axis must stay a barrier).
+
+### First paint cost: choose on eager rungs, not on N
+
+On a request-constrained host, recipe choice is driven by the rungs fetched before
+first paint, not by element count or total tree nodes:
+
+```
+first-pass rungs = eager parts × 1 level × min(3, rungs per level)
+converged rungs  = eager parts × 1 level × rungs per level
+requests         ≥ eager rungs × arrays per rung   (+ one per extra chunk)
+```
+
+A `kind=lod` group fetches only its default level; a `kind=partition` group fetches
+every part. A cold stream pass commits two rungs and prefetches a third, but background
+refinement drains the rest, so size hard limits against the converged count. The
+loader derivation, selector thresholds, measured example, and exact `requestCount`
+procedure are in
+[references/first-paint-requests.md](references/first-paint-requests.md).
+
+- **`overview` — ~3 eager rungs, independent of part count.** Its root is a
+  `kind=lod` whose fine partition defers behind a fills-screen selector. Crossing
+  it loads every fine part at once, so this saves opening-view requests, not total
+  session requests.
+- **`tiles`, `adaptive` — every part is eager**, so ~3 × P rungs on the first pass.
+  The part factor buys frustum culling and, for `adaptive`, per-tile detail; pay it
+  when requests are not the binding limit.
+- **`stream`, `levels` — one eager leaf/level at load**, but `levels` promotes on
+  frame 1 for typical whole-object framing, so do not assume its tree depth makes it
+  the cheapest opening view.
+
+So when first paint is request-constrained: prefer `overview` over `adaptive`/`tiles`
+at huge N, or raise `--max-elements` to cut the part count. At one part,
+`adaptive`/`tiles` reduce to the cheap `levels`/`stream` shapes behind a partition
+wrapper; use those recipes directly. Large byte size alone is not a reason to choose
+`adaptive`.
 
 ## Tiled fits (large volumes)
 
