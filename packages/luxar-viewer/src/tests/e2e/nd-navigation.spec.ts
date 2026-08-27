@@ -97,7 +97,9 @@ test.describe('nD Navigation - Dimension Selection', () => {
     // These assertions measure steady-state layout. The panel's entry animation
     // scales getBoundingClientRect() while the CSS floor remains unscaled, so
     // sampling during that animation compares values in different coordinate spaces.
-    test.use({ reducedMotion: 'reduce' });
+    test.beforeEach(async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+    });
 
     /**
      * Follow-up to #2193: the row's label is the DIMENSION NAME out of the store, so it is
