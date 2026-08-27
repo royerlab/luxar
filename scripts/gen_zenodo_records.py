@@ -18,7 +18,9 @@ on a machine holding ~400 MB of demo data, and on a partial checkout it reported
 "no PSNR" for archives whose hosted copies are stamped — publishing an absent
 figure for data that has one. The committed measurements carry a
 ``measured_sha256`` so ``--check`` can say when a figure was taken from bytes the
-manifest no longer pins, which is the drift a refit causes.
+manifest no longer pins, which is the drift a refit causes. Source-derived figures
+may retain their own provenance note after a later pinned archive read supplies that
+digest.
 
 ``quality_note`` is internal provenance and is never rendered. ``quality_caveat``
 is reader-facing text rendered next to an absent figure. ``unmeasured_reason`` is
@@ -474,6 +476,15 @@ def _retain_preferred_measurements(
         "source_bytes",
         "frames",
     )
+    recovered_fields = (
+        "psnr_db",
+        "foreground_psnr_db",
+        "foreground_fraction",
+        "source_shape",
+        "source_dtype",
+        "source_bytes",
+        "frames",
+    )
     retained = 0
     rejected = 0
     for key, new_entry in list(measured.items()):
@@ -512,8 +523,8 @@ def _retain_preferred_measurements(
         elif old_entry is not None and old_entry.get("measured_sha256") is None:
             recovered = {
                 field: old_entry[field]
-                for field in measurement_fields
-                if old_entry.get(field) is not None
+                for field in recovered_fields
+                if old_entry.get(field) is not None and new_entry.get(field) is None
             }
             if recovered:
                 measured[key] = {**new_entry, **recovered}
@@ -596,7 +607,9 @@ def refresh_characteristics(
                     "measured_sha256 records WHICH bytes each figure came from; "
                     "--check reports any non-null digest that no longer matches "
                     "the manifest pin. A null digest means the figures were "
-                    "recovered from the stated source rather than archive bytes. "
+                    "recovered from the stated source rather than archive bytes; "
+                    "a later pinned archive read may supply the digest while "
+                    "retaining those source-derived figures. "
                     "quality_note is internal provenance; quality_caveat is "
                     "published beside an absent figure. unmeasured_reason records "
                     "why refresh deliberately withheld measurements."

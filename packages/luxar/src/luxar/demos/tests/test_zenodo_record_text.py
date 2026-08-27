@@ -1110,7 +1110,7 @@ def test_source_derived_figures_survive_a_pinned_stampless_read(gen: Any) -> Non
     pinned_digest = "p" * 64
     measured = {
         key: {
-            "n_splats": 1_653_405,
+            "n_splats": 999_999,
             "ndim": 3,
             "format_version": "3.4",
             "topology": "single level",
@@ -1130,6 +1130,7 @@ def test_source_derived_figures_survive_a_pinned_stampless_read(gen: Any) -> Non
     assert measured[key]["psnr_db"] == 63.66
     assert measured[key]["foreground_psnr_db"] == 48.93
     assert measured[key]["source_bytes"] == 3_414_163_456
+    assert measured[key]["n_splats"] == 999_999
     assert measured[key]["topology"] == "single level"
     assert measured[key]["measured_from"] == "staged"
     assert measured[key]["measured_sha256"] == pinned_digest
