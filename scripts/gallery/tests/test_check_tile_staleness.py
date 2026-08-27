@@ -152,7 +152,7 @@ def test_stale_inputs_require_a_strictly_newer_commit() -> None:
     assert stale.stale_inputs(_stamp(20), inputs) == ["newer"]
 
 
-def test_media_flags_match_capture_threshold_boundaries() -> None:
+def test_media_flags_use_inclusive_warning_and_limit_boundaries() -> None:
     path = Path("tile.webm")
 
     assert (
@@ -173,6 +173,13 @@ def test_media_flags_match_capture_threshold_boundaries() -> None:
         stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES))
         == " [OVER LIMIT]"
     )
+
+
+def test_missing_media_blob_is_reported_as_staleness_error(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+
+    with pytest.raises(stale.StalenessError, match="Git object is unavailable"):
+        stale.GalleryHistory(repo)._small_blob_contents(["0" * 40])
 
 
 def test_manifest_line_ranges_isolate_each_demo_entry() -> None:
@@ -523,10 +530,13 @@ def test_media_sizes_use_committed_lfs_metadata_and_remain_report_only(
     output = capsys.readouterr().out
     assert "a.webm 20.00 MiB (20,971,520 bytes) [WARNING]" in output
     assert "b.webm 25.00 MiB (26,214,400 bytes) [OVER LIMIT]" in output
-    assert output.index("25.00 MiB  b.webm") < output.index("20.00 MiB  a.webm")
+    assert "a.webp 0.00 MiB (2,048 bytes)" not in output
+    assert output.index("25.00 MiB (26,214,400 bytes)  b.webm") < output.index(
+        "20.00 MiB (20,971,520 bytes)  a.webm"
+    )
     assert "Gallery media: 45.00 MiB total across 4 files" in output
     assert (
-        "Gallery media limits: 1 warning (>= 20.00 MiB), "
+        "Gallery media limits: 1 warning (20.00 MiB <= size < 25.00 MiB), "
         "1 over-limit file (>= 25.00 MiB)" in output
     )
     assert "Report only" in output

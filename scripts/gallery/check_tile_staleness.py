@@ -308,7 +308,14 @@ class GalleryHistory:
             header_end = output.find(b"\n", cursor)
             if header_end < 0:
                 raise StalenessError("truncated git cat-file batch header")
-            object_id, object_type, size_text = output[cursor:header_end].split()
+            header = output[cursor:header_end].split()
+            if len(header) == 2 and header[1] == b"missing":
+                raise StalenessError(f"Git object is unavailable: {expected_id}")
+            if len(header) != 3:
+                raise StalenessError(
+                    f"unexpected git cat-file batch header for {expected_id}"
+                )
+            object_id, object_type, size_text = header
             blob_size = int(size_text)
             cursor = header_end + 1
             blob = output[cursor : cursor + blob_size]
@@ -514,11 +521,14 @@ def _media_flag(media: GalleryMedia) -> str:
 
 
 def _format_tile_media(media: tuple[GalleryMedia, ...]) -> str:
-    return ", ".join(
-        f"{item.path.name} {_format_media_size(item.size_bytes)} "
-        f"({item.size_bytes:,} bytes){_media_flag(item)}"
-        for item in media
-    )
+    details = []
+    for item in media:
+        flag = _media_flag(item)
+        exact_size = f" ({item.size_bytes:,} bytes)" if flag else ""
+        details.append(
+            f"{item.path.name} {_format_media_size(item.size_bytes)}{exact_size}{flag}"
+        )
+    return ", ".join(details)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -564,7 +574,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         key=lambda media: (-media.size_bytes, media.path.name),
     )[:LARGEST_MEDIA_COUNT]:
         print(
-            f"{_format_media_size(item.size_bytes):>11}  "
+            f"{_format_media_size(item.size_bytes):>11} "
+            f"({item.size_bytes:,} bytes)  "
             f"{item.path.name}{_media_flag(item)}"
         )
     warning_count = sum(
@@ -578,7 +589,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     over_limit_label = "file" if over_limit_count == 1 else "files"
     print(
         f"Gallery media limits: {warning_count} {warning_label} "
-        f"(>= {_format_media_size(GALLERY_MEDIA_WARNING_BYTES)}), "
+        f"({_format_media_size(GALLERY_MEDIA_WARNING_BYTES)} <= size < "
+        f"{_format_media_size(GALLERY_MEDIA_LIMIT_BYTES)}), "
         f"{over_limit_count} over-limit {over_limit_label} "
         f"(>= {_format_media_size(GALLERY_MEDIA_LIMIT_BYTES)})"
     )
