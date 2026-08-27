@@ -1131,9 +1131,9 @@ export class SceneLoader {
    * boolean, so the first run's ``finally`` would clear it mid-flight and
    * ``isLoadPassInProgress()`` would report a load pass for the whole remaining
    * drain.
-   */
+  */
   kickRefinementIfIdle(): void {
-    if (this._disposed) return;
+    if (this._disposed || this._archiveFault) return;
     if (!this.anyLoaderHasMoreLODs()) return;
     if (this._updateInProgress || this._refining) {
       if (this._refinementKickPending) return;
@@ -1177,8 +1177,10 @@ export class SceneLoader {
    * `data/gsplats/lod-refinement.ts`. The full timing semantics — rAF
    * yield per pass, cancellation hand-off on pending view-state, and
    * lock release on normal completion — live in that module.
-   */
+  */
   private async scheduleGSplatsRefinement(): Promise<void> {
+    if (this._disposed || this._archiveFault) return;
+
     // Mark the whole run as REFINEMENT, not as a load pass. The lock this run
     // holds was handed over by an update tail / post-load kick that had already
     // committed the current view, so `isLoadPassInProgress()` must not see it

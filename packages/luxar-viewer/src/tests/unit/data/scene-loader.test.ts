@@ -1271,6 +1271,7 @@ describe('SceneLoader', () => {
       _updateInProgress: boolean;
       _refining: boolean;
       _disposed: boolean;
+      _archiveFault: ArchiveFaultError | null;
       _refinementKickPending: boolean;
       gsplatLoaders: Map<string, unknown>;
       loaders: Map<string, unknown>; // points
@@ -1423,6 +1424,39 @@ describe('SceneLoader', () => {
         internals._disposed = false;
         internals._updateInProgress = false;
         internals.gsplatLoaders.clear();
+      }
+    });
+
+    it('a pending re-check no-ops after an archive fault', async () => {
+      vi.useFakeTimers();
+      const { internals, spy } = stubOrchestrator();
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
+      internals._updateInProgress = true;
+      try {
+        sceneLoader.kickRefinementIfIdle();
+        internals._updateInProgress = false;
+        internals._archiveFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+        await vi.runOnlyPendingTimersAsync();
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+        internals._archiveFault = null;
+        internals._updateInProgress = false;
+        internals.gsplatLoaders.clear();
+      }
+    });
+
+    it('an already-scheduled refinement no-ops after an archive fault', async () => {
+      const internals = sceneLoader as unknown as KickInternals;
+      internals._updateInProgress = true;
+      internals._archiveFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+      try {
+        await internals.scheduleGSplatsRefinement();
+        expect(internals._updateInProgress).toBe(true);
+        expect(internals._refining).toBe(false);
+      } finally {
+        internals._archiveFault = null;
+        internals._updateInProgress = false;
       }
     });
 
