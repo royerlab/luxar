@@ -46,37 +46,45 @@ def _object_list(payload: object, key: str) -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], values)
 
 
+def _job_state(
+    job: dict[str, Any], queued_before: float | None
+) -> tuple[str, str, bool] | None:
+    labels = job.get("labels")
+    if not isinstance(labels, list) or not all(
+        isinstance(label, str) for label in labels
+    ):
+        raise ValueError("job labels must be a string list")
+    if "obsidian" not in labels:
+        return None
+    name = job.get("name")
+    status = job.get("status")
+    if not isinstance(name, str) or not isinstance(status, str):
+        raise ValueError("job name and status must be strings")
+    queued = status == "queued"
+    if queued and queued_before is not None:
+        created_at = job.get("created_at")
+        if not isinstance(created_at, str):
+            raise ValueError("queued job created_at must be a string")
+        try:
+            queued = parse_timestamp(created_at) <= queued_before
+        except ValueError as error:
+            raise ValueError("queued job created_at is not ISO-8601") from error
+    return name, status, queued
+
+
 def classify_jobs(payload: object, *, queued_before: float | None = None) -> ScanResult:
     """Partition obsidian-labelled jobs into visible, queued, and running names."""
     result = ScanResult()
     for job in _object_list(payload, "jobs"):
-        labels = job.get("labels")
-        if not isinstance(labels, list) or not all(
-            isinstance(label, str) for label in labels
-        ):
-            raise ValueError("job labels must be a string list")
-        if "obsidian" not in labels:
+        state = _job_state(job, queued_before)
+        if state is None:
             continue
-        name = job.get("name")
-        status = job.get("status")
-        if not isinstance(name, str) or not isinstance(status, str):
-            raise ValueError("job name and status must be strings")
+        name, status, queued = state
         result.visible.append(name)
         if status == "in_progress":
             result.running.append(name)
-        if status != "queued":
-            continue
-        if queued_before is not None:
-            created_at = job.get("created_at")
-            if not isinstance(created_at, str):
-                raise ValueError("queued job created_at must be a string")
-            try:
-                created = parse_timestamp(created_at)
-            except ValueError as error:
-                raise ValueError("queued job created_at is not ISO-8601") from error
-            if created > queued_before:
-                continue
-        result.queued.append(name)
+        if queued:
+            result.queued.append(name)
     return result
 
 
@@ -106,6 +114,40 @@ def read_api(endpoint: str) -> object:
         raise ApiError("gh returned invalid JSON") from error
 
 
+def _eligible_run_id(
+    run: dict[str, Any],
+    *,
+    status: str,
+    queued_before: float | None,
+    exclude_run: int | None,
+) -> int | None:
+    run_id = run.get("id")
+    if not isinstance(run_id, int):
+        raise ValueError("run id must be an integer")
+    if run_id == exclude_run:
+        return None
+    if status != "queued" or queued_before is None:
+        return run_id
+    created_at = run.get("created_at")
+    if not isinstance(created_at, str):
+        raise ValueError("queued run created_at must be a string")
+    try:
+        return run_id if parse_timestamp(created_at) <= queued_before else None
+    except ValueError as error:
+        raise ValueError("queued run created_at is not ISO-8601") from error
+
+
+def _limit_reached(
+    result: ScanResult,
+    *,
+    stop_after_queued: int | None,
+    stop_after_running: int | None,
+) -> bool:
+    return (
+        stop_after_queued is not None and len(result.queued) >= stop_after_queued
+    ) or (stop_after_running is not None and len(result.running) >= stop_after_running)
+
+
 def scan_repository(
     repository: str,
     *,
@@ -127,29 +169,18 @@ def scan_repository(
             result.error = {"scope": "runs", "detail": str(error)}
             return result
         for run in runs:
-            run_id = run.get("id")
-            if not isinstance(run_id, int):
-                result.error = {"scope": "runs", "detail": "run id must be an integer"}
+            try:
+                run_id = _eligible_run_id(
+                    run,
+                    status=status,
+                    queued_before=queued_before,
+                    exclude_run=exclude_run,
+                )
+            except ValueError as error:
+                result.error = {"scope": "runs", "detail": str(error)}
                 return result
-            if run_id == exclude_run:
+            if run_id is None:
                 continue
-            if status == "queued" and queued_before is not None:
-                created_at = run.get("created_at")
-                if not isinstance(created_at, str):
-                    result.error = {
-                        "scope": "runs",
-                        "detail": "queued run created_at must be a string",
-                    }
-                    return result
-                try:
-                    if parse_timestamp(created_at) > queued_before:
-                        continue
-                except ValueError:
-                    result.error = {
-                        "scope": "runs",
-                        "detail": "queued run created_at is not ISO-8601",
-                    }
-                    return result
             if result.scanned_runs >= max_runs:
                 result.truncated = True
                 return result
@@ -162,15 +193,10 @@ def scan_repository(
             except (ApiError, ValueError) as error:
                 result.error = {"scope": "jobs", "detail": str(error)}
                 return result
-            if (
-                stop_after_queued is not None
-                and len(result.queued) >= stop_after_queued
-            ):
-                result.stopped = True
-                return result
-            if (
-                stop_after_running is not None
-                and len(result.running) >= stop_after_running
+            if _limit_reached(
+                result,
+                stop_after_queued=stop_after_queued,
+                stop_after_running=stop_after_running,
             ):
                 result.stopped = True
                 return result
