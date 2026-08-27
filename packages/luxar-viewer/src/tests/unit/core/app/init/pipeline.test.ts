@@ -188,7 +188,7 @@ vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
 
 import { InputHandler, KeyAction } from '../../../../../input';
 import { ControlRail } from '../../../../../ui/control-rail';
-import { getSceneLoader } from '../../../../../data/scene-loader-manager';
+import { getSceneLoader, SceneLoaderManager } from '../../../../../data/scene-loader-manager';
 import {
   configureDepthSort,
   setDepthSortEnabled,
@@ -345,6 +345,18 @@ describe('runInitPipeline', () => {
       expect(factories.renderingControls).toHaveBeenCalledOnce();
       expect(factories.recordingPanel).toHaveBeenCalledOnce();
       expect(factories.layersPanel).toHaveBeenCalledOnce();
+    });
+
+    it('installs the renderer-owned KTX2 decoder on the loader manager', async () => {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      expect(SceneLoaderManager.getInstance().setKTX2TextureDecoder).toHaveBeenCalledWith(
+        expect.any(Function)
+      );
     });
 
     it('forwards canvas + renderer flags from options to sceneManager.init', async () => {

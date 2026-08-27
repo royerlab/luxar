@@ -8,7 +8,7 @@
  * of the loader's `nVertices`-shaped machinery and every one of its steps is
  * conditional on an encoding the other arrays do not have.
  *
- * ## Two arms, and why they cannot share a decode
+ * ## Three arms, and why they cannot share a decode
  *
  * `raw` is a numeric `(h, w, c)` array, so it goes through the normal Luxar
  * decode stack — which matters, because the raw arm is the one that carries HDR
@@ -19,6 +19,10 @@
  * A codec arm (`png` / `webp` / `jpeg`) is an opaque blob no Luxar encoder
  * touches, decoded by the browser via `createImageBitmap` — the same mechanism
  * `loaders/picking/image-label-loader.ts` already uses for hover thumbnails.
+ *
+ * The `ktx2` arm is also an opaque blob, but it must bypass browser image decode:
+ * the renderer-owned KTX2 decoder transcodes it directly to a native compressed
+ * GPU texture while preserving the authored mip chain.
  *
  * ## Stage 2 exists because Stage 1 cannot finish the job
  *
@@ -167,12 +171,13 @@ export async function decodeMeshTexture(
     // A fresh copy so the Blob owns a plain ArrayBuffer, exactly as
     // `image-label-loader.ts` does — a typed-array view over a larger buffer
     // would hand the decoder the wrong bytes.
-    // Keyed over EVERY encoding, `raw` included and mapped to null, so adding a
-    // new encoding to the contract is a compile error here rather than an `undefined`
-    // MIME the browser silently sniffs around. The null case is unreachable —
-    // `decode === 'codec'` excludes `raw` by construction — but is checked
-    // rather than asserted, since the two tables agreeing is an invariant across
-    // two files and nothing else enforces it.
+    // Keyed over EVERY encoding, with `raw` and `ktx2` mapped to null, so adding
+    // a new encoding to the contract is a compile error here rather than an
+    // `undefined` MIME the browser silently sniffs around. The null case is
+    // unreachable — `raw` is excluded by `decode === 'codec'`, while `ktx2`
+    // returns through the renderer-owned decoder above — but is checked rather
+    // than asserted, since the two tables agreeing is an invariant across two
+    // files and nothing else enforces it.
     const mime = CODEC_MIME[declared.encoding];
     if (mime === null) {
       throw new LoaderError(

@@ -130,6 +130,16 @@ describe('SceneLoaderManager', () => {
     expect(second.dispose).toHaveBeenCalledOnce();
   });
 
+  it('forwards the KTX2 decoder to each created SceneLoader', () => {
+    const manager = SceneLoaderManager.getInstance();
+    const decodeKTX2 = Object.assign(vi.fn(), { dispose: vi.fn() });
+
+    manager.setKTX2TextureDecoder(decodeKTX2);
+    const loader = manager.createLoader('ktx2');
+
+    expect((loader as unknown as { decodeKTX2: unknown }).decodeKTX2).toBe(decodeKTX2);
+  });
+
   it('should handle getAllLoaders correctly', () => {
     const manager = SceneLoaderManager.getInstance();
 
