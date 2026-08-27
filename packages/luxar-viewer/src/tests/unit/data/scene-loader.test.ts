@@ -29,6 +29,7 @@ import * as THREE from 'three';
 import { getPointTexture } from '../../../rendering/point-geometry';
 import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import * as zarr from 'zarrita';
+import { ArchiveFaultError } from '../../../cache/chunk-source';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -98,11 +99,12 @@ vi.mock('../../../rendering/depth-sort-coordinator', async (importOriginal) => {
 // warning. Mock the notifier so the test can assert toast() was called.
 const notifierMocks = vi.hoisted(() => ({
   toast: vi.fn(),
+  error: vi.fn(),
 }));
 vi.mock('../../../utils/cross-layer/notifier', () => ({
   notifier: {
     toast: notifierMocks.toast,
-    error: vi.fn(),
+    error: notifierMocks.error,
     showHelp: vi.fn(),
     hideHelp: vi.fn(),
     showLoading: vi.fn(),
@@ -380,6 +382,89 @@ describe('SceneLoader', () => {
       // Should track the failure
       expect(sceneLoader.hasFailures()).toBe(true);
       expect(sceneLoader.getFailedLoaders().size).toBe(1);
+    });
+
+    it('surfaces an archive fault once and preserves the last committed frame', async () => {
+      const fault = new ArchiveFaultError(
+        'The archive URL has expired. Refresh the page with a new URL.',
+        'https://example.test/scene.zip'
+      );
+      const failingLoader = {
+        updateView: vi.fn().mockRejectedValue(new Error('loader wrapper', { cause: fault })),
+        dispose: vi.fn(),
+      };
+      const successfulLoader = {
+        updateView: vi.fn().mockResolvedValue({
+          pointCount: 1,
+          positions: new Float32Array([1, 2, 3]),
+          metadata: { loadedPoints: 1 },
+        }),
+        dispose: vi.fn(),
+      };
+      const ordinaryFailureLoader = {
+        updateView: vi.fn().mockRejectedValue(new Error('ordinary node failure')),
+        dispose: vi.fn(),
+      };
+      const commitSpy = vi.spyOn(sceneLoader as any, 'updatePointsGeometry');
+      const prefetch = vi.fn();
+      const releaseShadows = vi.fn();
+      (sceneLoader as any)._slicePrefetcher = { prefetch, releaseShadows, dispose: vi.fn() };
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      loaders.clear();
+      loaders.set('/ordinary-failure', ordinaryFailureLoader);
+
+      await sceneLoader.updateView({ displayDims: [0, 1, 2] });
+
+      expect(sceneLoader.getFailedLoaders().has('/ordinary-failure')).toBe(true);
+      ordinaryFailureLoader.updateView.mockClear();
+
+      loaders.set('/fault', failingLoader);
+      loaders.set('/cached-success', successfulLoader);
+
+      await sceneLoader.updateView({ slicePosition: [0, 0, 1] });
+
+      expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect(notifierMocks.error).toHaveBeenCalledWith(fault.message, { persistent: true });
+      expect(sceneLoader.hasFailures()).toBe(false);
+      expect(commitSpy).not.toHaveBeenCalled();
+      expect(releaseShadows).toHaveBeenCalledOnce();
+
+      await sceneLoader.updateView({ slicePosition: [0, 0, 3] });
+      sceneLoader.prefetchSlice({ slicePosition: [0, 0, 3] }, 5);
+
+      expect(failingLoader.updateView).toHaveBeenCalledOnce();
+      expect(successfulLoader.updateView).toHaveBeenCalledOnce();
+      expect(ordinaryFailureLoader.updateView).toHaveBeenCalledOnce();
+      expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect(prefetch).not.toHaveBeenCalled();
+      expect((sceneLoader as any)._updateInProgress).toBe(false);
+    });
+
+    it('drains a superseded waiter when an archive fault stops the active pass', async () => {
+      const fault = new ArchiveFaultError('archive unavailable', 'https://example.test/scene.zip');
+      let rejectUpdate!: (error: Error) => void;
+      const failingLoader = {
+        updateView: vi.fn().mockImplementation(
+          () =>
+            new Promise<never>((_resolve, reject) => {
+              rejectUpdate = reject;
+            })
+        ),
+        dispose: vi.fn(),
+      };
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      loaders.clear();
+      loaders.set('/fault', failingLoader);
+
+      const faultingPass = sceneLoader.updateView({ slicePosition: [0, 0, 1] });
+      const queuedPass = sceneLoader.updateView({ slicePosition: [0, 0, 2] });
+      rejectUpdate(fault);
+
+      await Promise.all([faultingPass, queuedPass]);
+
+      expect(failingLoader.updateView).toHaveBeenCalledOnce();
+      expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect((sceneLoader as any)._updateInProgress).toBe(false);
     });
 
     it('routes the updateView call through the loader even for empty results (loader decides skip)', async () => {
@@ -1204,6 +1289,17 @@ describe('SceneLoader', () => {
       // The provider reads the same live failed set.
       expect(provider.getFailedPaths().sort()).toEqual(['/points/a', '/points/b']);
     });
+
+    it('supplies a classified reason when a loader throws a non-Error value', () => {
+      interface LoadSceneInternals extends FailInternals {
+        makeLoadSceneCtx(): { getFailedLoaderReasons(): string[] };
+      }
+
+      const internals = sceneLoader as unknown as LoadSceneInternals;
+      internals.registry.recordFailure('/points/a', undefined as unknown as Error);
+
+      expect(internals.makeLoadSceneCtx().getFailedLoaderReasons()).toEqual(['Unexpected']);
+    });
   });
 
   describe('kickRefinementIfIdle — refinement after deferred-group activation', () => {
@@ -1211,6 +1307,7 @@ describe('SceneLoader', () => {
       _updateInProgress: boolean;
       _refining: boolean;
       _disposed: boolean;
+      _archiveFault: ArchiveFaultError | null;
       _refinementKickPending: boolean;
       gsplatLoaders: Map<string, unknown>;
       loaders: Map<string, unknown>; // points
@@ -1363,6 +1460,39 @@ describe('SceneLoader', () => {
         internals._disposed = false;
         internals._updateInProgress = false;
         internals.gsplatLoaders.clear();
+      }
+    });
+
+    it('a pending re-check no-ops after an archive fault', async () => {
+      vi.useFakeTimers();
+      const { internals, spy } = stubOrchestrator();
+      internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
+      internals._updateInProgress = true;
+      try {
+        sceneLoader.kickRefinementIfIdle();
+        internals._updateInProgress = false;
+        internals._archiveFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+        await vi.runOnlyPendingTimersAsync();
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+        internals._archiveFault = null;
+        internals._updateInProgress = false;
+        internals.gsplatLoaders.clear();
+      }
+    });
+
+    it('an already-scheduled refinement no-ops after an archive fault', async () => {
+      const internals = sceneLoader as unknown as KickInternals;
+      internals._updateInProgress = true;
+      internals._archiveFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+      try {
+        await internals.scheduleGSplatsRefinement();
+        expect(internals._updateInProgress).toBe(true);
+        expect(internals._refining).toBe(false);
+      } finally {
+        internals._archiveFault = null;
+        internals._updateInProgress = false;
       }
     });
 

@@ -270,6 +270,13 @@ def fit_dust(volume: np.ndarray, acquisition=None) -> GSplatData:
         save_with_lod(
             result,
             LOCAL_FIT,
+            # `levels`, deliberately, against the `_lod_policy` default of
+            # `stream`. This is the "viewed small" exception: the galaxy is orbited
+            # at range as well as inspected up close, so the screen-area selector
+            # genuinely does pick a coarse level, and those levels are fetched
+            # rather than dead bytes. Measured cost of keeping them on this fit:
+            # levels 16 nodes / 10.97 MB vs stream 4 nodes / 7.88 MB (+39%) — paid
+            # on purpose, for the zoomed-out view.
             recipe="levels",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
