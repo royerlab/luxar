@@ -1,4 +1,10 @@
-"""Corpus-wide guards for demo-authored element-texture budgets."""
+"""Guards for statically resolvable demo-authored element-texture budgets.
+
+The gate covers ``partition=``, compiler ``auto_partition_max_elements=``, and
+gsplat recipe budgets. Hand-built ``add_partition_group(max_elements=...)``
+wrappers are out of scope because their budgets are computed at runtime and the
+affected demos assert those budgets directly.
+"""
 
 from __future__ import annotations
 
