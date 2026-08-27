@@ -192,7 +192,12 @@ def add_gsplats_impl(
                     "Decompose the data manually or omit image_labels."
                 )
 
-            tree = spatial_bsp_tree(ctr_arr, max_elements, rule=partition_rule)
+            tree = spatial_bsp_tree(
+                ctr_arr,
+                max_elements,
+                rule=partition_rule,
+                split_axes=scene.dimensions.displayed,
+            )
             parts = bsp_leaf_parts(tree)
             warn_if_oversized_single_part(
                 len(parts), int(parts[0].size) if parts else 0, max_elements, name

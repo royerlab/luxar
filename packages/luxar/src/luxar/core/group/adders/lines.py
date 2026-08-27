@@ -52,7 +52,7 @@ def _sah_polyline_centroids(
     vert_arr: np.ndarray,
     polyline_indices: List[np.ndarray],
 ) -> np.ndarray:
-    """Per-polyline spatial centroids for the SAH split, width ``min(3, ndim)``.
+    """Per-polyline centroids for the SAH split in every position column.
 
     An empty polyline (unreachable via ``identify_polylines``; kept for
     defensive symmetry with ``median_bsp_polylines``) contributes a zero row
@@ -61,9 +61,7 @@ def _sah_polyline_centroids(
     """
     return np.array(
         [
-            vert_arr[p, :3].mean(axis=0)
-            if p.size > 0
-            else np.zeros(min(3, vert_arr.shape[1]))
+            vert_arr[p].mean(axis=0) if p.size > 0 else np.zeros(vert_arr.shape[1])
             for p in polyline_indices
         ],
         dtype=np.float64,
@@ -76,13 +74,18 @@ def _build_line_partition_tree(
     n_vertices: int,
     max_elements: int,
     rule: str,
+    split_axes: Sequence[int],
 ) -> Tuple[Optional["BSPNode"], List[List[int]]]:
     """Build the requested atomic-polyline BSP and flatten its leaves."""
     from ..partition import bsp_leaf_parts, spatial_bsp_polyline_tree, spatial_bsp_tree
 
     if rule != "sah":
         tree = spatial_bsp_polyline_tree(
-            vert_arr, polyline_indices, max_elements, rule=rule
+            vert_arr,
+            polyline_indices,
+            max_elements,
+            rule=rule,
+            split_axes=split_axes,
         )
     elif not polyline_indices:
         tree = None
@@ -92,7 +95,12 @@ def _build_line_partition_tree(
             1, n_vertices // max(1, len(polyline_indices))
         )
         centroid_cap = max(1, max_elements // approximate_vertices_per_polyline)
-        tree = spatial_bsp_tree(centroids, max_elements=centroid_cap, rule="sah")
+        tree = spatial_bsp_tree(
+            centroids,
+            max_elements=centroid_cap,
+            rule="sah",
+            split_axes=split_axes,
+        )
 
     parts = [] if tree is None else [part.tolist() for part in bsp_leaf_parts(tree)]
     return tree, parts
@@ -330,6 +338,7 @@ def add_lines_impl(
                 n_vertices,
                 max_elements,
                 partition_rule,
+                scene.dimensions.displayed,
             )
 
             warn_if_oversized_single_part(

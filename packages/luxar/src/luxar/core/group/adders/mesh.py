@@ -1202,6 +1202,7 @@ def add_mesh_impl(
                 keys=keys,
                 image_labels=image_labels,
                 parent_node=parent_node,
+                split_axes=scene.dimensions.displayed,
                 extend_to_all=final_extend_dims or extend_to_all,
                 scalar_data_range=scalar_data_range,
                 **partition_attrs,
@@ -1708,6 +1709,7 @@ def _add_mesh_partition(
     keys: Any = None,
     image_labels: Any,
     parent_node: "Node",
+    split_axes: Sequence[int],
     extend_to_all: Optional[Union[List[str], str]],
     scalar_data_range: Optional[tuple[float, float]] = None,
     **attrs: Any,
@@ -1786,7 +1788,7 @@ def _add_mesh_partition(
 
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)
-    tree = spatial_bsp_tree(centroids, max_elements, rule=rule)
+    tree = spatial_bsp_tree(centroids, max_elements, rule=rule, split_axes=split_axes)
     face_parts = bsp_leaf_parts(tree)
 
     warn_if_oversized_single_part(

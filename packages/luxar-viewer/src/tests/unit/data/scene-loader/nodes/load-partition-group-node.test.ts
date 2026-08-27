@@ -507,6 +507,31 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.userData.bspTree).toEqual(bspTree);
   });
 
+  it('keeps a valid nD bsp_tree whose split uses a displayed column above 2', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = { axis: 3, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const parts = [
+      makePartNode('/partition/part_0', 'points', {
+        position_bounds: { min: [0, 0, 0, -2], max: [1, 1, 1, 0.5] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        position_bounds: { min: [0, 0, 0, -0.5], max: [1, 1, 1, 2] },
+      }),
+    ];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
+  });
+
   it('keeps a sparse grid bsp_tree using the measured per-axis overlap floor', async () => {
     attachStubChildren();
     const ctx = makeCtx();
@@ -647,7 +672,7 @@ describe('loadPartitionGroupNode', () => {
     ['has no right subtree', { axis: 0, split: 0, left: { part: 0 } }, 2],
     ['has a null right subtree', { axis: 0, split: 0, left: { part: 0 }, right: null }, 2],
     ['uses a non-integer axis', { axis: 0.5, split: 0, left: { part: 0 }, right: { part: 1 } }, 2],
-    ['uses an out-of-range axis', { axis: 5, split: 0, left: { part: 0 }, right: { part: 1 } }, 2],
+    ['uses a negative axis', { axis: -1, split: 0, left: { part: 0 }, right: { part: 1 } }, 2],
     [
       'uses a non-finite split',
       { axis: 0, split: Infinity, left: { part: 0 }, right: { part: 1 } },

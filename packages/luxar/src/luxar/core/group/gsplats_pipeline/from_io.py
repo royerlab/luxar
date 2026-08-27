@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 
 def _grafted_partition_bsp_tree(
-    node: "GSplatPartition",
+    node: "GSplatPartition", axes: "List[int]"
 ) -> Optional[Dict[str, Any]]:
     """Return stored or exactly recoverable planes and report recovery."""
     if node.bsp_tree is not None:
@@ -63,7 +63,7 @@ def _grafted_partition_bsp_tree(
         aprint("  🧭 No exact BSP split planes recovered; using centroid part ordering")
         return None
     boxes = [bounds for bounds in child_bounds if bounds is not None]
-    recovered = reconstruct_serialized_bsp_tree(boxes)
+    recovered = reconstruct_serialized_bsp_tree(boxes, axes=axes)
     if serialized_bsp_tree_separates(recovered, boxes):
         if recovered is not None and "part" not in recovered:
             aprint(f"  🧭 Recovered BSP split planes for {len(node.children)} parts")
@@ -941,7 +941,9 @@ def graft_gsplat_node(
         # stored tree; recover one only when the child bounds admit an exact
         # separating BSP. Overlapping/interlocking parts keep the viewer's
         # centroid fallback rather than receiving an invented ordering.
-        bsp_tree = _grafted_partition_bsp_tree(node)
+        bsp_tree = _grafted_partition_bsp_tree(
+            node, group._find_scene().dimensions.displayed
+        )
         if bsp_tree is not None:
             partition_attrs["bsp_tree"] = bsp_tree
         # `max_elements` is a per-part CAP, so only a capped splitter sets it

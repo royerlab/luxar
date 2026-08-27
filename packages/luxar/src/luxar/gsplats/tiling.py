@@ -376,8 +376,8 @@ def grid_bsp_tree(
     -------
     dict or None
         The serialized tree, or ``None`` when ``specs`` is empty or the grid
-        subdivides an axis beyond the third — the serialized format admits split
-        axes ``0``/``1``/``2`` only.
+        subdivides an axis beyond the third. Those axes are stacked
+        time/channel barriers and are never displayed.
 
     Raises
     ------
@@ -408,8 +408,8 @@ def grid_bsp_tree(
         if all(w == 1 for w in widths):
             return {"part": flat_of_cell[tuple(lo for lo, _ in ranges)]}
         # Split the axis with the most cells left (ties -> lowest axis, so the
-        # tree is deterministic); only axes 0/1/2 are representable, and an
-        # all-widths-1 grid already returned above.
+        # tree is deterministic). Axes past the third are stacked barriers that
+        # are never displayed, and an all-widths-1 grid already returned above.
         axis = max(range(min(3, ndim)), key=lambda d: widths[d])
         k0, k1 = ranges[axis]
         kmid = (k0 + k1) // 2
