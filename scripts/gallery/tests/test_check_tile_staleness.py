@@ -248,6 +248,7 @@ def test_gallery_capture_policy_is_a_global_input(tmp_path: Path, capsys) -> Non
     output = capsys.readouterr().out
     global_header = output.splitlines()[0]
     assert "crop policy" in global_header
+    assert output.count("2026-08-22T12:00:00Z") == 1
     assert output.count("newer global inputs: crop policy") == 2
     assert "STALE a" in output
     assert "STALE b" in output
