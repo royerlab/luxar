@@ -317,7 +317,6 @@ export function commitPointsGeometry(
     points.userData.visiblePointCount = pointCount;
     points.userData.requestedElementCount = data.pointCount;
     points.userData.droppedElementCount = data.pointCount - pointCount;
-    points.userData.droppedElementCount = data.pointCount - pointCount;
     // Append-fast-path bookkeeping: the buffer now holds this commit's
     // data in full (whether written fully or by suffix-extension), so the
     // next commit may append. Only consulted on the pool path, but the

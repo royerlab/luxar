@@ -154,11 +154,12 @@ function lengthOrZero(value: unknown): number {
  *   lacked `?debug`).
  * @returns A plain summary; `ok` is false with a `reason` for every
  *   not-ready case (no state, no totals at all, non-finite totals, empty
- *   scene). A READY verdict can carry a `reason` too — as a caveat, when some
- *   per-type total was counted as 0 because it was non-finite or absent from
- *   the snapshot rather than because the scene has none of that type. Note that
- *   `ok: true` means the scene graph carries elements, not that they are
- *   visible — see the module doc.
+ *   scene, renderer-truncated scene). A READY verdict can carry a `reason` too
+ *   — as a caveat, when some per-type total was counted as 0 because it was
+ *   non-finite or absent from the snapshot rather than because the scene has
+ *   none of that type. Note that `ok: true` means the scene graph carries
+ *   elements without renderer truncation, not that they are visible — see the
+ *   module doc.
  */
 export function summarizeCaptureReadiness(
   state: Partial<DebugState> | null | undefined

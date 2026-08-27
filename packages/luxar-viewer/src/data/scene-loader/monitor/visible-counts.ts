@@ -1,15 +1,16 @@
 /**
  * Aggregate per-mesh `visiblePointCount` / `visibleSegmentCount` /
- * `visibleSplatCount` userData (points + lines + gsplats, symmetrically)
- * across the scene graph and report the totals to the data-loading
- * monitor. Called once per update cycle after the points/lines/gsplats
- * commits so the monitor's HUD shows the post-clipping (and
+ * `visibleSplatCount` and `droppedElementCount` userData (points + lines +
+ * gsplats, symmetrically) across the scene graph and report the totals to the
+ * data-loading monitor. Called once per update cycle after the
+ * points/lines/gsplats commits so the monitor's HUD shows the post-clipping (and
  * post-progressive-refinement) visible counts rather than the raw loaded
  * counts.
  *
  * Alongside the totals, a per-path map (mesh `name` is the scene-graph
  * path) is pushed via `updateVisibleCountsByPath` so the monitor's
- * scene-graph tree can show per-node visible counts in badge tooltips.
+ * scene-graph tree can show per-node visible counts in badge tooltips; the
+ * aggregate dropped count is pushed via `updateDroppedElementCount`.
  *
  * Only meshes that are actually rendered are counted: the walk skips any
  * subtree whose root is `visible === false`. This excludes the inactive

@@ -313,10 +313,10 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
           ? geometry.instanceCount
           : (visiblePointCount ?? 0);
-      const requestedElementCount =
-        (object.userData as { requestedElementCount?: number }).requestedElementCount ?? pointCount;
       // Production nodes are created empty and stamped at commit. The fallback
       // covers synthetic debug/test nodes created directly with geometry data.
+      const requestedElementCount =
+        (object.userData as { requestedElementCount?: number }).requestedElementCount ?? pointCount;
       const droppedElementCount =
         (object.userData as { droppedElementCount?: number }).droppedElementCount ?? 0;
       totalDroppedElements += droppedElementCount;

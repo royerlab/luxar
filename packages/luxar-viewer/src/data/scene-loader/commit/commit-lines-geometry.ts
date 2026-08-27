@@ -216,7 +216,6 @@ export function commitLinesGeometry(
     mesh.userData.visibleSegmentCount = segmentCount;
     mesh.userData.requestedElementCount = processed.segmentCount;
     mesh.userData.droppedElementCount = processed.segmentCount - segmentCount;
-    mesh.userData.droppedElementCount = processed.segmentCount - segmentCount;
     // Append-fast-path bookkeeping: the buffer now holds this commit's
     // data in full (whether written fully or by suffix-extension), so the
     // next commit may append. A context restore clears this flag.
