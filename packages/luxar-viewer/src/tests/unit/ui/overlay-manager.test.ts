@@ -124,7 +124,6 @@ describe('OverlayManager — construction + state', () => {
 
   afterEach(() => {
     manager.dispose();
-    vi.restoreAllMocks();
   });
 
   it('starts with no overlays and not globally hidden', () => {
