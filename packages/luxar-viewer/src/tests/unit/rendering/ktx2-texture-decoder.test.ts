@@ -43,11 +43,16 @@ vi.mock('three/examples/jsm/loaders/KTX2Loader.js', async (importOriginal) => {
   };
 });
 
-const supportedRenderer = () =>
-  ({
-    isWebGPURenderer: true,
-    hasFeature: () => true,
-  }) as unknown as Renderer;
+class SupportedRenderer {
+  readonly isWebGPURenderer = true;
+  private readonly supported = true;
+
+  hasFeature(): boolean {
+    return this.supported;
+  }
+}
+
+const supportedRenderer = () => new SupportedRenderer() as unknown as Renderer;
 
 const compressedTexture = (overrides: Record<string, unknown> = {}) =>
   ({
@@ -80,14 +85,20 @@ describe('createKTX2TextureDecoder', () => {
   });
 
   it('checks renderer support lazily after backend initialization', async () => {
-    let initialized = false;
-    const hasFeature = vi.fn(() => {
-      if (!initialized) throw new Error('backend not initialized');
-      return true;
-    });
-    const renderer = { isWebGPURenderer: true, hasFeature } as unknown as Renderer;
-    const decode = createKTX2TextureDecoder(renderer);
-    initialized = true;
+    const hasFeature = vi.fn();
+    class LazyRenderer {
+      readonly isWebGPURenderer = true;
+      initialized = false;
+
+      hasFeature(name: string): boolean {
+        hasFeature(name);
+        if (!this.initialized) throw new Error('backend not initialized');
+        return true;
+      }
+    }
+    const renderer = new LazyRenderer();
+    const decode = createKTX2TextureDecoder(renderer as unknown as Renderer);
+    renderer.initialized = true;
     loaderState.texture = compressedTexture();
 
     await expect(decode('mesh/texture', new Uint8Array(1))).resolves.toBe(loaderState.texture);
@@ -98,7 +109,7 @@ describe('createKTX2TextureDecoder', () => {
     const dispose = vi.fn();
     loaderState.texture = compressedTexture({
       format: RGBAFormat,
-      isCompressedTexture: false,
+      isCompressedTexture: true,
       dispose,
     });
     const decode = createKTX2TextureDecoder(supportedRenderer());

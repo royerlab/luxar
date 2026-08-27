@@ -1,22 +1,26 @@
 import type * as THREE from 'three';
+import { RedFormat, RGBAFormat, RGFormat, RGBFormat } from 'three';
 import type { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 
 import type { KTX2TextureDecoder } from '../types/mesh';
 import type { Renderer } from './renderer-capabilities';
+
+const UNCOMPRESSED_FORMATS = new Set<number>([RGBAFormat, RGBFormat, RGFormat, RedFormat]);
 
 /** Return whether the renderer exposes a native Basis transcode target. */
 function hasCompressedTextureSupport(renderer: Renderer | null | undefined): boolean {
   if (!renderer) return false;
   if ((renderer as { isWebGPURenderer?: boolean }).isWebGPURenderer === true) {
     const hasFeature = (renderer as { hasFeature?: (name: string) => boolean }).hasFeature;
-    return Boolean(
-      hasFeature?.('texture-compression-astc') ||
-      hasFeature?.('texture-compression-etc1') ||
-      hasFeature?.('texture-compression-etc2') ||
-      hasFeature?.('texture-compression-s3tc') ||
-      hasFeature?.('texture-compression-bc') ||
-      hasFeature?.('texture-compression-pvrtc')
-    );
+    if (typeof hasFeature !== 'function') return false;
+    return [
+      'texture-compression-astc',
+      'texture-compression-etc1',
+      'texture-compression-etc2',
+      'texture-compression-s3tc',
+      'texture-compression-bc',
+      'texture-compression-pvrtc',
+    ].some((name) => hasFeature.call(renderer, name));
   }
   const extensions = (renderer as THREE.WebGLRenderer).extensions;
   if (!extensions?.has) return false;
@@ -85,7 +89,7 @@ export function createKTX2TextureDecoder(
     const image = texture.image as { depth?: number } | undefined;
     const isUncompressedTexture =
       (texture as THREE.CompressedTexture & { isCompressedTexture?: boolean })
-        .isCompressedTexture !== true;
+        .isCompressedTexture !== true || UNCOMPRESSED_FORMATS.has(texture.format);
     const isCubeTexture = (texture as THREE.CompressedTexture & { isCubeTexture?: boolean })
       .isCubeTexture;
     if (isUncompressedTexture || isCubeTexture || (image?.depth ?? 1) > 1) {
