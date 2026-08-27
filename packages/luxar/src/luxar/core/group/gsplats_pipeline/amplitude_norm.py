@@ -180,14 +180,38 @@ def normalize_gsplat_data(
 ) -> Tuple["GSplatData", Optional[float]]:
     """Normalise a ``GSplatData``'s amplitudes; return it and the factor used.
 
-    Uses :meth:`~luxar.gsplats.gsplat_data.GSplatData.scale_intensity`, which is
-    ladder-preserving and maps the same factor across every substitutive level.
+    Rebuilds the ladder with one factor across every substitutive level, then
+    drops measured reconstruction scores invalidated by the changed amplitudes.
+    This deliberately avoids the general intensity-edit restamp path: scene
+    insertion is core API and must not import the SciPy-backed LOD builders.
     """
     amps = np.asarray(result.amplitudes, dtype=np.float64).ravel()
     factor = resolve_factor(spec, _sample_reference(amps))
     if factor is None:
         return result, None
-    return result.scale_intensity(factor), factor
+
+    from luxar.gsplats._data.filtering import scrub_measured_stats
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+
+    def scale_level(level: "GSplatData") -> "GSplatData":
+        return level._map_additive(
+            lambda lod, _offset, _count: AdditiveSubLOD(
+                centers=lod.centers,
+                amplitudes=lod.amplitudes * factor,
+                cholesky_factors=lod.cholesky_factors,
+                colors=lod.colors,
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
+            )
+        )
+
+    scaled = (
+        result._map_substitutive(scale_level)
+        if result.n_substitutive > 1
+        else scale_level(result)
+    )
+    scrub_measured_stats(scaled)
+    return scaled, factor
 
 
 def normalize_node_in_place(node: "GSplatNode", spec: NormalizeSpec) -> Optional[float]:
