@@ -265,7 +265,7 @@ def test_partition_file_graft_warns_for_undisplayed_split_axis(capsys):
         scene_path = Path(tmp) / "scene.luxar.zarr"
         dimensions = Dimensions(
             [
-                Dimension("state", display=False),
+                Dimension("state", display=False, discrete=True, range=(-10.0, 10.0)),
                 Dimension("x", display=True),
                 Dimension("y", display=True),
             ]

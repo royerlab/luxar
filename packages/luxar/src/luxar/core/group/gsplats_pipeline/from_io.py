@@ -65,6 +65,20 @@ def _grafted_partition_bsp_tree(
     return None
 
 
+def _warn_if_grafted_partition_axes_not_displayed(
+    wrapper: "Group", bsp_tree: Optional[Dict[str, Any]], name: str
+) -> None:
+    """Diagnose stored split axes once standalone data meets scene dimensions."""
+    if bsp_tree is None:
+        return
+
+    from luxar.core.group.partition import warn_if_partition_axes_not_displayed
+
+    warn_if_partition_axes_not_displayed(
+        bsp_tree, wrapper._find_scene().dimensions.displayed, name
+    )
+
+
 def add_gsplats_from_file_impl(
     group: "Group",
     *,
@@ -916,14 +930,7 @@ def graft_gsplat_node(
             max_elements=cap,
             **partition_attrs,
         )
-        if bsp_tree is not None:
-            from luxar.core.group.partition import (
-                warn_if_partition_axes_not_displayed,
-            )
-
-            warn_if_partition_axes_not_displayed(
-                bsp_tree, wrapper._find_scene().dimensions.displayed, name
-            )
+        _warn_if_grafted_partition_axes_not_displayed(wrapper, bsp_tree, name)
         # Everything under a kind=partition is partition-bound — EXCEPT when the
         # partition holds a single part, which is not a tiling: that part covers
         # the whole object, so a ladder underneath it keeps the whole-object

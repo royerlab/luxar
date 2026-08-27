@@ -161,7 +161,7 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
     mesh_faces = np.arange(12, dtype=np.uint32).reshape(4, 3)
     dimensions = Dimensions(
         [
-            Dimension("state", display=False, categories=["a", "b"]),
+            Dimension("state", display=False, discrete=True, range=(-7.0, 7.0)),
             Dimension("x", display=True),
             Dimension("y", display=True),
             Dimension("z", display=True),
