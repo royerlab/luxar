@@ -43,6 +43,7 @@ export class RangeSlider {
   private wrapper: HTMLElement;
   private lowInput: HTMLInputElement;
   private highInput: HTMLInputElement;
+  private labelEl: HTMLElement | null;
   private lowLabel: HTMLElement;
   private highLabel: HTMLElement;
   private boundsLowLabel: HTMLElement;
@@ -69,9 +70,9 @@ export class RangeSlider {
     if (options.label) {
       const labelRow = document.createElement('div');
       labelRow.className = 'luxar-range-slider__label-row';
-      const labelEl = document.createElement('span');
-      labelEl.className = 'luxar-range-slider__label';
-      labelEl.textContent = options.label;
+      this.labelEl = document.createElement('span');
+      this.labelEl.className = 'luxar-range-slider__label';
+      this.labelEl.textContent = options.label;
 
       this.lowLabel = document.createElement('span');
       this.lowLabel.className = 'luxar-range-slider__value';
@@ -85,10 +86,11 @@ export class RangeSlider {
       valuesEl.appendChild(document.createTextNode(' \u2013 '));
       valuesEl.appendChild(this.highLabel);
 
-      labelRow.appendChild(labelEl);
+      labelRow.appendChild(this.labelEl);
       labelRow.appendChild(valuesEl);
       this.wrapper.appendChild(labelRow);
     } else {
+      this.labelEl = null;
       this.lowLabel = document.createElement('span');
       this.highLabel = document.createElement('span');
     }
@@ -353,6 +355,14 @@ export class RangeSlider {
     this.highInput.value = String(high);
     this.updateLabels();
     this.updateTrackFill();
+  }
+
+  /** Update the visible label and its explanatory tooltip. */
+  setLabel(label: string, tooltip?: string): void {
+    if (!this.labelEl) return;
+    this.labelEl.textContent = label;
+    if (tooltip) this.labelEl.title = tooltip;
+    else this.labelEl.removeAttribute('title');
   }
 
   /** Update the slider bounds */

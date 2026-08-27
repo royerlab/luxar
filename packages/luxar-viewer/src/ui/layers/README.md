@@ -7,7 +7,7 @@ Napari-inspired per-layer control panel for Luxar scenes.
 The Layers panel exposes scene graph nodes marked with `layer=True` (set in the Python API) as controllable layers in the viewer. Data nodes (`points`, `lines`, `gsplats`, `mesh`) and container `group` nodes may both be exposed as layers; for groups, controls apply to every data descendant. Specialized groups (`kind: 'lod'`, `kind: 'partition'`) appear under their resolved `display_type` rather than as `group`, and carry an extra badge (and, for LOD groups, an inline level selector). Each layer provides:
 
 - **Visibility toggle** (eye icon) — initial state taken from the node's `visible` attr (default `true`)
-- **Display range** [min, max] — maps to shader intensity/offset uniforms
+- **Display range** / **Colour range** [min, max] — maps scalar data or direct RGB input, respectively, to the full output range through the shader intensity/offset uniforms
 - **Gamma** correction
 - **Opacity**
 - **Blending mode** (additive, volumetric, normal, max, opaque, luminous)
@@ -137,7 +137,12 @@ The public entrypoint is `../layers.ts` (parent file); it re-exports only
 
 ## Display Range Mapping
 
-The UI shows [min, max] sliders. Internally these map to the existing shader uniforms:
+The UI shows one [min, max] slider with mode-specific wording:
+
+- **Display range** for a colormapped layer is a scalar data window mapped across the colormap.
+- **Colour range** for a direct-colour layer is the input RGB window mapped to the full output range. It is a live gain/offset control, not a report of the layer's data extents.
+
+Both modes map internally to the existing shader uniforms:
 
 ```
 intensity = 1 / (max - min)

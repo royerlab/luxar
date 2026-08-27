@@ -1227,12 +1227,22 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     panel.show();
     panel.layerState.select('/cloud', 'single');
 
+    const rangeLabel = container.querySelector('.luxar-range-slider__label') as HTMLElement;
+    expect(rangeLabel.textContent).toBe('Colour range');
+    expect(rangeLabel.title).toBe(
+      "Input RGB values in this range are mapped to the full output range. This controls colour gain and offset, not the layer's data extents."
+    );
+
     const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
       Array.from(s.options).some((o) => o.value === 'viridis')
     )!;
     cmSelect.value = 'viridis';
     cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
     expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(0.02, 6);
+    expect(rangeLabel.textContent).toBe('Display range');
+    expect(rangeLabel.title).toBe(
+      'Scalar data values in this range are mapped across the colormap.'
+    );
 
     // The user narrows the window…
     panel.layerState.setDisplayRange('/cloud', 0.001, 0.01);
@@ -1249,6 +1259,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
     expect(panel.layerState.getLayer('/cloud')!.displayMin).toBeCloseTo(0, 6);
     expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(1, 6);
+    expect(rangeLabel.textContent).toBe('Colour range');
+    expect(rangeLabel.title).toContain("not the layer's data extents");
   });
 
   it('a group layer whose colormap lives on a DESCENDANT toggles by effective mode', () => {

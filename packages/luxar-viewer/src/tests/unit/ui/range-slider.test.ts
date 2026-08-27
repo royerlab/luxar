@@ -194,6 +194,19 @@ describe('RangeSlider — track-fill geometry', () => {
 });
 
 describe('RangeSlider — public setters', () => {
+  it('setLabel updates both the visible label and its tooltip', () => {
+    const { slider } = makeSlider({ label: 'Display range' });
+    const label = host.querySelector('.luxar-range-slider__label') as HTMLElement;
+
+    slider.setLabel('Colour range', 'Input RGB window');
+    expect(label.textContent).toBe('Colour range');
+    expect(label.title).toBe('Input RGB window');
+
+    slider.setLabel('Display range');
+    expect(label.textContent).toBe('Display range');
+    expect(label.hasAttribute('title')).toBe(false);
+  });
+
   it('setValues writes both inputs and refreshes labels', () => {
     const { slider } = makeSlider({ label: 'Range' });
     slider.setValues(0.3, 0.7);
