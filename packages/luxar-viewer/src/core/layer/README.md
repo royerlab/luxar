@@ -7,16 +7,16 @@
 
 `LuxarLayer` is the headless sibling of `LuxarApp`.
 
-|                        | `LuxarApp`                                    | `LuxarLayer`                          |
-| ---------------------- | --------------------------------------------- | ------------------------------------- |
-| Renderer / camera      | owns them                                      | host owns them                        |
-| Controls               | owns them (orbit / fly / ortho)                | host owns them                        |
-| Post-processing        | owns the pipeline                              | host owns it                          |
-| UI (panels, rail, …)   | owns it                                        | none                                  |
-| Render loop            | owns it (`AnimationController`, idle-pausing)  | host calls `update()` per frame       |
-| Contributes            | the whole viewer                               | one `THREE.Group` + per-frame upkeep  |
+|                      | `LuxarApp`                                    | `LuxarLayer`                         |
+| -------------------- | --------------------------------------------- | ------------------------------------ |
+| Renderer / camera    | owns them                                     | host owns them                       |
+| Controls             | owns them (orbit / fly / ortho)               | host owns them                       |
+| Post-processing      | owns the pipeline                             | host owns it                         |
+| UI (panels, rail, …) | owns it                                       | none                                 |
+| Render loop          | owns it (`AnimationController`, idle-pausing) | host calls `update()` per frame      |
+| Contributes          | the whole viewer                              | one `THREE.Group` + per-frame upkeep |
 
-Use `LuxarApp` to embed *the viewer* in a page. Use `LuxarLayer` when the host
+Use `LuxarApp` to embed _the viewer_ in a page. Use `LuxarLayer` when the host
 already has a 3D scene and wants Luxar's data as one more thing in it — sharing
 one WebGL context, one camera, one set of controls.
 
@@ -35,17 +35,17 @@ Nothing in the data, cache, LOD, or material path reaches for `SceneManager`.
 import { LuxarLayer } from '@royerlab/luxar-viewer';
 
 const layer = new LuxarLayer({
-  renderer,                                              // host-owned
-  getCamera: () => camera,                               // host-owned, live getter
+  renderer, // host-owned
+  getCamera: () => camera, // host-owned, live getter
   getViewportSize: () => renderer.getSize(new THREE.Vector2()),
-  scene,                                                 // host-owned
+  scene, // host-owned
 });
 
 await layer.load('https://example.com/imaging.luxar.zarr');
 
 function animate() {
   requestAnimationFrame(animate);
-  layer.update();          // BEFORE the host renders
+  layer.update(); // BEFORE the host renders
   renderer.render(scene, camera);
 }
 
@@ -58,8 +58,8 @@ await layer.dispose();
 ```ts
 const t = layer.findDimension('time');
 if (t !== null) {
-  layer.prefetchDimensionValue(t, frame + 1);   // warm the next slice
-  void layer.setDimensionValue(t, frame);        // do NOT await during playback
+  layer.prefetchDimensionValue(t, frame + 1); // warm the next slice
+  void layer.setDimensionValue(t, frame); // do NOT await during playback
 }
 ```
 
@@ -72,14 +72,64 @@ Awaiting it during playback makes the host's own timeline stutter on network
 latency. The intended pattern is fire-and-forget plus a prefetch of the next
 value, so the layer shows the nearest committed slice and catches up.
 
+A host must not assume which centre column is which. Producers disagree about
+axis order for the same specimen — a fit handed over as `(Z, Y, X)` may be
+published as a scene storing `(X, Y, Z)`, and a scene authored by
+`luxar gsplat convert` names its axes `dim0…dimN` and declares nothing at all.
+Guessing wrong renders a plausible, silently transposed scene. Read the names:
+
+```ts
+const names = layer.getDimensionNames(); // e.g. ['Z', 'Y', 'X', 'Time'] — or ['dim0', …]
+```
+
 ### Placing the data in the host's world
 
 ```ts
-layer.alignTo(matrix);   // e.g. the host normalizes its own data into a unit box
+layer.alignTo(matrix); // e.g. the host normalizes its own data into a unit box
 ```
 
 Applied to the root's matrix, so nothing downstream needs to know: LOD selection
 reads projected screen area, which is transform-invariant.
+
+`alignTo` is **order-independent with `load`**: a matrix declared first is
+remembered and applied when the scene arrives. A host usually derives its
+placement from its own metadata, which resolves on a schedule unrelated to the
+scene fetch, so requiring one order would make correctness a race.
+
+### Visibility and exposure
+
+```ts
+layer.setVisible(false); // hide without discarding caches or in-flight streams
+layer.setExposure(0.5); // half the scene's authored exposure; 1 = as authored
+```
+
+`setVisible` toggles `visible` on the root rather than detaching it, so
+re-showing is instant and costs no refetch.
+
+`setExposure` scales the _authored_ opacity, not the live value, so the result
+does not depend on how a slider was dragged, and it is re-applied as geometry
+streams in so late-arriving nodes match the ones already on screen. It exists
+because a scene's authored exposure was tuned against whatever post chain
+authored it, and the host's is a different one.
+
+### API summary
+
+| Method                             | Purpose                                                           |
+| ---------------------------------- | ----------------------------------------------------------------- |
+| `load(src)`                        | Load a scene; resolves once the first slice commits               |
+| `update()`                         | Per-frame bookkeeping — depth sort, then LOD selection            |
+| `resize()`                         | After a viewport, DPR, or camera-projection change                |
+| `alignTo(m)`                       | Place the root in host world space; order-independent with `load` |
+| `getBounds()`                      | World-space bounds, or `null` before load                         |
+| `getDimensions()`                  | Dimension metadata (ndim, displayed, currentStep, ranges)         |
+| `getDimensionNames()`              | Axis names in centre-column order                                 |
+| `findDimension(name)`              | Index by name, case-insensitive, or `null`                        |
+| `setDimensionValue(i, v)`          | Move a non-displayed axis; coalesces                              |
+| `prefetchDimensionValue(i, v)`     | Warm a slice without committing it                                |
+| `awaitDimensionUpdate()`           | Resolve once no slice update is in flight                         |
+| `setVisible(v)` / `isVisible()`    | Show/hide without discarding caches                               |
+| `setExposure(m)` / `getExposure()` | Scale exposure relative to authored                               |
+| `dispose()`                        | Async full teardown of Luxar in the page                          |
 
 ## Host responsibilities
 
@@ -119,6 +169,7 @@ reads projected screen area, which is transform-invariant.
   to the host's own geometry. Otherwise exposure is the only control — the
   scene's authored `opacity` plus `setExposure()` — and `max` is the one blending
   mode that cannot saturate at all.
+
 - **`dispose()` is async** and tears down process singletons — the loader and its
   caches, the data-worker pool, the depth-sort worker, the material cache. It is
   a full teardown of Luxar in the page, not a partial one, which is consistent
@@ -126,6 +177,6 @@ reads projected screen area, which is transform-invariant.
 
 ## Files
 
-| File             | Purpose                                        |
-| ---------------- | ---------------------------------------------- |
-| `luxar-layer.ts` | The `LuxarLayer` class and its options type.   |
+| File             | Purpose                                      |
+| ---------------- | -------------------------------------------- |
+| `luxar-layer.ts` | The `LuxarLayer` class and its options type. |

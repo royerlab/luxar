@@ -75,7 +75,11 @@
 
 import * as THREE from 'three';
 
-import { loadScene, updateSceneForDimensions, prefetchSceneForDimensions } from '../../data/zarr-loader';
+import {
+  loadScene,
+  updateSceneForDimensions,
+  prefetchSceneForDimensions,
+} from '../../data/zarr-loader';
 import { SceneLoaderManager, getSceneLoader } from '../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { sceneDimsManager } from '../../scene/scene-dims-manager';

@@ -148,7 +148,7 @@ pass `allowLinks: false` to observe or replace navigation without allowing it.
 
 ## 🧩 Layer mode (Luxar inside a host's own renderer)
 
-`LuxarApp` embeds *the viewer*. `LuxarLayer` is for the other case: the host
+`LuxarApp` embeds _the viewer_. `LuxarLayer` is for the other case: the host
 already has a Three.js scene and wants Luxar's data as one more thing in it,
 sharing a single WebGL context, camera, and set of controls.
 
@@ -156,16 +156,16 @@ sharing a single WebGL context, camera, and set of controls.
 import { LuxarLayer } from '@royerlab/luxar-viewer';
 
 const layer = new LuxarLayer({
-  renderer,                                              // host-owned
-  getCamera: () => camera,                               // live getter
+  renderer, // host-owned
+  getCamera: () => camera, // live getter
   getViewportSize: () => renderer.getSize(new THREE.Vector2()),
-  scene,                                                 // host-owned
+  scene, // host-owned
 });
 await layer.load('https://example.com/imaging.luxar.zarr');
 
 function animate() {
   requestAnimationFrame(animate);
-  layer.update();                 // BEFORE the host renders
+  layer.update(); // BEFORE the host renders
   renderer.render(scene, camera);
 }
 
@@ -182,13 +182,23 @@ nD navigation coalesces, so a host can drive it from a slider at frame rate:
 
 ```ts
 const t = layer.findDimension('time');
-layer.prefetchDimensionValue(t!, frame + 1);   // warm the next slice
-void layer.setDimensionValue(t!, frame);        // don't await during playback
+layer.prefetchDimensionValue(t!, frame + 1); // warm the next slice
+void layer.setDimensionValue(t!, frame); // don't await during playback
 ```
 
 `alignTo(matrix)` places the data in the host's world space (for a host that
-normalizes its own coordinates). Same single-instance rule as `LuxarApp`, and
-the two are mutually exclusive. See
+normalizes its own coordinates); it may be called before or after `load()`.
+Read `getDimensionNames()` rather than assuming a centre-column order — producers
+disagree, and guessing renders a silently transposed scene. `setVisible()` hides
+without discarding caches, and `setExposure()` scales exposure relative to the
+scene's authored value, which a host needs because that value was tuned against a
+different post chain than its own.
+
+Note that a scene's `tone_mapping` does **not** apply in layer mode: Luxar
+tone-maps in a post-processing pass the layer does not own, so a host wanting a
+filmic rolloff over additive geometry must set `renderer.toneMapping` itself.
+
+Same single-instance rule as `LuxarApp`, and the two are mutually exclusive. See
 [`src/core/layer/README.md`](src/core/layer/README.md) for the full contract.
 
 ### What's NOT supported in v1

@@ -153,12 +153,19 @@ describe('LuxarLayer', () => {
 
     it('seeds camera params from the host camera', () => {
       new LuxarLayer(makeOptions());
-      expect(updateCameraParams).toHaveBeenCalledWith(expect.any(Number), expect.any(THREE.Vector2), false);
+      expect(updateCameraParams).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(THREE.Vector2),
+        false
+      );
     });
 
     it('forwards wasm/worker path overrides', () => {
       new LuxarLayer(makeOptions({ wasmPath: '/w.js', workerPath: '/dw.js' }));
-      expect(applyModuleOverrides).toHaveBeenCalledWith({ wasmPath: '/w.js', workerPath: '/dw.js' });
+      expect(applyModuleOverrides).toHaveBeenCalledWith({
+        wasmPath: '/w.js',
+        workerPath: '/dw.js',
+      });
     });
 
     it('warms the depth-sort worker while the page is still idle', () => {
