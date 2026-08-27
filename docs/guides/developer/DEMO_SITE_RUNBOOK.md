@@ -1,0 +1,345 @@
+# Demo Site Runbook
+
+How the public Luxar demo gallery and viewer are hosted, and how to publish a
+new wave of demos to them without breaking anything.
+
+This is an operational document. It records the architecture, the publish
+sequence, and — most importantly — the failure modes that produce a *plausible
+wrong answer* rather than an error. No credentials appear here; they live in
+`~/.config/luxar-r2/credentials.env` on the operator's machine.
+The publishing harness named below (`gen_landing.py`, `snapshot_hashes.py`,
+`compare_snapshot.py`, and the upload script) also lives outside this
+repository on that machine.
+
+---
+
+## 1. Architecture
+
+Three hostnames on the `luxarviewer.dev` zone, each serving a different thing:
+
+| Hostname | Serves | Backed by |
+|---|---|---|
+| `luxarviewer.dev` | The viewer alone, at the root | Cloudflare Pages project `luxar-viewer` |
+| `demos.luxarviewer.dev` | The gallery page, its media, and its viewer | Cloudflare Pages project `luxar-demos` |
+| `data.luxarviewer.dev` | The `.luxar.zarr` stores | Cloudflare R2 bucket `luxar-demos`, **direct** |
+
+**Neither Pages project has a `functions/` directory or an R2 binding.** Both
+are pure static assets. This is the single most important property of the
+setup, and it is deliberate: Pages Functions share the Workers free limit of
+100,000 requests/day, a limit that *fails* rather than bills. Serving the
+corpus through a Function put one invocation on every chunk fetch, which does
+not survive real traffic.
+
+Instead:
+
+- **Scene data** is fetched **cross-origin** from `data.luxarviewer.dev`, an R2
+  custom domain that bypasses Workers entirely. The gallery emits absolute
+  `?src=https://data.luxarviewer.dev/...` URLs for this reason. (Requires CORS —
+  §4.3.)
+- **Gallery media** (`/media/*`, ~180 files, ~485 MiB) are **deployed files**,
+  served by Pages' CDN for free and unmetered.
+
+The historical marker header `x-luxar-fn: r2` is how to confirm no Worker is in
+the path. It should now appear on *nothing*:
+
+```bash
+curl -sI "https://demos.luxarviewer.dev/media/earthquakes.webp" | grep -i x-luxar-fn
+curl -sI "https://data.luxarviewer.dev/data/<prefix>/<store>.luxar.zarr/<existing-object>" | grep -i x-luxar-fn
+# no output from either = correct
+```
+
+Beware when checking this: responses cached *before* the Function was removed
+still carry the header. Add a cache-busting query string, or you will conclude
+the Worker is still deployed when it is not (§3.2 again, applied to your own
+verification).
+
+A verify-everything sweep of the whole chain lives in the operator's harness;
+its essentials are reproduced in §5.
+
+### 1.1 The viewer takes an absolute `src`
+
+`https://luxarviewer.dev/?src=<absolute-url>` opens any store the browser can
+reach, which is the point of hosting the viewer at the apex — it is a general
+tool, not a demo appendage. That requires CORS on whatever origin holds the
+data (§4.3). The gallery uses the same absolute form because its data lives on
+the separate R2 hostname; a relative `/data/...` URL has no server on the Pages
+origin.
+
+---
+
+## 2. Publishing a wave
+
+A "wave" is: some demos changed on `dev`, rebuild them, and update the site.
+
+```
+build the changed demos
+  -> capture gallery media (stills + orbit videos)
+  -> luxar optimise --profile archive        # 1 MB chunk target
+  -> hash-compare against the LAST LOCAL BUILD
+  -> upload only what changed, to a NEW dated prefix
+  -> rebuild the page against that prefix, with an ABSOLUTE data host
+  -> deploy (page + media as static assets)
+  -> audit the live site
+  -> purge the superseded prefix
+```
+
+The published corpus deliberately uses `archive` rather than the general
+object-storage `hosting` profile. On a representative live store it reduced
+the chunk count from 5,004 to 224 (22×), accepting larger partial reads in
+exchange for far fewer stored objects. Re-measure browser traffic and request
+cost before changing that tradeoff.
+
+The page generator takes the data prefix as an argument, so pointing a wave at
+a new prefix is a parameter change, not an edit:
+
+```bash
+python gen_landing.py gallery.json deploy/index.html \
+    https://data.luxarviewer.dev/data/<new-prefix>
+```
+
+Passing a site-relative `/data/<prefix>` there is the mistake to avoid: it
+still renders a working page, but every chunk fetch becomes same-origin and
+needs something on the gallery origin to serve it. The audit asserts the URLs
+are absolute for exactly this reason.
+
+### 2.1 Always publish to a new dated prefix
+
+Prefixes are dated (`data/2026-08-26a/`). Never overwrite a live prefix in
+place. `luxar optimise` assigns a **fresh `content_hash` by design**, and a
+warm viewer cache validating on an unchanged hash would serve stale chunks. A
+new prefix sidesteps the whole class of problem: new URL, no stale cache, and
+the old prefix stays intact as a rollback until the audit passes.
+
+Unchanged stores are **server-side copied** within R2 rather than re-uploaded —
+same bytes, no egress, and it keeps the wave cheap.
+
+### 2.2 Hash-compare correctly, or not at all
+
+To decide which stores actually changed, compare **this local build against the
+previous local build**. Do *not* compare a local build against the published
+store: `optimise` gives every output a new `content_hash`, so that pairing
+reports "changed" for everything and is meaningless. This has already cost one
+near-miss 1.7 GB needless republish.
+
+Snapshot hashes *before* rebuilding, then diff:
+
+```bash
+python snapshot_hashes.py  > before.json   # walk datasets/demos, record content_hash
+# ... rebuild ...
+python compare_snapshot.py before.json     # report only genuine changes
+```
+
+### 2.3 "Unchanged" and "never built" are different answers
+
+A store that failed to rebuild (missing optional dependency, no GPU, no
+credentials) still has its old hash on disk and will report IDENTICAL. That is
+indistinguishable from a successful no-op rebuild unless you also check mtime.
+This caught `cell_tracking_challenge` reporting IDENTICAL at 64 hours old.
+
+Always assert freshness alongside the hash.
+
+---
+
+## 3. Hazards that fail silently
+
+Every item here produced a plausible wrong answer in production rather than an
+error. They are grouped by what lies to you.
+
+### 3.1 Stale media (historical — and how the fix works now)
+
+Scene URLs are dated; **media URLs are not**. When media was served from R2
+through a Pages Function, re-uploading a still to the same key left every edge
+serving the old bytes, and the only remedy was a `CACHE_EPOCH` constant in
+`pages/functions/_r2.js` that had to be bumped by hand on every wave that
+re-captured media. Forgetting it produced a correct page with last week's
+thumbnails — and it did, at least once.
+
+Moving media to Pages static assets removed that failure mode rather than
+mitigating it: a deployment replaces the asset and Pages invalidates its own
+CDN, so there is no epoch to remember. **Re-capturing media now just means
+re-running the deploy.**
+
+Do not reintroduce a hand-maintained cache-buster. If media ever moves back
+behind a long-TTL rule on another host, it needs hashed filenames instead —
+see §4.2.
+
+### 3.2 A cache policy change does not reach cached objects
+
+Changing R2 CORS, or any response-header policy, affects **only objects fetched
+after the change**. Anything already in the edge cache keeps serving the old
+response until its TTL expires. With a 30-day TTL that is a month of breakage
+that looks fine on every fresh test you run.
+
+Test the *cached* path, not a cache-busted one:
+
+```bash
+curl -s -o /dev/null "$URL"                                   # warm it
+curl -sD - -o /dev/null -H "Origin: https://luxarviewer.dev" "$URL" \
+  | grep -iE 'cf-cache-status|access-control-allow-origin'
+# want: cf-cache-status: HIT *and* the CORS header present
+```
+
+If cached objects lack the header, purge (Cloudflare → Caching → Configuration
+→ Purge Everything). There is no narrower fix.
+
+### 3.3 `curl -I` misreports cache status
+
+`HEAD` requests report `cf-cache-status: DYNAMIC` even where a `GET` cleanly
+shows `MISS → HIT → HIT`. Diagnosing cache behaviour with `-I` will tell you
+your cache rule failed when it is working. Use `-o /dev/null -D -` with a real
+GET.
+
+### 3.4 Zarr v2 vs v3 — never name a metadata document
+
+The corpus holds **both** on-disk formats, permanently. Any tool that hardcodes
+`.zattrs`, `.zarray`, `.zgroup`, `.zmetadata`, or `zarr.json` will silently
+mis-handle half the stores. In zarr v3 there is one `zarr.json` per node with
+attributes nested under `attributes`, and the consolidated index lives at
+`zarr.json` → `consolidated_metadata` → `metadata`.
+
+Two rules, learned the hard way:
+
+- Read through a **bi-format helper**, never a literal document name. A link
+  audit that hardcoded `zarr.json` scored a v2 store's 9-byte "Not found" body
+  as "no links" and passed.
+- **Absence must raise, not return empty.** Two separate probes both reported
+  "no `part_N` found → correct" while walking zero nodes. A checker that cannot
+  distinguish "nothing there" from "could not look" is worse than no checker.
+
+### 3.5 Scale estimates: measure the affected, not the eligible
+
+Counting things that *could* be affected instead of measuring what *is* has
+produced order-of-magnitude errors twice — a tile estimate wrong by >10×, and a
+model predicting 37,152 wasted requests on a scene that emits 5. Static models
+over the corpus are upper bounds. Ground-truth the head of the distribution in
+a real browser before reporting a number.
+
+### 3.6 R2 billing: 404s count
+
+R2 bills per operation. Cloudflare's pricing page exempts exactly one error
+class — HTTP 401 — and says nothing about 404, which is billed as a Class B
+read. In practice the edge caches 404s too, so with a cache rule in place R2
+sees one per URL per PoP per TTL and the cost collapses. The real cost of a
+404 storm is **first-paint latency**, not the bill.
+
+---
+
+## 4. Cloudflare configuration
+
+### 4.1 Cache rule on the data subdomain
+
+Rules → Cache Rules, filter `hostname equals data.luxarviewer.dev`, action
+"Eligible for cache" + "Ignore cache-control header and use this TTL".
+
+TTL is a tradeoff, not a tuning knob: prefixes are dated and therefore
+immutable, so a long TTL is safe for *data*. But the same rule governs how long
+a mistake persists — a CORS or header change is invisible to already-cached
+objects for the full TTL (§3.2). One day is a reasonable compromise; anything
+longer wants a purge in the change procedure.
+
+### 4.2 Media has no such protection
+
+`/media/*` URLs are **not** dated. They are currently Pages static assets, which
+is safe because a deploy invalidates them (§3.1). If media ever moves onto
+`data.luxarviewer.dev` or any other host behind the long-TTL cache rule, it
+needs a short TTL or hashed filenames *first*, otherwise a re-captured still is
+unfixable without a full purge.
+
+Two Pages limits bound this set: **25 MiB per file** and **20,000 files**. The
+count is comfortable (180), but the largest clip sits at **24.87 MiB** —
+0.13 MiB under the cap. A single oversized file fails the whole deployment, so
+cap the capture bitrate rather than discovering this on a deploy.
+
+### 4.3 CORS on the R2 bucket
+
+Required for **both** viewers now, since the gallery also fetches data
+cross-origin. `AllowedOrigins` must list every hostname that hosts a viewer:
+
+```
+https://luxarviewer.dev          apex viewer
+https://demos.luxarviewer.dev    gallery viewer
+https://luxar-demos.pages.dev    Pages fallback URL
+```
+
+Per-deployment preview URLs (`<hash>.luxar-demos.pages.dev`) cannot be
+enumerated, so **data will not load in a Pages preview deploy**. Verify against
+the canonical hostname.
+
+Directory `.luxar.zarr` stores, including the entire published corpus, fetch
+metadata and chunks with simple GETs. They require
+`Access-Control-Allow-Origin`, but no `Range` request header or preflight.
+
+Zipped `.zarr.zip` stores use byte-range requests. Their host must honour
+`Range`, include `range` in `AllowedHeaders`, and expose `Content-Range`,
+`Content-Length`, `Accept-Ranges`, and `ETag`. The range headers let the viewer
+validate partial responses; `ETag` preserves archive identity across
+cross-origin cache validation.
+
+Verify both paths. Curl does not enforce CORS, so inspect the response headers
+explicitly:
+
+```bash
+curl -sI -H "Origin: https://luxarviewer.dev" "$DIRECTORY_OBJECT_URL"
+# want: access-control-allow-origin
+
+curl -sI -X OPTIONS -H "Origin: https://luxarviewer.dev" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: range" "$ZIP_URL"
+# want: 204, access-control-allow-headers including "range"
+
+curl -sD - -o /dev/null -H "Origin: https://luxarviewer.dev" \
+  -H "Range: bytes=0-0" "$ZIP_URL"
+# want: 206 and access-control-expose-headers listing all four headers above
+```
+
+### 4.4 One hostname, one Pages project
+
+A domain attached to two Pages projects is ambiguous. After splitting the
+viewer out of the gallery, confirm each project claims only its own:
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/pages/projects/<project>/domains" \
+  -H "Authorization: Bearer $CF_API_TOKEN"
+```
+
+---
+
+## 5. Verifying a wave
+
+Run all of these; each catches a class the others cannot see.
+
+1. **Live-site audit** — every tile, scene URL, still and video resolves; no
+   placeholders; bylines match `DEMO_META`; bucket store count equals tile
+   count. Target: **0 problems**.
+2. **Browser probe** — load a sample of scenes in the real viewer, assert
+   non-zero elements and no console errors. A store can be perfectly published
+   and still render nothing.
+3. **Cache and CORS** — §3.2 and §4.3, against *cached* objects.
+4. **Pre-flight before purging the old prefix** — deleting from R2 is
+   irreversible, so first prove nothing references it: grep the gallery page,
+   the apex page, *and* the deployed JS bundles for the old prefix string, and
+   confirm every store in the old prefix also exists in the new one.
+
+### 5.1 Do not publish these
+
+`chromatrace_choir_umap` and `chromatrace_choir_umap_sequence` are unpublished
+research and must never reach the bucket. The external publish script carries
+both an exclusion list and a hard abort guard that fails the run if their media
+appears in the upload set. Keep both — the list alone has no teeth.
+
+---
+
+## 6. Framing tiles
+
+Gallery framing lives in `scripts/gallery/manifest.json`; see
+`scripts/gallery/README.md` for the field list. Two things worth knowing here:
+
+- **`fillTarget` defaults to 0.95, which is wrong for round or dense
+  subjects.** A globe or a capsid at 0.95 is cropped past its own silhouette
+  and reads as a texture wall. 0.65 is the value that keeps recurring for these.
+- **Judge a tile on the render, not on the metric.** The `coverage` score uses
+  a percentile bounding box that ignores exactly the frame-edge outliers that
+  make a tile unreadable — it rated a broken framing 93% and the correct one
+  63%. `border-lit` is the better signal, but it too is inflated by legitimately
+  bright limbs (a luminous cloud shell gains rim luminance seen edge-on). Look
+  at the image.
