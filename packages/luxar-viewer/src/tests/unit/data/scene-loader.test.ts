@@ -389,6 +389,13 @@ describe('SceneLoader', () => {
         'The archive URL has expired. Refresh the page with a new URL.',
         'https://example.test/scene.zip'
       );
+      const onArchiveFault = vi.fn();
+      sceneLoader.onArchiveFault(onArchiveFault);
+      sceneLoader.onArchiveFault(() => {
+        throw new Error('consumer failure');
+      });
+      const removedListener = vi.fn();
+      sceneLoader.onArchiveFault(removedListener)();
       const failingLoader = {
         updateView: vi.fn().mockRejectedValue(new Error('loader wrapper', { cause: fault })),
         dispose: vi.fn(),
@@ -425,6 +432,10 @@ describe('SceneLoader', () => {
 
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledWith(fault.message, { persistent: true });
+      expect(sceneLoader.archiveFault).toBe(fault);
+      expect(onArchiveFault).toHaveBeenCalledOnce();
+      expect(onArchiveFault).toHaveBeenCalledWith(fault);
+      expect(removedListener).not.toHaveBeenCalled();
       expect(sceneLoader.hasFailures()).toBe(false);
       expect(commitSpy).not.toHaveBeenCalled();
       expect(releaseShadows).toHaveBeenCalledOnce();
@@ -436,8 +447,22 @@ describe('SceneLoader', () => {
       expect(successfulLoader.updateView).toHaveBeenCalledOnce();
       expect(ordinaryFailureLoader.updateView).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect(onArchiveFault).toHaveBeenCalledOnce();
       expect(prefetch).not.toHaveBeenCalled();
       expect((sceneLoader as any)._updateInProgress).toBe(false);
+    });
+
+    it('can replay the latched archive fault to a late subscriber', () => {
+      const fault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+      (sceneLoader as any)._archiveFault = fault;
+      const listener = vi.fn();
+
+      const unsubscribe = sceneLoader.onArchiveFault(listener, { replayCurrent: true });
+
+      expect(listener).toHaveBeenCalledOnce();
+      expect(listener).toHaveBeenCalledWith(fault);
+
+      unsubscribe();
     });
 
     it('drains a superseded waiter when an archive fault stops the active pass', async () => {

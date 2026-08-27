@@ -13,6 +13,7 @@ import type {
   LuxarEmbedderEventMap,
   EmbedderDimensions,
   ScreenshotOptions,
+  DatasetFaultPayload,
 } from './app/embedder/events';
 import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
@@ -137,6 +138,8 @@ export class LuxarApp {
    * multi-instance-ready.
    */
   private embedderEvents = createEventBus<LuxarEmbedderEventMap>();
+  private datasetFaultUnsubscribe?: Unsubscribe;
+  private currentDatasetSrc?: string;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -335,6 +338,9 @@ export class LuxarApp {
    * Load a dataset and initialize UI
    */
   private async loadDataset(src: string): Promise<void> {
+    this.datasetFaultUnsubscribe?.();
+    this.datasetFaultUnsubscribe = undefined;
+    this.currentDatasetSrc = undefined;
     try {
       await loadDatasetImpl(src, {
         inputHandler: this.inputHandler,
@@ -353,9 +359,17 @@ export class LuxarApp {
         applyViewerConfigState: (config) => this.applyViewerConfigState(config),
         openCacheStatsView: () => this.openCacheStatsView(),
       });
-      // Public embedder event — fires for the initial load, the built-in
-      // dataset browser, and switchDataset() (all route through here).
+      this.currentDatasetSrc = src;
+      // A replayed terminal fault is post-load state, so preserve the public
+      // ordering: the dataset becomes available before its fault is reported.
       this.embedderEvents.emit('dataset-loaded', { src });
+      const sceneLoader = getSceneLoader();
+      if (sceneLoader) {
+        this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
+          (error) => this.embedderEvents.emit('dataset-fault', { src, error }),
+          { replayCurrent: true }
+        );
+      }
     } catch (error) {
       this.embedderEvents.emit('dataset-error', {
         src,
@@ -857,6 +871,13 @@ export class LuxarApp {
     };
   }
 
+  /** Current terminal fault for the loaded dataset, or null while updates remain usable. */
+  getDatasetFault(): DatasetFaultPayload | null {
+    const error = getSceneLoader()?.archiveFault;
+    if (!error || !this.currentDatasetSrc) return null;
+    return { src: this.currentDatasetSrc, error };
+  }
+
   /**
    * Set the slice position of a single (non-displayed) dimension. Clamped and
    * quantized by the scene-dims manager; triggers a data update and emits
@@ -974,6 +995,10 @@ export class LuxarApp {
     // scene that no longer exists. Restored BEFORE the teardown pipeline so a
     // step that throws partway can't strand it.
     setDocumentTitle(null);
+
+    this.datasetFaultUnsubscribe?.();
+    this.datasetFaultUnsubscribe = undefined;
+    this.currentDatasetSrc = undefined;
 
     runDisposePipeline({
       events: this.events,

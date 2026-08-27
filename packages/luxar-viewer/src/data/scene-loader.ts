@@ -257,6 +257,7 @@ export class SceneLoader {
   // bootstrapStandalone registers the notifier backend, so an embedded host gets
   // just the log.error below and no visible message while updates stay stopped (#2280).
   private _archiveFault: ArchiveFaultError | null = null;
+  private archiveFaultListeners = new Set<(error: ArchiveFaultError) => void>();
   /**
    * True for the duration of a progressive-LOD refinement run
    * (`scheduleGSplatsRefinement`).
@@ -454,6 +455,33 @@ export class SceneLoader {
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
+  }
+
+  /** Terminal archive fault for this loader, or null while updates remain usable. */
+  get archiveFault(): ArchiveFaultError | null {
+    return this._archiveFault;
+  }
+
+  /** Subscribe to the loader's one-shot terminal archive fault. */
+  onArchiveFault(
+    listener: (error: ArchiveFaultError) => void,
+    options: { replayCurrent?: boolean } = {}
+  ): () => void {
+    this.archiveFaultListeners.add(listener);
+    if (options.replayCurrent && this._archiveFault) {
+      listener(this._archiveFault);
+    }
+    return () => this.archiveFaultListeners.delete(listener);
+  }
+
+  private notifyArchiveFault(error: ArchiveFaultError): void {
+    for (const listener of this.archiveFaultListeners) {
+      try {
+        listener(error);
+      } catch (listenerError) {
+        log.warning(Modules.SCENE_LOADER, 'Archive-fault listener threw:', listenerError);
+      }
+    }
   }
 
   // ============================================================
@@ -1023,6 +1051,7 @@ export class SceneLoader {
           `Archive fault during view update: ${sweepArchiveFault.message}`
         );
         notifier.error(sweepArchiveFault.message, { persistent: true });
+        this.notifyArchiveFault(sweepArchiveFault);
       }
 
       // S6: predictive prefetch now lives inside each loader-task
@@ -1942,6 +1971,7 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+    this.archiveFaultListeners.clear();
     setSceneLineLoad(0);
 
     // Release the serialization lock explicitly — defence in depth. Only the
