@@ -509,17 +509,19 @@ def test_generate_rejects_bad_options_before_loading(
     """Option typos fail before downloading or expanding either deposition."""
 
     def fail_if_called(*args: object, **kwargs: object) -> None:
-        pytest.fail("build_state must not run before all options are validated")
+        pytest.fail("cached_download must not run before all options are validated")
 
-    monkeypatch.setattr(demo, "build_state", fail_if_called)
+    monkeypatch.setattr(demo, "cached_download", fail_if_called)
+    output_path = tmp_path / "scene.luxar.zarr"
 
     with pytest.raises(ValueError, match=message):
         demo.generate_nuclear_pore_complex(
-            tmp_path / "scene.luxar.zarr",
+            output_path,
             representation=representation,
             color_by=color_by,
             split=split,
         )
+    assert not output_path.exists()
 
 
 @pytest.mark.parametrize(
