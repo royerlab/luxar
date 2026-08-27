@@ -20,7 +20,7 @@ promotes on frame 1, so count two.
 
 A `kind=lod` group loads exactly one level eagerly — index `default_level`, which
 every gsplat recipe (`io/_compiler/gsplat_tree.py`) and scene graft
-(`core/group/gsplats_pipeline/from_io.py`) writes as 0, the coarsest. Every other
+(`core/group/gsplats_pipeline/from_io.py`) resolves to 0, the coarsest. Every other
 LOD-capable child is cheap-attached (placeholder plus loader thunk, no array fetch),
 and a nested `kind=lod` or `kind=partition` child defers too unless it carries its own
 `transform` or the viewer has no LOD registry
