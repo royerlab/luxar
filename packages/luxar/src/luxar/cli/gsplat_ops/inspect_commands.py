@@ -71,7 +71,11 @@ def _part_provenance_depth(records: list[Any]) -> int:
 def _print_fitting_value(
     key: str, value: Any, *, show_full_provenance: bool = False
 ) -> None:
-    if key == "part_provenance" and isinstance(value, list) and not show_full_provenance:
+    if (
+        key == "part_provenance"
+        and isinstance(value, list)
+        and not show_full_provenance
+    ):
         depth = _part_provenance_depth(value)
         if depth == 3:
             suffix = ", nested channels × timepoints"
@@ -247,9 +251,7 @@ def info_dataset(
                     aprint(f"❌ {load_exc}")
                     raise typer.Exit(1) from None
                 # Valid v3.0 partition/nested tree → report its shape.
-                _print_gsplat_tree_summary(
-                    path, show_full_provenance=full_provenance
-                )
+                _print_gsplat_tree_summary(path, show_full_provenance=full_provenance)
                 return
             n_splats = len(data.amplitudes)
             ndim = data.centers.shape[1]

@@ -82,12 +82,8 @@ def test_stacked_fit_provenance_is_rooted_in_fitting_and_describes_the_source() 
         assert "source_dtype" not in part["fitting"]
         assert "source_voxels" not in part["fitting"]
         assert "source_bytes" not in part["fitting"]
-    assert stacked.stats["part_provenance"][0]["fitting"][
-        "source_stored_bytes"
-    ] == 80
-    assert stacked.stats["part_provenance"][1]["fitting"][
-        "source_stored_bytes"
-    ] == 75
+    assert stacked.stats["part_provenance"][0]["fitting"]["source_stored_bytes"] == 80
+    assert stacked.stats["part_provenance"][1]["fitting"]["source_stored_bytes"] == 75
 
     fitting, _config, _provenance, pipeline = split_fitting_info(stacked.stats)
     assert fitting is not None

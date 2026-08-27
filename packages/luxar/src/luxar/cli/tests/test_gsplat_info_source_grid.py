@@ -117,10 +117,7 @@ def test_info_summarizes_nested_part_provenance_unless_full_is_requested(
             app, ["gsplat", "info", str(path), "--no-histograms"]
         )
         assert summary.exit_code == 0, summary.output
-        assert (
-            "part_provenance: 1 part, nested channels × timepoints"
-            in summary.output
-        )
+        assert "part_provenance: 1 part, nested channels × timepoints" in summary.output
         assert "psnr_db" not in summary.output
 
         full = CliRunner().invoke(

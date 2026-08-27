@@ -1050,9 +1050,9 @@ def _merge_partition(
                     aprint(f"  {label} {k}: empty, skipping")
                 continue
             part_provenance.append(
-                collect_part_provenance(
-                    [part], values=[float(k)], fit_reference=None
-                )[0]
+                collect_part_provenance([part], values=[float(k)], fit_reference=None)[
+                    0
+                ]
             )
             part.stats.pop("part_provenance", None)
             _stamp_recipe_floor(part, recipe, floor_stats)
