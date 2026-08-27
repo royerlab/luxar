@@ -6,7 +6,12 @@
  */
 
 import type { CacheMetrics, GlobalStats } from '../../../types/data-monitor-types';
-import { formatBytes, formatNumber, getCacheMemoryColorClass } from '../templates/format';
+import {
+  formatBytes,
+  formatNumber,
+  getCacheMemoryColorClass,
+  networkSummary,
+} from '../templates/format';
 import { countColorClass, getColorClass } from '../templates/primitives';
 import { patchField, updateColorClass } from './dom-helpers';
 import { presentHeadlineCounts } from '../headline-counts';
@@ -61,20 +66,9 @@ export function updateOverviewTab(
   patchField(container, 'memory-used', formatBytes(cacheMetrics.totalCacheMemory));
   patchField(container, 'query-speed', `${stats.avgQueryTime.toFixed(0)}ms`);
   patchField(container, 'query-rate', `${stats.queriesPerSecond.toFixed(1)}/sec`);
-  // "DATA LOADED" card: cumulative bytes delivered across all tiers
-  // (L1 + L2 + network), so it stays informative on a warm/cache-served
-  // reload where `bytesTransferred` is legitimately 0. The subtitle
-  // breaks out how much of that came over the network plus live bandwidth.
-  const network = cacheMetrics.network;
-  const dataLoaded = network ? (network.totalBytesServed ?? network.bytesTransferred) : 0;
-  patchField(container, 'network-bytes', network ? formatBytes(dataLoaded) : '0B');
-  patchField(
-    container,
-    'network-detail',
-    network
-      ? `${formatBytes(network.bytesTransferred)} net · ${formatBytes(network.bandwidth)}/s`
-      : '0B net'
-  );
+  const networkMetrics = networkSummary(cacheMetrics.network);
+  patchField(container, 'network-bytes', networkMetrics.dataLoaded);
+  patchField(container, 'network-detail', networkMetrics.detail);
 
   const memoryPercent =
     cacheMetrics.memoryLimit > 0

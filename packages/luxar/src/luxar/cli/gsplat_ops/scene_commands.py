@@ -31,7 +31,9 @@ def convert_to_scene(
         "(a categorical time/channel axis is left in place)",
     ),
     scale_intensity: Optional[float] = typer.Option(
-        None, "--scale-intensity", help="Scale amplitudes by factor (e.g., 0.1)"
+        None,
+        "--scale-intensity",
+        help="Scale matrix-shaped amplitudes by factor; replaces automatic normalization",
     ),
     opacity: float = typer.Option(1.0, "--opacity", help="Opacity (0.0-1.0)"),
     absorption: float = typer.Option(
@@ -63,7 +65,10 @@ def convert_to_scene(
         None, "--gamma", help="Display gamma (default 1.0)"
     ),
     intensity: Optional[float] = typer.Option(
-        None, "--intensity", help="Display intensity multiplier (default 1.0)"
+        None,
+        "--intensity",
+        help="Display-window intensity relative to amplitudes as stored "
+        "(automatically normalized unless --scale-intensity is set)",
     ),
     layer: bool = typer.Option(
         True,
@@ -182,6 +187,10 @@ def convert_to_scene(
                         scene.add_gsplats_from_data(
                             name="gsplats",
                             result=data,
+                            # An explicit scale is the caller's authored amplitude
+                            # transform; normalising immediately afterward would
+                            # cancel it exactly for raw-unit stores.
+                            normalize_amplitudes=scale_intensity is None,
                             opacity=opacity,
                             absorption=absorption,
                             blending_mode=blending_mode,

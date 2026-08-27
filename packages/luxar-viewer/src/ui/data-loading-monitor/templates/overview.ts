@@ -12,7 +12,12 @@ import {
   renderProgressBar,
 } from './primitives';
 import { headlineTooltip, presentHeadlineCounts } from '../headline-counts';
-import { formatBytes, formatNumber, getCacheMemoryColorClass } from './format';
+import {
+  formatBytes,
+  formatNumber,
+  getCacheMemoryColorClass,
+  networkSummary,
+} from './format';
 
 /**
  * Map LoaderType identifier to its short display label / item-unit pair.
@@ -76,23 +81,10 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
 export function renderSecondaryMetrics(
   memory: { used: number; limit: number },
   querySpeed: { avgTime: number; perSec: number },
-  network:
-    | {
-        bytesTransferred: number;
-        requestCount: number;
-        bandwidth: number;
-        totalBytesServed?: number;
-        totalRequestsServed?: number;
-      }
-    | undefined
+  network: NonNullable<CacheMetrics['network']> | undefined
 ): string {
   const memoryPercent = memory.limit > 0 ? (memory.used / memory.limit) * 100 : 0;
-  // Cumulative bytes delivered across all tiers (L1 + L2 + network).
-  // Falls back to network bytes for providers predating the field.
-  const dataLoaded = network ? (network.totalBytesServed ?? network.bytesTransferred) : 0;
-  // Demand reads served across all tiers; falls back to the network request
-  // count for providers predating the field (mirrors the bytes fallback).
-  const requestsServed = network ? (network.totalRequestsServed ?? network.requestCount) : 0;
+  const networkMetrics = networkSummary(network);
 
   return `
     <div class="luxar-secondary-metrics">
@@ -117,10 +109,10 @@ export function renderSecondaryMetrics(
       <div class="luxar-secondary-metrics__item">
         <span class="luxar-secondary-metrics__label" title="Total data delivered to the renderer since load, from all sources combined (memory caches + disk cache + network). The subtitle breaks out the network share — 'net' is what was actually downloaded, followed by current download bandwidth and the total request count. A big gap between loaded and net means the cache is doing its job">DATA LOADED</span>
         <div class="luxar-secondary-metrics__value" data-field="network-bytes">
-          ${network ? formatBytes(dataLoaded) : '0B'}
+          ${networkMetrics.dataLoaded}
         </div>
         <div class="luxar-secondary-metrics__subtitle" data-field="network-detail">
-          ${network ? `${formatBytes(network.bytesTransferred)} net · ${formatBytes(network.bandwidth)}/s · ${requestsServed.toLocaleString()} reqs` : '0B net'}
+          ${networkMetrics.detail}
         </div>
       </div>
     </div>

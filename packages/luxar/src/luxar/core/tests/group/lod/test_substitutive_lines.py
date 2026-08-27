@@ -34,7 +34,16 @@ def _segments(n_seg, seed=0):
     return verts
 
 
-def _build(tmp_path, *, n_seg=1500, line_type="segments", levels=2, widths=0.8, **kw):
+def _build(
+    tmp_path,
+    *,
+    n_seg=1500,
+    line_type="segments",
+    levels=2,
+    widths=0.8,
+    additive_lod=None,
+    **kw,
+):
     out = tmp_path / "t.luxar.zarr"
     verts = _segments(n_seg)
     colors = (
@@ -49,6 +58,7 @@ def _build(tmp_path, *, n_seg=1500, line_type="segments", levels=2, widths=0.8, 
             colors=colors,
             line_type=line_type,
             substitutive_lod=dict(levels=levels, device="cpu", seed=0, **kw),
+            additive_lod=additive_lod,
         )
     return zarr.open(str(out), mode="r")["curves"], verts.shape[0]
 
@@ -157,6 +167,29 @@ class TestAddLinesSubstitutiveLod:
     def test_position_bounds_backfilled(self, tmp_path) -> None:
         grp, _ = _build(tmp_path)
         assert "position_bounds" in grp.attrs
+
+    def test_render_light_survives_writer_quantization(self, tmp_path) -> None:
+        from luxar.encoding import ArrayDecoder
+        from luxar.gsplats.utils.trils import merge_tril, unpack_tril
+
+        grp, _ = _build(tmp_path, n_seg=2000, levels=3, widths=0.05, additive_lod=False)
+        decoder = ArrayDecoder()
+        lights = []
+        for i in range(3):
+            child = grp[f"child_{i}"]
+            assert "amplitude_normalization_factor" not in child.attrs
+            amplitudes = decoder.decode(child["amplitudes"], grp).astype(np.float64)
+            diagonal = decoder.decode(child["cholesky_factors_diag"], grp).astype(
+                np.float64
+            )
+            off_diagonal = decoder.decode(
+                child["cholesky_factors_offdiag"], grp
+            ).astype(np.float64)
+            factors = unpack_tril(merge_tril(diagonal, off_diagonal, 3), 3)
+            lights.append(float(np.sum(amplitudes * np.abs(np.linalg.det(factors)))))
+
+        for light in lights[1:]:
+            assert light == pytest.approx(lights[0], rel=0.03)
 
     def test_float_indices_rejected_before_partial_lod_write(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"

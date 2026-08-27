@@ -137,6 +137,15 @@ def add_gsplats_as_lod_group_impl(
             lod_group=None,
             additive_lod=None,
             coverage_fraction=coverage_vals[child_idx],
+            # The parent already normalised the WHOLE pyramid with one factor.
+            # Letting each level normalise itself here is not merely redundant:
+            # a coarser level's amplitudes are larger (merged representatives
+            # carry combined mass), so its own p99.9 is higher and it would be
+            # scaled DOWN relative to its siblings. Measured before this was
+            # pinned: factors 0.1266 / 0.2549 / 0.0594 across three levels of
+            # one node, i.e. the levels rescaled against each other and the
+            # brightness pops at every LOD switch.
+            normalize_amplitudes=False,
             **child_attrs,
         )
 

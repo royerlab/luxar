@@ -17,7 +17,7 @@ archive served to a WebGL viewer. This skill builds a scene from a dataset.
 
 **The repo's demos and examples are the canonical know-how** — when in doubt, read a
 matching one before writing code:
-- `packages/luxar/src/luxar/demos/demo_*.py` (87 complete demos)
+- `packages/luxar/src/luxar/demos/demo_*.py` (88 complete demos)
 - `packages/luxar/examples/*_example.py` (53 focused examples)
 
 ## The canonical pattern (every demo follows this)
@@ -151,9 +151,31 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   panel's max straight into `intensity=` stores a window `hi²` times too narrow and
   the scene renders blown out. Read it back the same way:
   `lo = -offset/intensity`, `hi = (1-offset)/intensity`.
-- **`opacity` is the exposure lever, and it wants to be tiny** (1e-2 is normal).
-  Scaling the amplitudes instead does nothing — the viewer normalises by the stored
-  maximum.
+- **Amplitudes MUST be normalised into `[0, ~1]` before the node enters the
+  scene, and no viewer control can substitute for it.** A fitted
+  `.gsplats.zarr` stores amplitudes in RAW SOURCE UNITS — the fitter multiplies
+  its `[0,1]` working copy back out by the volume's intensity range, so a fit
+  from a uint16 detector stack carries detector counts, in the hundreds or
+  thousands. In the shader the stored amplitude does two jobs and the display
+  window only reaches one of them: it picks the colormap LUT index
+  (`t = clamp((A - min) * scale, 0, 1)` — clamped, so it selects a *colour* and
+  can never scale brightness), and it sets **emitted radiance and, under
+  `volumetric`, optical depth** (`tau = absorption * opacity * intensity` with
+  `intensity ∝ A`), which nothing windows. An amplitude of 800 therefore emits
+  1000x the radiance of 0.8 and saturates `1 - exp(-tau)` to an opaque shell.
+  `add_gsplats_from_data` / `add_gsplats_from_file` /
+  `add_gsplats_from_volume` / a graft now normalise by default (robust p99.9 →
+  1.0, one factor for the whole structure, a no-op on data already in range).
+  A child inserted directly into a `kind=lod` or `kind=partition` group instead
+  defaults to no normalisation so its exposure stays shared with its siblings;
+  pass `normalize_amplitudes=True` to override that rule or `False` to preserve
+  raw units elsewhere. Note this is the *opposite* of what this bullet used to
+  claim — the viewer does **not** normalise by the stored maximum.
+- **`opacity` is the exposure lever, and with normalised amplitudes it lives in
+  its natural range.** That is the point of normalising: against raw counts
+  `opacity` has to carry a ~1/500 factor on a `[0,1]` control, which is
+  unauthorable in the panel and is why so much older shipped appearance is a
+  magic tiny constant.
 - **For a colormapped node, the display window is NOT an exposure lever, and
   reaching for it first is the classic wrong turn.** Under `volumetric` (or any sum
   projection) a pixel accumulates along the ray, while the window only picks each
