@@ -136,7 +136,6 @@ function bspTreeStructureIsValid(node: unknown, partCount: number, seenParts: bo
     typeof axis !== 'number' ||
     !Number.isInteger(axis) ||
     axis < 0 ||
-    axis > 2 ||
     typeof split !== 'number' ||
     !Number.isFinite(split)
   ) {
@@ -178,7 +177,6 @@ function summarizeStraddlingTree(
     typeof axis !== 'number' ||
     !Number.isInteger(axis) ||
     axis < 0 ||
-    axis > 2 ||
     axis >= bounds[0].min.length ||
     typeof split !== 'number' ||
     !Number.isFinite(split)
@@ -232,7 +230,7 @@ function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeValidati
     if (!bounds) {
       return { tree: tree as BspTreeNode, verified: false };
     }
-    const overlapFloors = [0, 0, 0];
+    const overlapFloors = new Array<number>(Math.max(3, bounds[0].min.length)).fill(0);
     const collectedParts = new Array<boolean>(bounds.length).fill(false);
     if (
       !summarizeStraddlingTree(tree, bounds, collectedParts, overlapFloors, false) ||

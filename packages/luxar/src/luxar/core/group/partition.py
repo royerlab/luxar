@@ -544,10 +544,11 @@ def serialized_bsp_tree_straddles_centers(
 def serialized_bsp_tree_axis_overlap_floors(
     tree: Optional[Dict[str, Any]],
     boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
-) -> "Optional[Tuple[float, float, float]]":
+) -> "Optional[Tuple[float, ...]]":
     """Largest measured part-box interpenetration on each serialized axis.
 
-    Returns a three-axis tuple, with ``0.0`` for axes the tree never splits.
+    Returns at least three values (or one per box dimension for nD data), with
+    ``0.0`` for axes the tree never splits.
     Returns ``None`` when the leaf labels do not name ``boxes`` exactly or the
     stored tree metadata is malformed.
     """
@@ -557,9 +558,10 @@ def serialized_bsp_tree_axis_overlap_floors(
         labels = serialized_bsp_leaf_labels(tree)
         if sorted(labels) != list(range(len(boxes))):
             return None
-        overlap_floors = [0.0, 0.0, 0.0]
+        ndim = max(3, len(boxes[0][0]) if boxes else 0)
+        overlap_floors = [0.0] * ndim
         _collect_axis_overlap_floors(tree, boxes, overlap_floors)
-        return overlap_floors[0], overlap_floors[1], overlap_floors[2]
+        return tuple(overlap_floors)
     except (KeyError, TypeError, ValueError, IndexError, OverflowError):
         return None
 
@@ -572,7 +574,7 @@ def _collect_axis_overlap_floors(
     if "part" in node:
         return
     axis = int(node.get("axis", -1))
-    if axis not in (0, 1, 2) or (boxes and axis >= len(boxes[0][0])):
+    if axis < 0 or (boxes and axis >= len(boxes[0][0])):
         raise ValueError("invalid split axis")
     left_labels = serialized_bsp_leaf_labels(node["left"])
     right_labels = serialized_bsp_leaf_labels(node["right"])
@@ -594,7 +596,7 @@ def _node_straddles_centers(
     if "part" in node:
         return True
     axis = int(node.get("axis", -1))
-    if axis not in (0, 1, 2) or (boxes and axis >= len(boxes[0][0])):
+    if axis < 0 or (boxes and axis >= len(boxes[0][0])):
         return False
     split = float(node["split"])
     if not np.isfinite(split):
@@ -635,7 +637,7 @@ def _node_separates(
     # 0/1/2 is what the format admits, and the parts must actually HAVE that
     # axis — a 2D partition's boxes have two columns, so a tree naming axis 2
     # describes something other than these parts.
-    if axis not in (0, 1, 2) or (boxes and axis >= len(boxes[0][0])):
+    if axis < 0 or (boxes and axis >= len(boxes[0][0])):
         return False
     split = float(node["split"])
     # `left` holds coord < split, `right` holds coord >= split, so a left box

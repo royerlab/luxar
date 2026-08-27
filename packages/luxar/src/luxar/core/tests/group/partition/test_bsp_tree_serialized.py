@@ -204,6 +204,17 @@ class TestMapThroughAffine:
         with pytest.raises(ValueError, match="split_axes"):
             spatial_bsp_tree(np.zeros((4, 4)), 1, split_axes=split_axes)
 
+    def test_soundness_checks_accept_split_columns_above_two(self) -> None:
+        tree = {"axis": 3, "split": 0.0, "left": {"part": 0}, "right": {"part": 1}}
+        boxes = [
+            (np.array([0.0, 0.0, 0.0, -2.0]), np.array([1.0, 1.0, 1.0, -0.5])),
+            (np.array([0.0, 0.0, 0.0, 0.5]), np.array([1.0, 1.0, 1.0, 2.0])),
+        ]
+
+        assert serialized_bsp_tree_separates(tree, boxes)
+        assert serialized_bsp_tree_straddles_centers(tree, boxes)
+        assert serialized_bsp_tree_axis_overlap_floors(tree, boxes) == (0.0,) * 4
+
     def test_mapping_tracks_the_centers_it_describes(self) -> None:
         # The real invariant: after transforming BOTH the points and the tree,
         # the planes must still separate the same point sets.
