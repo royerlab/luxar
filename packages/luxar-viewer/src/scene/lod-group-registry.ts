@@ -968,7 +968,9 @@ export class LODGroupRegistry {
    * ``loading`` — only the registry does; keep that invariant here).
    *
    * Returns ``true`` when a retry was kicked OR one is already in flight
-   * (``loading``), ``false`` when no lazy child with that leaf path exists.
+   * (``loading``), ``false`` when no retryable lazy child with that leaf path
+   * exists. Permanently-failed children are not retryable within the same
+   * dataset; the caller drops their stale per-leaf failure record.
    * Fire-and-forget semantics: ``true`` means "retry started", not "retry
    * succeeded" — the thunk owns the ready/failed outcome, and a repeat
    * failure re-enters the normal cooldown cycle.
@@ -978,6 +980,7 @@ export class LODGroupRegistry {
     for (const entry of this.entries.values()) {
       for (const child of entry.children) {
         if (child.object.name !== path || !child.ensureLoaded) continue;
+        if (child.permanentlyFailed) return false;
         if (child.loading) return true; // retry already in flight
         child.failed = false;
         child.failedTick = undefined;

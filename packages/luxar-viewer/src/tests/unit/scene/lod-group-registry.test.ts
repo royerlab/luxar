@@ -2061,6 +2061,21 @@ describe('LODGroupRegistry — retryLazyChildByLeafPath', () => {
     expect(ensureLoaded).not.toHaveBeenCalled();
   });
 
+  it('refuses to clear or retry a permanently-failed lazy leaf', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const child = makeLazyChild(0.5, ensureLoaded);
+    child.object.name = '/g/child_1';
+    child.failed = true;
+    child.permanentlyFailed = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+
+    expect(reg.retryLazyChildByLeafPath('/g/child_1')).toBe(false);
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    expect(child.failed).toBe(true);
+    expect(child.permanentlyFailed).toBe(true);
+  });
+
   it('returns false for unknown paths and for anonymous deferred-group placeholders', () => {
     const reg = makeRegistry();
     // Deferred-GROUP lazy child: anonymous placeholder (no name, by design).

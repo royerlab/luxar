@@ -930,6 +930,12 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(deferred.permanentlyFailed).toBe(true);
     expect(deferred.ready).toBe(false);
     expect(deferred.loading).toBe(false);
+
+    deferred.ready = true;
+    deferred.release!();
+    expect(deferred.ready).toBe(false);
+    expect(deferred.failed).toBe(true);
+    expect(deferred.permanentlyFailed).toBe(true);
   });
 });
 
