@@ -31,7 +31,7 @@ import type { RegisteredShortcutBindings } from '../../types/shortcut-help';
  *   });
  */
 export interface NotifierBackend {
-  showError(message: string): void;
+  showError(message: string, options?: ErrorNotificationOptions): void;
   showToast(message: string, durationMs?: number): void;
   showHelpOverlay(bindings: RegisteredShortcutBindings): void;
   hideHelpOverlay(): void;
@@ -47,6 +47,11 @@ export interface NotifierBackend {
    */
   showSceneIdentityBanner?(kind: 'changed' | 'unreachable'): void;
   hideSceneIdentityBanner?(onlyKind?: 'changed' | 'unreachable'): void;
+}
+
+export interface ErrorNotificationOptions {
+  /** Keep the error visible until the user dismisses it. */
+  persistent?: boolean;
 }
 
 // MED-42 (audit-ack): module-level singleton state is intentional, not
@@ -79,8 +84,8 @@ function warnIfMissing(method: string): void {
  */
 export const notifier = {
   /** Display a user-friendly error dialog with guidance. */
-  error(message: string): void {
-    if (backend) backend.showError(message);
+  error(message: string, options?: ErrorNotificationOptions): void {
+    if (backend) backend.showError(message, options);
     else warnIfMissing('error');
   },
   /** Brief toast notification that auto-dismisses. */

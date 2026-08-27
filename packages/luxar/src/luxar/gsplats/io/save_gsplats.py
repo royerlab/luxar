@@ -692,6 +692,12 @@ def _stamp_optional_bsp_tree(
         root.attrs["bsp_tree"] = tree
 
 
+def _resolve_metadata_provider(
+    value: Optional[Dict[str, Any] | Callable[[], Optional[Dict[str, Any]]]],
+) -> Optional[Dict[str, Any]]:
+    return value() if callable(value) else value
+
+
 def write_partition_streaming(
     path: str | Path,
     part_nodes: Callable[[], Iterator["GSplatNode"]],
@@ -699,7 +705,9 @@ def write_partition_streaming(
     max_elements: int = 0,
     ordering: Literal["morton", "hilbert", "none"] = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
-    fitting_info: Optional[Dict[str, Any]] = None,
+    fitting_info: Optional[
+        Dict[str, Any] | Callable[[], Optional[Dict[str, Any]]]
+    ] = None,
     fitting_config: Optional[Dict[str, Any]] = None,
     provenance_info: Optional[Dict[str, Any]] = None,
     pipeline_info: Optional[Dict[str, Any]] = None,
@@ -724,9 +732,11 @@ def write_partition_streaming(
     ``position_bounds``), plus the v3.0 self-identifying header. Each part carries
     a ``child_index`` for napari-style sibling ordering — matching
     :func:`~luxar.io._compiler.gsplat_tree.write_gsplat_node`'s partition branch.
-    ``bsp_tree`` is a PROVIDER, not a value: it is called once, after the part loop
-    has run, and whatever it returns is written as the root's optional split-plane
-    attr (the same one the standalone branch writes). A callable because the
+    ``fitting_info`` may be a value or a provider; a provider is called once after
+    the part loop, allowing metadata to describe the parts that actually survived.
+    ``bsp_tree`` is likewise a provider, and whatever it returns is written as the
+    root's optional split-plane attr (the same one the standalone branch writes).
+    A callable is needed because the
     surviving part set — the thing the tree's leaf labels must be renumbered
     against — is only known once the producer has finished skipping empty regions,
     so the caller prunes inside the provider. Omit it, or return ``None``, and the
@@ -823,9 +833,10 @@ def write_partition_streaming(
         if description:
             root.attrs["description"] = description
 
-        if fitting_info is not None:
+        resolved_fitting_info = _resolve_metadata_provider(fitting_info)
+        if resolved_fitting_info is not None:
             fitting_group = root.create_group("fitting")
-            fitting_group.attrs.update(fitting_info)
+            fitting_group.attrs.update(resolved_fitting_info)
             if fitting_config is not None:
                 fitting_group.create_group("config").attrs.update(fitting_config)
         if provenance_info is not None:
