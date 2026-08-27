@@ -79,6 +79,7 @@ import { bootstrapStandalone } from '../../../core/bootstrap';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { setDocumentTitle } from '../../../core/document-title';
 import { log } from '../../../utils/log';
+import { notifier } from '../../../utils/cross-layer/notifier';
 import type { UrlParams } from '../../../config/url-params';
 import {
   defaultUserSettings,
@@ -243,6 +244,36 @@ describe('bootstrapStandalone', () => {
         warmCodecs: false,
       });
       expect(mocks.bloscThunk).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('notifier backend', () => {
+    it('disables auto-dismiss only for persistent errors', async () => {
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+
+      notifier.error('archive unavailable', { persistent: true });
+      notifier.error('ordinary failure');
+
+      expect(mocks.showError).toHaveBeenNthCalledWith(
+        1,
+        'archive unavailable',
+        expect.any(Function),
+        {
+          datasetBrowser: 'dataset-browser.toggle',
+          help: 'help.toggle',
+        },
+        { autoDismiss: false }
+      );
+      expect(mocks.showError).toHaveBeenNthCalledWith(
+        2,
+        'ordinary failure',
+        expect.any(Function),
+        {
+          datasetBrowser: 'dataset-browser.toggle',
+          help: 'help.toggle',
+        },
+        undefined
+      );
     });
   });
 
