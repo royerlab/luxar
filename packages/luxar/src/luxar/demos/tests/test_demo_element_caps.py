@@ -8,15 +8,21 @@ from pathlib import Path
 
 import pytest
 
+from luxar.core.group.partition import DEFAULT_MAX_ELEMENTS
 from luxar.demos import registry
 from luxar.typing_utils.constants import max_elements_per_node
 
 DEMO_PATHS = sorted(registry._DEMOS_DIR.glob("demo_*.py"))
 _GEOMETRY_BY_ADDER = {
     "add_points": "points",
+    # Lines partition by vertices while the viewer cap counts segments. Since
+    # segments <= vertices, enforcing the segment cap here is conservative.
     "add_lines": "lines",
     "add_gsplats": "gsplats",
 }
+# Mesh is intentionally absent: its partition budget counts faces, and mesh has
+# no per-element texture or corresponding max_elements_per_node() capacity.
+_KNOWN_NON_BUDGET_SPREADS = {"link_attrs"}
 
 
 @dataclass(frozen=True)
@@ -66,18 +72,41 @@ def _resolve_integer(expression: ast.expr, constants: dict[str, int]) -> int:
     )
 
 
-def _partition_max_elements(expression: ast.expr) -> ast.expr:
+def _default_budget_expression() -> ast.Constant:
+    return ast.Constant(value=DEFAULT_MAX_ELEMENTS)
+
+
+def _partition_max_elements(expression: ast.expr) -> ast.expr | None:
+    if isinstance(expression, ast.Constant):
+        if expression.value is True:
+            return _default_budget_expression()
+        if expression.value is False or expression.value is None:
+            return None
     if isinstance(expression, ast.Call) and isinstance(expression.func, ast.Name):
         if expression.func.id == "dict":
+            if expression.args or any(
+                keyword.arg is None for keyword in expression.keywords
+            ):
+                raise AssertionError(
+                    "demo partition= values cannot use opaque dict inputs because the "
+                    "corpus-wide element-cap gate cannot silently miss their budget"
+                )
             for keyword in expression.keywords:
                 if keyword.arg == "max_elements":
                     return keyword.value
+            return _default_budget_expression()
     if isinstance(expression, ast.Dict):
         for key, value in zip(expression.keys, expression.values):
+            if key is None:
+                raise AssertionError(
+                    "demo partition= values cannot use dictionary unpacking because "
+                    "the corpus-wide element-cap gate cannot silently miss their budget"
+                )
             if isinstance(key, ast.Constant) and key.value == "max_elements":
                 return value
+        return _default_budget_expression()
     raise AssertionError(
-        "demo partition= values must spell max_elements inline so the corpus-wide "
+        "demo partition= values must be statically readable so the corpus-wide "
         "element-cap gate cannot silently miss their per-node budget"
     )
 
@@ -87,14 +116,56 @@ def authored_element_budgets(path: Path) -> list[AuthoredElementBudget]:
     constants = _module_integer_constants(tree)
     budgets: list[AuthoredElementBudget] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        if not isinstance(node, ast.Call):
+            continue
+        opaque_spreads = [
+            keyword.value
+            for keyword in node.keywords
+            if keyword.arg is None
+            and not (
+                isinstance(keyword.value, ast.Name)
+                and keyword.value.id in _KNOWN_NON_BUDGET_SPREADS
+            )
+        ]
+        if opaque_spreads:
+            relevant_call = (
+                isinstance(node.func, ast.Name) and node.func.id == "LuxarZarrCompiler"
+            ) or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in _GEOMETRY_BY_ADDER
+            )
+            if relevant_call:
+                raise AssertionError(
+                    "demo geometry and compiler calls cannot use ** keyword spreads "
+                    "because the corpus-wide element-cap gate cannot silently miss "
+                    "their budgets"
+                )
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        if isinstance(node.func, ast.Name) and node.func.id == "LuxarZarrCompiler":
+            budget_expression = keywords.get("auto_partition_max_elements")
+            if budget_expression is None or (
+                isinstance(budget_expression, ast.Constant)
+                and budget_expression.value is None
+            ):
+                continue
+            max_elements = _resolve_integer(budget_expression, constants)
+            for geometry_type in ("points", "gsplats"):
+                budgets.append(
+                    AuthoredElementBudget(
+                        path=path,
+                        line=node.lineno,
+                        geometry_type=geometry_type,
+                        max_elements=max_elements,
+                    )
+                )
+            continue
+        if not isinstance(node.func, ast.Attribute):
             continue
         geometry_type = _GEOMETRY_BY_ADDER.get(node.func.attr)
         if geometry_type is None:
             continue
-        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
-        budget_expression = keywords.get("auto_partition_max_elements")
-        if budget_expression is None and "partition" in keywords:
+        budget_expression = None
+        if "partition" in keywords:
             budget_expression = _partition_max_elements(keywords["partition"])
         if budget_expression is None:
             continue
@@ -135,7 +206,7 @@ def test_demo_authored_element_budgets_fit_the_viewer_floor() -> None:
     )
 
 
-def test_budget_discovery_covers_both_partition_spellings(tmp_path: Path) -> None:
+def test_budget_discovery_covers_partition_spellings(tmp_path: Path) -> None:
     demo = tmp_path / "demo_example.py"
     demo.write_text(
         """
@@ -143,7 +214,10 @@ POINT_BUDGET = 5_591_040
 scene.add_points('points', positions, partition=dict(max_elements=POINT_BUDGET))
 scene.add_gsplats('splats', centers, amplitudes, cholesky,
                   partition={'max_elements': 4_194_304})
-scene.add_lines('lines', vertices, auto_partition_max_elements=2_793_472)
+scene.add_lines('lines', vertices, widths=0.1, partition=True)
+scene.add_lines('no_partition', vertices, widths=0.1, partition=False)
+scene.add_points('default_dict', positions, partition=dict(rule='sah'))
+scene.add_points('default_literal', positions, partition={'rule': 'sah'})
 """,
         encoding="utf-8",
     )
@@ -153,8 +227,22 @@ scene.add_lines('lines', vertices, auto_partition_max_elements=2_793_472)
     ] == [
         ("points", 5_591_040),
         ("gsplats", 4_194_304),
-        ("lines", 2_793_472),
+        ("lines", DEFAULT_MAX_ELEMENTS),
+        ("points", DEFAULT_MAX_ELEMENTS),
+        ("points", DEFAULT_MAX_ELEMENTS),
     ]
+
+
+def test_budget_discovery_covers_compiler_auto_partition(tmp_path: Path) -> None:
+    demo = tmp_path / "demo_example.py"
+    demo.write_text(
+        "LuxarZarrCompiler('out', auto_partition_max_elements=1_000_000)\n",
+        encoding="utf-8",
+    )
+    assert [
+        (budget.geometry_type, budget.max_elements)
+        for budget in authored_element_budgets(demo)
+    ] == [("points", 1_000_000), ("gsplats", 1_000_000)]
 
 
 def test_budget_discovery_rejects_an_unreadable_partition(tmp_path: Path) -> None:
@@ -165,6 +253,29 @@ def test_budget_discovery_rejects_an_unreadable_partition(tmp_path: Path) -> Non
     )
     with pytest.raises(AssertionError, match="cannot silently miss"):
         authored_element_budgets(demo)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "scene.add_points('points', positions, **opts)\n",
+        "LuxarZarrCompiler('out', **opts)\n",
+    ],
+)
+def test_budget_discovery_rejects_keyword_spreads(tmp_path: Path, source: str) -> None:
+    demo = tmp_path / "demo_example.py"
+    demo.write_text(source, encoding="utf-8")
+    with pytest.raises(AssertionError, match="keyword spreads"):
+        authored_element_budgets(demo)
+
+
+def test_budget_discovery_allows_known_link_attribute_spreads(tmp_path: Path) -> None:
+    demo = tmp_path / "demo_example.py"
+    demo.write_text(
+        "scene.add_points('points', positions, **link_attrs)\n",
+        encoding="utf-8",
+    )
+    assert authored_element_budgets(demo) == []
 
 
 def test_over_cap_detection_is_strict_at_the_viewer_floor() -> None:
