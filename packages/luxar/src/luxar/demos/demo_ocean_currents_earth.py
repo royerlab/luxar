@@ -9,11 +9,10 @@ rather than from any hand-drawn arrows.
 
 Two of Luxar's four geometry types, at global scale:
 
-  * **Earth (Points)** — a **jittered Fibonacci sphere** sampled from the NASA
-    Blue Marble *land_shallow_topo* texture. The jitter matters: a bare Fibonacci
-    lattice is a *lattice*, and at radii ~ point spacing its spiral arms beat
-    against themselves into visible moire "worms" over land and sea alike.
-    Dithering each point by ~1 mean-spacing cell turns that structure into noise.
+  * **Earth (Mesh)** — a tiled UV sphere carrying the NASA Blue Marble
+    *land_shallow_topo* texture at its full 16384-pixel master width. Per-fragment
+    texture sampling keeps coastlines sharp without spending millions of points
+    on the planet backdrop.
   * **Currents (Lines)** — HYCOM surface velocities, RK4-integrated into
     **connected polylines** draped just above the globe, coloured deep-blue ->
     white by current speed with the tail fading out (per-vertex RGBA), so each
@@ -29,47 +28,39 @@ on-screen length and hands the speed information to *colour* instead — this is
 what produces the legible "Van Gogh" texture. Speed is sampled along the path and
 carried separately for that purpose.
 
-RENDERING NOTE — WHY `normal` AND NOT `additive`
-------------------------------------------------
-The lines use ``blending_mode="normal"``. Additive blending does not respect the
+RENDERING NOTE — WHY `luminous`
+-------------------------------
+The lines use ``blending_mode="luminous"``, and the distinction that matters is
+between ``luminous`` and plain ``additive`` — not between additive and
+``normal``, which is how this note originally read.
+
+``luminous`` is additive **and** depth-tested. So it keeps what the old ``normal``
+choice was protecting (the far-side network stays hidden behind the opaque globe)
+while gaining two things ``normal`` cannot give:
+
+* overlapping ribbons ACCUMULATE, which is informative rather than incidental — a
+  boundary current concentrates flow, so it gets brighter;
+* the result is order-INDEPENDENT. ``normal`` puts every ribbon in the viewer's
+  sorted transparent set, so what you see depends on getting depth order right
+  across 11M segments and the cloud shell; additive composition is commutative, so
+  that whole class of sorting artefact does not arise.
+
+The original note below is kept because its warning is still true of plain
+``additive``, which is a different mode:
+
+Additive blending does not respect the
 depth buffer, so with an additive line layer the currents on the **far side** of
 the globe show straight through the near side and appear painted across the
 continents. It looks exactly like a broken land mask and is not one.
 
-LEVEL OF DETAIL — WHY BOTH LAYERS ARE A PARTITION OF LOD LADDERS
------------------------------------------------------------------
-Each layer is a ``kind=partition`` of 16 per-tile ``kind=lod`` ladders (the
-"adaptive" topology), because the two problems here need different halves and
-neither half solves both. A single node of either layer overflows the viewer's
-element texture and gets its tail SILENTLY clamped (that is how #1957 erased
-the North Atlantic), which ``partition=`` fixes. But ``partition=`` does not
-bound RESIDENCY — every part is fetched and drawn and the GPU only
-frustum-culls, so at the opening whole-globe pose, where nothing is outside the
-frustum, all 19.44M elements stayed resident (#2155). Only the per-tile ladder
-bounds that, because a non-default level is cheap-attached with an
-``ensureLoaded`` thunk and never fetched until its tile needs it.
-
-Measured in-browser at the authored opening pose: **5.47M elements resident,
-down from 19.44M** — with 15 of 16 tiles per layer on their coarsest level and
-the one front-facing tile a level finer, which is the topology working as
-intended.
-
-The ladder is deliberately SHALLOW (``LOD_COMPRESSION = 2``). At 4 the numbers
-are much better (1.52M resident, 12.8x) and the opening shot is worse: the
-coarsest globe is 1/16 density and renders as a mottled shell of separable
-discs. This demo's opening frame is a full-screen globe, which is the framing
-that least tolerates a decimated surface, so the residency win was traded down
-for it. The COST of that choice is on disk — three levels at 1/2 steps sum to
-1.75x the finest, and the built scene is ~546 MB against ~290 MB for a flat
-build. ``LOD_COMPRESSION`` and ``LOD_LEVELS`` are the two constants to move if
-that balance should sit elsewhere.
-
-Coarse levels are FEWER WHOLE ELEMENTS, not merged geometry — the built-in
-``substitutive_lod=`` coarsens by synthesising gsplats, which is right for a
-density cloud and wrong here, where the ribbons ARE the picture. Keeping whole
-elements means each level has to carry the same apparent ink as the one it
-replaces: points get a ``sqrt`` radius (plus :data:`SHELL_SEAL_MARGIN`) and
-ribbons a linear width. See the ``LOD_LEVELS`` block for the derivations.
+RESIDENCY NOTE — WHY THE CURRENTS ARE PARTITION-OF-LOD
+------------------------------------------------------
+`partition=` bounds node size but not residency: every visible part is fetched
+and drawn, and at the opening whole-globe pose every current tile is in view.
+The current layer is therefore a `kind=partition` of per-tile `kind=lod`
+ladders. Each coarse level keeps fewer **whole ribbons** and widens them
+linearly, preserving the field's apparent ink without replacing the curves
+with synthetic geometry.
 
 KNOWN LIMITATION — NO RIBBONS POLEWARD OF 80 DEG
 ------------------------------------------------
@@ -114,16 +105,18 @@ from __future__ import annotations
 DEMO_META = {
     "key": "ocean_currents_earth",
     "title": "Ocean Currents of Earth",
-    "description": "HYCOM surface-current streamlines (Lines) over a NASA Blue Marble globe (Points).",
+    "description": "HYCOM surface-current streamlines (Lines) over a NASA Blue Marble globe (textured Mesh).",
     "category": "geoscience",
-    "geometry": "points+lines",
+    # "mixed": the globe is a textured Mesh and the currents are Lines. The
+    # closed vocabulary in registry.py has no "mesh+lines".
+    "geometry": "mixed",
     "requirements": {
         "download_mb": 72,
         "compute": "medium",
         "gpu": "none",
         "local_data": None,
     },
-    "caches": ["ocean_currents_earth"],
+    "caches": ["ocean_currents_earth", "blue_marble"],
     "outputs": ["ocean_currents_earth"],
     "citation": {
         "short": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble",
@@ -159,15 +152,13 @@ from luxar.demos import (
 )
 from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._globe_common import (
-    fibonacci_sphere,
-    sample_equirect,
+    Clouds,
+    blue_marble_basemap,
+    build_earth,
 )
 from luxar.demos._globe_common import lonlat_to_xyz as _lonlat_to_xyz
 from luxar.encoding import EncodingMode
-from luxar.typing_utils.constants import (
-    MAX_POINTS_PER_POINTS_NODE,
-    MAX_SEGMENTS_PER_LINES_NODE,
-)
+from luxar.typing_utils.constants import MAX_SEGMENTS_PER_LINES_NODE
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -194,12 +185,23 @@ BLUE_MARBLE_URL: Final = (
 R_EARTH_KM: Final = 6371.0
 RADIUS: Final = 100.0  # globe radius in scene units
 
-N_GLOBE: Final = 8_000_000  # jittered Fibonacci-sphere surface points
-GLOBE_RADII: Final = 0.098  # ~0.78x mean point spacing -> a sealed shell
+# The globe is a TEXTURED MESH. It was 8M points, and it had to be: a point
+# cloud resolves the Blue Marble at about one sample per point, so sealing a
+# shell that could show the coastlines needed millions. A UV sphere samples the
+# texture per FRAGMENT, so the vertex count only has to make the sphere read as
+# round — and the 8M-element budget goes back to the streamlines.
+GLOBE_LON: Final = 512
+GLOBE_LAT: Final = 256
+# 16384x8192 across two tiles, matching the earthquakes globe. Splitting is what
+# lifts the ceiling past the 16384 per-axis GPU limit, and it also keeps each tile
+# inside WebP's hard 16383 bound so the basemap can use the smaller codec.
+GLOBE_TEXTURE_WIDTH: Final = 16384
+GLOBE_TILES: Final = 2
 N_SEEDS: Final = 220_000  # streamlines
 N_STEPS: Final = 52  # advection steps per streamline (-> N_STEPS + 1 vertices)
 STEP_KM: Final = 14.0  # arc-length step -> ~730 km ribbons
 FIELD_STRIDE: Final = 2  # subsample the 1/12 deg grid for advection
+FLOW_LIFT: Final = 0.0015  # lift ribbons just clear of the textured globe
 LINE_WIDTH: Final = 0.026
 LINE_OPACITY: Final = 0.77
 LINE_INTENSITY: Final = 1.0
@@ -208,99 +210,14 @@ MIN_SEED_SPEED: Final = 0.04  # skip near-still water when seeding
 STALL_SPEED: Final = 0.02  # freeze a ribbon that runs out of current
 LAT_LIMIT: Final = 79.9  # HYCOM's grid stops at +/-80
 
-# -----------------------------------------------------------------------------
-# Partition-of-LOD residency budget (#2155)
-# -----------------------------------------------------------------------------
-#
-# Both layers are a `kind=partition` of per-tile `kind=lod` ladders — the
-# "adaptive" topology. Two separate problems make this the right shape, and
-# NEITHER half solves both:
-#
-# * A single node of either layer overflows the element texture. One Lines node
-#   holds at most MAX_SEGMENTS_PER_LINES_NODE (2,793,472) segments on a
-#   4096-class GPU and one Points node MAX_POINTS_PER_POINTS_NODE (5,591,040)
-#   points; the ribbons want 11,440,000 segments and the globe 8,000,000
-#   points. Overflow CLAMPS, and because geometry is stored in spatial order
-#   the lost tail is one contiguous lobe — that is exactly how #1957's missing
-#   North Atlantic wedge was produced. `partition=` alone fixes this.
-#
-# * `partition=` alone does NOT bound residency: every part is fetched and
-#   drawn and the GPU merely frustum-culls, so at the opening whole-globe pose
-#   — where nothing is outside the frustum — all 19.4M elements stayed
-#   resident (#2155). `substitutive_lod` is what makes detail view-dependent:
-#   a `kind=lod` group picks ONE child per frame from that tile's own projected
-#   size, and non-default levels are cheap-attached with an `ensureLoaded`
-#   thunk, so an off-screen or zoomed-out tile never fetches its fine data.
-#
-# The ladders are hand-built rather than requested with `substitutive_lod=`,
-# for two reasons. `partition=` and `substitutive_lod=` still do not compose in
-# the adder API (`core/group/adders/lines.py`), and — the substantive one — the
-# built-in substitutive axis coarsens by SYNTHESISING GSPLATS. That is right
-# for a density cloud and wrong here: at the opening whole-globe view the
-# ribbons ARE the picture, and replacing them with blobs would trade the
-# demo's whole reason for existing for the residency win. Coarse levels here
-# are FEWER WHOLE ELEMENTS, so a streamline still looks like a streamline.
-#
-# Keeping whole elements is only half of it — a decimated level also has to
-# carry the same apparent INK as the level it replaces, or every switch pops:
-#
-# * Points get a sqrt(1/density) radius. A shell of N points at radius r seals
-#   when r is about the mean spacing, and spacing on a fixed sphere goes as
-#   1/sqrt(N) — so thinning by K needs radius x sqrt(K) or the globe stops
-#   being opaque and you see through it to the far side.
-# * Ribbons get a LINEAR 1/density width. The line shader floors sub-pixel
-#   lines at 1.5px and then dims by pixelWidth/1.5, so ink goes as
-#   count x width — only that exponent holds the current field's apparent
-#   density constant across the ladder.
-LOD_LEVELS: Final = 3  # finest + 2 coarser
-#: Thinning between adjacent levels. 2, not 4, and that was MEASURED rather
-#: than chosen for the bigger number. At 4 the coarsest level is 1/16 density
-#: and the opening whole-globe view — where this demo spends its first
-#: impression and where every tile is at its coarsest — rendered as a visibly
-#: mottled shell of separable discs against main's smooth surface. The
-#: residency win at 4 (12.8x, measured in-browser) is not worth the demo's
-#: opening shot. At 2 the coarsest is 1/4 density, still a 4x residency cut,
-#: and the shell holds together.
+# Per-tile substitutive ladders bound opening-view residency while preserving
+# whole ribbons. A compression of 2 keeps the coarse field visually continuous;
+# larger values save more memory but make the opening globe visibly sparse.
+LOD_LEVELS: Final = 3
 LOD_COMPRESSION: Final = 2
 LOD_STREAM_CHUNK: Final = 20_000
+CURRENT_TILE_RIBBONS: Final = 13_750
 
-# Tile sizes. Both are chosen so a tile's FINEST level sits comfortably under
-# its element-texture cap (asserted in `check_tile_budget`), and so the two
-# layers get a comparable number of tiles — a tile is the unit of independent
-# LOD selection, so too few makes selection coarse-grained and too many
-# multiplies node count (tiles x LOD_LEVELS leaves per layer).
-GLOBE_TILE_POINTS: Final = 500_000  # 8.0M / 500k -> 16 tiles
-CURRENT_TILE_RIBBONS: Final = 13_750  # 220k / 13,750 -> 16 tiles
-
-#: Radius margin over the pure mean-spacing ``sqrt`` law on the coarse levels.
-#:
-#: The law is exact for an EVEN lattice. The subset is uniform-random (see
-#: :func:`level_subset` for why every alternative measured worse), and a
-#: Poisson subset leaves gaps well past the mean spacing — on the globe those
-#: gaps are holes you see the far side of the planet through. This is the one
-#: knob to turn if a coarse level ever looks porous, at the cost of a blurrier
-#: coarse shell, which is the trade LOD exists to make.
-SHELL_SEAL_MARGIN: Final = 1.3
-
-#: The coarsest globe level's point radius, in scene units.
-GLOBE_COARSEST_RADII: Final = (
-    GLOBE_RADII * SHELL_SEAL_MARGIN * float(LOD_COMPRESSION ** (LOD_LEVELS - 1)) ** 0.5
-)
-
-#: Fractional radial lift of the ribbons above the globe shell.
-#:
-#: Derived, not tuned. The globe's coarsest level inflates its point radius to
-#: :data:`GLOBE_COARSEST_RADII`, which reaches much further off the sphere than
-#: the finest level does. A lift tuned against the FINEST radius (the old
-#: 0.0015 = 0.15 scene units, against a 0.098 radius) is swallowed the moment a
-#: tile switches down, and the ribbons over that tile vanish into the globe —
-#: the exact "vanishing layer" class this topology exists to remove,
-#: reintroduced by a constant. Anchoring on the coarsest radius keeps the
-#: clearance correct under any change of ladder depth.
-#:
-#: 1.4x that radius: enough to ride clear of the shell at every level, small
-#: enough (0.36 of 100 scene units) to still read as draped ON the surface.
-FLOW_LIFT: Final = 1.4 * GLOBE_COARSEST_RADII / RADIUS
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -527,65 +444,18 @@ def polyline_segment_indices(n_paths: int, n_vertices: int) -> np.ndarray:
 def lod_counts(
     n: int, levels: int = LOD_LEVELS, compression: int = LOD_COMPRESSION
 ) -> list:
-    """Element counts for one tile's ladder, COARSEST first, finest last.
-
-    A geometric ladder: the finest level is the whole tile and each step
-    coarser divides by ``compression``. Counts are de-duplicated and floored at
-    1, so a tile too small to support the full depth collapses to a shorter
-    ladder instead of emitting repeated or empty levels (which the viewer would
-    cross-fade between at zero visual benefit).
-
-    Args:
-        n: Elements in this tile (points, or whole ribbons).
-        levels: Ladder depth including the finest level.
-        compression: Thinning factor between adjacent levels.
-
-    Returns:
-        Ascending counts, coarsest→finest, always ending at exactly ``n``.
-
-    Raises:
-        ValueError: ``n`` < 1, ``levels`` < 1, or ``compression`` < 2.
-    """
+    """Return de-duplicated coarse-to-fine element counts ending at ``n``."""
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
     if levels < 1:
         raise ValueError(f"levels must be >= 1, got {levels}")
     if compression < 2:
         raise ValueError(f"compression must be >= 2, got {compression}")
-    counts = [max(1, n // compression**k) for k in range(levels)]
-    return sorted(set(counts))
+    return sorted({max(1, n // compression**level) for level in range(levels)})
 
 
 def level_subset(n: int, count: int, seed: int) -> np.ndarray:
-    """A deterministic uniform-random subset of ``count`` of ``n`` elements.
-
-    Random rather than a stride: the globe is a golden-angle Fibonacci spiral
-    and the ribbons are seeded on one, so every k-th element resonates with the
-    spiral and decimates into visible arms rather than into a thinner field.
-
-    Random rather than ``stratified_grid_order`` (the built-in
-    ``spatial-uniform`` LOD sampler) — MEASURED, against the intuition. That
-    sampler walks a doubling grid over the BOUNDING BOX, which is right for a
-    volumetric cloud and wrong for a hollow shell: a cubic grid cuts a sphere
-    into cells of very unequal shell area, so its prefix is uniform per CELL
-    and lumpy per unit surface. On a 4000-point sphere thinned to 250, its
-    worst nearest-neighbour gap was 34.3 against random's 27.2 — worse than
-    the thing it was supposed to improve on
-    (``test_level_subset_beats_the_bounding_box_stratified_sampler``).
-
-    What random costs is a Poisson tail: gaps a good deal wider than the mean
-    spacing, which is why the coarse radius carries
-    :data:`SHELL_SEAL_MARGIN` over the pure mean-spacing ``sqrt`` law.
-
-    Args:
-        n: Population size.
-        count: How many to keep; ``count >= n`` returns everything.
-        seed: Per-(layer, tile, level) seed — see :func:`level_seed`.
-
-    Returns:
-        Sorted int64 indices into ``[0, n)``. Sorting is deterministic and
-        cheap; the compiler establishes the stored Hilbert chunk order.
-    """
+    """Return a deterministic sorted random subset of ``count`` elements."""
     if count >= n:
         return np.arange(n, dtype=np.int64)
     rng = np.random.default_rng(seed)
@@ -593,54 +463,12 @@ def level_subset(n: int, count: int, seed: int) -> np.ndarray:
 
 
 def level_seed(layer: int, tile: int, level: int) -> int:
-    """A collision-free RNG seed for one (layer, tile, level) subset.
-
-    Mixing the three coordinates into disjoint decades rather than adding them
-    (``1000 + tile`` and friends) keeps the two layers' tiles from drawing the
-    SAME subset pattern, which would correlate where the globe thins with where
-    the ribbons thin and make the decimation legible as a texture.
-    """
+    """Return a collision-free seed for one layer/tile/level subset."""
     return 1_000_003 * layer + 1_009 * tile + level
 
 
-def seal_margin(count: int, n_finest: int) -> float:
-    """Radius multiplier that keeps a decimated shell sealed at ``count``.
-
-    Spacing on a fixed sphere goes as ``1/sqrt(N)``, so thinning by ``K`` needs
-    radius ``x sqrt(K)`` just to hold the mean spacing — and
-    :data:`SHELL_SEAL_MARGIN` on top of that to cover the Poisson gaps a random
-    subset leaves past the mean. The FINEST level is left exactly alone: it is
-    the whole tile, it is already an even Fibonacci lattice, and inflating it
-    would blur the one level that is supposed to be sharp.
-
-    Args:
-        count: Elements in this level.
-        n_finest: Elements in the tile's finest level.
-
-    Returns:
-        A multiplier on ``GLOBE_RADII``; exactly 1.0 at the finest level.
-    """
-    if count >= n_finest:
-        return 1.0
-    return SHELL_SEAL_MARGIN * (n_finest / count) ** 0.5
-
-
 def check_tile_budget(geometry: str, largest_tile: int, cap: int) -> None:
-    """Fail the build when a tile's finest level would be clamped.
-
-    The whole point of tiling here is to stay under the per-node element
-    texture bound; if a raise of ``N_GLOBE`` / ``N_SEEDS`` pushes a tile back
-    over it the symptom in the viewer is a silently missing wedge, so it is
-    worth an exception at authoring time instead.
-
-    Args:
-        geometry: ``"points"`` or ``"lines"``, for the message.
-        largest_tile: Elements in the biggest tile's FINEST level.
-        cap: The conservative 4096-class capacity for that geometry.
-
-    Raises:
-        ValueError: The largest tile exceeds ``cap``.
-    """
+    """Reject a tile whose finest level would exceed the element-texture cap."""
     if largest_tile > cap:
         raise ValueError(
             f"largest {geometry} tile holds {largest_tile:,} elements, over the "
@@ -759,99 +587,10 @@ def download_sources() -> tuple:
 
 
 def tile_coverage(counts: list, n_tiles: int) -> list:
-    """Coverage thresholds for one tile's ladder, on the anchor its shape implies.
-
-    A REAL tiling (>= 2 parts) uses the fills-screen anchor: the switching
-    group's bbox is one tile, so its projected rect is intrinsically a fraction
-    of the whole object's and a whole-object anchor would make every tile pick
-    its finest level while the globe is merely full-frame.
-
-    A ONE-PART partition is not a tiling — that part's bbox IS the whole object
-    — so it takes the plain whole-object anchor instead. Production always
-    yields many tiles, but the writers are called with small inputs in tests and
-    could be called with a reduced ``N_GLOBE``; getting this wrong holds the
-    finest level back until the object OVERFILLS the viewport (the #1361 blur).
-
-    Args:
-        counts: Per-level element counts, coarsest→finest.
-        n_tiles: Parts in the enclosing ``kind=partition``.
-
-    Returns:
-        Ascending coverage thresholds, one per level.
-    """
+    """Return LOD coverage thresholds for a tiled or whole-object anchor."""
     if n_tiles < 2:
         return coverage_fractions(counts)
     return partitioned_coverage_fractions(counts)
-
-
-def write_globe_parts(
-    scene,
-    gpos: np.ndarray,
-    gcolors: np.ndarray,
-    tile_size: int = GLOBE_TILE_POINTS,
-) -> tuple:
-    """Write the globe as a ``kind=partition`` of per-tile ``kind=lod`` ladders.
-
-    Coarse levels are fewer whole points with a ``sqrt`` -inflated radius, so
-    the shell stays sealed at every level (see the ladder note above the
-    ``LOD_LEVELS`` constants).
-
-    Args:
-        scene: The scene root.
-        gpos: ``(N, 3)`` globe point positions.
-        gcolors: ``(N, 3)`` per-point colors.
-
-    Returns:
-        ``(n_tiles, coarsest_total)`` — tiles written, and the element count
-        resident when every tile sits on its coarsest level.
-    """
-    tree = spatial_bsp_tree(gpos, tile_size, rule="median")
-    parts = bsp_leaf_parts(tree)
-    check_tile_budget(
-        "points", max(int(p.size) for p in parts), MAX_POINTS_PER_POINTS_NODE
-    )
-    wrapper = scene.add_partition_group(
-        "earth",
-        display_type="points",
-        max_elements=tile_size,
-        # `opaque`, NOT `normal` — the globe is the BACKDROP. Opaque is the only
-        # mode that leaves the viewer's sorted transparent set and the only one
-        # that unconditionally depth-writes, so it is the only one that reliably
-        # composites *under* the translucent ribbons drawn in front of it (see
-        # `BlendingMode`'s docstring). It rides on the WRAPPER because the
-        # wrapper is the node marked `layer=True`, and so the one the Layers
-        # panel reads to seed this layer's controls.
-        blending_mode="opaque",
-        opacity=1.0,
-        layer=True,
-        position_bounds=position_bounds_from_array(gpos),
-        bsp_tree=tree.to_serializable(),
-    )
-    coarsest = 0
-    for tile, idx in enumerate(parts):
-        counts = lod_counts(int(idx.size))
-        lod = wrapper.add_lod_group(f"part_{tile}", selector="screen-area")
-        coverage = tile_coverage(counts, len(parts))
-        coarsest += counts[0]
-        for level, (count, cover) in enumerate(zip(counts, coverage)):
-            sub = idx[level_subset(int(idx.size), count, level_seed(0, tile, level))]
-            lod.add_points(
-                f"child_{level}",
-                positions=gpos[sub],
-                colors=gcolors[sub],
-                radii=GLOBE_RADII * seal_margin(count, int(idx.size)),
-                coverage_fraction=float(cover),
-                # A geometric `stream:` ladder gives a fast first paint where a
-                # stratified sampler would dump the whole level into one final
-                # commit.
-                additive_lod=level_additive_lod(
-                    dict(counts=f"stream:{LOD_STREAM_CHUNK}", method="random", seed=0),
-                    level_n=count,
-                    compression_factor=LOD_COMPRESSION,
-                    is_coarsest=(level == 0),
-                ),
-            )
-    return len(parts), coarsest
 
 
 def write_current_parts(
@@ -862,41 +601,21 @@ def write_current_parts(
     n_vertices: int,
     tile_size: int = CURRENT_TILE_RIBBONS,
 ) -> tuple:
-    """Write the ribbons as a ``kind=partition`` of per-tile ``kind=lod`` ladders.
-
-    Tiled on ribbon CENTROIDS so each ribbon stays atomic — a ribbon split
-    across two tiles would be two half-ribbons, and a prefix of an arbitrarily
-    ordered index buffer is not a coarser curve. Coarse levels are fewer whole
-    ribbons at a LINEARLY widened stroke, which is what holds the field's
-    apparent ink constant across a switch.
-
-    Args:
-        scene: The scene root.
-        vertices: ``(n_paths * n_vertices, 3)`` ribbon vertices, path-major.
-        colors: ``(n_paths * n_vertices, 4)`` per-vertex RGBA.
-        n_paths: Number of ribbons.
-        n_vertices: Vertices per ribbon.
-
-    Returns:
-        ``(n_tiles, coarsest_segments)`` — tiles written, and the segment count
-        resident when every tile sits on its coarsest level.
-    """
+    """Write ribbons as a partition of per-tile substitutive LOD ladders."""
     blocks = vertices.reshape(n_paths, n_vertices, 3)
     centroids = blocks.mean(axis=1)
     tree = spatial_bsp_tree(centroids, tile_size, rule="median")
     parts = bsp_leaf_parts(tree)
     check_tile_budget(
         "lines",
-        max(int(p.size) for p in parts) * (n_vertices - 1),
+        max(int(part.size) for part in parts) * (n_vertices - 1),
         MAX_SEGMENTS_PER_LINES_NODE,
     )
     wrapper = scene.add_partition_group(
         "currents",
         display_type="lines",
         max_elements=tile_size * (n_vertices - 1),
-        # `normal`, NOT `additive` — see the module docstring: additive ignores
-        # depth, so far-side currents bleed across the continents.
-        blending_mode="normal",
+        blending_mode="luminous",
         opacity=LINE_OPACITY,
         intensity=LINE_INTENSITY,
         layer=True,
@@ -937,11 +656,25 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
     with asection("Loading surface currents"):
         field = load_hycom_surface(hycom_path)
 
-    with asection(f"Building globe ({N_GLOBE:,} points)"):
-        texture = np.asarray(image_module.open(marble_path).convert("RGB"))
-        glon, glat = fibonacci_sphere(N_GLOBE)
-        gpos = lonlat_to_xyz(glon, glat, np.zeros(N_GLOBE, dtype=np.float64))
-        gcolors = sample_equirect(texture, glon, glat)
+    with asection(f"Building globe mesh ({GLOBE_LON}x{GLOBE_LAT} quads)"):
+        # The SHARED hi-res basemap, not `marble_path`'s 2048x1024 image. That
+        # image was sized for the point cloud, which resolved roughly one texel per
+        # point and so could not use more; a per-fragment mesh makes the basemap the
+        # only limit on how sharp a coastline looks. `marble_path` is still
+        # downloaded by `download_sources` (it is part of the demo's declared
+        # provenance) and is used as the FALLBACK when the larger master is
+        # unavailable.
+        try:
+            basemap, basemap_w, basemap_h = blue_marble_basemap(
+                width=GLOBE_TEXTURE_WIDTH
+            )
+            tiles = GLOBE_TILES
+        except Exception as error:
+            aprint(f"⚠️  Hi-res basemap unavailable ({error}); using the 2048 image")
+            basemap = np.asarray(image_module.open(marble_path).convert("RGB"))
+            basemap_h, basemap_w = basemap.shape[:2]
+            tiles = 1
+        aprint(f"globe basemap: {basemap_w}x{basemap_h} across {tiles} tile(s)")
 
     with asection(f"Advecting {N_SEEDS:,} streamlines x {N_STEPS} steps"):
         seed_lon, seed_lat = seed_ocean_points(field, N_SEEDS)
@@ -968,8 +701,10 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
         taper = np.linspace(0.15, 1.0, n_vertices, dtype=np.float32) ** 1.5
         alpha = np.tile(taper, (n_paths, 1)).ravel()
         colors = np.column_stack([rgb, alpha]).astype(np.float32)
-        n_segments = n_paths * (n_vertices - 1)
-        aprint(f"{n_paths:,} ribbons, {n_segments:,} segments, {total:,} vertices")
+        aprint(
+            f"{n_paths:,} ribbons, {n_paths * (n_vertices - 1):,} segments, "
+            f"{total:,} vertices"
+        )
 
     with asection("Writing scene"):
         dims = Dimensions(
@@ -993,23 +728,64 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                     # white the fastest currents are supposed to reach.
                     tone_mapping="None",
                     camera=globe_camera(-84.0, 25.0),
+                    # Turntable about the SOUTH-NORTH axis. Orbit auto-rotation spins
+                    # azimuthally about the controls' up vector, so pinning up to
+                    # +y is what makes this a planetary rotation rather than a
+                    # tumble: `lonlat_to_xyz` puts the north pole on +y.
+                    auto_rotate=True,
+                    auto_rotate_speed=0.35,
                 ),
             )
             scene.attrs["title"] = "Ocean Currents of Earth — HYCOM surface circulation"
             scene.attrs[BUILDER_FINGERPRINT_ATTR] = FINGERPRINT
-            n_globe_tiles, globe_coarsest = write_globe_parts(scene, gpos, gcolors)
+            # ONE call: basemap tiles + the thin cloud deck. Shared with the
+            # other three Earth demos so they cannot drift apart.
+            build_earth(
+                scene,
+                "earth",
+                radius=RADIUS,
+                n_lon=GLOBE_LON,
+                n_lat=GLOBE_LAT,
+                texture_width=GLOBE_TEXTURE_WIDTH,
+                tiles=GLOBE_TILES,
+                basemap=basemap,
+                # UNLIT, unlike the earthquakes globe, and the difference is the
+                # point of the arm existing. This basemap is a REFERENCE for the
+                # current speeds drawn over it: a view-anchored diffuse key would
+                # darken the limb as the camera moved, so the same ocean would read
+                # as a different colour depending on where you were looking from.
+                # tone_mapping="None" is pinned for the same reason (see
+                # tests/test_demos_tone_mapping_policy.py) — the two only work as a
+                # pair.
+                shading="none",
+                # THIN, because the ribbons are the data and they are drawn at
+                # FLOW_LIFT (0.0015) while the shell sits at 0.012 — in front of
+                # them. At this strength it reads as atmosphere over the map rather
+                # than as an occluder of the currents.
+                # A STRONGER deck than the other two data globes, because this
+                # scene's foreground is by far the brightest: the current ribbons
+                # are `luminous`, so overlapping streamlines ACCUMULATE and a
+                # boundary current saturates. At the shared 0.45/1.6 the clouds
+                # were there and unreadable. Cloud strength is not portable
+                # between demos for the same reason exposure is not — it is
+                # relative to whatever is drawn over it.
+                clouds=Clouds(strength=0.65, gamma=1.9, intensity=2.4),
+                # `opaque` is the mesh default and the right one here: the globe is
+                # the BACKDROP. It is the only mode that leaves the viewer's sorted
+                # transparent set and the only one that unconditionally depth-writes,
+                # so it is the only one that reliably composites *under* the
+                # translucent ribbons in front of it.
+                blending_mode="opaque",
+                opacity=1.0,
+                layer=True,
+            )
             n_current_tiles, current_coarsest = write_current_parts(
                 scene, vertices, colors, n_paths, n_vertices
             )
             aprint(
-                f"earth: {n_globe_tiles} tiles x {LOD_LEVELS} levels; "
-                f"currents: {n_current_tiles} tiles x {LOD_LEVELS} levels"
-            )
-            aprint(
-                f"resident with every tile at its coarsest level: "
-                f"{globe_coarsest + current_coarsest:,} elements "
-                f"({globe_coarsest:,} points + {current_coarsest:,} segments), "
-                f"down from {N_GLOBE + n_paths * (n_vertices - 1):,}"
+                f"currents: {n_current_tiles} tiles x {LOD_LEVELS} levels; "
+                f"{current_coarsest:,} segments resident at the coarsest levels, "
+                f"down from {n_paths * (n_vertices - 1):,}"
             )
             scene.add_text(
                 "Ocean Currents of Earth",

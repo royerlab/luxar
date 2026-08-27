@@ -72,7 +72,7 @@ import * as zarr from '../zarr';
 import { MAX_MESH_VERTICES, MESH_DECODE_BUDGET_BYTES } from '../../config/constants';
 import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
 import { LoaderError, classifyLoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
-import type { MeshMetadata } from '../../types/mesh';
+import type { MeshMetadata, MeshTextureEncoding } from '../../types/mesh';
 import type { EncodingName } from '../../types/format-contract';
 
 /**
@@ -94,6 +94,13 @@ export interface MeshArrayHandles {
   normals?: zarr.Array<zarr.DataType, zarr.Readable>;
   colors?: zarr.Array<zarr.DataType, zarr.Readable>;
   scalars?: zarr.Array<zarr.DataType, zarr.Readable>;
+  uvs?: zarr.Array<zarr.DataType, zarr.Readable>;
+  /**
+   * The texture payload. The one handle here that is NOT per-vertex, which is
+   * why it is excluded from every `nVertices`-shaped cross-check below and
+   * charged against the budget by its own declared dimensions instead.
+   */
+  texture?: zarr.Array<zarr.DataType, zarr.Readable>;
   labelOffsets?: zarr.Array<zarr.DataType, zarr.Readable>;
   labelBytes?: zarr.Array<zarr.DataType, zarr.Readable>;
   imageLabelOffsets?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -116,6 +123,8 @@ export const MESH_ARRAY_NAMES: Record<keyof MeshArrayHandles, string> = {
   normals: 'normals',
   colors: 'colors',
   scalars: 'scalars',
+  uvs: 'uvs',
+  texture: 'texture',
   labelOffsets: 'label_offsets',
   labelBytes: 'label_bytes',
   imageLabelOffsets: 'image_label_offsets',
@@ -179,6 +188,17 @@ export interface MeshPreflightResult {
    * against that same budget — not instead of it.
    */
   accountedBytes: number;
+  /**
+   * The validated texture declaration, when the node has a texture.
+   *
+   * A production consumer, like `accountedBytes` and unlike the two
+   * observation-only fields above: the loader decodes and Stage-2-checks against
+   * THESE numbers rather than re-reading `attrs.texture_*`. Re-reading would put a
+   * second, unvalidated copy of the load-bearing dimensions in the one place that
+   * allocates from them — the same "re-deriving the accounting" mistake that
+   * bypassed the byte budget four times.
+   */
+  texture?: TextureDeclaration;
 }
 
 /**
@@ -597,6 +617,136 @@ const UNENCODED_COLOR_DTYPES = new Set([
   '=f4',
 ]);
 
+/**
+ * The texture encodings this loader can decode, and which decode path each takes.
+ *
+ * Closed for the same reason {@link ENCODING_BUDGET_KIND} is closed: an
+ * unrecognised value must be a REJECTION, never a fall-through to "probably an
+ * image". The two arms allocate differently — `raw` materializes
+ * `h * w * c` values through the decoder, while a codec arm hands the bytes to
+ * `createImageBitmap` and gets back a 4-channel 8-bit surface whatever the source
+ * stored — so guessing wrong means charging the wrong number against the ceiling.
+ */
+export const TEXTURE_DECODE_KIND: Record<MeshTextureEncoding, 'raw' | 'codec'> = {
+  raw: 'raw',
+  png: 'codec',
+  webp: 'codec',
+  jpeg: 'codec',
+};
+
+/**
+ * Per-axis pixel ceiling for a mesh texture.
+ *
+ * The byte budget already refuses anything whose *area* is large, so this exists
+ * for the shape the byte budget cannot see: a `100000 x 2` texture is 800 KB and
+ * passes every accounting here, then fails to upload because it exceeds
+ * `MAX_TEXTURE_SIZE` on every real GPU. THREE.js responds by warning and
+ * clamping, so the mesh renders with a resampled or missing texture and nothing
+ * in the load path says why.
+ *
+ * 16384 is the limit on current desktop hardware. Deliberately NOT probed from
+ * the live context: the preflight runs before any renderer is in scope, and a
+ * device-dependent admission decision would make a store load on one machine and
+ * fail on another, which is worse than one honest fixed ceiling. A texture near
+ * this cap is refused by the byte budget anyway unless it is a thin strip.
+ *
+ * MIRROR: `MAX_MESH_TEXTURE_SIZE` in `luxar/validation/base.py`.
+ */
+export const MAX_MESH_TEXTURE_SIZE = 16384;
+
+/** The validated texture declaration, or `null` when the node has no texture. */
+export interface TextureDeclaration {
+  encoding: MeshTextureEncoding;
+  width: number;
+  height: number;
+  channels: number;
+  /** Which decode path {@link TEXTURE_DECODE_KIND} assigns this encoding. */
+  decode: 'raw' | 'codec';
+}
+
+/**
+ * Validate the declared texture attrs, BEFORE anything computes with them.
+ *
+ * The ordering is the whole point of this being a separate function, so it is
+ * worth stating plainly: `texture_width`/`texture_height`/`texture_channels` are
+ * the *only* bound on an encoded texture's decode, because a codec payload's
+ * stored size says nothing about what it expands to. A 200 KB JPEG declaring
+ * `30000 x 30000` expands to 3.6 GB.
+ *
+ * So these numbers are load-bearing, and a budget that computes with them before
+ * checking them is not a budget. `NaN * 4 > BUDGET` is `false`; so is
+ * `-1 * 4 > BUDGET`. Either would ADMIT the node — the precise failure mode
+ * {@link parseDtype}'s docstring calls "a budget that admits everything", reached
+ * by a different route. Every field is therefore checked to be a positive
+ * integer here, and the caller may only do arithmetic on what this returns.
+ *
+ * That last clause is enforced by DATA FLOW, not by convention, which is worth
+ * stating because it is the part that survives future edits: the budget's texture
+ * term reads {@link TextureDeclaration}, and the only way to obtain one is to call
+ * this. Moving the call after the accounting does not produce a subtly weaker
+ * check, it produces a compile error. A comment asking the next author to
+ * preserve an ordering would not.
+ */
+function resolveTextureDeclaration(path: string, attrs: MeshMetadata): TextureDeclaration | null {
+  if (!attrs.has_texture) return null;
+
+  const encoding = attrs.texture_encoding;
+  if (typeof encoding !== 'string' || !Object.hasOwn(TEXTURE_DECODE_KIND, encoding)) {
+    rejectMesh(
+      path,
+      `has_texture is set but texture_encoding is ${JSON.stringify(encoding)}; ` +
+        `expected one of ${Object.keys(TEXTURE_DECODE_KIND).join(', ')}. The decode path ` +
+        'and the byte accounting both depend on it, so it cannot be guessed.'
+    );
+  }
+
+  const dims: [string, unknown][] = [
+    ['texture_width', attrs.texture_width],
+    ['texture_height', attrs.texture_height],
+    ['texture_channels', attrs.texture_channels],
+  ];
+  for (const [name, value] of dims) {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+      rejectMesh(
+        path,
+        `${name} is ${JSON.stringify(value)}; a positive integer is required. The ` +
+          'decoded texture surface is charged against the per-node byte budget from ' +
+          'these three numbers — for an encoded texture they are the only bound on ' +
+          'what it expands to — so a non-integer or negative value would make the ' +
+          'budget comparison pass and admit an unbounded decode.'
+      );
+    }
+  }
+  const width = attrs.texture_width as number;
+  const height = attrs.texture_height as number;
+  const channels = attrs.texture_channels as number;
+
+  if (channels !== 1 && channels !== 3 && channels !== 4) {
+    rejectMesh(
+      path,
+      `texture_channels is ${channels}; must be 1 (luminance), 3 (RGB) or 4 (RGBA). ` +
+        'Any other count has no defined mapping onto a GPU texture format.'
+    );
+  }
+  if (width > MAX_MESH_TEXTURE_SIZE || height > MAX_MESH_TEXTURE_SIZE) {
+    rejectMesh(
+      path,
+      `texture is ${width}x${height}, over the ${MAX_MESH_TEXTURE_SIZE} per-axis ` +
+        'limit. A texture larger than the GPU maximum on either axis is silently ' +
+        'clamped at upload, so the mesh would render with the wrong image and no ' +
+        'diagnostic. Resample it.'
+    );
+  }
+
+  return {
+    encoding: encoding as MeshTextureEncoding,
+    width,
+    height,
+    channels,
+    decode: TEXTURE_DECODE_KIND[encoding as MeshTextureEncoding],
+  };
+}
+
 /** Human-readable byte count for error messages. */
 function mib(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
@@ -677,6 +827,11 @@ export async function preflightMesh(
 
   // --- (b) byte budget -----------------------------------------------------
   //
+  // The texture declaration is resolved FIRST, before a single byte is counted:
+  // its three dimension attrs are the only bound on an encoded texture's decode,
+  // and computing with an unchecked one silently admits the node (see
+  // `resolveTextureDeclaration`).
+  //
   // TWO terms per array, because the loader allocates twice over: it fetches the
   // stored bytes, and then the decoder materializes the LOGICAL values, and on the
   // admission path those coexist.
@@ -696,6 +851,7 @@ export async function preflightMesh(
   // logically uint32 but the INDEX encoder narrows it to the smallest unsigned dtype
   // that fits, while an external int64 store costs 8 bytes per index — so a
   // canonical 4 would be wrong in both directions.
+  const texture = resolveTextureDeclaration(path, attrs);
 
   // The running sum over arrays, WITHOUT the max-chunk term — that term is folded
   // in once, below, to produce `peakBytes` (the quantity actually compared against
@@ -804,6 +960,28 @@ export async function preflightMesh(
       );
     }
   }
+  // The texture's DECODED SURFACE, charged only on the codec arm — and the
+  // asymmetry is the interesting part rather than an oversight.
+  //
+  // On the `raw` arm the loop above already charged it: `logicalLayout` reads the
+  // `(h, w, c)` shape, so `count * DECODED_BYTES_PER_VALUE` is exactly the
+  // materialized surface (an over-estimate for a uint8 texture kept native, never
+  // an under-estimate). Adding a second term there would double-charge and could
+  // FALSELY REJECT a legitimate texture, which is the failure mode this file's
+  // `array_ref` comment warns about in the other direction.
+  //
+  // On a codec arm it charged `n * 4` for an `(n,)` byte array — a number with no
+  // relationship at all to what the image expands to. That is the decompression
+  // bomb: the viewer loads arbitrary `?src=` URLs, and a 200 KB JPEG is admitted
+  // by any stored-size accounting while `createImageBitmap` allocates gigabytes.
+  //
+  // Charged at 4 bytes per pixel regardless of `channels`, because an `ImageBitmap`
+  // is 4-channel 8-bit whatever the source stored — a 1-channel PNG still costs
+  // `w * h * 4`. Using the declared channel count here would under-charge by 4x.
+  if (texture?.decode === 'codec') {
+    arraysBytes += texture.width * texture.height * 4;
+  }
+
   const peakBytes = arraysBytes + maxChunkBytes;
   if (peakBytes > MESH_DECODE_BUDGET_BYTES) {
     rejectMesh(
@@ -878,6 +1056,8 @@ export async function preflightMesh(
     ['has_normals', attrs.has_normals, [arrays.normals] as const],
     ['has_colors', attrs.has_colors, [arrays.colors] as const],
     ['has_scalars', attrs.has_scalars, [arrays.scalars] as const],
+    ['has_uvs', attrs.has_uvs, [arrays.uvs] as const],
+    ['has_texture', attrs.has_texture, [arrays.texture] as const],
     ['has_labels', attrs.has_labels, [arrays.labelOffsets, arrays.labelBytes] as const],
     [
       'has_image_labels',
@@ -913,6 +1093,55 @@ export async function preflightMesh(
     }
   }
   if (arrays.scalars) checkLayout('scalars', arrays.scalars, nVertices, [1]);
+  if (arrays.uvs) {
+    checkLayout(
+      'uvs',
+      arrays.uvs,
+      nVertices,
+      [2],
+      'A texture coordinate is (u, v) per vertex; any other width would sample ' +
+        'the wrong texel for every vertex after the first.'
+    );
+  }
+
+  // `uvs` and `texture` must arrive together. The writer refuses either alone, so
+  // this is not a state Luxar can produce — but a third-party store can, and each
+  // half alone fails SILENTLY at render: UVs with no texture bind a per-vertex
+  // attribute nothing samples, and a texture with no UVs samples one arbitrary
+  // texel across the whole surface. Both look like a rendering bug rather than a
+  // malformed store, which is exactly the case for catching it here.
+  if (attrs.has_uvs !== attrs.has_texture) {
+    rejectMesh(
+      path,
+      `has_uvs is ${String(attrs.has_uvs)} but has_texture is ` +
+        `${String(attrs.has_texture)}; a texture and its coordinates are only ` +
+        'meaningful together. Either alone renders something wrong rather than ' +
+        'failing, so it is refused at load.'
+    );
+  }
+
+  // A raw texture's array must actually hold the surface its attrs declare.
+  // Checked against the LOGICAL layout for the same reason every other array is:
+  // a quantized HDR texture stores u16 codes whose shape is its own.
+  //
+  // Only the raw arm can be checked here — a codec payload's stored length says
+  // nothing about its decoded size, which is precisely why the declared dims are
+  // load-bearing. Its verification is necessarily Stage 2, against the dimensions
+  // `createImageBitmap` actually reports (see `mesh-whole-node-loader.ts`).
+  if (texture && arrays.texture && texture.decode === 'raw') {
+    const layout = logicalLayout(arrays.texture);
+    const expected = texture.height * texture.width * texture.channels;
+    if (layout === null || layout.count !== expected) {
+      rejectMesh(
+        path,
+        `texture declares ${texture.width}x${texture.height}x${texture.channels} ` +
+          `(${expected.toLocaleString()} values) but its array describes ` +
+          `${layout === null ? 'an unusable shape' : layout.count.toLocaleString() + ' values'}. ` +
+          'The declared dimensions are what the byte budget and the upload both ' +
+          'use, so they must match the data.'
+      );
+    }
+  }
 
   // --- (d) normal_dims well-formedness ------------------------------------
   let normalDims: number[] | undefined;
@@ -941,5 +1170,13 @@ export async function preflightMesh(
     normalDims = [...dims];
   }
 
-  return { nVertices, nFaces, ndim, colorComponents, normalDims, accountedBytes: peakBytes };
+  return {
+    nVertices,
+    nFaces,
+    ndim,
+    colorComponents,
+    normalDims,
+    accountedBytes: peakBytes,
+    texture: texture ?? undefined,
+  };
 }

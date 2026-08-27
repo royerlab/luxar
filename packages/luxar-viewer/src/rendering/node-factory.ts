@@ -119,10 +119,14 @@ const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
   mesh: {
     build: (obj, pickId) => {
       const attrs = (obj.userData?.attrs ?? {}) as MeshMetadata;
+      const visual = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+      const baseColorTexture = (visual as THREE.ShaderMaterial | undefined)?.uniforms?.uBaseColorTex
+        ?.value as THREE.Texture | undefined;
       return materialManager.createMeshPickingMaterial({
         nodeId: pickId,
         opacity: attrs.opacity ?? 1.0,
         alphaCutoff: attrs.alpha_cutoff,
+        baseColorTexture,
       });
     },
     afterRegister: syncMeshPickMaterialToVisual,

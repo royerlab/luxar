@@ -40,6 +40,7 @@
 import * as THREE from 'three';
 import {
   Fn,
+  texture,
   uniform,
   attribute,
   varying,
@@ -102,6 +103,15 @@ export interface MeshPickTSLNodes {
   readonly uIsOrtho: TSLNode;
   /** Near-fade start distance, world units (scene-relative). */
   readonly uNearCull: TSLNode;
+  /**
+   * The visual material's base-colour texture, when the node has one.
+   *
+   * Sampled for its ALPHA only — the pick pass has no colour output — because
+   * texture alpha multiplies coverage in the visual shader, so an RGBA basemap's
+   * cutout holes are real holes on screen and must not stay pickable or
+   * depth-occluding.
+   */
+  readonly uBaseColorTex?: TSLNode;
 }
 
 /**
@@ -115,11 +125,16 @@ export function meshPickWebGPUFactory(
   nodes: MeshPickTSLNodes,
   outMaterial?: NodeMaterial
 ): NodeMaterial {
+  // Build-time, keyed on whether the node HAS a texture — a per-node constant, so
+  // unlike `uAlphaCutout` (a layers-panel-mutable mode) this never needs to be a
+  // runtime branch, and it decides whether `uv` enters the vertex layout at all.
+  const uBaseColorTex = nodes.uBaseColorTex ?? null;
   // The only attribute beyond `position`: the element id is the `vertexIndex`
   // built-in, and normals/scalars are shading inputs with no bearing on which
   // vertex was clicked. Read as vec4 for the same reason the visual factory does —
   // a size-3 attribute supplies the opaque `w = 1.0` for free.
   const aColor: TSLNode = attribute<'vec4'>('color', 'vec4');
+  const aUv: TSLNode | null = uBaseColorTex ? attribute<'vec2'>('uv', 'vec2') : null;
 
   const uNodeId = nodes.uNodeId;
   const uOpacity = nodes.uOpacity;
@@ -148,12 +163,14 @@ export function meshPickWebGPUFactory(
   // view position the visual factory carries — that one is differentiated for the
   // flat-normal fallback, and the pick pass has no shading to do.
   const vViewZ: TSLNode = varying(float(0.0));
+  const vUv: TSLNode | null = aUv ? varying(vec2(float(0.0), float(0.0))) : null;
 
   const vertexBody = Fn(() => {
     // Sanitized identically to the visual pair: alpha is the whole coverage term
     // for a mesh, and a NaN would survive into the cutout comparison as a fragment
     // that never discards — pickable where the visual has a hole.
     vAlpha.assign(sanitizeAlpha(aColor.w));
+    if (vUv && aUv) vUv.assign(aUv);
     const mvPos: TSLNode = modelViewMatrix.mul(vec4(positionGeometry, 1.0)).toVar();
     vViewZ.assign(mvPos.z);
     return cameraProjectionMatrix.mul(mvPos);
@@ -212,7 +229,16 @@ export function meshPickWebGPUFactory(
   const fragmentPrologue = Fn(() => {
     // Identical coverage to the visual shader (§6.2): a mesh has no per-element
     // intensity/amplitude, so coverage is per-vertex alpha times node opacity.
-    coverage.assign(vAlpha.mul(uOpacity));
+    // Texture alpha folded in BEFORE the cutout comparison, matching the visual
+    // graph's ordering exactly — comparing a different quantity is how the two
+    // passes would disagree about where the holes are. No luminance swizzle: a
+    // 1-channel texture samples alpha 1.0, so the visual graph's `.rrr` fix for
+    // `.rgb` has no analogue here.
+    coverage.assign(
+      uBaseColorTex && vUv
+        ? vAlpha.mul(uOpacity).mul(uBaseColorTex.sample(vUv).a)
+        : vAlpha.mul(uOpacity)
+    );
     // Same fade, same 1e-20 degenerate-smoothstep floor and same 0.01 reject as the
     // visual graph — pick coverage must keep matching visible coverage as the camera
     // flies into the surface. Per FRAGMENT, because a triangle spans depth.
@@ -313,5 +339,13 @@ export function buildMeshPickTSLNodesFromUniforms(
     // with (overridden per scene by updateCameraParams).
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    // PRESENCE-keyed, not defaulted: an absent uniform means the node has no
+    // texture, and binding a blank one would build the sampling variant for a node
+    // whose geometry has no `uv` attribute — a bound-but-unfilled attribute reads as
+    // (0, 0, 0, 1) rather than "absent", so every fragment would sample texel 0 and
+    // the whole mesh could vanish under the cutout.
+    ...(uniforms.uBaseColorTex?.value
+      ? { uBaseColorTex: texture(uniforms.uBaseColorTex.value as THREE.Texture) }
+      : {}),
   };
 }

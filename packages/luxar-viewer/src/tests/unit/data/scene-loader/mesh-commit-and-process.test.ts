@@ -39,6 +39,8 @@ const ATTRS: MeshMetadata = {
   has_normals: false,
   has_colors: false,
   has_scalars: false,
+  has_uvs: false,
+  has_texture: false,
   shading: 'flat',
   double_sided: false,
   ordering: 'none',

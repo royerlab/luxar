@@ -2176,7 +2176,21 @@ test.describe('TSL ↔ GLSL shader parity', () => {
   // divergence — the whole point — but NOT a WGSL-only convention difference. The
   // sign forcing above is what makes that untested axis safe by construction rather
   // than by luck.
-  for (const variant of ['mesh', 'mesh-additive', 'mesh-max', 'mesh-colormap'] as const) {
+  for (const variant of [
+    'mesh',
+    'mesh-additive',
+    'mesh-max',
+    'mesh-colormap',
+    // The two new colour/lighting arms. Worth PIXELS rather than only a codegen
+    // snapshot for the reason this file's own header gives: a snapshot shows the
+    // line, only a rendered frame shows it landing. For `mesh-texture` specifically
+    // the sampler is the thing at risk — a per-vertex fetch, a wrong UV, or a
+    // dropped alpha term all produce a plausible frame that a text diff would not
+    // question.
+    'mesh-texture',
+    'mesh-none-shading',
+    'mesh-pick-texture',
+  ] as const) {
     test(`${variant}: shaded surface parity across backends`, async ({ page }) => {
       await bootHarness(page);
 
@@ -2203,6 +2217,132 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       ).toBeLessThan(2.0);
     });
   }
+
+  test('mesh-texture: the texture is REAL — it recolours the surface and cuts a hole', async ({
+    page,
+  }) => {
+    // Parity alone cannot catch the worst failure here. If the sampler were dropped,
+    // `vUv` never assigned, or the texture never bound, both backends would agree
+    // perfectly — on the WRONG image. So this asserts the texture has an EFFECT, in
+    // two independent ways:
+    //
+    // 1. the four quadrants take the texture's own PURE hues, not the fixture's
+    //    per-vertex ramp. Measured rather than assumed: the untextured build renders
+    //    (194,142,143) at the first quadrant where the textured one renders
+    //    (207,0,0) — a colour the vertex ramp cannot produce, since its reddest
+    //    corner carries G=0.5 and B=0.25 and shading scales all channels alike.
+    // 2. the fully-transparent texel's quadrant is DISCARDED, because texture alpha
+    //    multiplies coverage and the `opaque` cutout then rejects it.
+    //
+    // (2) is what pins the alpha term specifically: without it the quadrant would
+    // render white instead of empty, and (1) alone would still pass.
+    //
+    // Both frames come from the SAME backend — this is about the variant's effect,
+    // not cross-backend agreement, which the parametrized test above covers.
+    // `assertBothRendered` is deliberately not used: it reads the corner pixel as a
+    // background sample, and this fixture's quad fills the frame.
+    await bootHarness(page);
+
+    const textured = (await runTSL(page, 'mesh-texture')).pixels;
+    const plain = (await runTSL(page, 'mesh')).pixels;
+    expect(
+      meanAbsDiff(plain, textured),
+      'a textured build that matches the untextured one is not sampling the texture'
+    ).toBeGreaterThan(8.0);
+
+    // (1) Pure hues. The fixture maps one texel per corner under NEAREST, and the
+    // three opaque texels are pure red, green and blue. "Pure" here means the other
+    // two channels are near zero, which no shaded vertex-ramp colour can be.
+    const rgbAt = (px: number[], x: number, y: number): [number, number, number] => [
+      px[(y * 64 + x) * 4],
+      px[(y * 64 + x) * 4 + 1],
+      px[(y * 64 + x) * 4 + 2],
+    ];
+    const dominance = ([r, g, b]: [number, number, number], channel: 0 | 1 | 2): number => {
+      const v = [r, g, b];
+      const others = v.filter((_, i) => i !== channel);
+      return v[channel] - Math.max(...others);
+    };
+    // Screen positions established by measurement, not by reasoning about the UV
+    // orientation — which is exactly the kind of assumption a rolled or mirrored
+    // mapping would satisfy anyway.
+    const quadrants: Array<[number, number, 0 | 1 | 2]> = [
+      [16, 16, 0],
+      [48, 16, 1],
+      [16, 48, 2],
+    ];
+    for (const [x, y, channel] of quadrants) {
+      const px = rgbAt(textured, x, y);
+      expect(
+        dominance(px, channel),
+        `textured quadrant (${x},${y}) should be dominated by channel ${channel}, got ${px.join(',')}`
+      ).toBeGreaterThan(120);
+      // The untextured build must NOT be that pure at the same spot, or the
+      // assertion above would pass on a build that ignored the texture entirely.
+      expect(
+        dominance(rgbAt(plain, x, y), channel),
+        `untextured quadrant (${x},${y}) is unexpectedly pure — this test proves nothing`
+      ).toBeLessThan(120);
+    }
+
+    // (2) The hole. Counted rather than sampled at one point, so the assertion does
+    // not depend on which corner the transparent texel lands in.
+    const backgroundCount = (px: number[]): number => {
+      let n = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        if (px[i] === 0 && px[i + 1] === 0 && px[i + 2] === 0) n++;
+      }
+      return n;
+    };
+    const holeGrowth = backgroundCount(textured) - backgroundCount(plain);
+    expect(
+      holeGrowth,
+      'the transparent texel must discard roughly a quarter of the quad; background ' +
+        `pixels only grew by ${holeGrowth}`
+    ).toBeGreaterThan(500);
+  });
+
+  test('mesh-none-shading: the unlit variant reaches the shader and renders', async ({ page }) => {
+    // Deliberately a WEAKER pixel claim than the flat-normal test's, because the
+    // strong claim is made structurally instead: the codegen spec asserts the unlit
+    // build contains no `dFdx`/`dFdy`, no `normal` attribute and no
+    // `gl_FrontFacing`. That IS the proof that its output cannot depend on normals,
+    // and it is stronger than any pixel heuristic could be.
+    //
+    // A first attempt here asserted the unlit frame was measurably FLATTER than the
+    // lit one. That was wrong about the fixture: its per-vertex colour ramp varies
+    // across the quad on its own, so an unlit build has a spread too — and the lit
+    // build's additive specular can make it BRIGHTER than unlit at some points
+    // rather than uniformly darker. Measured, not reasoned: at (16,48) the lit build
+    // renders (255,237,254) against unlit's (239,215,233).
+    //
+    // So what this adds over the codegen assertions is only that the variant is
+    // wired through end to end and still draws a surface.
+    await bootHarness(page);
+
+    const unlit = (await runTSL(page, 'mesh-none-shading')).pixels;
+    const lit = (await runTSL(page, 'mesh')).pixels;
+
+    expect(
+      meanAbsDiff(lit, unlit),
+      'the unlit build rendered identically to the lit one — `shading: none` is not reaching the shader'
+    ).toBeGreaterThan(4.0);
+
+    // Still a surface, not an empty frame: the cutout is unchanged by shading, so
+    // the unlit build must cover the same area.
+    const covered = (px: number[]): number => {
+      let n = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        if (px[i] !== 0 || px[i + 1] !== 0 || px[i + 2] !== 0) n++;
+      }
+      return n;
+    };
+    expect(covered(unlit), 'the unlit build drew nothing').toBeGreaterThan(1000);
+    expect(
+      Math.abs(covered(unlit) - covered(lit)),
+      'shading must not change which fragments survive the cutout'
+    ).toBeLessThan(64);
+  });
 
   test('mesh-flat-normal: the derivative variant is lit, and DIFFERS from the smooth one', async ({
     page,

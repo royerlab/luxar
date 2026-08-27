@@ -73,6 +73,14 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
     uniform mediump float uInvGamma;   // gamma on the VALUE, pre-LUT
     #endif
 
+    #ifdef LUXAR_MESH_BASE_COLOR_TEX
+    // \`uv\` needs no declaration: three.js's vertex prefix declares
+    // position/normal/uv unconditionally for every program, which is also why
+    // \`position\` and \`normal\` are used below without appearing here. Declaring it
+    // would be a redefinition error.
+    out mediump vec2 vUv;
+    #endif
+
     out mediump vec3 vColor;
     // SMOOTHLY interpolated, unlike the gsplat shader's \`flat out … vAlpha\`:
     // a splat's alpha is a per-INSTANCE constant, so interpolating it is a no-op
@@ -85,7 +93,7 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
     // mediump would quantize the inter-fragment delta into a noisy normal.
     out highp vec3 vViewPos;
 
-    #ifndef LUXAR_MESH_FLAT_NORMAL
+    #if !defined(LUXAR_MESH_FLAT_NORMAL) && !defined(LUXAR_MESH_NO_SHADING)
     // VIEW-space normal. The attribute is in the node's local display frame and
     // every other input to the shade term is view-space, so it is carried across
     // by \`normalMatrix\` (the inverse-transpose of the model-view matrix) HERE,
@@ -98,6 +106,10 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
     #endif
 
     void main() {
+      #ifdef LUXAR_MESH_BASE_COLOR_TEX
+      vUv = uv;
+      #endif
+
       #ifdef USE_COLORMAP
       // The display-range window and gamma shape the scalar VALUE before the LUT
       // lookup, not the resulting colour — same rule as the point/line shaders.
@@ -107,6 +119,13 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
       t = pow(t, uInvGamma);
       #endif
       vColor = texture(uColormapTex, vec2(t, 0.5)).rgb;
+      #elif defined(LUXAR_MESH_BASE_COLOR_TEX)
+      // Left at white: the base colour comes from a PER-FRAGMENT texture fetch, so
+      // there is nothing per-vertex to carry. Not skipped altogether because the
+      // fragment stage multiplies by \`vColor\` unconditionally — that keeps the
+      // GOG/gamma tail identical across all three colour sources rather than
+      // forking it three ways, and white is the multiplicative identity.
+      vColor = vec3(1.0);
       #else
       vColor = color.rgb;
       #endif
@@ -120,7 +139,7 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
 
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
       vViewPos = mvPosition.xyz;
-      #ifndef LUXAR_MESH_FLAT_NORMAL
+      #if !defined(LUXAR_MESH_FLAT_NORMAL) && !defined(LUXAR_MESH_NO_SHADING)
       vNormal = normalMatrix * normal;
       #endif
       gl_Position = projectionMatrix * mvPosition;
@@ -185,16 +204,22 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
     uniform int uIsOrtho;
     uniform float uNearCull;
 
+    #ifdef LUXAR_MESH_BASE_COLOR_TEX
+    uniform sampler2D uBaseColorTex;
+    in mediump vec2 vUv;
+    #endif
+
     in mediump vec3 vColor;
     in mediump float vAlpha;
     in highp vec3 vViewPos;
-    #ifndef LUXAR_MESH_FLAT_NORMAL
+    #if !defined(LUXAR_MESH_FLAT_NORMAL) && !defined(LUXAR_MESH_NO_SHADING)
     in highp vec3 vNormal;
     #endif
 
     out vec4 fragColor;
 
     void main() {
+      #ifndef LUXAR_MESH_NO_SHADING
       // (1) Derivative normal, UNCONDITIONALLY — see the module doc.
       highp vec3 derivativeNormal = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
       // Forced viewer-facing rather than assumed so, which makes the fallback
@@ -247,14 +272,43 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       mediump float wrap = clamp(dot(N, L) * 0.5 + 0.5, 0.0, 1.0);
       mediump float shade = mix(uAmbient, 1.0, pow(wrap, uShadeExponent));
       mediump float spec = uSpecular * pow(max(dot(N, H), 0.0), uShininess);
+      #endif
 
       // Per-node GOG. Identical chain to the sibling shaders (§6.2 notes it is
       // copied rather than shared — _shared/ carries the sanitizers and the
       // define helpers, but each of the eight shader files writes this tail out).
-      #ifdef LUXAR_NO_GOG
-      mediump vec3 adjusted = vColor;
+      // Base colour. The texture is sampled PER FRAGMENT, unlike the colormap LUT,
+      // which is a vertex-stage lookup: a LUT maps one scalar per vertex and
+      // interpolating the resulting colour is a close-enough model of
+      // interpolating the scalar, whereas an image has structure BETWEEN vertices
+      // and a per-vertex fetch would resolve exactly one texel per vertex —
+      // reproducing the point-cloud limitation this feature exists to remove.
+      #ifdef LUXAR_MESH_BASE_COLOR_TEX
+      mediump vec4 texel = texture(uBaseColorTex, vUv);
+      #ifdef LUXAR_MESH_TEX_LUMINANCE
+      // A single-channel texture uploads as RedFormat, which samples as
+      // (r, 0, 0, 1) — so without this swizzle a greyscale basemap renders pure
+      // red rather than grey. Its own define because the alternative, expanding
+      // 1 channel to RGBA on the CPU, would quadruple the upload for data that
+      // is one \`.rrr\` away from correct.
+      mediump vec3 baseColor = vColor * texel.rrr;
       #else
-      mediump vec3 adjusted = max(vColor * uIntensity + uOffset, vec3(0.0));
+      mediump vec3 baseColor = vColor * texel.rgb;
+      #endif
+      // Texture alpha MULTIPLIES coverage, so an RGBA basemap gets real cutout
+      // holes under \`opaque\` rather than an all-or-nothing silhouette. A
+      // 3-channel texture is expanded to RGBA with alpha 1 at upload and a
+      // 1-channel one samples alpha 1, so this term is a free no-op for both.
+      mediump float texAlpha = texel.a;
+      #else
+      mediump vec3 baseColor = vColor;
+      mediump float texAlpha = 1.0;
+      #endif
+
+      #ifdef LUXAR_NO_GOG
+      mediump vec3 adjusted = baseColor;
+      #else
+      mediump vec3 adjusted = max(baseColor * uIntensity + uOffset, vec3(0.0));
       #endif
 
       // Colormap mode already applied gamma to the scalar VALUE pre-LUT, and
@@ -268,12 +322,20 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       // The shade factor is a LIGHTING term: it multiplies RGB and must never
       // enter the coverage below, or a silhouette fragment would also turn
       // transparent (and, under the cutout, dissolve).
+      #ifdef LUXAR_MESH_NO_SHADING
+      // Unlit: the base colour reaches the screen unmodulated. This is what every
+      // other Luxar geometry type does — the other three are purely emissive — and
+      // what a data basemap needs, since a view-anchored key would make a
+      // colour-coded surface read differently as the camera moved.
+      mediump vec3 shadedColor = finalColor;
+      #else
       mediump vec3 shadedColor = finalColor * shade + vec3(spec);
+      #endif
 
       // Mesh has no per-element intensity/amplitude/falloff scalar (§2.2) — it is
       // a solid surface — so coverage is just the per-vertex alpha times node
       // opacity. NOT \`intensity * uOpacity\` like the emissive types.
-      mediump float a = vAlpha * uOpacity;
+      mediump float a = vAlpha * uOpacity * texAlpha;
 
       // Perspective near fade, PER FRAGMENT (see the module doc for why not per
       // vertex). uNearCull is scene-bounds-scaled (diagonal * 0.001); the 1e-20

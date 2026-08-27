@@ -13,9 +13,10 @@ import * as THREE from 'three';
 import {
   createEmptyMeshNode,
   createMeshMaterial,
-  resolveFlatNormal,
+  resolveMeshShading,
   applyMeshShading,
   applyMeshSide,
+  applyMeshTexture,
 } from '../../../../rendering/node-factory/create-mesh-node';
 import { MeshMaterial } from '../../../../rendering/materials/mesh/material-glsl';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
@@ -23,6 +24,7 @@ import type { MeshDataLoader, MeshMetadata } from '../../../../types/mesh';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import { log } from '../../../../utils/log';
+import type { PickingSystem } from '../../../../rendering/picking/picking-system';
 
 const ATTRS: MeshMetadata = {
   type: 'mesh',
@@ -32,6 +34,8 @@ const ATTRS: MeshMetadata = {
   has_normals: false,
   has_colors: false,
   has_scalars: false,
+  has_uvs: false,
+  has_texture: false,
   shading: 'flat',
   double_sided: true,
   ordering: 'none',
@@ -42,18 +46,27 @@ const loader = {} as MeshDataLoader;
 const hasFlat = (m: THREE.Material): boolean =>
   !!(m as MeshMaterial).defines && 'LUXAR_MESH_FLAT_NORMAL' in (m as MeshMaterial).defines;
 
-describe('resolveFlatNormal — the §3.4 rule in one place', () => {
+describe('resolveMeshShading — the §3.4 rule in one place', () => {
   it.each([
-    // shading,   has_normals, usable, → flat?
-    ['flat', true, true, true, 'an explicit flat overrides valid stored normals'],
-    ['smooth', true, true, false, 'the only case that reads the stored normals'],
-    ['smooth', false, false, true, 'no normals to read'],
-    ['smooth', true, false, true, 'normals authored for other axes'],
-    ['flat', false, false, true, 'flat and normal-less agree'],
+    // shading,   has_normals, usable, → resolved
+    ['flat', true, true, 'flat', 'an explicit flat overrides valid stored normals'],
+    ['smooth', true, true, 'smooth', 'the only case that reads the stored normals'],
+    ['smooth', false, false, 'flat', 'no normals to read'],
+    ['smooth', true, false, 'flat', 'normals authored for other axes'],
+    ['flat', false, false, 'flat', 'flat and normal-less agree'],
+    // The unlit arm short-circuits AHEAD of every stored-normal question, and both
+    // of these pin that ordering rather than just the value. A `none` node with
+    // perfectly valid stored normals must still resolve to `none` — falling through
+    // would compute a normal the shader then discards — and a `none` node with
+    // UNUSABLE normals must not be rescued into `flat`, which is what a rule that
+    // tested usability first would do.
+    ['none', true, true, 'none', 'unlit wins over valid stored normals'],
+    ['none', true, false, 'none', 'unlit is not view-dependent, so a frame mismatch is irrelevant'],
+    ['none', false, false, 'none', 'unlit needs no normals in the first place'],
   ] as const)(
-    'shading=%s has_normals=%s usable=%s → flat=%s (%s)',
+    'shading=%s has_normals=%s usable=%s → %s (%s)',
     (shading, has_normals, usable, expected, _why) => {
-      expect(resolveFlatNormal({ ...ATTRS, shading, has_normals } as MeshMetadata, usable)).toBe(
+      expect(resolveMeshShading({ ...ATTRS, shading, has_normals } as MeshMetadata, usable)).toBe(
         expected
       );
     }
@@ -183,6 +196,66 @@ describe('applyMeshSide', () => {
   });
 });
 
+describe('applyMeshTexture', () => {
+  it('disposes both blank shader placeholders when the real image arrives', () => {
+    const attrs = {
+      ...ATTRS,
+      has_uvs: true,
+      has_texture: true,
+      texture_width: 1,
+      texture_height: 1,
+      texture_channels: 3,
+      texture_color_space: 'srgb',
+    } as MeshMetadata;
+    const pickingSystem = {
+      allocatePickId: () => 1,
+      registerNode: (main: THREE.Object3D, pick: THREE.Object3D) => {
+        main.userData.pickNode = pick;
+      },
+    } as unknown as PickingSystem;
+    const node = createEmptyMeshNode('/surface', attrs, loader, pickingSystem);
+    const placeholders = (node.userData as { meshTexturePlaceholders: THREE.Texture[] })
+      .meshTexturePlaceholders;
+    const disposals = placeholders.map((placeholder) => vi.spyOn(placeholder, 'dispose'));
+
+    applyMeshTexture(node, attrs, {
+      kind: 'raw',
+      pixels: new Uint8Array([255, 0, 0]),
+      width: 1,
+      height: 1,
+      channels: 3,
+    });
+
+    expect(disposals).toHaveLength(2);
+    expect(disposals.every((dispose) => dispose.mock.calls.length === 1)).toBe(true);
+    expect(node.userData.meshTexturePlaceholders).toBeUndefined();
+  });
+
+  it('disposes the uploaded GPU texture with the shared geometry', () => {
+    const attrs = {
+      ...ATTRS,
+      has_uvs: true,
+      has_texture: true,
+      texture_width: 1,
+      texture_height: 1,
+      texture_channels: 3,
+      texture_color_space: 'srgb',
+    } as MeshMetadata;
+    const node = createEmptyMeshNode('/surface', attrs, loader, null);
+    applyMeshTexture(node, attrs, {
+      kind: 'raw',
+      pixels: new Uint8Array([255, 0, 0]),
+      width: 1,
+      height: 1,
+      channels: 3,
+    });
+    const texture = (node.userData as { meshTexture: THREE.Texture }).meshTexture;
+    const dispose = vi.spyOn(texture, 'dispose');
+    node.geometry.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('createMeshMaterial — the viewer-side mode defaults', () => {
   let warn: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
@@ -191,7 +264,7 @@ describe('createMeshMaterial — the viewer-side mode defaults', () => {
   afterEach(() => warn.mockRestore());
 
   it("defaults to 'opaque' when the attrs name no mode", () => {
-    expect(createMeshMaterial(ATTRS, false).userData.blendingMode).toBe('opaque');
+    expect(createMeshMaterial(ATTRS, 'smooth').userData.blendingMode).toBe('opaque');
   });
 
   it('honours an INHERITED mode rather than overriding it', () => {
@@ -199,7 +272,7 @@ describe('createMeshMaterial — the viewer-side mode defaults', () => {
     // must survive — this is why the default lives in the viewer and is never
     // stamped into the node by the writer.
     expect(
-      createMeshMaterial({ ...ATTRS, blending_mode: 'additive' } as MeshMetadata, false).userData
+      createMeshMaterial({ ...ATTRS, blending_mode: 'additive' } as MeshMetadata, 'smooth').userData
         .blendingMode
     ).toBe('additive');
   });
@@ -207,7 +280,7 @@ describe('createMeshMaterial — the viewer-side mode defaults', () => {
   it('warns ONCE, naming the node, when volumetric is inherited — then falls back', () => {
     const material = createMeshMaterial(
       { ...ATTRS, blending_mode: 'volumetric' } as MeshMetadata,
-      false,
+      'smooth',
       undefined,
       '/organ/surface'
     );
@@ -224,7 +297,7 @@ describe('createMeshMaterial — the viewer-side mode defaults', () => {
     const geometry = new THREE.BufferGeometry();
     const material = createMeshMaterial(
       { ...ATTRS, has_scalars: true, colormap: 'viridis' } as MeshMetadata,
-      false,
+      'smooth',
       geometry,
       '/surface'
     );
@@ -247,7 +320,7 @@ describe('createMeshMaterial — the viewer-side mode defaults', () => {
         offset: 0,
         scalar_data_range: [0, 1],
       } as MeshMetadata,
-      false,
+      'smooth',
       geometry,
       '/surface'
     );
@@ -281,7 +354,7 @@ describe('createMeshMaterial — the §6.3 opaque default survives the composed 
       children: [meshLeaf],
     };
     const composed = applyEffectiveAttrs(root, meshLeaf) as unknown as MeshMetadata;
-    expect(createMeshMaterial(composed, false).userData.blendingMode).toBe('opaque');
+    expect(createMeshMaterial(composed, 'smooth').userData.blendingMode).toBe('opaque');
   });
 
   it('honours an inherited mode set by an ancestor group', () => {
@@ -306,7 +379,7 @@ describe('createMeshMaterial — the §6.3 opaque default survives the composed 
       children: [group],
     };
     const composed = applyEffectiveAttrs(root, meshLeaf) as unknown as MeshMetadata;
-    expect(createMeshMaterial(composed, false).userData.blendingMode).toBe('additive');
+    expect(createMeshMaterial(composed, 'smooth').userData.blendingMode).toBe('additive');
   });
 });
 
@@ -324,7 +397,7 @@ describe('createMeshMaterial — authored shade knobs (§6.2)', () => {
         shininess: 48,
         alpha_cutoff: 0.125,
       } as MeshMetadata,
-      false
+      'smooth'
     );
     expect(m.uniforms.uAmbient.value).toBe(0.75);
     expect(m.uniforms.uShadeExponent.value).toBe(4);
@@ -347,7 +420,7 @@ describe('createMeshMaterial — authored shade knobs (§6.2)', () => {
         shade_exponent: 0,
         shininess: 0,
       } as MeshMetadata,
-      false
+      'smooth'
     );
     expect(hot.uniforms.uAmbient.value).toBe(1);
     expect(hot.uniforms.uSpecular.value).toBe(1);
@@ -358,7 +431,7 @@ describe('createMeshMaterial — authored shade knobs (§6.2)', () => {
 
     const cold = createMeshMaterial(
       { ...ATTRS, ambient: -5, alpha_cutoff: -5 } as MeshMetadata,
-      false
+      'smooth'
     );
     expect(cold.uniforms.uAmbient.value).toBe(0);
     expect(cold.uniforms.uAlphaCutoff.value).toBe(0);
@@ -369,7 +442,7 @@ describe('createMeshMaterial — authored shade knobs (§6.2)', () => {
     // the default, not to 0 or 1 — which would look like a deliberate setting.
     const m = createMeshMaterial(
       { ...ATTRS, ambient: NaN, alpha_cutoff: Infinity } as MeshMetadata,
-      false
+      'smooth'
     );
     expect(m.uniforms.uAmbient.value).toBe(MESH_DEFAULTS.ambient);
     expect(m.uniforms.uAlphaCutoff.value).toBe(MESH_DEFAULTS.alphaCutoff);
