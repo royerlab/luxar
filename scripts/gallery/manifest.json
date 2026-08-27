@@ -294,7 +294,7 @@
       "dataset": "datasets/demos/earthquakes.luxar.zarr",
       "citation": "USGS ANSS Comprehensive Catalog",
       "fillTarget": 0.65,
-      "note": "fillTarget 0.65: at the default 0.95 the globe was cropped past its own limb and read as a noise wall rather than as Earth \u2014 3658/4316 border pixels (84.8%) lit. The value was originally derived against a 2M-point stippled shell and CARRIED OVER CORRECTLY when #2176 rebuilt the globe as a textured UV-sphere mesh: re-measured after that change at 0.0% border-lit and 72% coverage. Worth keeping because the mesh limb is both harder-edged and brighter (the cloud shell is luminous on a slightly larger sphere, so the rim gains luminance seen edge-on), which pushes border-lit up at framing that is actually correct \u2014 judge this tile on the render, not the metric."
+      "note": "fillTarget 0.65: before #2176, at the default 0.95 the globe was cropped past its own limb and read as a noise wall rather than as Earth \u2014 3658/4316 border pixels (84.8%) lit. The value was originally derived against that 2M-point stippled shell and CARRIED OVER CORRECTLY when #2176 rebuilt the globe as a textured UV-sphere mesh: re-measured after that change at 0.0% border-lit and 72% coverage. The committed README tile predates the rebuild, so those post-mesh figures describe the current demo rather than the checked-in media. Worth keeping because the mesh limb is both harder-edged and brighter (the cloud shell is luminous on a slightly larger sphere, so the rim gains luminance seen edge-on), which pushes border-lit up at framing that is actually correct \u2014 judge this tile on the render, not the metric."
     },
     {
       "id": "global_rivers_earth",
@@ -679,7 +679,7 @@
       "citation": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble",
       "lodFinest": false,
       "fillTarget": 0.65,
-      "note": "fillTarget 0.65 to match its sibling earthquakes. With no framing hint it defaulted to 0.95 and captured at 3777/4316 border pixels (87.5%) lit \u2014 the globe's limb fell outside the frame entirely and the tile read as a flat current map rather than as Earth. Note this is NOT the additive cloud-rim effect that inflates border-lit at correct framing on these globes: there was no rim in shot at all. The streamlines stay legible at 0.65 because they cover the whole ocean, and the sphere returns."
+      "note": "fillTarget 0.65 to match its sibling earthquakes. With no framing hint it defaulted to 0.95 and captured at 3777/4316 border pixels (87.5%) lit \u2014 the globe's limb fell outside the frame entirely and the tile read as a flat current map rather than as Earth. At 0.65, final coverage=67.5% and final lit=0.7%. Note this is NOT the additive cloud-rim effect that inflates border-lit at correct framing on these globes: there was no rim in shot at all. The streamlines stay legible at 0.65 because they cover the whole ocean, and the sphere returns."
     },
     {
       "id": "zebrahub_velocity_streamlines",
