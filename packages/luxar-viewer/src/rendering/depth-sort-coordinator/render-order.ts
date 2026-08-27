@@ -28,6 +28,7 @@
 
 import * as THREE from 'three';
 import type { BspTreeNode } from '../../types/partition-group';
+import { log, Modules } from '../../utils/log';
 
 // Per-frame scratch (no allocation on the hot path — the
 // 'lod-group-selector' invariant). Allocated lazily on first use rather
@@ -53,6 +54,9 @@ let scratch: RenderOrderScratch | null = null;
  * outlives a frame.
  */
 const partitionRankCache = new Map<THREE.Object3D, Map<number, number> | null>();
+
+/** Partition wrappers already diagnosed for an unusable display-axis mapping. */
+const warnedAxisMappingWrappers = new WeakSet<THREE.Object3D>();
 
 /**
  * Nearest partition-wrapper ancestor of `mesh` plus the mesh's part index
@@ -131,8 +135,10 @@ function traverseBspBackToFront(
  *   not currently displayed (its plane then carries no on-screen depth
  *   information, so the caller must fall back to the centroid heuristic).
  */
-function bspAxisToComponent(tree: BspTreeNode): readonly number[] | null {
-  const displayed = getDisplayDims?.();
+function bspAxisToComponent(
+  tree: BspTreeNode,
+  displayed: readonly number[] | null | undefined
+): readonly number[] | null {
   // No dims yet (or a 3-displayed identity map): the naive axis === component
   // reading is exactly right, and this is the overwhelmingly common case. Note
   // the app-layer accessor returns an EMPTY array before dims init, which must
@@ -198,11 +204,19 @@ function wrapperPartRanks(
   wrapper.updateWorldMatrix(true, false);
   s.wrapperInv.copy(wrapper.matrixWorld).invert();
   s.eyeLocal.copy(camPos).applyMatrix4(s.wrapperInv);
-  const axisToComponent = bspAxisToComponent(tree);
+  const displayed = getDisplayDims?.();
+  const axisToComponent = bspAxisToComponent(tree, displayed);
   if (axisToComponent === null) {
     // A split axis isn't on screen under the current display dims, so its
     // plane carries no depth information — fall back to the centroid
     // heuristic rather than ordering along the wrong axis.
+    if (!warnedAxisMappingWrappers.has(wrapper)) {
+      warnedAxisMappingWrappers.add(wrapper);
+      log.warning(
+        Modules.RENDERER,
+        `partition-kind group ${wrapper.name || '(unnamed)'} has a valid bsp_tree whose split axes are not all displayed (displayDims=[${displayed?.join(', ') ?? ''}]); falling back to centroid ordering`
+      );
+    }
     partitionRankCache.set(wrapper, null);
     return null;
   }

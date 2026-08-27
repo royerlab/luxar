@@ -122,12 +122,15 @@ Exports:
   tree builders used by the native geometry adders.
 - `bsp_leaf_parts` — shared left-first leaf flattening used by all four adders.
 - `persist_pruned_bsp_tree` — drops unwritten regions, renumbers surviving
-  `child_index` labels, and stamps the serialized tree on the partition wrapper.
+  `child_index` labels, stamps the serialized tree on the partition wrapper,
+  and warns when its actual split axes are not displayed.
 - `median_bsp_partition` / `midpoint_bsp_partition` / `sah_bsp_partition` and
   the median/midpoint polyline wrappers — flat-list conveniences retained as
   parity oracles for the production tree builders.
 - `warn_if_oversized_single_part` — surfaces the degenerate
   fully-coincident-input case where the BSP cannot split below `max_elements`.
+- `warn_if_partition_axes_not_displayed` — surfaces persisted split axes that
+  the current display configuration cannot map for exact viewer traversal.
 - `validate_partition_group` — well-formedness check (≥1 child, present
   `display_type`, `max_elements >= 1`, homogeneous child `display_type`).
 - `PartitionSpec` — value-vocabulary type alias for `partition=`
