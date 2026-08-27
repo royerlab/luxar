@@ -189,8 +189,10 @@ current viewer sets the field to exactly that sum, so the max is inert on
 a live snapshot). The per-node counts `pointCloudCount`, `gsplatCount`,
 `lineCount` and `meshNodeCount` come along too, so a mesh-only or
 lines-only scene is recognised as loaded rather than reading as empty. A
-warning almost always means the slice position is wrong or the dataset
-URL is stale. The converse does not hold: the verdict measures the scene
+nonzero `totalDroppedElements` rejects the capture as renderer-truncated;
+split or partition the oversized node before capturing. Other warnings
+almost always mean the slice position is wrong or the dataset URL is
+stale. The converse does not hold: the verdict measures the scene
 graph (hidden nodes and all LOD levels included), so an all-hidden scene
 passes and can still capture blank.
 

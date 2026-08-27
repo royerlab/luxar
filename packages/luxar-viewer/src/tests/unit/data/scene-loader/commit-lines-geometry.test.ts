@@ -111,6 +111,7 @@ describe('commitLinesGeometry', () => {
     const staged: StagedLinesCommit = { path: '/lines', sourceData: makeSourceData(), processed };
     commitLinesGeometry(staged, root, null, undefined, 0);
     expect(mesh.userData.visibleSegmentCount).toBe(7);
+    expect(mesh.userData.requestedElementCount).toBe(7);
     // C6[P2][P11]: pin the actual GPU dispatch — a mutant dropping the
     // updateInstancedLinesMesh call would still pass the userData write.
     // No-pool path calls updateInstancedLinesMesh(mesh, processed).
@@ -788,6 +789,8 @@ describe('commitLinesGeometry — depth-sort integration (lines sort registratio
       commitLinesGeometry(makeStaged(100), root, pool as never, undefined, 0);
 
       expect((mesh.userData as { visibleSegmentCount: number }).visibleSegmentCount).toBe(6);
+      expect((mesh.userData as { requestedElementCount: number }).requestedElementCount).toBe(100);
+      expect((mesh.userData as { droppedElementCount: number }).droppedElementCount).toBe(94);
       const [, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
         THREE.Mesh,
         () => Float32Array,

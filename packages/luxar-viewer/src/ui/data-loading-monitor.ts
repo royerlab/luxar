@@ -482,6 +482,10 @@ export class DataLoadingMonitor {
     this.sceneGraphModel.updateVisibleCount(type, count);
   }
 
+  public updateDroppedElementCount(count: number): void {
+    this.sceneGraphModel.updateDroppedElementCount(count);
+  }
+
   /**
    * Per-node visible counts after nD slicing, keyed by scene-graph path.
    * Pushed by the SceneLoader's visible-counts walk (only rendered meshes

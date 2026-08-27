@@ -182,6 +182,17 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       // counts. Keep this unconditional: DATASETS_ALLOW_ZERO_POINTS waives only
       // the point-specific assertion, not the requirement that geometry loaded.
       expect(state.totalElements).toBeGreaterThan(0);
+      // This is per COMMITTED SLICE, unlike Python's per-node-total authoring warning.
+      // temporal_spiral_sphere_4d_example legitimately authors 102.4M points in one node,
+      // but its non-displayed discrete t axis commits only 200K points per viewer slice.
+      const droppedNodes = [...state.pointClouds, ...state.lineMeshes, ...state.gsplatMeshes]
+        .filter((node) => node.droppedElementCount > 0)
+        .map((node) => `${node.name}: ${node.droppedElementCount}`)
+        .join(', ');
+      expect(
+        state.totalDroppedElements,
+        `renderer capacity dropped elements from ${droppedNodes || 'unknown nodes'}`
+      ).toBe(0);
 
       // A strict per-node assertion is not valid: nd_points_example has a visible
       // /Reference5D node with pointCount=0 while its sibling carries all 820 points,
