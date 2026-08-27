@@ -136,11 +136,10 @@ import { warnFailedLoaders } from './scene-loader/loaders/failure-report';
 /**
  * Classification of a per-node load failure. The actual policy in
  * `loadLeafNode` (around `:1285-1307`) is partial-scene resilience:
- * every classified kind — including `Unexpected` — is logged, toasted
- * (severity varies by kind), and the leaf returns `null` so its
- * siblings can still render. Nothing rethrows from a classified
- * `LoaderError`. The `kind` field drives the user-visible severity
- * and message, not control flow.
+ * every classified kind — including `Unexpected` — is logged, and the
+ * leaf returns `null` so its siblings can still render. Authored archive
+ * container faults are re-thrown because they invalidate the whole store.
+ * The `kind` field drives logging and retry policy for ordinary failures.
  */
 import { initializeSceneDimensions as initializeSceneDimensionsHelper } from './scene-loader/nodes/initialize-scene-dimensions';
 import {
