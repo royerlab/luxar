@@ -789,6 +789,7 @@ describe('commitLinesGeometry — depth-sort integration (lines sort registratio
       commitLinesGeometry(makeStaged(100), root, pool as never, undefined, 0);
 
       expect((mesh.userData as { visibleSegmentCount: number }).visibleSegmentCount).toBe(6);
+      expect((mesh.userData as { requestedElementCount: number }).requestedElementCount).toBe(100);
       const [, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
         THREE.Mesh,
         () => Float32Array,
