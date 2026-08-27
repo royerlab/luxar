@@ -316,11 +316,23 @@ to its author-facing owner: the first geometry node or `kind=lod` /
 and warning names and deduplication use that owner so implementation-level LOD
 chunks and partition parts report once as the node the author wrote. Candidate
 pairs are sweep-pruned on a displayed axis, and repeated pairwise hits are rolled
-up into connected overlap clusters so each warning names every participating
-owner without flooding the log. The primary remedy is to merge the geometry and
-partition it spatially, with the displayed dimensions in the first three position
-columns; additive blending is identified as an order-independent option for an
-emissive medium that changes surface appearance.
+up into connected overlap clusters. Each warning lists at most five owners,
+orders containers first and marks them, then reports how many participants were
+omitted. Same-geometry, same-mode clusters lead with the appearance-preserving
+remedy: merge the geometry and use `partition={"max_elements": N}`. That remedy
+is available to Points, Lines, Mesh, and Gaussian Splats. Heterogeneous geometry
+or blend-mode clusters instead say that merging cannot preserve the authored
+material and fall back to the mode/bounds choices. Additive blending remains an
+order-independent option for an emissive medium, but changes surface appearance.
+
+When the displayed dimensions are not the first position columns, the warning
+names their actual column indices and says: "Put the displayed dimensions first
+to keep exact BSP ordering." That finalize-time clause is a stopgap alongside
+#2226's earlier write-time diagnostic and can shrink once that check lands. The
+default `(0, 1, 2)` layout, and ordinary 1D/2D prefixes, omit the dead caveat.
+Default-additive/depth-writing warnings print as their pairs are scanned;
+order-dependent cluster warnings flush after the scan, so scenes with both see
+the additive diagnostics first and the rolled-up clusters second.
 
 ### `validation.prune_childless_wrappers(store) -> None`
 
