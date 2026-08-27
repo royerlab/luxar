@@ -120,6 +120,17 @@ describe('createKTX2TextureDecoder', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it('rejects textures Three does not identify as compressed', async () => {
+    const dispose = vi.fn();
+    loaderState.texture = compressedTexture({ isCompressedTexture: false, dispose });
+    const decode = createKTX2TextureDecoder(supportedRenderer());
+
+    await expect(decode('mesh/texture', new Uint8Array(1))).rejects.toThrow(
+      /uncompressed.*raw.*jpeg/i
+    );
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
   it('rejects an uncompressed non-RGBA KTX2 container parsed by Three', async () => {
     const parserModule = 'three/examples/jsm/libs/ktx-parse.module.js';
     const { createDefaultContainer, VK_FORMAT_R8G8_UNORM, write } = await import(parserModule);
