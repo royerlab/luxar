@@ -15,11 +15,11 @@ keys a caller must not supply.
 from __future__ import annotations
 
 import difflib
+import warnings
 from typing import Any, Dict, FrozenSet, Optional
 
 import numpy as np
 import zarr
-from arbol import aprint
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
@@ -35,6 +35,11 @@ from ...validation.types import (
     validate_appearance_fraction,
     validate_positive_finite,
 )
+
+
+class ElementCapacityWarning(UserWarning):
+    """A node may exceed the viewer's per-node element-texture capacity."""
+
 
 # Writer-authoritative attrs each geometry writer stamps unconditionally.
 # User-supplied values for these keys are rejected in the fail-fast gate:
@@ -581,7 +586,7 @@ def warn_if_over_element_cap(
         if geometry_type == "gsplats"
         else "Split it with partition=dict(max_elements=...)"
     )
-    aprint(
+    warnings.warn(
         f"⚠️  '{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
         f"{geometry_type} node can render on a 4096-class GPU. If the whole "
         f"node is committed at once, such a GPU can silently drop the tail — "
@@ -589,7 +594,9 @@ def warn_if_over_element_cap(
         f"order, that tail is one contiguous region, so it looks like a "
         f"clean-edged hole in the data (#1957). An nD node sliced on a "
         f"non-displayed dimension commits only its current slice. {remedy} "
-        f"to render everywhere."
+        f"to render everywhere.",
+        ElementCapacityWarning,
+        stacklevel=2,
     )
     return True
 
