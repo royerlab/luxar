@@ -123,6 +123,11 @@ def _active_worker_counts(
     }
 
 
+def _active_host_workers(active_workers: dict[int, int], n_run: int) -> int:
+    """Count workers sharing host RAM, capped by runnable tasks."""
+    return max(1, min(sum(active_workers.values()), n_run))
+
+
 def _staging_path(out: Path, token: str | int) -> Path:
     """Per-attempt staging directory for a task's fit output.
 
@@ -294,7 +299,7 @@ def run_batch_local(
 
     active_workers = _active_worker_counts(task_ids, assignment, workers, _skip)
     n_run = sum(0 if _skip(task_id) else 1 for task_id in task_ids)
-    active_host_workers = max(1, min(sum(active_workers.values()), n_run))
+    active_host_workers = _active_host_workers(active_workers, n_run)
 
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]

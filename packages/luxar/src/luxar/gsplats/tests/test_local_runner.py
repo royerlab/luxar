@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from luxar.gsplats.batch.local_runner import (
+    _active_host_workers,
     _active_worker_counts,
     _finalize_output,
     _staging_path,
@@ -79,6 +80,13 @@ def test_active_worker_counts_checks_each_task_once() -> None:
 
     assert checked == [0, 1, 2, 3, 4]
     assert counts == {0: 1, 1: 2}
+
+
+def test_active_host_workers_sum_devices_and_clamp_to_runnable_tasks() -> None:
+    active_workers = {0: 2, 1: 2, 2: 2, 3: 2}
+
+    assert _active_host_workers(active_workers, n_run=8) == 8
+    assert _active_host_workers(active_workers, n_run=1) == 1
 
 
 # ---------------------------------------------------------------------------

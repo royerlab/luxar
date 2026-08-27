@@ -367,6 +367,28 @@ def test_cuda_quality_budget_rejects_shared_workers_on_a_small_host(
     assert "1 GiB per-worker budget (8 worker(s) sharing the host)" in reason
 
 
+def test_host_worker_count_falls_back_to_device_worker_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Producers with one worker count still divide the host allowance."""
+    import torch
+
+    from luxar.gsplats.utils import device as device_utils
+
+    monkeypatch.delenv("LUXAR_TILED_QUALITY_MAX_GB", raising=False)
+    monkeypatch.setenv(merged_quality.QUALITY_WORKERS_PER_DEVICE_ENV, "8")
+    monkeypatch.delenv(merged_quality.QUALITY_WORKERS_PER_HOST_ENV, raising=False)
+    monkeypatch.setattr(merged_quality, "_available_ram_gb", lambda: 16.0)
+    monkeypatch.setattr(
+        device_utils, "resolve_torch_device", lambda _device: torch.device("cpu")
+    )
+
+    reason = _quality_memory_guard((512, 512, 512), "cpu")
+    assert reason is not None
+    assert "4.0 GiB of host memory" in reason
+    assert "1 GiB per-worker budget (8 worker(s) sharing the host)" in reason
+
+
 def test_host_quality_budget_names_an_explicit_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
