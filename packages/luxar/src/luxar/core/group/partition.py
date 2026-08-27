@@ -399,6 +399,24 @@ def persist_pruned_bsp_tree(
 _RECONSTRUCT_VISIT_BUDGET = 200_000
 
 
+def _validated_reconstruction_axes(
+    n_axes: int, axes: Optional[Sequence[int]]
+) -> Tuple[int, ...]:
+    search_axes = (
+        tuple(range(n_axes)) if axes is None else tuple(int(axis) for axis in axes)
+    )
+    if (
+        not search_axes
+        or len(set(search_axes)) != len(search_axes)
+        or any(axis < 0 or axis >= n_axes for axis in search_axes)
+    ):
+        raise ValueError(
+            f"axes must name distinct position columns in [0, {n_axes}); "
+            f"got {search_axes}"
+        )
+    return search_axes
+
+
 def reconstruct_serialized_bsp_tree(
     boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
     *,
@@ -437,18 +455,7 @@ def reconstruct_serialized_bsp_tree(
 
     visits = [0]
     n_axes = len(boxes[0][0])
-    search_axes = (
-        tuple(range(n_axes)) if axes is None else tuple(int(axis) for axis in axes)
-    )
-    if (
-        not search_axes
-        or len(set(search_axes)) != len(search_axes)
-        or any(axis < 0 or axis >= n_axes for axis in search_axes)
-    ):
-        raise ValueError(
-            f"axes must name distinct position columns in [0, {n_axes}); "
-            f"got {search_axes}"
-        )
+    search_axes = _validated_reconstruction_axes(n_axes, axes)
 
     def build(items: "List[int]") -> Optional[Dict[str, Any]]:
         visits[0] += 1
