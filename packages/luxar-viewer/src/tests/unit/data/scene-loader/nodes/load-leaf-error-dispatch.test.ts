@@ -104,7 +104,9 @@ describe('loadLeafNode', () => {
       }, '/points')
     ).rejects.toBe(fault);
     expect(warnSpy).not.toHaveBeenCalled();
-    expect(errorSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Archive fault loading /points: Reading the archive failed after retries.')
+    );
   });
 
   it('logs the cause stack when one is available', async () => {

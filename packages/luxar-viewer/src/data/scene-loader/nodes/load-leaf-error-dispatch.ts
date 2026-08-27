@@ -95,7 +95,13 @@ export async function loadLeafNode<T extends THREE.Object3D>(
   } catch (error) {
     if (!(error instanceof LoaderError)) throw error;
     const archiveFault = archiveFaultFrom(error);
-    if (archiveFault) throw archiveFault;
+    if (archiveFault) {
+      log.error(
+        Modules.SCENE_LOADER,
+        `Archive fault loading ${path}: ${archiveFault.message}`
+      );
+      throw archiveFault;
+    }
     const causeStack = error.cause instanceof Error ? error.cause.stack : undefined;
     switch (error.kind) {
       case 'Network':
