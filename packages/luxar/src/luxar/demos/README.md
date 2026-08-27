@@ -49,7 +49,7 @@ never deleted by `demo cache clear`, by key, under `--all` or under `--orphans`.
 
 A `local/` subdirectory inside a cache dir holds artifacts **this machine
 computed for itself** — a demo's own refit, when its hosted data could not be
-reached — written there by `luxar.utils.data_fetch.local_fit_path`. That is a
+reached — written there by `luxar.demos.local_fit_path`. That is a
 separate namespace from the manifest's own `~/.cache/luxar/<dataset>/<file>`,
 which the fetch checksums and quarantines; a local fit stored under the hosted
 name is destroyed and recomputed on every launch (#1618). `demo cache clear`
@@ -382,7 +382,8 @@ Time-animated version of the particle collision demo. Watch particle tracks grow
 #### demo_4d_fractals.py - 4D Geometric Fractal Explorer
 Interactive exploration of 6 different 4D geometric fractals with categorical dimension.
 
-**Run**: `luxar demo run fractals_4d [-- --grid=64]`
+**Run**: `luxar demo run fractals_4d [-- --grid=64]` (default: 147 MB,
+~25 min, ~24 GB peak memory)
 
 **Demonstrates**: 4D spatial navigation (XYZ + W dimension, every W slider stop shows structure), categorical dimension (select between 6 fractal types), large dataset (~44.5M points, up to ~7.5M per fractal), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
 
@@ -647,7 +648,7 @@ HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) dr
 
 **Requires**: Internet access on first run (~72 MB: HYCOM GLBy0.08 surface u/v + Blue Marble texture; cached under `~/.cache/luxar/ocean_currents_earth/`).
 
-**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, `stream:` additive LOD for fast first paint on an 8M-point globe.
+**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node segment ceiling, and **partition-of-LOD on both layers** — each is a `kind=partition` of 16 per-tile `kind=lod` ladders, which is what keeps the opening whole-globe view at 5.47M resident elements instead of 19.44M (`partition=` alone bounds node size but not residency: every part is drawn and only frustum-culled). Coarse levels are fewer whole elements with a compensating `sqrt` point radius / linear ribbon width, so a streamline still looks like a streamline. The scene is ~546 MB on disk against ~290 MB for a flat build — substitutive LOD stores levels, not deltas; `LOD_COMPRESSION` / `LOD_LEVELS` move that balance.
 
 ---
 
@@ -1291,11 +1292,11 @@ same information inside its own error message.
 Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
 
-`luxar.demos` is the ONLY spelling for these helpers: never import the guarded
-concern modules under `luxar.utils` (including `luxar.utils.data_fetch`,
-`luxar.utils.download`, and `luxar.utils.remote_zip`) or private demo helpers
-such as `luxar.demos._support._fields` directly from a demo, even though that is
-where they live. The authoritative guarded set is
+`luxar.demos` is the ONLY spelling for these helpers: never import guarded
+`luxar.demos._support.*` concern modules (including dataset, download, and
+remote-ZIP support), `luxar.utils.colors`, `luxar.utils.scenes`, or private demo
+helpers such as `luxar.demos._support._fields` directly from a demo, even though
+that is where they live. The authoritative guarded set is
 `tests/test_demo_import_spelling.py`'s `DEEP_MODULES`. That test fails the build
 on every deep spelling, including relative forms, in every demo module here and
 in the three `gsplats/**/demos` trees, and also on a name the barrel does not

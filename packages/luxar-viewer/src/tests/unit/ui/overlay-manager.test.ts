@@ -209,6 +209,26 @@ describe('OverlayManager.loadOverlays', () => {
     expect(el.style.left).toBe('25%');
     expect(el.style.top).toBe('75%');
   });
+
+  it('skips image content whose source is inside a zipped store', async () => {
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'archive-image',
+          type: 'overlay_image',
+          image_file: 'preview.png',
+          size: [0.25, 0.25],
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr.zip'
+    );
+
+    expect(document.querySelector('.luxar-overlay--image img')).toBeNull();
+    expect(warningSpy).toHaveBeenCalledOnce();
+    warningSpy.mockRestore();
+  });
 });
 
 describe('OverlayManager — anchoring (issue #773)', () => {

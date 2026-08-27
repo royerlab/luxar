@@ -29,7 +29,8 @@
 //! branchless multi-lane min/max + interleaved partial histograms (the 4×
 //! histogram footprint cost more in cache pressure than the broken
 //! dependency chains gained). The simple three-pass form above is the
-//! fastest measured; see `perf-budget.test.ts` for the enforced floor.
+//! fastest measured; see `perf-budget.test.ts` for the 50 M splats/s floor
+//! (report-only unless `LUXAR_PERF_QUIET_HOST=1`).
 //!
 //! Raw f16-bit-pattern keys (the SparkJS trick) are deliberately NOT used:
 //! Luxar scenes carry physical units spanning nm..km, and f16

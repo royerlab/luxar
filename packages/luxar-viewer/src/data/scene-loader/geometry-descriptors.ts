@@ -163,6 +163,7 @@ export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
         normal_dims: attrs?.attrs?.normal_dims,
         double_sided: attrs?.attrs?.double_sided ?? true,
         extend_to_all: attrs?.attrs?.extend_to_all,
+        slab_tolerance: attrs?.attrs?.slab_tolerance,
       });
       ctx.commitMeshGeometry(staged);
     },

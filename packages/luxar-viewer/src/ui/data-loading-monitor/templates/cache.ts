@@ -2,6 +2,7 @@
  * Cache-tab templates and shared cache display helpers.
  */
 
+import type { CacheValidationMode } from '../../../cache/types';
 import type {
   CacheMetrics,
   CacheStatusBadge,
@@ -249,14 +250,14 @@ function renderCacheStatusRow(badges: CacheStatusBadge[] | undefined, always = f
  * this verbatim; null/undefined render as a neutral placeholder so
  * callers don't have to guard the value themselves.
  */
-export function formatValidationMode(
-  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
-): string {
+export function formatValidationMode(mode: CacheValidationMode | undefined): string {
   switch (mode) {
     case 'content-hash':
       return 'Content Hash';
     case 'zattrs-hash':
       return 'Metadata Hash';
+    case 'archive-etag':
+      return 'Archive ETag';
     case 'ttl':
       return 'TTL';
     case 'none':
@@ -274,9 +275,7 @@ export function formatValidationMode(
  * so the tooltip stays correct when the mode changes after the first
  * validation completes (e.g. '—' → Content Hash).
  */
-export function validationModeTooltip(
-  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
-): string {
+export function validationModeTooltip(mode: CacheValidationMode | undefined): string {
   switch (mode) {
     case 'content-hash':
       return (
@@ -293,6 +292,14 @@ export function validationModeTooltip(
         'a fresh timestamp on every save, so a dataset regenerated at the same URL is detected ' +
         'and every cache tier cleared. Only a producer that rewrites chunk data without touching ' +
         'root metadata could still serve stale chunks.'
+      );
+    case 'archive-etag':
+      return (
+        'Archive-ETag validation: this dataset is a single zipped store (.zarr.zip), whose root ' +
+        'metadata lives INSIDE the archive and so cannot be re-fetched on its own. The viewer ' +
+        "instead asks the server for the archive's ETag (or its modification time and size) and " +
+        'compares that with the one stored next to the disk cache. This covers the whole store at ' +
+        'once rather than one document, so any change to the archive clears every cache tier.'
       );
     case 'ttl':
       return (
@@ -319,18 +326,17 @@ export function validationModeTooltip(
 /**
  * Didactic hover explanation for the "Last Validated" / "Cached Since"
  * timestamp, mode-aware because the timestamp means different things:
- * under the hash modes it is a real confirmation that updates on each
+ * under the source-validation modes it is a real confirmation that updates on each
  * successful online check, while under ttl/none it is a fixed known-good
  * baseline (when the cache was established) that does NOT advance on
  * repeat offline checks.
  */
-export function lastValidatedTooltip(
-  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
-): string {
+export function lastValidatedTooltip(mode: CacheValidationMode | undefined): string {
   const base =
-    'The viewer re-fetches the dataset root metadata from the server at load time. For the ' +
-    'content-hash and .zattrs-hash modes this timestamp updates on each successful check; for ' +
-    'ttl/none it is a fixed baseline that does not advance on repeat checks. ';
+    'At load time the viewer checks the dataset root metadata, or the archive itself for a ' +
+    'zipped store. For the content-hash, .zattrs-hash, and archive-etag modes this timestamp ' +
+    'updates on each successful check; for ttl/none it is a fixed baseline that does not ' +
+    'advance on repeat checks. ';
   switch (mode) {
     case 'content-hash':
       return (
@@ -345,6 +351,13 @@ export function lastValidatedTooltip(
         'At this moment the fingerprint of the dataset root metadata (.zattrs bytes) was ' +
         'compared against the server and the cache was confirmed current (or cleared if it did ' +
         'not match). "Never" = no check has completed yet, e.g. offline.'
+      );
+    case 'archive-etag':
+      return (
+        base +
+        "At this moment the archive's ETag (or modification time and size) was compared against " +
+        'the server and the cache was confirmed current (or cleared if it did not match). ' +
+        '"Never" = no check has completed yet, e.g. offline.'
       );
     case 'ttl':
       return (
@@ -369,17 +382,17 @@ export function lastValidatedTooltip(
 
 /**
  * Row label for the freshness timestamp, mode-aware to match the
- * timestamp's actual meaning: only the hash modes truly VALIDATE the
+ * timestamp's actual meaning: only the source-validation modes truly validate the
  * cache against the server on each check ("Last Validated"). Under
  * ttl/none the timestamp is a fixed baseline marking when the cache was
  * established, not a per-check event, so "Cached Since" is the honest label.
  */
-export function lastValidatedLabel(
-  mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
-): string {
-  // Both hash modes genuinely VALIDATE the cache against the server on each
+export function lastValidatedLabel(mode: CacheValidationMode | undefined): string {
+  // All three validation modes genuinely validate the cache against the server on each
   // successful check; ttl/none record a fixed baseline that does not advance.
-  return mode === 'content-hash' || mode === 'zattrs-hash' ? 'Last Validated' : 'Cached Since';
+  return mode === 'content-hash' || mode === 'zattrs-hash' || mode === 'archive-etag'
+    ? 'Last Validated'
+    : 'Cached Since';
 }
 
 /**
@@ -730,13 +743,13 @@ export function renderCacheContent(
           ${statusRowHtml}
         </div>
         <div class="luxar-cache-health__row">
-          <span class="luxar-cache-health__label" title="The strategy used to detect a dataset that changed on the server: Content Hash (fingerprint comparison, Luxar-compiled datasets), TTL (cached data expires after a configured age), or None (no change detection — external dataset)">Validation</span>
+          <span class="luxar-cache-health__label" title="The strategy used to detect a dataset that changed on the server: Content Hash, Metadata Hash, Archive ETag, TTL (cached data expires after a configured age), or None (no change detection)">Validation</span>
           <span class="luxar-cache-health__value" data-field="cache-health-mode" title="${escapeHtml(validationModeTooltip(cacheMetrics.health?.validationMode))}">
             ${formatValidationMode(cacheMetrics.health?.validationMode)}
           </span>
         </div>
         <div class="luxar-cache-health__row">
-          <span class="luxar-cache-health__label" data-field="cache-health-validated-label" title="When the cache's freshness was last established — for hash-validated datasets the last successful server check, for TTL/none the known-good baseline; hover the value for details under the current mode">${lastValidatedLabel(cacheMetrics.health?.validationMode)}</span>
+          <span class="luxar-cache-health__label" data-field="cache-health-validated-label" title="When the cache's freshness was last established — for source-validated datasets the last successful server check, for TTL/none the known-good baseline; hover the value for details under the current mode">${lastValidatedLabel(cacheMetrics.health?.validationMode)}</span>
           <span class="luxar-cache-health__value" data-field="cache-health-validated" title="${escapeHtml(lastValidatedTooltip(cacheMetrics.health?.validationMode))}">
             ${formatLastValidated(cacheMetrics.health?.lastValidatedAt)}
           </span>

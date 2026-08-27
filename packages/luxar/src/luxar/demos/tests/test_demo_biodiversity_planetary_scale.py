@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import consolidate, open_group
-from luxar.conftest import find_repo_relative_file, read_ts_number_const
+from luxar.conftest import read_ts_number_const, viewer_source
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.core.group.partition import serialized_bsp_tree_separates
 from luxar.demos import demo_biodiversity_planetary_scale as demo_module
@@ -998,15 +998,7 @@ def _viewer_fill_factor() -> float:
     anchor move fail HERE, on this calibration, instead of only on that
     separate coupling test.
     """
-    rel = Path("packages") / "luxar-viewer" / "src" / "scene" / "lod-group-registry.ts"
-    start = Path(demo_module.__file__).resolve()
-    registry = find_repo_relative_file(rel, start)
-    assert registry is not None, (
-        f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
-        "update this test — do NOT delete it: it is what makes the "
-        "OCCURRENCE_COVERAGE calibration guards fail on a future anchor move "
-        "instead of silently going stale."
-    )
+    registry = viewer_source("src/scene/lod-group-registry.ts")
     source = registry.read_text(encoding="utf-8")
     return read_ts_number_const(source, "FILL_FACTOR")
 
@@ -1082,10 +1074,7 @@ def test_occurrence_coverage_refines_once_a_tile_fills_the_viewport() -> None:
     dead weight. Unlike the two calibration tests above this isn't a
     diagonal-era MEASUREMENT to convert — it's the viewer's own screen-fill
     definition, read live from both TypeScript constants."""
-    rel = Path("packages") / "luxar-viewer" / "src" / "scene" / "lod-group-registry.ts"
-    start = Path(demo_module.__file__).resolve()
-    registry = find_repo_relative_file(rel, start)
-    assert registry is not None
+    registry = viewer_source("src/scene/lod-group-registry.ts")
     source = registry.read_text(encoding="utf-8")
     fill_factor = read_ts_number_const(source, "FILL_FACTOR")
     screen_fill_diagonal_ratio = read_ts_number_const(

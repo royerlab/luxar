@@ -59,6 +59,12 @@ def _scene_without_split_planes(tmp: Path) -> Path:
     with LuxarZarrCompiler(path) as compiler:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         scene.add_gsplats_from_file("tiles", str(source))
+
+    # The graft recovers planes from these disjoint boxes; strip them so this
+    # remains the scene-store counterpart of _partition_without_split_planes.
+    root = zc_open_group(str(path), mode="r+")
+    del root["tiles"].attrs["bsp_tree"]
+    zc_consolidate(root)
     return path
 
 

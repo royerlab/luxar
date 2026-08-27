@@ -79,7 +79,7 @@ from pathlib import Path
 
 import pytest
 
-from luxar.conftest import find_repo_relative_file
+from luxar.conftest import viewer_source
 from luxar.demos import _cinematic_camera
 from luxar.demos._cinematic_camera import (
     CINEMATIC_FOV_DEG,
@@ -400,24 +400,8 @@ def test_pull_in_uses_the_shared_framing_scale(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_python_fov_constants_match_the_viewer_contract() -> None:
-    start = Path(__file__).resolve()
-    camera_source = find_repo_relative_file(
-        Path("packages/luxar-viewer/src/config/sections/camera/data.ts"), start
-    )
-    rendering_source = find_repo_relative_file(
-        Path("packages/luxar-viewer/src/config/sections/rendering-controls/data.ts"),
-        start,
-    )
-    assert camera_source is not None, (
-        "cannot locate packages/luxar-viewer/src/config/sections/camera/data.ts. "
-        "If the viewer file moved, update this test — do NOT delete it: it locks "
-        "CINEMATIC_FOV_DEG to the live 35 mm preset."
-    )
-    assert rendering_source is not None, (
-        "cannot locate packages/luxar-viewer/src/config/sections/"
-        "rendering-controls/data.ts. If the viewer file moved, update this test — "
-        "do NOT delete it: it locks VIEWER_DEFAULT_FOV_DEG to the live default."
-    )
+    camera_source = viewer_source("src/config/sections/camera/data.ts")
+    rendering_source = viewer_source("src/config/sections/rendering-controls/data.ts")
 
     cinematic_match = re.search(
         r"['\"]35mm['\"]\s*:\s*([0-9]+(?:\.[0-9]+)?)",

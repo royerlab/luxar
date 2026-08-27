@@ -6,6 +6,7 @@
  * and loading statistics in real-time.
  */
 
+import type { CacheValidationMode } from '../cache/types';
 import type { GeometryTypeName, NodeKind, NodeTypeName } from './format-contract';
 
 /**
@@ -376,7 +377,7 @@ export interface CacheMetrics {
    * Optional because some providers may not surface it.
    */
   health?: {
-    validationMode?: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none';
+    validationMode?: CacheValidationMode;
     lastValidatedAt?: number | null;
     unvalidatedExternalDataset?: boolean;
     /**
@@ -679,7 +680,7 @@ export interface CacheStatsProvider {
     };
     /** Optional cache validation health. */
     health?: {
-      validationMode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none';
+      validationMode: CacheValidationMode;
       lastValidatedAt: number | null;
       unvalidatedExternalDataset: boolean;
       /**

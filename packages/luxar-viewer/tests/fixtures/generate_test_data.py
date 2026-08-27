@@ -2658,6 +2658,8 @@ def generate_gsplats_test() -> None:
         # factors. Using 1/sigma here makes projected splats enormous; the
         # viewer's screen-coverage safety fade then legitimately culls the
         # entire fixture, so browser smoke tests see a black canvas.
+        # Keep this aligned with the Group.add_gsplats and AdditiveSubLOD
+        # authoring docstrings, which own the public covariance convention.
         cholesky = np.zeros((num_splats, 6), dtype=np.float32)
         for i in range(num_splats):
             # Diagonal covariance factor: sigma (isotropic-ish with slight variation)

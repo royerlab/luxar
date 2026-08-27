@@ -6,6 +6,8 @@
  * It uses multiple detection strategies to work with any static file server.
  */
 
+import { isZippedZarrStoreUrl } from '../zip/entries';
+
 export interface DirectoryEntry {
   name: string;
   path: string;
@@ -183,9 +185,10 @@ export class DirectoryNavigator {
           const name = displayName || href.split('/').filter(Boolean).pop() || '';
           const isDir = !!collection;
 
-          // Check if it's a Zarr directory
+          // Check if it's a Zarr directory — or a zipped store, which is a
+          // FILE the viewer reads in place over range requests.
           let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
-          if (isDir && name.endsWith('.zarr')) {
+          if (isDir ? name.endsWith('.zarr') : isZippedZarrStoreUrl(name)) {
             type = 'zarr';
           }
 
@@ -263,7 +266,7 @@ export class DirectoryNavigator {
             const name = text.replace(/\/$/, '');
 
             let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
-            if (isDir && name.endsWith('.zarr')) {
+            if (isDir ? name.endsWith('.zarr') : isZippedZarrStoreUrl(name)) {
               type = 'zarr';
             }
 
@@ -288,7 +291,7 @@ export class DirectoryNavigator {
             const name = text.replace(/\/$/, '');
 
             let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
-            if (isDir && name.endsWith('.zarr')) {
+            if (isDir ? name.endsWith('.zarr') : isZippedZarrStoreUrl(name)) {
               type = 'zarr';
             }
 
@@ -311,7 +314,7 @@ export class DirectoryNavigator {
           const name = text.replace(/\/$/, '');
 
           let type: 'file' | 'directory' | 'zarr' = isDir ? 'directory' : 'file';
-          if (isDir && name.endsWith('.zarr')) {
+          if (isDir ? name.endsWith('.zarr') : isZippedZarrStoreUrl(name)) {
             type = 'zarr';
           }
 
@@ -364,7 +367,11 @@ export class DirectoryNavigator {
         path: this.currentPath ? `${this.currentPath}/${entry.name}` : entry.name,
         type:
           entry.type ||
-          (entry.name.endsWith('.zarr') ? 'zarr' : entry.isDirectory ? 'directory' : 'file'),
+          (entry.name.endsWith('.zarr') || isZippedZarrStoreUrl(entry.name)
+            ? 'zarr'
+            : entry.isDirectory
+              ? 'directory'
+              : 'file'),
         size: entry.size,
         modified: entry.modified ? new Date(entry.modified) : undefined,
       }));

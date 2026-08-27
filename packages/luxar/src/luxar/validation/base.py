@@ -766,6 +766,207 @@ def validate_vertices_for_writing(
         )
 
 
+def mesh_decoded_value_count(
+    n_vertices: int,
+    n_dims: int,
+    n_faces: int,
+    *,
+    normals: Any = None,
+    colors: Any = None,
+    scalars: Any = None,
+) -> int:
+    """Total LOGICAL values a mesh's arrays decode to.
+
+    The one quantity the write side can compute exactly, and the only term
+    :func:`validate_mesh_decode_budget` charges. Dtype-independent, because every
+    decoder-routed array materializes as float32 in the viewer — so no encoder
+    behaviour (narrowing, LUT, ``array_ref`` dedup) has to be predicted here.
+
+    A broadcast colour or a scalar ``scalars`` is counted at its ``n_vertices``
+    expansion, not its one stored row: that expansion is real and it is what the
+    loader charges.
+
+    Shared so the flat and reveal-ladder checks cannot drift apart.
+    """
+    values = n_vertices * n_dims + 3 * n_faces
+    if normals is not None:
+        values += n_vertices * 3
+    if colors is not None:
+        # Components from the array's own width, or from a broadcast colour's
+        # length; either way the loader charges the n_vertices expansion.
+        components = (
+            int(np.asarray(colors).shape[1])
+            if isinstance(colors, np.ndarray) and np.asarray(colors).ndim == 2
+            else len(colors)
+            if isinstance(colors, (list, tuple))
+            else 3
+        )
+        values += n_vertices * components
+    if scalars is not None:
+        values += n_vertices
+    return values
+
+
+def validate_mesh_ladder_decode_budget(
+    levels: Any, context: str = "mesh reveal ladder"
+) -> None:
+    """Refuse a reveal ladder whose LEVELS SUM over the viewer's ceiling.
+
+    The one place the flat check is not merely incomplete but *multiplicatively*
+    so, which is why it gets its own validator rather than a docstring caveat.
+
+    The viewer's progressive loader concatenates a ladder's ``additive_<i>``
+    levels into one node's buffers and keeps every level resident, so it charges
+    their SUM against a single budget (``mesh-progressive-loader.ts``). The write
+    side otherwise never sees the sum: the flat check runs once on the authored
+    mesh, and each level's own ``write_mesh`` re-checks only itself. A shell
+    ladder duplicates every vertex on a shell boundary, so its total exceeds the
+    flat mesh by a factor that grows with the level count. A comfortably-under-
+    budget surface therefore wrote cleanly and then failed to load, which is
+    precisely the class of failure this family of checks exists to prevent.
+
+    Sound in the same direction as its flat sibling: it charges only decoded
+    values, so it can never refuse a ladder the loader would admit.
+
+    Args:
+        levels: The per-level payload dicts, each with ``vertices`` / ``faces``
+            and the optional channels, as built for the multi-LOD writer.
+        context: Context for the error message.
+
+    Raises:
+        ValidationError: If the levels' combined decoded footprint exceeds the
+            ceiling.
+    """
+    from ..typing_utils.constants import (
+        MESH_DECODE_BUDGET_BYTES,
+        MESH_DECODED_BYTES_PER_VALUE,
+    )
+
+    total = 0
+    for level in levels:
+        vertices = np.asarray(level["vertices"])
+        total += mesh_decoded_value_count(
+            int(vertices.shape[0]),
+            int(vertices.shape[1]),
+            int(np.asarray(level["faces"]).size // 3),
+            normals=level.get("normals"),
+            colors=level.get("colors"),
+            scalars=level.get("scalars"),
+        )
+    declared = total * MESH_DECODED_BYTES_PER_VALUE
+    if declared > MESH_DECODE_BUDGET_BYTES:
+        mib = declared / (1024 * 1024)
+        budget_mib = MESH_DECODE_BUDGET_BYTES / (1024 * 1024)
+        raise ValidationError(
+            f"{context}: {len(levels)} levels decode to {mib:,.0f} MiB combined, "
+            f"over the viewer's {budget_mib:,.0f} MiB per-node budget. The levels "
+            "are concatenated into one node's buffers and all stay resident, so "
+            "they are charged together rather than against separate budgets — a "
+            "shell ladder duplicates every vertex on a shell boundary, so the "
+            "total exceeds the flat surface by a factor that grows with the "
+            "level count.",
+            "Write fewer levels, decimate the surface first, or split it across "
+            "several mesh nodes — the budget is per node",
+        )
+
+
+def validate_mesh_decode_budget(
+    n_vertices: int,
+    n_dims: int,
+    n_faces: int,
+    *,
+    normals: Any = None,
+    colors: Any = None,
+    scalars: Any = None,
+    context: str = "mesh",
+) -> None:
+    """Refuse a mesh whose declared footprint provably exceeds the viewer's ceiling.
+
+    The general rule this enforces: **Luxar must not let you author a scene that
+    provably will not load.** A bound enforced only on the read side is not a
+    bound — it is a delayed failure, surfacing in a browser far from the
+    ``add_mesh`` call that caused it.
+
+    The viewer's mesh loader is whole-node: it fetches and decodes every array in
+    full, so it gates admission on a per-node byte ceiling
+    (:data:`~luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES`) computed from
+    ``.zarray`` metadata BEFORE fetching a chunk. A store above it does not render
+    slowly — it does not render.
+
+    **This check is deliberately weaker than that gate, and the asymmetry is the
+    whole design.** A hard error that over-counted would refuse a store the viewer
+    would happily accept, which is a worse bug than the one it fixes. So it charges
+    only the term it can compute exactly:
+
+    * **Charged:** every array's DECODED size — its logical value count times
+      4 bytes, since every decoder-routed array materializes as float32 in the
+      viewer. This is dtype-independent, so no encoder behaviour has to be
+      predicted. Note a broadcast colour or a scalar ``scalars`` is charged at its
+      logical ``n_vertices`` expansion, not its one stored row: that expansion is
+      real, and it is what the loader charges.
+    * **Not charged:** the STORED bytes (the encoder's dtype narrowing, LUT and
+      ``array_ref`` dedup choices would all have to be replicated here, coupling
+      this validator to encoder internals for the sake of a term the loader adds
+      on top anyway); the largest per-chunk allocation (bounded by the ~64 KB
+      chunk policy, negligible against 512 MiB); and the label / image-label CSR
+      arrays. All three are bounded constants.
+
+    A reveal ladder is the one case where the shortfall was *multiplicative*
+    rather than a bounded constant — this validator sees one authored mesh at a
+    time, while the viewer concatenates every level into one resident node
+    buffer and charges their sum. That is handled separately rather than
+    omitted: see :func:`validate_mesh_ladder_decode_budget`.
+
+    Every omission is a term the loader ADDS, so this is a strict lower bound on
+    the loader's accounting: anything refused here is certainly refused there. The
+    cost of that soundness is completeness — a mesh between roughly half the
+    ceiling and the ceiling still writes and is still refused by the viewer. Half
+    a bound enforced at the right moment beats a whole one enforced too late, and
+    beats a whole one that sometimes cries wolf.
+
+    The authority for the full accounting is
+    ``packages/luxar-viewer/src/data/mesh/preflight.ts``. If that changes, this
+    stays sound as long as it only ever charges fewer terms.
+
+    Args:
+        n_vertices: Vertex count.
+        n_dims: Vertex dimensionality (``vertices`` is ``(n_vertices, n_dims)``).
+        n_faces: Triangle count (``faces`` decodes to ``3 * n_faces`` indices).
+        normals: The normals array, or ``None``. Only presence is read.
+        colors: The colors array or broadcast colour, or ``None``.
+        scalars: The scalars array or broadcast scalar, or ``None``.
+        context: Context for the error message.
+
+    Raises:
+        ValidationError: If the decoded footprint alone exceeds the ceiling.
+    """
+    from ..typing_utils.constants import (
+        MESH_DECODE_BUDGET_BYTES,
+        MESH_DECODED_BYTES_PER_VALUE,
+    )
+
+    declared = (
+        mesh_decoded_value_count(
+            n_vertices, n_dims, n_faces, normals=normals, colors=colors, scalars=scalars
+        )
+        * MESH_DECODED_BYTES_PER_VALUE
+    )
+    if declared > MESH_DECODE_BUDGET_BYTES:
+        mib = declared / (1024 * 1024)
+        budget_mib = MESH_DECODE_BUDGET_BYTES / (1024 * 1024)
+        raise ValidationError(
+            f"{context}: this mesh's arrays decode to {mib:,.0f} MiB "
+            f"({n_vertices:,} vertices / {n_faces:,} faces), over the viewer's "
+            f"{budget_mib:,.0f} MiB per-node budget. A mesh is loaded whole, so the "
+            "viewer refuses a node this large before fetching any of it — the scene "
+            "would not render. The real footprint is larger still: this figure "
+            "counts only decoded bytes, while the loader also charges stored bytes.",
+            "Decimate the surface (`luxar.mesh.decimate`, or "
+            "`add_mesh(substitutive_lod=…)`), or split it across several mesh "
+            "nodes — the budget is per node",
+        )
+
+
 def validate_faces_for_writing(
     faces: Any, n_vertices: int, context: str = "faces"
 ) -> None:

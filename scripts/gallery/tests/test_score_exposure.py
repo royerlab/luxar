@@ -17,20 +17,11 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from luxar.conftest import viewer_source
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import score_exposure as se  # noqa: E402
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-POLICY_TS = (
-    REPO_ROOT
-    / "packages"
-    / "luxar-viewer"
-    / "src"
-    / "tests"
-    / "screenshots"
-    / "exposure-policy.ts"
-)
 
 # Thresholds the scorer mirrors from the capture harness, as
 # {name in exposure-policy.ts: name in score_exposure.py}. Deliberately NOT
@@ -210,14 +201,16 @@ def test_thresholds_match_the_capture_harness() -> None:
     rather than in a comment. Change a threshold in ``exposure-policy.ts`` and
     this test names the Python constant that needs the same edit.
     """
-    if not POLICY_TS.exists():
-        pytest.skip(f"viewer sources not present: {POLICY_TS}")
+    try:
+        policy_ts = viewer_source("src/tests/screenshots/exposure-policy.ts")
+    except AssertionError as error:
+        pytest.skip(f"viewer sources not present: {error}")
     ts_values = {
-        name: float(value) for name, value in _TS_CONST.findall(POLICY_TS.read_text())
+        name: float(value) for name, value in _TS_CONST.findall(policy_ts.read_text())
     }
     missing = sorted(set(MIRRORED_THRESHOLDS) - set(ts_values))
     assert not missing, (
-        f"not found in {POLICY_TS.name} (renamed or removed?): {missing}"
+        f"not found in {policy_ts.name} (renamed or removed?): {missing}"
     )
     mismatched = {
         ts_name: (ts_values[ts_name], getattr(se, py_name))

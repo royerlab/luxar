@@ -29,11 +29,14 @@ workflow still skipped.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -42,9 +45,11 @@ import yaml
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
 
-#: One row per gate input that carries NO classified source extension, so the only
-#: thing standing between it and a silent skip is an explicit pattern alternative.
+#: One row per gate input whose required domain is not guaranteed by its ordinary
+#: source extension or package path, so an explicit pattern alternative is required.
 #: ``(path, domain, why)`` — the reason is quoted back in the failure message.
+#: Viewer-source readers name their paths through ``viewer_source()``; the static
+#: scan below checks those literal calls against this declaration.
 #:
 #: Not every row is load-bearing to the same degree: some are matched by a broad
 #: alternative that could not plausibly be removed (``Cargo.lock`` via the whole
@@ -61,6 +66,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         ".github/workflows/docs.yml",
         "py",
         "test_docs_workflow.py guards the Pages workflow itself",
+    ),
+    (
+        ".github/workflows/external-reference-audits.yml",
+        "py",
+        "test_run_external_reference_audits.py pins its schedule and token wiring",
     ),
     (
         "scripts/complexity_baseline.json",
@@ -80,15 +90,52 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_demo_meta.py cross-validates it against the demo registry",
     ),
     (
+        "scripts/gallery/manifest.json",
+        "ts",
+        "gallery-selection.test.ts validates README capture ids against it",
+    ),
+    (
         "docs/guides/user/CLI_REFERENCE.md",
         "py",
         "test_docs_command_coverage.py drift-guards it against the live Typer app; "
         "its .md only selects docs-quality, which runs no pytest",
     ),
     (
+        ".agents/skills/luxar-gsplat-pipeline/SKILL.md",
+        "py",
+        "test_cholesky_documentation.py executes its documented Cholesky packing",
+    ),
+    (
+        ".agents/skills/luxar-visualization/SKILL.md",
+        "py",
+        "test_cholesky_documentation.py executes its documented Cholesky packing, "
+        "and check-demo-counts synchronizes its demo and focused-example counts",
+    ),
+    (
+        ".agents/skills/luxar-visualization/references/scene-api.md",
+        "py",
+        "test_cholesky_documentation.py executes its documented Cholesky packing",
+    ),
+    (
+        "CLAUDE.md",
+        "py",
+        "test_cholesky_documentation.py guards its contributor-facing convention, "
+        "and check-demo-counts synchronizes its bundled-demo count with the registry",
+    ),
+    (
+        "docs/specs/GSPLATS_DIMENSION_MAPPING.md",
+        "py",
+        "test_cholesky_documentation.py guards its hand-authoring contract",
+    ),
+    (
         "README.md",
         "py",
         "test_readme_demo_docs.py drift-guards the root demo documentation",
+    ),
+    (
+        "README.md",
+        "ts",
+        "gallery-selection.test.ts derives the README capture set from it",
     ),
     (
         "packages/luxar/src/luxar/demos/README.md",
@@ -116,6 +163,78 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "scripts/check_version_consistency.py pins it to the Python version",
     ),
     (
+        "packages/luxar-viewer/src/config/sections/camera/data.ts",
+        "py",
+        "test_viewer_config.py and test_demos_cinematic_mode.py parse its FOV "
+        "presets and defaults",
+    ),
+    (
+        "packages/luxar-viewer/src/config/sections/rendering-controls/data.ts",
+        "py",
+        "test_demos_cinematic_mode.py parses its default FOV",
+    ),
+    (
+        "packages/luxar-viewer/src/data/attrs-composer.ts",
+        "py",
+        "test_blending_warnings.py parses the scene-root exclusion from the "
+        "attrs-inheritance chain",
+    ),
+    (
+        "packages/luxar-viewer/src/data/loaders/spatial-query/tolerance-computer.ts",
+        "py",
+        "test_ordering_gsplats.py parses the continuous-dimension tolerance",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/blending-state.ts",
+        "py",
+        "test_blending_warnings.py parses the normal-mode depth-write threshold",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/element-texture-layout.ts",
+        "py",
+        "test_element_cap_warning.py parses the element-texture capacity inputs",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/materials/mesh/appearance.ts",
+        "py",
+        "test_blending_warnings.py parses MESH_SUPPORTED_BLENDING_MODES",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/node-factory/create-points-node.ts",
+        "py",
+        "test_blending_warnings.py parses the points blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/node-factory/create-lines-node.ts",
+        "py",
+        "test_blending_warnings.py parses the lines blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/node-factory/create-gsplats-node.ts",
+        "py",
+        "test_blending_warnings.py parses the gsplats blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/rendering/node-factory/create-mesh-node.ts",
+        "py",
+        "test_blending_warnings.py parses the mesh-node blending default",
+    ),
+    (
+        "packages/luxar-viewer/src/scene/lod-group-registry.ts",
+        "py",
+        "LOD and biodiversity contract tests parse the live screen-coverage constants",
+    ),
+    (
+        "packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts",
+        "py",
+        "test_score_exposure.py parses the capture harness thresholds",
+    ),
+    (
+        "packages/luxar-viewer/tools/example-fixture-freshness.ts",
+        "py",
+        "test_run_examples.py pins the shared stale-fixture exit code",
+    ),
+    (
         "packages/luxar-viewer/src/types/format-contract.ts",
         "py",
         "the generated TypeScript half `check-contract` judges",
@@ -129,6 +248,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "packages/luxar-viewer/src/tests/README.md",
         "py",
         "test_fixture_environment.py checks its fixture-generator invocation",
+    ),
+    (
+        "packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts",
+        "py",
+        "test_generate_gallery_datasets.py derives the manifest field contract from it",
     ),
     (
         "packages/luxar-viewer/tests/fixtures/README.md",
@@ -153,6 +277,19 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
 #: satisfy every positive row.
 NON_DOMAIN_PATHS: list[str] = ["CHANGELOG.md", "docs/index.rst"]
 
+#: Inputs with no Python consumer. These must remain outside ``dom_py`` so adding
+#: a few contract inputs cannot silently widen ownership to whole subtrees and
+#: make unrelated PRs pay for the Python matrix.
+NON_PYTHON_DOMAIN_PATHS: list[str] = [
+    ".github/workflows/publish.yml",
+    "packages/luxar-viewer/src/config/sections/adaptive-dpr/data.ts",
+    "packages/luxar-viewer/src/data/loaders/spatial-query/spatial-query-builder.ts",
+    "packages/luxar-viewer/src/rendering/display-range.ts",
+    "packages/luxar-viewer/src/scene/lod-fade.ts",
+    "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",
+    "packages/luxar-viewer/tools/example-smoke-inventory.ts",
+]
+
 #: The docs gate's own negative control: real tracked files that must NOT set
 #: ``docs_relevant``. Kept separate from ``NON_DOMAIN_PATHS`` because the two
 #: controls test opposite gates — these DO belong to a language domain.
@@ -160,6 +297,29 @@ NON_DOCS_PATHS: list[str] = [
     "packages/luxar-launcher/go.mod",
     "packages/luxar-viewer/src/wasm/rust/src/lib.rs",
 ]
+
+_PYTHON_SOURCE_ROOTS = (
+    REPO / "packages/luxar/src/luxar",
+    REPO / "packages/luxar/examples/tests",
+    REPO / "scripts",
+    REPO / "stats",
+)
+
+_NON_SCANNED_PYTHON_VIEWER_INPUTS = {
+    "packages/luxar-viewer/package.json": "read by check_version_consistency.py",
+    "packages/luxar-viewer/src/types/format-contract.ts": (
+        "generated and checked by scripts/gen_format_contract.py"
+    ),
+    "packages/luxar-viewer/src/tests/global-setup.ts": (
+        "matched by test_fixture_environment.py through git grep"
+    ),
+    "packages/luxar-viewer/src/tests/README.md": (
+        "matched by test_fixture_environment.py through git grep"
+    ),
+    "packages/luxar-viewer/tests/fixtures/README.md": (
+        "matched by test_fixture_environment.py through git grep"
+    ),
+}
 
 #: The rule that puts the workflow itself in every domain. Extracted as text so a
 #: reword breaks this file rather than silently dropping the only classification
@@ -291,6 +451,162 @@ def test_a_prose_only_change_claims_no_language_domain(
     )
 
 
+@pytest.mark.parametrize("path", NON_PYTHON_DOMAIN_PATHS)
+def test_inputs_without_python_readers_do_not_claim_the_python_domain(
+    workflow: str, path: str
+) -> None:
+    """Cross-language ownership must stay narrower than whole input subtrees."""
+    assert (REPO / path).exists(), f"{path} moved; update this test"
+    assert not _classifies(_domain_patterns(workflow)["py"], path), (
+        f"{path} sets dom_py even though no Python gate reads it; narrow the "
+        "cross-language viewer pattern"
+    )
+
+
+def _viewer_source_calls(
+    source_roots: tuple[Path, ...] = _PYTHON_SOURCE_ROOTS,
+    *,
+    repo: Path = REPO,
+) -> tuple[set[str], list[str]]:
+    paths: set[str] = set()
+    non_literal_calls: list[str] = []
+    for source_root in source_roots:
+        for source_path in source_root.rglob("*.py"):
+            source = source_path.read_text(encoding="utf-8")
+            if "viewer_source" not in source:
+                continue
+            relative = source_path.relative_to(repo)
+            tree = ast.parse(source, filename=str(source_path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    aliased_import = any(
+                        alias.name == "viewer_source"
+                        and alias.asname not in (None, "viewer_source")
+                        for alias in node.names
+                    )
+                    if aliased_import:
+                        non_literal_calls.append(f"{relative}:{node.lineno}")
+                    continue
+                if not isinstance(node, ast.Call):
+                    continue
+                function = node.func
+                is_viewer_source = (
+                    isinstance(function, ast.Name) and function.id == "viewer_source"
+                ) or (
+                    isinstance(function, ast.Attribute)
+                    and function.attr == "viewer_source"
+                )
+                if not is_viewer_source:
+                    continue
+                if (
+                    len(node.args) != 1
+                    or not isinstance(node.args[0], ast.Constant)
+                    or not isinstance(node.args[0].value, str)
+                ):
+                    non_literal_calls.append(f"{relative}:{node.lineno}")
+                    continue
+                paths.add(f"packages/luxar-viewer/{node.args[0].value}")
+    return paths, non_literal_calls
+
+
+def test_viewer_source_scan_covers_every_pytest_source_root() -> None:
+    with (REPO / "pyproject.toml").open("rb") as stream:
+        pytest_paths = tomllib.load(stream)["tool"]["pytest"]["ini_options"][
+            "testpaths"
+        ]
+
+    uncovered = [
+        path
+        for path in pytest_paths
+        if not any(
+            (REPO / path) == source_root or (REPO / path).is_relative_to(source_root)
+            for source_root in _PYTHON_SOURCE_ROOTS
+        )
+    ]
+    assert not uncovered, (
+        f"pytest source roots missing from the viewer_source() scan: {uncovered}"
+    )
+
+
+def test_viewer_source_scan_finds_shared_helpers(tmp_path: Path) -> None:
+    helper = tmp_path / "shared_helper.py"
+    helper.write_text('viewer_source("src/shared.ts")\n', encoding="utf-8")
+
+    paths, errors = _viewer_source_calls((tmp_path,), repo=tmp_path)
+
+    assert paths == {"packages/luxar-viewer/src/shared.ts"}
+    assert errors == []
+
+
+def test_viewer_source_scan_rejects_aliased_imports(tmp_path: Path) -> None:
+    helper = tmp_path / "shared_helper.py"
+    helper.write_text(
+        'from luxar.conftest import viewer_source as source\nsource("src/hidden.ts")\n',
+        encoding="utf-8",
+    )
+
+    paths, errors = _viewer_source_calls((tmp_path,), repo=tmp_path)
+
+    assert paths == set()
+    assert errors == ["shared_helper.py:1"]
+
+
+def _assert_viewer_source_paths_are_owned(paths: set[str]) -> None:
+    python_gate_inputs = {path for path, domain, _why in GATE_INPUTS if domain == "py"}
+    negative_readers = sorted(paths & set(NON_PYTHON_DOMAIN_PATHS))
+    assert not negative_readers, (
+        "NON_PYTHON_DOMAIN_PATHS contains viewer sources now read by Python tests; "
+        f"move them into GATE_INPUTS: {negative_readers}"
+    )
+
+    missing = sorted(paths - python_gate_inputs)
+    assert not missing, (
+        "viewer sources read by Python tests must have dom_py GATE_INPUTS rows: "
+        f"{missing}"
+    )
+
+    python_viewer_inputs = {
+        path for path in python_gate_inputs if path.startswith("packages/luxar-viewer/")
+    }
+    exceptions = set(_NON_SCANNED_PYTHON_VIEWER_INPUTS)
+    stale_exceptions = sorted(exceptions - python_viewer_inputs)
+    unaccounted_inputs = sorted(python_viewer_inputs - paths - exceptions)
+    scanned_exceptions = sorted(paths & exceptions)
+    assert not stale_exceptions, (
+        "non-scanned viewer input exceptions must name dom_py GATE_INPUTS rows: "
+        f"{stale_exceptions}"
+    )
+    assert not unaccounted_inputs, (
+        "dom_py viewer GATE_INPUTS must be discovered through viewer_source() or "
+        f"documented as non-scannable: {unaccounted_inputs}"
+    )
+    assert not scanned_exceptions, (
+        "viewer inputs now discovered through viewer_source() must leave the "
+        f"non-scanned exception table: {scanned_exceptions}"
+    )
+
+
+def test_negative_viewer_source_reader_reports_negative_control() -> None:
+    with pytest.raises(AssertionError, match="NON_PYTHON_DOMAIN_PATHS contains"):
+        _assert_viewer_source_paths_are_owned(
+            {"packages/luxar-viewer/src/rendering/display-range.ts"}
+        )
+
+
+def test_viewer_source_readers_are_statically_owned_by_the_python_gate() -> None:
+    """Every shared viewer-source reader must have one checked classifier row."""
+    paths, non_literal_calls = _viewer_source_calls()
+    assert not non_literal_calls, (
+        "viewer_source() must be called by that name with one string-literal path "
+        "so classifier ownership is statically discoverable; invalid uses: "
+        f"{non_literal_calls}"
+    )
+    assert paths, (
+        "no viewer_source() calls found; the ownership guard would pass vacuously"
+    )
+    _assert_viewer_source_paths_are_owned(paths)
+
+
 @pytest.mark.parametrize("path", NON_DOCS_PATHS)
 def test_a_non_documentation_change_does_not_claim_the_docs_gate(
     workflow: str, path: str
@@ -352,7 +668,7 @@ def test_the_docs_gate_names_its_own_checker_and_baselines(workflow: str) -> Non
 def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     workflow: str,
 ) -> None:
-    """Obsidian reserves a TypeScript slot without delaying required checks."""
+    """Obsidian limits per-run slot use and preserves Python memory headroom."""
     jobs = yaml.safe_load(workflow)["jobs"]
     max_parallel = re.sub(r"\s+", "", jobs["python-tests"]["strategy"]["max-parallel"])
     branches = re.fullmatch(
@@ -364,7 +680,7 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     )
     obsidian_cap, hosted_cap = map(int, branches.groups())
     assert obsidian_cap == 2, (
-        "python-tests must leave one of obsidian's three slots for TypeScript"
+        "one run's Python matrix must not monopolise obsidian's three slots"
     )
 
     matrix_expression = jobs["python-tests"]["strategy"]["matrix"]["python-version"]
@@ -372,7 +688,36 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert matrix_lists, "python-tests must declare its event-specific version matrices"
     largest_matrix_size = max(len(json.loads(matrix)) for matrix in matrix_lists)
     assert hosted_cap >= largest_matrix_size, (
-        "the hosted max-parallel branch must not throttle the off-PR Python matrix"
+        "the hosted max-parallel branch must not throttle the full Python matrix"
+    )
+
+    pytest_addopts = jobs["python-tests"]["env"]["PYTEST_ADDOPTS"]
+    worker_branches = re.fullmatch(
+        r"\$\{\{\s*needs\.pick-runner\.outputs\.label\s*==\s*'obsidian'\s*"
+        r"&&\s*'([^']*)'\s*\|\|\s*'([^']*)'\s*\}\}",
+        pytest_addopts,
+    )
+    assert worker_branches is not None, (
+        "python-tests must enable xdist only on pick-runner's obsidian label"
+    )
+    obsidian_args = shlex.split(worker_branches.group(1))
+    hosted_args = shlex.split(worker_branches.group(2))
+    assert hosted_args == [], "GitHub-hosted Python coverage must stay serial"
+    worker_flags = [
+        obsidian_args[index + 1]
+        for index, arg in enumerate(obsidian_args[:-1])
+        if arg == "-n"
+    ]
+    assert worker_flags == ["2"], (
+        "python-tests must leave memory headroom in obsidian's 12 GiB runner slot"
+    )
+    dist_flags = [
+        obsidian_args[index + 1]
+        for index, arg in enumerate(obsidian_args[:-1])
+        if arg == "--dist"
+    ]
+    assert dist_flags == ["loadfile"], (
+        "parallel coverage must keep each file's shared fixtures on one worker"
     )
 
     for hosted_job in ("release-readiness", "wheel-viewer"):
@@ -394,6 +739,219 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     assert pick_runner["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}", (
         "pick-runner must authenticate gh api with the workflow token"
     )
+
+
+def test_scheduled_ci_supplies_a_green_window_every_three_hours(
+    workflow: str,
+) -> None:
+    """Promotion must not depend on a merge-free hour appearing by chance."""
+    # BaseLoader preserves the YAML 1.1 ``on`` key instead of coercing it to True.
+    parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
+    schedules = [entry["cron"] for entry in parsed["on"]["schedule"]]
+    matrix_line = next(
+        line for line in workflow.splitlines() if "python-version: ${{" in line
+    )
+    match = re.search(r"github\.event\.schedule == '([^']+)'", matrix_line)
+    assert match is not None, "the full Python matrix must name a daily schedule"
+    assert match.group(1) in schedules, (
+        "one scheduled window must retain the full daily Python matrix"
+    )
+
+    scheduled_hours: list[int] = []
+    for schedule in schedules:
+        minute, hour, day, month, weekday = schedule.split()
+        assert (minute, day, month, weekday) == ("17", "*", "*", "*")
+        if hour == "*/3":
+            scheduled_hours.extend(range(0, 24, 3))
+        else:
+            scheduled_hours.extend(int(value) for value in hour.split(","))
+    assert sorted(scheduled_hours) == list(range(0, 24, 3))
+
+
+def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
+    """A green cron must clear cancelled duplicate contexts on the same SHA."""
+    parsed = yaml.safe_load(workflow)
+    assert parsed["concurrency"]["group"] == (
+        "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-"
+        "${{ github.run_attempt }}"
+    )
+    assert parsed["concurrency"]["cancel-in-progress"] is True
+
+    jobs = parsed["jobs"]
+    repair = jobs["repair-cancelled-push-checks"]
+
+    assert set(repair["needs"]) == {
+        "python-tests",
+        "typescript-tests",
+        "release-readiness",
+        "wheel-viewer",
+        "docs-quality",
+    }
+    condition = re.sub(r"\s+", "", repair["if"])
+    assert "github.event_name=='schedule'" in condition
+    assert "always()" in condition
+    assert "!cancelled()" in condition
+    assert repair["permissions"] == {"actions": "write"}
+    assert repair["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}"
+
+    script = repair["steps"][0]["run"]
+    assert "actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest" in script
+    assert "event=push" in script
+    assert "status=completed" in script
+    assert "head_sha=${GITHUB_SHA}" in script
+    assert 'select(.name == "CI")' in script
+    assert "max_by(.id).id // empty" in script
+    assert "actions/runs/${push_run}/jobs?filter=latest" in script
+    assert '.conclusion == "cancelled"' in script
+    for context in (
+        "python-tests (3.12)",
+        "typescript-tests",
+        "release-readiness",
+        "wheel-viewer",
+        "docs-quality",
+    ):
+        assert context in script
+    assert "actions/jobs/$job_id/rerun" in script
+    assert "actions/runs/${push_run}/rerun-failed-jobs" in script
+
+
+def _run_cancelled_push_repair(
+    workflow: str,
+    tmp_path: Path,
+    *,
+    scheduled_python: str = "success",
+    push_python_latest: str = "cancelled",
+    push_typescript: str = "cancelled",
+    push_release: str = "cancelled",
+    rejected_endpoint: str = "",
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Execute the repair shell against deterministic workflow/job snapshots."""
+    script = yaml.safe_load(workflow)["jobs"]["repair-cancelled-push-checks"]["steps"][
+        0
+    ]["run"]
+    calls_path = tmp_path / "calls"
+    fake_gh = tmp_path / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+endpoint = next((arg for arg in sys.argv if arg.startswith("repos/")), "")
+if "--method" in sys.argv:
+    with open(os.environ["CALLS_PATH"], "a", encoding="utf-8") as stream:
+        stream.write(endpoint + "\\n")
+    if endpoint == os.environ["REJECTED_ENDPOINT"]:
+        raise SystemExit(1)
+elif f"/runs/{os.environ['GITHUB_RUN_ID']}/jobs?" in endpoint:
+    print(json.dumps([{"jobs": [
+        {"id": 10, "name": "python-tests (3.12)", "conclusion": "cancelled"},
+        {"id": 11, "name": "python-tests (3.12)", "conclusion": os.environ["SCHEDULED_PYTHON"]},
+        {"id": 12, "name": "typescript-tests", "conclusion": "success"},
+        {"id": 13, "name": "release-readiness", "conclusion": "success"},
+        {"id": 14, "name": "wheel-viewer", "conclusion": "success"},
+        {"id": 15, "name": "docs-quality", "conclusion": "success"},
+        {"id": 16, "name": "python-tests (3.14)", "conclusion": "failure"},
+    ]}]))
+elif "/actions/runs?" in endpoint:
+    print("900")
+elif "/runs/900/jobs?" in endpoint:
+    print(json.dumps([{"jobs": [
+        {"id": 21, "name": "python-tests (3.12)", "conclusion": "cancelled"},
+        {"id": 22, "name": "typescript-tests", "conclusion": os.environ["PUSH_TYPESCRIPT"]},
+        {"id": 23, "name": "release-readiness", "conclusion": os.environ["PUSH_RELEASE"]},
+        {"id": 24, "name": "python-tests (3.14)", "conclusion": "cancelled"},
+        {"id": 25, "name": "python-tests (3.12)", "conclusion": os.environ["PUSH_PYTHON_LATEST"]},
+    ]}]))
+else:
+    raise SystemExit(f"unexpected endpoint: {endpoint}")
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+        env=os.environ
+        | {
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "CALLS_PATH": str(calls_path),
+            "GITHUB_REPOSITORY": "royerlab/luxar",
+            "GITHUB_RUN_ID": "800",
+            "GITHUB_SHA": "deadbeef",
+            "SCHEDULED_PYTHON": scheduled_python,
+            "PUSH_PYTHON_LATEST": push_python_latest,
+            "PUSH_TYPESCRIPT": push_typescript,
+            "PUSH_RELEASE": push_release,
+            "REJECTED_ENDPOINT": rejected_endpoint,
+        },
+    )
+    calls = calls_path.read_text().splitlines() if calls_path.exists() else []
+    return result, calls
+
+
+def test_green_schedule_reruns_all_latest_cancelled_required_push_jobs(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(workflow, tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [
+        "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs",
+    ]
+
+
+def test_green_schedule_ignores_older_cancelled_push_attempt(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow, tmp_path, push_python_latest="success", push_release="success"
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/jobs/22/rerun"]
+
+
+def test_single_cancelled_required_job_uses_job_rerun(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        push_typescript="success",
+        push_release="success",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/jobs/25/rerun"]
+
+
+def test_rejected_multi_job_rerun_is_reported(workflow: str, tmp_path: Path) -> None:
+    endpoint = "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs"
+    result, calls = _run_cancelled_push_repair(
+        workflow, tmp_path, rejected_endpoint=endpoint
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [endpoint]
+    assert (
+        "rerun rejected for push run 900 (3 cancelled required jobs)" in result.stdout
+    )
+
+
+def test_non_green_schedule_does_not_repair_push_jobs(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow, tmp_path, scheduled_python="failure"
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == []
+    assert "python-tests (3.12)=failure" in result.stdout
 
 
 def _run_pick_runner(

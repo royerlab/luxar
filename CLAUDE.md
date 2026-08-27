@@ -257,7 +257,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 85 bundled demos (table)
+luxar demo                       # List the 87 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -727,13 +727,14 @@ luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # 
 # groups kept); auto/memory also re-quantize the CENTERS to per-axis uint16
 # fixed-point, so on ordinary spatial data centers are bit-exact only under
 # -e precision. Three exceptions stay exact in every mode: a GRIDDED axis (a
-# stacked sigma=0 time/channel axis) keeps uint16 but has its grid snapped onto
-# the data's own spacing; a LUT-eligible centers array is stored verbatim as
-# lut_uint8 (~1 B/value); and an axis that is NEITHER gridded nor LUT-eligible
-# whose grid would displace splats past their own sigma FOR MORE THAN 0.1% OF
-# THE SPLATS falls back to float32 (a smaller degenerate population is quantized
-# away silently — see MAX_UNREPRESENTABLE_SPLAT_FRACTION). Decode is always
-# float32 so viewer/GPU/WASM are unaffected. Unlike migrate-format (legacy→current,
+# stacked time/channel centers column that lands on a regular lattice) keeps
+# uint16 but has its grid snapped onto the data's own spacing; a LUT-eligible
+# centers array is stored verbatim as lut_uint8 (~1 B/value); and an axis that
+# is NEITHER gridded nor LUT-eligible whose grid would displace splats past
+# their own sigma FOR MORE THAN 0.1% OF THE SPLATS falls back to float32 (a
+# smaller degenerate population is quantized away silently — see
+# MAX_UNREPRESENTABLE_SPLAT_FRACTION). Decode is always float32 so
+# viewer/GPU/WASM are unaffected. Unlike migrate-format (legacy→current,
 # float32 vs AUTO-uint16 only) this exposes the full ladder incl. memory=uint8.
 luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
 luxar gsplat reencode fit.gsplats.zarr fit_f32.gsplats.zarr -e precision  # float32 (exact/archival)
@@ -1326,7 +1327,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 ### Geometry Types & Attributes
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
 - **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
-- **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32, RGB or RGBA — the optional alpha is per-splat opacity, consumed by every blending mode; mapped to optical depth in `volumetric`)
+- **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required; chol(Σ), scale-like diagonal), colors (Uint8/Float32, RGB or RGBA — the optional alpha is per-splat opacity, consumed by every blending mode; mapped to optical depth in `volumetric`)
 - **Mesh** (renderable, shaded): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. Three structural paths are supported: `kind=partition` (`add_mesh(partition=…)`, spec §9.2), *substitutive* LOD (`add_mesh(substitutive_lod=…)`, decimated by `luxar.mesh.decimate`), and a spatially coherent *reveal* additive ladder (`add_mesh(additive_lod={"method": "radial"})`) — though no two of them in the same call. No additive (prefix) LOD ladder over an *arbitrary* order — a prefix of an arbitrarily ordered index buffer is a holed surface, not a coarser one — so a non-reveal method and `volumetric` blending are both still refused with an explanation rather than silently degraded. No spatial index (`ordering="none"`): a mesh loads whole.
 
 ### Transforms

@@ -1,10 +1,9 @@
 # Viewer Developer Tools
 
-Standalone TypeScript drivers that automate a real Chromium against the
-running viewer — for AI-assisted debugging and for capturing publication-
-grade screenshots without a physical monitor. Sibling to `scripts/` (which
-holds build / quality / perf-diff utilities); these are interactive
-browser-driving tools, not part of any build pipeline.
+Standalone developer tools for driving a real Chromium, generating benchmark
+fixtures, and serving range-readable data. Sibling to `scripts/` (which holds
+build / quality / perf-diff utilities); these are local development helpers,
+not part of any build pipeline.
 
 The two browser drivers share the same recipe: launch headless Chromium
 via `@playwright/test` with GPU acceleration flags, navigate to a Luxar
@@ -20,7 +19,9 @@ tools/
 ├── agent-driver.ts          # Browser debugging driver
 ├── capture-hires.ts         # High-resolution figure capture for papers
 ├── e2e-server-identity.ts   # Checkout identity + Playwright preflight helpers
-└── e2e-workers.ts           # Local Playwright parallelism sized to the machine
+├── e2e-workers.ts           # Local Playwright parallelism sized to the machine
+├── make-zip-bench-fixtures.py # Build directory/STORED/DEFLATE benchmark fixtures
+└── range-http-server.py     # Static server with strict HTTP Range support
 ```
 
 ## `e2e-server-identity.ts`

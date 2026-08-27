@@ -40,6 +40,9 @@ axis_world_values = _demo.axis_world_values
 generate_4d_fractal = _demo.generate_4d_fractal
 materialised_w_planes = _demo.materialised_w_planes
 checkerboard_4d = _demo.checkerboard_4d
+surface_normals = _demo.surface_normals
+surface_of = _demo.surface_of
+apply_fractal_ambient_occlusion = _demo.apply_fractal_ambient_occlusion
 
 GRID = 24  # small but structurally representative (fast: 24^4 = 331K samples)
 N_FRACTALS = 6
@@ -99,9 +102,10 @@ class TestEveryWPlanePopulated:
         contract is about the stops the slider actually offers, not about the
         full lattice.
         """
-        positions, values = generate_4d_fractal(fractal_type, grid_size=GRID)
+        positions, values, normals = generate_4d_fractal(fractal_type, grid_size=GRID)
         assert len(positions) > 0
         assert len(values) == len(positions)
+        assert normals.shape == (len(positions), 3)
 
         axis = axis_world_values(GRID).astype(np.float32)
         planes = materialised_w_planes(GRID, _demo.W_STRIDE)
@@ -118,7 +122,7 @@ class TestEveryWPlanePopulated:
         on, so a rule that empties an interior plane must fail here even though
         the shipped stride would skip that plane.
         """
-        positions, _ = generate_4d_fractal(fractal_type, grid_size=GRID, w_stride=1)
+        positions, _, _ = generate_4d_fractal(fractal_type, grid_size=GRID, w_stride=1)
         axis = axis_world_values(GRID).astype(np.float32)
         w = positions[:, 0]
         for plane_w in axis:
@@ -129,7 +133,7 @@ class TestEveryWPlanePopulated:
     @pytest.mark.parametrize("fractal_type", range(N_FRACTALS))
     def test_positions_on_snap_grid(self, fractal_type: int) -> None:
         """All 4 coordinates take only the declared axis values."""
-        positions, _ = generate_4d_fractal(fractal_type, grid_size=GRID)
+        positions, _, _ = generate_4d_fractal(fractal_type, grid_size=GRID)
         full = axis_world_values(GRID).astype(np.float32)
         axis = set(full.tolist())
         planes = materialised_w_planes(GRID, _demo.W_STRIDE)
@@ -147,7 +151,7 @@ class TestEveryWPlanePopulated:
         even when the cap has silently become a whole-dataset budget again,
         which is the regression that made a finer grid render SPARSER.
         """
-        positions, _ = generate_4d_fractal(fractal_type, grid_size=GRID)
+        positions, _, _ = generate_4d_fractal(fractal_type, grid_size=GRID)
         planes = materialised_w_planes(GRID, _demo.W_STRIDE)
         budget = _demo.TARGET_MAX_POINTS_PER_PLANE
         assert len(positions) <= len(planes) * budget
@@ -163,7 +167,7 @@ class TestEveryWPlanePopulated:
 
     def test_minimum_grid_works_for_all_fractals(self) -> None:
         for fractal_type in range(N_FRACTALS):
-            positions, _ = generate_4d_fractal(fractal_type, grid_size=3)
+            positions, _, _ = generate_4d_fractal(fractal_type, grid_size=3)
             assert len(positions) > 0
 
     def test_empty_plane_error_reports_lattice_plane(
@@ -190,7 +194,7 @@ class TestEveryWPlanePopulated:
         take the subsample branch; at the test grid they don't. Shrink the
         budget so that branch (and the post-subsample plane check) runs."""
         planes = materialised_w_planes(GRID, _demo.W_STRIDE)
-        positions, _ = generate_4d_fractal(
+        positions, _, _ = generate_4d_fractal(
             0, grid_size=GRID, max_points_per_plane=200
         )  # XOR is dense
         assert len(positions) == 200 * len(planes)
@@ -231,10 +235,128 @@ class TestCheckerboardIsDeterministicStructure:
 class TestGeneratorDeterminism:
     @pytest.mark.parametrize("fractal_type", range(N_FRACTALS))
     def test_same_seed_same_output(self, fractal_type: int) -> None:
-        p1, v1 = generate_4d_fractal(fractal_type, grid_size=GRID)
-        p2, v2 = generate_4d_fractal(fractal_type, grid_size=GRID)
+        p1, v1, n1 = generate_4d_fractal(fractal_type, grid_size=GRID)
+        p2, v2, n2 = generate_4d_fractal(fractal_type, grid_size=GRID)
         assert np.array_equal(p1, p2)
         assert np.array_equal(v1, v2)
+        assert np.array_equal(n1, n2)
+
+
+class TestAmbientOcclusionInputs:
+    def test_generator_derives_normals_before_surface_extraction(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def solid_rule(iw, ix, iy, iz, grid_size):
+            del iw
+            keep = (
+                (ix >= 1)
+                & (ix < grid_size - 1)
+                & (iy >= 1)
+                & (iy < grid_size - 1)
+                & (iz >= 1)
+                & (iz < grid_size - 1)
+            )
+            return keep, np.ones(keep.shape, dtype=np.float32)
+
+        monkeypatch.setattr(
+            _demo, "_fractal_rule", lambda fractal_type, rng: ("solid", solid_rule)
+        )
+
+        _, _, normals = generate_4d_fractal(0, grid_size=5)
+
+        assert len(normals) == 26
+        assert np.all(np.linalg.norm(normals, axis=1) > 0.0)
+
+    def test_surface_normals_point_outward_from_the_solid(self) -> None:
+        solid = np.zeros((5, 5, 5), dtype=bool)
+        solid[1:4, 1:4, 1:4] = True
+        normals = surface_normals(solid)
+        surface = surface_of(solid)
+
+        np.testing.assert_allclose(normals[1, 2, 2], [-1.0, 0.0, 0.0])
+        np.testing.assert_allclose(normals[3, 2, 2], [1.0, 0.0, 0.0])
+        assert np.all(np.linalg.norm(normals[surface], axis=1) > 0.0)
+
+        isolated = np.zeros((5, 5, 5), dtype=bool)
+        isolated[2, 2, 2] = True
+        np.testing.assert_array_equal(surface_normals(isolated)[2, 2, 2], 0.0)
+
+    def test_occlusion_isolated_by_fractal_and_w_slice(self) -> None:
+        solid = np.zeros((17, 17, 17), dtype=bool)
+        solid[1:16, 1:16, 1:16] = True
+        surface = surface_of(solid)
+        spatial = np.column_stack(np.nonzero(surface)).astype(np.float32) / 8.0 - 1.0
+        normals = surface_normals(solid)[surface]
+
+        def block(fractal: float, w: float, x_offset: float) -> np.ndarray:
+            shifted = spatial.copy()
+            shifted[:, 0] += x_offset
+            return np.column_stack(
+                [
+                    np.full(len(spatial), fractal, dtype=np.float32),
+                    np.full(len(spatial), w, dtype=np.float32),
+                    shifted,
+                ]
+            )
+
+        positions = np.vstack(
+            [
+                block(0.0, -0.5, 0.0),
+                block(0.0, 0.5, 0.5),
+                block(1.0, -0.5, 1.0),
+            ]
+        )
+        repeated_normals = np.vstack([normals, normals, normals])
+        base_colors = np.ones((len(positions), 3), dtype=np.float32)
+
+        colors = apply_fractal_ambient_occlusion(
+            positions, repeated_normals, base_colors
+        )
+        scaled_positions = positions.copy()
+        scaled_positions[:, :2] *= 10.0
+        scaled_colors = apply_fractal_ambient_occlusion(
+            scaled_positions, repeated_normals, base_colors
+        )
+        expected_shade = _demo.bake_ambient_occlusion(
+            positions,
+            normals=repeated_normals,
+            occluder="opaque",
+            n_directions=_demo.AO_N_DIRECTIONS,
+            spatial_dims=(2, 3, 4),
+            group_by=np.repeat([0, 1, 2], len(spatial)),
+        )
+        merged_shade = _demo.bake_ambient_occlusion(
+            positions,
+            normals=repeated_normals,
+            occluder="opaque",
+            n_directions=_demo.AO_N_DIRECTIONS,
+            spatial_dims=(2, 3, 4),
+        )
+        no_normal_shade = _demo.bake_ambient_occlusion(
+            positions,
+            normals=None,
+            occluder="opaque",
+            n_directions=_demo.AO_N_DIRECTIONS,
+            spatial_dims=(2, 3, 4),
+            group_by=np.repeat([0, 1, 2], len(spatial)),
+        )
+        rolled_normal_colors = apply_fractal_ambient_occlusion(
+            positions,
+            np.roll(repeated_normals, 1, axis=1),
+            base_colors,
+        )
+
+        np.testing.assert_array_equal(colors, scaled_colors)
+        np.testing.assert_allclose(colors[:, 0], expected_shade, atol=1e-6)
+        blocks = colors.reshape(3, len(spatial), 3)
+        np.testing.assert_allclose(blocks[0], blocks[1], atol=1e-6)
+        np.testing.assert_allclose(blocks[0], blocks[2], atol=1e-6)
+        assert float(np.max(np.abs(colors[:, 0] - merged_shade))) > 0.02
+        assert float(np.max(np.abs(colors[:, 0] - no_normal_shade))) > 0.1
+        assert float(np.max(np.abs(colors - rolled_normal_colors))) > 0.05
+        assert float(colors.mean()) < 0.98
+        assert float(np.ptp(colors[:, 0])) > 0.05
+        assert np.all(colors <= base_colors)
 
 
 class TestWrittenDatasetContract:
@@ -245,6 +367,8 @@ class TestWrittenDatasetContract:
     def test_dimension_metadata_and_decoded_planes(
         self, tmp_path: Path, grid: int
     ) -> None:
+        import zarr
+
         from luxar.io.reader import LuxarScene
 
         # 12 exercises phase alignment when grid//2 is not divisible by the
@@ -267,6 +391,12 @@ class TestWrittenDatasetContract:
         assert wdim["step"] == step
         assert wdim["range"] == [float(axis[0]), float(axis[-1])]
         assert len(planes) > 2, "test grid too small to exercise the slider"
+
+        attrs = zarr.open_group(out, mode="r")["Fractals4D"].attrs
+        assert attrs["blending_mode"] == "volumetric"
+        assert attrs["opacity"] == pytest.approx(0.43)
+        assert attrs["absorption"] == pytest.approx(1.23)
+        assert attrs["intensity"] == pytest.approx(1.0 / _demo.DISPLAY_MAX)
 
         pos = scene.get_points("Fractals4D")["positions"]
         w = pos[:, 1]
