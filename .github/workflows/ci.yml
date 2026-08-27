@@ -1135,9 +1135,9 @@ jobs:
   # A scheduled run can put fresh successful checks on the same SHA as an older
   # cancelled push run, but branch protection's rollup can retain the cancelled
   # duplicate for each required context. Once this run has proved the five
-  # protected contexts green, walk every commit still ahead of main through this
-  # scheduled SHA and rerun cancelled required jobs from its push suite. This
-  # repairs commits skipped by the three-hour schedule as well as the tip.
+  # protected contexts green, walk commits still ahead of main through this
+  # scheduled SHA newest first and rerun cancelled required jobs from up to two
+  # push suites. This repairs skipped commits without an unbounded runner burst.
   repair-cancelled-push-checks:
     needs:
       [python-tests, typescript-tests, release-readiness, wheel-viewer, docs-quality]
