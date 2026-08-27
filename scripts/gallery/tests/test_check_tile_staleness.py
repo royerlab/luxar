@@ -190,6 +190,20 @@ def test_uncommitted_manifest_edit_does_not_affect_committed_report(
     assert by_id["b"].stale_inputs == ()
 
 
+def test_staged_uncommitted_media_does_not_affect_committed_report(
+    tmp_path: Path, capsys
+) -> None:
+    repo = _repo(tmp_path)
+    (repo / "docs/images/readme/gallery/zzz.webp").write_text("staged still\n")
+    (repo / "docs/images/readme/gallery/zzz.webm").write_text("staged video\n")
+    _git(repo, "add", "docs/images/readme/gallery")
+
+    assert stale.main(["--repo-root", str(repo)]) == 0
+    output = capsys.readouterr().out
+    assert "UNKNOWN zzz" not in output
+    assert "0 stale, 2 current, 0 unknown" in output
+
+
 def test_tile_uses_older_commit_from_still_and_video_pair(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / "docs/images/readme/gallery/a.webp").write_text("new still only\n")

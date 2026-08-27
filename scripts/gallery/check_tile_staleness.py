@@ -22,10 +22,7 @@ SHADING_PATHSPECS = (
     f"{SHADING_PATH.as_posix()}/*.py",
     f":(exclude){SHADING_PATH.as_posix()}/tests/**",
 )
-TILES_PATHSPECS = (
-    "docs/images/readme/gallery/*.webp",
-    "docs/images/readme/gallery/*.webm",
-)
+TILES_DIR = Path("docs/images/readme/gallery")
 GLOBAL_INPUT_PATHS = {
     "dataset generator": Path("scripts/gallery/generate_gallery_datasets.py"),
     "gallery capture": Path(
@@ -216,26 +213,20 @@ class GalleryHistory:
         return max(stamps, key=lambda stamp: stamp.committed_at)
 
     def _head_text(self, path: Path) -> str | None:
-        result = subprocess.run(
-            ["git", "show", f"HEAD:{path.as_posix()}"],
-            cwd=self.repo_root,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result.stdout
-        if (
-            "does not exist in 'HEAD'" in result.stderr
-            or "exists on disk" in result.stderr
-        ):
+        tracked = self._git("ls-tree", "--name-only", "HEAD", "--", path.as_posix())
+        if not tracked:
             return None
-        raise StalenessError(
-            f"git show HEAD:{path.as_posix()} failed: {result.stderr.strip()}"
-        )
+        return self._git("show", f"HEAD:{path.as_posix()}")
 
     def _tracked_tile_media(self) -> list[tuple[str, tuple[Path, ...]]]:
-        output = self._git("ls-files", "--", *TILES_PATHSPECS)
-        media = [Path(line) for line in output.splitlines() if line]
+        output = self._git(
+            "ls-tree", "-r", "--name-only", "HEAD", "--", TILES_DIR.as_posix()
+        )
+        media = [
+            Path(line)
+            for line in output.splitlines()
+            if Path(line).suffix in {".webp", ".webm"}
+        ]
         if not media:
             raise StalenessError("no committed README gallery tiles found")
         by_demo: dict[str, list[Path]] = {}
