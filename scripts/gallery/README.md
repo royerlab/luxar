@@ -35,7 +35,7 @@ make generate-gallery ONLY=desi_galaxies    # a subset
 GALLERY_ONLY=lorenz pnpm gallery
 GALLERY_ONLY=readme pnpm gallery             # root README media already on disk
 
-# Report committed README tiles whose narrow render inputs are newer
+# Report committed README tile staleness and media size margins
 make check-gallery-staleness
 ```
 
@@ -57,13 +57,13 @@ Global inputs are printed once above the rows, while per-demo failures print
 `UNKNOWN` and do not hide the rest of the report. All reads use committed
 `HEAD`, so an in-progress manifest edit cannot create a fake commit timestamp.
 Each row also reports the committed README WebP/WebM sizes. The 20 MiB warning
-and 25 MiB limit shelves are borrowed from the capture guard as a sanity check;
-the Cloudflare Pages `/media/*` deploy corpus is a separate set measured during
-capture. Git LFS pointer metadata supplies the content byte count even when the
-large object is not checked out, so the check requires the committed Git blobs
-to be available. The footer prints the corpus total and five largest files. The
-total is informational because this check does not enforce a corpus-size cap,
-and all size findings remain report-only.
+and 25 MiB limit shelves are borrowed from the gallery capture size guard
+(#2263) as a sanity check; the Cloudflare Pages `/media/*` deploy corpus is a
+separate set measured during capture. Git LFS pointer metadata supplies the
+content byte count even when the large object is not checked out, so the check
+requires the committed Git blobs to be available. The footer prints the corpus
+total and five largest files. The total is informational because this check
+does not enforce a corpus-size cap, and all size findings remain report-only.
 The first version intentionally does not inspect external dataset pins or
 machine-local/LFS payload contents beyond committed pointer metadata. The check
 refuses shallow clones rather than silently producing incomplete history; run
