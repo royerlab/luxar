@@ -124,6 +124,7 @@ describe('OverlayManager — construction + state', () => {
 
   afterEach(() => {
     manager.dispose();
+    vi.restoreAllMocks();
   });
 
   it('starts with no overlays and not globally hidden', () => {
@@ -163,6 +164,7 @@ describe('OverlayManager.loadOverlays', () => {
 
   afterEach(() => {
     manager.dispose();
+    vi.restoreAllMocks();
   });
 
   it('creates a div per overlay with the luxar-overlay class', async () => {
@@ -210,8 +212,13 @@ describe('OverlayManager.loadOverlays', () => {
     expect(el.style.top).toBe('75%');
   });
 
-  it('skips image content whose source is inside a zipped store', async () => {
-    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+  it('reads zipped image content through the store and revokes its typed object URL', async () => {
+    const imageBytes = new Uint8Array([137, 80, 78, 71]);
+    const readFile = vi.fn().mockResolvedValue(imageBytes);
+    const createObjectURLSpy = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:overlay-image');
+    const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
     await manager.loadOverlays(
       [
@@ -222,12 +229,46 @@ describe('OverlayManager.loadOverlays', () => {
           size: [0.25, 0.25],
         }),
       ],
-      'https://example.com/scene.luxar.zarr.zip'
+      'https://example.com/scene.luxar.zarr.zip',
+      readFile
     );
 
+    expect(readFile).toHaveBeenCalledExactlyOnceWith('/overlays/archive-image/preview.png');
+    expect(createObjectURLSpy).toHaveBeenCalledOnce();
+    const blob = createObjectURLSpy.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('image/png');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(imageBytes);
+
+    const img = document.querySelector('.luxar-overlay--image img') as HTMLImageElement;
+    expect(img.src).toBe('blob:overlay-image');
+    expect(img.alt).toBe('archive-image');
+
+    manager.dispose();
+    expect(revokeObjectURLSpy).toHaveBeenCalledExactlyOnceWith('blob:overlay-image');
+  });
+
+  it('warns and omits zipped image content when the archive member is missing', async () => {
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const readFile = vi.fn().mockResolvedValue(undefined);
+    const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL');
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'archive-image',
+          type: 'overlay_image',
+          image_file: 'preview.png',
+          size: [0.25, 0.25],
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr.zip',
+      readFile
+    );
+
+    expect(readFile).toHaveBeenCalledExactlyOnceWith('/overlays/archive-image/preview.png');
     expect(document.querySelector('.luxar-overlay--image img')).toBeNull();
     expect(warningSpy).toHaveBeenCalledOnce();
-    warningSpy.mockRestore();
+    expect(createObjectURLSpy).not.toHaveBeenCalled();
   });
 });
 

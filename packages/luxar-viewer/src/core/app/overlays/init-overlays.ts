@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { OverlayManager } from '../../../ui/overlay-manager';
+import { OverlayManager, type OverlayFileReader } from '../../../ui/overlay-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { InputHandler } from '../../../input';
 import type { RecordingPanel } from '../../../ui/recording-panel';
@@ -30,10 +30,11 @@ export async function initOverlays(ports: InitOverlaysPorts): Promise<OverlayMan
 
   const overlayConfigs = root?.userData?.overlayConfigs;
   const zarrBaseUrl = root?.userData?.zarrBaseUrl;
+  const readOverlayFile = root?.userData?.readOverlayFile as OverlayFileReader | undefined;
 
   const manager = new OverlayManager();
   if (overlayConfigs?.length > 0 && zarrBaseUrl) {
-    await manager.loadOverlays(overlayConfigs, zarrBaseUrl);
+    await manager.loadOverlays(overlayConfigs, zarrBaseUrl, readOverlayFile);
   }
   ports.inputHandler.setOverlayManager(manager);
   ports.recordingPanel?.setOverlayManager(manager);

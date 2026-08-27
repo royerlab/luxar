@@ -14,6 +14,16 @@ import { escapeHtml } from '../utils/escape-html';
 import { substituteHoverTemplate } from '../utils/hover-template';
 import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 
+/** Read one opaque file from the active scene store. */
+export type OverlayFileReader = (path: string) => Promise<Uint8Array | undefined>;
+
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
 /** Font preset mappings to CSS font-family stacks */
 export const FONT_PRESETS: Record<string, string> = {
   sans: 'system-ui, -apple-system, sans-serif',
@@ -185,7 +195,9 @@ interface HoverOverlayEntry {
 export class OverlayManager {
   private overlayElements = new Map<string, HTMLDivElement>();
   private configs = new Map<string, OverlayConfig>();
+  private objectUrls = new Set<string>();
   private baseUrl = '';
+  private readFile?: OverlayFileReader;
   private boundDimChangeHandler: () => void;
   /** Whether overlays are globally hidden by the user toggle (U key) */
   private globallyHidden = false;
@@ -206,14 +218,20 @@ export class OverlayManager {
    * Load overlays from parsed configs and render them.
    *
    * @param overlayConfigs - Array of overlay configurations from zarr
-   * @param baseUrl - Base URL of the zarr store (for image fetching)
+   * @param baseUrl - Base URL of the zarr store (for directory image fetching)
+   * @param readFile - Reader for opaque files held inside the active store
    */
-  async loadOverlays(overlayConfigs: OverlayConfig[], baseUrl: string): Promise<void> {
+  async loadOverlays(
+    overlayConfigs: OverlayConfig[],
+    baseUrl: string,
+    readFile?: OverlayFileReader
+  ): Promise<void> {
     this.baseUrl = baseUrl;
+    this.readFile = readFile;
 
     for (const config of overlayConfigs) {
       try {
-        const el = this.createOverlayElement(config);
+        const el = await this.createOverlayElement(config);
         getViewerContainer().appendChild(el);
         this.overlayElements.set(config.name, el);
         this.configs.set(config.name, config);
@@ -442,6 +460,10 @@ export class OverlayManager {
     for (const el of this.overlayElements.values()) {
       el.remove();
     }
+    for (const url of this.objectUrls) {
+      URL.revokeObjectURL(url);
+    }
+    this.objectUrls.clear();
     this.overlayElements.clear();
     this.configs.clear();
     this.hoverOverlays.clear();
@@ -450,7 +472,7 @@ export class OverlayManager {
   // ---------------------------------------------------------------- private
 
   /** Create a DOM element for a single overlay. */
-  private createOverlayElement(config: OverlayConfig): HTMLDivElement {
+  private async createOverlayElement(config: OverlayConfig): Promise<HTMLDivElement> {
     const el = document.createElement('div');
     el.className = 'luxar-overlay';
     el.dataset.overlayName = config.name;
@@ -489,7 +511,7 @@ export class OverlayManager {
         this.createTextContent(el, config);
         break;
       case 'overlay_image':
-        this.createImageContent(el, config);
+        await this.createImageContent(el, config);
         break;
       case 'overlay_html':
         this.createHtmlContent(el, config);
@@ -624,7 +646,7 @@ export class OverlayManager {
   }
 
   /** Create image overlay content. */
-  private createImageContent(el: HTMLDivElement, config: OverlayConfig): void {
+  private async createImageContent(el: HTMLDivElement, config: OverlayConfig): Promise<void> {
     el.classList.add('luxar-overlay--image');
 
     const img = document.createElement('img');
@@ -632,16 +654,20 @@ export class OverlayManager {
     // Construct image URL from base zarr URL
     if (config.image_file) {
       if (isZippedStoreUrl(this.baseUrl)) {
-        // An overlay image inside a `.zarr.zip` has no URL — it is a member of
-        // the archive and can only be read through the store. Concatenating
-        // anyway would produce `…scene.luxar.zarr.zipoverlays/…` (the archive
-        // base carries no trailing slash, deliberately) and show a broken
-        // image. Skip with one warning until overlays read through the store.
-        log.warning(
-          Modules.UI,
-          `Image overlay "${config.name}" is not supported on a zipped store (.zarr.zip) — skipping`
+        const path = `/overlays/${config.name}/${config.image_file}`;
+        const bytes = await this.readFile?.(path);
+        if (!bytes) {
+          log.warning(Modules.UI, `Image overlay "${config.name}" is missing ${path} — skipping`);
+          return;
+        }
+        const extension = config.image_file.split('.').pop()?.toLowerCase() ?? '';
+        const blobBytes = Uint8Array.from(bytes);
+        const objectUrl = URL.createObjectURL(
+          new Blob([blobBytes.buffer], { type: IMAGE_MIME_BY_EXTENSION[extension] ?? '' })
         );
-        return;
+        this.objectUrls.add(objectUrl);
+        img.src = objectUrl;
+        img.alt = config.name;
       } else {
         const imageUrl = `${this.baseUrl}overlays/${config.name}/${config.image_file}`;
         img.src = imageUrl;
