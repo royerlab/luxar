@@ -220,6 +220,21 @@ def test_failed_rebuild_attempts_every_example_and_leaves_no_marker(
     assert not (output_dir / run_examples.MARKER_NAME).exists()
 
 
+def test_capacity_warnings_fail_example_generation(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    _write_example(
+        repo,
+        "one",
+        "import warnings\n"
+        "from luxar.io import ElementCapacityWarning\n"
+        "warnings.warn('over capacity', ElementCapacityWarning)\n",
+    )
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 1
+    assert not (output_dir / run_examples.MARKER_NAME).exists()
+
+
 def test_successful_rebuild_without_outputs_preserves_previous_fixtures(
     tmp_path: Path,
 ) -> None:

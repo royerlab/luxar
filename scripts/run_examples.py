@@ -172,7 +172,16 @@ def generate_examples(
     for index, script in enumerate(scripts, start=1):
         print(f"\n[{index}/{len(scripts)}] 📊 Running {script.name}...", flush=True)
         print("─" * 48, flush=True)
-        result = subprocess.run([python, str(script)], cwd=repo_root, check=False)
+        result = subprocess.run(
+            [
+                python,
+                "-W",
+                "error::luxar.io.ElementCapacityWarning",
+                str(script),
+            ],
+            cwd=repo_root,
+            check=False,
+        )
         if result.returncode == 0:
             print(f"✅ Success: {script.name}", flush=True)
         else:
