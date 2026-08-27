@@ -921,6 +921,8 @@ def spatial_bsp_tree(
     ``1`` for 2D data, ``0``/``1``/``2`` for 3D+). The viewer maps that column
     through ``displayDims`` to reach its own local axis — see
     ``render-order.ts``; the two coincide only when ``displayDims == [0, 1, 2]``.
+    If any split column is not displayed, the writer warns and the viewer
+    discards the whole tree in favor of centroid ordering.
     """
     if positions.ndim != 2:
         raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")

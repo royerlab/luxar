@@ -371,9 +371,10 @@ only re-emit the advisory.)
   pre-wrapper gates — no adder resolves `DEFAULT_MAX_ELEMENTS` itself any more),
   the production BSP tree builders (`spatial_bsp_tree`,
   `spatial_bsp_polyline_tree`), shared leaf flattening and prune/persist helpers
-  (`bsp_leaf_parts`, `persist_pruned_bsp_tree`), and the two advisories
+  (`bsp_leaf_parts`, `persist_pruned_bsp_tree`), and the three advisories
   (`warn_if_partition_needs_more_dims`, which DROPS the request below 2 spatial
-  dims, and `warn_if_oversized_single_part`). Each native partition wrapper
+  dims, `warn_if_oversized_single_part`, and
+  `warn_if_partition_axes_not_displayed`). Each native partition wrapper
   stamps its pruned `bsp_tree`; the flat splitters remain parity-test helpers.
 - `compositing` — `COMPOSITING_ATTRS`, `position_bounds_from_array`,
   `slice_optional_array`, `is_broadcast_color`,
