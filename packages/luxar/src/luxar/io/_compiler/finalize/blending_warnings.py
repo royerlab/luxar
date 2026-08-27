@@ -20,6 +20,7 @@ _BLENDING_MODES = frozenset(mode.value for mode in BlendingMode)
 _MESH_SUPPORTED_BLENDING_MODES = frozenset(
     {"opaque", "normal", "additive", "luminous", "max"}
 )
+_MAX_CLUSTER_PARTICIPANTS = 5
 
 
 @dataclass(frozen=True)
@@ -141,12 +142,19 @@ def _cluster_root(parents: dict[str, str], path: str) -> str:
 def _merge_sorted_overlap(
     parents: dict[str, str],
     modes: dict[str, set[str]],
+    geometry_types: dict[str, set[str]],
+    containers: set[str],
     left: _BlendLeaf,
     right: _BlendLeaf,
 ) -> None:
     for node in (left, right):
         parents.setdefault(node.owner_path, node.owner_path)
         modes.setdefault(node.owner_path, set()).add(node.mode)
+        geometry_types.setdefault(node.owner_path, set()).add(node.leaf.geometry_type)
+    if _contains(left.leaf, right.leaf):
+        containers.add(left.owner_path)
+    if _contains(right.leaf, left.leaf):
+        containers.add(right.owner_path)
     left_root = _cluster_root(parents, left.owner_path)
     right_root = _cluster_root(parents, right.owner_path)
     if left_root != right_root:
@@ -154,21 +162,54 @@ def _merge_sorted_overlap(
 
 
 def _warn_sorted_overlap_clusters(
-    parents: dict[str, str], modes: dict[str, set[str]]
+    parents: dict[str, str],
+    modes: dict[str, set[str]],
+    geometry_types: dict[str, set[str]],
+    containers: set[str],
+    displayed_dimensions: tuple[int, ...],
 ) -> None:
     clusters: dict[str, list[str]] = {}
     for path in sorted(parents):
         clusters.setdefault(_cluster_root(parents, path), []).append(path)
     for cluster in sorted(clusters.values()):
+        ordered = sorted(cluster, key=lambda path: (path not in containers, path))
+        shown = ordered[:_MAX_CLUSTER_PARTICIPANTS]
         participants = ", ".join(
-            f"'{path}' ({'/'.join(sorted(modes[path]))})" for path in cluster
+            f"'{path}' ({' + '.join(sorted(modes[path]))})"
+            f"{' [contains another node]' if path in containers else ''}"
+            for path in shown
         )
+        omitted = len(ordered) - len(shown)
+        if omitted:
+            participants += f", and {omitted} more"
+        cluster_modes = {mode for path in cluster for mode in modes[path]}
+        cluster_geometry_types = {
+            geometry_type for path in cluster for geometry_type in geometry_types[path]
+        }
+        displayed_advice = ""
+        expected_displayed_dimensions = tuple(range(len(displayed_dimensions)))
+        if displayed_dimensions != expected_displayed_dimensions:
+            displayed_advice = (
+                f" Displayed dimensions are position columns {displayed_dimensions}, not "
+                f"{expected_displayed_dimensions}. Put the displayed dimensions first to keep "
+                "exact BSP ordering."
+            )
+        if len(cluster_geometry_types) == 1 and len(cluster_modes) == 1:
+            remedy = (
+                ' Merge them into one node and pass partition={"max_elements": N} to order '
+                "disjoint BSP cells back-to-front. This preserves placement and appearance for "
+                "same-type, same-mode Points, Lines, Mesh, and Gaussian Splats."
+            )
+        else:
+            remedy = (
+                " Merging cannot preserve this cluster because its geometry types or blending "
+                "modes differ."
+            )
         aprint(
             f"  ⚠️  overlapping order-dependent nodes {participants} have view-dependent "
-            'cross-node order; merge them into one node and pass partition={"max_elements": N}, '
-            "with the displayed dimensions in the first three position columns, to order disjoint "
-            "BSP cells back-to-front. For an emissive medium, additive blending is "
-            "order-independent but changes surface appearance; otherwise separate their bounds."
+            f"cross-node order.{displayed_advice}{remedy} For an emissive medium, additive "
+            "blending is order-independent but changes surface appearance; otherwise separate "
+            "their bounds."
         )
 
 
@@ -186,6 +227,8 @@ def warn_overlapping_blending(
     warned_additive: set[str] = set()
     sorted_parents: dict[str, str] = {}
     sorted_modes: dict[str, set[str]] = {}
+    sorted_geometry_types: dict[str, set[str]] = {}
+    sorted_containers: set[str] = set()
     for left, right in _candidate_pairs(leaves, displayed_dimensions):
         if left.owner_path == right.owner_path:
             continue
@@ -217,6 +260,19 @@ def warn_overlapping_blending(
             and _internally_sorted(right)
             and (_contains(left.leaf, right.leaf) or _contains(right.leaf, left.leaf))
         ):
-            _merge_sorted_overlap(sorted_parents, sorted_modes, left, right)
+            _merge_sorted_overlap(
+                sorted_parents,
+                sorted_modes,
+                sorted_geometry_types,
+                sorted_containers,
+                left,
+                right,
+            )
 
-    _warn_sorted_overlap_clusters(sorted_parents, sorted_modes)
+    _warn_sorted_overlap_clusters(
+        sorted_parents,
+        sorted_modes,
+        sorted_geometry_types,
+        sorted_containers,
+        tuple(dimensions.displayed[:3]),
+    )
