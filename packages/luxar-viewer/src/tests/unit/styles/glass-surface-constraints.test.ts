@@ -143,11 +143,69 @@ describe('dimension-sliders.css — bounded single-line labels (#2188)', () => {
     expect(name).toMatch(/white-space:\s*nowrap/);
 
     const value = ruleBody(css, '.luxar-dimension-slider__value');
-    expect(value).toMatch(/min-width:\s*0/);
     expect(value).toMatch(/white-space:\s*nowrap/);
     expect(value).toMatch(/overflow:\s*hidden/);
     expect(value).toMatch(/text-overflow:\s*ellipsis/);
     expect(value).toMatch(/text-align:\s*right/);
+  });
+});
+
+/**
+ * #2193 hardened the row against a long VALUE and left the other side open. The
+ * row's label is the DIMENSION NAME out of the store, so it is
+ * dataset-controlled too: `flex: 0 0 auto; white-space: nowrap` with no width
+ * bound let a 62-char name take a 400px panel's entire row (name 385px, value
+ * 0px, row overflowing by 34px → a horizontal scrollbar inside `__scroll`).
+ *
+ * These are CSS-text facts nothing else can see. jsdom does no layout, so the
+ * unit suite cannot observe the overflow; the geometry half lives in
+ * `tests/e2e/nd-navigation.spec.ts`.
+ */
+describe('dimension-sliders.css — the row survives a long dimension NAME (follow-up to #2193)', () => {
+  const css = loadCss('components/dimension-sliders.css');
+
+  it('reserves the value floor once, on the row', () => {
+    // Declared on `__label` rather than duplicated as two literals: the name's
+    // max-width and the value's min-width must reference the SAME number or the
+    // row either overflows (name floor too small) or wastes width.
+    expect(ruleBody(css, '.luxar-dimension-slider__label')).toMatch(
+      /--luxar-dim-value-floor:\s*\d+px/
+    );
+  });
+
+  it('caps the name at the row minus that floor, and ellipsizes it', () => {
+    const name = ruleBody(css, '.luxar-dimension-slider__name');
+    expect(name).toMatch(
+      /max-width:\s*calc\(\s*100%\s*-\s*var\(--luxar-dim-value-floor\)\s*-\s*var\(--luxar-spacing-\d+\)\s*\)/
+    );
+    // Without these the cap would CLIP the name mid-glyph instead of
+    // ellipsising it — bounded, but indistinguishable from the bug it fixes.
+    expect(name).toMatch(/overflow:\s*hidden/);
+    expect(name).toMatch(/text-overflow:\s*ellipsis/);
+  });
+
+  it('keeps the name unshrinkable so a long VALUE still cannot squeeze it', () => {
+    // The regression a first attempt at this fix actually produced: making the
+    // name `flex: 0 1 auto` bounded it, but flex shrink is weighted by base
+    // size, so a 73-char value then shrank the name from 53px to 25px —
+    // reintroducing precisely what #2193/§7.6 exists to prevent. `max-width` is
+    // load-bearing here, not stylistic.
+    expect(ruleBody(css, '.luxar-dimension-slider__name')).not.toMatch(/flex:\s*0\s+[1-9]/);
+  });
+
+  it('holds the floor from the value side too', () => {
+    expect(ruleBody(css, '.luxar-dimension-slider__value')).toMatch(
+      /min-width:\s*var\(--luxar-dim-value-floor\)/
+    );
+  });
+
+  it('lets the panel floor yield to a narrower viewport', () => {
+    // A flat `min-width: 400px` under `left: 50%; translateX(-50%)` put the
+    // panel at left -6px / right 386px in a 380px window — off BOTH edges, and
+    // unreachable because the panel is `position: fixed`.
+    const root = ruleBody(css, '.luxar-dimension-sliders');
+    expect(root).toMatch(/min-width:\s*min\([^;]*100vw[^;]*var\(--luxar-spacing-10\)[^;]*\)/);
+    expect(root).not.toMatch(/min-width:\s*\d+px/);
   });
 
   it('ellipsizes compact categorical labels and toggle values on one line', () => {
