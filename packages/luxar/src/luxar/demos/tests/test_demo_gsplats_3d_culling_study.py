@@ -22,7 +22,7 @@ _demo = _load_demo_module()
 
 
 def test_scene_description_uses_loaded_base_count() -> None:
-    description = _demo.scene_description(200_023)
+    description = _demo.scene_description([{"splats": 200_023}, {"splats": 95_160}])
 
     assert "200,023 splats" in description
     assert "200,155 splats" not in description

@@ -271,11 +271,11 @@ def level_label(row: dict) -> str:
     )
 
 
-def scene_description(base_splats: int) -> str:
+def scene_description(rows: list[dict]) -> str:
     """Describe the culling study using the fit loaded for this build."""
     return (
         "Ten cumulative-amplitude cull levels of one Drosophila "
-        f"gastrulation fit ({base_splats:,} splats), stacked on a Cull selector so "
+        f"gastrulation fit ({rows[0]['splats']:,} splats), stacked on a Cull selector so "
         "they swap in place at a fixed camera. Culling removes the dimmest "
         "splats first, which on this data is background haze rather than "
         "nuclei. Press 1 then [ / ] to step the selector."
@@ -341,7 +341,7 @@ def create_luxar_scene(output_path: Path) -> Path:
                 ),
             )
             scene.attrs["title"] = "GSplats: What Does Culling Actually Remove?"
-            scene.attrs["description"] = scene_description(rows[0]["splats"])
+            scene.attrs["description"] = scene_description(rows)
 
             scene.add_gsplats_from_data(
                 name="drosophila_nuclei",
