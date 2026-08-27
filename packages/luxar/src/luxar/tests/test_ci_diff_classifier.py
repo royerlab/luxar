@@ -1071,6 +1071,25 @@ def test_rejected_multi_job_rerun_is_reported(workflow: str, tmp_path: Path) -> 
     )
 
 
+def test_rejected_rerun_does_not_consume_repair_cap(
+    workflow: str, tmp_path: Path
+) -> None:
+    endpoint = "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs"
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        rejected_endpoint=endpoint,
+        candidate_shas=("oldest", "older", "deadbeef"),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [
+        endpoint,
+        "repos/royerlab/luxar/actions/jobs/31/rerun",
+        "repos/royerlab/luxar/actions/jobs/41/rerun",
+    ]
+
+
 @pytest.mark.parametrize(
     "failed_get_endpoint",
     [
