@@ -11,9 +11,9 @@ session (see ``_zarr_format_follows_luxar``), and holds a few small shared test
 helpers: ``confine_temp_dirs`` isolates in-process temporary files,
 ``array_compressor`` reads an array's compressor without the caller knowing
 which zarr format wrote it, and ``find_repo_relative_file`` / ``viewer_source`` /
-``read_ts_number_const`` let the handful of cross-language constant-lock tests
-read a number straight out of a TypeScript source rather than trust a prose
-comment to stay in sync.
+``read_ts_number_const`` / ``read_ts_string_literals`` let the handful of
+cross-language constant-lock tests read values straight out of a TypeScript
+source rather than trust a prose comment to stay in sync.
 """
 
 from __future__ import annotations
@@ -226,3 +226,41 @@ def read_ts_number_const(source: str, name: str) -> float:
         "If it was renamed or computed, update the caller — do NOT delete it."
     )
     return float(m.group(1))
+
+
+def read_ts_string_literals(source: str, name: str) -> frozenset[str]:
+    """Parse a string vocabulary from a TypeScript type, property, or array.
+
+    Accepts either ``type NAME = 'a' | 'b';`` (optionally exported) or an
+    interface property spelled ``NAME: 'a' | 'b';``, plus a literal const array
+    such as ``const NAME: readonly T[] = ['a', 'b'];``. Raises ``AssertionError``
+    when the declaration is missing, ambiguous, computed, multiline, or repeats
+    a member: source-lock tests should fail loudly when the TypeScript shape
+    changes rather than silently compare an incomplete vocabulary.
+    """
+    source_without_comments = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    escaped_name = re.escape(name)
+    union_matches = re.findall(
+        rf"^\s*(?:(?:export\s+)?type\s+{escaped_name}\s*=|"
+        rf"{escaped_name}\s*\??\s*:)\s*"
+        r"((?:'[^'\r\n]+'\s*\|\s*)*'[^'\r\n]+')\s*;",
+        source_without_comments,
+        re.MULTILINE,
+    )
+    array_matches = re.findall(
+        rf"^\s*(?:export\s+)?const\s+{escaped_name}(?:\s*:[^=]+)?=\s*\[\s*"
+        r"((?:'[^'\r\n]+'\s*,\s*)*'[^'\r\n]+'\s*,?)\s*\]\s*;",
+        source_without_comments,
+        re.MULTILINE,
+    )
+    matches = union_matches + array_matches
+    assert len(matches) == 1, (
+        f"expected exactly one literal string declaration named {name!r}, found "
+        f"{len(matches)}. If it was renamed, computed, or split across lines, "
+        "update the caller or this parser — do NOT delete the cross-language lock."
+    )
+    members = re.findall(r"'([^']+)'", matches[0])
+    assert len(members) == len(set(members)), (
+        f"literal-string union {name!r} repeats a member: {members!r}"
+    )
+    return frozenset(members)

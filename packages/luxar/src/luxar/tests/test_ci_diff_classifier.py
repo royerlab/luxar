@@ -225,6 +225,31 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "LOD and biodiversity contract tests parse the live screen-coverage constants",
     ),
     (
+        "packages/luxar-viewer/src/types/geometry-capabilities.ts",
+        "py",
+        "test_geometry_capabilities.py compares the viewer capability table",
+    ),
+    (
+        "packages/luxar-viewer/src/types/line-join.ts",
+        "py",
+        "test_constants.py compares the line-join vocabulary",
+    ),
+    (
+        "packages/luxar-viewer/src/types/lod-group.ts",
+        "py",
+        "test_constants.py compares the LOD selector and display-type vocabularies",
+    ),
+    (
+        "packages/luxar-viewer/src/types/partition-group.ts",
+        "py",
+        "test_constants.py compares the partition display-type vocabulary",
+    ),
+    (
+        "packages/luxar-viewer/src/types/data-monitor-types.ts",
+        "py",
+        "test_constants.py compares the monitor display-type vocabulary",
+    ),
+    (
         "packages/luxar-viewer/src/tests/screenshots/exposure-policy.ts",
         "py",
         "test_score_exposure.py parses the capture harness thresholds",
@@ -287,6 +312,7 @@ NON_PYTHON_DOMAIN_PATHS: list[str] = [
     "packages/luxar-viewer/src/rendering/display-range.ts",
     "packages/luxar-viewer/src/scene/lod-fade.ts",
     "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",
+    "packages/luxar-viewer/src/types/blending.ts",
     "packages/luxar-viewer/tools/example-smoke-inventory.ts",
 ]
 
