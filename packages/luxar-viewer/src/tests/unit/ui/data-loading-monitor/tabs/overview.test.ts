@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { updateOverviewTab } from '../../../../../ui/data-loading-monitor/tabs/overview';
+import { renderSecondaryMetrics } from '../../../../../ui/data-loading-monitor/templates/overview';
 import type { CacheMetrics, GlobalStats } from '../../../../../types/data-monitor-types';
 
 describe('updateOverviewTab', () => {
@@ -46,5 +47,88 @@ describe('updateOverviewTab', () => {
       )
     ).toBe(false);
     expect(badges).not.toHaveBeenCalled();
+  });
+
+  it('keeps the rendered and patched network detail identical', () => {
+    const container = document.createElement('div');
+    const network = {
+      bytesTransferred: 500,
+      requestCount: 7,
+      bandwidth: 50,
+      totalBytesServed: 1000,
+      totalRequestsServed: 42,
+    };
+    container.innerHTML = `<span data-field="visible-points"></span>${renderSecondaryMetrics(
+      { used: 0, limit: 1 },
+      { avgTime: 0, perSec: 0 },
+      network
+    )}`;
+    const stats = {
+      datasetSize: 1,
+      visiblePoints: 1,
+      datasetSegments: 0,
+      visibleSegments: 0,
+      datasetSplats: 0,
+      visibleSplats: 0,
+      droppedElements: 0,
+      avgQueryTime: 0,
+      queriesPerSecond: 0,
+    } as GlobalStats;
+    const badges = vi.fn();
+    const renderedDetail = container
+      .querySelector('[data-field="network-detail"]')
+      ?.textContent?.trim();
+
+    updateOverviewTab(
+      container,
+      stats,
+      {
+        totalCacheMemory: 0,
+        memoryLimit: 1,
+        network,
+      } as CacheMetrics,
+      badges
+    );
+    const patchedDetail = container
+      .querySelector('[data-field="network-detail"]')
+      ?.textContent?.trim();
+    expect(patchedDetail).toBe(renderedDetail);
+    expect(patchedDetail).toBe('500B net · 50B/s · 42 reqs');
+  });
+
+  it('falls back to requestCount for legacy providers', () => {
+    const container = document.createElement('div');
+    container.innerHTML =
+      '<span data-field="visible-points"></span><span data-field="network-bytes"></span><span data-field="network-detail"></span>';
+    const stats = {
+      datasetSize: 1,
+      visiblePoints: 1,
+      datasetSegments: 0,
+      visibleSegments: 0,
+      datasetSplats: 0,
+      visibleSplats: 0,
+      droppedElements: 0,
+      avgQueryTime: 0,
+      queriesPerSecond: 0,
+    } as GlobalStats;
+
+    updateOverviewTab(
+      container,
+      stats,
+      {
+        totalCacheMemory: 0,
+        memoryLimit: 1,
+        network: {
+          bytesTransferred: 500,
+          requestCount: 7,
+          bandwidth: 50,
+          totalBytesServed: 1000,
+        },
+      } as CacheMetrics,
+      vi.fn()
+    );
+    expect(container.querySelector('[data-field="network-detail"]')?.textContent).toBe(
+      '500B net · 50B/s · 7 reqs'
+    );
   });
 });
