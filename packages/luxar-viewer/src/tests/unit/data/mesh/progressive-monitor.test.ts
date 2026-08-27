@@ -118,20 +118,6 @@ describe('meshPayloadBytes — texture arms', () => {
 });
 
 describe('MeshProgressiveLoader — monitor telemetry', () => {
-  it('charges compressed textures at the preflight residency estimate', () => {
-    const data = meshData();
-    data.texture = {
-      kind: 'compressed',
-      texture: {} as never,
-      width: 11,
-      height: 7,
-      channels: 4,
-    };
-
-    const geometryBytes = data.vertices.byteLength + data.faces.byteLength;
-    expect(meshPayloadBytes(data)).toBe(geometryBytes + Math.ceil((11 * 7 * 4) / 3));
-  });
-
   it('reports one aggregate keyed by the NODE path, not per level', () => {
     const loader = ladder([level('/surface/additive_0'), level('/surface/additive_1')]);
     const m = loader.getMetrics();

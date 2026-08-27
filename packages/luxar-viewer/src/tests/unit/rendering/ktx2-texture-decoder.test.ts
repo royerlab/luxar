@@ -15,9 +15,7 @@ const loaderState = vi.hoisted(() => ({
 }));
 
 vi.mock('three/examples/jsm/loaders/KTX2Loader.js', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('three/examples/jsm/loaders/KTX2Loader.js')
-  >();
+  const actual = await importOriginal<typeof import('three/examples/jsm/loaders/KTX2Loader.js')>();
   return {
     KTX2Loader: class extends actual.KTX2Loader {
       constructor() {
@@ -38,7 +36,6 @@ vi.mock('three/examples/jsm/loaders/KTX2Loader.js', async (importOriginal) => {
       }
       dispose() {
         loaderState.dispose();
-        super.dispose();
       }
     },
   };
@@ -110,8 +107,8 @@ describe('createKTX2TextureDecoder', () => {
   });
 
   it('rejects an uncompressed non-RGBA KTX2 container parsed by Three', async () => {
-    // @ts-expect-error untyped Three.js example module
-    const { createDefaultContainer, VK_FORMAT_R8G8_UNORM, write } = await import('three/examples/jsm/libs/ktx-parse.module.js');
+    const parserModule = 'three/examples/jsm/libs/ktx-parse.module.js';
+    const { createDefaultContainer, VK_FORMAT_R8G8_UNORM, write } = await import(parserModule);
     const container = createDefaultContainer();
     Object.assign(container, {
       vkFormat: VK_FORMAT_R8G8_UNORM,
