@@ -190,9 +190,9 @@ def resolve_partition_spec(partition: Any) -> Tuple[int, str]:
 class BSPNode:
     """A node of the recursive BSP the spatial splitters build.
 
-    An **internal** node carries the split plane it applied: ``axis`` (one of
-    the first-3 spatial axes, ``0``/``1``/``2``) and the ``split`` coordinate
-    (in the positions' own coordinate space), plus its two children. A
+    An **internal** node carries the split plane it applied: ``axis`` (a
+    position-column index) and the ``split`` coordinate (in the positions' own
+    coordinate space), plus its two children. A
     **leaf** carries the index array of the elements it contains. The split
     convention matches the splitters exactly: the ``left`` subtree holds
     ``coord < split`` and ``right`` holds ``coord >= split``.
@@ -300,8 +300,7 @@ def serialized_bsp_leaf_cells(
     This is the tile's true boundary, which is NOT the same as the hull of the
     splats it happens to contain: a splat sits somewhere inside its cell, so the
     hull is strictly tighter and using it would crop away signal the tile is
-    responsible for. Only axes below ``min(3, ndim)`` are ever split
-    (:func:`spatial_bsp_tree`), so higher dims come back unbounded.
+    responsible for. Axes not split by the supplied tree come back unbounded.
     """
     cells: Dict[int, List[Tuple[float, float]]] = {}
 
@@ -400,8 +399,28 @@ def persist_pruned_bsp_tree(
 _RECONSTRUCT_VISIT_BUDGET = 200_000
 
 
+def _validated_reconstruction_axes(
+    n_axes: int, axes: Optional[Sequence[int]]
+) -> Tuple[int, ...]:
+    search_axes = (
+        tuple(range(n_axes)) if axes is None else tuple(int(axis) for axis in axes)
+    )
+    if (
+        not search_axes
+        or len(set(search_axes)) != len(search_axes)
+        or any(axis < 0 or axis >= n_axes for axis in search_axes)
+    ):
+        raise ValueError(
+            f"axes must name distinct position columns in [0, {n_axes}); "
+            f"got {search_axes}"
+        )
+    return search_axes
+
+
 def reconstruct_serialized_bsp_tree(
     boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+    *,
+    axes: Optional[Sequence[int]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Recover split planes from a set of DISJOINT axis-aligned part boxes.
 
@@ -416,6 +435,12 @@ def reconstruct_serialized_bsp_tree(
     At each step it scans the boxes' own faces as candidate cuts and takes the
     first that splits the set cleanly, recursing on both sides.
 
+    ``axes`` restricts recovery to position columns the destination viewer can
+    display; omitting it considers every recorded column. Callers with scene
+    metadata pass its displayed columns, while standalone gsplat stores pass
+    their spatial-first columns so stacked time/channel axes cannot turn
+    spatially overlapping parts into a misleading exact tree.
+
     Leaves carry each box's index in ``boxes`` verbatim, so a caller can pair the
     result with :func:`prune_serialized_bsp_tree` if the part set changes.
 
@@ -429,7 +454,8 @@ def reconstruct_serialized_bsp_tree(
         return None
 
     visits = [0]
-    n_axes = min(3, len(boxes[0][0]))
+    n_axes = len(boxes[0][0])
+    search_axes = _validated_reconstruction_axes(n_axes, axes)
 
     def build(items: "List[int]") -> Optional[Dict[str, Any]]:
         visits[0] += 1
@@ -437,7 +463,7 @@ def reconstruct_serialized_bsp_tree(
             return None
         if len(items) == 1:
             return {"part": int(items[0])}
-        for axis in range(n_axes):
+        for axis in search_axes:
             # Candidate cuts are the boxes' own faces: any separating plane can
             # be slid onto one without changing which side anything falls.
             cuts = sorted(
@@ -544,10 +570,11 @@ def serialized_bsp_tree_straddles_centers(
 def serialized_bsp_tree_axis_overlap_floors(
     tree: Optional[Dict[str, Any]],
     boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
-) -> "Optional[Tuple[float, float, float]]":
+) -> "Optional[Tuple[float, ...]]":
     """Largest measured part-box interpenetration on each serialized axis.
 
-    Returns a three-axis tuple, with ``0.0`` for axes the tree never splits.
+    Returns at least three values (or one per box dimension for nD data), with
+    ``0.0`` for axes the tree never splits.
     Returns ``None`` when the leaf labels do not name ``boxes`` exactly or the
     stored tree metadata is malformed.
     """
@@ -557,9 +584,10 @@ def serialized_bsp_tree_axis_overlap_floors(
         labels = serialized_bsp_leaf_labels(tree)
         if sorted(labels) != list(range(len(boxes))):
             return None
-        overlap_floors = [0.0, 0.0, 0.0]
+        ndim = max(3, len(boxes[0][0]) if boxes else 0)
+        overlap_floors = [0.0] * ndim
         _collect_axis_overlap_floors(tree, boxes, overlap_floors)
-        return overlap_floors[0], overlap_floors[1], overlap_floors[2]
+        return tuple(overlap_floors)
     except (KeyError, TypeError, ValueError, IndexError, OverflowError):
         return None
 
@@ -572,7 +600,7 @@ def _collect_axis_overlap_floors(
     if "part" in node:
         return
     axis = int(node.get("axis", -1))
-    if axis not in (0, 1, 2) or (boxes and axis >= len(boxes[0][0])):
+    if axis < 0 or (boxes and axis >= len(boxes[0][0])):
         raise ValueError("invalid split axis")
     left_labels = serialized_bsp_leaf_labels(node["left"])
     right_labels = serialized_bsp_leaf_labels(node["right"])
@@ -594,7 +622,7 @@ def _node_straddles_centers(
     if "part" in node:
         return True
     axis = int(node.get("axis", -1))
-    if axis not in (0, 1, 2) or (boxes and axis >= len(boxes[0][0])):
+    if axis < 0 or (boxes and axis >= len(boxes[0][0])):
         return False
     split = float(node["split"])
     if not np.isfinite(split):
@@ -632,10 +660,9 @@ def _node_separates(
     if "part" in node:
         return True
     axis = int(node.get("axis", -1))
-    # 0/1/2 is what the format admits, and the parts must actually HAVE that
-    # axis — a 2D partition's boxes have two columns, so a tree naming axis 2
-    # describes something other than these parts.
-    if axis not in (0, 1, 2) or (boxes and axis >= len(boxes[0][0])):
+    # The parts must actually have the named column — a 2D partition's boxes
+    # have two columns, so a tree naming axis 2 describes something else.
+    if axis < 0 or (boxes and axis >= len(boxes[0][0])):
         return False
     split = float(node["split"])
     # `left` holds coord < split, `right` holds coord >= split, so a left box
@@ -663,8 +690,7 @@ def _axis_image(
     A plane ``coord[axis] == s`` stays axis-aligned only when the affine sends
     that axis to a single other axis and nothing else lands on it: column
     ``axis`` must have one nonzero, at row ``b``, and row ``b`` one nonzero, at
-    column ``axis``. Returns ``(b, coefficient, offset[b])``; ``b`` must be one
-    of the three axes the serialized format admits.
+    column ``axis``. Returns ``(b, coefficient, offset[b])``.
     """
     ndim = int(linear.shape[0])
     if axis >= ndim:
@@ -676,8 +702,6 @@ def _axis_image(
     if rows.size != 1:
         return None
     image = int(rows[0])
-    if image > 2:
-        return None
     cols = np.flatnonzero(np.abs(linear[image, :]) > atol)
     if cols.size != 1 or int(cols[0]) != axis:
         return None
@@ -708,8 +732,7 @@ def map_serialized_bsp_tree(
 
     Returns ``None`` when a split axis actually used by the tree has no such
     image: an arbitrary rotation shears the cells out of axis-alignment and the
-    serialized format cannot express the result. ``b`` must also land in
-    ``0``/``1``/``2``, the only axes the format admits.
+    serialized format cannot express the result.
 
     ``linear`` is the linear part and ``shift`` the translation of
     ``p -> linear @ p + shift``; either may be ``None`` for identity/zero, and
@@ -820,6 +843,22 @@ def _bsp_tree_midpoint(
     )
 
 
+def _box_boundary_measure(mins: NDArray, maxs: NDArray) -> float:
+    """Return the box-boundary proxy used by the surface-area heuristic.
+
+    SAH weights a child by the probability a random ray hits it, proportional
+    to surface area in 3D and perimeter in 2D; using the 3D form on planar data
+    would index a missing third extent. In 1D, twice the length is intentional:
+    the true boundary is constant and would tie every candidate split.
+    """
+    ext = np.maximum(0.0, maxs - mins)
+    if ext.shape[0] == 1:
+        return float(2.0 * ext[0])
+    if ext.shape[0] == 2:
+        return float(2.0 * (ext[0] + ext[1]))
+    return float(2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2]))
+
+
 def _bsp_tree_sah(
     spatial: NDArray,
     max_elements: int,
@@ -827,19 +866,6 @@ def _bsp_tree_sah(
     n_candidates: int,
 ) -> BSPNode:
     """SAH-split BSP tree recursion (see :func:`sah_bsp_partition`)."""
-
-    def surface_area(mins: NDArray, maxs: NDArray) -> float:
-        """SAH cost proxy: the measure of the box boundary.
-
-        SAH weights a child by the probability a random ray hits it, which is
-        proportional to the box's boundary measure — surface area
-        ``2(xy + xz + yz)`` in 3D, but **perimeter** ``2(x + y)`` in 2D. Using
-        the 3D form on planar data would index a non-existent third extent.
-        """
-        ext = np.maximum(0.0, maxs - mins)
-        if ext.shape[0] == 2:
-            return float(2.0 * (ext[0] + ext[1]))
-        return float(2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2]))
 
     if indices.size <= max_elements:
         return BSPNode(indices=indices)
@@ -869,9 +895,9 @@ def _bsp_tree_sah(
             right_mins = mins.copy()
             right_maxs = maxs.copy()
             right_mins[axis] = pos
-            score = n_left * surface_area(
+            score = n_left * _box_boundary_measure(
                 left_mins, left_maxs
-            ) + n_right * surface_area(right_mins, right_maxs)
+            ) + n_right * _box_boundary_measure(right_mins, right_maxs)
             if score < best_score:
                 best_score = score
                 best_axis = axis
@@ -899,12 +925,42 @@ def _bsp_tree_sah(
     )
 
 
+def _resolve_split_axes(
+    positions: NDArray, split_axes: Optional[Sequence[int]]
+) -> List[int]:
+    axes = (
+        list(range(min(3, positions.shape[1])))
+        if split_axes is None
+        else [int(axis) for axis in split_axes]
+    )
+    if not axes or len(axes) > 3:
+        raise ValueError(f"split_axes must contain 1 to 3 columns; got {axes}")
+    if len(set(axes)) != len(axes):
+        raise ValueError(f"split_axes must not contain duplicates; got {axes}")
+    if min(axes) < 0 or max(axes) >= positions.shape[1]:
+        raise ValueError(
+            f"split_axes {axes} are out of bounds for positions with "
+            f"shape {positions.shape}"
+        )
+    return axes
+
+
+def _restore_bsp_position_columns(root: BSPNode, axes: Sequence[int]) -> None:
+    if root.is_leaf:
+        return
+    assert root.axis is not None and root.left is not None and root.right is not None
+    root.axis = axes[root.axis]
+    _restore_bsp_position_columns(root.left, axes)
+    _restore_bsp_position_columns(root.right, axes)
+
+
 def spatial_bsp_tree(
     positions: NDArray,
     max_elements: int,
     *,
     rule: str = "median",
     n_candidates: int = 32,
+    split_axes: Optional[Sequence[int]] = None,
 ) -> BSPNode:
     """Build the BSP **tree** (split planes retained) for ``positions``.
 
@@ -916,13 +972,12 @@ def spatial_bsp_tree(
     (``"median"`` default / ``"midpoint"`` / ``"sah"``); ``n_candidates`` is
     forwarded to the SAH rule only.
 
-    Splits only ever fall on the first up-to-three (spatial) axes, so a
-    serialized tree's ``axis`` is always a center-column index below 3 (``0``/
-    ``1`` for 2D data, ``0``/``1``/``2`` for 3D+). The viewer maps that column
-    through ``displayDims`` to reach its own local axis — see
-    ``render-order.ts``; the two coincide only when ``displayDims == [0, 1, 2]``.
-    If any split column is not displayed, the writer warns and the viewer
-    discards the whole tree in favor of centroid ordering.
+    By default splits fall on the first up-to-three position columns. Pass
+    ``split_axes`` to choose up to three columns explicitly; serialized
+    ``axis`` values remain the original position-column indices. Scene adders
+    pass the dimensions displayed at write time so the viewer can use the tree
+    immediately. A later nD navigation change can still select a different
+    displayed triple, in which case the viewer falls back to centroid ordering.
     """
     if positions.ndim != 2:
         raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
@@ -938,20 +993,26 @@ def spatial_bsp_tree(
     if n == 0:
         raise ValueError("spatial_bsp_tree needs a non-empty positions array")
 
-    spatial = positions[:, : min(3, positions.shape[1])]
+    axes = _resolve_split_axes(positions, split_axes)
+
+    spatial = positions[:, axes]
     root = np.arange(n, dtype=np.intp)
     if rule == "median":
-        return _bsp_tree_median(spatial, max_elements, root)
-    if rule == "midpoint":
-        return _bsp_tree_midpoint(spatial, max_elements, root)
-    if rule == "sah":
+        tree = _bsp_tree_median(spatial, max_elements, root)
+    elif rule == "midpoint":
+        tree = _bsp_tree_midpoint(spatial, max_elements, root)
+    elif rule == "sah":
         if n_candidates < 2:
             raise ValueError(
                 f"n_candidates must be >= 2 (need at least one interior split); "
                 f"got {n_candidates}"
             )
-        return _bsp_tree_sah(spatial, max_elements, root, n_candidates)
-    raise ValueError(f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}")
+        tree = _bsp_tree_sah(spatial, max_elements, root, n_candidates)
+    else:
+        raise ValueError(f"rule must be 'median', 'midpoint', or 'sah'; got {rule!r}")
+
+    _restore_bsp_position_columns(tree, axes)
+    return tree
 
 
 def bsp_leaf_parts(root: BSPNode) -> List[NDArray[np.intp]]:
@@ -1016,6 +1077,8 @@ def warn_if_partition_axes_not_displayed(
     Call only after a real >1-part tree is committed. The result is exact for
     the display configuration in force at write time; the viewer repeats the
     check because nD navigation can later select a different displayed triple.
+    Changing ``scene.dimensions`` after authoring can likewise invalidate this
+    verdict before the scene is finalized.
     """
     split_columns: set[int] = set()
 
@@ -1179,11 +1242,14 @@ def _validate_polyline_bsp_inputs(
 
 
 def _polyline_centroids_and_sizes(
-    vertices: NDArray, polyline_indices: List[NDArray[np.intp]]
-) -> Tuple[NDArray[np.float64], NDArray[np.intp]]:
-    """Return split coordinates and atomic vertex counts for each polyline."""
+    vertices: NDArray,
+    polyline_indices: List[NDArray[np.intp]],
+    split_axes: Optional[Sequence[int]],
+) -> Tuple[NDArray[np.float64], NDArray[np.intp], List[int]]:
+    """Return split coordinates, atomic vertex counts, and resolved axes."""
     n_polylines = len(polyline_indices)
-    spatial = vertices[:, : min(3, vertices.shape[1])]
+    axes = _resolve_split_axes(vertices, split_axes)
+    spatial = vertices[:, axes]
     centroids = np.zeros((n_polylines, spatial.shape[1]), dtype=np.float64)
     sizes = np.zeros(n_polylines, dtype=np.intp)
     for polyline_index, members in enumerate(polyline_indices):
@@ -1191,7 +1257,7 @@ def _polyline_centroids_and_sizes(
             continue
         centroids[polyline_index] = spatial[members].mean(axis=0)
         sizes[polyline_index] = members.size
-    return centroids, sizes
+    return centroids, sizes, axes
 
 
 def _polyline_bsp_node(
@@ -1241,6 +1307,7 @@ def spatial_bsp_polyline_tree(
     max_elements: int,
     *,
     rule: str = "median",
+    split_axes: Optional[Sequence[int]] = None,
 ) -> Optional[BSPNode]:
     """Build a BSP tree over atomic polylines, capped by vertex count.
 
@@ -1251,8 +1318,7 @@ def spatial_bsp_polyline_tree(
 
     Args:
         vertices: ``(N, d)`` array of vertex positions. At least 2
-            spatial dimensions required (planar data splits fine; only the
-            first 3 drive the split).
+            spatial dimensions required (planar data splits fine).
         polyline_indices: List of per-polyline vertex-index arrays — the
             output of :func:`luxar.core.group.lod.lines.identify_polylines`.
         max_elements: Cap on a single part's vertex count. The BSP
@@ -1261,6 +1327,8 @@ def spatial_bsp_polyline_tree(
             its own (oversized) part rather than being broken up.
 
         rule: ``"median"`` or ``"midpoint"``.
+        split_axes: Up to three position columns to split. Defaults to the
+            first up-to-three columns.
 
     Returns:
         The split-plane tree, or ``None`` for no polylines. Its leaf payloads
@@ -1269,14 +1337,18 @@ def spatial_bsp_polyline_tree(
     _validate_polyline_bsp_inputs(vertices, max_elements, rule)
     if not polyline_indices:
         return None
-    centroids, sizes = _polyline_centroids_and_sizes(vertices, polyline_indices)
-    return _polyline_bsp_node(
+    centroids, sizes, axes = _polyline_centroids_and_sizes(
+        vertices, polyline_indices, split_axes
+    )
+    tree = _polyline_bsp_node(
         centroids,
         sizes,
         np.arange(len(polyline_indices), dtype=np.intp),
         max_elements,
         rule,
     )
+    _restore_bsp_position_columns(tree, axes)
+    return tree
 
 
 def _flat_polyline_parts(root: Optional[BSPNode]) -> List[List[int]]:

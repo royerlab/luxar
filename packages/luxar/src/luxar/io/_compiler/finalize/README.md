@@ -327,11 +327,6 @@ effective opacities instead say that merging cannot preserve the authored
 material and fall back to the mode/bounds choices. Additive blending remains an
 order-independent option for an emissive medium, but changes surface appearance.
 
-When the displayed dimensions are not the first position columns, the warning
-names their actual column indices and says: "Put the displayed dimensions first
-to keep exact BSP ordering." That finalize-time clause is a stopgap alongside
-#2226's earlier write-time diagnostic and can shrink once that check lands. The
-default `(0, 1, 2)` layout, and ordinary 1D/2D prefixes, omit the dead caveat.
 Default-additive/depth-writing warnings print as their pairs are scanned;
 order-dependent cluster warnings flush after the scan, so scenes with both see
 the additive diagnostics first and the rolled-up clusters second.

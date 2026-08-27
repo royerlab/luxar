@@ -119,7 +119,8 @@ Three split rules, selected via `partition=dict(rule=...)`:
 Exports:
 
 - `BSPNode`, `spatial_bsp_tree`, and `spatial_bsp_polyline_tree` — production
-  tree builders used by the native geometry adders.
+  tree builders used by the native geometry adders; scene adders select the
+  currently displayed position columns and serialize their original indices.
 - `bsp_leaf_parts` — shared left-first leaf flattening used by all four adders.
 - `persist_pruned_bsp_tree` — drops unwritten regions, renumbers surviving
   `child_index` labels, stamps the serialized tree on the partition wrapper,

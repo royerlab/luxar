@@ -101,6 +101,35 @@ def _partition_scene(
     return path, geometry
 
 
+def _hidden_first_partition_scene(tmp: Path) -> Path:
+    """A native 4D partition whose widest displayed column is index 3."""
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+    rng = np.random.default_rng(7)
+    positions = np.empty((400, 4), dtype=np.float32)
+    positions[:, 0] = rng.integers(0, 3, 400)
+    positions[:, 1:3] = rng.uniform(-1, 1, (400, 2))
+    positions[:, 3] = rng.uniform(-40, 40, 400)
+    dimensions = Dimensions(
+        [
+            Dimension("state", display=False, spatial=True, range=(0, 2)),
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+        ]
+    )
+    path = tmp / "hidden-first.luxar.zarr"
+    with LuxarZarrCompiler(path) as compiler:
+        scene = compiler.create_scene(dimensions=dimensions)
+        scene.add_points(
+            "points",
+            positions,
+            partition={"max_elements": 100},
+            extend_to_all=[],
+        )
+    return path
+
+
 def _disjoint_centroid_split_lines_scene(tmp: Path) -> Path:
     """A native lines partition whose valid plane crosses one part's bounds."""
     from luxar import Dimensions, LuxarZarrCompiler
@@ -139,7 +168,7 @@ def _disjoint_centroid_split_lines_scene(tmp: Path) -> Path:
     return path
 
 
-def _uniform_tiled_store(tmp: Path) -> Path:
+def _uniform_tiled_store(tmp: Path, *, stacked: bool = False) -> Path:
     """A uniform-tiled partition on disk: overlapping parts, approximate planes.
 
     The shape this PR's own uniform-tiling producer writes — apodized tiles keep
@@ -154,11 +183,15 @@ def _uniform_tiled_store(tmp: Path) -> Path:
     for spec in specs:
         lo = np.array(spec.origin, dtype=float)
         hi = lo + np.array(spec.shape, dtype=float)
-        chol = np.zeros((40, 6), dtype=np.float32)
-        chol[:, [0, 2, 5]] = 1.0
+        chol = np.zeros((40, 10 if stacked else 6), dtype=np.float32)
+        chol[:, [0, 2, 5] + ([9] if stacked else [])] = 1.0
         centers = rng.uniform(lo, hi, size=(40, 3)).astype(np.float32)
         centers[0] = lo
         centers[1] = hi
+        if stacked:
+            centers = np.column_stack(
+                (centers, np.full(40, spec.index, dtype=np.float32))
+            )
         regions.append(
             GSplatData(
                 centers=centers,
@@ -427,6 +460,81 @@ def _order_violations(tree: dict, boxes: list, poses: int = 60) -> int:
 
 
 class TestSplitPlanesCheck:
+    def test_axis_three_partition_is_healthy_and_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _hidden_first_partition_scene(Path(tmp))
+            attrs = read_node_attrs(path / "points") or {}
+            before = attrs["bsp_tree"]
+            assert before["axis"] == 3
+
+            report = diagnose_store(path)
+            assert report.healthy
+
+            fixed = diagnose_store(path, fix=True)
+            assert fixed.healthy
+            attrs = read_node_attrs(path / "points") or {}
+            assert attrs["bsp_tree"] == before
+
+    def test_missing_axis_three_planes_are_recovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _hidden_first_partition_scene(Path(tmp))
+            root = zc_open_group(str(path), mode="r+")
+            del root["points"].attrs["bsp_tree"]
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+            assert [finding.severity for finding in report.findings] == ["error"]
+            assert report.findings[0].fixable
+            assert "no split planes recorded for 4 parts" in report.findings[0].summary
+
+            fixed = diagnose_store(path, fix=True)
+            assert fixed.healthy
+            attrs = read_node_attrs(path / "points") or {}
+            assert attrs["bsp_tree"]["axis"] == 3
+            assert diagnose_store(path).healthy
+
+    def test_narrow_part_bounds_report_a_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _hidden_first_partition_scene(Path(tmp))
+            root = zc_open_group(str(path), mode="r+")
+            for name in root["points"].group_keys():
+                child = root["points"][name]
+                bounds = dict(child.attrs["position_bounds"])
+                bounds["min"] = bounds["min"][:3]
+                bounds["max"] = bounds["max"][:3]
+                child.attrs["position_bounds"] = bounds
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+
+            assert [finding.path for finding in report.findings] == ["points"]
+            assert report.findings[0].summary == (
+                "split planes disagree with the parts, and cannot be rebuilt"
+            )
+            assert report.findings[0].fixable
+            assert not report.healthy
+
+    def test_ragged_part_bounds_report_a_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _hidden_first_partition_scene(Path(tmp))
+            root = zc_open_group(str(path), mode="r+")
+            names = sorted(root["points"].group_keys())
+            for name in names[1:]:
+                child = root["points"][name]
+                bounds = dict(child.attrs["position_bounds"])
+                bounds["min"] = bounds["min"][:3]
+                bounds["max"] = bounds["max"][:3]
+                child.attrs["position_bounds"] = bounds
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+
+            assert [finding.path for finding in report.findings] == ["points"]
+            assert report.findings[0].summary == (
+                "split planes present but not verifiable"
+            )
+            assert report.healthy
+
     def test_a_healthy_partition_reports_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _partition_store(Path(tmp))
@@ -557,6 +665,20 @@ class TestSplitPlanesCheck:
             assert not finding.fixable
             assert "centroid-split lines or mesh" in finding.detail
             assert report.healthy  # a note does not fail the gate
+
+            diagnose_store(path, fix=True)
+            assert _root_attrs(path)["bsp_tree"] == before
+
+    def test_a_stacked_axis_does_not_make_overlapping_parts_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp), stacked=True)
+            before = _root_attrs(path)["bsp_tree"]
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.severity == "note"
+            assert not finding.fixable
+            assert report.healthy
 
             diagnose_store(path, fix=True)
             assert _root_attrs(path)["bsp_tree"] == before
@@ -708,6 +830,50 @@ class TestSplitPlanesCheck:
             repaired = diagnose_store(path, fix=True)
             assert repaired.healthy
             assert _root_attrs(path)["bsp_tree"] == healthy
+
+    def test_frame_scale_recovery_pads_unsplit_nd_axes(self) -> None:
+        from luxar.gsplats.doctor.checks import _recover_frame_scale
+
+        stored = {
+            "axis": 0,
+            "split": 1.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        }
+        boxes = [
+            (np.array([0.0, 0.0, 0.0, 0.0]), np.array([2.0, 1.0, 1.0, 1.0])),
+            (np.array([2.0, 0.0, 0.0, 0.0]), np.array([4.0, 1.0, 1.0, 1.0])),
+        ]
+
+        recovered = _recover_frame_scale(stored, boxes)
+
+        assert recovered is not None
+        repaired, factors, frame_scale_supported = recovered
+        assert repaired["split"] == 2.0
+        assert factors == (2.0, 1.0, 1.0, 1.0)
+        assert not frame_scale_supported
+
+    def test_frame_scale_recovery_repairs_an_nd_split_axis(self) -> None:
+        from luxar.gsplats.doctor.checks import _recover_frame_scale
+
+        stored = {
+            "axis": 3,
+            "split": 1.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        }
+        boxes = [
+            (np.array([0.0, 0.0, 0.0, 0.0]), np.array([1.0, 1.0, 1.0, 2.0])),
+            (np.array([0.0, 0.0, 0.0, 2.0]), np.array([1.0, 1.0, 1.0, 4.0])),
+        ]
+
+        recovered = _recover_frame_scale(stored, boxes)
+
+        assert recovered is not None
+        repaired, factors, frame_scale_supported = recovered
+        assert repaired["split"] == 2.0
+        assert factors == (1.0, 1.0, 1.0, 2.0)
+        assert not frame_scale_supported
 
     def test_unrecoverable_overlap_violation_names_the_actual_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
