@@ -512,6 +512,9 @@ def test_cache_root_and_kept_path_are_reported_after_the_result(
     assert kept_path.exists()
     harness.shutil.rmtree(kept_path)
 
+    assert harness.main(["thing", "--require-verified", "1"]) == 0
+    assert harness.main(["thing", "--require-verified", "2"]) == 1
+
 
 def test_json_manifest_is_valid(harness: ModuleType) -> None:
     raw = (REPO / "packages/luxar/src/luxar/demos/data_manifest.json").read_text()
