@@ -25,7 +25,7 @@ amplitude, walks from the brightest down, and keeps the prefix that carries a
 fraction ``R`` of the fit's TOTAL amplitude. Everything below that line is
 discarded. So ``retention=0.99`` does not mean "keep 99% of the splats" — it
 means "keep whatever number of splats accounts for 99% of the light", which
-here is 93% of them.
+was 93% of them on the superseded pre-refit archive generation measured below.
 
 That asymmetry IS the finding. Amplitude in a fitted stack is heavy-tailed: a
 minority of splats sit on nuclei and carry most of the signal, while a long tail

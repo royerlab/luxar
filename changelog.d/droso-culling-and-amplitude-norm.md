@@ -62,12 +62,12 @@ the only way to actually see them.
 
 Cumulative culling keeps the brightest splats accounting for a fraction of the
 fit's total amplitude, so `retention=0.99` does not mean keeping 99% of the
-splats — it means keeping however many account for 99% of the light. On this fit
-that is 93% of them, and giving up a quarter of the amplitude halves the file
-while removing splats spread across the dimmest background rather than anything
-you are looking at. Each level's size is measured by writing it, not estimated
-from a bytes-per-splat constant, because the encoder picks its quantisation from
-each level's own range.
+splats — it means keeping however many account for 99% of the light. On the
+superseded pre-refit archive generation measured here, that was 93% of them, and
+giving up a quarter of the amplitude halves the file while removing splats
+spread across the dimmest background rather than anything you are looking at.
+Each level's size is measured by writing it, not estimated from a bytes-per-splat
+constant, because the encoder picks its quantisation from each level's own range.
 
 The demo adds no hosted bytes: it reuses the existing
 `gsplats_3d_drosophila_gastrulation` archive. Its ratios are quoted against the

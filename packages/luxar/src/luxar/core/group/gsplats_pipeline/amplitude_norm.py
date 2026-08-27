@@ -227,7 +227,8 @@ def normalize_node_in_place(node: "GSplatNode", spec: NormalizeSpec) -> Optional
     frozen, and rebuilding one through the ``additive_sublods=`` constructor
     drops the authored per-rung metadata the fast path carries straight off disk
     (``coverage_fraction``, the energy stamps the viewer's LOD upgrades read).
-    Mutating the amplitude arrays touches only the values being scaled.
+    The rewrite scales only amplitude values, rescales their energy stamps, and
+    removes refinement stats that no longer describe the scaled data.
 
     This is the ``kind=partition`` / nested-tree counterpart of
     :func:`normalize_gsplat_data`. It exists because those trees never become a
