@@ -399,7 +399,13 @@ def info_dataset(
                         "provenance",
                     ]:
                         value = data.stats[key]
-                        if isinstance(value, (dict, list)):
+                        if key == "part_provenance":
+                            _print_fitting_value(
+                                key,
+                                value,
+                                show_full_provenance=full_provenance,
+                            )
+                        elif isinstance(value, (dict, list)):
                             aprint(
                                 f"  {key}: {type(value).__name__} with {len(value)} items"
                             )

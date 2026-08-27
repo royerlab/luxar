@@ -61,9 +61,11 @@ def test_info_surfaces_the_source_grid(tmp_path: Path) -> None:
 
 
 def test_info_summarizes_nested_part_provenance_unless_full_is_requested(
-    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
-    from luxar.cli.gsplat_ops.inspect_commands import _print_fitting_value
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+    from luxar.gsplats.io.save_gsplats import write_partition_streaming
+    from luxar.gsplats.tree import GSplatLeaf
 
     records = [
         {
@@ -82,14 +84,57 @@ def test_info_summarizes_nested_part_provenance_unless_full_is_requested(
             },
         }
     ]
-    _print_fitting_value("part_provenance", records)
-    summary = capsys.readouterr().out
-    assert "part_provenance: 1 part, nested channels × timepoints" in summary
-    assert "psnr_db" not in summary
+    centers = np.zeros((1, 3), dtype=np.float32)
+    amplitudes = np.ones(1, dtype=np.float32)
+    cholesky_factors = np.array([[1.0, 0.0, 1.0, 0.0, 0.0, 1.0]], dtype=np.float32)
+    flat = tmp_path / "flat.gsplats.zarr"
+    GSplatData(
+        centers=centers,
+        amplitudes=amplitudes,
+        cholesky_factors=cholesky_factors,
+        stats={"part_provenance": records},
+    ).save(flat, ordering="none")
 
-    _print_fitting_value("part_provenance", records, show_full_provenance=True)
-    full = capsys.readouterr().out
-    assert "psnr_db" in full
+    partition = tmp_path / "partition.gsplats.zarr"
+    leaf = GSplatLeaf(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky_factors,
+            )
+        ]
+    )
+    write_partition_streaming(
+        partition,
+        lambda: iter([leaf]),
+        fitting_info={"part_provenance": records},
+        ordering="none",
+    )
+
+    for path in (flat, partition):
+        summary = CliRunner().invoke(
+            app, ["gsplat", "info", str(path), "--no-histograms"]
+        )
+        assert summary.exit_code == 0, summary.output
+        assert (
+            "part_provenance: 1 part, nested channels × timepoints"
+            in summary.output
+        )
+        assert "psnr_db" not in summary.output
+
+        full = CliRunner().invoke(
+            app,
+            [
+                "gsplat",
+                "info",
+                str(path),
+                "--no-histograms",
+                "--full-provenance",
+            ],
+        )
+        assert full.exit_code == 0, full.output
+        assert "psnr_db" in full.output
 
     help_result = CliRunner().invoke(app, ["gsplat", "info", "--help"])
     assert help_result.exit_code == 0, help_result.output
