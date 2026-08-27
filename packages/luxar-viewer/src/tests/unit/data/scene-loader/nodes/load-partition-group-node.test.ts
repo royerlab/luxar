@@ -180,6 +180,55 @@ describe('loadPartitionGroupNode', () => {
     ]);
   });
 
+  it('loads parts with bounded concurrency while preserving authored order and indices', async () => {
+    const children = Array.from({ length: 10 }, (_, index) =>
+      makePartNode(`/partition/part_${index}`, 'points', { child_index: index })
+    );
+    const releases: Array<() => void> = [];
+    const gates = children.map(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+    let active = 0;
+    let maxActive = 0;
+    let started = 0;
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      const index = children.indexOf(child);
+      started++;
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await gates[index];
+      const object = new THREE.Group();
+      object.name = child.path;
+      parentThree.add(object);
+      active--;
+    });
+
+    const loadPromise = loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    await Promise.resolve();
+    const firstWave = started;
+    for (let index = releases.length - 1; index >= 0; index--) releases[index]();
+    const wrapper = await loadPromise;
+
+    expect(firstWave).toBe(8);
+    expect(maxActive).toBe(8);
+    expect(wrapper.children.map((child) => child.name)).toEqual(
+      children.map((child) => child.path)
+    );
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual(
+      children.map((_, index) => index)
+    );
+  });
+
   it('all children stay visible after load (no LOD-style selector)', async () => {
     attachStubChildren();
     const ctx = makeCtx();
