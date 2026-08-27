@@ -459,11 +459,11 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     drawOrderProvider: createDrawOrderProvider(rootGroup),
   });
 
-  // Report what ACTUALLY happened. `loadScene` cannot throw on a failed node
-  // (loadLeafNode swallows LoaderError so the rest of the scene still builds), so
-  // without this a scene whose every node failed logged success over an empty
-  // viewport. Totality is graded against the registered path set — a failed lazy
-  // LOD level records a failure without registering, so a count would over-report.
+  // Report what ACTUALLY happened. Ordinary leaf-local LoaderErrors are swallowed
+  // so the rest of the scene still builds; without this, a scene whose every node
+  // failed logged success over an empty viewport. Container-wide archive faults
+  // rethrow before this point. Totality is graded against the registered path set
+  // because a failed lazy LOD level records a failure without registering.
   reportLoadOutcome(
     ctx.getFailedLoaderPaths(),
     [...ctx.loaders.keys(), ...ctx.linesLoaders.keys(), ...ctx.gsplatLoaders.keys()],

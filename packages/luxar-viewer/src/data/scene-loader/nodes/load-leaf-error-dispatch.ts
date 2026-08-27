@@ -3,9 +3,10 @@
  *
  * `loadPoints` / `loadLines` / `loadGSplats` may throw `LoaderError`
  * with a `kind` from { Network, Decode, Validation, Unexpected }.
- * `loadLeafNode` catches the LoaderError, logs according to the kind, and
- * returns `null` so the failing leaf doesn't take down the scene — its
- * siblings still render.
+ * `loadLeafNode` catches ordinary LoaderErrors, logs according to the kind,
+ * and returns `null` so the failing leaf doesn't take down the scene — its
+ * siblings still render. Archive container faults are re-thrown because every
+ * leaf backed by that archive is compromised.
  *
  * User-facing notification is deliberately NOT done here: it belongs to the
  * end-of-load aggregate (`loaders/failure-report.ts`). Per-node toasts could not
@@ -81,9 +82,9 @@ export function classifyLoaderError(error: unknown): LoaderErrorKind {
 }
 
 /**
- * Run a leaf-node loader, dispatching {@link LoaderError} by kind so a
- * single failing node doesn't take the whole scene down. Re-throws
- * anything that isn't a LoaderError.
+ * Run a leaf-node loader, dispatching ordinary {@link LoaderError}s by kind so
+ * a single failing node doesn't take the whole scene down. Re-throws anything
+ * that isn't a LoaderError, plus authored archive container faults.
  */
 export async function loadLeafNode<T extends THREE.Object3D>(
   load: () => Promise<T | null>,

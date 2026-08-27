@@ -2,13 +2,14 @@
  * Reporting for loader failures — the aggregate view, as distinct from the
  * per-node logging in `nodes/load-leaf-error-dispatch.ts`.
  *
- * Exists because `loadScene` structurally CANNOT throw on a failed load:
- * `loadLeafNode` catches every `LoaderError` and returns null so the rest of the
- * scene still builds. That is the right behavior, but it meant a scene whose
- * every node failed resolved normally and logged an unconditional
+ * Exists because `loadScene` structurally cannot throw on ordinary leaf-local
+ * failures: `loadLeafNode` catches their `LoaderError`s and returns null so the
+ * rest of the scene still builds. That is the right behavior, but it meant a
+ * scene whose every node failed resolved normally and logged an unconditional
  * "Scene loaded successfully" — a green log over an empty viewport, which is
  * what made a real data bug (a WASM trap in the gsplat projection kernel) look
- * like a mystery.
+ * like a mystery. Container-wide archive faults remain fatal and bypass this
+ * aggregate.
  *
  * @module data/scene-loader/loaders/failure-report
  */
