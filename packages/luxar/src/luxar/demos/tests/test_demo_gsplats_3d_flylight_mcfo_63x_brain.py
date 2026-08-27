@@ -69,9 +69,13 @@ def test_build_composite_writes_gain_balanced_uint16(
     volumes[2][0, 0, 0] = 15
     monkeypatch.setattr(_demo, "signal_channel_indices", lambda _path: [0, 1, 2])
     monkeypatch.setattr(_demo, "reference_channel_index", lambda _path: 3)
-    monkeypatch.setattr(
-        _demo, "decode_h5j_channel", lambda _path, channel: volumes[channel]
-    )
+    decoded = []
+
+    def decode(_path: Path, channel: int) -> np.ndarray:
+        decoded.append(channel)
+        return volumes[channel]
+
+    monkeypatch.setattr(_demo, "decode_h5j_channel", decode)
     monkeypatch.setattr(_demo, "BALANCE_PERCENTILE", 50.0)
 
     out = tmp_path / "composite.zarr"
@@ -81,6 +85,7 @@ def test_build_composite_writes_gain_balanced_uint16(
     assert composite.dtype == np.uint16
     assert composite[1, 1, 1] == 20
     assert composite[0, 0, 0] == 60
+    assert decoded == [0, 1, 2, 0, 1, 2]
 
 
 def test_colour_preserves_hue_metadata_and_off_grid_state(
@@ -446,13 +451,13 @@ def test_levelling_angle_has_the_cli_rotation_sign(tmp_path: Path, monkeypatch) 
 # ---------------------------------------------------------------------------
 
 
-def test_the_shipped_splat_count_matches_the_measured_archive() -> None:
-    """N_SPLATS must equal the sidecar's measurement for this archive.
+def test_the_hosted_splat_count_matches_the_measured_archive() -> None:
+    """N_SPLATS must equal the sidecar's hosted-generation measurement.
 
     The sidecar is written by `gen_zenodo_records.py --refresh` from the
-    archive's own stamps, so this ties the demo's user-visible strings to the
-    bytes. A refit that updates one and not the other fails here instead of
-    shipping a caption that misinforms viewers.
+    archive's own stamps, so this ties the documented recompute recipe to the
+    hosted bytes. Runtime strings use the loaded node's count because the
+    bundled fallback is a different generation.
     """
     # Walk up to the sidecar rather than hardcoding a parent depth: this test
     # runs from a worktree as often as from the main checkout, and a fixed
@@ -478,9 +483,8 @@ def test_the_shipped_splat_count_matches_the_measured_archive() -> None:
         "protect the caption -- re-run gen_zenodo_records.py --refresh"
     )
     assert _demo.N_SPLATS == measured, (
-        f"the demo states {_demo.N_SPLATS:,} splats but the archive measures "
-        f"{measured:,}. The count reaches the ON-SCREEN caption, so a mismatch "
-        f"ships a wrong number to viewers."
+        f"the hosted recipe states {_demo.N_SPLATS:,} splats but the sidecar "
+        f"measures {measured:,}"
     )
 
 

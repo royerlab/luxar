@@ -81,7 +81,7 @@ VOXEL SIZE:
     um, the right envelope for an adult Drosophila central brain plus optic
     lobes, which independently checks both the calibration and the orientation.
 
-PIPELINE (how the bundled gsplats were produced; re-run with ``--recompute``):
+PIPELINE (how the hosted refit was produced; re-run with ``--recompute``):
     1. Fetch ``VT019012-20140423_20_D5-f-63x-brain-GAL4-unaligned_stack.h5j``
        (199 MB) from the public S3 bucket.
     2. Decode it. H5J is an HDF5 container holding one H.265 elementary stream
@@ -265,15 +265,10 @@ VOXEL_UM = (0.19, 0.19, 0.38)
 # that moves only the max is not a reason to touch it.
 DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
 
-# Splat count of the archive this demo ships, stated in the docstring, the
-# pipeline provenance line, the scene description and the ON-SCREEN caption.
-# It lived as four separate literals until a refit changed the archive and the
-# caption kept telling viewers the old number; every gate passed, because they
-# all checked the archive and none compared it against the prose. One constant
-# now feeds the three runtime strings, and
-# test_the_shipped_splat_count_matches_the_measured_archive holds it to the
-# measurements sidecar so the next refit fails instead of shipping a wrong
-# number. The docstring literal cannot interpolate -- update it by hand.
+# Splat count of the hosted refit. The bundled fallback is an older generation,
+# so runtime descriptions and captions derive their count from whichever archive
+# is actually loaded. This pin remains as a cross-check against the committed
+# measurements sidecar and the hosted-generation recipe in the docstring.
 N_SPLATS = 660_035
 
 # Opacity is the exposure lever and wants to be tiny. Scaling amplitudes also
@@ -459,10 +454,14 @@ def build_composite(h5j_path: Path, out_zarr: Path) -> None:
             f"reference channel {reference_channel_index(h5j_path)} (excluded)"
         )
 
-        tops = [
-            float(np.percentile(decode_h5j_channel(h5j_path, c), BALANCE_PERCENTILE))
-            for c in signal
-        ]
+        tops = []
+        shape = None
+        for channel in signal:
+            volume = decode_h5j_channel(h5j_path, channel)
+            if shape is None:
+                shape = volume.shape
+            tops.append(float(np.percentile(volume, BALANCE_PERCENTILE)))
+            del volume
         ceiling = max(tops)
         gains = [ceiling / t if t > 0 else 1.0 for t in tops]
         aprint(
@@ -470,7 +469,7 @@ def build_composite(h5j_path: Path, out_zarr: Path) -> None:
             f"gains {[round(g, 4) for g in gains]}"
         )
 
-        shape = decode_h5j_channel(h5j_path, signal[0]).shape
+        assert shape is not None
         composite = np.zeros(shape, dtype=np.uint16)
         for channel, gain in zip(signal, gains):
             volume = decode_h5j_channel(h5j_path, channel)

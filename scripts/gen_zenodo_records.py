@@ -499,8 +499,7 @@ def _retain_preferred_measurements(
                 measured[key] = (
                     old_entry
                     if any(
-                        old_entry.get(field) is not None
-                        for field in measurement_fields
+                        old_entry.get(field) is not None for field in measurement_fields
                     )
                     else {
                         **old_entry,
