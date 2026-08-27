@@ -22,6 +22,8 @@ _GEOMETRY_BY_ADDER = {
 }
 # Mesh is intentionally absent: its partition budget counts faces, and mesh has
 # no per-element texture or corresponding max_elements_per_node() capacity.
+# Existing ``link_attrs`` spreads contain only link-template render metadata;
+# keep that established exception explicit while rejecting every opaque spread.
 _KNOWN_NON_BUDGET_SPREADS = {"link_attrs"}
 
 
