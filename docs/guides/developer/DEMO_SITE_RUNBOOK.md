@@ -133,10 +133,58 @@ python compare_snapshot.py before.json     # report only genuine changes
 
 A store that failed to rebuild (missing optional dependency, no GPU, no
 credentials) still has its old hash on disk and will report IDENTICAL. That is
-indistinguishable from a successful no-op rebuild unless you also check mtime.
-This caught `cell_tracking_challenge` reporting IDENTICAL at 64 hours old.
+indistinguishable from a successful no-op rebuild unless you also check
+freshness. This caught `cell_tracking_challenge` reporting IDENTICAL at 64 hours
+old.
 
-Always assert freshness alongside the hash.
+**Check freshness on FILES, not on the store directory.** A directory's mtime
+updates only when its direct children change, so `stat` on
+`<store>.luxar.zarr` can report a fresh timestamp over a tree nothing rewrote.
+Not hypothetical: `desi_galaxies` passed a directory-mtime check while all
+9,064 of its files were four days old.
+
+Walk the tree and count how many files predate the run:
+
+```python
+mtimes = [p.stat().st_mtime for p in store.rglob("*") if p.is_file()]
+stale = sum(1 for m in mtimes if m < run_started)
+# a real rebuild leaves ~0 stale; a skipped one leaves ~all
+```
+
+### 2.4 A demo may reuse a cached scene and still exit 0
+
+Some demos short-circuit when their output already exists. `desi_galaxies`
+prints `Using cached scene: …`, emits its own warning that the cached scene is
+stale, then finishes with `Dataset generated at …` and exit status 0. A wave
+driver reading exit codes learns nothing.
+
+The staleness it warned about was real and had shipped: both LOD ladders held a
+finest-level node of 9,751,955 points against a 4,000,000-point demo ceiling,
+which "can silently lose their tail on a 4096-class GPU". The published tile
+carried that for six days.
+
+Two remedies, both printed by the demo itself:
+
+```bash
+luxar demo run <key> -- --recompute       # recompute from source
+rm -rf datasets/demos/<key>.luxar.zarr    # or drop it and let the demo unpack
+                                          # the current shipped Git-LFS asset
+```
+
+Grep build logs for `Using cached scene` after any sweep. One demo in 89 took
+that path — few enough to miss, and the one that had a real defect behind it.
+
+### 2.5 Rebuild against the commit you think you are on
+
+A sweep is only valid for the code it ran against, and `dev` moves under a long
+one. A full 86-demo pass takes roughly ninety minutes here, during which several
+PRs can land. Record the HEAD the sweep started from, and re-check it at the
+end; if a store-affecting commit landed mid-sweep, the results are stale for
+every demo it touches.
+
+Discarding a partial sweep and restarting at current `dev` is usually cheaper
+than finishing one you know is stale and then reasoning about which subset to
+redo — that subset calculation is where scoping errors happen.
 
 ---
 
