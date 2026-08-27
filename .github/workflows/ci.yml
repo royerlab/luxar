@@ -226,9 +226,12 @@ jobs:
   # an in-progress obsidian job in any repository run proves the busy box is live.
   #
   # Same-repo runs route to obsidian while the positive capacity timestamp is
-  # fresh OR another obsidian job is in progress, so busy-box overflow queues
-  # instead of consuming paid runners. A stale publisher with no active work
-  # degrades to GitHub-hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
+  # fresh OR another obsidian job is in progress. With no fresh capacity and
+  # fewer than ten eligible runs, five obsidian jobs waiting at least five
+  # minutes hit the backlog cap and burst new work to GitHub-hosted. At the
+  # ten-run scan bound, any aged obsidian backlog routes hosted; without that
+  # evidence, known liveness still wins. A stale publisher with no active work
+  # degrades to hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
   #
   # Freshness matters more than it looks: a job assigned to a registered-but-
   # offline self-hosted label does not fail or fall back, it QUEUES for up to 24
@@ -246,11 +249,12 @@ jobs:
       label: ${{ steps.pick.outputs.label }}
     steps:
       - id: pick
-        name: Pick runner from obsidian capacity and activity
+        name: Pick runner from obsidian capacity, activity, and backlog
         env:
           FORCE_HOSTED: ${{ vars.LUXAR_CI_FORCE_HOSTED }}
           GH_TOKEN: ${{ github.token }}
           HEARTBEAT: ${{ vars.LUXAR_CI_HEARTBEAT }}
+          MAX_QUEUED_OBSIDIAN: ${{ vars.LUXAR_CI_MAX_QUEUED_OBSIDIAN }}
           # Empty on push events; the `|| github.repository` makes those read
           # as same-repo, which they are.
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
@@ -288,28 +292,96 @@ jobs:
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
-            2>/dev/null) || runs=""
-          if [ -z "$runs" ]; then
-            echo "run liveness unreadable; routing to obsidian to avoid paid overflow"
+          active_obsidian=0
+          max_queued_obsidian=${MAX_QUEUED_OBSIDIAN:-5}
+          if ! echo "$max_queued_obsidian" | grep -qE '^[1-9][0-9]*$'; then
+            max_queued_obsidian=5
+          fi
+          max_scanned_runs=10
+          scanned_runs=0
+          queue_grace_seconds=300
+          queue_cutoff=$(( now - queue_grace_seconds ))
+          queued_obsidian=0
+          for run_status in in_progress queued; do
+            runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=${run_status}&per_page=100" \
+              2>/dev/null) || runs=""
+            if [ -z "$runs" ]; then
+              if [ "$queued_obsidian" -gt 0 ]; then
+                echo "run activity unreadable after finding aged backlog -> routing to ubuntu-latest"
+                echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+              else
+                echo "run activity unreadable; routing to obsidian to avoid paid overflow"
+                echo "label=obsidian" >> "$GITHUB_OUTPUT"
+              fi
+              exit 0
+            fi
+            run_ids=$(echo "$runs" | jq -r --arg status "$run_status" \
+              --argjson cutoff "$queue_cutoff" \
+              '.workflow_runs[]
+              | select($status == "in_progress" or (.created_at | fromdateiso8601) <= $cutoff)
+              | .id' 2>/dev/null) || {
+                if [ "$queued_obsidian" -gt 0 ]; then
+                  echo "run backlog unreadable after finding aged backlog -> routing to ubuntu-latest"
+                  echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                else
+                  echo "run backlog unreadable; routing to obsidian to avoid paid overflow"
+                  echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                fi
+                exit 0
+              }
+            for run_id in $run_ids; do
+              if [ "$scanned_runs" -ge "$max_scanned_runs" ]; then
+                if [ "$queued_obsidian" -gt 0 ]; then
+                  echo "backlog scan reached its ${max_scanned_runs}-run limit after finding aged backlog -> routing to ubuntu-latest"
+                  echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+                break 2
+              fi
+              scanned_runs=$(( scanned_runs + 1 ))
+              jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
+                2>/dev/null) || jobs=""
+              if [ -z "$jobs" ]; then
+                if [ "$queued_obsidian" -gt 0 ]; then
+                  echo "job activity unreadable after finding aged backlog -> routing to ubuntu-latest"
+                  echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                else
+                  echo "job activity unreadable; routing to obsidian to avoid paid overflow"
+                  echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                fi
+                exit 0
+              fi
+              queued=$(echo "$jobs" | jq --argjson cutoff "$queue_cutoff" \
+                '[.jobs[] | select(.status == "queued")
+                | select(.labels | index("obsidian"))
+                | select((.created_at | fromdateiso8601) <= $cutoff)] | length' \
+                2>/dev/null) || {
+                  if [ "$queued_obsidian" -gt 0 ]; then
+                    echo "job backlog unreadable after finding aged backlog -> routing to ubuntu-latest"
+                    echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "job backlog unreadable; routing to obsidian to avoid paid overflow"
+                    echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                  fi
+                  exit 0
+                }
+              queued_obsidian=$(( queued_obsidian + queued ))
+              if [ "$queued_obsidian" -ge "$max_queued_obsidian" ]; then
+                echo "at least $queued_obsidian obsidian jobs have waited ${queue_grace_seconds}s -> routing to ubuntu-latest"
+                echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              if echo "$jobs" | jq -e '.jobs[] | select(.status == "in_progress")
+                | select(.labels | index("obsidian"))' >/dev/null; then
+                active_obsidian=1
+              fi
+            done
+          done
+          if [ "$active_obsidian" -eq 1 ]; then
+            echo "obsidian work is in progress with at least $queued_obsidian aged jobs queued -> routing to obsidian"
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          for run_id in $(echo "$runs" | jq -r '.workflow_runs[].id' 2>/dev/null); do
-            jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
-              2>/dev/null) || jobs=""
-            if [ -z "$jobs" ]; then
-              echo "job liveness unreadable; routing to obsidian to avoid paid overflow"
-              echo "label=obsidian" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            if echo "$jobs" | jq -e '.jobs[] | select(.status == "in_progress")
-              | select(.labels | index("obsidian"))' >/dev/null; then
-              echo "obsidian job is in progress in run $run_id -> routing to obsidian"
-              echo "label=obsidian" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
           echo "capacity heartbeat is unavailable or stale and no obsidian job is active -> routing to ubuntu-latest"
           echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
 

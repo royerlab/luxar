@@ -12,11 +12,13 @@
  * @module rendering/material-manager/factories
  */
 
+import type * as THREE from 'three';
 import type { BlendingMode } from '../../types/blending';
 import type { LineJoinStyle } from '../../types/line-join';
 import type { LinePrimitive } from '../../types/line-primitive';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
+import type { MeshShadingMode } from '../materials/mesh/appearance';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
 import { MeshMaterial } from '../materials/mesh/material-glsl';
 import { PointPickingMaterial } from '../picking/point/material';
@@ -148,8 +150,18 @@ export interface MeshMaterialProperties {
   gamma: number;
   intensity: number;
   offset: number;
-  /** Shade from screen-space derivatives instead of the stored `normal` attribute. */
-  flatNormal?: boolean;
+  /**
+   * How normals are obtained: stored, screen-space derivatives, or none (unlit).
+   *
+   * One enum rather than the earlier `flatNormal` boolean, because a second
+   * boolean for the unlit arm would admit a meaningless `flatNormal && noShading`
+   * combination.
+   */
+  shading?: MeshShadingMode;
+  /** Base-colour texture, sampled per fragment. Excludes the other two sources. */
+  baseColorTexture?: THREE.Texture;
+  /** Whether {@link baseColorTexture} is single-channel (red replicated to RGB). */
+  baseColorTextureLuminance?: boolean;
   /**
    * Wrapped-diffuse shade floor, clamped to `[0, 1]` (`1.0` = flat diffuse). Optional
    * because the writer never stamps it — it reaches here only when an author passed

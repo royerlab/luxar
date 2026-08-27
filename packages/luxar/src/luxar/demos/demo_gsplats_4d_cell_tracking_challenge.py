@@ -132,6 +132,7 @@ from luxar.demos import (
 from luxar.demos.registry import DEMO_CACHE_ROOT
 from luxar.encoding import EncodingMode
 from luxar.gsplats import GSplatData
+from luxar.gsplats.merged_quality import collect_part_provenance
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -891,10 +892,21 @@ def combine_to_4d(
             g = g.scale_intensity(1.0 / amp_max)
         prepared.append(g)
 
+    values = list(range(len(prepared)))
+    # Preserve the as-fitted stamps before filtering and intensity normalization.
+    part_provenance = collect_part_provenance(
+        per_timepoint,
+        values=values,
+        fit_reference={
+            "kind": "preprocessed",
+            "note": "cropped acquisition; stacked splats are filtered and intensity-normalized",
+        },
+    )
     return GSplatData.combine_as_new_dimension(
         prepared,
-        values=list(range(len(prepared))),
+        values=values,
         sigma=0.0,
+        part_provenance=part_provenance,
     )
 
 

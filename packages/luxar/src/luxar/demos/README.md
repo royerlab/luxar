@@ -630,22 +630,22 @@ Variant of the Chromatrace demo with an 89-step slider stepping through each fin
 ### Data-Driven Demos (External Datasets)
 
 #### demo_global_rivers_earth.py - Rivers of Earth
-A topographic ETOPO globe (Points) plus every HydroRIVERS reach (Lines) in geographic 3D.
+A relief-displaced textured mesh globe plus every HydroRIVERS reach (Lines) in geographic 3D.
 
 **Run**: `luxar demo run global_rivers_earth`
 
-**Demonstrates**: Mixed Points+Lines geometry in one scene, geographic (lat/lon/elevation) coordinate mapping, large real-world datasets with local caching (~1 GB download on first run).
+**Demonstrates**: Mixed Mesh+Lines geometry, tiled high-resolution textures, geographic (lat/lon/elevation) coordinate mapping, and large real-world datasets with local caching (~1 GB download on first run).
 
 ---
 
 #### demo_ocean_currents_earth.py - Ocean Currents of Earth
-HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) draped over a jittered-Fibonacci NASA Blue Marble globe — a "Perpetual Ocean"-style visualization of the Gulf Stream, Kuroshio, and Antarctic Circumpolar Current.
+HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) draped over a textured NASA Blue Marble mesh globe — a "Perpetual Ocean"-style visualization of the Gulf Stream, Kuroshio, and Antarctic Circumpolar Current.
 
 **Run**: `luxar demo run ocean_currents_earth`
 
-**Requires**: Internet access on first run (~72 MB: HYCOM GLBy0.08 surface u/v + Blue Marble texture; cached under `~/.cache/luxar/ocean_currents_earth/`).
+**Requires**: Internet access on first run (HYCOM GLBy0.08 surface u/v under `~/.cache/luxar/ocean_currents_earth/`, plus the shared NASA Blue Marble imagery under `~/.cache/luxar/blue_marble/` — ~28 MB, downloaded once and reused by all four Earth demos).
 
-**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node segment ceiling, and **partition-of-LOD on both layers** — each is a `kind=partition` of 16 per-tile `kind=lod` ladders, which is what keeps the opening whole-globe view at 5.47M resident elements instead of 19.44M (`partition=` alone bounds node size but not residency: every part is drawn and only frustum-culled). Coarse levels are fewer whole elements with a compensating `sqrt` point radius / linear ribbon width, so a streamline still looks like a streamline. The scene is ~546 MB on disk against ~290 MB for a flat build — substitutive LOD stores levels, not deltas; `LOD_COMPRESSION` / `LOD_LEVELS` move that balance.
+**Demonstrates**: Mixed Mesh+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, tiled globe textures, and a **partition-of-LOD current layer** — 16 per-tile `kind=lod` ladders keep the opening whole-globe view from retaining every ribbon. Coarse levels preserve whole streamlines and widen them linearly so the field's apparent ink stays stable across switches; `LOD_COMPRESSION` / `LOD_LEVELS` tune the residency-versus-disk trade.
 
 ---
 

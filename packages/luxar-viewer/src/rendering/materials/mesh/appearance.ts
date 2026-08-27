@@ -228,3 +228,133 @@ export function syncMeshEmissionDefines(
   }
   return changed;
 }
+
+/**
+ * How a mesh obtains its base colour, resolved to exactly one source.
+ *
+ * `'vertex'` is the default and needs no define — the shader reads the `color`
+ * attribute, which is always bound. The other two replace it.
+ */
+export type MeshColorSource = 'vertex' | 'colormap' | 'texture';
+
+/**
+ * The colour-source defines, keyed by the source that selects them.
+ *
+ * `'vertex'` is absent on purpose rather than mapped to `''`: it is the shader's
+ * fall-through, so representing it as a define would create a fourth state (both
+ * "vertex" and "texture" set) that the shader has no branch for.
+ */
+export const MESH_COLOR_SOURCE_DEFINES = {
+  colormap: 'USE_COLORMAP',
+  texture: 'LUXAR_MESH_BASE_COLOR_TEX',
+} as const satisfies Partial<Record<MeshColorSource, string>>;
+
+/**
+ * Bring a material's colour-source defines in line with `source`, and report
+ * whether anything changed.
+ *
+ * The colour-source twin of {@link syncMeshEmissionDefines}, and it exists for the
+ * same reason: **at most one colour-source define is ever set** is an invariant
+ * across two backends, so implementing it twice would let a unit test asserting
+ * "never both" prove only that both copies happen to agree today.
+ *
+ * It is a live failure mode rather than a theoretical one, and worse than the
+ * emission case. `USE_COLORMAP` and `LUXAR_MESH_BASE_COLOR_TEX` both write the
+ * base colour, so a material that stranded one while adding the other would
+ * compile fine and silently ignore whichever the shader happened to test second —
+ * a mesh that reads its texture attrs, uploads the image, binds the UVs, and then
+ * renders in colormap colours, with nothing anywhere reporting a problem.
+ *
+ * Write-side exclusivity does not remove the need for this. `add_mesh` refuses
+ * `texture` alongside `colors`/`colormap`, but a material is also mutated at
+ * RUNTIME by the layers panel, which can turn a colormap on for a node whose
+ * store never had one.
+ *
+ * @returns `true` when a define was added or removed — the caller's signal to
+ *   recompile (GLSL) or rebuild the graph (TSL).
+ */
+export function syncMeshColorSourceDefines(
+  defines: Record<string, unknown>,
+  source: MeshColorSource
+): boolean {
+  let changed = false;
+  for (const [name, flag] of Object.entries(MESH_COLOR_SOURCE_DEFINES)) {
+    const wanted = source === name;
+    const had = flag in defines;
+    if (wanted && !had) {
+      defines[flag] = '';
+      changed = true;
+    } else if (!wanted && had) {
+      delete defines[flag];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
+ * Resolve the colour source a config selects, refusing to guess when it asks for
+ * two.
+ *
+ * A texture WINS over a colormap, and the tie has to be broken somewhere rather
+ * than left to define ordering. Texture wins because it is the more specific
+ * declaration: a colormap can be switched on at runtime by the layers panel for
+ * any node with scalars, while a texture only exists if the store carried an
+ * image and its UVs, which the writer already refused to pair with a colormap.
+ */
+export function resolveMeshColorSource(config: {
+  colormapTexture?: unknown;
+  baseColorTexture?: unknown;
+}): MeshColorSource {
+  if (config.baseColorTexture) return 'texture';
+  if (config.colormapTexture) return 'colormap';
+  return 'vertex';
+}
+
+/**
+ * How a mesh's normals are obtained, as ONE value rather than a pair of booleans.
+ *
+ * `shading` used to reach the material as a single `flatNormal` boolean, which was
+ * adequate for two arms and is not for three: `'none'` needs no normal at all, so
+ * as a second boolean it would admit a meaningless `flatNormal && noShading`
+ * combination and double the variant count for a state that has one behaviour.
+ * Kept as an enum so the invalid combinations do not exist to be tested.
+ */
+export type MeshShadingMode = 'smooth' | 'flat' | 'none';
+
+/**
+ * The shading defines, keyed by mode. `'smooth'` is the fall-through and has none.
+ */
+export const MESH_SHADING_DEFINES = {
+  flat: 'LUXAR_MESH_FLAT_NORMAL',
+  none: 'LUXAR_MESH_NO_SHADING',
+} as const satisfies Partial<Record<MeshShadingMode, string>>;
+
+/**
+ * Bring a material's shading defines in line with `mode`.
+ *
+ * Third in the family, and the one whose stale-flag case is worst: a stranded
+ * `LUXAR_MESH_NO_SHADING` alongside `LUXAR_MESH_FLAT_NORMAL` gives a shader that
+ * computes a derivative normal and then discards it, so the mesh renders FLATLY
+ * LIT — which looks like a deliberate unlit style rather than a bug.
+ *
+ * @returns `true` when a define was added or removed.
+ */
+export function syncMeshShadingDefines(
+  defines: Record<string, unknown>,
+  mode: MeshShadingMode
+): boolean {
+  let changed = false;
+  for (const [name, flag] of Object.entries(MESH_SHADING_DEFINES)) {
+    const wanted = mode === name;
+    const had = flag in defines;
+    if (wanted && !had) {
+      defines[flag] = '';
+      changed = true;
+    } else if (!wanted && had) {
+      delete defines[flag];
+      changed = true;
+    }
+  }
+  return changed;
+}

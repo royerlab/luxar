@@ -79,10 +79,9 @@ def _planned_merge_stats(
 
     ``time_seconds`` is the merge's wall clock. On a sequential flat result it
     overwrites ``concatenate``'s sum of box fit times; on a partition root this
-    block is its sole writer. Normal parallel workers deliberately omit fitting
-    info while preserving normalization provenance, so this is also the sole
-    writer for their flat merge. The overwrite still protects callers whose
-    custom workers do persist fitting info from summing concurrent fit times.
+    block is its sole writer. Parallel workers persist their box fitting info,
+    so the overwrite prevents ``concatenate`` from reporting the sum of
+    concurrently elapsed box fit times.
     """
 
     stats: dict[str, Any] = {

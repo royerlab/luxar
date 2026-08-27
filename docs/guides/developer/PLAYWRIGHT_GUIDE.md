@@ -547,9 +547,9 @@ npx playwright install chromium
 ### Timeouts across many unrelated specs at once
 
 **Cause**: The machine, not the viewer. Each worker costs a Chromium (renderer +
-GPU process + the viewer's worker pool) plus a share of the single-threaded
-`python3 -m http.server 9000` dataset server, so an already-loaded box services
-input too slowly for the 10 s action timeout even though the page is healthy.
+GPU process + the viewer's worker pool) plus a share of the Python dataset
+server on port 9000, so an already-loaded box services input too slowly for the
+10 s action timeout even though the page is healthy.
 
 **Fix**: Usually none — `playwright.config.ts` sizes the local worker count via
 `tools/e2e-workers.ts`, scaling a ceiling of four by the box's free fraction

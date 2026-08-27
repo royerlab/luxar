@@ -25,6 +25,7 @@ function makeCaps(apiSurface: 'webgl2' | 'webgpu'): RendererCapabilities {
       hdr: false,
       deepColor: false,
       floatTextures: true,
+      filterableFloatTextures: false,
       colorDepth: { red: 8, green: 8, blue: 8 },
       recommendedColorSpace: 'srgb',
     },

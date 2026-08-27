@@ -19,6 +19,9 @@
  *     subject is blown white or the background is lifted to grey. The decision
  *     logic is `./exposure-policy` (pure, unit-tested); a per-demo `exposure`
  *     in the manifest overrides the whole thing.
+ *   - **Under-fill check** — measures final still span + lit area on every
+ *     framing path after all nudges. Warns below the measured gallery floors
+ *     and never fails — see `./crop-policy`.
  *   - **Crop check** — counts LIT pixels on the frame's outermost row/column in
  *     the still and in orbit poses spread across the whole rock on a ~5° grid
  *     (plus the last frame of a timelapse, where a developing subject is
@@ -73,7 +76,9 @@ import {
   borderLitPercent,
   borderSampleFrames,
   evaluateBorderLit,
+  evaluateUnderfill,
   type BorderSample,
+  type CoverageMeasurement,
   type CropFraming,
 } from './crop-policy';
 import { resolveGalleryOnly } from './gallery-selection';
@@ -461,23 +466,27 @@ async function setDistance(page: any, dist: number): Promise<void> {
  * PERCENTILE bounding box of the lit pixels (BBOX_LO/HI_PCTILE) so a few stray
  * outlier points don't report a full-frame subject (the Gaia/asteroid failure).
  * Returns coverage = max(bboxW/frameW, bboxH/frameH) and the lit fraction.
+ * A retained PNG can be supplied when measuring a frame the harness already
+ * captured; framing probes otherwise take a smaller JPEG screenshot.
  */
-async function measureCoverage(page: any): Promise<{ coverage: number; litFraction: number }> {
-  const shot = await page.screenshot({ type: 'jpeg', quality: 60 });
+async function measureCoverage(page: any, pngShot?: Buffer): Promise<CoverageMeasurement> {
+  const shot = pngShot ?? (await page.screenshot({ type: 'jpeg', quality: 60 }));
   const b64 = shot.toString('base64');
   return await page.evaluate(
     async ({
       b64img,
+      imageType,
       litThreshold,
       loP,
       hiP,
     }: {
       b64img: string;
+      imageType: 'jpeg' | 'png';
       litThreshold: number;
       loP: number;
       hiP: number;
     }) => {
-      const blob = await (await fetch(`data:image/jpeg;base64,${b64img}`)).blob();
+      const blob = await (await fetch(`data:image/${imageType};base64,${b64img}`)).blob();
       const bmp = await createImageBitmap(blob);
       const w = 400;
       const h = Math.max(1, Math.round((bmp.height / bmp.width) * w));
@@ -508,8 +517,28 @@ async function measureCoverage(page: any): Promise<{ coverage: number; litFracti
       const bh = (q(ys, hiP) - q(ys, loP)) / h;
       return { coverage: Math.max(bw, bh), litFraction: xs.length / (w * h) };
     },
-    { b64img: b64, litThreshold: LIT_THRESHOLD, loP: BBOX_LO_PCTILE, hiP: BBOX_HI_PCTILE }
+    {
+      b64img: b64,
+      imageType: pngShot ? 'png' : 'jpeg',
+      litThreshold: LIT_THRESHOLD,
+      loP: BBOX_LO_PCTILE,
+      hiP: BBOX_HI_PCTILE,
+    }
   );
+}
+
+/** Failure-tolerant final coverage diagnostic for an already-captured PNG still. */
+async function measureCoverageOrNull(
+  page: any,
+  shot: Buffer,
+  demoId: string
+): Promise<CoverageMeasurement | null> {
+  try {
+    return await measureCoverage(page, shot);
+  } catch (error) {
+    console.warn(`[${demoId}] coverage measurement skipped:`, error);
+    return null;
+  }
 }
 
 /**
@@ -1334,12 +1363,24 @@ for (const demo of DEMOS) {
     }
     // Measure the still LAST (but while the page is still open): decoding a
     // retained buffer doesn't care where the camera ended up, and doing it here
-    // keeps the crop check from inserting seconds between the still screenshot
-    // and the orbit's rAF freeze — progressive LOD is still streaming there, so a
-    // diagnostic must not change what the media pipeline captures. Failure-
-    // tolerant for the same reason as the orbit samples.
+    // keeps both still measurements from inserting seconds between the still
+    // screenshot and the orbit's rAF freeze — progressive LOD is still streaming
+    // there, so a diagnostic must not change what the media pipeline captures.
+    // Failure-tolerant for the same reason as the orbit samples.
+    const coverageMeasurement = await measureCoverageOrNull(page, stillShot, demo.id);
     const stillSample = await measureBorderLitOrNull(page, stillShot, 'still', demo.id);
     await page.close();
+
+    if (coverageMeasurement) {
+      console.log(
+        `[${demo.id}] final coverage=${(coverageMeasurement.coverage * 100).toFixed(1)}% ` +
+          `final lit=${(coverageMeasurement.litFraction * 100).toFixed(1)}%`
+      );
+      const underfill = evaluateUnderfill({ demoId: demo.id, measurement: coverageMeasurement });
+      if (underfill.underfilled) console.warn(underfill.message);
+    } else {
+      console.log(`[${demo.id}] final coverage=unmeasured final lit=unmeasured`);
+    }
 
     // Crop check (before the orbit-failure return — the still sample alone is
     // worth reporting). ALWAYS log the count: it is a per-tile regression signal

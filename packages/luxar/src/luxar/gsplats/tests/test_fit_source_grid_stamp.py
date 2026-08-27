@@ -65,6 +65,31 @@ def _fit(V, **kw):
     )
 
 
+def test_region_restamp_excludes_acquisition_only_source_claims() -> None:
+    from luxar.gsplats.gsplat_data import stamp_region_scoped_stats
+
+    stats = {"source_declared": True, "source_stored_bytes": 999, "kept": "value"}
+    stamp_region_scoped_stats(
+        stats,
+        source_shape=(2, 3, 4),
+        fitted_shape=(1, 3, 4),
+        n_splats=3,
+        occupancy=0.25,
+        source_itemsize=2,
+    )
+
+    assert stats == {
+        "kept": "value",
+        "source_shape": [2, 3, 4],
+        "source_voxels": 24,
+        "source_bytes": 48,
+        "fitted_shape": [1, 3, 4],
+        "fitted_voxels": 12,
+        "occupancy": 0.25,
+        "voxels_per_splat": 4.0,
+    }
+
+
 def test_fit_stamps_the_source_grid() -> None:
     V = _sparse_blobs()
     stats = _fit(V).stats

@@ -1053,6 +1053,36 @@ class TestMeshLod:
         assert "'overlays' (group)" not in stdout
         assert "(overlay)" not in stdout
 
+    def test_textured_mesh_names_and_safely_drops_texture_data(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Texture sampling attrs must not strand an otherwise valid rewrite."""
+        from luxar.cli.mesh_ops.lod_commands import run_lod
+
+        source = tmp_path / "src.luxar.zarr"
+        vertices, _faces = _grid_mesh()
+        uvs = np.zeros((vertices.shape[0], 2), dtype=np.float32)
+        texture = np.zeros((2, 2, 3), dtype=np.uint8)
+        _write_source(
+            source,
+            uvs=uvs,
+            texture=texture,
+            texture_wrap="clamp",
+            texture_filter="nearest",
+        )
+
+        out = tmp_path / "out.luxar.zarr"
+        assert len(_run(run_lod, source, out)) >= 2
+
+        stdout = capsys.readouterr().out
+        assert "'surf' has a texture and per-vertex UV coordinates" in stdout
+        assert "will NOT be carried into the new scene" in stdout
+        written = LuxarScene.load(out)
+        for mesh_path in written.list_meshes():
+            mesh = written.get_mesh(mesh_path)
+            assert mesh.uvs is None
+            assert mesh.texture is None
+
     def test_a_mesh_nested_under_a_transformed_group_names_that_group(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

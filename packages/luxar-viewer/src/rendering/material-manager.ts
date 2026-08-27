@@ -222,6 +222,24 @@ export class MaterialManager {
   }
 
   /**
+   * The two capabilities a mesh texture upload depends on.
+   *
+   * Exposed as a narrow accessor rather than the whole `RendererCapabilities`
+   * because the texture upload is the only consumer outside this class, and it
+   * needs exactly these two. Returns the conservative answer when caps have not
+   * been set (unit tests, pre-renderer): `filterableFloatTextures: false` selects a
+   * HalfFloat upload, which filters correctly on every backend — degrading HDR
+   * precision is recoverable, whereas a float32 texture the device cannot filter
+   * silently samples blocky.
+   */
+  getTextureCapabilities(): { filterableFloatTextures: boolean; maxAnisotropy: number } {
+    return {
+      filterableFloatTextures: this.caps?.hdr.filterableFloatTextures ?? false,
+      maxAnisotropy: 8,
+    };
+  }
+
+  /**
    * Create a point material — PER NODE, no LRU cache.
    *
    * Point data lives in a per-node texture (`uPointTex`), so two nodes
@@ -368,7 +386,7 @@ export class MaterialManager {
    * Per node for a different reason than its three siblings: they carry the node's
    * own element texture, so sharing would rebind one node's data onto another's
    * mesh. A mesh material holds no per-node texture at all — but it does hold two
-   * pieces of per-node state that make sharing wrong anyway: the `flatNormal`
+   * pieces of per-node state that make sharing wrong anyway: the `shading`
    * compile-time variant (a function of that node's `shading` and its normals'
    * validity for the active view) and `side` (re-applied per epoch by
    * `applyMeshSide`). Sharing would let one node's shading model and face-sidedness
@@ -396,7 +414,9 @@ export class MaterialManager {
       intensity: props.intensity,
       offset: props.offset,
       blendingMode: props.blendingMode,
-      flatNormal: props.flatNormal,
+      shading: props.shading,
+      baseColorTexture: props.baseColorTexture,
+      baseColorTextureLuminance: props.baseColorTextureLuminance,
       ambient: props.ambient,
       shadeExponent: props.shadeExponent,
       specular: props.specular,

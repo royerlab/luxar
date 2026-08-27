@@ -368,6 +368,14 @@ describe('LayerStateManager', () => {
     expect(layer.dataMax).toBeGreaterThanOrEqual(3.5);
   });
 
+  it('uses an HDR texture range to bound the direct-colour slider', () => {
+    mgr.initFromSceneGraph(makeSceneGraph([{ texture_data_range: [0, 6.5] as [number, number] }]));
+    const layer = mgr.getLayers()[0];
+    expect(layer.displayMin).toBe(0);
+    expect(layer.displayMax).toBe(1);
+    expect(layer.dataMax).toBeGreaterThanOrEqual(6.5);
+  });
+
   it('still windows a COLORMAPPED layer on its scalar range', () => {
     // The #522 case: a linear [0, 1] window on right-skewed gsplat amplitudes
     // buries ~99% of splats in the bottom few % and renders near-black.
