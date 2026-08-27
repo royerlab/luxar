@@ -906,18 +906,31 @@ three shared slots; repository-wide queue order may still put other work ahead o
 that run's `typescript-tests`. The final Python leg follows. Every scheduled window
 also runs the short `release-readiness` and `wheel-viewer` checks on GitHub-hosted
 runners, and `pick-runner` routes the long Python/TypeScript legs to hosted runners
-when obsidian has neither fresh capacity nor work in flight. Five of the twelve most
-recent daily scheduled runs (2026-08-14 to 2026-08-25) took that billed path. Every
-added window therefore consumes hosted minutes for short jobs, while routing adds
-either obsidian queue depth or the long legs to the hosted bill. Those routed long
-legs alone expose roughly 200–240 hosted minutes/day at that observed rate; one daily
-pair of extra Python legs is small beside that baseline. (If newer interpreters ever
-become deliberately unsupported, the honest fix is a `requires-python` upper bound,
-not a quiet single-leg matrix.)
+when obsidian has no fresh capacity and either no work in flight, an aged backlog at
+the configured cap, or any aged backlog when the bounded scan cannot inspect every
+eligible run. Five of the twelve most recent daily scheduled runs (2026-08-14 to
+2026-08-25) took that billed path. Every added window therefore consumes hosted
+minutes for short jobs, while routing adds either obsidian queue depth or the long
+legs to the hosted bill. Those routed long legs alone expose roughly 200–240 hosted
+minutes/day at that observed rate; one daily pair of extra Python legs is small beside
+that baseline. (If newer interpreters ever become deliberately unsupported, the
+honest fix is a `requires-python` upper bound, not a quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
 defect behind issue #839, where all three legs silently ran the same version.
+
+The router bounds that queue/cost tradeoff after fresh capacity has been ruled out.
+It scans at most ten eligible queued/in-progress runs and counts only obsidian jobs
+that have waited at least five minutes. When fewer than ten runs are eligible, five
+aged jobs by default send new work to GitHub-hosted runners;
+`LUXAR_CI_MAX_QUEUED_OBSIDIAN` overrides that validated cap. Reaching the scan bound
+instead routes hosted after finding any aged backlog; without backlog evidence,
+known obsidian liveness still wins.
+Raising a long-leg timeout for queue tolerance also raises its worst-case hosted bill,
+so the cap deliberately limits how often those larger budgets burst onto paid runners.
+Router decisions are concurrent snapshots, so a burst can still overshoot the cap
+before its newly routed jobs materialise.
 
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
