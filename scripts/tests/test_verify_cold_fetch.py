@@ -374,11 +374,15 @@ def test_help_documents_skip_and_teardown_guards(harness: ModuleType, capsys) ->
     out = capsys.readouterr().out
     assert "--allow-skip" in out
     assert "--require-verified" in out
-    assert "explicitly named target" in out
+    assert harness.__doc__ is not None
+    assert "explicitly named" in harness.__doc__
+    assert "unless ``--allow-skip``" in harness.__doc__
     assert "pre-removal teardown" in out
 
 
-def test_an_explicitly_named_skip_is_a_failure(harness: ModuleType, capsys) -> None:
+def test_an_explicitly_named_skip_is_a_failure(
+    harness: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     """Asking for a dataset by name and getting no answer is not a pass.
 
     This is the fails-open shape a tolerant skip branch creates: at teardown
@@ -386,29 +390,51 @@ def test_an_explicitly_named_skip_is_a_failure(harness: ModuleType, capsys) -> N
     copy — having verified nothing. Every record is dormant today, so this is
     also the path they would actually take.
     """
-    assert harness.main(["gsplats_kidney"]) == 1
+    monkeypatch.setattr(
+        harness.data_fetch,
+        "load_manifest",
+        lambda: _manifest(None, sha=_digest(PAYLOAD)),
+    )
+    assert harness.main(["thing"]) == 1
     err = capsys.readouterr().err
     assert "NOT verified" in err
     assert "target(s)" in err
     assert "asked for them by name" in err
 
 
-def test_allow_skip_is_the_only_way_to_tolerate_it(harness: ModuleType, capsys) -> None:
-    assert harness.main(["gsplats_kidney", "--allow-skip"]) == 0
+def test_allow_skip_is_the_only_way_to_tolerate_it(
+    harness: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        harness.data_fetch,
+        "load_manifest",
+        lambda: _manifest(None, sha=_digest(PAYLOAD)),
+    )
+    assert harness.main(["thing", "--allow-skip"]) == 0
 
 
 def test_require_verified_fails_when_nothing_was_verified(
-    harness: ModuleType, capsys
+    harness: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     """The teardown gate: demand a count rather than trusting a green exit."""
+    monkeypatch.setattr(
+        harness.data_fetch,
+        "load_manifest",
+        lambda: _manifest(None, sha=_digest(PAYLOAD)),
+    )
     assert harness.main(["--require-verified", "1"]) == 1
     assert "0 target(s) verified" in capsys.readouterr().err
 
 
 def test_a_bare_all_skipped_run_says_so_rather_than_implying_success(
-    harness: ModuleType, capsys
+    harness: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     """Exit 0 is correct while nothing is published — silence would not be."""
+    monkeypatch.setattr(
+        harness.data_fetch,
+        "load_manifest",
+        lambda: _manifest(None, sha=_digest(PAYLOAD)),
+    )
     assert harness.main([]) == 0
     out = capsys.readouterr().out
     assert "nothing was actually verified" in out
