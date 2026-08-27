@@ -36,11 +36,13 @@
  *
  * The demo list is `scripts/gallery/manifest.json` (shared with the Python
  * dataset generator). Demos whose dataset is absent are skipped (not failed).
- * Restrict to a subset with `GALLERY_ONLY=id1,id2 pnpm gallery`.
+ * Restrict to manifest ids with `GALLERY_ONLY=id1,id2 pnpm gallery`, or use
+ * `GALLERY_ONLY=readme` for the media embedded in the root README.
  *
  * Usage:
  *   pnpm gallery                 # capture every demo with a dataset on disk
  *   GALLERY_ONLY=lorenz pnpm gallery
+ *   GALLERY_ONLY=readme pnpm gallery
  *
  * Prerequisites:
  *   - Datasets present:  hatch run python scripts/gallery/generate_gallery_datasets.py
@@ -74,10 +76,12 @@ import {
   type BorderSample,
   type CropFraming,
 } from './crop-policy';
+import { resolveGalleryOnly } from './gallery-selection';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '../../../../..');
 const MANIFEST_PATH = path.join(REPO_ROOT, 'scripts/gallery/manifest.json');
+const README_PATH = path.join(REPO_ROOT, 'README.md');
 const OUTPUT_DIR = path.join(REPO_ROOT, 'docs/images/gallery');
 
 // Dedicated ports (not the default 5173/9876) so a concurrent agent's dev
@@ -214,7 +218,6 @@ interface DemoEntry {
   // software-GL frame take minutes: the viewport-relative coverage LOD then
   // picks a lighter level sized to the framing, so the orbit video is feasible.
   lodFinest?: boolean;
-  readme?: boolean;
   // Free-text human annotation carried in the manifest (why a demo is framed a
   // certain way, what still needs tuning). Declared so the manifest and this
   // interface agree; the capture code never reads it.
@@ -226,13 +229,17 @@ function loadManifest(): DemoEntry[] {
   let demos = raw.demos;
   const only = process.env.GALLERY_ONLY;
   if (only) {
-    const wanted = new Set(
-      only
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
+    const selection = resolveGalleryOnly(
+      only,
+      fs.readFileSync(README_PATH, 'utf-8'),
+      demos.map((demo) => demo.id)
     );
-    demos = demos.filter((d) => wanted.has(d.id));
+    if (selection.unknownTokens.length > 0) {
+      console.warn(
+        `[gallery] GALLERY_ONLY did not match manifest ids: ${selection.unknownTokens.join(', ')}`
+      );
+    }
+    demos = demos.filter((demo) => selection.wantedIds.has(demo.id));
   }
   return demos;
 }
@@ -454,23 +461,30 @@ async function setDistance(page: any, dist: number): Promise<void> {
  * PERCENTILE bounding box of the lit pixels (BBOX_LO/HI_PCTILE) so a few stray
  * outlier points don't report a full-frame subject (the Gaia/asteroid failure).
  * Returns coverage = max(bboxW/frameW, bboxH/frameH) and the lit fraction.
+ * A retained PNG can be supplied when measuring a frame the harness already
+ * captured; framing probes otherwise take a smaller JPEG screenshot.
  */
-async function measureCoverage(page: any): Promise<{ coverage: number; litFraction: number }> {
-  const shot = await page.screenshot({ type: 'jpeg', quality: 60 });
+async function measureCoverage(
+  page: any,
+  pngShot?: Buffer
+): Promise<{ coverage: number; litFraction: number }> {
+  const shot = pngShot ?? (await page.screenshot({ type: 'jpeg', quality: 60 }));
   const b64 = shot.toString('base64');
   return await page.evaluate(
     async ({
       b64img,
+      imageType,
       litThreshold,
       loP,
       hiP,
     }: {
       b64img: string;
+      imageType: 'jpeg' | 'png';
       litThreshold: number;
       loP: number;
       hiP: number;
     }) => {
-      const blob = await (await fetch(`data:image/jpeg;base64,${b64img}`)).blob();
+      const blob = await (await fetch(`data:image/${imageType};base64,${b64img}`)).blob();
       const bmp = await createImageBitmap(blob);
       const w = 400;
       const h = Math.max(1, Math.round((bmp.height / bmp.width) * w));
@@ -501,8 +515,28 @@ async function measureCoverage(page: any): Promise<{ coverage: number; litFracti
       const bh = (q(ys, hiP) - q(ys, loP)) / h;
       return { coverage: Math.max(bw, bh), litFraction: xs.length / (w * h) };
     },
-    { b64img: b64, litThreshold: LIT_THRESHOLD, loP: BBOX_LO_PCTILE, hiP: BBOX_HI_PCTILE }
+    {
+      b64img: b64,
+      imageType: pngShot ? 'png' : 'jpeg',
+      litThreshold: LIT_THRESHOLD,
+      loP: BBOX_LO_PCTILE,
+      hiP: BBOX_HI_PCTILE,
+    }
   );
+}
+
+/** Failure-tolerant final coverage diagnostic for an already-captured still. */
+async function measureCoverageOrNull(
+  page: any,
+  shot: Buffer,
+  demoId: string
+): Promise<number | null> {
+  return await measureCoverage(page, shot)
+    .then(({ coverage }) => coverage)
+    .catch((e: unknown) => {
+      console.warn(`[${demoId}] final coverage not measured: ${e}`);
+      return null;
+    });
 }
 
 /**
@@ -1331,6 +1365,10 @@ for (const demo of DEMOS) {
     // and the orbit's rAF freeze — progressive LOD is still streaming there, so a
     // diagnostic must not change what the media pipeline captures. Failure-
     // tolerant for the same reason as the orbit samples.
+    const finalCoverage = await measureCoverageOrNull(page, stillShot, demo.id);
+    if (finalCoverage !== null) {
+      console.log(`[${demo.id}] final coverage=${(finalCoverage * 100).toFixed(0)}%`);
+    }
     const stillSample = await measureBorderLitOrNull(page, stillShot, 'still', demo.id);
     await page.close();
 

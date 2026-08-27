@@ -794,8 +794,8 @@ and each job runs its expensive steps only for the domain(s) it covers:
 
 | Domain | Set by | Gates |
 |--------|--------|-------|
-| `dom_py` | `*.py`, `Makefile`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh`, plus gate inputs that carry no Python extension, listed below | `python-tests`, `wheel-viewer` |
-| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
+| `dom_py` | `*.py`, `Makefile`, `pyproject.toml`, `*.pyx/*.pxd`, CUDA `*.cu/*.cuh`, plus cross-language gate inputs listed below | `python-tests`, `wheel-viewer` |
+| `dom_ts` | anything under `packages/luxar-viewer/`, root `tsconfig*.json`, `vitest*.{ts,js,mjs}`, plus gallery-selection inputs listed below | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_rust` | `*.rs`, `Cargo.toml/lock` | `typescript-tests`, `release-readiness`, `wheel-viewer` |
 | `dom_go` | `*.go`, `go.mod/sum`, `cli/_launchers/` | `go-launcher` |
 
@@ -816,16 +816,47 @@ the pytest suite itself reads: `scripts/complexity_baseline.json` (the C901
 ratchet's only input that carries no Python extension),
 `scripts/gallery/manifest.json` (cross-validated against the demo registry) and
 `docs/guides/user/CLI_REFERENCE.md` (drift-guarded against the live Typer app),
-plus the root `README.md` and `packages/luxar/src/luxar/demos/README.md` guarded
-against the live demo registry and exported helper inventory.
+plus the root `README.md`, `CLAUDE.md`, and
+`.agents/skills/luxar-visualization/SKILL.md` guarded against the live demo and
+example inventories, `packages/luxar/src/luxar/demos/README.md` guarded against
+the exported helper inventory, and the gallery capture spec whose `DemoEntry`
+interface defines the manifest field contract. The Cholesky documentation guard
+reads that same `CLAUDE.md` and skill page, and adds
+`.agents/skills/luxar-visualization/references/scene-api.md`,
+`.agents/skills/luxar-gsplat-pipeline/SKILL.md` and
+`docs/specs/GSPLATS_DIMENSION_MAPPING.md` to the Python-owned set.
+Consequently, every `CLAUDE.md` edit runs the Python matrix.
+Two workflow files and `.gitattributes` are `dom_py` for the same reason:
+`test_docs_workflow.py` reads `docs.yml` and `.gitattributes`, and
+`test_run_external_reference_audits.py` asserts the schedule, permissions and
+token wiring of `external-reference-audits.yml`. A workflow file matches no
+other domain on its own, so each has to be named or its guard never runs.
+Viewer TypeScript sources read by Python contract tests are also `dom_py`.
+Those tests resolve files through the shared `viewer_source()` helper, and
+`test_ci_diff_classifier.py` statically scans every literal helper call: each
+must have a Python `GATE_INPUTS` row, while every `NON_PYTHON_DOMAIN_PATHS`
+control must remain unread. Five viewer inputs are consumed without opening a
+named path in a test: the version and generated-format checks run through their
+scripts, while `test_fixture_environment.py` matches its three fixture files via
+`git grep`. The classifier test keeps those explicit exceptions disjoint from
+the scanned readers and requires every `dom_py` viewer row to be in one set or
+the other. `GATE_INPUTS` is therefore the exact declaration; the workflow ERE is
+its checked copy rather than a second unchecked inventory. Ownership stays
+file-narrow so unrelated viewer changes do not pull in the Python matrix. The
+docs gate has no corresponding hole: it already owns every viewer TypeScript
+source under `src/`, while viewer tools outside `src/` are outside both the
+documentation checker's viewer scan and TypeDoc's entry points. `dom_ts`
+explicitly owns the root `README.md` and gallery manifest because the
+gallery-selection unit test resolves and validates the README capture set from
+them.
 A check whose own inputs are unclassified is a check that skips for exactly the
 change it exists to catch. `.github/workflows/ci.yml` selects **all four**
 domains: it defines how every suite is invoked, so an edit that breaks a command
 or a condition is caught by the run that contains it.
 
 A change that touches no domain at all — most Markdown, `docs/`, and
-`CHANGELOG.md`, except for the pytest inputs noted above — runs no language
-suite. Those jobs still *run* (checkout plus skipped steps),
+`CHANGELOG.md`, except for the explicitly classified gate inputs noted above —
+runs no language suite. Those jobs still *run* (checkout plus skipped steps),
 so their required contexts (`python-tests (3.12)`, `typescript-tests`,
 `release-readiness`, `wheel-viewer`) report an explicit green in seconds
 instead of a grey "skipped", which is what keeps strict branch protection from
@@ -833,7 +864,7 @@ wedging. `docs-quality`, the fifth required context, is gated separately on
 `docs_relevant` — a docs-only change is documentation-relevant by definition,
 so it runs the full Sphinx and TypeDoc gate, which is the point.
 
-A push to `dev`, a nightly run, or an empty diff has no PR base and selects
+A push to `dev`, a scheduled run, or an empty diff has no PR base and selects
 every domain. The gate **fails safe**: each condition is written
 `dom_x != 'false'`, so if the `changes` job itself dies its outputs read empty
 and every suite runs. (Writing them `== 'true'` would invert that — a broken
@@ -858,39 +889,83 @@ runs everything. The same trade as the per-PR Python matrix below: found on
 |-------|-------------|
 | `pull_request` | `3.12` — the floor, and the one required status context |
 | `push` to `dev` | `3.12`, `3.13`, `3.14` |
-| nightly `schedule` (09:17 UTC) | `3.12`, `3.13`, `3.14` |
+| daily `schedule` (`09:17` UTC) | `3.12`, `3.13`, `3.14` |
+| remaining `:17` windows (`00,03,06,12,15,18,21` UTC) | `3.12` — the promotion-required context |
 
 3.12 is the FLOOR (`requires-python = ">=3.12"`, what zarr 3.2+ requires) and is
 what the required `python-tests (3.12)` status context names, so it runs on every
 event. `>=3.12` has no ceiling, though: 3.13 and 3.14 are supported, `install-hatch`
 explicitly prefers them, and a developer's `hatch env` picks the newest interpreter
-on the box. So the off-PR set is exactly the set of versions the wheel's
-classifiers advertise — "declared" and "tested" are kept identical by
-construction, because a claimed-but-never-exercised version is the same species of
-lie as an untested 3.10 claim would be. Finding a break within 24h is the trade
-against spending three legs on every PR, on a box with three self-hosted slots.
-On obsidian, `max-parallel: 2` starts two Python legs while reserving the third
-slot for `typescript-tests`; the final Python leg follows, while the short
-`release-readiness` and `wheel-viewer` checks run independently on GitHub-hosted
-runners. (If newer interpreters ever become deliberately unsupported, the honest
-fix is a `requires-python` upper bound, not a quiet single-leg matrix.)
+on the box. Every merge push and the daily 09:17 UTC schedule therefore run exactly
+the versions the wheel's classifiers advertise — "declared" and "tested" are kept
+identical by construction, because a claimed-but-never-exercised version is the
+same species of lie as an untested 3.10 claim would be. All eight scheduled windows
+land every three hours; the seven other than 09:17 carry only the required 3.12 leg.
+On obsidian, `max-parallel: 2` prevents one run's Python matrix from monopolising all
+three shared slots; repository-wide queue order may still put other work ahead of
+that run's `typescript-tests`. The final Python leg follows. Every scheduled window
+also runs the short `release-readiness` and `wheel-viewer` checks on GitHub-hosted
+runners, and `pick-runner` routes the long Python/TypeScript legs to hosted runners
+when obsidian has neither fresh capacity nor work in flight. Five of the twelve most
+recent daily scheduled runs (2026-08-14 to 2026-08-25) took that billed path. Every
+added window therefore consumes hosted minutes for short jobs, while routing adds
+either obsidian queue depth or the long legs to the hosted bill. Those routed long
+legs alone expose roughly 200–240 hosted minutes/day at that observed rate; one daily
+pair of extra Python legs is small beside that baseline. (If newer interpreters ever
+become deliberately unsupported, the honest fix is a `requires-python` upper bound,
+not a quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
 defect behind issue #839, where all three legs silently ran the same version.
 
-The nightly and push runs differ from a PR run in *scope* as well: neither has a PR
+Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
 documentation gate.
 
 Scheduled runs sit in their own `concurrency` group: they share
 `refs/heads/dev` with merge-triggered runs, so under one shared group
 `cancel-in-progress` let whichever started second cancel the other. A merge
-landing mid-nightly killed the nightly; a cron firing over an in-flight merge
+landing mid-schedule killed the scheduled run; a cron firing over an in-flight merge
 killed that merge's push run, which is the only place the new `dev` commit gets
-the full matrix at all. The cron fires the whole workflow rather than
-`python-tests` alone — a schedule event has no PR base, so change detection
-selects the full suite and the documentation gate as well.
+the full matrix at all. Scheduled runs still share a group with each other, so a
+window that remains in flight three hours later is cancelled by its successor —
+which is itself a promotion window, so a lost window costs three hours rather than
+the cadence. *Unloaded*, a floor-only window is one Python leg beside
+`typescript-tests`, about 83–91 minutes against the 180 minutes of spacing; the
+09:17 full-matrix window is three legs at `max-parallel: 2`, so two waves, roughly
+166–182 minutes plus the hosted `changes`/`pick-runner` preamble — at the spacing
+rather than under it. Both are unloaded figures on a deliberately `SCHED_IDLE` box,
+so neither window is guaranteed to finish. The full-matrix one is simply the first
+to lose, and the 3.13/3.14 coverage it carries then waits for the next day. A
+floor-only window needs about half as much quiet and is therefore the last to be
+lost; sustained contention at the documented 2.4–3.3x stretch can cancel both until
+the box quiets. The cron fires the whole workflow rather than `python-tests` alone —
+a schedule event has no PR base, so change detection selects the full suite and the
+documentation gate as well.
+
+GitHub branch protection does not necessarily replace a cancelled push check with a
+later successful scheduled check of the same name on the same SHA. After a scheduled
+run has completed the five protected contexts successfully,
+`repair-cancelled-push-checks` inspects the completed push run for that SHA and reruns
+cancelled jobs for any of those five protected contexts. A single cancelled context uses
+a job-level rerun. Two or more use one failed-jobs rerun because GitHub returns `403`
+once the first job-level rerun has moved the run into a new attempt; the run-level path
+also re-enqueues cancelled or failed non-required matrix legs such as Python 3.13/3.14.
+A schedule whose own protected contexts are not all green performs no repair, and a
+rejected rerun is reported as a warning. A failed repaired job is terminal for that SHA
+unless it is included in the multi-job failed-jobs rerun; otherwise recovery requires a
+manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
+later merge cannot cancel the repaired attempt. That exemption applies to ordinary PR
+reruns too, and neither rerun path restarts `queue-watchdog`; an obsidian-routed job
+can therefore remain queued until GitHub's 24-hour limit if the runner disappears. The
+repair job has only `actions: write` permission and runs on GitHub-hosted Linux;
+recovered long legs reuse their original runner-routing decision and repay work that the
+scheduled run already performed. On the multi-job path, up to four obsidian-routed long
+legs can therefore run alongside the next push run, increasing self-hosted contention.
+When the original routing decision was `ubuntu-latest`, up to eight repair windows per
+day can also add hosted-runner minutes, but only on a SHA that can otherwise block
+promotion.
 
 ## Architecture Notes
 

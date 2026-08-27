@@ -586,7 +586,7 @@ def test_a_merge_that_knows_nothing_stays_silent() -> None:
 
 def test_an_all_empty_concatenate_does_not_promote_the_first_input() -> None:
     """The all-empty branch used to copy input 0's stats wholesale, which is
-    exactly what the unanimity rule exists to prevent."""
+    exactly what the fresh merge-stat contract exists to prevent."""
     merged = GSplatData.concatenate(
         [
             _leaf(n=0, ndim=3, stats={"floor": 110.0, "fitter_name": "x"}),
@@ -594,5 +594,6 @@ def test_an_all_empty_concatenate_does_not_promote_the_first_input() -> None:
         ]
     )
     assert "floor" not in merged.stats
-    # Non-normalization stats still ride along from input 0 as before.
-    assert merged.stats["fitter_name"] == "x"
+    assert "fitter_name" not in merged.stats
+    assert merged.stats["concatenated_from"] == 2
+    assert merged.stats["splats_per_source"] == [0, 0]

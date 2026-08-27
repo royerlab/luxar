@@ -24,6 +24,7 @@ the Git LFS cache-to-payload mapping honest.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,8 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 import pytest
+
+from luxar.conftest import viewer_source
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -477,6 +480,34 @@ def test_capture_only_entries_have_no_runnable_demo_on_disk() -> None:
                 f"{entry['id']}: manifest says capture-only, but "
                 f"{on_disk[entry['id']]} is on disk and can generate the dataset"
             )
+
+
+def test_manifest_carries_no_undeclared_fields() -> None:
+    """Keep manifest metadata within the capture harness's DemoEntry contract."""
+    capture_spec = viewer_source("src/tests/screenshots/generate-gallery.spec.ts")
+    source = capture_spec.read_text(encoding="utf-8")
+    interface_match = re.search(
+        r"^interface DemoEntry\s*\{(?P<body>.*?)^\}",
+        source,
+        re.DOTALL | re.MULTILINE,
+    )
+    assert interface_match is not None, (
+        f"cannot find DemoEntry in {capture_spec}; update this contract test if it moved"
+    )
+    declared_fields = set(
+        re.findall(
+            r"^  ([A-Za-z_$][\w$]*)\??\s*:",
+            interface_match.group("body"),
+            re.MULTILINE,
+        )
+    )
+
+    undeclared = {
+        entry["id"]: sorted(set(entry) - declared_fields)
+        for entry in gen.load_manifest()
+        if set(entry) - declared_fields
+    }
+    assert not undeclared, f"manifest fields missing from DemoEntry: {undeclared}"
 
 
 def test_gallery_git_lfs_caches_resolve_to_manifest_files() -> None:

@@ -6,6 +6,7 @@
  * CSS transitions, blend modes, and configurable interaction.
  */
 
+import { isZippedStoreUrl } from '../data/zip/entries';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { log, Modules } from '../utils/log';
 import { getViewerContainer } from '../utils/viewer-container';
@@ -630,9 +631,22 @@ export class OverlayManager {
 
     // Construct image URL from base zarr URL
     if (config.image_file) {
-      const imageUrl = `${this.baseUrl}overlays/${config.name}/${config.image_file}`;
-      img.src = imageUrl;
-      img.alt = config.name;
+      if (isZippedStoreUrl(this.baseUrl)) {
+        // An overlay image inside a `.zarr.zip` has no URL — it is a member of
+        // the archive and can only be read through the store. Concatenating
+        // anyway would produce `…scene.luxar.zarr.zipoverlays/…` (the archive
+        // base carries no trailing slash, deliberately) and show a broken
+        // image. Skip with one warning until overlays read through the store.
+        log.warning(
+          Modules.UI,
+          `Image overlay "${config.name}" is not supported on a zipped store (.zarr.zip) — skipping`
+        );
+        return;
+      } else {
+        const imageUrl = `${this.baseUrl}overlays/${config.name}/${config.image_file}`;
+        img.src = imageUrl;
+        img.alt = config.name;
+      }
     }
 
     // Size

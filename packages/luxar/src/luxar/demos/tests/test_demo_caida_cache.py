@@ -704,7 +704,7 @@ class TestLoadPipeline:
     ) -> None:
         """The bundle name and the pruner's pattern must not drift apart.
 
-        The name comes from ``_safe_cache_key`` over in ``luxar.utils.cache``
+        The name comes from ``_safe_cache_key`` over in ``luxar.demos._support.datasets.cache``
         (which keeps ``.`` and ``-``, so both snapshot filenames survive intact);
         the pattern that finds it again lives here. The prune tests below build
         their bundles by hand, so nothing else in this file would notice a

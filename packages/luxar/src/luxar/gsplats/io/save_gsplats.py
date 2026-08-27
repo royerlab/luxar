@@ -168,6 +168,9 @@ _FITTING_INFO_KEYS = (
     "source_voxels",
     "source_bytes",
     "source_stored_bytes",
+    # Per-coordinate component-fit provenance for a stacked axis. This remains a
+    # list rather than being averaged into one quality claim for the union.
+    "part_provenance",
     "fitted_shape",
     "fitted_voxels",
     "occupancy",

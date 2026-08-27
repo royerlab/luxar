@@ -7,7 +7,10 @@
  * on this facade rather than importing the backend directly.
  */
 
+import { createZipStoreOptions } from '../../../data/zip/store';
 import { describe, expect, it } from 'vitest';
+import ZipFileStore from '@zarrita/storage/zip';
+import { zipSync } from 'fflate';
 import * as zarr from '../../../data/zarr';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
@@ -137,6 +140,23 @@ describe('Zarr facade contract', () => {
 
     const fetchStore = zarr.createFetchStore('https://example.test/data.zarr');
     expect(fetchStore).toHaveProperty('get');
+  });
+
+  it('wires nested archive entries to slash-prefixed Zarr keys', async () => {
+    const archive = zipSync({
+      'scene.luxar.zarr/zarr.json': encoder.encode('{"zarr_format":3,"node_type":"group"}'),
+      'scene.luxar.zarr/points/zarr.json': encoder.encode('{"zarr_format":3,"node_type":"array"}'),
+      'scene.luxar.zarr/points/c/0': new Uint8Array([1, 2, 3]),
+    });
+    const store = ZipFileStore.fromBlob(
+      new Blob([archive as BlobPart]),
+      createZipStoreOptions('scene.luxar.zarr.zip')
+    );
+
+    expect(new TextDecoder().decode(await store.get('/zarr.json'))).toContain(
+      '"node_type":"group"'
+    );
+    expect(await store.get('/points/c/0')).toEqual(new Uint8Array([1, 2, 3]));
   });
 
   it('resolves dataset-relative locations predictably', () => {

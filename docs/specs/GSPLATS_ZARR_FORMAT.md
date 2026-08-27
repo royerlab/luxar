@@ -803,6 +803,48 @@ onto the source grid will not reproduce these numbers — divide the spacing bac
 out first. The metrics describe the fit, not the coordinate frame it was
 delivered in.
 
+**Stacked component provenance** (`fitting/part_provenance`, optional) keeps the
+component fits addressable without pretending their scores aggregate into one
+number. It is a JSON list in stacked-coordinate order:
+
+```json
+[
+  {
+    "coordinate": 0.0,
+    "fit_reference": {
+      "kind": "preprocessed",
+      "note": "connected-component filter, minimum 4 voxels"
+    },
+    "fitting": {
+      "psnr_db": 47.01,
+      "foreground_psnr_db": 22.81,
+      "source_shape": [96, 640, 640],
+      "source_dtype": "uint8",
+      "source_bytes": 39321600
+    }
+  }
+]
+```
+
+`fit_reference.kind` is one of `acquisition`, `preprocessed`, or `synthetic`;
+`note` is optional free text. Missing reference metadata means unknown. A reader
+may quote a bare component dB range only when **every** entry says
+`acquisition`; `preprocessed`, `synthetic`, and unknown records remain useful
+provenance but are not scores against the published acquisition. Non-finite
+fields are omitted from that entry rather than shortening the list. When every
+entry records the same source grid and dtype, the stack also carries
+`source_shape = [parts, *part_shape]` in source-array order (stack first, unlike
+the appended center column), the shared `source_dtype`, unanimous
+`source_declared`, and sums of `source_voxels`, `source_bytes`, and
+`source_stored_bytes` at the root. Values inside each `fitting` record describe
+the component as fitted; a caller may subsequently filter or normalize the
+splats before stacking, so per-part counts need not sum to the archived root
+count. The current record does not identify which center column holds its
+coordinate, so a later rewrite can scrub stale fitting/source fields but cannot
+generically remove records for coordinates eliminated wholesale. After such a
+rewrite, the list length is provenance cardinality from stack time, not a
+surviving-frame count; re-stack the rewritten components to refresh it.
+
 On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
 of the finest surviving parts, after each part's post-fit cull, measured on that
 same fitter voxel grid. It does not describe the coarser content a viewer may

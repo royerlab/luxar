@@ -17,6 +17,7 @@
  */
 
 import { LuxarApp, type LuxarAppOptions } from './app';
+import { KeyAction } from '../input';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
@@ -104,6 +105,9 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   const patchConsole = opts.patchConsole ?? true;
   const warmCodecs = opts.warmCodecs ?? true;
   const validateConfig = opts.validateConfig ?? true;
+  let app: LuxarApp | undefined;
+  const shortcutForAction = (actionId: string): string | undefined =>
+    app?.shortcutForAction(actionId);
 
   // Load + apply the persisted global viewer preferences (Settings popover)
   // BEFORE the first config read below: live-read values are applied by
@@ -166,7 +170,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // .showHelp etc. without importing the ui/ helper modules directly —
   // that's what keeps the dependency-cruiser layer order clean.
   setNotifierBackend({
-    showError,
+    showError: (message) =>
+      showError(message, shortcutForAction, {
+        datasetBrowser: KeyAction.toggleDatasetBrowser,
+        help: KeyAction.toggleHelp,
+      }),
     showToast,
     showHelpOverlay,
     hideHelpOverlay,
@@ -290,7 +298,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     blendWarmup: urlParams.blendWarmup,
   };
 
-  const app = new LuxarApp();
+  app = new LuxarApp();
 
   if (isDebugMode) {
     // Seed the debug surface before init() so consumers (e.g. Playwright)
@@ -319,7 +327,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       app,
       consoleInterceptor,
       version: '1.0.0',
-      showError,
+      showError: (message) =>
+        showError(message, shortcutForAction, {
+          datasetBrowser: KeyAction.toggleDatasetBrowser,
+          help: KeyAction.toggleHelp,
+        }),
     };
     log.custom(LogEmoji.CONSOLE, Modules.LUXAR, 'Debug interface available at window.__luxarDebug');
   }
@@ -328,7 +340,14 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     await app.init(appOptions);
   } catch (error) {
     log.error(Modules.LUXAR, `Failed to start Luxar application: ${getErrorMessage(error)}`, error);
-    showError('Failed to start the application. Please check the console for details.');
+    showError(
+      'Failed to start the application. Please check the console for details.',
+      shortcutForAction,
+      {
+        datasetBrowser: KeyAction.toggleDatasetBrowser,
+        help: KeyAction.toggleHelp,
+      }
+    );
     throw error;
   }
 

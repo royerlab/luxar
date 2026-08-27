@@ -5,7 +5,8 @@ description: >-
   (point clouds, trajectories/lines, nD images, volumes, time series, multichannel
   stacks) into a .luxar.zarr scene and view it in the web viewer. Covers the
   LuxarZarrCompiler → create_scene → add_points/add_lines/add_gsplats →
-  serve/export flow, Dimensions, transforms, hierarchy, and the demo/example
+  serve/export flow, Dimensions, transforms, hierarchy, baked ambient occlusion
+  (luxar.shading) for emissive geometry that reads flat, and the demo/example
   patterns that are the canonical source of know-how.
 ---
 
@@ -16,8 +17,8 @@ archive served to a WebGL viewer. This skill builds a scene from a dataset.
 
 **The repo's demos and examples are the canonical know-how** — when in doubt, read a
 matching one before writing code:
-- `packages/luxar/src/luxar/demos/demo_*.py` (85 complete demos)
-- `packages/luxar/examples/*_example.py` (52 focused examples)
+- `packages/luxar/src/luxar/demos/demo_*.py` (87 complete demos)
+- `packages/luxar/examples/*_example.py` (53 focused examples)
 
 ## The canonical pattern (every demo follows this)
 
@@ -104,8 +105,7 @@ scene.add_text("Embryo, t=0", position=(0.02, 0.02), font_size=0.05, anchor="top
 ## Demo helpers (for scripts that fit/serve)
 
 From `luxar.demos` (the barrel that re-exports these — the single spelling; never
-import the owning `luxar.utils` modules or `luxar.utils.data_fetch` directly from
-a demo):
+import the owning `luxar.demos._support.*` modules directly from a demo):
 - `launch_viewer(output_path, open_browser=True)` — serve via the CLI viewer.
 - `parse_demo_flags()` — standard `--recompute` / `--no-serve` / `--serve-only` flags.
 - `load_precomputed_gsplats(demo_name, file_names, recompute=...)` — load cached
@@ -256,6 +256,83 @@ the correction angle directly (`gsplat transform --rotate-z <-angle>`), and it c
 shrink the bounding box dramatically — 483×508 → 663×303 µm on a fly brain, which is
 the difference between framing the specimen and framing empty corners.
 
+## Baked ambient occlusion (`luxar.shading`)
+
+**Reach for this when a dense scene renders as an even glow and the shape is
+gone.** Points, Lines and GSplats are emissive — their shaders know nothing about
+neighbouring geometry, so there is no shading term at all and no exposure tweak
+will put one there. `bake_ambient_occlusion` computes the missing one offline.
+
+```python
+from luxar.shading import bake_ambient_occlusion
+
+shade = bake_ambient_occlusion(positions, mass=amplitudes)   # volumetric data
+shade = bake_ambient_occlusion(                              # a surface
+    vertices, normals=normals, occluder="opaque", radius=4.0, strength=0.85
+)
+colors = (base_colors * shade[:, None]).astype(np.float32)   # multiply into EMISSION
+```
+
+The mental model that makes the knobs obvious: **emissivity is a function of
+ambient illumination.** Emission–absorption transport has two terms; the blending
+mode already supplies the outgoing attenuation, and for matter lit from outside
+rather than glowing the emission term is `albedo × incident irradiance` — which is
+what occlusion measures. So it multiplies into COLOUR, never into `opacity` or
+`absorption`, and it *composes* with `volumetric` instead of double-counting it.
+
+Choosing settings:
+
+- **`occluder`** — `"density"` (default) for a medium; `"opaque"` for a **surface
+  sampled as points**. Not cosmetic: under Beer–Lambert a one-cell-thick shell
+  only attenuates by `exp(-k)`, so a *wall* passes about half the light, and no
+  single `k` both blocks walls and spares thick regions.
+- **`normals`** — pass them if you have them (mesh normals, marching-cubes or
+  distance-field gradients). Roughly doubles the discrimination on a shell. Never
+  invent them: local-PCA normals on a volumetric cloud are meaningless, and
+  full-sphere is the correct reading there anyway.
+- **`radius`** — the scale of structure it responds to, and the easiest thing to
+  get wrong. **Size it against the geometry you actually built, not the science.**
+  A demo whose radius came from the real complex's 120 nm ring, on a scaled-down
+  25 nm model, sat at 23% of the object and measured *worse* contrast than a
+  radius four times smaller — past a point the window stops reporting enclosure
+  and starts reporting depth.
+- **`group_by`** — required for nD. Pass the timepoint index or occlusion crosses
+  the time axis and the whole sequence shades as one solid.
+- **`strength`** — physical, not taste: `1 - strength` is the indirect,
+  multiply-scattered ambient reaching even an enclosed element. Points want more
+  than mesh (≈0.85 vs ≈0.45): a depth-tested surface puts one element in each
+  pixel, while a point cloud blends overlapping sprites and an additive one shows
+  the ray-*averaged* shade.
+
+Three traps worth knowing before you judge a result:
+
+- **AO always lowers mean brightness.** Dividing by the term's own maximum
+  (`normalized = shade / shade.max()`) preserves peak brightness, not the mean;
+  scale node intensity by `1 / normalized.mean()` if the authored mean exposure
+  must survive.
+- **A frame that merely looks crisper may just be darker.** Compare against the
+  unshaded original, and judge a stronger setting on the 5th percentile, not the
+  contrast number — crushing the dark end to black raises contrast while showing
+  less.
+- **Check your sprite radius before blaming the occlusion.** If the render radius
+  is under half the sample spacing the sprites never touch, the surface renders as
+  stipple, and that per-pixel noise drowns the gradient completely. This has
+  already cost one debugging session.
+
+`directional_optical_depth` is the lower-level primitive AO is built from — the
+column toward ONE direction. Use it only when the direction is a real light that
+belongs to the subject (`demo_volumetric_cloud`'s sun). It is **not** a general
+appearance path: a single baked direction is locked to world space, so it stops
+reading the moment the camera orbits. A key light has to follow the viewer, which
+makes it a material concern — the mesh shader does it properly in view space.
+
+Occlusion is authored at SCENE time and deliberately absent from the gsplat
+toolbox: a `.gsplats.zarr` is a reconstruction, and a per-element sidecar there
+would be one more thing for `reencode`/`lod`/`decimate`/refits to reorder or
+invalidate. Working demos: `demo_exotic_surfaces` (surfaces, opaque),
+`demo_nuclear_pore_complex` and `demo_atp_synthase` (burial shading on PDB atoms),
+`demo_mesh_isosurface_cells3d` (per-vertex, on top of the mesh key light).
+
 ## Serve & export
 
 ```bash
@@ -267,11 +344,21 @@ luxar info my_scene.luxar.zarr --stats              # inspect a built scene
 ## Gotchas (from the codebase)
 
 - `create_scene` REQUIRES `dimensions=`.
-- GSplat `cholesky_factors` are packed lower-triangular: 3D = `(N,6)`
-  `[L00, L10, L11, L20, L21, L22]`; isotropic std σ -> `[1/σ,0,1/σ,0,0,1/σ]`.
+- GSplat `cholesky_factors` are the packed lower-triangular factor **L of the
+  covariance** (Σ = L·Lᵀ): 3D = `(N,6)` `[L00, L10, L11, L20, L21, L22]`. The
+  diagonal is **scale-like** — isotropic std σ -> `[σ,0,σ,0,0,σ]`, NOT `1/σ`.
+  This is the same contract documented by `Group.add_gsplats` and
+  the `AdditiveSubLOD` docstring.
 - `transforms.compose(t1, t2, t3)` applies `t1` FIRST.
 - 4D/nD scenes can show 0 elements at a given slice — navigate to a populated slice,
   or use `extend_to_all` to broadcast across a non-displayed dim.
+- To hand-author a stacked time/channel axis from lower-dimensional splats, use
+  `dim_order=["x", "y", "z"]`, `fill={"time": t}`,
+  `fill_sigma={"time": 0.0}`, and `extend_to_all=[]` (omitting the last argument
+  auto-broadcasts the unmapped axis). Embedding regularizes the semantic zero to
+  `1e-7`. For full scene-dimensional input without `dim_order` embedding, use a
+  strictly positive diagonal smaller than the coordinate step; the writer rejects
+  zero.
 - Match `positions` column order to the `Dimensions` order.
 - **Always pass `n_iters` to `add_gsplats_from_volume` / `fit_gaussian_splats`** (the
   example above uses 5000). The default is 1000 — *below* the CLI's lowest preset —
