@@ -131,19 +131,22 @@ def _call_name(node: ast.Call) -> str | None:
 
 
 def _reject_opaque_spreads(node: ast.Call, *, call_name: str | None, site: str) -> None:
+    is_geometry_adder = (
+        isinstance(node.func, ast.Attribute) and call_name in _GEOMETRY_BY_ADDER
+    )
     has_opaque_spread = any(
         keyword.arg is None
         and not (
-            isinstance(keyword.value, ast.Name)
+            is_geometry_adder
+            and isinstance(keyword.value, ast.Name)
             and keyword.value.id in _KNOWN_NON_BUDGET_SPREADS
         )
         for keyword in node.keywords
     )
-    relevant_call = (
-        call_name == "LuxarZarrCompiler"
-        or call_name in _GEOMETRY_BY_ADDER
-        or call_name in _GSPLAT_RECIPE_CALLS
+    relevant_call = isinstance(node.func, ast.Name) and (
+        call_name == "LuxarZarrCompiler" or call_name in _GSPLAT_RECIPE_CALLS
     )
+    relevant_call = relevant_call or is_geometry_adder
     if has_opaque_spread and relevant_call:
         raise AssertionError(
             f"{site}: demo geometry, compiler, and recipe calls cannot use ** keyword "
@@ -185,7 +188,7 @@ def _budgets_for_call(
     call_name = _call_name(node)
     _reject_opaque_spreads(node, call_name=call_name, site=site)
     keywords = {keyword.arg: keyword.value for keyword in node.keywords}
-    if call_name == "LuxarZarrCompiler":
+    if isinstance(node.func, ast.Name) and call_name == "LuxarZarrCompiler":
         budget_expression = _explicit_budget_expression(
             keywords, "auto_partition_max_elements"
         )
@@ -202,7 +205,7 @@ def _budgets_for_call(
             )
             for geometry_type in ("points", "gsplats")
         ]
-    if call_name in _GSPLAT_RECIPE_CALLS:
+    if isinstance(node.func, ast.Name) and call_name in _GSPLAT_RECIPE_CALLS:
         budget_expression = _explicit_budget_expression(keywords, "max_elements")
         if budget_expression is None:
             return []
@@ -216,7 +219,11 @@ def _budgets_for_call(
                 site=site,
             )
         ]
-    geometry_type = _GEOMETRY_BY_ADDER.get(call_name or "")
+    geometry_type = (
+        _GEOMETRY_BY_ADDER.get(call_name or "")
+        if isinstance(node.func, ast.Attribute)
+        else None
+    )
     if geometry_type is None:
         return []
     budget_expression = (
@@ -347,6 +354,7 @@ def test_budget_discovery_rejects_an_unreadable_partition(tmp_path: Path) -> Non
         "LuxarZarrCompiler('out', **opts)\n",
         "build_gsplats_cache(src, cache, recipe='tiles', **opts)\n",
         "RecipeParams(**opts)\n",
+        "RecipeParams(**link_attrs)\n",
     ],
 )
 def test_budget_discovery_rejects_keyword_spreads(tmp_path: Path, source: str) -> None:
