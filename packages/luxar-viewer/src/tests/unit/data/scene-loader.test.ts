@@ -404,7 +404,7 @@ describe('SceneLoader', () => {
       const commitSpy = vi.spyOn(sceneLoader as any, 'updatePointsGeometry');
       const prefetch = vi.fn();
       const releaseShadows = vi.fn();
-      (sceneLoader as any)._slicePrefetcher = { prefetch, releaseShadows };
+      (sceneLoader as any)._slicePrefetcher = { prefetch, releaseShadows, dispose: vi.fn() };
       const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
       loaders.clear();
       loaders.set('/fault', failingLoader);
