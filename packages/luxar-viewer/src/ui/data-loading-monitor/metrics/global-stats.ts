@@ -113,7 +113,7 @@ export function aggregateGlobalStats({
     visibleSegments: visibleByType.lines,
     datasetSplats: totalByType.gsplats,
     visibleSplats: visibleByType.gsplats,
-    droppedElements: sceneGraph.droppedElements ?? 0,
+    droppedElements: sceneGraph.droppedElements,
     totalQueries,
     totalLoads,
     avgQueryTime: totalQueries > 0 ? totalQueryTime / totalQueries : 0,

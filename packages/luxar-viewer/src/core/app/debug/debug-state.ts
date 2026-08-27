@@ -28,9 +28,9 @@ export interface PointCloudInfo {
   hasColors: boolean;
   hasRadii: boolean;
   hasSharpness: boolean;
-  requestedElementCount?: number;
-  grantedElementCount?: number;
-  droppedElementCount?: number;
+  requestedElementCount: number;
+  grantedElementCount: number;
+  droppedElementCount: number;
 }
 
 /** Per-mesh gsplat info reported by getState(). */
@@ -38,9 +38,9 @@ export interface GSplatMeshInfo {
   name: string;
   splatCount: number;
   visible: boolean;
-  requestedElementCount?: number;
-  grantedElementCount?: number;
-  droppedElementCount?: number;
+  requestedElementCount: number;
+  grantedElementCount: number;
+  droppedElementCount: number;
 }
 
 /** Per-mesh line-instance info reported by getState(). */
@@ -49,9 +49,9 @@ export interface LineMeshInfo {
   segmentCount: number;
   visible: boolean;
   hasColormap: boolean;
-  requestedElementCount?: number;
-  grantedElementCount?: number;
-  droppedElementCount?: number;
+  requestedElementCount: number;
+  grantedElementCount: number;
+  droppedElementCount: number;
 }
 
 /**

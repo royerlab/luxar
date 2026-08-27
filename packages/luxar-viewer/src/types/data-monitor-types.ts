@@ -226,7 +226,7 @@ export interface GlobalStats {
   datasetSplats: number; // Total splats in all gsplats datasets
   visibleSplats: number; // Currently visible/rendered splats
   /** Elements omitted by renderer capacity clamps across visible texture-backed nodes. */
-  droppedElements?: number;
+  droppedElements: number;
   totalQueries: number;
   totalLoads: number;
   avgQueryTime: number;
@@ -620,7 +620,7 @@ export interface SceneGraphState {
   /** Currently visible elements per type (after nD clipping / progressive LOD) */
   visibleByType: GeometryCounters;
   /** Elements omitted by renderer capacity clamps across visible texture-backed nodes. */
-  droppedElements?: number;
+  droppedElements: number;
 }
 
 /**

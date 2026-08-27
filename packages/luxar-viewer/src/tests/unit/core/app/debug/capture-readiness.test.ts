@@ -118,7 +118,17 @@ describe('summarizeCaptureReadiness', () => {
       makeState({
         totalLines: 5000,
         totalElements: 5000,
-        lineMeshes: [{ name: 'tracks', segmentCount: 5000, visible: true, hasColormap: true }],
+        lineMeshes: [
+          {
+            name: 'tracks',
+            segmentCount: 5000,
+            visible: true,
+            hasColormap: true,
+            requestedElementCount: 5000,
+            grantedElementCount: 5000,
+            droppedElementCount: 0,
+          },
+        ],
       })
     );
 
@@ -143,11 +153,28 @@ describe('summarizeCaptureReadiness', () => {
             hasColors: true,
             hasRadii: false,
             hasSharpness: false,
+            requestedElementCount: 100,
+            grantedElementCount: 100,
+            droppedElementCount: 0,
           },
         ],
         gsplatMeshes: [
-          { name: 'splats_a', splatCount: 150, visible: true },
-          { name: 'splats_b', splatCount: 100, visible: true },
+          {
+            name: 'splats_a',
+            splatCount: 150,
+            visible: true,
+            requestedElementCount: 150,
+            grantedElementCount: 150,
+            droppedElementCount: 0,
+          },
+          {
+            name: 'splats_b',
+            splatCount: 100,
+            visible: true,
+            requestedElementCount: 100,
+            grantedElementCount: 100,
+            droppedElementCount: 0,
+          },
         ],
       })
     );
@@ -307,6 +334,9 @@ describe('summarizeCaptureReadiness', () => {
             hasColors: true,
             hasRadii: false,
             hasSharpness: false,
+            requestedElementCount: 100,
+            grantedElementCount: 100,
+            droppedElementCount: 0,
           },
         ],
       })

@@ -124,6 +124,6 @@ export function updateVisibleCountsInMonitor(
   for (const child of rootGroup.children) visit(child);
 
   for (const t of GEOMETRY_TYPES) monitor.updateVisibleCount(t, totals[t]);
-  monitor.updateDroppedElementCount?.(droppedElements);
+  monitor.updateDroppedElementCount(droppedElements);
   monitor.updateVisibleCountsByPath(byPath);
 }

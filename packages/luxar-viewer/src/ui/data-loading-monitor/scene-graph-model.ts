@@ -107,6 +107,7 @@ export class SceneGraphModel {
     this.sceneGraphState = {
       root,
       ...this.calculateSceneGraphStats(root),
+      droppedElements: 0,
     };
     this.markStructureDirty();
   }
@@ -193,7 +194,13 @@ export class SceneGraphModel {
       for (const type of GEOMETRY_TYPES) totalByType[type] += stats.totalByType[type];
     }
 
-    return { totalNodes, nodesByType, totalByType, visibleByType: { ...totalByType } };
+    return {
+      totalNodes,
+      nodesByType,
+      totalByType,
+      visibleByType: { ...totalByType },
+      droppedElements: 0,
+    };
   }
 
   private ensureSceneGraphNodeIndex(): Map<string, SceneGraphNode> | null {

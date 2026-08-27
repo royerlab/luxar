@@ -319,12 +319,12 @@ export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMet
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard(
           'DROPPED ELEMENTS',
-          formatNumber(stats.droppedElements ?? 0),
-          'renderer capacity clamp',
-          (stats.droppedElements ?? 0) > 0 ? getColorClass('error') : getColorClass('success'),
+          formatNumber(stats.droppedElements),
+          'renderer capacity clamp — partition oversized nodes',
+          stats.droppedElements > 0 ? getColorClass('error') : getColorClass('success'),
           'small',
           'dropped-elements',
-          'Elements requested by visible points, lines, and Gaussian-splat nodes but omitted because a node exceeded the GPU element-texture capacity. Mesh is not element-texture backed.'
+          'Elements requested by visible points, lines, and Gaussian-splat nodes but omitted because a node exceeded the GPU element-texture capacity. Split the dataset into multiple nodes or partition it; mesh is not element-texture backed.'
         )}
       </div>
 
