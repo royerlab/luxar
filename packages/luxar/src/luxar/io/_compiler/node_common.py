@@ -15,11 +15,11 @@ keys a caller must not supply.
 from __future__ import annotations
 
 import difflib
+import warnings
 from typing import Any, Dict, FrozenSet, Optional
 
 import numpy as np
 import zarr
-from arbol import aprint
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
@@ -37,6 +37,11 @@ from ...validation.types import (
     validate_texture_filter,
     validate_texture_wrap,
 )
+
+
+class ElementCapacityWarning(UserWarning):
+    """A node may exceed the viewer's per-node element-texture capacity."""
+
 
 # Writer-authoritative attrs each geometry writer stamps unconditionally.
 # User-supplied values for these keys are rejected in the fail-fast gate:
@@ -592,6 +597,10 @@ def warn_if_over_element_cap(
         enabled: False to suppress a redundant child warning when its parent
             checks the aggregate count.
 
+    Warns:
+        ElementCapacityWarning: If a supported geometry node exceeds the
+            conservative viewer capacity floor.
+
     Returns:
         True if a warning was emitted.
     """
@@ -607,8 +616,8 @@ def warn_if_over_element_cap(
         if geometry_type == "gsplats"
         else "Split it with partition=dict(max_elements=...)"
     )
-    aprint(
-        f"⚠️  '{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
+    message = (
+        f"'{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
         f"{geometry_type} node can render on a 4096-class GPU. If the whole "
         f"node is committed at once, such a GPU can silently drop the tail — "
         f"and because elements are stored in Hilbert "
@@ -617,6 +626,7 @@ def warn_if_over_element_cap(
         f"non-displayed dimension commits only its current slice. {remedy} "
         f"to render everywhere."
     )
+    warnings.warn(message, ElementCapacityWarning, stacklevel=1)
     return True
 
 
