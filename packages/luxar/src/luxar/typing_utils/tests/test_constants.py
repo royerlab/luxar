@@ -1,18 +1,101 @@
-"""Guards for cross-language numeric constants.
+"""Guards for cross-language constants.
 
 These pin values that must stay literally equal across the Python package and
-the TypeScript viewer. The two languages cannot share a symbol, so each side
-asserts its own value and names the other file — the same convention used for
-``ALPHA_CLAMP`` (``luxar.gsplats.utils.alpha`` <->
+the TypeScript viewer. Numeric constants use same-value assertions on each side;
+shared vocabularies parse the viewer source here so changing only one language
+fails directly. The numeric convention is the same one used for ``ALPHA_CLAMP``
+(``luxar.gsplats.utils.alpha`` <->
 ``rendering/materials/_shared/volumetric.ts``).
 """
 
 import math
 
+import pytest
+
+from luxar.conftest import read_ts_string_literals, viewer_source
 from luxar.typing_utils.constants import (
     DEFAULT_POINT_RADIUS,
     DEFAULT_TRUNCATION_RADIUS,
+    LINE_JOIN_STYLES,
+    LOD_SELECTORS,
 )
+from luxar.typing_utils.geometry_capabilities import (
+    lod_capable_types,
+    partition_capable_types,
+)
+
+
+def test_line_join_styles_match_the_viewer_union() -> None:
+    """Writer validation and viewer parsing accept exactly the same spellings."""
+    source = viewer_source("src/types/line-join.ts").read_text(encoding="utf-8")
+    assert read_ts_string_literals(source, "LineJoinStyle") == LINE_JOIN_STYLES
+    assert read_ts_string_literals(source, "LINE_JOIN_STYLES") == LINE_JOIN_STYLES
+
+
+def test_lod_selectors_match_the_viewer_metadata_union() -> None:
+    """Authored selector units stay valid on both sides of the file format."""
+    viewer_selectors = read_ts_string_literals(
+        viewer_source("src/types/lod-group.ts").read_text(encoding="utf-8"),
+        "selector",
+    )
+    assert viewer_selectors == LOD_SELECTORS
+
+
+def test_lod_display_types_match_the_capability_table() -> None:
+    """The viewer's metadata union names exactly the LOD-capable geometries."""
+    viewer_display_types = read_ts_string_literals(
+        viewer_source("src/types/lod-group.ts").read_text(encoding="utf-8"),
+        "display_type",
+    )
+    assert viewer_display_types == set(lod_capable_types())
+
+
+def test_partition_display_types_match_the_capability_table() -> None:
+    """The viewer's metadata union names exactly partition-capable geometries."""
+    viewer_display_types = read_ts_string_literals(
+        viewer_source("src/types/partition-group.ts").read_text(encoding="utf-8"),
+        "display_type",
+    )
+    assert viewer_display_types == set(partition_capable_types())
+
+
+def test_monitor_display_types_match_specialized_group_metadata() -> None:
+    """Monitor display types cover the union of specialized group geometries."""
+    viewer_display_types = read_ts_string_literals(
+        viewer_source("src/types/data-monitor-types.ts").read_text(encoding="utf-8"),
+        "displayType",
+    )
+    assert viewer_display_types == set(lod_capable_types()) | set(
+        partition_capable_types()
+    )
+
+
+def test_string_literal_parser_ignores_block_comments() -> None:
+    """A commented declaration cannot shadow the live TypeScript property."""
+    source = """/*
+selector: 'wrong' | 'commented';
+*/
+selector: 'coverage' | 'screen-area';
+"""
+    assert read_ts_string_literals(source, "selector") == {
+        "coverage",
+        "screen-area",
+    }
+
+
+def test_string_literal_parser_rejects_ambiguous_declarations() -> None:
+    """Two live declarations fail loudly instead of selecting the first one."""
+    source = """selector: 'first' | 'value';
+selector: 'coverage' | 'screen-area';
+"""
+    with pytest.raises(AssertionError, match="found 2"):
+        read_ts_string_literals(source, "selector")
+
+
+def test_string_literal_parser_rejects_repeated_members() -> None:
+    """A duplicated member cannot collapse silently through set conversion."""
+    with pytest.raises(AssertionError, match="repeats a member"):
+        read_ts_string_literals("type X = 'a' | 'a';", "X")
 
 
 class TestDefaultTruncationRadius:
