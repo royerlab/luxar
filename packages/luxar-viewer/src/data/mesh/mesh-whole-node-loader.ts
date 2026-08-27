@@ -53,6 +53,7 @@ import {
   type MeshPreflightResult,
 } from './preflight';
 import { validateFaceIndices, validateMaterializedLength } from './validate';
+import { decodeMeshTexture } from './texture-decode';
 import type { FaceIndexSource } from './validate';
 import { combineSignals } from '../../workers/worker-pool/timeout/combine-signals';
 import type { UpdateSession } from '../../profiling/update-profiler';
@@ -61,6 +62,7 @@ import type {
   MeshColorArray,
   MeshDataLoader,
   MeshMetadata,
+  MeshTextureData,
   MeshViewState,
 } from '../../types/mesh';
 
@@ -77,6 +79,8 @@ const OPTIONAL_ARRAYS = [
   ['normals', 'has_normals'],
   ['colors', 'has_colors'],
   ['scalars', 'has_scalars'],
+  ['uvs', 'has_uvs'],
+  ['texture', 'has_texture'],
   ['labelOffsets', 'has_labels'],
   ['labelBytes', 'has_labels'],
   ['imageLabelOffsets', 'has_image_labels'],
@@ -376,6 +380,55 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
       validateMaterializedLength(this.path, 'colors', colors.length, nVertices * colorComponents);
     }
 
+    let uvs: Float32Array | undefined;
+    if (handles.uvs) {
+      // COORDINATE-encoded on the write side, exactly like `normals`, so it must
+      // go through the decoder rather than a raw read — a quantized store holds
+      // per-channel u16 codes, not floats.
+      const decoded = await this.decoder.decode(
+        handles.uvs,
+        handles.uvs.attrs as unknown as ArrayMetadata,
+        nVertices * 2,
+        storeRoot,
+        signal
+      );
+      validateMaterializedLength(this.path, 'uvs', decoded.length, nVertices * 2);
+      // Non-finite UVs are refused on both sides. A NaN coordinate does not
+      // merely mis-sample its own vertex: it interpolates across every triangle
+      // that shares it, so one bad vertex smears an undefined sample over a
+      // patch of surface with nothing to attribute it to. The write side rejects
+      // it too, but a third-party store never went through the write side.
+      for (let i = 0; i < decoded.length; i++) {
+        if (!Number.isFinite(decoded[i])) {
+          throw new LoaderError(
+            'Validation',
+            this.path,
+            new Error(
+              `uvs contains a non-finite value at index ${i} (vertex ` +
+                `${Math.floor(i / 2)}). A NaN or infinite texture coordinate ` +
+                'interpolates across every triangle sharing that vertex.'
+            )
+          );
+        }
+      }
+      uvs = decoded;
+    }
+
+    let texture: MeshTextureData | undefined;
+    if (handles.texture && pre.texture) {
+      // Fed the PREFLIGHT's validated declaration, never `this.attrs`: these are
+      // the numbers the byte budget admitted the node on, and allocating from a
+      // second unvalidated copy is how a ceiling stops meaning anything.
+      texture = await decodeMeshTexture(
+        this.path,
+        handles.texture,
+        pre.texture,
+        this.decoder,
+        storeRoot,
+        signal
+      );
+    }
+
     let scalars: Float32Array | undefined;
     if (handles.scalars) {
       const decoded = await this.decoder.decode(
@@ -396,6 +449,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
       colors,
       colorComponents,
       scalars,
+      uvs,
+      texture,
       vertexCount: nVertices,
       faceCount: nFaces,
       ndim,
@@ -543,6 +598,15 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     // re-initialize path below starts with a live signal.
     this.aborter.abort();
     this.aborter = new AbortController();
+    // An `ImageBitmap` holds a decoded surface OUTSIDE the JS heap, so dropping
+    // the last reference does not free it — the spec requires an explicit
+    // `close()`. A 2048x1024 basemap is 8 MB of native memory per node, and a
+    // dataset switch disposes every node at once, so leaking it is how a few
+    // switches turn into hundreds of megabytes the GC cannot reclaim and no heap
+    // profiler attributes to us.
+    if (this.data?.texture?.kind === 'bitmap') {
+      this.data.texture.bitmap.close();
+    }
     this.handles = null;
     this.preflight = null;
     this.data = null;

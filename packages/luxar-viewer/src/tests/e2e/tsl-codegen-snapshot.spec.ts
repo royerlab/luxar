@@ -366,7 +366,10 @@ const SHADERS = [
   'mesh-max',
   'mesh-flat-normal',
   'mesh-colormap',
+  'mesh-texture',
+  'mesh-none-shading',
   'mesh-pick',
+  'mesh-pick-texture',
   // Shared math. This pins the LITERALS the TSL code generator emits —
   // the textual half of the module's value-level parity contract (the
   // pixel half is the parity spec's same-named test):
@@ -446,6 +449,89 @@ test.describe('TSL → generated-shader snapshots', () => {
     // The attribute itself: declared in the smooth vertex stage, absent in the flat one.
     expect(smooth.vertexShader).toMatch(/\bin\s+vec3\s+normal\s*;/);
     expect(flat.vertexShader).not.toMatch(/\bin\s+vec3\s+normal\s*;/);
+  });
+
+  test('mesh-none-shading strips the whole lighting path, derivatives included', async ({
+    page,
+  }) => {
+    // Stronger than `mesh-flat-normal`'s claim, and the reason `shading` became a
+    // 3-valued enum rather than gaining a second boolean: the unlit build must not
+    // contain the lighting at all. Not the stored normal (which `flat` also drops),
+    // and not the DERIVATIVE normal either — `flat` keeps that one, so this is the
+    // only variant with no normal of any kind.
+    //
+    // The distinction matters because the obvious implementation is `shade = 1.0`,
+    // which computes both derivatives, normalizes, evaluates a pow() for the wrap
+    // term and another for the specular, then multiplies by one. It renders
+    // identically and costs all of that per fragment.
+    await bootHarness(page);
+    const unlit = await runTSL(page, 'mesh-none-shading');
+    const flat = await runTSL(page, 'mesh-flat-normal');
+    const smooth = await runTSL(page, 'mesh');
+    const both = (r: TSLResult) => `${r.vertexShader}\n${r.fragmentShader}`;
+
+    // The derivative pair: present in BOTH lit builds, absent here. Checked against
+    // `flat` as well as `smooth` so this cannot pass by accidentally re-testing what
+    // the flat-normal test above already covers.
+    for (const token of ['dFdx', 'dFdy']) {
+      expect(both(smooth), `smooth build must contain ${token}`).toContain(token);
+      expect(both(flat), `flat build must contain ${token}`).toContain(token);
+      expect(both(unlit), `unlit build must NOT contain ${token}`).not.toContain(token);
+    }
+    // No normal attribute in the vertex layout, which on WebGPU is baked into the
+    // pipeline at first draw.
+    expect(unlit.vertexShader).not.toMatch(/\bin\s+vec3\s+normal\s*;/);
+    // And the stored-normal machinery, as in the flat test.
+    for (const token of ['gl_FrontFacing', '1e-12']) {
+      expect(both(unlit), `unlit build must NOT contain ${token}`).not.toContain(token);
+    }
+  });
+
+  test('mesh-texture samples per FRAGMENT, and only the textured builds bind uv', async ({
+    page,
+  }) => {
+    // The structural claim the whole feature rests on. A colormap LUT is sampled in
+    // the VERTEX stage (one scalar per vertex, so interpolating the resulting colour
+    // approximates interpolating the scalar); an image has structure BETWEEN
+    // vertices, so it must be sampled in the FRAGMENT stage or the mesh resolves
+    // exactly one texel per vertex — reproducing the point-cloud limitation this
+    // replaces.
+    //
+    // Asserted as a comparison against `mesh-colormap` rather than in isolation,
+    // because "the fragment stage has a sampler" is only meaningful next to a build
+    // where the sampler is in the other stage.
+    await bootHarness(page);
+    const textured = await runTSL(page, 'mesh-texture');
+    const colormap = await runTSL(page, 'mesh-colormap');
+    const plain = await runTSL(page, 'mesh');
+
+    // Colormap: sampler in the VERTEX stage, none in the fragment.
+    expect(colormap.vertexShader).toContain('texture(');
+    expect(colormap.fragmentShader).not.toContain('texture(');
+    // Texture: the other way round.
+    expect(textured.fragmentShader).toContain('texture(');
+    // `uv` enters the vertex layout ONLY for the textured build — an attribute that
+    // appears later is silently broken on WebGPU.
+    expect(textured.vertexShader).toMatch(/\bin\s+vec2\s+uv\s*;/);
+    expect(plain.vertexShader).not.toMatch(/\bin\s+vec2\s+uv\s*;/);
+    expect(colormap.vertexShader).not.toMatch(/\bin\s+vec2\s+uv\s*;/);
+  });
+
+  test('mesh-pick-texture samples the texture too, so cutout holes are unpickable', async ({
+    page,
+  }) => {
+    // Texture alpha multiplies coverage in the visual shader, so an RGBA basemap's
+    // transparent regions are real holes on screen. A pick pass without the sampler
+    // would leave them pickable AND depth-occluding — a divergence no amount of
+    // `syncMeshPickAppearance` can fix, because it is not an appearance uniform.
+    await bootHarness(page);
+    const pickTextured = await runTSL(page, 'mesh-pick-texture');
+    const pickPlain = await runTSL(page, 'mesh-pick');
+
+    expect(pickTextured.fragmentShader).toContain('texture(');
+    expect(pickPlain.fragmentShader).not.toContain('texture(');
+    expect(pickTextured.vertexShader).toMatch(/\bin\s+vec2\s+uv\s*;/);
+    expect(pickPlain.vertexShader).not.toMatch(/\bin\s+vec2\s+uv\s*;/);
   });
 
   test('mesh-pick keeps both mode behaviours as runtime uniforms, and binds no shading inputs', async ({

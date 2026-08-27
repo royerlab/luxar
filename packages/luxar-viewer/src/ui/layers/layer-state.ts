@@ -80,19 +80,25 @@ function deriveScalarRangeFromDescendants(node: SceneNode): [number, number] | u
   return best;
 }
 
+/** Direct element-colour or texture range stamped on this node. */
+function directColorRange(node: SceneNode): [number, number] | undefined {
+  return (node.attrs.color_data_range || node.attrs.texture_data_range) as
+    [number, number] | undefined;
+}
+
 /**
- * `color_data_range` of the node, else the UNION of every descendant's.
+ * Direct colour range, else the UNION of every descendant's.
  * A partition's parts each declare their own spread, and the slider bounds
  * must cover the whole layer — taking the first part's range alone would
  * leave a later HDR part's colours unreachable.
  */
 function deriveColorRangeFromDescendants(node: SceneNode): [number, number] | undefined {
-  const own = node.attrs.color_data_range as [number, number] | undefined;
+  const own = directColorRange(node);
   if (own) return own;
   let min = Infinity;
   let max = -Infinity;
   const visit = (n: SceneNode): void => {
-    const r = n.attrs.color_data_range as [number, number] | undefined;
+    const r = directColorRange(n);
     if (r) {
       min = Math.min(min, r[0]);
       max = Math.max(max, r[1]);

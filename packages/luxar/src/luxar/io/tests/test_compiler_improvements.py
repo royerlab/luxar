@@ -2002,6 +2002,8 @@ class TestUnknownRenderAttrRejected:
             ("specular", 0.5),
             ("shininess", 24.0),
             ("alpha_cutoff", 0.2),
+            ("texture_filter", "nearest"),
+            ("texture_wrap", "clamp"),
         ],
     )
     @pytest.mark.parametrize("node_type", ["points", "lines", "gsplats", "group"])

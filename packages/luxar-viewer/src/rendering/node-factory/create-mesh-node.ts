@@ -40,6 +40,9 @@ import { resolveColormapWindow } from '../display-range';
 import { scheduleBlendModeProgramWarmupForObject } from '../webgl-blend-warmup';
 import { log, Modules } from '../../utils/log';
 import type { MeshSide } from '../../data/mesh/projection';
+import type { MeshShadingMode } from '../materials/mesh/appearance';
+import { createMeshTexture } from '../mesh-texture';
+import type { MeshTextureData } from '../../types/mesh';
 import type { MeshDataLoader, MeshMetadata, MeshUserData } from '../../types/mesh';
 
 /**
@@ -118,28 +121,110 @@ export function applyMeshShading(
   storedNormalsUsable: boolean
 ): void {
   const material = object.material as LuxarMeshMaterial;
-  if (typeof material.updateFlatNormal !== 'function') return;
-  material.updateFlatNormal(resolveFlatNormal(attrs, storedNormalsUsable));
+  if (typeof material.updateShading !== 'function') return;
+  material.updateShading(resolveMeshShading(attrs, storedNormalsUsable));
   scheduleBlendModeProgramWarmupForObject(object);
 }
 
 /**
- * Whether this node shades from screen-space derivatives rather than stored normals.
+ * Upload the decoded texture into the material, once the data has arrived.
+ *
+ * Separate from node creation because a texture is DATA: `createEmptyMeshNode` runs
+ * before any fetch, so the material is built with a blank placeholder and the real
+ * image is installed here, on the commit that carries it.
+ *
+ * What is decided at CREATION and never here is the shader VARIANT — the define and
+ * the `uv` attribute both key off `attrs.has_texture`, a per-node constant. That
+ * split is the point: the variant is fixed from birth (WebGPU bakes the attribute
+ * set into the pipeline at first draw), and only the texture's IDENTITY changes,
+ * which on GLSL is a plain uniform write with no recompile.
+ *
+ * Idempotent, so the steady state after the first commit costs nothing: the setter
+ * compares the incoming texture against the bound one and only rebuilds the TSL
+ * graph when they differ. That comparison is load-bearing on the TSL backend, where
+ * `texture()` captures its Texture at construction — a slice move that re-installed
+ * the same image would otherwise rebuild the graph on every frame of a scrub.
+ */
+export function applyMeshTexture(
+  object: THREE.Mesh,
+  attrs: MeshMetadata,
+  data: MeshTextureData
+): void {
+  const material = object.material as LuxarMeshMaterial;
+  if (typeof material.updateBaseColorTexture !== 'function') return;
+
+  // Uploaded ONCE per node and cached on the object, keyed by the payload's
+  // identity. The loader caches the decoded mesh for its whole life and hands back
+  // the same `data.texture` on every `updateView`, so identity is a sound key — and
+  // re-uploading a 2048x1024 basemap on every slice move is the regression this
+  // avoids. Cached on the node rather than in a module map so it is collected with
+  // the node and cannot outlive a dataset switch.
+  const cache = object.userData as {
+    meshTextureSource?: MeshTextureData;
+    meshTexture?: THREE.Texture;
+    meshTexturePlaceholders?: THREE.Texture[];
+  };
+  cache.meshTexturePlaceholders?.forEach((placeholder) => placeholder.dispose());
+  delete cache.meshTexturePlaceholders;
+  let texture = cache.meshTexture ?? null;
+  if (cache.meshTextureSource !== data || !texture) {
+    cache.meshTexture?.dispose();
+    texture = createMeshTexture(data, attrs, materialManager.getTextureCapabilities(), object.name);
+    object.geometry.addEventListener('dispose', () => texture?.dispose());
+    cache.meshTextureSource = data;
+    cache.meshTexture = texture;
+  }
+
+  const luminance = attrs.texture_channels === 1;
+  material.updateBaseColorTexture(texture, luminance);
+
+  // The pick pass samples the same texture, for its alpha: texture alpha multiplies
+  // coverage, so an RGBA basemap's holes are real holes on screen and must not stay
+  // pickable or depth-occluding.
+  //
+  // Through the METHOD, not the uniform, and the difference is backend-visible: on
+  // GLSL the uniform IS the binding, but the TSL twin's `texture()` node captured
+  // its Texture at construction, so a uniform write there would leave the pick pass
+  // sampling the blank placeholder — alpha 0 everywhere, making the whole mesh
+  // unpickable. Both wrappers expose the same method name so there is no branch.
+  const pickMaterial = (object.userData.pickNode as THREE.Mesh | undefined)?.material;
+  if (pickMaterial && !Array.isArray(pickMaterial)) {
+    const pick = pickMaterial as { updateBaseColorTexture?: (t: THREE.Texture | null) => void };
+    pick.updateBaseColorTexture?.(texture);
+  }
+}
+
+/**
+ * How this node obtains its normals, as ONE value.
  *
  * The full §3.4 rule in one place: stored normals are used **iff**
  * `shading === 'smooth'` AND the node actually has them AND they were authored for
- * the axes currently displayed. Every other case — explicit `'flat'`, absent
+ * the axes currently displayed. Every other lit case — explicit `'flat'`, absent
  * normals, or a frame mismatch — takes the derivative fallback, which is correct for
  * the projected geometry, just faceted rather than smoothed.
+ *
+ * `'none'` short-circuits ahead of all of that, and the ORDER matters: an unlit mesh
+ * needs no normal, so falling through to the derivative fallback would compute one
+ * and discard it. It is also the only arm that is NOT view-dependent — the other two
+ * can flip on a `displayDims` change, this one is purely authored — which is why it
+ * is answered before anything reads `storedNormalsUsable`.
+ *
+ * Returns an enum rather than the earlier `flatNormal` boolean: a second boolean for
+ * the unlit arm would admit a meaningless `flatNormal && noShading` state and double
+ * the shader variant count for something with one behaviour.
  *
  * `storedNormalsUsable` already folds in "has normals at all" (it is `false` without
  * `normal_dims`), so `has_normals` is checked here only to keep the rule readable
  * against a hand-built attrs object in a test.
  */
-export function resolveFlatNormal(attrs: MeshMetadata, storedNormalsUsable: boolean): boolean {
-  if (attrs.shading === 'flat') return true;
-  if (!attrs.has_normals) return true;
-  return !storedNormalsUsable;
+export function resolveMeshShading(
+  attrs: MeshMetadata,
+  storedNormalsUsable: boolean
+): MeshShadingMode {
+  if (attrs.shading === 'none') return 'none';
+  if (attrs.shading === 'flat') return 'flat';
+  if (!attrs.has_normals) return 'flat';
+  return storedNormalsUsable ? 'smooth' : 'flat';
 }
 
 /**
@@ -156,7 +241,7 @@ export function resolveFlatNormal(attrs: MeshMetadata, storedNormalsUsable: bool
  */
 export function createMeshMaterial(
   attrs: MeshMetadata,
-  flatNormal: boolean,
+  shading: MeshShadingMode,
   geometry?: THREE.BufferGeometry,
   path?: string,
   leafAttrs?: Partial<MeshMetadata>
@@ -197,7 +282,18 @@ export function createMeshMaterial(
     intensity: composedIntensity,
     offset: composedOffset,
     blendingMode: requestedMode,
-    flatNormal,
+    shading,
+    // A BLANK placeholder, not the real image — which has not been fetched yet.
+    // Seeding it here rather than at the first commit is what fixes the shader
+    // VARIANT from birth: `has_texture` is a per-node constant, so the define never
+    // flips and (on GLSL) the arriving image is a uniform write with no recompile.
+    // Nothing draws in the meantime — the placeholder geometry has zero faces.
+    ...(attrs.has_texture
+      ? {
+          baseColorTexture: new THREE.Texture(),
+          baseColorTextureLuminance: attrs.texture_channels === 1,
+        }
+      : {}),
   });
 
   const colormapName = attrs.colormap;
@@ -276,6 +372,7 @@ export function createEmptyMeshNode(
     // metadata, which is what the real arrays' presence will agree with.
     normals: attrs.has_normals ? new Float32Array(3) : null,
     scalars: attrs.has_scalars ? new Float32Array(1) : null,
+    uvs: attrs.has_uvs ? new Float32Array(2) : null,
     vertexCount: 1,
     faceCount: 0,
   });
@@ -285,8 +382,8 @@ export function createEmptyMeshNode(
   // view-INDEPENDENT half alone, which is the right guess for the overwhelmingly
   // common case (`normal_dims` authored for the axes the scene opens on), and let
   // the first commit's `applyMeshShading` correct it if not.
-  const flatNormal = resolveFlatNormal(attrs, attrs.has_normals);
-  const material = createMeshMaterial(attrs, flatNormal, geometry, path, leafAttrs);
+  const shading = resolveMeshShading(attrs, attrs.has_normals);
+  const material = createMeshMaterial(attrs, shading, geometry, path, leafAttrs);
   material.side = attrs.double_sided ? THREE.DoubleSide : THREE.FrontSide;
 
   const mesh = new THREE.Mesh(geometry, material);
@@ -312,6 +409,10 @@ export function createEmptyMeshNode(
   };
   mesh.userData = userData;
 
+  const texturePlaceholders: THREE.Texture[] = [];
+  const visualPlaceholder = material.uniforms.uBaseColorTex?.value;
+  if (visualPlaceholder instanceof THREE.Texture) texturePlaceholders.push(visualPlaceholder);
+
   if (attrs.transform) applyTransform(mesh, attrs.transform);
 
   if (pickingSystem) {
@@ -321,11 +422,17 @@ export function createEmptyMeshNode(
     // from the same node opacity and cutoff. Both are re-pushed by the layers panel
     // through `syncMeshPickAppearance`; seeding them here keeps the FIRST pick
     // (which can precede any panel interaction) consistent with the screen.
+    const pickPlaceholder = attrs.has_texture ? new THREE.Texture() : null;
     const pickMaterial = materialManager.createMeshPickingMaterial({
       nodeId: pickId,
       opacity: attrs.opacity ?? 1.0,
       alphaCutoff: attrs.alpha_cutoff,
+      // Same placeholder-at-creation rule as the visual material above: this
+      // decides whether the pick program declares a sampler, and `has_texture` is a
+      // per-node constant. `applyMeshTexture` installs the real image at commit.
+      baseColorTexture: pickPlaceholder,
     });
+    if (pickPlaceholder) texturePlaceholders.push(pickPlaceholder);
     materialManager.register(pickMaterial);
     // Share the same indexed BufferGeometry — only the material differs. The
     // picking system re-syncs `geometry` from the main node every pick render, so a
@@ -338,6 +445,15 @@ export function createEmptyMeshNode(
     // the appearance sync below find their way back here.
     pickMaterial.setPickSide(material.side);
     pickMaterial.setPickMode(resolveRequestedMeshMode(attrs));
+  }
+
+  if (texturePlaceholders.length > 0) {
+    (
+      mesh.userData as MeshUserData & { meshTexturePlaceholders: THREE.Texture[] }
+    ).meshTexturePlaceholders = texturePlaceholders;
+    for (const placeholder of texturePlaceholders) {
+      geometry.addEventListener('dispose', () => placeholder.dispose());
+    }
   }
 
   return mesh;

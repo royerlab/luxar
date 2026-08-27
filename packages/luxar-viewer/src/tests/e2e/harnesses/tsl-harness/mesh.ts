@@ -111,7 +111,61 @@ const QUAD_COLORS_RGB = new Float32Array([
   1.0, 0.5, 0.25, 0.25, 1.0, 0.5, 0.5, 0.25, 1.0, 1.0, 1.0, 1.0,
 ]);
 
-function buildMeshGeometry(withScalars = false, rgbOnly = false): THREE.BufferGeometry {
+/**
+ * Per-corner UVs covering the full [0, 1] square.
+ *
+ * Chosen so the 2x2 texture below lands one texel per corner under NEAREST — which
+ * makes the parity comparison read the sampler itself rather than an interpolation
+ * both backends happen to agree on. A degenerate mapping (all corners at the same
+ * UV) would render a flat colour and pass even if the varying were never assigned.
+ */
+const QUAD_UVS = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+
+/**
+ * A 2x2 RGBA texture with a transparent texel, NEAREST-filtered.
+ *
+ * The transparent texel is the load-bearing part: texture alpha multiplies
+ * coverage, so under the `opaque` cutout one quadrant must be DISCARDED. A fully
+ * opaque texture would render the same on a backend that dropped the alpha term
+ * entirely, so the fixture would not distinguish them.
+ *
+ * NEAREST plus no mipmaps so the sampled value at each corner is exactly one
+ * authored texel — a linear filter would blend across the texels and make an
+ * off-by-one in the UV mapping invisible.
+ */
+function buildBaseColorTexture(): THREE.DataTexture {
+  const data = new Uint8Array([
+    255,
+    0,
+    0,
+    255, // red, opaque
+    0,
+    255,
+    0,
+    255, // green, opaque
+    0,
+    0,
+    255,
+    255, // blue, opaque
+    255,
+    255,
+    255,
+    0, // white, FULLY TRANSPARENT — the cutout quadrant
+  ]);
+  const tex = new THREE.DataTexture(data, 2, 2, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function buildMeshGeometry(
+  withScalars = false,
+  rgbOnly = false,
+  withUVs = false
+): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(QUAD_POSITIONS, 3, false));
   geometry.setAttribute('normal', new THREE.BufferAttribute(QUAD_NORMALS, 3, false));
@@ -124,14 +178,17 @@ function buildMeshGeometry(withScalars = false, rgbOnly = false): THREE.BufferGe
   if (withScalars) {
     geometry.setAttribute('aScalar', new THREE.BufferAttribute(QUAD_SCALARS, 1, false));
   }
+  if (withUVs) {
+    geometry.setAttribute('uv', new THREE.BufferAttribute(QUAD_UVS, 2, false));
+  }
   geometry.setIndex(new THREE.BufferAttribute(QUAD_INDICES, 1, false));
   return geometry;
 }
 
 const buildMeshObject =
-  (withScalars = false, rgbOnly = false) =>
+  (withScalars = false, rgbOnly = false, withUVs = false) =>
   (material: THREE.Material): THREE.Object3D => {
-    const mesh = new THREE.Mesh(buildMeshGeometry(withScalars, rgbOnly), material);
+    const mesh = new THREE.Mesh(buildMeshGeometry(withScalars, rgbOnly, withUVs), material);
     // Both faces, matching the `double_sided` default — and required for the
     // `gl_FrontFacing` flip to be exercised at all by a camera on either side.
     material.side = THREE.DoubleSide;
@@ -178,7 +235,8 @@ const UNFADED_REFERENCE_UNIFORMS = { uIsOrtho: 1, uNearCull: 0.8 } as const;
 /** Uniforms mirroring the production `MeshMaterial` constructor. */
 function meshUniforms(
   withColormap = false,
-  fade: { uIsOrtho: number; uNearCull: number } = ORTHO_FADE_UNIFORMS
+  fade: { uIsOrtho: number; uNearCull: number } = ORTHO_FADE_UNIFORMS,
+  withTexture = false
 ): Record<string, THREE.IUniform> {
   return {
     uOpacity: { value: 1.0 },
@@ -199,6 +257,7 @@ function meshUniforms(
           uScalarScale: { value: 1.0 },
         }
       : {}),
+    ...(withTexture ? { uBaseColorTex: { value: buildBaseColorTexture() } } : {}),
   };
 }
 
@@ -214,7 +273,8 @@ function meshUniforms(
  */
 function meshPickUniforms(
   surfaceMode: boolean,
-  fade: { uIsOrtho: number; uNearCull: number } = ORTHO_FADE_UNIFORMS
+  fade: { uIsOrtho: number; uNearCull: number } = ORTHO_FADE_UNIFORMS,
+  withTexture = false
 ): Record<string, THREE.IUniform> {
   return {
     uNodeId: { value: 1 },
@@ -224,6 +284,7 @@ function meshPickUniforms(
     uSurfaceDepth: { value: surfaceMode ? 1 : 0 },
     uIsOrtho: { value: fade.uIsOrtho },
     uNearCull: { value: fade.uNearCull },
+    ...(withTexture ? { uBaseColorTex: { value: buildBaseColorTexture() } } : {}),
   };
 }
 
@@ -287,7 +348,7 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
       LUXAR_MESH_ALPHA_CUTOUT: '',
       LUXAR_MESH_FLAT_NORMAL: '',
     }),
-    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', flatNormal: true }),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', shading: 'flat' }),
     buildMesh: buildMeshObject(),
   },
   // A size-3 `float32` colour attribute — the RGB layout, where the opaque
@@ -317,6 +378,40 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
     buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', useColormap: true }),
     buildMesh: buildMeshObject(true),
   },
+  // A base-colour TEXTURE: the fragment stage samples `uBaseColorTex` through the
+  // interpolated `vUv` instead of reading the `color` attribute's RGB. Distinct
+  // generated code from every entry above — it is the only one with a sampler in the
+  // FRAGMENT stage (the colormap's is in the vertex stage) and the only one that
+  // declares a `uv` attribute.
+  //
+  // The fixture's transparent texel is what makes this non-vacuous under `opaque`:
+  // texture alpha multiplies coverage, so one quadrant must be discarded. A backend
+  // that dropped the alpha term would fill it.
+  'mesh-texture': {
+    source: MESH_SOURCE,
+    buildUniforms: () => meshUniforms(false, ORTHO_FADE_UNIFORMS, true),
+    buildDefines: () => ({
+      LUXAR_MESH_ALPHA_CUTOUT: '',
+      LUXAR_MESH_BASE_COLOR_TEX: '',
+    }),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', useBaseColorTexture: true }),
+    buildMesh: buildMeshObject(false, false, true),
+  },
+  // `shading: 'none'` — the unlit arm. No normal is computed at all, so neither the
+  // `normal` attribute, its varying, nor the derivative pair appears in the
+  // generated code, and the shade/specular terms are absent from the fragment tail.
+  // On this fixture it renders the base colour flat where `mesh` shades it with a
+  // radial gradient.
+  'mesh-none-shading': {
+    source: MESH_SOURCE,
+    buildUniforms: () => meshUniforms(),
+    buildDefines: () => ({
+      LUXAR_MESH_ALPHA_CUTOUT: '',
+      LUXAR_MESH_NO_SHADING: '',
+    }),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', shading: 'none' }),
+    buildMesh: buildMeshObject(),
+  },
   // The pick pass in its DEFAULT state: `opaque`, so the cutout is on and the real
   // projected depth is written. The RGBA fixture's 0.25-alpha corner is below the
   // 0.5 cutoff, so part of the quad is discarded — which is the whole point of
@@ -329,6 +424,23 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
         buildMeshPickTSLNodesFromUniforms(uniforms)
       ) as unknown as THREE.Material,
     buildMesh: buildMeshObject(),
+  },
+  // The pick twin of `mesh-texture`. Its own entry rather than a variant of
+  // `mesh-pick` because the sampler is DEFINE-gated there too (unlike the cutout,
+  // which is a runtime uniform), so this is genuinely distinct generated code.
+  //
+  // What it pins is the correctness point the whole pick-side texture work exists
+  // for: the transparent texel must be discarded HERE as well as in the visual
+  // pass, or the hole the user can see stays pickable and depth-occluding.
+  'mesh-pick-texture': {
+    source: MESH_PICK_SOURCE,
+    buildUniforms: () => meshPickUniforms(true, ORTHO_FADE_UNIFORMS, true),
+    buildDefines: () => ({ LUXAR_MESH_PICK_BASE_COLOR_TEX: '' }),
+    buildTSLMaterial: (uniforms) =>
+      meshPickWebGPUFactory(
+        buildMeshPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: buildMeshObject(false, false, true),
   },
   // The OTHER arm of both runtime uniforms: no cutout, brightness-as-depth. Not in
   // the codegen snapshot list, and deliberately so — the branch is a runtime uniform

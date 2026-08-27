@@ -160,6 +160,36 @@ export function detectFramebufferYDown(renderer: Renderer): boolean {
 }
 
 /**
+ * Whether a live WebGPU device advertises the optional `float32-filterable`
+ * feature (or, under the WebGL2 compat backend, the equivalent GL extension).
+ *
+ * Read from the backend that is actually running rather than from the API
+ * surface, for the same reason `maxTextureSize` is below: `?webgpu-force-webgl`
+ * runs a WebGL2 context behind the WebGPU renderer, and assuming a real device's
+ * feature set there would overestimate it.
+ */
+function hasWebGPUFloat32Filterable(renderer: unknown): boolean {
+  const backend = (
+    renderer as {
+      backend?: {
+        device?: { features?: { has?: (name: string) => boolean } };
+        gl?: WebGL2RenderingContext;
+      };
+    }
+  ).backend;
+  const features = backend?.device?.features;
+  if (features && typeof features.has === 'function') {
+    return features.has('float32-filterable');
+  }
+  if (backend?.gl && typeof backend.gl.getExtension === 'function') {
+    return !!backend.gl.getExtension('OES_texture_float_linear');
+  }
+  // No backend in scope yet (a pre-init or test renderer). False is the safe
+  // answer: it selects a HalfFloat upload, which filters correctly everywhere.
+  return false;
+}
+
+/**
  * Build a `RendererCapabilities` snapshot from a constructed
  * renderer. Call once after renderer init; pass the result to
  * consumers (PostProcessingManager, SceneManager, …).
@@ -209,7 +239,19 @@ export function createRendererCapabilities(
       green: (gl.getParameter(gl.GREEN_BITS) as number) ?? 8,
       blue: (gl.getParameter(gl.BLUE_BITS) as number) ?? 8,
     };
-    const hdr: HDRCapabilities = { ...display, floatTextures, colorDepth };
+    // Separate extension from the color-buffer ones above, and separately
+    // required: core WebGL2 lets a FloatType texture exist and be sampled with
+    // NEAREST, but LINEAR filtering on one needs `OES_texture_float_linear`. When
+    // it is absent the sampler silently falls back to nearest rather than
+    // erroring, so an HDR mesh texture would look blocky with nothing to say why
+    // — hence a probe rather than an assumption.
+    const filterableFloatTextures = !!gl.getExtension('OES_texture_float_linear');
+    const hdr: HDRCapabilities = {
+      ...display,
+      floatTextures,
+      filterableFloatTextures,
+      colorDepth,
+    };
 
     return {
       apiSurface: 'webgl2',
@@ -243,6 +285,13 @@ export function createRendererCapabilities(
   const hdr: HDRCapabilities = {
     ...display,
     floatTextures: true, // WebGPU canvas formats include float-texture targets
+    // `float32-filterable` is an OPTIONAL WebGPU feature, so this is read from
+    // the live device rather than assumed from the API surface. Defaulting it to
+    // true would be the worse error of the two: an HDR texture would upload as
+    // FloatType on a device that cannot filter it and sample blocky, whereas
+    // defaulting to false costs half the precision on a HalfFloat upload and
+    // still filters correctly everywhere.
+    filterableFloatTextures: hasWebGPUFloat32Filterable(renderer),
     colorDepth: { red: 8, green: 8, blue: 8 },
   };
 
