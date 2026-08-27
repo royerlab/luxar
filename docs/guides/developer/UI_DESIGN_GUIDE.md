@@ -656,6 +656,25 @@ protect the label with `flex: 0 0 auto; white-space: nowrap` and give the value
 keeps long values from shrinking or wrapping the label and prevents horizontal
 scrollbars inside bounded panels.
 
+**First ask whether the label is really fixed.** The recipe above protects one
+side because the other is dataset-controlled; when *both* sides are, protecting
+one just moves the overflow to it. A dimension-slider row is the case in point —
+its label is the dimension name out of the store — and a 62-char name took a
+400px panel's whole row, leaving the value 0px wide and giving `__scroll` a
+horizontal scrollbar. So a dataset-controlled label additionally needs:
+
+- a reserved floor for the value, declared once on the row
+  (`--luxar-dim-value-floor`) and consumed from both ends: the label takes
+  `max-width: calc(100% - <floor> - <gap>)`, the value `min-width: <floor>`;
+- its own `overflow: hidden; text-overflow: ellipsis`;
+- an unconditional `title`, since it can now be truncated.
+
+Bound such a label with `max-width`, never by making it shrinkable: flex shrink
+is weighted by base size, so a shrinkable label is one a long *value* can shrink
+— reintroducing exactly what the first paragraph prevents. Reserve the floor on
+the **right-aligned** side where possible; a box wider than its glyphs is
+invisible there, so the reservation is free whenever the value is short.
+
 ### 7.7 The panel filter row (pending #1508)
 
 Type-to-filter for list-bearing panels is **one shared recipe**,

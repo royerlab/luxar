@@ -665,17 +665,30 @@ export class DimensionSliders {
     const label = document.createElement('div');
     label.className = 'luxar-dimension-slider__label';
 
+    // Resolved ONCE, because the underline affordance and the tooltip text are
+    // two decisions off the same fact and must not disagree. Compilers write an
+    // EMPTY description rather than omitting the key (the shipped
+    // `dimension_sliders_5d_example` does), so this has to be a truthiness test:
+    // reading it as `dimMeta?.description ?? name` left the real viewer with a
+    // `title=""` — the class ternary correctly saw no description while the
+    // tooltip used it anyway, and the full name became unrecoverable exactly
+    // where the CSS had just started truncating it.
+    const description = dimMeta?.description ? dimMeta.description : undefined;
+
     const dimName = document.createElement('span');
-    dimName.className = dimMeta?.description
+    dimName.className = description
       ? 'luxar-dimension-slider__name luxar-dimension-slider__name--with-tooltip'
       : 'luxar-dimension-slider__name';
     const name = this.dimensionNames[dimIndex] || `Dim ${dimIndex}`;
     dimName.textContent = name;
 
-    // Add tooltip with description if available
-    if (dimMeta?.description) {
-      dimName.title = dimMeta.description;
-    }
+    // The name is ellipsised by CSS once it would claim the value's reserved
+    // width, so it always needs a tooltip to stay recoverable — falling back to
+    // the bare name, exactly as the dropdown and toggle labels already do
+    // (`createDropdownInGrid` / `createToggleInGrid`). The dotted underline
+    // stays tied to an authored description: a tooltip that only repeats
+    // visible text should not advertise itself.
+    dimName.title = description ?? name;
 
     const valueLabel = document.createElement('span');
     valueLabel.id = `luxar-dim-value-${dimIndex}`;

@@ -93,6 +93,110 @@ test.describe('nD Navigation - Dimension Selection', () => {
     });
   }
 
+  test.describe('dimension slider row overflow', () => {
+    // These assertions measure steady-state layout. The panel's entry animation
+    // scales getBoundingClientRect() while the CSS floor remains unscaled, so
+    // sampling during that animation compares values in different coordinate spaces.
+    test.beforeEach(async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+    });
+
+    /**
+     * Follow-up to #2193: the row's label is the DIMENSION NAME out of the store, so it is
+     * dataset-controlled — and #2193 left it `flex: 0 0 auto; white-space: nowrap`
+     * with no width bound. A long name then took the whole row: at a 400px panel a
+     * 62-char name measured 385px, the value readout was squeezed to 0px, and the
+     * 34px of row overflow became a horizontal scrollbar inside `__scroll`
+     * (`overflow-y: auto` forces `overflow-x` to compute to `auto`).
+     *
+     * The name is overwritten in the DOM rather than served from a bespoke
+     * fixture: what is under test is whether the CSS bounds ARBITRARY name text,
+     * and a new example dataset would drag the Python example generators and the
+     * stale-example smoke contract into a viewer-CSS change. The DOM wiring that
+     * puts a store's name (and its tooltip) into this element is pinned in
+     * `tests/unit/ui/dimension-sliders.test.ts`; layout is only observable here.
+     */
+    for (const viewport of [
+      // At 1440 the panel is at its 800px cap, so a 62-char name still FITS
+      // inside the row minus the reserved floor — the bound must hold without
+      // truncating anything. It only bites once the panel narrows.
+      { width: 1440, height: 900, expectTruncated: false },
+      { width: 380, height: 700, expectTruncated: true },
+    ]) {
+      test(`a long dimension name cannot overrun the slider row at ${viewport.width}x${viewport.height}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize(viewport);
+        await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
+        await waitForLuxarReady(page);
+        await expect(page.locator('.luxar-dimension-slider__label').first()).toBeVisible();
+
+        const geometry = await page.evaluate(() => {
+          const LONG_NAME = 'reconstruction_timepoint_index_relative_to_gastrulation_onset';
+          const row = document.querySelector<HTMLElement>('.luxar-dimension-slider__label')!;
+          const name = row.querySelector<HTMLElement>('.luxar-dimension-slider__name')!;
+          const value = row.querySelector<HTMLElement>('.luxar-dimension-slider__value')!;
+          name.textContent = LONG_NAME;
+
+          const lineCount = (element: Element): number => {
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return new Set(Array.from(range.getClientRects(), (rect) => Math.round(rect.top))).size;
+          };
+
+          const panel = document.querySelector<HTMLElement>('.luxar-dimension-sliders')!;
+          const scroll = document.querySelector<HTMLElement>('.luxar-dimension-sliders__scroll')!;
+          const rowRect = row.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+          const floor = parseFloat(
+            getComputedStyle(row).getPropertyValue('--luxar-dim-value-floor')
+          );
+
+          return {
+            nameLines: lineCount(name),
+            valueLines: lineCount(value),
+            nameTruncated: name.scrollWidth > name.clientWidth,
+            nameWidth: name.getBoundingClientRect().width,
+            valueWidth: value.getBoundingClientRect().width,
+            rowWidth: rowRect.width,
+            floor,
+            // How far the row's own children spill past it — the overflow that
+            // becomes a horizontal scrollbar.
+            childOverflow:
+              Math.max(
+                ...Array.from(row.children, (child) => child.getBoundingClientRect().right)
+              ) - rowRect.right,
+            scrollOverflow: scroll.scrollWidth - scroll.clientWidth,
+            panelLeft: panelRect.left,
+            panelRight: panelRect.right,
+            viewportWidth: window.innerWidth,
+          };
+        });
+
+        // The name yields (it is recoverable from its `title`); the live value
+        // readout, which is the whole point of the panel, does not.
+        expect(geometry.nameLines).toBe(1);
+        expect(geometry.valueLines).toBe(1);
+        expect(geometry.valueWidth).toBeGreaterThanOrEqual(geometry.floor);
+
+        // The width-independent invariant: whether or not the name had to be cut,
+        // it never claims the row minus the reserved floor.
+        expect(geometry.floor).toBeGreaterThan(0);
+        expect(geometry.nameWidth).toBeLessThanOrEqual(geometry.rowWidth - geometry.floor + 1);
+        expect(geometry.nameTruncated).toBe(viewport.expectTruncated);
+
+        // No horizontal scrollbar inside a slider panel, at any width.
+        expect(geometry.childOverflow).toBeLessThanOrEqual(1);
+        expect(geometry.scrollOverflow).toBeLessThanOrEqual(0);
+
+        // And the panel itself stays reachable: a flat `min-width: 400px` under
+        // `left: 50%; translateX(-50%)` hung it off BOTH edges below ~404px.
+        expect(geometry.panelLeft).toBeGreaterThanOrEqual(0);
+        expect(geometry.panelRight).toBeLessThanOrEqual(geometry.viewportWidth);
+      });
+    }
+  });
+
   test('should navigate forward with ] key', async ({ page }) => {
     const consoleLogs: string[] = [];
     page.on('console', (msg) => {
