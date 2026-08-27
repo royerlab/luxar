@@ -76,6 +76,18 @@ def test_stacked_fit_provenance_is_rooted_in_fitting_and_describes_the_source() 
     assert stacked.stats["source_voxels"] == 120
     assert stacked.stats["source_bytes"] == 240
     assert stacked.stats["source_stored_bytes"] == 155
+    for part in stacked.stats["part_provenance"]:
+        assert "source_shape" not in part["fitting"]
+        assert "source_declared" not in part["fitting"]
+        assert "source_dtype" not in part["fitting"]
+        assert "source_voxels" not in part["fitting"]
+        assert "source_bytes" not in part["fitting"]
+    assert stacked.stats["part_provenance"][0]["fitting"][
+        "source_stored_bytes"
+    ] == 80
+    assert stacked.stats["part_provenance"][1]["fitting"][
+        "source_stored_bytes"
+    ] == 75
 
     fitting, _config, _provenance, pipeline = split_fitting_info(stacked.stats)
     assert fitting is not None
@@ -300,7 +312,7 @@ def test_part_provenance_survives_lod_and_save_load(tmp_path: Path) -> None:
     ladder.save(path, include_fitting_info=True)
     loaded = GSplatData.load(path, include_stats=True)
 
-    assert loaded.stats["part_provenance"] == provenance
+    assert loaded.stats["part_provenance"] == stacked.stats["part_provenance"]
     assert loaded.stats["source_shape"] == [2, 8, 8, 8]
     assert loaded.stats["source_declared"] is True
     assert loaded.stats["source_voxels"] == 1024

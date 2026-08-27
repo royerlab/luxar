@@ -264,13 +264,15 @@ def _build_part_for_tile(
     # in THIS slot (some may be empty here); merge_with_channel_colors needs a
     # length match. A multi-channel dataset where only one channel survives in this
     # tile still tints that channel (its color), which is correct.
-    channel_provenance = None
-    if len(c_indices) > 1:
-        channel_provenance = collect_part_provenance(
+    channel_provenance = (
+        collect_part_provenance(
             per_channel,
             values=[float(c_indices[position]) for position in kept_positions],
             fit_reference=None,
         )
+        if len(c_indices) > 1
+        else None
+    )
 
     if channel_colors and len(c_indices) > 1:
         colors = [channel_colors[i] for i in kept_positions]
@@ -286,6 +288,17 @@ def _build_part_for_tile(
     if part.n_splats == 0:
         return None
     return part
+
+
+def _single_part_provenance(part: "GSplatData") -> List[Dict[str, Any]]:
+    """Move whole-fit quality under an attributable K=1 component record."""
+    from luxar.gsplats._data.filtering import _CONTENT_SCOPED_STATS_KEYS
+    from luxar.gsplats.merged_quality import collect_part_provenance
+
+    provenance = collect_part_provenance([part], values=[0.0], fit_reference=None)
+    for key in _CONTENT_SCOPED_STATS_KEYS:
+        part.stats.pop(key, None)
+    return provenance
 
 
 def volume_refit_source_error(
@@ -962,12 +975,14 @@ def _merge_partition(
             )
             if part is None:
                 raise ValueError("Single tile-region is empty — nothing to merge")
+            single_part_provenance = _single_part_provenance(part)
             if recipe is None:
                 # Pass the authoritative stacked-time barrier here too (K==1,
                 # no recipe) so a single-tile timelapse gets per-timepoint chunk
                 # locality instead of relying on value-based auto-detect.
                 # `save` derives pipeline_info from `stats`, so the floor block
                 # goes in there rather than through the argument (#1175).
+                part.stats["part_provenance"] = single_part_provenance
                 part.stats.update(floor_stats)
                 part.save(final_path, barrier_dims=barrier_dims)
                 if verbose:
@@ -987,6 +1002,7 @@ def _merge_partition(
                 write_gsplats_tree(
                     final_path,
                     node,
+                    fitting_info={"part_provenance": single_part_provenance},
                     pipeline_info=pipeline_info,
                     barrier_dims=barrier_dims,
                 )
@@ -1008,7 +1024,6 @@ def _merge_partition(
     slot_tree = _slot_bsp_tree(manifest, output_dir, verbose)
     kept_slots: List[int] = []
     part_provenance: List[Dict[str, Any]] = []
-    fitting_info: Dict[str, Any] = {"part_provenance": part_provenance}
     # A per-part volume re-fit crops the source to each tile. The split planes
     # above ARE those tiles, keyed by the same slot index the loop walks, so the
     # cells come from the tree already reconstructed for ordering.
@@ -1020,6 +1035,7 @@ def _merge_partition(
 
         kept = 0
         kept_slots.clear()
+        part_provenance.clear()
         for k in range(n_k):
             part = _build_part_for_tile(
                 tiles_dir, k, t_indices, c_indices, n_k, channel_colors, label
@@ -1028,13 +1044,12 @@ def _merge_partition(
                 if verbose:
                     aprint(f"  {label} {k}: empty, skipping")
                 continue
-            part_provenance.extend(
+            part_provenance.append(
                 collect_part_provenance(
-                    [part],
-                    values=[float(k)],
-                    fit_reference=None,
-                )
+                    [part], values=[float(k)], fit_reference=None
+                )[0]
             )
+            part.stats.pop("part_provenance", None)
             _stamp_recipe_floor(part, recipe, floor_stats)
             # Each part is a single nD splat set → a matrix-shaped tree (a leaf,
             # or — with a per-part recipe — a leaf-with-ladder / substitutive lod
@@ -1067,7 +1082,7 @@ def _merge_partition(
             final_path,
             _parts,
             max_elements=0,
-            fitting_info=fitting_info,
+            fitting_info=lambda: {"part_provenance": list(part_provenance)},
             pipeline_info=pipeline_info,
             barrier_dims=barrier_dims,
             # Resolved after the stream, when `kept_slots` is complete.
