@@ -479,8 +479,8 @@ def lod_recipe(
     recipe is picked by how many levels and tiles the viewer fetches EAGERLY,
     not by N: overview defers its whole fine branch behind a selector, while
     tiles and adaptive load every part at once. Measured on one 1.58 GiB 4D
-    timelapse, an adaptive build (44 parts) needed 689 requests to first paint
-    against 39 for the same data as one stacked leaf with a stream ladder.
+    timelapse, an adaptive build (44 parts) needed ~18x more requests to first
+    paint than the same data as one stacked leaf with a stream ladder.
 
     (Renamed 2026-07: additive->stream, substitutive/pyramid->levels,
     partitioned->tiles, multiscale->overview, mosaic->adaptive.)
