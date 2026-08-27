@@ -20,6 +20,18 @@ if [ -n "${LUXAR_BENCH_PYTHON:-}" ]; then
     HATCH_PYTHON="${LUXAR_BENCH_PYTHON}"
 else
     HATCH_ENV="$(cd "${REPO_ROOT}" && hatch env find default 2>/dev/null || true)"
+    # `hatch env find` emits ANSI colour even when its output is captured, so the
+    # raw substitution is not a usable path — resolution would fail on every
+    # machine where hatch colourises. Safely (the -f guard rejects it) but
+    # unconditionally, which makes the script unusable rather than merely strict.
+    #
+    # Stripped with bash parameter expansion rather than `sed`/`head`: this runs
+    # with a deliberately minimal PATH in the regression tests, and a pipeline
+    # through absent tools fails into the same empty result it is meant to fix.
+    shopt -s extglob
+    HATCH_ENV="${HATCH_ENV//$'\033'\[*([0-9;])[a-zA-Z]/}"
+    HATCH_ENV="${HATCH_ENV%%$'\n'*}"
+    shopt -u extglob
     HATCH_PYTHON="${HATCH_ENV:-/nonexistent}/bin/python"
 fi
 BENCHMARK_SCRIPT="${REPO_ROOT}/scripts/benchmarks/benchmark_bisect_runner.py"

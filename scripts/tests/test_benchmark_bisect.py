@@ -67,6 +67,29 @@ def test_hatch_environment_is_resolved_from_repo_root(tmp_path: Path) -> None:
     assert f"Hatch Python not found at {missing_env}/bin/python" in result.stdout
 
 
+def test_ansi_coloured_hatch_output_is_stripped(tmp_path: Path) -> None:
+    """`hatch env find` colourises even when captured, and the raw bytes are not a path.
+
+    Without stripping, resolution fails on every machine where hatch emits colour
+    — safely, because the `-f` guard rejects the escape-laden path, but
+    unconditionally, which makes the script unusable rather than merely strict.
+    Observed on macOS: the capture begins with a literal ESC [ 1 m.
+    """
+    command_path = _command_path(tmp_path)
+    missing_env = tmp_path / "coloured-env"
+    hatch = command_path / "hatch"
+    hatch.write_text(f"#!/bin/bash\nprintf '\\033[1m%s\\033[0m\\n' {missing_env!s}\n")
+    hatch.chmod(0o755)
+
+    result = _run_script(tmp_path, command_path)
+
+    assert result.returncode == 1
+    # The path it reports must be the clean one, with no escape bytes left in it.
+    assert f"Hatch Python not found at {missing_env}/bin/python" in result.stdout
+    assert "\033" not in result.stdout
+    assert "\x1b" not in result.stdout
+
+
 def test_explicit_python_override_skips_hatch_resolution(tmp_path: Path) -> None:
     command_path = _command_path(tmp_path)
     hatch_called = tmp_path / "hatch-called"
