@@ -4,11 +4,14 @@ import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import type { KTX2TextureDecoder } from '../types/mesh';
 import type { Renderer } from './renderer-capabilities';
 
-function hasCompressedTextureSupport(renderer: Renderer): boolean {
+/** Return whether the renderer exposes a native Basis transcode target. */
+function hasCompressedTextureSupport(renderer: Renderer | null | undefined): boolean {
+  if (!renderer) return false;
   if ((renderer as { isWebGPURenderer?: boolean }).isWebGPURenderer === true) {
     const hasFeature = (renderer as { hasFeature?: (name: string) => boolean }).hasFeature;
     return Boolean(
       hasFeature?.('texture-compression-astc') ||
+      hasFeature?.('texture-compression-etc1') ||
       hasFeature?.('texture-compression-etc2') ||
       hasFeature?.('texture-compression-s3tc') ||
       hasFeature?.('texture-compression-bc') ||
@@ -16,8 +19,10 @@ function hasCompressedTextureSupport(renderer: Renderer): boolean {
     );
   }
   const extensions = (renderer as THREE.WebGLRenderer).extensions;
+  if (!extensions?.has) return false;
   return [
     'WEBGL_compressed_texture_astc',
+    'WEBGL_compressed_texture_etc1',
     'WEBGL_compressed_texture_etc',
     'WEBGL_compressed_texture_s3tc',
     'EXT_texture_compression_bptc',
@@ -26,19 +31,30 @@ function hasCompressedTextureSupport(renderer: Renderer): boolean {
   ].some((name) => extensions.has(name));
 }
 
-export function createKTX2TextureDecoder(renderer: Renderer): KTX2TextureDecoder {
+/**
+ * Create an app-lifetime KTX2 decoder for one initialized renderer.
+ *
+ * The Three.js loader and its worker pool are created lazily on the first KTX2
+ * payload, so applications that never load KTX2 do not initialize the Basis
+ * transcoder. Missing renderers and devices without a compressed target fail
+ * closed with the portable texture alternatives in the error.
+ */
+export function createKTX2TextureDecoder(
+  renderer: Renderer | null | undefined
+): KTX2TextureDecoder {
   const supported = hasCompressedTextureSupport(renderer);
-  const loader = supported ? new KTX2Loader().detectSupport(renderer) : null;
+  let loader: KTX2Loader | null = null;
 
   return async (path, bytes) => {
-    if (!loader) {
+    if (!renderer || !supported) {
       throw new Error(
-        `${path}: texture encoding 'ktx2' requires ASTC, ETC2, S3TC/BC, or PVRTC ` +
+        `${path}: texture encoding 'ktx2' requires ASTC, ETC1/2, S3TC/BC, or PVRTC ` +
           "GPU compressed-texture support. Use 'raw' or 'jpeg' for a portable texture."
       );
     }
+    const activeLoader = (loader ??= new KTX2Loader().detectSupport(renderer));
     return await new Promise<THREE.CompressedTexture>((resolve, reject) => {
-      loader.parse(new Uint8Array(bytes).buffer, resolve, reject);
+      activeLoader.parse(new Uint8Array(bytes).buffer, resolve, reject);
     });
   };
 }

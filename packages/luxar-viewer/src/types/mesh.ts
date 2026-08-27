@@ -61,13 +61,14 @@ export type MeshShading = 'smooth' | 'flat' | 'none';
  *
  * `'raw'` is an `(H, W, C)` numeric array the decoder materializes directly —
  * the only arm that can carry HDR, since no browser-native image codec stores
- * floats. The other three are a 1-D `uint8` array of codec bytes, decoded with
+ * floats. PNG, WebP, and JPEG are 1-D `uint8` codec bytes decoded with
  * `createImageBitmap`, exactly as `image_label_bytes` already does for hover
- * thumbnails.
+ * thumbnails. KTX2 is also opaque bytes, but delegates to THREE's Basis
+ * transcoder and stays GPU-compressed after upload.
  *
  * A closed vocabulary on purpose: an unrecognised value must be a rejection and
  * not a fall-through to "probably an image", because the decode path and the
- * byte budget differ between the two arms.
+ * byte budget differ between the raw, bitmap-codec, and GPU-compressed arms.
  */
 export type MeshTextureEncoding = 'raw' | 'png' | 'webp' | 'jpeg' | 'ktx2';
 
@@ -317,10 +318,9 @@ export type MeshColorArray = Float32Array | Uint8Array | Uint16Array;
  * A decoded texture, in whichever form its encoding produced.
  *
  * A discriminated union rather than one struct with optional fields, because the
- * two arms upload through genuinely different THREE.js classes (`DataTexture` vs
- * `Texture` over an `ImageBitmap`) and an exhaustive `switch` on `kind` is the
- * only way a future third arm becomes a compile error instead of a silently
- * untextured mesh.
+ * three arms upload through genuinely different THREE.js classes (`DataTexture`,
+ * `Texture` over an `ImageBitmap`, or `CompressedTexture`) and an exhaustive
+ * branch on `kind` prevents a future arm from becoming a silently untextured mesh.
  *
  * `width`/`height`/`channels` are the *verified* dimensions, not the declared
  * ones: the loader compares what it decoded against

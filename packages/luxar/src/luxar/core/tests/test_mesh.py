@@ -3338,6 +3338,7 @@ def test_ktx2_encoder_defaults_to_uastc_and_preserves_rgba_input(
         "2",
         "--zcmp",
     ]
+    assert seen["command"][8:11] == ["3", "--assign_oetf", "srgb"]
     assert np.array_equal(seen["array"][..., 3], rgba[..., 3])
 
 

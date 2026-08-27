@@ -1373,12 +1373,13 @@ def validate_texture_for_writing(
 ) -> Tuple[int, int, int]:
     """Validate a mesh texture payload and resolve its declared dimensions.
 
-    Two payload shapes, split into :func:`_resolve_raw_texture_dims` and
+    Two physical payload shapes, split into :func:`_resolve_raw_texture_dims` and
     :func:`_resolve_encoded_texture_dims`, because the *declared* dimensions
     matter identically to both and are what the viewer's admission gate spends:
 
-    * ``raw`` — an ``(H, W, C)`` array. Dimensions come off the shape, so a
-      caller-supplied ``width``/``height``/``channels`` must agree with it.
+    * ``raw`` and authoring-time ``ktx2`` — an ``(H, W, C)`` array.
+      Dimensions come off the shape, so caller-supplied
+      ``width``/``height``/``channels`` must agree with it.
     * ``png`` / ``webp`` / ``jpeg`` — a 1-D ``uint8`` array of encoded bytes, the
       same shape ``image_label_bytes`` already uses. Dimensions cannot be read
       from the payload without decoding it, so they are **required**.

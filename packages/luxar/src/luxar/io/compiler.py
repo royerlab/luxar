@@ -908,7 +908,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 for ETC1S.
             texture_width: Declared width. Required for encoded payloads, where
                 it cannot be read without decoding; read off the array for
-                ``raw``, and refused if it disagrees.
+                ``raw`` or ``ktx2``, and refused if it disagrees.
             texture_height: Declared height. Same contract as ``texture_width``.
             texture_channels: Declared channels — 1, 3 or 4. Same contract.
             texture_color_space: ``srgb`` (default) or ``linear``. An ordinary

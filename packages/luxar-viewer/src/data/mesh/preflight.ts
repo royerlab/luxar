@@ -622,10 +622,10 @@ const UNENCODED_COLOR_DTYPES = new Set([
  *
  * Closed for the same reason {@link ENCODING_BUDGET_KIND} is closed: an
  * unrecognised value must be a REJECTION, never a fall-through to "probably an
- * image". The two arms allocate differently — `raw` materializes
- * `h * w * c` values through the decoder, while a codec arm hands the bytes to
- * `createImageBitmap` and gets back a 4-channel 8-bit surface whatever the source
- * stored — so guessing wrong means charging the wrong number against the ceiling.
+ * image". The three arms allocate differently: `raw` materializes
+ * `h * w * c` values, a bitmap codec produces a 4-channel 8-bit surface, and
+ * KTX2 remains GPU-compressed with a full mip chain. Guessing wrong would charge
+ * the wrong admission budget.
  */
 export const TEXTURE_DECODE_KIND: Record<MeshTextureEncoding, 'raw' | 'codec' | 'ktx2'> = {
   raw: 'raw',
@@ -967,8 +967,8 @@ export async function preflightMesh(
       );
     }
   }
-  // The texture's DECODED SURFACE, charged only on the codec arm — and the
-  // asymmetry is the interesting part rather than an oversight.
+  // The texture's DECODED SURFACE, charged separately for opaque payloads —
+  // and the asymmetry is the interesting part rather than an oversight.
   //
   // On the `raw` arm the loop above already charged it: `logicalLayout` reads the
   // `(h, w, c)` shape, so `count * DECODED_BYTES_PER_VALUE` is exactly the

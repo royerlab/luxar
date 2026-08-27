@@ -105,8 +105,7 @@ def _encode_ktx2(
             ]
         else:
             command += ["--encode", "basis-lz", "--qlevel", str(resolved_quality)]
-        if color_space == "linear":
-            command += ["--assign_oetf", "linear"]
+        command += ["--assign_oetf", color_space]
         command += [str(output), str(source)]
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
         if completed.returncode != 0 or not output.is_file():
@@ -134,13 +133,18 @@ def write_texture(
 
     Args:
         group: The mesh node's zarr group.
-        texture: ``(H, W, C)`` array for ``raw``, else 1-D ``uint8`` encoded bytes.
-        encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg``.
+        texture: ``(H, W, C)`` array for ``raw`` or ``ktx2`` authoring;
+            otherwise 1-D ``uint8`` encoded bytes.
+        encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg`` | ``ktx2``.
         width: Declared width; required for encoded payloads.
         height: Declared height; required for encoded payloads.
         channels: Declared channel count; required for encoded payloads.
         color_space: Declared transfer function; HDR raw values require ``linear``.
         ctx: Dataset write context (encoder, mode, compressor).
+        ktx2_mode: Basis encoding mode for KTX2 authoring.
+        ktx2_quality: Optional mode-specific KTX2 quality.
+        encoded_ktx2: Pre-encoded bytes supplied by the mesh writer after its
+            failure-atomic preflight.
 
     Returns:
         ``(height, width, channels)`` as validated.

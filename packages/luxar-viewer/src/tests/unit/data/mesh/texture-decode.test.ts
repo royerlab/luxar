@@ -9,6 +9,7 @@
  * declares 16x16, is admitted for a kilobyte, and detonates a 30000x30000 decode.
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { decodeMeshTexture } from '../../../../data/mesh/texture-decode';
 import { ArrayDecoder, ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
@@ -145,15 +146,24 @@ describe('decodeMeshTexture — encoded payloads', () => {
 });
 
 describe('decodeMeshTexture — KTX2 payloads', () => {
-  const ktxDecl = decl({ encoding: 'ktx2', decode: 'ktx2', channels: 4 });
+  const fixture = new Uint8Array(
+    readFileSync(new URL('./fixtures/2d_etc1s.ktx2', import.meta.url))
+  );
+  const ktxDecl = decl({
+    encoding: 'ktx2',
+    decode: 'ktx2',
+    width: 40,
+    height: 40,
+    channels: 3,
+  });
 
   beforeEach(() => {
-    nextRead = { data: new Uint8Array([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0xbb, 0x0d]) };
+    nextRead = { data: fixture };
   });
 
   it('returns the renderer-transcoded compressed texture without a bitmap decode', async () => {
     const texture = {
-      image: { width: 4, height: 2 },
+      image: { width: 40, height: 40 },
       dispose: vi.fn(),
     } as unknown as import('three').CompressedTexture;
     const decodeKTX2 = vi.fn(async () => texture);
@@ -165,11 +175,17 @@ describe('decodeMeshTexture — KTX2 payloads', () => {
       storeRoot,
       decodeKTX2
     );
-    expect(result).toMatchObject({ kind: 'compressed', texture, width: 4, height: 2, channels: 4 });
+    expect(result).toMatchObject({
+      kind: 'compressed',
+      texture,
+      width: 40,
+      height: 40,
+      channels: 3,
+    });
     expect(decodeKTX2).toHaveBeenCalledWith(PATH, expect.any(Uint8Array), {
-      width: 4,
-      height: 2,
-      channels: 4,
+      width: 40,
+      height: 40,
+      channels: 3,
     });
   });
 
@@ -177,6 +193,15 @@ describe('decodeMeshTexture — KTX2 payloads', () => {
     await expect(
       decodeMeshTexture(PATH, handle('|u1'), ktxDecl, newDecoder(), storeRoot)
     ).rejects.toThrow(/requires GPU compressed-texture support.*raw.*jpeg/);
+  });
+
+  it('wraps transcode failures with path and payload context', async () => {
+    const decodeKTX2 = vi.fn(async () => {
+      throw new Error('invalid KTX2 identifier');
+    });
+    await expect(
+      decodeMeshTexture(PATH, handle('|u1'), ktxDecl, newDecoder(), storeRoot, decodeKTX2)
+    ).rejects.toThrow(/failed to decode as ktx2.*966 bytes.*invalid KTX2 identifier/i);
   });
 
   it('disposes a transcode whose dimensions contradict the declaration', async () => {
@@ -190,7 +215,7 @@ describe('decodeMeshTexture — KTX2 payloads', () => {
     );
     await expect(
       decodeMeshTexture(PATH, handle('|u1'), ktxDecl, newDecoder(), storeRoot, decodeKTX2)
-    ).rejects.toThrow(/decoded to 8x8 but declares 4x2/);
+    ).rejects.toThrow(/decoded to 8x8 but declares 40x40/);
     expect(dispose).toHaveBeenCalledOnce();
   });
 });

@@ -188,8 +188,8 @@ GLOBE_LAT = 256
 # per longitude band is the route, and it lifts the ceiling to tiles x 16384.
 GLOBE_TEXTURE_WIDTH = 16384
 GLOBE_TILES = 2
-GLOBE_TEXTURE_FORMAT = "webp"
-GLOBE_TEXTURE_QUALITY = 90
+GLOBE_TEXTURE_FORMAT = "ktx2"
+GLOBE_TEXTURE_QUALITY = 2
 
 # The cloud deck is REAL WEATHER — NASA's Blue Marble cloud composite — not
 # procedural noise, and a translucent mesh shell rather than 60k luminous points.

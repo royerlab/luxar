@@ -885,17 +885,16 @@ def add_textured_globe(
 
     Useful sizes:
 
-    * ``tiles=1`` at 8192 — 6.0 MB (JPEG) / 4.3 MB (WebP), the comfortable default.
-    * ``tiles=1`` at 16384 — 4x the pixels, 20.4 MB JPEG. Over WebP's limit.
-    * ``tiles=2`` at 8192 each — also 4x the pixels, but two 4.3 MB WebP payloads
-      instead of one 20.4 MB JPEG, and each node is budgeted separately so neither
-      approaches the per-node decode ceiling.
-    * ``tiles=4`` at 5400 each — the native 21600x10800 master, exactly.
+    * ``tiles=1`` at 8192 — about 43 MiB resident as KTX2 UASTC including
+      mipmaps, versus 128 MiB after decoding a JPEG/WebP to RGBA8.
+    * ``tiles=2`` at 8192 each — the 16384x8192 production basemap, about 171 MiB
+      resident across both KTX2 tiles instead of 512 MiB RGBA8.
+    * ``tiles=4`` at 5400 each — the native 21600x10800 master, about 297 MiB
+      resident across four KTX2 tiles instead of about 890 MiB RGBA8.
 
-    The cost is real and worth stating: every tile is a separate draw call and a
-    separate resident decoded surface, so ``tiles=4`` at native resolution holds
-    ~930 MB of texture across the four nodes. That is why this is a knob and not
-    the default.
+    Every tile remains a separate draw call because the 16384 per-axis device
+    limit still applies; KTX2 removes CPU bitmap expansion and cuts resident GPU
+    bytes, not the geometric split.
 
     ## The seam
 
@@ -914,8 +913,10 @@ def add_textured_globe(
         n_lon: Total longitude divisions across the whole globe.
         n_lat: Latitude divisions.
         tiles: Number of longitude bands. 1 = a single node.
-        fmt: Texture codec (see :func:`encode_texture`).
-        quality: Codec quality.
+        fmt: Texture codec. ``ktx2`` passes RGB tiles to the mesh writer for
+            optional ``toktx`` authoring; other values use :func:`encode_texture`.
+        quality: Codec quality. KTX2 uses the UASTC 0-4 scale; other codecs use
+            their existing image-codec scale.
         shading: ``smooth`` | ``flat`` | ``none``.
         relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
         **mesh_kwargs: Forwarded to ``add_mesh`` (blending_mode, opacity, ...).
@@ -1010,9 +1011,18 @@ def add_textured_globe(
         else:
             right = src[:, c1 % src_w : (c1 % src_w) + 1]
             slice_rgb = np.concatenate([src[:, c0:c1], right], axis=1)
-        payload, encoding, tw, th, tc = encode_texture(
-            slice_rgb, fmt=fmt, quality=quality, channels=3
-        )
+        if fmt.lower() == "ktx2":
+            payload = np.asarray(slice_rgb)
+            if np.issubdtype(payload.dtype, np.floating):
+                payload = np.clip(payload * 255.0, 0, 255).astype(np.uint8)
+            elif payload.dtype != np.uint8:
+                payload = payload.astype(np.uint8)
+            encoding = "ktx2"
+            th, tw, tc = payload.shape
+        else:
+            payload, encoding, tw, th, tc = encode_texture(
+                slice_rgb, fmt=fmt, quality=quality, channels=3
+            )
         target.add_mesh(
             f"part_{t}" if tiles > 1 else name,
             vertices=vertices,
@@ -1023,6 +1033,7 @@ def add_textured_globe(
             texture_width=tw,
             texture_height=th,
             texture_channels=tc,
+            **({"texture_ktx2_quality": quality} if encoding == "ktx2" else {}),
             normals=normals,
             normal_dims=[0, 1, 2],
             shading=shading,
@@ -1296,8 +1307,8 @@ def build_earth(
     n_lat: int = 256,
     texture_width: int = 16384,
     tiles: int = 2,
-    fmt: str = "webp",
-    quality: int = 90,
+    fmt: str = "ktx2",
+    quality: int = 2,
     shading: str = "smooth",
     relief: Any = 0.0,
     basemap: Optional[np.ndarray] = None,
@@ -1334,8 +1345,8 @@ def build_earth(
         n_lat: Latitude divisions.
         texture_width: Basemap width to fetch; halved per axis into ``tiles``.
         tiles: Longitude bands, each its own node. See :func:`add_textured_globe`.
-        fmt: Basemap codec.
-        quality: Basemap codec quality.
+        fmt: Basemap codec; defaults to GPU-compressed ``ktx2``.
+        quality: Basemap codec quality; defaults to UASTC level 2 for KTX2.
         shading: ``smooth`` | ``flat`` | ``none``.
         relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
         basemap: Supply the RGB array directly instead of fetching it — for a demo

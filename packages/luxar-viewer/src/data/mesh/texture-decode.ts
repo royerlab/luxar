@@ -135,11 +135,23 @@ export async function decodeMeshTexture(
           )
         );
       }
-      const texture = await decodeKTX2(path, new Uint8Array(bytes), {
-        width,
-        height,
-        channels: channels as 3 | 4,
-      });
+      let texture: import('three').CompressedTexture;
+      try {
+        texture = await decodeKTX2(path, new Uint8Array(bytes), {
+          width,
+          height,
+          channels: channels as 3 | 4,
+        });
+      } catch (error) {
+        throw new LoaderError(
+          'Validation',
+          path,
+          new Error(
+            `texture failed to decode as ktx2 (${bytes.length.toLocaleString()} bytes). ` +
+              `${error instanceof Error ? error.message : String(error)}`
+          )
+        );
+      }
       const image = texture.image as { width?: number; height?: number } | undefined;
       if (image?.width !== width || image?.height !== height) {
         texture.dispose();

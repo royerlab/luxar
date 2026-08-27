@@ -169,6 +169,7 @@ vi.mock('../../../../../data/scene-loader-manager', () => ({
       setMonitorFactory: vi.fn(),
       setLODGroupRegistryFactory: vi.fn(),
       setRequestRender: vi.fn(),
+      setKTX2TextureDecoder: vi.fn(),
     }),
   },
   getSceneLoader: vi.fn().mockReturnValue(null),

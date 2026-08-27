@@ -11,3 +11,7 @@ Basis transcoder assets in standalone builds, and rejects the node clearly when
 the device has no native compressed-texture target instead of silently expanding
 to RGBA8. Preflight remains device-independent and charges one byte per pixel
 plus the full mip tail.
+
+The four shared Earth demo builders now author their basemap tiles through KTX2
+by default. Published demo archives and gallery baselines remain part of the
+batched regeneration tracked in #1879.
