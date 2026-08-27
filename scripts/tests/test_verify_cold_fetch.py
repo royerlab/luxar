@@ -371,6 +371,36 @@ def test_main_rejects_an_unknown_dataset(harness: ModuleType, capsys) -> None:
     assert "unknown dataset" in capsys.readouterr().err
 
 
+def test_main_rejects_a_cache_root_that_is_a_file(
+    harness: ModuleType, tmp_path: Path, capsys
+) -> None:
+    cache_root = tmp_path / "not-a-directory"
+    cache_root.write_text("occupied")
+
+    assert harness.main(["--list", "--cache-root", str(cache_root)]) == 2
+    stderr = capsys.readouterr().err
+    assert "--cache-root" in stderr
+    assert "not a directory" in stderr
+
+
+@pytest.mark.parametrize("bucket", ["local-compute", "regenerate"])
+def test_non_hosted_datasets_are_labelled_as_not_hosted(
+    harness: ModuleType,
+    bucket: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    manifest = {"records": {}, "datasets": {"thing": {"bucket": bucket}}}
+
+    ok, detail, _ = harness.verify("thing", manifest, keep=False)
+    assert ok
+    assert detail == f"SKIP  not hosted ({bucket} dataset)"
+
+    monkeypatch.setattr(harness.data_fetch, "load_manifest", lambda: manifest)
+    assert harness.main(["--list", "thing"]) == 0
+    assert capsys.readouterr().out.split()[-2:] == ["not", "hosted"]
+
+
 def test_main_checks_every_variant_and_labels_each_row(
     harness: ModuleType,
     origin,

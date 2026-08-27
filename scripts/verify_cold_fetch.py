@@ -185,8 +185,9 @@ def verify(
 ) -> tuple[bool, str, Optional[Path]]:
     """Fetch *name* into a throwaway cache with no in-repo copy, and check it."""
     spec = manifest["datasets"][name]
-    if spec.get("bucket") != "zenodo":
-        return True, "SKIP  not redistributable (local-compute dataset)", None
+    bucket = spec.get("bucket")
+    if bucket != "zenodo":
+        return True, f"SKIP  not hosted ({bucket} dataset)", None
     files, _ = data_fetch.resolve_variant(name, spec, variant)
     if not files:
         return True, "SKIP  no files declared (pending upload)", None
@@ -257,6 +258,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="directory for throwaway caches (default: system temporary directory)",
     )
     args = parser.parse_args(argv)
+    if (
+        args.cache_root is not None
+        and args.cache_root.exists()
+        and not args.cache_root.is_dir()
+    ):
+        print(
+            f"error: --cache-root is not a directory: {args.cache_root}",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         manifest = data_fetch.load_manifest()
@@ -274,7 +285,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     targets = verification_targets(manifest, names)
     if args.list:
         for name, variant in targets:
-            state = "reachable" if is_reachable(manifest, name, variant) else "dormant"
+            spec = manifest["datasets"][name]
+            if spec.get("bucket") != "zenodo":
+                state = "not hosted"
+            else:
+                state = "reachable" if is_reachable(manifest, name, variant) else "dormant"
             print(f"{target_label(name, variant):<40} {state}")
         return 0
 
