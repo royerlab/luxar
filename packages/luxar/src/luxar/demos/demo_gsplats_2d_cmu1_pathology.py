@@ -605,11 +605,6 @@ Controls:
             # from all three never changed their relative position. Framing is
             # unaffected too (the viewer targets the bounding-box centre, not
             # the origin), and `unit="px"` now reads as true slide coordinates.
-            # The old per-channel `scale_intensity(0.1)` is gone with it: a
-            # colormapped gsplat layer is windowed by the node's own
-            # `amplitude_data_range`, so a global amplitude scale cancels and
-            # the render is identical either way.
-
             # Add each channel as a layer-enabled gsplats node
             for i, (cache_path, ch_config) in enumerate(
                 zip(cache_paths, CHANNELS[: len(cache_paths)])

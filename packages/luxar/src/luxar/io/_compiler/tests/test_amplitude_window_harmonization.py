@@ -1297,9 +1297,20 @@ def test_scene_compiler_harmonizes_a_colormapped_substitutive_lod(
     n = len(sublods)
     windows = [_window(root, f"splats/child_{i}") for i in range(n)]
     mwmas = [_mwma(root, f"splats/child_{i}") for i in range(n)]
-    # The finest level keeps the window its own writer derived.
+
+    # The finest level keeps the window its own writer derived — from the
+    # amplitudes AS INSERTED. This ladder's raw amplitudes sit above 1.0, so the
+    # scene adder normalises them on the way in (one factor for the whole
+    # pyramid; see core/group/gsplats_pipeline/amplitude_norm.py) and the
+    # authored window scales with them. Reading the factor back rather than
+    # hard-coding the scaled numbers keeps this asserting the writer's rule
+    # instead of a literal that silently re-pins whenever the reference moves.
+    factor = dict(root["splats/child_0"].attrs).get(
+        "amplitude_normalization_factor"
+    ) or dict(root["splats"].attrs).get("amplitude_normalization_factor")
+    assert factor is not None, "the adder should have normalised this ladder"
     assert tuple(windows[-1]) == pytest.approx(
-        _authored_window(np.asarray(sublods[0].amplitudes)), rel=1e-9
+        _authored_window(np.asarray(sublods[0].amplitudes) * factor), rel=1e-6
     )
     for i in range(n):
         scale = mwmas[i] / mwmas[-1]
