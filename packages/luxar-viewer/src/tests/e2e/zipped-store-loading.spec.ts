@@ -15,6 +15,7 @@ import { fileURLToPath } from 'url';
 import * as fs from 'fs';
 import * as path from 'path';
 import { zipSync } from 'fflate';
+import { uiConfig } from '../../config/sections/ui/data';
 import { test, expect, ALLOW_CONSOLE_ERRORS, type Page } from './fixtures';
 import {
   getLuxarState,
@@ -153,6 +154,6 @@ test('a host that ignores Range shows a persistent actionable failure', async ({
     }))
   ).toEqual({ initialized: false, runtimeReady: undefined, hasGetState: false });
 
-  await page.waitForTimeout(10_500);
+  await page.waitForTimeout(uiConfig.timings.errorAutoDismissMs + 500);
   await expect(message).toBeVisible();
 });
