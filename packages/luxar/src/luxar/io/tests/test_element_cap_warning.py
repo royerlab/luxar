@@ -11,6 +11,8 @@ diagnosis where it is cheap to act on.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import warnings
 from pathlib import Path
 
@@ -127,20 +129,39 @@ def test_a_partitioned_part_stays_quiet() -> None:
     assert caught == []
 
 
-def test_the_warning_names_the_count_the_cap_and_the_remedy(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_the_warning_names_the_count_the_cap_and_the_remedy() -> None:
     with pytest.warns(ElementCapacityWarning) as caught:
         warn_if_over_element_cap("lines", 11_440_000, "/currents")
     message = str(caught[0].message)
-    output = capsys.readouterr().out
     assert "/currents" in message
     assert "11,440,000" in message
     assert "2,793,472" in message
     assert "partition=dict(max_elements=...)" in message
     assert "whole node is committed at once" in message
     assert "current slice" in message
-    assert f"⚠️  {message}" in output
+
+
+def test_the_warning_displays_once_through_arbol() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import warnings\n"
+            "from luxar.io import ElementCapacityWarning\n"
+            "from luxar.io._compiler.node_common import warn_if_over_element_cap\n"
+            "from luxar.utils.arbol_warnings import arbol_warnings\n"
+            "with warnings.catch_warnings():\n"
+            "    warnings.simplefilter('always', ElementCapacityWarning)\n"
+            "    with arbol_warnings():\n"
+            "        warn_if_over_element_cap('lines', 11_440_000, '/currents')\n",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    output = result.stdout
+    assert output.count("⚠️") == 1
+    assert "ElementCapacityWarning: '/currents' holds 11,440,000 segments" in output
 
 
 def test_gsplat_warning_names_both_supported_remedies() -> None:
@@ -156,7 +177,6 @@ def test_a_flat_node_warns_on_its_total(
     geometry_type: str,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The leaf writers themselves must enforce the cap, not only the helper."""
     monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, geometry_type, 4096)
@@ -171,12 +191,10 @@ def test_a_flat_node_warns_on_its_total(
                 scene.add_lines("flat", positions, widths=0.1)
 
     message = str(caught[0].message)
-    output = capsys.readouterr().out
     assert "'/flat'" in message
     assert (
         "5,000 points" if geometry_type == "points" else "5,000 segments"
     ) in message
-    assert f"⚠️  {message}" in output
 
 
 @pytest.mark.parametrize("geometry_type", ["points", "lines"])
@@ -184,7 +202,6 @@ def test_an_additive_ladder_warns_on_its_total(
     geometry_type: str,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Only the actionable parent path warns when the viewer concatenates levels."""
     monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, geometry_type, 4096)
@@ -212,20 +229,16 @@ def test_an_additive_ladder_warns_on_its_total(
 
     assert len(caught) == 1
     message = str(caught[0].message)
-    output = capsys.readouterr().out
     expected = "10,000 points" if geometry_type == "points" else "10,000 segments"
     assert "'/ladder'" in message
     assert expected in message
     assert "'/ladder/additive_0'" not in message
     assert "'/ladder/additive_1'" not in message
-    assert output.count("⚠️") == 1
-    assert f"⚠️  {message}" in output
 
 
 def test_a_gsplat_leaf_warns_on_its_total(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, "gsplats", 4096)
     centers = np.zeros((5_000, 3), dtype=np.float32)
@@ -237,16 +250,13 @@ def test_a_gsplat_leaf_warns_on_its_total(
             scene.add_gsplats("gs", centers, 1.0, cholesky)
 
     message = str(caught[0].message)
-    output = capsys.readouterr().out
     assert "'/gs'" in message
     assert "5,000 splats" in message
-    assert f"⚠️  {message}" in output
 
 
 def test_an_additive_gsplat_ladder_warns_on_its_total(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, "gsplats", 4096)
     centers = np.zeros((3_000, 3), dtype=np.float32)
@@ -269,8 +279,5 @@ def test_an_additive_gsplat_ladder_warns_on_its_total(
 
     assert len(caught) == 1
     message = str(caught[0].message)
-    output = capsys.readouterr().out
     assert "'/gs'" in message
     assert "6,000 splats" in message
-    assert output.count("⚠️") == 1
-    assert f"⚠️  {message}" in output

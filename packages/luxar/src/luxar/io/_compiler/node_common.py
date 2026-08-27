@@ -20,7 +20,6 @@ from typing import Any, Dict, FrozenSet, Optional
 
 import numpy as np
 import zarr
-from arbol import aprint
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
@@ -597,7 +596,6 @@ def warn_if_over_element_cap(
         f"non-displayed dimension commits only its current slice. {remedy} "
         f"to render everywhere."
     )
-    aprint(f"⚠️  {message}")
     warnings.warn(message, ElementCapacityWarning, stacklevel=1)
     return True
 

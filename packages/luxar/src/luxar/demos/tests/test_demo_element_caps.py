@@ -59,7 +59,9 @@ def _module_integer_constants(tree: ast.Module) -> dict[str, int]:
     return constants
 
 
-def _resolve_integer(expression: ast.expr, constants: dict[str, int]) -> int:
+def _resolve_integer(
+    expression: ast.expr, constants: dict[str, int], *, site: str
+) -> int:
     if (
         isinstance(expression, ast.Constant)
         and isinstance(expression.value, int)
@@ -69,7 +71,7 @@ def _resolve_integer(expression: ast.expr, constants: dict[str, int]) -> int:
     if isinstance(expression, ast.Name) and expression.id in constants:
         return constants[expression.id]
     raise AssertionError(
-        "demo element budgets must be integer literals or module-level integer "
+        f"{site}: demo element budgets must be integer literals or module-level integer "
         "constants so the corpus-wide cap gate can verify them"
     )
 
@@ -78,7 +80,7 @@ def _default_budget_expression() -> ast.Constant:
     return ast.Constant(value=DEFAULT_MAX_ELEMENTS)
 
 
-def _partition_max_elements(expression: ast.expr) -> ast.expr | None:
+def _partition_max_elements(expression: ast.expr, *, site: str) -> ast.expr | None:
     if isinstance(expression, ast.Constant):
         if expression.value is True:
             return _default_budget_expression()
@@ -90,7 +92,7 @@ def _partition_max_elements(expression: ast.expr) -> ast.expr | None:
                 keyword.arg is None for keyword in expression.keywords
             ):
                 raise AssertionError(
-                    "demo partition= values cannot use opaque dict inputs because the "
+                    f"{site}: demo partition= values cannot use opaque dict inputs because the "
                     "corpus-wide element-cap gate cannot silently miss their budget"
                 )
             for keyword in expression.keywords:
@@ -101,14 +103,14 @@ def _partition_max_elements(expression: ast.expr) -> ast.expr | None:
         for key, value in zip(expression.keys, expression.values):
             if key is None:
                 raise AssertionError(
-                    "demo partition= values cannot use dictionary unpacking because "
+                    f"{site}: demo partition= values cannot use dictionary unpacking because "
                     "the corpus-wide element-cap gate cannot silently miss their budget"
                 )
             if isinstance(key, ast.Constant) and key.value == "max_elements":
                 return value
         return _default_budget_expression()
     raise AssertionError(
-        "demo partition= values must be statically readable so the corpus-wide "
+        f"{site}: demo partition= values must be statically readable so the corpus-wide "
         "element-cap gate cannot silently miss their per-node budget"
     )
 
@@ -120,6 +122,7 @@ def authored_element_budgets(path: Path) -> list[AuthoredElementBudget]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
+        site = f"{path.name}:{node.lineno}"
         opaque_spreads = [
             keyword.value
             for keyword in node.keywords
@@ -138,7 +141,7 @@ def authored_element_budgets(path: Path) -> list[AuthoredElementBudget]:
             )
             if relevant_call:
                 raise AssertionError(
-                    "demo geometry and compiler calls cannot use ** keyword spreads "
+                    f"{site}: demo geometry and compiler calls cannot use ** keyword spreads "
                     "because the corpus-wide element-cap gate cannot silently miss "
                     "their budgets"
                 )
@@ -150,12 +153,12 @@ def authored_element_budgets(path: Path) -> list[AuthoredElementBudget]:
                 and budget_expression.value is None
             ):
                 continue
-            max_elements = _resolve_integer(budget_expression, constants)
+            max_elements = _resolve_integer(budget_expression, constants, site=site)
             for geometry_type in ("points", "gsplats"):
                 budgets.append(
                     AuthoredElementBudget(
                         path=path,
-                        line=node.lineno,
+                        line=getattr(budget_expression, "lineno", node.lineno),
                         geometry_type=geometry_type,
                         max_elements=max_elements,
                     )
@@ -168,15 +171,17 @@ def authored_element_budgets(path: Path) -> list[AuthoredElementBudget]:
             continue
         budget_expression = None
         if "partition" in keywords:
-            budget_expression = _partition_max_elements(keywords["partition"])
+            budget_expression = _partition_max_elements(
+                keywords["partition"], site=site
+            )
         if budget_expression is None:
             continue
         budgets.append(
             AuthoredElementBudget(
                 path=path,
-                line=node.lineno,
+                line=getattr(budget_expression, "lineno", node.lineno),
                 geometry_type=geometry_type,
-                max_elements=_resolve_integer(budget_expression, constants),
+                max_elements=_resolve_integer(budget_expression, constants, site=site),
             )
         )
     return sorted(budgets, key=lambda budget: budget.line)
@@ -224,14 +229,14 @@ scene.add_points('default_literal', positions, partition={'rule': 'sah'})
         encoding="utf-8",
     )
     assert [
-        (budget.geometry_type, budget.max_elements)
+        (budget.geometry_type, budget.max_elements, budget.line)
         for budget in authored_element_budgets(demo)
     ] == [
-        ("points", 5_591_040),
-        ("gsplats", 4_194_304),
-        ("lines", DEFAULT_MAX_ELEMENTS),
-        ("points", DEFAULT_MAX_ELEMENTS),
-        ("points", DEFAULT_MAX_ELEMENTS),
+        ("points", 5_591_040, 3),
+        ("gsplats", 4_194_304, 5),
+        ("lines", DEFAULT_MAX_ELEMENTS, 6),
+        ("points", DEFAULT_MAX_ELEMENTS, 8),
+        ("points", DEFAULT_MAX_ELEMENTS, 9),
     ]
 
 
@@ -253,7 +258,9 @@ def test_budget_discovery_rejects_an_unreadable_partition(tmp_path: Path) -> Non
         "scene.add_points('points', positions, partition=partition_config)\n",
         encoding="utf-8",
     )
-    with pytest.raises(AssertionError, match="cannot silently miss"):
+    with pytest.raises(
+        AssertionError, match=r"demo_example\.py:1: .*cannot silently miss"
+    ):
         authored_element_budgets(demo)
 
 
@@ -267,7 +274,7 @@ def test_budget_discovery_rejects_an_unreadable_partition(tmp_path: Path) -> Non
 def test_budget_discovery_rejects_keyword_spreads(tmp_path: Path, source: str) -> None:
     demo = tmp_path / "demo_example.py"
     demo.write_text(source, encoding="utf-8")
-    with pytest.raises(AssertionError, match="keyword spreads"):
+    with pytest.raises(AssertionError, match=r"demo_example\.py:1: .*keyword spreads"):
         authored_element_budgets(demo)
 
 

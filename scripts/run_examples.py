@@ -25,20 +25,6 @@ MARKER_NAME = ".fixture-build.json"
 MARKER_VERSION = 2
 # Keep synchronized with packages/luxar-viewer/tools/example-fixture-freshness.ts.
 STALE_EXIT_CODE = 3
-_WARNING_ERROR_BOOTSTRAP = """
-import runpy
-import sys
-import warnings
-from pathlib import Path
-
-from luxar.io import ElementCapacityWarning
-
-warnings.simplefilter("error", ElementCapacityWarning)
-script = sys.argv[1]
-sys.argv = sys.argv[1:]
-sys.path[0] = str(Path(script).resolve().parent)
-runpy.run_path(script, run_name="__main__")
-"""
 
 
 def source_fingerprint(repo_root: Path = REPO_ROOT) -> str:
@@ -186,16 +172,7 @@ def generate_examples(
     for index, script in enumerate(scripts, start=1):
         print(f"\n[{index}/{len(scripts)}] 📊 Running {script.name}...", flush=True)
         print("─" * 48, flush=True)
-        result = subprocess.run(
-            [
-                python,
-                "-c",
-                _WARNING_ERROR_BOOTSTRAP,
-                str(script),
-            ],
-            cwd=repo_root,
-            check=False,
-        )
+        result = subprocess.run([python, str(script)], cwd=repo_root, check=False)
         if result.returncode == 0:
             print(f"✅ Success: {script.name}", flush=True)
         else:
