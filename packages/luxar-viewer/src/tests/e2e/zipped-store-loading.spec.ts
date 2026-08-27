@@ -5,16 +5,17 @@
  * catches the routing failure where an archive can reach `initialized` with an
  * empty scene. This spec packages an existing generated fixture, loads both
  * forms through the normal E2E data server, and requires identical element
- * counts. It also emulates a host that ignores Range and pins the loud startup
- * failure instead of an initialized empty scene. The DEFLATE fixture is smaller
- * than unzipit's end-of-directory search window, so it is retained in one read;
- * the STORED case covers windowed reads.
+ * counts. It also emulates a host that ignores Range and pins the actionable,
+ * persistent startup failure instead of an initialized empty scene. The DEFLATE
+ * fixture is smaller than unzipit's end-of-directory search window, so it is
+ * retained in one read; the STORED case covers windowed reads.
  */
 
 import { fileURLToPath } from 'url';
 import * as fs from 'fs';
 import * as path from 'path';
 import { zipSync } from 'fflate';
+import { uiConfig } from '../../config/sections/ui/data';
 import { test, expect, ALLOW_CONSOLE_ERRORS, type Page } from './fixtures';
 import {
   getLuxarState,
@@ -126,9 +127,10 @@ for (const format of archiveFormats) {
   });
 }
 
-test('a host that ignores Range fails loudly without initializing an empty scene', async ({
+test('a host that ignores Range shows a persistent actionable failure', async ({
   page,
 }, testInfo) => {
+  await page.setViewportSize({ width: 1024, height: 600 });
   testInfo.annotations.push({
     type: ALLOW_CONSOLE_ERRORS,
     description: 'The console error is the user-visible behavior under test.',
@@ -159,7 +161,23 @@ test('a host that ignores Range fails loudly without initializing an empty scene
   await expect
     .poll(() => consoleErrors.join('\n'), { timeout: 10_000 })
     .toMatch(/honours HTTP Range requests/);
-  await expect(page.locator('#luxar-error-message')).toBeVisible();
+  const message = page.locator('#luxar-error-message-text');
+  await expect(message).toContainText(/honours HTTP Range requests/);
+  const dialog = page.locator('.luxar-error-dialog');
+  const dialogBounds = await dialog.boundingBox();
+  expect(dialogBounds).not.toBeNull();
+  expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(dialogBounds!.y + dialogBounds!.height).toBeLessThanOrEqual(600);
+  expect(await dialog.evaluate((element) => getComputedStyle(element).overflowY)).toBe('auto');
+  expect(await dialog.evaluate((element) => element.scrollTop)).toBe(0);
+  const titleBounds = await page.locator('#luxar-error-title').boundingBox();
+  expect(titleBounds).not.toBeNull();
+  expect(titleBounds!.y).toBeGreaterThanOrEqual(dialogBounds!.y);
+  expect(
+    await page.evaluate(() =>
+      document.activeElement?.classList.contains('luxar-error-dialog__dismiss')
+    )
+  ).toBe(true);
   expect(pageErrors).toEqual([]);
   expect(
     await page.evaluate(() => ({
@@ -168,4 +186,7 @@ test('a host that ignores Range fails loudly without initializing an empty scene
       hasGetState: typeof window.__luxarDebug?.getState === 'function',
     }))
   ).toEqual({ initialized: false, runtimeReady: undefined, hasGetState: false });
+
+  await page.waitForTimeout(uiConfig.timings.errorAutoDismissMs + 500);
+  await expect(message).toBeVisible();
 });

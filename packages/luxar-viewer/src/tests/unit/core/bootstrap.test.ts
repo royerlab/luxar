@@ -76,6 +76,7 @@ vi.mock('zarrita', () => ({
 }));
 
 import { bootstrapStandalone } from '../../../core/bootstrap';
+import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { setDocumentTitle } from '../../../core/document-title';
 import { log } from '../../../utils/log';
 import type { UrlParams } from '../../../config/url-params';
@@ -493,6 +494,29 @@ describe('bootstrapStandalone', () => {
         help: 'help.toggle',
       });
       expect(resolveShortcut(shortcutActions.help)).toBe('F1');
+      expect(mocks.showError.mock.calls[0][3]).toEqual({ autoDismiss: false });
+    });
+
+    it('surfaces authored archive fault remedies in the persistent startup dialog', async () => {
+      const initError = new ArchiveFaultError(
+        'The archive was not found. Check the `?src=` path.',
+        'https://example.test/missing.zarr.zip'
+      );
+      mocks.init.mockRejectedValueOnce(initError);
+
+      await expect(bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS })).rejects.toBe(
+        initError
+      );
+
+      expect(mocks.showError).toHaveBeenCalledWith(
+        initError.message,
+        expect.any(Function),
+        {
+          datasetBrowser: 'dataset-browser.toggle',
+          help: 'help.toggle',
+        },
+        { autoDismiss: false }
+      );
     });
   });
 
