@@ -739,9 +739,9 @@ def _batch_floor_stats(manifest: BatchManifest) -> Dict[str, Any]:
 
     ``batch-fit`` resolves ONE background level at plan time and hands it to
     every ``(t, c)`` task, but the merge never recorded it: the streaming
-    partition writer is fed a parts generator (no root node to promote a
-    ``meta`` block from) and the tiles it reloads carry no stats. The level is
-    already on the manifest, so take it from there.
+    partition writer is fed a parts generator with no root node whose ``meta``
+    block could be promoted. The manifest remains the authority for the shared
+    level, so take it from there rather than inferring it from one tile.
 
     Only an unambiguous answer is written. ``floor_level`` is set exactly when
     the tasks were handed a concrete number; a ``None`` means one of three

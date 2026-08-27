@@ -60,6 +60,42 @@ def test_info_surfaces_the_source_grid(tmp_path: Path) -> None:
     assert "compression:" in result.output, result.output
 
 
+def test_info_summarizes_nested_part_provenance_unless_full_is_requested(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from luxar.cli.gsplat_ops.inspect_commands import _print_fitting_value
+
+    records = [
+        {
+            "coordinate": 0.0,
+            "fitting": {
+                "part_provenance": [
+                    {
+                        "coordinate": 1.0,
+                        "fitting": {
+                            "part_provenance": [
+                                {"coordinate": 2.0, "fitting": {"psnr_db": 40.0}}
+                            ]
+                        },
+                    }
+                ]
+            },
+        }
+    ]
+    _print_fitting_value("part_provenance", records)
+    summary = capsys.readouterr().out
+    assert "part_provenance: 1 parts, nested channels × timepoints" in summary
+    assert "psnr_db" not in summary
+
+    _print_fitting_value("part_provenance", records, show_full_provenance=True)
+    full = capsys.readouterr().out
+    assert "psnr_db" in full
+
+    help_result = CliRunner().invoke(app, ["gsplat", "info", "--help"])
+    assert help_result.exit_code == 0, help_result.output
+    assert "--full-provenance" in help_result.output
+
+
 def test_cli_fit_stamps_the_stored_dtype_not_the_loaders_cast(tmp_path: Path) -> None:
     """End to end through the command: a uint16 file must not record float32.
 
