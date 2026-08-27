@@ -70,7 +70,7 @@ forced the zebrafish demo to round. And the build asserts every stored timepoint
 lands on the grid rather than trusting that it does.
 
 ================================================================================
-CULLING: WHY THIS SHIPS AT 64% OF WHAT WAS FITTED
+CULLING: WHY THIS SHIPS AT 65% OF WHAT WAS FITTED
 ================================================================================
 
 The fit produces 256,000 splats per frame — 128 million in total, about 1.19 GB.
@@ -92,7 +92,7 @@ WHERE THE DATA COMES FROM
 This demo downloads **one fitted archive** and builds a scene from it. That
 archive is the only input, and nothing else is needed to run the demo:
 
-    gsplats_4d_drosophila_embryogenesis  ->  droso_timelapse.gsplats.zarr.zip
+    gsplats_4d_drosophila_embryogenesis  ->  drosophila_embryogenesis_500tp.gsplats.zarr.zip
     824 MB, 83,221,420 splats, 500 timepoints
     Zenodo record 10.5281/zenodo.22118695
 

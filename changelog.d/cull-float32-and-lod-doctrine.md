@@ -52,3 +52,14 @@ range. The two pathology slides keep `adaptive`, which is what parts are for.
 One catch travels with `stream`: a flat store needs re-chunking or scrubbing gets
 worse rather than better — 173 requests per timepoint step as built, two after
 `luxar optimise --profile archive`. Additive-only and re-chunking are a package.
+
+#### Adding the 4D Drosophila embryogenesis demo
+
+The demo catalogue now includes a 500-timepoint SiMView recording of Drosophila
+embryogenesis as one time-sliced 4D Gaussian-splat node. The scene validates and
+normalises the stored time coordinate to the acquisition's 30-second interval,
+keeps one appearance scale across every frame and ladder rung, and documents the
+fit, cull, physical scaling, and streaming-optimisation pipeline.
+
+The 824 MB archive is pinned to Zenodo record `22118695`; the record remains
+unpublished until its recorded publication gate is cleared.

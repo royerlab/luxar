@@ -127,7 +127,8 @@ RECORDS = {
     # implies no consent to publish. Recorded in the repo on purpose — Zenodo's
     # `notes` and `description` are both PUBLISHED metadata, so an internal
     # process gate written there would ship with the record.
-    # No dataset points here yet: the timelapse archive lands in a later pass.
+    # The timelapse dataset below points at this record; publishing remains
+    # gated on the conversation above even after the archive is uploaded.
     "droso-timelapse": {
         "title": (
             "Drosophila melanogaster embryogenesis: a 500-timepoint "

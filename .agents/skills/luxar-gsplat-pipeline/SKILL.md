@@ -425,14 +425,14 @@ nodes; publishing the regenerated archive remains #1879);
 and pays +39% on purpose.
 
 **Does the RESIDENT set fit?** `MAX_SPLATS_PER_GSPLATS_NODE` is 4,194,304 on a
-4096-class GPU (8.38M at 8192). Above it the viewer silently drops the tail, and
-since storage is Hilbert-ordered that tail is one contiguous lobe — a clean-edged
-hole, not noise. **Only the resident slice counts**: an nD node sliced on a hidden
-axis is measured per-slice, so a 500-timepoint node holding 128M splats at
-~256k/frame is fine. The compiler currently warns on the node total rather than
-the resident slice, so that warning is expected for a sliced nD node that
-satisfies the runtime limit. For a STATIC object over the cap, parts are
-load-bearing.
+4096-class GPU (8.38M at 8192). Above it the viewer reports the clamp at load
+time and drops the tail; since storage is Hilbert-ordered that tail is one
+contiguous lobe — a clean-edged hole, not noise. **Only the resident slice
+counts**: an nD node sliced on a hidden axis is measured per-slice, so a
+500-timepoint node holding 128M splats at ~256k/frame is fine. The compiler also
+warns on the node total rather than the resident slice, so that warning is
+expected for a sliced nD node that satisfies the runtime limit. For a STATIC
+object over the cap, parts are load-bearing.
 
 **On a time-stacked 4D node, a partition buys nothing at all.** The writer
 lexsorts by the time barrier, so a timepoint's splats are already contiguous and
