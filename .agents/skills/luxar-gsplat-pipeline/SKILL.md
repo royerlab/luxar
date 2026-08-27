@@ -419,7 +419,9 @@ The table above answers "what fits in memory and renders fast". It does not answ
 "how many requests does the host serve before anything appears". On a
 request-constrained host — one where request *count*, not bandwidth, is the binding
 limit, and exceeding it fails rather than bills — that count, not element count and
-not chunk size, is what picks the recipe.
+not chunk size, is what picks the recipe. Paths below are relative to
+`packages/luxar-viewer/src/` for the viewer and `packages/luxar/src/luxar/` for
+Python.
 
 **Count eager rungs, not nodes.** `parts × levels × rungs` counts the tree; first
 paint pays only the part of it the loader fetches eagerly:
@@ -431,43 +433,46 @@ requests         ≈ eager rungs × arrays per rung + one per extra chunk
 ```
 
 A `kind=lod` group loads exactly ONE level eagerly — index `default_level`, which
-every gsplat recipe and graft writes as 0, the coarsest
-(`io/_compiler/gsplat_tree.py`). Every other LOD-capable child is cheap-attached
-(placeholder + loader thunk, no array fetch), and a nested `kind=lod`/`kind=partition`
-child defers too — unless it carries its own `transform`, or the viewer has no LOD
-registry, either of which sends it down the eager path
-(`scene-loader/nodes/load-lod-group-node.ts::canDeferGroup`). A `kind=partition`
-group has no such selector: it loads EVERY part eagerly
-(`scene-loader/nodes/load-partition-group-node.ts`).
+every gsplat recipe (`io/_compiler/gsplat_tree.py`) and scene graft
+(`core/group/gsplats_pipeline/from_io.py`) writes as 0, the coarsest. Every other
+LOD-capable child is cheap-attached (placeholder + loader thunk, no array fetch), and
+a nested `kind=lod`/`kind=partition` child defers too — unless it carries its own
+`transform`, or the viewer has no LOD registry, either of which sends it down the
+eager path (`data/scene-loader/nodes/load-lod-group-node.ts::canDeferGroup`). A
+`kind=partition` group has no such selector: it loads EVERY part eagerly
+(`data/scene-loader/nodes/load-partition-group-node.ts`).
 
 **The first pass is a floor, not a ceiling.** A cold pass commits 2 stream rungs
-(`loaders/progressive/streaming-policy.ts::shouldStopAfterLevel`) and prefetches a
-third (`gsplats/gsplats-progressive-loader.ts::prefetchNextLOD`) — but post-load
-refinement is kicked fire-and-forget from *inside* `loadScene` before it returns
-(`scene-loader/lifecycle/load-scene.ts`), one rung per frame, so the rest land
-alongside first paint and converge on the full eager-level ladder. Size a hard cap
-against `converged rungs`; `min(3, …)` only says what the user sees first.
+(`data/loaders/progressive/streaming-policy.ts::shouldStopAfterLevel`) and prefetches
+a third (`data/gsplats/gsplats-progressive-loader.ts::prefetchNextLOD`) — but
+post-load refinement is kicked fire-and-forget from *inside* `loadScene` before it
+returns (`data/scene-loader/lifecycle/load-scene.ts`), one rung per frame, so the
+rest land shortly after and converge on the full eager-level ladder for a static
+view. It is suspended outright while a playback frame budget is active, and every
+navigation restarts it from the committed prefix. Size a hard cap against
+`converged rungs`; `min(3, …)` only says what the user sees first.
 
-**And a rung is not one request.** `chunk_bounds` is a real one-chunk data read
-(`loaders/chunk-bounds-loader.ts`), then `centers`, `amplitudes`,
-`cholesky_factors_diag`, `cholesky_factors_offdiag` and optionally `colors`, at one
-HTTP request per zarr chunk with no coalescing. Call a 3D rung **5–6 requests
-minimum** plus one per extra chunk — but that is an array *list*, not a constant, so
-re-count it: a v3.0 store packs the Cholesky factors into one array, a colormapped
-fit carries no `colors`, and an nD rung whose slice query selects nothing costs only
-the `chunk_bounds` read. Array *metadata* is free on a Luxar-compiled store (one
-consolidated index for the whole scene); on an arbitrary `?src=` store without one a
-deferred tree pays a round trip per rung it never fetches — `parts × levels × rungs`,
-which then dominates.
+**And a rung is not one request.** `chunk_bounds` is a real one-chunk data read when
+the leaf carries a spatial index (`data/loaders/chunk-bounds-loader.ts`), then
+`centers`, `amplitudes`, `cholesky_factors_diag`, `cholesky_factors_offdiag` and
+optionally `colors`, at one HTTP request per zarr chunk with no coalescing. Call a 3D
+rung **5–6 requests minimum** plus one per extra chunk — but that is an array *list*,
+not a constant, so re-count it: a v3.0 store packs the Cholesky factors into one
+array, a colormapped fit carries no `colors`, and an nD rung whose slice query selects
+nothing costs only the `chunk_bounds` read. Array *metadata* is free — one
+consolidated index for the whole scene, fetched once.
 
 **Only a partition-anchored ladder actually keeps its one eager level.** The selector
 runs on the first frame and upgrades win outright with no hysteresis
-(`scene/lod-selector-math.ts`), and the anchors differ: a whole-object ladder sits at
-half-screen occupancy (`core/group/lod/group.py::WHOLE_OBJECT_FINEST_ANCHOR`), which
-the opening framing already satisfies, so a `levels` store promotes straight to a
-near-finest level; a partition-bound ladder sits at `PARTITION_FINEST_AREA` = 1.0 —
-the tile alone filling the screen — which it does not. So the recipes split where the
-scale ordering does not:
+(`scene/lod-selector-math.ts`), and the anchors differ. A whole-object ladder anchors
+its FINEST level at half-screen occupancy
+(`core/group/lod/group.py::WHOLE_OBJECT_FINEST_ANCHOR` = 0.5), which the default
+opening framing does *not* reach — a cube measures ~0.32 area occupancy at 16:9, an
+elongated object ~0.25 — but that still clears the intermediate rungs of a
+`[0, ⅛, ¼, ½]` ladder, so a `levels` store promotes off its coarsest level on the
+first selector frame rather than holding it. A partition-bound ladder is anchored at
+`PARTITION_FINEST_AREA` = 1.0 — the tile alone filling the screen — which the opening
+framing does not clear at all. So the recipes split where the scale ordering does not:
 
 - **`overview` — ~3 eager rungs, independent of part count.** Its root is a
   `kind=lod` over `[coarse_leaf, fine_partition]`, coarsest first
@@ -480,19 +485,18 @@ scale ordering does not:
   frame 1 as above, so it is not the cheap option its depth suggests.
 
 **Measured, on one 1.58 GiB 4D timelapse.** Built with `adaptive`: 44 parts × 4
-levels × 4 rungs = 704 nodes, of which 44 × 1 × 3 = **132 first-pass rungs** (176
-converged). First paint measured **689** requests after
-`luxar optimise --profile archive`, and 922 as built. 689 over 132 rungs is 5.2
-requests per rung — right at the array-list floor, which also says refinement had not
-converged when the poll fired (176 rungs could not come in under 880).
+levels × 4 rungs = 704 nodes, of which 44 × 1 × 3 = **132** rungs on the first pass
+and 176 converged. At ~5 arrays per rung the model predicts **660–880** requests.
+Measured first paint: **689** after `luxar optimise --profile archive` — inside the
+band — and 922 as built, the excess over it being the extra-chunk term.
 
 The control is the same data as a single stacked 4D leaf with an 8-rung `stream`
 ladder — 8 nodes, and 3.34 M splats against the `adaptive` store's 33,632 at first
-paint, so the *larger* store in every sense that matters. It pays 3 eager rungs:
-**39** requests at `archive`, 62 as built — 13 per rung, three times h2afva's. **The
-floor is only tight when eager rungs are small.** h2afva's held ~255 splats each, so
-every array was one chunk; the control's held ~1.1 M, so the extra-chunk term
-dominated. Check which regime you are in before trusting the floor.
+paint, so the *larger* store in every sense that matters. 3 rungs on the first pass
+and 8 converged predicts **15–40**: measured **39** at `archive`, again inside the
+band, and 62 as built. The same model, the same treatment, both stores — no fitted
+constant, and note it gives a *band*, because the harness polls at ready and cannot
+tell a first pass from a converged one.
 
 Like chunk regime for like, 704 nodes cost **15–18× what 8 nodes cost** — and
 conservatively so: the single-leaf figures are local, where first paint equals
@@ -502,7 +506,7 @@ all). At fixed structure, re-chunking alone moves *first paint* 25–37% (922 �
 62 → 39) — a real second-order term, and `--profile archive` is still the right call
 (a full load gains far more), but it cannot touch the structure term.
 
-**Carry no fitted constant forward.** Across those five measured points
+**Carry no fitted constant forward.** Across the five measured points
 `requests/node` spans 0.98 to 7.75, a 7.9× range: it is a ratio of two things that
 move independently — what fraction of the tree is eager, and how many chunks each
 array spans. Derive from eager rungs, never from a per-node rate.
@@ -516,13 +520,14 @@ and is NOT an HTTP count; and `requestCount` excludes the document, bundle, WASM
 zip-open probes, so it is a lower bound. `luxar info --stats` projects the full-load
 chunk count for a store on disk — the offline companion.
 
-So when first paint is request-constrained: prefer `overview` over
-`adaptive`/`tiles` at huge N, or raise `--max-elements` to cut the part count — but
-not to one part, which makes the BSP return a single-part partition and drops both
-recipes back to the whole-object anchor (`gsplats/lod/recipes.py::build_adaptive`),
-promoting on frame 1. Or keep the object a single stacked leaf with a `stream` ladder
-and let the deferral do the work. A large byte size on its own is not a reason to
-reach for `adaptive`.
+So when first paint is request-constrained: prefer `overview` over `adaptive`/`tiles`
+at huge N, or raise `--max-elements` to cut the part count. Note where that lever
+ends: at one part the BSP stops splitting, `adaptive` falls back to the whole-object
+anchor (`gsplats/lod/recipes.py::build_adaptive`) and `tiles` becomes a single
+additive-laddered leaf (`gsplats/lod/recipes.py::_ladder_for_part` returns a leaf,
+not a lod group) — both collapse into `levels`/`stream`, which is the cheap shape. Reach for
+those directly rather than arriving at them by accident. A large byte size on its own
+is not a reason to reach for `adaptive`.
 
 ## Tiled fits (large volumes)
 
