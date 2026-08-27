@@ -805,6 +805,9 @@ make build-wasm    # Build WASM module
 
 ## API Reference
 
+Full generated reference for Python and TypeScript:
+[Luxar documentation](https://royerlab.github.io/luxar/).
+
 ### Python API
 
 ```python
