@@ -1188,6 +1188,68 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(rgbMat.updateOffset).toHaveBeenLastCalledWith(0);
   });
 
+  it('labels direct-colour and colormapped ranges with their mapping semantics', () => {
+    const stubMat = makeColormapRoutingStub();
+    const geometry = new THREE.BufferGeometry();
+    geometry.userData.hasScalars = true;
+    const mesh = new THREE.Mesh(geometry, stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: {
+            layer: true,
+            type: 'points',
+            has_scalars: true,
+            intensity: 2.4,
+            offset: 0,
+            scalar_data_range: [0.0001, 0.02],
+          },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const rangeLabel = container.querySelector('.luxar-range-slider__label') as HTMLElement;
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(1 / 2.4, 6);
+    expect(rangeLabel.textContent).toBe('Colour range');
+    expect(rangeLabel.title).toBe(
+      "Input RGB values in this range are mapped to the full output range. This controls colour gain and offset, not the layer's data extents."
+    );
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    )!;
+    cmSelect.value = 'viridis';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(0.02, 6);
+    expect(rangeLabel.textContent).toBe('Display range');
+    expect(rangeLabel.title).toBe(
+      'Scalar data values in this range are mapped across the colormap.'
+    );
+
+    cmSelect.value = '';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(rangeLabel.textContent).toBe('Colour range');
+    expect(rangeLabel.title).toContain("not the layer's data extents");
+  });
+
   it('switching between two active palettes keeps a user-adjusted scalar window', () => {
     // Re-defaulting the window is for the off↔on MODE flip only — the
     // rendered value is the same scalar on both sides of viridis → plasma,
