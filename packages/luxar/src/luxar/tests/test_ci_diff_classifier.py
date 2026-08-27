@@ -903,6 +903,7 @@ def _run_cancelled_push_repair(
     push_typescript: str = "cancelled",
     push_release: str = "cancelled",
     rejected_endpoint: str = "",
+    failed_get_endpoint: str = "",
     candidate_shas: tuple[str, ...] = ("deadbeef",),
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Execute the repair shell against deterministic workflow/job snapshots."""
@@ -923,6 +924,8 @@ if "--method" in sys.argv:
         stream.write(endpoint + "\\n")
     if endpoint == os.environ["REJECTED_ENDPOINT"]:
         raise SystemExit(1)
+elif endpoint == os.environ["FAILED_GET_ENDPOINT"]:
+    raise SystemExit(1)
 elif f"/runs/{os.environ['GITHUB_RUN_ID']}/jobs?" in endpoint:
     print(json.dumps([{"jobs": [
         {"id": 10, "name": "python-tests (3.12)", "conclusion": "cancelled"},
@@ -982,6 +985,7 @@ else:
             "PUSH_TYPESCRIPT": push_typescript,
             "PUSH_RELEASE": push_release,
             "REJECTED_ENDPOINT": rejected_endpoint,
+            "FAILED_GET_ENDPOINT": failed_get_endpoint,
             "CANDIDATE_SHAS": ",".join(candidate_shas),
         },
     )
@@ -1052,6 +1056,28 @@ def test_rejected_multi_job_rerun_is_reported(workflow: str, tmp_path: Path) -> 
         "rerun rejected for push run 900 (deadbeef; 3 cancelled required jobs)"
         in result.stdout
     )
+
+
+@pytest.mark.parametrize(
+    "failed_get_endpoint",
+    [
+        "repos/royerlab/luxar/actions/runs?head_sha=deadbeef&event=push&status=completed&per_page=100",
+        "repos/royerlab/luxar/actions/runs/900/jobs?filter=latest&per_page=100",
+    ],
+)
+def test_candidate_api_failure_does_not_abort_backlog_repair(
+    workflow: str, tmp_path: Path, failed_get_endpoint: str
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        failed_get_endpoint=failed_get_endpoint,
+        candidate_shas=("older", "deadbeef"),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/jobs/31/rerun"]
+    assert "API query failed for deadbeef; continuing backlog repair" in result.stdout
 
 
 def test_non_green_schedule_does_not_repair_push_jobs(

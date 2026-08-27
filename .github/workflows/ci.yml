@@ -1182,16 +1182,22 @@ jobs:
           required_json=$(printf '%s\n' "${required[@]}" \
             | jq -Rsc 'split("\n") | map(select(length > 0))')
           while IFS= read -r candidate_sha; do
-            push_run=$(gh api \
+            if ! push_run=$(gh api \
               "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${candidate_sha}&event=push&status=completed&per_page=100" \
-              --jq '[.workflow_runs[] | select(.name == "CI")] | max_by(.id).id // empty')
+              --jq '[.workflow_runs[] | select(.name == "CI")] | max_by(.id).id // empty'); then
+              echo "::warning::API query failed for $candidate_sha; continuing backlog repair"
+              continue
+            fi
             if [ -z "$push_run" ]; then
               echo "No completed push CI run found for $candidate_sha"
               continue
             fi
 
-            push_jobs=$(gh api --paginate --slurp \
-              "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/jobs?filter=latest&per_page=100")
+            if ! push_jobs=$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/jobs?filter=latest&per_page=100"); then
+              echo "::warning::API query failed for $candidate_sha; continuing backlog repair"
+              continue
+            fi
             cancelled_jobs=$(jq -r --argjson required "$required_json" '
               [.[] | .jobs[]]
               | group_by(.name)[]
