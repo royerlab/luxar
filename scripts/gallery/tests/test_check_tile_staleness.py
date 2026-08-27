@@ -79,6 +79,7 @@ def _repo(tmp_path: Path) -> Path:
     for relative in (
         "scripts/gallery",
         "packages/luxar/src/luxar/demos",
+        "packages/luxar/src/luxar/demos/_support",
         "packages/luxar/src/luxar/shading",
         "packages/luxar/src/luxar/shading/tests",
         "packages/luxar-viewer/src/tests/screenshots",
@@ -103,9 +104,10 @@ def _repo(tmp_path: Path) -> Path:
     )
     for demo_id in ("a", "b"):
         (tmp_path / f"packages/luxar/src/luxar/demos/demo_{demo_id}.py").write_text(
+            "from luxar.demos._cinematic_camera import pull_in\n"
             "from luxar.shading import bake_ambient_occlusion\n"
             if demo_id == "a"
-            else "# demo b\n"
+            else "from luxar.demos._support._umap_utils import colors\n"
         )
         for suffix in ("webp", "webm"):
             (tmp_path / f"docs/images/readme/gallery/{demo_id}.{suffix}").write_text(
@@ -113,6 +115,12 @@ def _repo(tmp_path: Path) -> Path:
             )
     (tmp_path / "packages/luxar/src/luxar/shading/occlusion.py").write_text(
         "# shading\n"
+    )
+    (tmp_path / "packages/luxar/src/luxar/demos/_cinematic_camera.py").write_text(
+        "# camera helper\n"
+    )
+    (tmp_path / "packages/luxar/src/luxar/demos/_support/_umap_utils.py").write_text(
+        "# umap helper\n"
     )
 
     _git(tmp_path, "init", "-b", "dev")
@@ -236,6 +244,53 @@ def test_demo_script_edit_stales_only_its_tile(tmp_path: Path, capsys) -> None:
     output = capsys.readouterr().out
     assert "STALE b:" in output
     assert "newer per-tile inputs: demo generator" in output
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "expected_demo", "expected_label"),
+    [
+        (
+            "packages/luxar/src/luxar/demos/_cinematic_camera.py",
+            "a",
+            "demo helper _cinematic_camera",
+        ),
+        (
+            "packages/luxar/src/luxar/demos/_support/_umap_utils.py",
+            "b",
+            "demo helper _support._umap_utils",
+        ),
+    ],
+)
+def test_demo_helper_edit_stales_only_its_importers(
+    tmp_path: Path,
+    relative_path: str,
+    expected_demo: str,
+    expected_label: str,
+) -> None:
+    repo = _repo(tmp_path)
+    (repo / relative_path).write_text("# revised helper\n")
+    _commit(repo, "revise demo helper", 22)
+
+    by_id = {
+        status.demo_id: status for status in stale.GalleryHistory(repo).tile_statuses()
+    }
+
+    other_demo = "b" if expected_demo == "a" else "a"
+    assert by_id[expected_demo].stale_inputs == (expected_label,)
+    assert by_id[other_demo].stale_inputs == ()
+
+
+def test_missing_demo_helper_is_an_unknown_row(tmp_path: Path, capsys) -> None:
+    repo = _repo(tmp_path)
+    (repo / "packages/luxar/src/luxar/demos/demo_b.py").write_text(
+        "from luxar.demos._missing import helper\n"
+    )
+    _commit(repo, "reference missing helper", 22)
+
+    assert stale.main(["--repo-root", str(repo)]) == 0
+    output = capsys.readouterr().out
+    assert "CURRENT a" in output
+    assert "UNKNOWN b: demo helper '_missing' is not tracked at HEAD" in output
 
 
 def test_gallery_capture_policy_is_a_global_input(tmp_path: Path, capsys) -> None:

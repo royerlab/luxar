@@ -146,6 +146,20 @@ def imports_luxar_shading(source: str) -> bool:
     return False
 
 
+def direct_demo_helper_modules(source: str) -> tuple[str, ...]:
+    """Return directly imported private modules under ``luxar.demos``."""
+    tree = ast.parse(source)
+    modules = {
+        node.module.removeprefix("luxar.demos.")
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.level == 0
+        and node.module is not None
+        and node.module.startswith("luxar.demos._")
+    }
+    return tuple(sorted(modules))
+
+
 class GalleryHistory:
     """Read the narrow Git history inputs that can invalidate committed gallery tiles."""
 
@@ -291,8 +305,20 @@ class GalleryHistory:
                     script_path = DEMOS_DIR / script
                     inputs["demo generator"] = self._last_commit(script_path)
                     source = self._head_text(script_path)
-                    if source is not None and imports_luxar_shading(source):
-                        inputs["luxar.shading"] = shading_input
+                    if source is not None:
+                        for module in direct_demo_helper_modules(source):
+                            helper_path = DEMOS_DIR.joinpath(
+                                *module.split(".")
+                            ).with_suffix(".py")
+                            if self._head_text(helper_path) is None:
+                                raise StalenessError(
+                                    f"demo helper {module!r} is not tracked at HEAD"
+                                )
+                            inputs[f"demo helper {module}"] = self._last_commit(
+                                helper_path
+                            )
+                        if imports_luxar_shading(source):
+                            inputs["luxar.shading"] = shading_input
                 inputs["manifest entry"] = self._manifest_entry_commit(ranges[demo_id])
                 tile = min(
                     (self._last_commit(path) for path in media_paths),
