@@ -36,6 +36,12 @@ import { clampGamma } from './attrs-utils';
 import { clamp } from '../gui/format/value-formatting';
 import type { LayerApplyEngine } from './layer-apply';
 
+const SCALAR_RANGE_LABEL = 'Display range';
+const COLOUR_RANGE_LABEL = 'Colour range';
+const SCALAR_RANGE_TOOLTIP = 'Scalar data values in this range are mapped across the colormap.';
+const COLOUR_RANGE_TOOLTIP =
+  "Input RGB values in this range are mapped to the full output range. This controls colour gain and offset, not the layer's data extents.";
+
 /**
  * Dependencies injected by the owning {@link LayersPanel}. `state` and
  * `apply` are the panel's (stable) layer-state manager and material-apply
@@ -165,7 +171,8 @@ export class LayerControls {
       max: 1,
       valueLow: 0,
       valueHigh: 1,
-      label: 'Display range',
+      label: SCALAR_RANGE_LABEL,
+      tooltip: SCALAR_RANGE_TOOLTIP,
       onChange: (low, high) => {
         this.controlsInteracting = true;
         this.deps.state.applyToSelected((l) => {
@@ -607,6 +614,10 @@ export class LayerControls {
     if (!primary) return;
 
     if (this.rangeSlider) {
+      this.rangeSlider.setLabel(
+        primary.scalarWindow ? SCALAR_RANGE_LABEL : COLOUR_RANGE_LABEL,
+        primary.scalarWindow ? SCALAR_RANGE_TOOLTIP : COLOUR_RANGE_TOOLTIP
+      );
       this.rangeSlider.setBounds(primary.dataMin, primary.dataMax);
       this.rangeSlider.setValues(primary.displayMin, primary.displayMax);
     }
