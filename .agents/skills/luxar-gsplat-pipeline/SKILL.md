@@ -453,10 +453,9 @@ post-load refinement — kicked from *inside* `loadScene`
 (`data/scene-loader/lifecycle/load-scene.ts`) — drains the rest a rung per frame and
 converges on the full eager-level ladder. So size a hard cap against
 `converged rungs`; `min(3, …)` only says what the user sees first. Two caveats:
-refinement is suspended outright while a playback frame budget is active, and an
-nD/slice navigation resets each loader to LOD 0 rather than resuming from its
-committed prefix (only a query-identical re-trigger, such as the pause after
-playback, resumes) — so navigating a timelapse re-pays the prefix.
+refinement is suspended outright while a playback frame budget is active, and a
+slice the SliceCache has not seen resets to LOD 0. Revisiting a cached slice restores
+its stored full ladder or prefix from memory, so it does not re-pay that prefix.
 
 **And a rung is not one request.** `chunk_bounds` is a real one-chunk data read when
 the leaf carries a spatial index (`data/loaders/chunk-bounds-loader.ts`), then
@@ -485,7 +484,8 @@ framing does not clear at all. So the recipes split where the scale ordering doe
   `kind=lod` over `[coarse_leaf, fine_partition]`, coarsest first
   (`gsplats/lod/recipes.py::build_overview`), so the entire fine branch defers
   behind a fills-screen selector. The only large-N recipe that both defers its
-  parts and holds its eager level.
+  parts and holds its eager level. Crossing that selector loads every fine part in
+  one activation, so this saves opening-view requests, not total session requests.
 - **`tiles`, `adaptive` — every part is eager**, so ~3 × P rungs on the first pass.
   What the part factor buys is per-tile selection — `adaptive` is the only recipe
   where a distant tile stays coarse while a near one goes fine — so pay it when
@@ -504,7 +504,10 @@ first-pass and **880** converged. Measured first paint: **689** after
 The control is the same data as a single stacked 4D leaf with an 8-rung `stream`
 ladder — 8 nodes, holding 3.34 M splats against the `adaptive` store's 33,632 at first
 paint. Its structure term is 15 first-pass and 40 converged; measured **39** at
-`archive` (local, so converged: essentially the 40 exactly) and 62 as built.
+`archive` (local, so converged) and 62 as built. That one-request miss falsifies the
+nominal 40 floor: at least one assumed read was absent, for example a rung with
+`ordering: "none"` and therefore no `chunk_bounds` probe, or a broadcast `(1, d)`
+array shared across rungs.
 
 Only the *low* end of that is a real test — the extra-chunk term can only add, so any
 excess is absorbable and 880 is not a ceiling. Like chunk regime for like, 704 nodes

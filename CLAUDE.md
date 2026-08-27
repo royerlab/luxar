@@ -548,6 +548,8 @@ luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no fl
 #   tiles     spatial BSP tiles, culled + streamed per tile        — large N
 #   overview  instant coarse overview level + fine tiles on zoom   — huge N
 #   adaptive  tiles where EVERY tile picks its own detail level    — largest N
+# Scale is not the only axis: when first paint is request-constrained, eager-rung
+# count picks the recipe. See "First paint cost" in the gsplat-pipeline skill.
 # Renamed 2026-07 (old → new): additive→stream, substitutive/pyramid→levels,
 # partitioned→tiles, multiscale→overview, mosaic→adaptive. Old names error with
 # a pointer; stored batch manifests translate silently.
