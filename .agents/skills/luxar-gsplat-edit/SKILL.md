@@ -69,34 +69,58 @@ an archive for a consumer that is not the Luxar scene compiler. **`--scale-inten
 on `gsplat convert` implies opting out of the automatic normalisation**, since
 normalising straight after an explicit scale would cancel it exactly.
 
-## `cull --method cumulative`: report the COUNT, and verify it
+## `cull --method cumulative` ranks by PEAK, and that is not what you see
 
-`--retention R` keeps the brightest splats accounting for a fraction R of the
-**pooled** total amplitude — not R of the splats, and not R per timepoint. The
-surviving splat fraction is a property of the amplitude distribution, so the
-retention is an *input* and the count is the *outcome*: **always report and check
-the count.**
+`--retention R` keeps splats carrying a fraction R of the total **peak
+amplitude**. But a splat's contribution to the render is amplitude x volume, and
+the dim splats a cumulative cull discards first are the LARGE, diffuse ones. So
+the retention number systematically understates what the cull costs.
 
-Verified on one Drosophila timelapse: a 20-frame subset and the full 500-frame
-merge have **identical** amplitude distributions (both need exactly 65.0% of
-splats to carry 96% of amplitude), as they should — pooling more of the same
-distribution does not change its quantile structure. But the same
-`-r 0.960` returned 65% of splats on the 20-frame store and **12%** on the
-500-frame one. Same specimen, same fit settings, same flag, same distribution.
+Measured on one Drosophila timepoint at `--retention 0.960`:
 
-That discrepancy was caused by the descending amplitude CDF accumulating in
-float32: at production scale the running sum saturated and understated both the
-total amplitude and the fraction of splats needed to reach it. The accumulator
-is now float64, so culling is scale-invariant for identical amplitude
-distributions.
+| | splats | peak amplitude | integrated mass | rendered intensity |
+|---|---|---|---|---|
+| pre-cull | 256,000 | 1.804e7 | 6.881e7 | 43.54 |
+| post-cull | 165,739 | 1.738e7 | 5.749e7 | 32.25 |
+| **retained** | 64.7% | **96.3%** | **83.5%** | **74.1%** |
 
-* **Check the resulting count against the distribution** before shipping. If
-  `-r 0.96` does not keep roughly the fraction the CDF says it should, something
-  other than the documented rule is acting.
+The cull is honest about its own contract — 96.3% of peak, as asked. But it
+removed **16.5% of the mass and 26% of the rendered intensity**, because the
+discarded splats carry ~4.4x more mass per unit peak than the kept ones. Against
+the raw volume that frame scored **28.7 dB foreground post-cull vs 37.2 dB
+pre-cull** — an 8.5 dB drop for a nominal 4% amplitude loss.
+
+Two consequences:
+
+* **`retention` is not a fidelity dial.** 0.96 does not mean "96% as good"; on
+  diffuse data it can mean a quarter of the light. If you need to bound the
+  quality loss, score the culled result — do not infer it from R.
+* **It is still the right tool when the diffuse component IS haze**, which is
+  the usual case in light-sheet: the removed intensity was background, the
+  render looks unchanged, and the authored `opacity` absorbs the difference.
+  That is a judgement about the data, not something R guarantees.
+
+## `cull --method cumulative`: report the COUNT, not the retention
+
+`--retention R` is an *input*; the surviving splat count is the *outcome*, and it
+depends entirely on the amplitude distribution. **Always report and check the
+count** — R alone tells a reader nothing about what they will get.
+
+This was worth more than a style note. The same `-r 0.960` returned **65%** of
+splats on a 20-frame store and **12%** on the 500-frame one, from provably
+identical amplitude distributions (both need exactly 65.0% of splats for 96% of
+amplitude). Cause: the cumulative sum accumulated in **float32** and saturated on
+the larger set — fixed in #2260, filed as #2258. Ladder depth was the obvious
+suspect and was wrong: 1, 2, 4, 8 and 13 rungs all gave 65.3% on the same data.
+
+So the check that would have caught it, and is worth keeping:
+
+* **Compare the resulting count against the CDF.** If `-r 0.96` does not keep
+  roughly the fraction `np.cumsum(np.sort(amps)[::-1], dtype=np.float64)` says
+  it should, something other than the documented rule is acting.
 * **Check per-slice survival on a timelapse** (`np.unique` on the stacked centre
-  column). On this data every one of 500 frames survived within a 2.4x spread,
-  so the loss was uniform rather than gutting dim timepoints — but that is worth
-  confirming, not assuming.
+  column). On this data all 500 frames survived within a 2.4x spread, so the loss
+  was uniform rather than gutting dim timepoints — worth confirming, not assuming.
 
 **There is deliberately no occlusion/shading command here.** If a fit renders as a
 flat glow with no visible shape, the fix is `luxar.shading.bake_ambient_occlusion`
