@@ -369,6 +369,18 @@ class TestReconstructAndVerify:
         ]
         assert reconstruct_serialized_bsp_tree(boxes) is None
 
+    def test_recovery_can_be_restricted_to_displayable_axes(self) -> None:
+        boxes = [
+            (np.array([0.0, 0.0, 0.0, 0.0]), np.array([10.0, 10.0, 10.0, 1.0])),
+            (np.array([5.0, 5.0, 5.0, 2.0]), np.array([15.0, 15.0, 15.0, 3.0])),
+        ]
+        assert reconstruct_serialized_bsp_tree(boxes, axes=(0, 1, 2)) is None
+
+        rebuilt = reconstruct_serialized_bsp_tree(boxes, axes=(3,))
+        assert rebuilt is not None
+        assert rebuilt["axis"] == 3
+        assert serialized_bsp_tree_separates(rebuilt, boxes)
+
     def test_no_boxes_yields_no_tree(self) -> None:
         assert reconstruct_serialized_bsp_tree([]) is None
 

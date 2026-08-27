@@ -73,6 +73,17 @@ def _part_boxes(
     return [by_index[i] for i in range(len(names))]
 
 
+def _reconstruction_axes(
+    root: "zarr.Group", boxes: "List[Tuple[np.ndarray, np.ndarray]]"
+) -> Tuple[int, ...]:
+    scene_dimensions = root.attrs.get("scene_dimensions")
+    if scene_dimensions is not None:
+        from luxar.core.dimensions import Dimensions
+
+        return tuple(Dimensions.from_dict(scene_dimensions).displayed)
+    return tuple(range(min(3, len(boxes[0][0]))))
+
+
 def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
     """A ``kind=partition`` should record how its parts stack up (``bsp_tree``).
 
@@ -122,7 +133,9 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
             if serialized_bsp_tree_separates(dict(stored), boxes):
                 continue  # healthy
             stored_dict = dict(stored)
-            rebuilt = reconstruct_serialized_bsp_tree(boxes)
+            rebuilt = reconstruct_serialized_bsp_tree(
+                boxes, axes=_reconstruction_axes(root, boxes)
+            )
             labels_name_parts = _labels_name_the_parts(stored_dict, len(boxes))
             approximate_ok = rebuilt is None or group.attrs.get("display_type") in (
                 "lines",
@@ -197,7 +210,9 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
             )
             continue
 
-        rebuilt = reconstruct_serialized_bsp_tree(boxes)
+        rebuilt = reconstruct_serialized_bsp_tree(
+            boxes, axes=_reconstruction_axes(root, boxes)
+        )
         findings.append(_missing_finding(group, where, len(boxes), rebuilt))
     return findings
 

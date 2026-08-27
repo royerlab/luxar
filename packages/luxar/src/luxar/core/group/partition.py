@@ -401,6 +401,8 @@ _RECONSTRUCT_VISIT_BUDGET = 200_000
 
 def reconstruct_serialized_bsp_tree(
     boxes: "Sequence[tuple[NDArray[np.floating], NDArray[np.floating]]]",
+    *,
+    axes: Optional[Sequence[int]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Recover split planes from a set of DISJOINT axis-aligned part boxes.
 
@@ -415,10 +417,11 @@ def reconstruct_serialized_bsp_tree(
     At each step it scans the boxes' own faces as candidate cuts and takes the
     first that splits the set cleanly, recursing on both sides.
 
-    Recovery considers every recorded position column. For standalone gsplat
-    partitions that can include a stacked time/channel axis; the viewer safely
-    declines such a tree when that axis is not displayed, matching its fallback
-    for a missing tree rather than preventing recovery for native nD scenes.
+    ``axes`` restricts recovery to position columns the destination viewer can
+    display; omitting it considers every recorded column. Callers with scene
+    metadata pass its displayed columns, while standalone gsplat stores pass
+    their spatial-first columns so stacked time/channel axes cannot turn
+    spatially overlapping parts into a misleading exact tree.
 
     Leaves carry each box's index in ``boxes`` verbatim, so a caller can pair the
     result with :func:`prune_serialized_bsp_tree` if the part set changes.
@@ -434,6 +437,18 @@ def reconstruct_serialized_bsp_tree(
 
     visits = [0]
     n_axes = len(boxes[0][0])
+    search_axes = (
+        tuple(range(n_axes)) if axes is None else tuple(int(axis) for axis in axes)
+    )
+    if (
+        not search_axes
+        or len(set(search_axes)) != len(search_axes)
+        or any(axis < 0 or axis >= n_axes for axis in search_axes)
+    ):
+        raise ValueError(
+            f"axes must name distinct position columns in [0, {n_axes}); "
+            f"got {search_axes}"
+        )
 
     def build(items: "List[int]") -> Optional[Dict[str, Any]]:
         visits[0] += 1
@@ -441,7 +456,7 @@ def reconstruct_serialized_bsp_tree(
             return None
         if len(items) == 1:
             return {"part": int(items[0])}
-        for axis in range(n_axes):
+        for axis in search_axes:
             # Candidate cuts are the boxes' own faces: any separating plane can
             # be slid onto one without changing which side anything falls.
             cuts = sorted(

@@ -168,7 +168,7 @@ def _disjoint_centroid_split_lines_scene(tmp: Path) -> Path:
     return path
 
 
-def _uniform_tiled_store(tmp: Path) -> Path:
+def _uniform_tiled_store(tmp: Path, *, stacked: bool = False) -> Path:
     """A uniform-tiled partition on disk: overlapping parts, approximate planes.
 
     The shape this PR's own uniform-tiling producer writes — apodized tiles keep
@@ -183,11 +183,15 @@ def _uniform_tiled_store(tmp: Path) -> Path:
     for spec in specs:
         lo = np.array(spec.origin, dtype=float)
         hi = lo + np.array(spec.shape, dtype=float)
-        chol = np.zeros((40, 6), dtype=np.float32)
-        chol[:, [0, 2, 5]] = 1.0
+        chol = np.zeros((40, 10 if stacked else 6), dtype=np.float32)
+        chol[:, [0, 2, 5] + ([9] if stacked else [])] = 1.0
         centers = rng.uniform(lo, hi, size=(40, 3)).astype(np.float32)
         centers[0] = lo
         centers[1] = hi
+        if stacked:
+            centers = np.column_stack(
+                (centers, np.full(40, spec.index, dtype=np.float32))
+            )
         regions.append(
             GSplatData(
                 centers=centers,
@@ -619,6 +623,20 @@ class TestSplitPlanesCheck:
             assert not finding.fixable
             assert "centroid-split lines or mesh" in finding.detail
             assert report.healthy  # a note does not fail the gate
+
+            diagnose_store(path, fix=True)
+            assert _root_attrs(path)["bsp_tree"] == before
+
+    def test_a_stacked_axis_does_not_make_overlapping_parts_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _uniform_tiled_store(Path(tmp), stacked=True)
+            before = _root_attrs(path)["bsp_tree"]
+
+            report = diagnose_store(path)
+            (finding,) = report.findings
+            assert finding.severity == "note"
+            assert not finding.fixable
+            assert report.healthy
 
             diagnose_store(path, fix=True)
             assert _root_attrs(path)["bsp_tree"] == before

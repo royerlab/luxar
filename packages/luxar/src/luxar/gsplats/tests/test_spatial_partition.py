@@ -356,6 +356,55 @@ def test_partition_graft_leaves_overlapping_parts_without_bsp_tree(
         )
 
 
+def test_partition_graft_does_not_recover_on_a_hidden_stacked_axis(
+    capsys: pytest.CaptureFixture[str],
+):
+    from luxar import Dimension, Dimensions, LuxarZarrCompiler
+
+    data = _clustered(20)
+    children = []
+    for stacked_value in (0.0, 1.0):
+        centers = np.column_stack(
+            (
+                data.centers,
+                np.full(data.n_splats, stacked_value, dtype=np.float32),
+            )
+        )
+        chol = np.zeros((data.n_splats, 10), dtype=np.float32)
+        chol[:, [0, 2, 5, 9]] = 1.0
+        children.append(
+            GSplatData(
+                centers=centers,
+                amplitudes=np.ones(data.n_splats, dtype=np.float32),
+                cholesky_factors=chol,
+            ).tree
+        )
+    partition = GSplatPartition(children=children, max_elements=data.n_splats)
+    dimensions = Dimensions(
+        [
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+            Dimension("time", display=False, discrete=True, range=(0, 1)),
+        ]
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        part = Path(tmp) / "stacked.gsplats.zarr"
+        write_gsplats_tree(part, partition, ordering="none")
+
+        scene_path = Path(tmp) / "scene.luxar.zarr"
+        with LuxarZarrCompiler(scene_path) as compiler:
+            scene = compiler.create_scene(dimensions=dimensions)
+            scene.add_gsplats_from_file(name="g", path=part, extend_to_all=[])
+
+        grafted = zarr.open_group(str(scene_path), mode="r")["g"]
+        assert "bsp_tree" not in grafted.attrs
+        output = capsys.readouterr().out
+        assert "No exact BSP split planes recovered" in output
+        assert "Recovered BSP split planes" not in output
+
+
 def test_single_part_graft_does_not_report_recovered_split_planes(
     capsys: pytest.CaptureFixture[str],
 ):
