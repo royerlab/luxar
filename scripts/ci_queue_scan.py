@@ -84,10 +84,16 @@ def read_api(endpoint: str) -> object:
     """Read one GitHub API endpoint through the authenticated gh CLI."""
     try:
         completed = subprocess.run(
-            ["gh", "api", endpoint], capture_output=True, text=True, check=False
+            ["gh", "api", endpoint],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
         )
     except FileNotFoundError as error:
         raise ApiError("gh was not found") from error
+    except subprocess.TimeoutExpired as error:
+        raise ApiError("gh API request timed out") from error
     if completed.returncode != 0:
         detail = next(
             (line.strip() for line in completed.stderr.splitlines() if line.strip()),

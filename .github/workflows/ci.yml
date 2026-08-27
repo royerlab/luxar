@@ -317,12 +317,14 @@ jobs:
           fi
           queue_grace_seconds=300
           queue_cutoff=$(( now - queue_grace_seconds ))
+          max_scanned_runs=10
           scan=$(python3 scripts/ci_queue_scan.py scan \
             --repository "$GITHUB_REPOSITORY" \
             --status in_progress --status queued \
             --queued-before "$queue_cutoff" \
-            --max-runs 10 \
-            --stop-after-queued "$max_queued_obsidian") || scan=""
+            --max-runs "$max_scanned_runs" \
+            --stop-after-queued "$max_queued_obsidian") \
+            || scan='{"error":{"scope":"helper"}}'
           queued_obsidian=$(echo "$scan" | jq '.queued | length' 2>/dev/null) || queued_obsidian=0
           error_scope=$(echo "$scan" | jq -r '.error.scope // empty' 2>/dev/null) || error_scope=helper
           if [ -n "$error_scope" ]; then
@@ -342,7 +344,7 @@ jobs:
           fi
           truncated=$(echo "$scan" | jq -r '.truncated' 2>/dev/null) || truncated=true
           if [ "$truncated" = "true" ] && [ "$queued_obsidian" -gt 0 ]; then
-            echo "backlog scan reached its 10-run limit after finding aged backlog -> routing to ubuntu-latest"
+            echo "backlog scan reached its ${max_scanned_runs}-run limit after finding aged backlog -> routing to ubuntu-latest"
             echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -389,6 +391,8 @@ jobs:
       # Credentials stay disabled; only scripts/ is materialised.
       contents: read
     steps:
+      # The job-level guard inherits pick-runner's fork check, so this checkout
+      # never materialises a fork's merge ref in the actions:write job.
       - id: scanner-checkout
         name: Check out the stdlib queue scanner
         continue-on-error: true
@@ -428,16 +432,20 @@ jobs:
               echo "jobs API read failed; retrying"
               sleep 30; continue
             fi
-            classified=$(echo "$jobs" | python3 scripts/ci_queue_scan.py classify) || classified=""
+            classified=$(echo "$jobs" | python3 scripts/ci_queue_scan.py classify) \
+              || classified='{"error":{"scope":"helper"}}'
             classify_error=$(echo "$classified" | jq -r '.error.scope // empty' 2>/dev/null) || classify_error=helper
             if [ -n "$classify_error" ]; then
               no_activity_checks=0
               echo "jobs API response was not parseable; retrying"
               sleep 30; continue
             fi
-            visible=$(echo "$classified" | jq '.visible | length')
-            queued=$(echo "$classified" | jq -r '.queued | join(", ")')
-            running=$(echo "$classified" | jq -r '.running | join(", ")')
+            visible=$(echo "$classified" | jq '.visible | length') \
+              || { no_activity_checks=0; echo "job classification failed; retrying"; sleep 30; continue; }
+            queued=$(echo "$classified" | jq -r '.queued | join(", ")') \
+              || { no_activity_checks=0; echo "job classification failed; retrying"; sleep 30; continue; }
+            running=$(echo "$classified" | jq -r '.running | join(", ")') \
+              || { no_activity_checks=0; echo "job classification failed; retrying"; sleep 30; continue; }
             fanout_pending=$(echo "$jobs" | jq -r '[.jobs[] | select(.name == "changes")
                                                             | select(.status == "queued" or .status == "in_progress")
                                                             | .name] | join(", ")') \
@@ -476,7 +484,8 @@ jobs:
               --status in_progress \
               --max-runs 100 \
               --exclude-run "$GITHUB_RUN_ID" \
-              --stop-after-running 1) || liveness=""
+              --stop-after-running 1) \
+              || liveness='{"error":{"scope":"helper"}}'
             liveness_error=$(echo "$liveness" | jq -r '.error.scope // empty' 2>/dev/null) || liveness_error=helper
             if [ "$liveness_error" = "runs" ] || [ "$liveness_error" = "helper" ]; then
               no_activity_checks=0
@@ -488,6 +497,8 @@ jobs:
               echo "job liveness unreadable; not cancelling on a fluke — retrying"
               sleep 30; continue
             fi
+            # The API request itself is capped at 100 runs, so max-runs=100
+            # cannot truncate this single-status liveness scan.
             other_running=$(echo "$liveness" | jq -r '.running | join(", ")')
             if [ -n "$other_running" ]; then
               no_activity_checks=0

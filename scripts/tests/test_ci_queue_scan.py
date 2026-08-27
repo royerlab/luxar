@@ -207,3 +207,16 @@ def test_read_api_reports_gh_failure_without_traceback(
 
     with pytest.raises(ci_queue_scan.ApiError, match="rate limited"):
         ci_queue_scan.read_api("repos/royerlab/luxar/actions/runs")
+
+
+def test_read_api_times_out_instead_of_hanging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs["timeout"] == 30
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+
+    with pytest.raises(ci_queue_scan.ApiError, match="timed out"):
+        ci_queue_scan.read_api("repos/royerlab/luxar/actions/runs")
