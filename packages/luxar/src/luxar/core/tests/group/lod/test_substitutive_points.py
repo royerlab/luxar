@@ -333,7 +333,7 @@ class TestAddPointsSubstitutiveLod:
         from luxar.encoding import ArrayDecoder
         from luxar.gsplats.utils.trils import merge_tril, unpack_tril
 
-        grp, _ = _build(tmp_path, levels=3, radius_scale=0.05)
+        grp, _ = _build(tmp_path, levels=3, radius_scale=10.0)
         dec = ArrayDecoder()
         lights = []
         for i in range(3):  # gsplat children
