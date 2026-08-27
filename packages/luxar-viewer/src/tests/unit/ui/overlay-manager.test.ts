@@ -309,7 +309,7 @@ describe('OverlayManager.loadOverlays', () => {
     );
 
     const img = document.querySelector('.luxar-overlay--image img') as HTMLImageElement;
-    img.onerror?.(new Event('error'));
+    img.dispatchEvent(new Event('error'));
 
     expect(document.querySelector('.luxar-overlay--image img')).toBeNull();
     expect(warningSpy).toHaveBeenCalledExactlyOnceWith(
