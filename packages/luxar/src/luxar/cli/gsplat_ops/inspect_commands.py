@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Optional
 
 import typer
 from arbol import aprint, asection
@@ -152,13 +152,17 @@ def _print_statistics_table(data: "np.ndarray", label: str) -> None:
             aprint(f"  {key:<10s}: {value:>12.6f}")
 
 
-def _normalized_amplitude_cdf(amplitudes: "np.ndarray") -> "np.ndarray":
+def _normalized_amplitude_cdf(amplitudes: "np.ndarray") -> "Optional[np.ndarray]":
     """Return the descending amplitude CDF with a non-saturating accumulator."""
     import numpy as np
 
     sorted_amplitudes = np.sort(amplitudes)[::-1]
     cumulative = np.cumsum(sorted_amplitudes, dtype=np.float64)
-    return cast("np.ndarray", cumulative / cumulative[-1])
+    total = cumulative[-1]
+    if total <= 0:
+        return None
+    cumulative /= total
+    return cumulative
 
 
 def info_dataset(
@@ -202,6 +206,7 @@ def info_dataset(
         import numpy as np
 
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.utils.alpha import effective_amplitudes
 
         with asection(f"Loading dataset: {path.name}"):
             try:
@@ -278,15 +283,16 @@ def info_dataset(
         aprint(f"\nTotal Amplitude: {total_amp:.4e}")
 
         # Top contributors
-        cumsum_norm = _normalized_amplitude_cdf(data.amplitudes)
+        cumsum_norm = _normalized_amplitude_cdf(effective_amplitudes(data))
 
         # Find how many splats contribute to 50%, 90%, 95%, 99%
-        for threshold in [0.50, 0.90, 0.95, 0.99]:
-            n_contrib = np.searchsorted(cumsum_norm, threshold) + 1
-            pct = (n_contrib / n_splats) * 100
-            aprint(
-                f"  Top {n_contrib:,} splats ({pct:.1f}%) contribute {threshold * 100:.0f}% of total amplitude"
-            )
+        if cumsum_norm is not None:
+            for threshold in [0.50, 0.90, 0.95, 0.99]:
+                n_contrib = np.searchsorted(cumsum_norm, threshold) + 1
+                pct = (n_contrib / n_splats) * 100
+                aprint(
+                    f"  Top {n_contrib:,} splats ({pct:.1f}%) contribute {threshold * 100:.0f}% of total amplitude"
+                )
 
         if show_histograms:
             aprint(
@@ -386,7 +392,11 @@ def info_dataset(
         aprint(f"✓ Mean splat volume ({truncate:g}σ): {np.mean(volumes):.4e}")
 
         # Pruning recommendation
-        n_for_95pct = np.searchsorted(cumsum_norm, 0.95) + 1
+        n_for_95pct = (
+            np.searchsorted(cumsum_norm, 0.95) + 1
+            if cumsum_norm is not None
+            else n_splats
+        )
         if n_for_95pct < n_splats * 0.5:  # If less than 50% needed for 95%
             removable = n_splats - n_for_95pct
             pct_removable = (removable / n_splats) * 100
