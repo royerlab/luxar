@@ -915,15 +915,18 @@ pair of extra Python legs is small beside that baseline. (If newer interpreters 
 become deliberately unsupported, the honest fix is a `requires-python` upper bound,
 not a quiet single-leg matrix.)
 
-The router bounds that queue/cost tradeoff by scanning both queued and in-progress
-workflow runs before selecting the long-leg runner. Five already-queued obsidian jobs
-send new work to GitHub-hosted runners; below the cap, a fresh capacity heartbeat or
-active obsidian work still prefers the self-hosted box. Router decisions are concurrent
-snapshots, so a burst can overshoot the cap before its newly routed jobs materialise.
-
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
 defect behind issue #839, where all three legs silently ran the same version.
+
+The router bounds that queue/cost tradeoff after fresh capacity has been ruled out.
+It scans at most ten eligible queued/in-progress runs and counts only obsidian jobs
+that have waited at least five minutes. Five aged jobs by default send new work to
+GitHub-hosted runners; `LUXAR_CI_MAX_QUEUED_OBSIDIAN` overrides that validated cap.
+Raising a long-leg timeout for queue tolerance also raises its worst-case hosted bill,
+so the cap deliberately limits how often those larger budgets burst onto paid runners.
+Router decisions are concurrent snapshots, so a burst can still overshoot the cap
+before its newly routed jobs materialise.
 
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
