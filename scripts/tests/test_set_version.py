@@ -17,10 +17,12 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 SET_VERSION = REPO / "scripts/set_version.py"
 CHECK_VERSIONS = REPO / "scripts/check_version_consistency.py"
+RELEASE = REPO / "scripts/release.sh"
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -209,23 +211,42 @@ def test_gate_catches_a_stale_viewer_version(
     check_module: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     paths = _checkout(tmp_path)
     paths["pkg_json"].write_text(json.dumps({"version": "2026.5.1"}) + "\n")
     _point_at(check_module, paths, tmp_path, monkeypatch)
     assert check_module.main() == 1
+    assert "make set-version DATE=2026.06.05" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("version", ["2026.6.5", "2026.02.31"])
+def test_gate_rejects_an_invalid_python_version(
+    check_module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    version: str,
+) -> None:
+    paths = _checkout(tmp_path, version)
+    _point_at(check_module, paths, tmp_path, monkeypatch)
+
+    assert check_module.main() == 2
+    assert str(paths["init"]) in capsys.readouterr().err
 
 
 def test_gate_catches_a_stale_citation_version(
     check_module: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     paths = _checkout(tmp_path)
     cff = paths["citation"].read_text().replace("2026.06.05", "2026.05.01")
     paths["citation"].write_text(cff)
     _point_at(check_module, paths, tmp_path, monkeypatch)
     assert check_module.main() == 1
+    assert "make set-version DATE=2026.06.05" in capsys.readouterr().err
 
 
 def test_gate_catches_a_date_that_disagrees_with_the_version(
@@ -282,6 +303,19 @@ def test_gate_accepts_valid_yaml_scalar_spellings(
 def test_the_committed_tree_is_consistent(check_module: ModuleType) -> None:
     """Guards the actual files, not a fixture — this is what CI runs for."""
     assert check_module.main() == 0
+    citation = yaml.safe_load((REPO / "CITATION.cff").read_text())
+    init_text = (REPO / "packages/luxar/src/luxar/__init__.py").read_text()
+    version_match = check_module.CALVER_RE.search(init_text)
+    assert version_match is not None
+    version = version_match.group(1)
+    assert isinstance(citation["version"], str)
+    assert isinstance(citation["date-released"], str)
+    assert citation["version"] == version
+    assert citation["date-released"] == version.replace(".", "-")
+
+
+def test_release_remedy_passes_the_version_as_a_make_variable() -> None:
+    assert "make set-version DATE=$VERSION" in RELEASE.read_text()
 
 
 def test_set_version_and_the_gate_agree_on_where_the_files_are() -> None:

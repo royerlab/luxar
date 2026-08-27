@@ -106,7 +106,7 @@ ok "release version: $VERSION  →  tag: $TAG"
 # published artifact would carry a version that disagrees with the release tag.
 if command -v python3 >/dev/null 2>&1; then
   python3 scripts/check_version_consistency.py \
-    || die "Release version mismatch. Run 'make set-version $VERSION' and merge it first."
+    || die "Release version mismatch. Run 'make set-version DATE=$VERSION' and merge it first."
   ok "Python, viewer, and citation versions are consistent"
 else
   warn "python3 not found; skipped release version-consistency check"

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -53,6 +54,17 @@ def main() -> int:
         print(f"error: no __version__ assignment in {INIT}", file=sys.stderr)
         return 2
     py_version = m.group(1)
+    try:
+        if not re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", py_version):
+            raise ValueError
+        date.fromisoformat(py_version.replace(".", "-"))
+    except ValueError:
+        print(
+            f"error: {INIT} __version__ {py_version!r} is not valid zero-padded "
+            "CalVer YYYY.MM.DD",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         pkg = json.loads(PKG_JSON.read_text())
@@ -72,7 +84,7 @@ def main() -> int:
             f"(-> semver {expected_viewer!r})\n"
             f"  Viewer  package.json     = {viewer_version!r}\n"
             "They must describe the same release. Run "
-            f"`make set-version {py_version}` to sync, then commit.",
+            f"`make set-version DATE={py_version}` to sync, then commit.",
             file=sys.stderr,
         )
         return 1
@@ -105,7 +117,7 @@ def main() -> int:
             f"  CITATION.cff date-released = {cff_date!r}  "
             f"(expected {expected_date!r})\n"
             "They must describe the same release. Run "
-            f"`make set-version {py_version}` to sync, then commit.",
+            f"`make set-version DATE={py_version}` to sync, then commit.",
             file=sys.stderr,
         )
         return 1
