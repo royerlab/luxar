@@ -960,17 +960,16 @@ rejected rerun is reported as a warning. A failed repaired job is terminal for t
 unless it is included in the multi-job failed-jobs rerun; otherwise recovery requires a
 manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
 later merge cannot cancel the repaired attempt. That exemption applies to ordinary PR
-reruns too, and neither rerun path restarts `queue-watchdog`. An obsidian-routed job left
-undispatched after its runners disappear can therefore remain queued until GitHub's
-24-hour ceiling; one dispatched before its slot recycles can instead reach its timeout
-before any step starts or runner name is recorded. The repair job has only
+reruns too, and neither rerun path restarts `queue-watchdog`. An obsidian-routed job
+left undispatched after its runners disappear can therefore remain queued until
+GitHub's 24-hour ceiling; one dispatched before its slot recycles can instead reach its
+timeout before any step starts or runner name is recorded. The repair job has only
 `actions: write` permission and runs on GitHub-hosted Linux; recovered long legs reuse
 their original runner-routing decision and repay work that the scheduled run already
 performed. On the multi-job path, up to four long legs routed to obsidian can therefore
-run alongside the next push run, increasing self-hosted contention.
-When the original routing decision was `ubuntu-latest`, up to eight repair windows per
-day can also add hosted-runner minutes, but only on a SHA that can otherwise block
-promotion.
+run alongside the next push run, increasing self-hosted contention. When the original
+routing decision was `ubuntu-latest`, up to eight repair windows per day can also add
+hosted-runner minutes, but only on a SHA that can otherwise block promotion.
 
 ## Architecture Notes
 
