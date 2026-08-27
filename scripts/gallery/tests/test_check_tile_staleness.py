@@ -238,7 +238,7 @@ def test_gallery_capture_policy_is_a_global_input(tmp_path: Path, capsys) -> Non
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
     assert "global inputs:" in output
-    assert "crop policy" in output
+    assert output.count("crop policy") == 1
     assert "STALE a" in output
     assert "STALE b" in output
 

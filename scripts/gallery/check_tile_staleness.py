@@ -306,23 +306,20 @@ def _format_status(status: TileStatus) -> str:
     tile_stamp = _format_stamp(status.tile)
     if not status.stale_inputs:
         return f"CURRENT {status.demo_id}: tile {tile_stamp}"
-    stale_global = [
-        label for label in status.stale_inputs if label in status.global_input_labels
-    ]
     stale_per_tile = [
         label
         for label in status.stale_inputs
         if label not in status.global_input_labels
     ]
-    details: list[str] = []
-    if stale_global:
-        details.append(f"newer global inputs: {', '.join(stale_global)}")
     per_tile_details = ", ".join(
         f"{label} {_format_stamp(status.inputs[label])}" for label in stale_per_tile
     )
     if per_tile_details:
-        details.append(f"newer per-tile inputs: {per_tile_details}")
-    return f"STALE {status.demo_id}: tile {tile_stamp}; {'; '.join(details)}"
+        return (
+            f"STALE {status.demo_id}: tile {tile_stamp}; "
+            f"newer per-tile inputs: {per_tile_details}"
+        )
+    return f"STALE {status.demo_id}: tile {tile_stamp}"
 
 
 def _format_stamp(stamp: CommitStamp) -> str:
