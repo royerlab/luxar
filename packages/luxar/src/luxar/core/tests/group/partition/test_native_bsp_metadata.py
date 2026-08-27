@@ -120,7 +120,10 @@ def test_native_partition_adders_write_valid_bsp_trees(tmp_path, rule: str) -> N
             assert not serialized_bsp_tree_separates(tree, boxes)
 
 
-def test_native_partition_adders_split_on_displayed_columns(tmp_path, capsys) -> None:
+@pytest.mark.parametrize("rule", ["median", "midpoint", "sah"])
+def test_native_partition_adders_split_on_displayed_columns(
+    tmp_path, capsys, rule: str
+) -> None:
     """Every native partition writer emits a tree usable by the current view."""
     centers = np.array(
         [
@@ -171,7 +174,10 @@ def test_native_partition_adders_split_on_displayed_columns(tmp_path, capsys) ->
     with LuxarZarrCompiler(output) as compiler:
         scene = compiler.create_scene(dimensions=dimensions)
         scene.add_points(
-            "points", centers, partition={"max_elements": 1}, extend_to_all=[]
+            "points",
+            centers,
+            partition={"max_elements": 1, "rule": rule},
+            extend_to_all=[],
         )
         scene.add_lines(
             "lines",
@@ -179,14 +185,14 @@ def test_native_partition_adders_split_on_displayed_columns(tmp_path, capsys) ->
             widths=0.05,
             indices=line_indices,
             line_type="indexed",
-            partition={"max_elements": 2},
+            partition={"max_elements": 2, "rule": rule},
             extend_to_all=[],
         )
         scene.add_mesh(
             "mesh",
             mesh_vertices,
             mesh_faces,
-            partition={"max_elements": 1},
+            partition={"max_elements": 1, "rule": rule},
             extend_to_all=[],
         )
         scene.add_gsplats(
@@ -194,7 +200,7 @@ def test_native_partition_adders_split_on_displayed_columns(tmp_path, capsys) ->
             centers=centers,
             amplitudes=np.ones(centers.shape[0], dtype=np.float32),
             cholesky_factors=np.array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1], dtype=np.float32),
-            partition={"max_elements": 1},
+            partition={"max_elements": 1, "rule": rule},
             extend_to_all=[],
         )
 
