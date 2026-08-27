@@ -208,6 +208,24 @@ assert loaded_ladder.n_additive_sublods == 2
 assert loaded_ladder.n_substitutive == 1
 assert loaded_ladder.additive_prefix(0).n_splats == 32
 
+stamped_rung = sublod(32)
+stamped_rung.stats.update(
+    energy_fraction_cum=0.5, lod_n_splats=32, lod_cumulative_n=32
+)
+GSplatData(additive_sublods=[stamped_rung, sublod(N)]).save(STAMPED_LADDER_PATH)
+loaded_stamped_ladder = GSplatData.load(STAMPED_LADDER_PATH)
+for edit in (
+    lambda: loaded_stamped_ladder.scale_intensity(0.5),
+    lambda: loaded_stamped_ladder.additive_prefix(0),
+):
+    try:
+        edit()
+    except ModuleNotFoundError as exc:
+        assert exc.name == "scipy", exc
+    else:
+        raise AssertionError("stamped LOD edit unexpectedly stayed core-only")
+print("STAMPED-LOD-BLOCKED")
+
 GSplatData(
     substitutive_levels=[
         SubstitutiveLevel(additive_sublods=[sublod(16)]),
@@ -320,12 +338,14 @@ def test_core_scene_authoring_without_gsplats_extra(tmp_path: Path) -> None:
     scene_path = tmp_path / "core_only.luxar.zarr"
     splats_path = tmp_path / "core_only.gsplats.zarr"
     ladder_path = tmp_path / "core_only_ladder.gsplats.zarr"
+    stamped_ladder_path = tmp_path / "stamped_ladder.gsplats.zarr"
     stack_path = tmp_path / "core_only_stack.gsplats.zarr"
     script = (
         _BLOCK_EXTRA.replace(_SENTINEL, "")
         + f"\nSCENE_PATH = {str(scene_path)!r}\n"
         + f"SPLATS_PATH = {str(splats_path)!r}\n"
         + f"LADDER_PATH = {str(ladder_path)!r}\n"
+        + f"STAMPED_LADDER_PATH = {str(stamped_ladder_path)!r}\n"
         + f"STACK_PATH = {str(stack_path)!r}\n"
         + textwrap.dedent(_BUILD_SCENE)
     )
@@ -336,6 +356,7 @@ def test_core_scene_authoring_without_gsplats_extra(tmp_path: Path) -> None:
         f"{result.stdout}\n{result.stderr}"
     )
     assert "BUILD-OK" in result.stdout, result.stderr
+    assert "STAMPED-LOD-BLOCKED" in result.stdout, result.stderr
 
     # The scene was really compiled, not merely imported.
     assert scene_path.is_dir()

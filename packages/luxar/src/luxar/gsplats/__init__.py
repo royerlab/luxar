@@ -36,17 +36,19 @@ exception bypasses the stub guard. Which root is missing depends on the route:
   splats, the heuristic ``cull`` methods ``cumulative`` /
   ``amplitude_percentile`` / ``combined`` (hence a bare ``cull()``, whose
   ``auto`` resolves to ``cumulative``), ``embed_dimension``, a strict
-  ``additive_prefix`` view, and
-  ``add_gsplats_from_data(..., additive_lod={...})``, which BUILDS a ladder —
-  unlike ``add_points(..., additive_lod=...)``, which does not go through
-  ``lod`` and works core-only.
+  ``additive_prefix`` view.
 * ``'torch'``, imported earlier still — the rendering-based ``cull`` methods
   ``error_budget`` / ``redundancy``, and therefore an ``auto`` handed a
   ``target`` or a ``shape``.
 
-Those rewrites work core-only on unstamped data. An operation that removes nothing
-(an all-passing filter, a ``cull`` whose retention keeps every splat)
-short-circuits before either import regardless of stamps.
+Building a ladder with ``add_gsplats_from_data(..., additive_lod={...})`` also
+needs ``'scipy'`` regardless of source stamps. Unlike
+``add_points(..., additive_lod=...)``, that route goes through ``lod``.
+
+The stamp-driven rewrites in the first bullet work core-only on unstamped data.
+An operation that removes nothing (an all-passing filter, a ``cull`` whose
+retention keeps every splat) short-circuits before either import regardless of
+stamps.
 """
 
 from __future__ import annotations
