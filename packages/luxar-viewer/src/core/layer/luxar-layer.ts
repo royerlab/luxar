@@ -321,8 +321,8 @@ export class LuxarLayer {
 
     const dims = sceneDimsManager.getDims();
     if (dims) await updateSceneForDimensions(dims, root, LOADER_ID);
-    this.applyRenderOrder();
     if (this.disposed) return root;
+    this.applyRenderOrder();
     this.configureBlendWarmup();
     await warmSceneBlendModePrograms(root);
 
