@@ -201,11 +201,12 @@ class TestValidateImageInput:
         assert data == b"\xff\xd8"
         assert fmt == "jpeg"
 
-    def test_file_path_without_suffix(self, tmp_path):
+    @pytest.mark.parametrize("filename", ["test", "test.tmp"])
+    def test_file_path_without_recognized_suffix(self, tmp_path, filename):
         image_bytes, _ = validate_image_input(
             np.zeros((2, 2, 3), dtype=np.uint8)
         )
-        test_file = tmp_path / "test"
+        test_file = tmp_path / filename
         test_file.write_bytes(image_bytes)
 
         data, fmt = validate_image_input(test_file)
