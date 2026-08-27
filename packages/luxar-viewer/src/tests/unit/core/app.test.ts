@@ -1399,6 +1399,14 @@ describe('LuxarApp', () => {
       expect(onFault).toHaveBeenCalledOnce();
       expect(onFault).toHaveBeenCalledWith({ src: SRC, error: fault });
       expect(app.getDatasetFault()).toEqual({ src: SRC, error: fault });
+
+      const foreignFault = new Error('foreign archive unavailable');
+      const manager = SceneLoaderManager.getInstance();
+      manager.setMonitorFactory(null);
+      const foreignLoader = manager.createLoader('foreign');
+      (foreignLoader as any)._archiveFault = foreignFault;
+
+      expect(app.getDatasetFault()).toEqual({ src: SRC, error: fault });
     });
 
     it('replays a fault latched before app wiring and replaces the listener on switch', async () => {

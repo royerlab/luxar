@@ -66,6 +66,7 @@ import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
 import { getSceneLoader } from '../data/scene-loader-manager';
+import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
 
@@ -139,6 +140,7 @@ export class LuxarApp {
    */
   private embedderEvents = createEventBus<LuxarEmbedderEventMap>();
   private datasetFaultUnsubscribe?: Unsubscribe;
+  private datasetFaultLoader?: SceneLoader;
   private currentDatasetSrc?: string;
 
   /**
@@ -340,6 +342,7 @@ export class LuxarApp {
   private async loadDataset(src: string): Promise<void> {
     this.datasetFaultUnsubscribe?.();
     this.datasetFaultUnsubscribe = undefined;
+    this.datasetFaultLoader = undefined;
     this.currentDatasetSrc = undefined;
     try {
       await loadDatasetImpl(src, {
@@ -365,6 +368,7 @@ export class LuxarApp {
       this.embedderEvents.emit('dataset-loaded', { src });
       const sceneLoader = getSceneLoader();
       if (sceneLoader) {
+        this.datasetFaultLoader = sceneLoader;
         this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
           (error) => this.embedderEvents.emit('dataset-fault', { src, error }),
           { replayCurrent: true }
@@ -769,7 +773,7 @@ export class LuxarApp {
   /**
    * Subscribe to a public embedder event. Returns an unsubscribe function.
    *
-   * Events: `dataset-loaded`, `dataset-error`, `dimensions-changed`,
+   * Events: `dataset-loaded`, `dataset-error`, `dataset-fault`, `dimensions-changed`,
    * `selection` (see {@link LuxarEmbedderEventMap}). Safe to call before
    * `init()`; the per-app emitter outlives individual init/dispose cycles.
    *
@@ -871,9 +875,9 @@ export class LuxarApp {
     };
   }
 
-  /** Current terminal fault for the loaded dataset, or null while updates remain usable. */
+  /** Current terminal fault, or null when no dataset is loaded or no fault has occurred. */
   getDatasetFault(): DatasetFaultPayload | null {
-    const error = getSceneLoader()?.archiveFault;
+    const error = this.datasetFaultLoader?.archiveFault;
     if (!error || !this.currentDatasetSrc) return null;
     return { src: this.currentDatasetSrc, error };
   }
@@ -998,6 +1002,7 @@ export class LuxarApp {
 
     this.datasetFaultUnsubscribe?.();
     this.datasetFaultUnsubscribe = undefined;
+    this.datasetFaultLoader = undefined;
     this.currentDatasetSrc = undefined;
 
     runDisposePipeline({
