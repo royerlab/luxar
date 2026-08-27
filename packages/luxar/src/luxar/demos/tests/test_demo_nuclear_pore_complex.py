@@ -406,11 +406,15 @@ def test_build_state_uses_the_deposited_symmetry_order(
 
 
 @pytest.mark.parametrize(
-    "states,expected_entry",
-    [([("Constricted", "7R5K")], "7R5K"), ([("Dilated", "7R5J")], "7R5J")],
+    "states,expected_entries",
+    [
+        ([("Constricted", "7R5K")], "7R5K"),
+        ([("Dilated", "7R5J")], "7R5J"),
+        ([("Constricted", "7R5K"), ("Dilated", "7R5J")], "7R5J/7R5K"),
+    ],
 )
 def test_single_state_caption_names_the_selected_deposition(
-    states, expected_entry: str, monkeypatch: pytest.MonkeyPatch
+    states, expected_entries: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Captions report the selected deposition and representation's atom count."""
 
@@ -428,29 +432,25 @@ def test_single_state_caption_names_the_selected_deposition(
     demo._add_annotations(Scene(), states, 1_248_480)
 
     assert captured["detail"] == (
-        f"1,248,480 atoms • 808 chains • 25 nucleoporins • PDB {expected_entry}"
+        f"1,248,480 atoms • 808 chains • 25 nucleoporins • PDB {expected_entries}"
     )
 
 
-def test_main_banner_does_not_claim_the_all_atom_count(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
+def test_main_banner_does_not_claim_the_all_atom_count(capsys) -> None:
     """A filtered representation is not introduced as the all-atom count."""
-    lines = []
-    monkeypatch.setattr(
-        demo.sys,
-        "argv",
-        ["demo_nuclear_pore_complex.py", "--no-serve", "--representation=calpha"],
+    demo._print_banner(
+        {
+            "state": "both",
+            "representation": "calpha",
+            "color": "module",
+            "split": "none",
+        }
     )
-    monkeypatch.setattr(demo, "aprint", lambda line="": lines.append(str(line)))
-    monkeypatch.setattr(demo, "get_demos_output_dir", lambda: tmp_path)
-    monkeypatch.setattr(demo, "_generate_or_exit", lambda *args: None)
 
-    demo.main()
-
-    banner = "\n".join(lines)
+    banner = capsys.readouterr().out
     assert "4,937,064 atoms" not in banner
     assert "808 chains · 25 nucleoporins · 6 modules" in banner
+    assert "representation: calpha" in banner
 
 
 def test_demo_is_classified_as_heavy_compute() -> None:

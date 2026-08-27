@@ -1323,9 +1323,8 @@ def _parse_args(argv: Sequence[str]) -> Dict[str, str]:
     return options
 
 
-def main() -> None:
-    """Main demo entry point."""
-    options = _parse_args(sys.argv[1:])
+def _print_banner(options: Dict[str, str]) -> None:
+    """Print the representation-neutral startup banner."""
     aprint("=" * 70)
     aprint("NUCLEAR PORE COMPLEX — THE COMPLETE HUMAN NPC")
     aprint("=" * 70)
@@ -1339,6 +1338,12 @@ def main() -> None:
     aprint(f"  colour by:      {options['color']}")
     aprint(f"  node layout:    {options['split']}")
     aprint("")
+
+
+def main() -> None:
+    """Main demo entry point."""
+    options = _parse_args(sys.argv[1:])
+    _print_banner(options)
 
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "nuclear_pore_complex.luxar.zarr"
