@@ -121,7 +121,19 @@ def run_flatten_dataset(
             load_gsplat_node,
             read_authored_appearance,
         )
-        from luxar.gsplats.tree import iter_default_leaves
+        from luxar.gsplats.tree import (
+            GSplatLodGroup,
+            GSplatNode,
+            GSplatPartition,
+            iter_default_leaves,
+        )
+
+        def contains_partition(candidate: GSplatNode) -> bool:
+            if isinstance(candidate, GSplatPartition):
+                return True
+            if isinstance(candidate, GSplatLodGroup):
+                return any(contains_partition(child) for child in candidate.children)
+            return False
 
         if output_path.exists() and not overwrite:
             aprint(f"❌ Error: {output_path} exists; pass --overwrite to replace it.")
@@ -147,7 +159,7 @@ def run_flatten_dataset(
             # `lod_cutpoints: [...]` describes a tree that no longer exists (#1600).
             if stats:
                 carried_stats = stats_after_structure_change(stats)
-                if len(leaves) > 1:
+                if contains_partition(node):
                     # Batch-merge coordinates identify spatial slots. Flattening
                     # removes those slots, so their provenance is no longer valid.
                     carried_stats.pop("part_provenance", None)
