@@ -62,7 +62,8 @@ screen. Two live exceptions in this repo, and they are different from each other
 
 ``cryoem_virus`` is the counter-example: a single compact particle, always
 full-frame, so its coarse levels were never selected and it moved to ``stream``
-for a 28% saving.
+for a 28% saving when regenerated. Publishing that regenerated archive remains
+tracked in #1879.
 
 **under the cap** — ``MAX_SPLATS_PER_GSPLATS_NODE`` is 4,194,304 resident on a
 4096-class GPU (8.38M at 8192). Above it the viewer silently drops the tail, and
@@ -71,7 +72,9 @@ clean-edged hole rather than noise. **Only the RESIDENT slice counts**, so an nD
 node sliced on a hidden axis is measured per-slice — a 500-timepoint node at
 ~165k splats/frame is 25x under the cap despite holding 82M in total. For a
 STATIC object above the cap, parts stop being a distraction and become
-load-bearing.
+load-bearing. The compiler currently warns on the node total rather than the
+resident slice, so that warning is expected for a sliced nD node that satisfies
+the runtime limit.
 
 Measured cost of the alternatives, same flat fit, same knobs:
 

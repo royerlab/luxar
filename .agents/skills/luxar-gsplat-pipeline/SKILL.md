@@ -419,7 +419,8 @@ requests), so halving a node count does not halve the cost.
 so at a full-frame view the *finest* substitutive level shows and coarse levels
 are bytes nobody fetches. They pay off only when the object is genuinely small
 on screen. `cryoem_virus` (a compact particle, always full-frame) moved
-`levels -> stream` for **-28%** (16.03 -> 11.50 MB, 16 -> 4 nodes);
+`levels -> stream` for **-28%** when regenerated (16.03 -> 11.50 MB, 16 -> 4
+nodes; publishing the regenerated archive remains #1879);
 `milky_way_dust` keeps `levels` because the galaxy really is orbited at range,
 and pays +39% on purpose.
 
@@ -428,7 +429,10 @@ and pays +39% on purpose.
 since storage is Hilbert-ordered that tail is one contiguous lobe — a clean-edged
 hole, not noise. **Only the resident slice counts**: an nD node sliced on a hidden
 axis is measured per-slice, so a 500-timepoint node holding 128M splats at
-~256k/frame is fine. For a STATIC object over the cap, parts are load-bearing.
+~256k/frame is fine. The compiler currently warns on the node total rather than
+the resident slice, so that warning is expected for a sliced nD node that
+satisfies the runtime limit. For a STATIC object over the cap, parts are
+load-bearing.
 
 **On a time-stacked 4D node, a partition buys nothing at all.** The writer
 lexsorts by the time barrier, so a timepoint's splats are already contiguous and

@@ -84,9 +84,11 @@ distribution does not change its quantile structure. But the same
 `-r 0.960` returned 65% of splats on the 20-frame store and **12%** on the
 500-frame one. Same specimen, same fit settings, same flag, same distribution.
 
-**That discrepancy is unexplained and under investigation** (2026-08-26); the two
-stores differ in ladder depth (8 rungs vs 13), which is the leading suspect. Until
-it is understood:
+That discrepancy was caused by the descending amplitude CDF accumulating in
+float32: at production scale the running sum saturated and understated both the
+total amplitude and the fraction of splats needed to reach it. The accumulator
+is now float64, so culling is scale-invariant for identical amplitude
+distributions.
 
 * **Check the resulting count against the distribution** before shipping. If
   `-r 0.96` does not keep roughly the fraction the CDF says it should, something

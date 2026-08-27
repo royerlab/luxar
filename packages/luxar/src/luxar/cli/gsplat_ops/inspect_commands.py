@@ -152,6 +152,15 @@ def _print_statistics_table(data: "np.ndarray", label: str) -> None:
             aprint(f"  {key:<10s}: {value:>12.6f}")
 
 
+def _normalized_amplitude_cdf(amplitudes: "np.ndarray") -> "np.ndarray":
+    """Return the descending amplitude CDF with a non-saturating accumulator."""
+    import numpy as np
+
+    sorted_amplitudes = np.sort(amplitudes)[::-1]
+    cumulative = np.cumsum(sorted_amplitudes, dtype=np.float64)
+    return cumulative / cumulative[-1]
+
+
 def info_dataset(
     path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -269,9 +278,7 @@ def info_dataset(
         aprint(f"\nTotal Amplitude: {total_amp:.4e}")
 
         # Top contributors
-        sorted_amps = np.sort(data.amplitudes)[::-1]
-        cumsum = np.cumsum(sorted_amps)
-        cumsum_norm = cumsum / cumsum[-1]
+        cumsum_norm = _normalized_amplitude_cdf(data.amplitudes)
 
         # Find how many splats contribute to 50%, 90%, 95%, 99%
         for threshold in [0.50, 0.90, 0.95, 0.99]:

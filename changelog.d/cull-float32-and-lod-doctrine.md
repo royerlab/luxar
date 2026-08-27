@@ -22,11 +22,11 @@ it was a scale-invariance check — a twenty-frame subset and the full
 five-hundred-frame merge have provably identical amplitude distributions, and
 culled to 65% and 12%.
 
-The accumulator and the two statistics reductions beside it are now float64. The
-regression tests assert the kept fraction against a float64 ground truth computed
-in the test rather than a hard-coded number, and assert directly that tiling the
-same distribution eight times does not move the fraction, which is the property
-the bug broke.
+The accumulator, the two statistics reductions beside it, and the matching
+amplitude CDF in `luxar gsplat info` are now float64. The regression tests assert
+the kept fraction against a float64 ground truth computed in the test rather than
+a hard-coded number, and assert directly that tiling the same distribution eight
+times does not move the fraction, which is the property the bug broke.
 
 #### Choosing a LOD recipe by the view rather than by the element count
 
@@ -44,7 +44,8 @@ per-node splat cap applies to the resident slice rather than the node total, so
 an nD node sliced on a hidden axis is measured per-slice.
 
 `cryoem_virus` is a compact particle always seen full-frame and moves to
-`stream`, 28% smaller with a quarter of the nodes. `milky_way_dust` keeps
+`stream`; a regenerated archive is 28% smaller with a quarter of the nodes,
+while publishing that archive remains #1879. `milky_way_dust` keeps
 `levels` and pays 39% for them on purpose, because a galaxy really is orbited at
 range. The two pathology slides keep `adaptive`, which is what parts are for.
 

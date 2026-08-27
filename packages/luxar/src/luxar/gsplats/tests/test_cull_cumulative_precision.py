@@ -66,7 +66,6 @@ def _data(amps: np.ndarray) -> GSplatData:
     )
 
 
-@pytest.mark.slow
 def test_cumulative_cull_matches_the_float64_rule_at_scale() -> None:
     """The kept fraction must be what the amplitude CDF says, not less."""
     amps = _heavy_tailed_amplitudes(N_SPLATS)
@@ -86,7 +85,6 @@ def test_cumulative_cull_matches_the_float64_rule_at_scale() -> None:
     )
 
 
-@pytest.mark.slow
 def test_cumulative_cull_fraction_is_invariant_under_tiling() -> None:
     """Pooling more of the SAME distribution must not change the fraction.
 
