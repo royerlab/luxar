@@ -63,6 +63,7 @@ vi.mock('../../../../../data/scene-loader/nodes/load-mesh-node', () => ({
 }));
 
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
+import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
 import { ArchiveFaultError } from '../../../../../cache/chunk-source';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
@@ -912,7 +913,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
     attachStubChildren();
     const archiveFault = new ArchiveFaultError('archive is no longer readable', '/scene.zip');
     loadGSplatsNodeExpensiveMock.mockRejectedValue(
-      new Error('lazy level load failed', { cause: archiveFault })
+      new LoaderError('Network', '/lod/child_1', archiveFault)
     );
     const reg = makeReg();
     const ctx = makeCtx(reg);

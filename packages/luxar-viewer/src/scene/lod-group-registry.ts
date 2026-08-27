@@ -1866,7 +1866,8 @@ export class LODGroupRegistry {
    *
    * ``retryLazyChildByLeafPath`` (an explicit user retry of a FAILED level)
    * deliberately bypasses this and calls ``kickDeferredLoad`` directly: an
-   * explicit request is honoured whatever the layer's visibility.
+   * explicit request for a retryable child is honoured whatever the layer's
+   * visibility.
    */
   private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
     if (!isEffectivelyVisible(entry.groupObject)) return;
