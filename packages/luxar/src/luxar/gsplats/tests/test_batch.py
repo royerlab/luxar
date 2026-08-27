@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -1382,6 +1383,38 @@ class TestMergeOrchestrator:
         merged = GSplatData.load(final)
         assert merged.n_splats == total
 
+    def test_single_tile_moves_quality_under_part_provenance(
+        self, tmp_path: Path
+    ) -> None:
+        """K=1 keeps the tile score attributable instead of claiming it at root."""
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        self._write_tiles(tiles_dir, n_t=1, n_c=1, n_k=1)
+        path = tiles_dir / output_filename(0, 0, 0, 1, 1, 1)
+        tile = GSplatData.load(path)
+        tile.stats.update(psnr_db=40.0, foreground_psnr_db=20.0)
+        tile.save(path)
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=1, n_channels=1, n_tiles=1),
+            out_dir,
+            verbose=False,
+        )
+
+        fitting = dict(zarr.open_group(str(final), mode="r")["fitting"].attrs)
+        assert "psnr_db" not in fitting
+        assert "foreground_psnr_db" not in fitting
+        provenance = fitting["part_provenance"]
+        assert [record["coordinate"] for record in provenance] == [0.0]
+        assert provenance[0]["fitting"]["psnr_db"] == 40.0
+        assert provenance[0]["fitting"]["foreground_psnr_db"] == 20.0
+
     def test_flat_flag_emits_single_leaf(self, tmp_path: Path) -> None:
         """--flat → single flat leaf (old behavior), loadable as GSplatData."""
         from luxar.gsplats.batch.manifest import BatchManifest
@@ -1419,6 +1452,97 @@ class TestMergeOrchestrator:
             assert child.ndim == 4
             assert total_splats(child) == 8  # 2 timepoints * 4 splats
         assert total_splats(node) == total  # = 2*1*2 tiles * 4 = 16
+
+    def test_partition_merge_collects_nested_tile_fit_provenance(
+        self, tmp_path: Path
+    ) -> None:
+        """Streaming merge retains every tile stamp without inventing a root score."""
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        self._write_tiles(tiles_dir, n_t=2, n_c=2, n_k=3)
+
+        for t in range(2):
+            for c in range(2):
+                for k in range(3):
+                    path = tiles_dir / output_filename(t, c, k, 2, 2, 3)
+                    if k == 1:
+                        shutil.rmtree(path)
+                        Path(f"{path}.empty").touch()
+                        continue
+                    tile = GSplatData.load(path)
+                    if (t, c, k) != (1, 1, 2):
+                        tile.stats.update(
+                            psnr_db=40.0 + 4 * k + 2 * c + t,
+                            foreground_psnr_db=20.0 + 4 * k + 2 * c + t,
+                            source_shape=[4, 5, 6],
+                            source_dtype="uint16",
+                        )
+                    tile.save(path)
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=2, n_channels=2, n_tiles=3),
+            out_dir,
+            channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            verbose=False,
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        fitting = dict(root["fitting"].attrs)
+        assert "psnr_db" not in fitting
+        parts = fitting["part_provenance"]
+        assert [part["coordinate"] for part in parts] == [0.0, 2.0]
+        assert all("fit_reference" not in part for part in parts)
+        assert "part_provenance" not in dict(root["part_0"].attrs["lod_stats"])
+        assert "part_provenance" not in dict(root["part_1"].attrs["lod_stats"])
+
+        channels = parts[1]["fitting"]["part_provenance"]
+        assert [channel["coordinate"] for channel in channels] == [0.0, 1.0]
+        timepoints = channels[1]["fitting"]["part_provenance"]
+        assert [timepoint["coordinate"] for timepoint in timepoints] == [0.0, 1.0]
+        assert timepoints[0]["fitting"]["psnr_db"] == 50.0
+        assert "psnr_db" not in timepoints[1]["fitting"]
+        assert "foreground_psnr_db" not in timepoints[1]["fitting"]
+        assert "source_shape" not in timepoints[1]["fitting"]
+
+    def test_partition_merge_embeds_lone_surviving_timepoint_coordinate(
+        self, tmp_path: Path
+    ) -> None:
+        """A tile present only at t=2 remains a one-frame 4D stack at t=2."""
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        self._write_tiles(tiles_dir, n_t=3, n_c=1, n_k=2)
+        for t in (0, 1):
+            path = tiles_dir / output_filename(t, 0, 1, 3, 1, 2)
+            shutil.rmtree(path)
+            Path(f"{path}.empty").touch()
+        path = tiles_dir / output_filename(2, 0, 1, 3, 1, 2)
+        tile = GSplatData.load(path)
+        tile.stats.update(source_shape=[4, 5, 6], source_dtype="uint16")
+        tile.save(path)
+
+        final = merge_batch_results(
+            BatchManifest(n_timepoints=3, n_channels=1, n_tiles=2),
+            out_dir,
+            verbose=False,
+        )
+
+        root = zarr.open_group(str(final), mode="r")
+        parts = dict(root["fitting"].attrs)["part_provenance"]
+        timepoints = parts[1]["fitting"]["part_provenance"]
+        assert [record["coordinate"] for record in timepoints] == [2.0]
+        assert parts[1]["fitting"]["source_shape"] == [1, 4, 5, 6]
 
     def test_partition_multichannel_parts_carry_colors(self, tmp_path: Path) -> None:
         """T=1, C=2, K=2 with colors → partition; each part is color-merged."""
