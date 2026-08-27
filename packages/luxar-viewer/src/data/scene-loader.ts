@@ -254,9 +254,9 @@ export class SceneLoader {
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
   // Terminal for this loader: loadScene is one-shot, and dataset switches create
-  // a fresh SceneLoader through SceneLoaderManager.createLoaderAsync. Only standalone
-  // bootstrap registers the default notifier overlay; embedders currently receive the
-  // log entry before updates remain stopped, without a host-facing fault notification.
+  // a fresh SceneLoader through SceneLoaderManager.createLoaderAsync. Only
+  // bootstrapStandalone registers the notifier backend, so an embedded host gets
+  // just the log.error below and no visible message while updates stay stopped (#2280).
   private _archiveFault: ArchiveFaultError | null = null;
   /**
    * True for the duration of a progressive-LOD refinement run
