@@ -180,7 +180,7 @@ DEMO_META = {
     "geometry": "points",
     "requirements": {
         "download_mb": 28,  # 7R5J.cif.gz + 7R5K.cif.gz, ~13.8 MB each
-        "compute": "medium",
+        "compute": "heavy",
         "gpu": "none",
         "local_data": None,
     },
@@ -1218,7 +1218,7 @@ def generate_nuclear_pore_complex(
                 total, n_nodes = add_nucleoporin_nodes(scene, states)
             else:
                 raise ValueError(f"unknown split {split!r}; expected none|nucleoporin")
-            _add_annotations(scene, wanted)
+            _add_annotations(scene, wanted, len(states[0]["positions"]))
         expected = sum(len(state["positions"]) for state in states)
         if total != expected:
             raise ValueError(
@@ -1272,12 +1272,13 @@ def _report_geometry(
         )
 
 
-def _add_annotations(scene, states: Sequence[Tuple[str, str]]) -> None:
+def _add_annotations(scene, states: Sequence[Tuple[str, str]], atom_count: int) -> None:
     """Add the title and caption overlays.
 
     Args:
         scene: The scene to annotate.
         states: Selected ``(label, pdb_id)`` pairs, which determine the caption.
+        atom_count: Number of atoms in each selected conformational state.
     """
     scene.add_text(
         "Nuclear Pore Complex",
@@ -1288,9 +1289,9 @@ def _add_annotations(scene, states: Sequence[Tuple[str, str]]) -> None:
         blend_mode="difference",
     )
     detail = (
-        "4.9M atoms • 808 chains • 25 nucleoporins • PDB 7R5J/7R5K"
+        f"{atom_count:,} atoms • 808 chains • 25 nucleoporins • PDB 7R5J/7R5K"
         if len(states) > 1
-        else f"4.9M atoms • 808 chains • 25 nucleoporins • PDB {states[0][1]}"
+        else f"{atom_count:,} atoms • 808 chains • 25 nucleoporins • PDB {states[0][1]}"
     )
     add_demo_caption(scene, detail, DEMO_META.get("citation"))
 
@@ -1329,7 +1330,7 @@ def main() -> None:
     aprint("NUCLEAR PORE COMPLEX — THE COMPLETE HUMAN NPC")
     aprint("=" * 70)
     aprint("")
-    aprint("  4,937,064 atoms · 808 chains · 25 nucleoporins · 6 modules")
+    aprint("  808 chains · 25 nucleoporins · 6 modules")
     aprint("  PDB 7R5J (dilated) / 7R5K (constricted), Mosalaganti et al. 2022")
     aprint("  Assembled with the deposition's OWN C8 symmetry operators")
     aprint("")
