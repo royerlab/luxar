@@ -398,7 +398,7 @@ def test_non_hosted_datasets_are_labelled_as_not_hosted(
 
     monkeypatch.setattr(harness.data_fetch, "load_manifest", lambda: manifest)
     assert harness.main(["--list", "thing"]) == 0
-    assert capsys.readouterr().out.split()[-2:] == ["not", "hosted"]
+    assert capsys.readouterr().out.splitlines() == [f"{'thing':<40} not hosted"]
 
 
 def test_main_checks_every_variant_and_labels_each_row(
