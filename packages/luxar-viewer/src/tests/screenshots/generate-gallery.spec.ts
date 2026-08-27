@@ -1453,33 +1453,36 @@ for (const demo of DEMOS) {
 
     const webpPath = path.join(OUTPUT_DIR, `${demo.id}.webp`);
     const webmPathOut = path.join(OUTPUT_DIR, `${demo.id}.webm`);
-    let webpEncoded = false;
     try {
-      convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
-      webpEncoded = true;
-    } catch (e) {
-      console.error(`[${demo.id}] webp failed:`, e);
+      let webpEncoded = false;
+      try {
+        convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
+        webpEncoded = true;
+      } catch (e) {
+        console.error(`[${demo.id}] webp failed:`, e);
+      }
+      if (webpEncoded) {
+        const webpMedia = recordGalleryMedia(demo.id, webpPath);
+        console.log(
+          `[${demo.id}] webp → ${path.basename(webpPath)} (${formatMediaSize(webpMedia.sizeBytes)})`
+        );
+      }
+      let webmEncoded = false;
+      try {
+        convertFramesToWebm(framesDir, webmPathOut); // full-quality master
+        webmEncoded = true;
+      } catch (e) {
+        console.error(`[${demo.id}] webm failed:`, e);
+      }
+      if (webmEncoded) {
+        const webmMedia = recordGalleryMedia(demo.id, webmPathOut);
+        console.log(
+          `[${demo.id}] webm → ${path.basename(webmPathOut)} (${formatMediaSize(webmMedia.sizeBytes)})`
+        );
+      }
+    } finally {
+      fs.rmSync(framesDir, { recursive: true, force: true }); // clean up frames
     }
-    if (webpEncoded) {
-      const webpMedia = recordGalleryMedia(demo.id, webpPath);
-      console.log(
-        `[${demo.id}] webp → ${path.basename(webpPath)} (${formatMediaSize(webpMedia.sizeBytes)})`
-      );
-    }
-    let webmEncoded = false;
-    try {
-      convertFramesToWebm(framesDir, webmPathOut); // full-quality master
-      webmEncoded = true;
-    } catch (e) {
-      console.error(`[${demo.id}] webm failed:`, e);
-    }
-    if (webmEncoded) {
-      const webmMedia = recordGalleryMedia(demo.id, webmPathOut);
-      console.log(
-        `[${demo.id}] webm → ${path.basename(webmPathOut)} (${formatMediaSize(webmMedia.sizeBytes)})`
-      );
-    }
-    fs.rmSync(framesDir, { recursive: true, force: true }); // clean up frames
   });
 }
 

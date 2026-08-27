@@ -25,6 +25,9 @@ describe('gallery media reporting', () => {
     expect(
       checkGalleryMediaSize(mediaFile('drifting', 'webm', GALLERY_MEDIA_WARNING_BYTES))
     ).toEqual({ warning: '[drifting] drifting.webm is 20.00 MiB; the Pages limit is 25.00 MiB' });
+    expect(
+      checkGalleryMediaSize(mediaFile('near-limit', 'webm', GALLERY_MEDIA_LIMIT_BYTES - 1)).warning
+    ).toContain('[near-limit] near-limit.webm is 25.00 MiB');
     expect(() =>
       checkGalleryMediaSize(mediaFile('oversized', 'webm', GALLERY_MEDIA_LIMIT_BYTES))
     ).toThrow('[oversized] oversized.webm is 25.00 MiB; Pages requires each file below 25.00 MiB');
