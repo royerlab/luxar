@@ -45,6 +45,7 @@ import {
   getSupportedMimeType as getSupportedMimeTypePure,
 } from './media-utilities';
 import type { CaptureStrategy, SessionState } from './capture-strategy';
+import { createLiveOverlayCompositor, type LiveOverlayCompositor } from './live-overlay-compositor';
 import type { RecordingSession } from './session';
 import type { RecordingMode, RecordingOptions } from './types';
 
@@ -66,6 +67,9 @@ export class VideoRecordingStrategy implements CaptureStrategy {
   captureStream: MediaStream | null = null;
   recordedChunks: Blob[] = [];
   durationTimer: ReturnType<typeof setTimeout> | null = null;
+  // Non-null only while recording a scene that HAS visible overlays: the
+  // mirror canvas the stream is captured from instead of the WebGL canvas.
+  liveOverlayCompositor: LiveOverlayCompositor | null = null;
 
   // ── Per-frame callback IDs ─────────────────────────────────────
   readonly keepAliveCallbackId = 'recording-keepalive';
@@ -134,7 +138,20 @@ export class VideoRecordingStrategy implements CaptureStrategy {
         continuous: true,
       });
 
-      this.captureStream = canvas.captureStream(opts.videoFPS);
+      // DOM overlays are not in the WebGL canvas, so capturing it directly
+      // films the scene without them. When the scene has overlays and the
+      // user asked for them, capture a mirror canvas that is re-composited
+      // once per rendered frame instead. Null (and therefore free) whenever
+      // there is nothing to draw. Created AFTER the resolution scaling
+      // above so the mirror is sized to the frame actually being recorded.
+      this.liveOverlayCompositor = createLiveOverlayCompositor(
+        opts.includeOverlays,
+        session.overlayManager,
+        canvas
+      );
+      const captureSource = this.liveOverlayCompositor?.canvas ?? canvas;
+
+      this.captureStream = captureSource.captureStream(opts.videoFPS);
       this.mediaRecorder = new MediaRecorder(this.captureStream, {
         mimeType,
         videoBitsPerSecond,
@@ -343,16 +360,27 @@ export class VideoRecordingStrategy implements CaptureStrategy {
   }
 
   /**
-   * Stop every track on the captureStream and drop the reference.
+   * Tear down the whole capture SOURCE: stop every track on the
+   * captureStream, drop the reference, and detach the live overlay
+   * compositor if this recording had one.
    * `mediaRecorder.stop()` does NOT stop the underlying tracks, so
    * without this call canvas-capture media tracks accumulate across
    * repeated recordings.
+   *
+   * The overlay compositor is unwound HERE rather than at each call site
+   * precisely because its lifetime is the captureStream's: every path
+   * that ends a recording (onstop's unwind, onstop's disposed branch, the
+   * setup catch, dispose) already routes through this one method, so a
+   * per-frame `frame-end` listener cannot outlive the recording that
+   * installed it.
    *
    * Non-private so Panel can route `panel.cleanupCaptureStream()` through.
    */
   cleanupCaptureStream(): void {
     this.captureStream?.getTracks().forEach((track) => track.stop());
     this.captureStream = null;
+    this.liveOverlayCompositor?.detach();
+    this.liveOverlayCompositor = null;
   }
 
   // ── Test/orchestrator-visible: same reason — Panel proxies.

@@ -51,6 +51,7 @@ reference to Session for the shared scaffolding.
 | `media-utilities.ts`          | `computeVideoBitrate`, `getSupportedMimeType`, `generateFilename`, `anchorOffset`          |
 | `ffmpeg-script.ts`            | `generateFfmpegScript` — the bundled `encode_video.sh`, incl. the EXR display transform    |
 | `overlay-compositor.ts`       | `compositeOverlays` + text / image / HTML overlay rasterization                            |
+| `live-overlay-compositor.ts`  | `LiveOverlayCompositor` — mirror canvas that puts overlays into REAL-TIME WebM capture     |
 | `animation-sync.ts`           | `SliderSyncCoordinator` + `getTurntableInfo` / `getNavigableDimensionOptions`              |
 | `gui-builder.ts`              | Pure mode→format and format→predicate visibility rules (`computeControlVisibility`)        |
 | `zip-sequence-capture.ts`     | `ZipSequenceCapture` — streaming ZIP writer for image / EXR sequences                      |
@@ -423,10 +424,37 @@ module used to do — is only correct when the canvas fills the viewport
 AND the capture is canvas-sized. Recording breaks both halves, which is
 why a logo shrank as the output resolution went up.
 
-Two paths cannot composite overlays at all, and the confirmation dialog
-says so when overlays are visible: the real-time MediaRecorder
-(`canvas.captureStream` sees the WebGL canvas alone) and the EXR driver
-(raw HDR buffer).
+## Overlays in a real-time recording
+
+`canvas.captureStream()` on the WebGL canvas sees the WebGL canvas alone,
+so the real-time path used to drop every DOM overlay — "Include Overlays"
+was silently a no-op for all of Video mode (which is always real-time
+WebM) and for a non-smooth WebM turntable.
+
+`live-overlay-compositor.ts` closes that: when the scene has visible
+overlays and the user asked for them, `VideoRecordingStrategy` captures a
+MIRROR 2D canvas instead, refreshed once per rendered frame with a blit of
+the GL canvas plus the same `compositeOverlays()` the screenshot path
+runs. No overlays to draw ⇒ no mirror, and the GL canvas is captured
+directly as before.
+
+The refresh is driven by the `frame-end` event, NOT by `requestAnimation-
+Frame`, and that is load-bearing. The renderer runs with
+`preserveDrawingBuffer: false`, so `drawImage(glCanvas)` only yields
+pixels inside the same task that issued the draw calls; `frame-end` is
+emitted on the line after `postProcessing.render()`. A blit from a later
+task returns a fully black frame — measured on a live scene, not assumed.
+Cost is 0.1 ms median / 0.3 ms max per frame on a 4.7 Mpx canvas.
+
+The compositor is torn down in `cleanupCaptureStream()`, which every path
+that ends a recording already routes through, so a per-frame listener
+cannot outlive its recording.
+
+One path still cannot composite overlays, and the confirmation dialog
+says so when overlays are visible: the EXR driver writes the raw
+pre-grade HDR buffer, where a display-space overlay has no meaning.
+HTML overlays stay best-effort everywhere (their `foreignObject`
+rasterization is async); text and image overlays are exact.
 
 ## The bundled `encode_video.sh`
 
