@@ -168,7 +168,7 @@ export async function decodeMeshTexture(
     // `image-label-loader.ts` does — a typed-array view over a larger buffer
     // would hand the decoder the wrong bytes.
     // Keyed over EVERY encoding, `raw` included and mapped to null, so adding a
-    // fifth to the contract is a compile error here rather than an `undefined`
+    // new encoding to the contract is a compile error here rather than an `undefined`
     // MIME the browser silently sniffs around. The null case is unreachable —
     // `decode === 'codec'` excludes `raw` by construction — but is checked
     // rather than asserted, since the two tables agreeing is an invariant across

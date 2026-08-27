@@ -666,6 +666,18 @@ def test_texture_rejections(factory, error_pattern, test_id) -> None:
         factory()
 
 
+@pytest.mark.parametrize("texture", [np.zeros((4, 4), np.uint8), np.zeros(16, np.uint8)])
+def test_ktx2_shape_error_names_pixel_input_contract(texture) -> None:
+    """KTX2 authoring takes pixels, not the encoded-byte shape used by bitmap codecs."""
+    with pytest.raises(ValidationError) as exc_info:
+        validate_texture_for_writing(texture, "ktx2")
+
+    message = str(exc_info.value)
+    assert "Encoding 'ktx2'" in message
+    assert "uint8 (H, W, 3|4) pixels" in message
+    assert "pre-built KTX2 container" in message
+
+
 @pytest.mark.parametrize(
     "texture,encoding,dims,expected,test_id",
     [

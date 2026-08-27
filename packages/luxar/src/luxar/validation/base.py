@@ -1305,14 +1305,21 @@ def validate_uvs_for_writing(uvs: Any, n_vertices: int, context: str = "uvs") ->
         )
 
 
-def _resolve_raw_texture_dims(arr: Any, context: str) -> Tuple[int, int, int]:
+def _resolve_raw_texture_dims(
+    arr: Any, encoding: str, context: str
+) -> Tuple[int, int, int]:
     """Read and dtype-check an ``(H, W, C)`` raw texture payload."""
     if arr.ndim != 3:
+        suggestion = (
+            "Pass uint8 (H, W, 3|4) pixels, not a pre-built KTX2 container"
+            if encoding == "ktx2"
+            else "Reshape to (height, width, channels); a greyscale texture is "
+            "(H, W, 1), not (H, W)"
+        )
         raise ValidationError(
-            f"{context}: Encoding 'raw' expects an (H, W, C) array, got shape "
+            f"{context}: Encoding {encoding!r} expects an (H, W, C) array, got shape "
             f"{arr.shape}",
-            "Reshape to (height, width, channels); a greyscale texture is "
-            "(H, W, 1), not (H, W)",
+            suggestion,
         )
     # Same rule as element colours: float of any width is writable because it
     # quantizes; an integer array must already be uint8 or uint16.
@@ -1431,7 +1438,7 @@ def validate_texture_for_writing(
 
     arr = np.asarray(texture)
     res_h, res_w, res_c = (
-        _resolve_raw_texture_dims(arr, context)
+        _resolve_raw_texture_dims(arr, encoding, context)
         if encoding in {"raw", "ktx2"}
         else _resolve_encoded_texture_dims(
             arr, encoding, width, height, channels, context

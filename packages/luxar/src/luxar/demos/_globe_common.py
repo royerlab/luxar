@@ -883,18 +883,24 @@ def add_textured_globe(
     every part would either duplicate the whole texture or need a shared-atlas
     mechanism that does not exist.
 
-    Useful sizes:
+    Useful sizes for the default bitmap path:
 
-    * ``tiles=1`` at 8192 — about 43 MiB resident as KTX2 UASTC including
-      mipmaps, versus 128 MiB after decoding a JPEG/WebP to RGBA8.
-    * ``tiles=2`` at 8192 each — the 16384x8192 production basemap, about 171 MiB
-      resident across both KTX2 tiles instead of 512 MiB RGBA8.
-    * ``tiles=4`` at 5400 each — the native 21600x10800 master, about 297 MiB
-      resident across four KTX2 tiles instead of about 890 MiB RGBA8.
+    * ``tiles=1`` at 8192 — 6.0 MB (JPEG) / 4.3 MB (WebP), the comfortable default.
+    * ``tiles=1`` at 16384 — 4x the pixels, 20.4 MB JPEG. Over WebP's limit.
+    * ``tiles=2`` at 8192 each — also 4x the pixels, but two 4.3 MB WebP payloads
+      instead of one 20.4 MB JPEG, and each node is budgeted separately so neither
+      approaches the per-node decode ceiling.
+    * ``tiles=4`` at 5400 each — the native 21600x10800 master, exactly.
 
-    Every tile remains a separate draw call because the 16384 per-axis device
-    limit still applies; KTX2 removes CPU bitmap expansion and cuts resident GPU
-    bytes, not the geometric split.
+    The cost is real and worth stating: every tile is a separate draw call and a
+    separate resident decoded surface. That is why this is a knob and not the
+    default.
+
+    With opt-in KTX2 UASTC including mipmaps, the resident figures are about
+    43 MiB for one 8192x4096 tile, 171 MiB across two 8192x8192 tiles, and
+    297 MiB across four 5400x10800 tiles, versus 128, 512 and 890 MiB as RGBA8.
+    The 16384 per-axis device limit still applies; KTX2 removes CPU bitmap
+    expansion and cuts resident GPU bytes, not the geometric split.
 
     ## The seam
 

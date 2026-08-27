@@ -153,8 +153,9 @@ if (entryHref) {
           fail(
             `Chunk '${name}' statically imports '${dep}', and '${name}' is reachable ` +
               `from the entry chunk. The whole '${stem}' chunk is therefore eager. ` +
-              `If this is 'three' → 'three-webgpu', the shared three.core.js needs its ` +
-              `own codeSplitting group in vite.config.ts (see #1679).`
+              `Keep '${stem}' dynamically imported. For 'three' → 'three-webgpu', ` +
+              `the shared three.core.js needs its own codeSplitting group in ` +
+              `vite.config.ts (see #1679).`
           );
         }
       }
@@ -166,12 +167,12 @@ if (entryHref) {
 }
 
 // ── 4. The lazy chunk must still EXIST ────────────────────────────────────
-// Guards the degenerate "fix": dropping WebGPU support would also make every
+// Guards the degenerate "fix": dropping a lazy feature would also make every
 // assertion above pass.
 for (const stem of LAZY_ONLY) {
   if (!assetFiles.some((f) => f.includes(stem) && f.endsWith('.js'))) {
     fail(
-      `No '${stem}' chunk was emitted at all. The WebGPU path must still be built ` +
+      `No '${stem}' chunk was emitted at all. The '${stem}' path must still be built ` +
         `— it is only supposed to be LAZY, not absent.`
     );
   }
