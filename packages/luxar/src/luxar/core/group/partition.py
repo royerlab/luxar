@@ -817,7 +817,13 @@ def _bsp_tree_midpoint(
 
 
 def _box_boundary_measure(mins: NDArray, maxs: NDArray) -> float:
-    """SAH cost proxy: length/perimeter/surface area for a 1D/2D/3D box."""
+    """Return the box-boundary proxy used by the surface-area heuristic.
+
+    SAH weights a child by the probability a random ray hits it, proportional
+    to surface area in 3D and perimeter in 2D; using the 3D form on planar data
+    would index a missing third extent. In 1D, twice the length is intentional:
+    the true boundary is constant and would tie every candidate split.
+    """
     ext = np.maximum(0.0, maxs - mins)
     if ext.shape[0] == 1:
         return float(2.0 * ext[0])

@@ -818,7 +818,7 @@ def test_nonstandard_displayed_dimensions_do_not_add_obsolete_advice(capsys) -> 
     assert "Put the displayed dimensions first" not in output
 
 
-def test_two_dimensional_scene_omits_displayed_dimension_caveat(capsys) -> None:
+def test_two_dimensional_scene_warns_for_overlap_cluster(capsys) -> None:
     root = _root(n_dims=2)
     _leaf(
         root,
@@ -840,7 +840,6 @@ def test_two_dimensional_scene_omits_displayed_dimension_caveat(capsys) -> None:
 
     output = capsys.readouterr().out
     assert "overlapping order-dependent nodes" in output
-    assert "Put the displayed dimensions first" not in output
 
 
 def test_overlap_union_joins_existing_multi_member_clusters(capsys) -> None:

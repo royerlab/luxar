@@ -169,7 +169,6 @@ def _warn_sorted_overlap_clusters(
     geometry_types: dict[str, set[str]],
     opacities: dict[str, set[float]],
     containers: set[str],
-    displayed_dimensions: tuple[int, ...],
 ) -> None:
     clusters: dict[str, list[str]] = {}
     for path in sorted(parents):
@@ -293,5 +292,4 @@ def warn_overlapping_blending(
         sorted_geometry_types,
         sorted_opacities,
         sorted_containers,
-        tuple(dimensions.displayed[:3]),
     )
