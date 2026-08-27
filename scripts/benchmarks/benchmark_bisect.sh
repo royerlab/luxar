@@ -16,7 +16,12 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # Interpreter for the benchmark runs. Resolved from hatch rather than hardcoded:
 # this used to name one developer's virtualenv by absolute path, which no other
 # machine has. Override when hatch cannot report it.
-HATCH_PYTHON="${LUXAR_BENCH_PYTHON:-$(hatch env find default 2>/dev/null)/bin/python}"
+if [ -n "${LUXAR_BENCH_PYTHON:-}" ]; then
+    HATCH_PYTHON="${LUXAR_BENCH_PYTHON}"
+else
+    HATCH_ENV="$(cd "${REPO_ROOT}" && hatch env find default 2>/dev/null || true)"
+    HATCH_PYTHON="${HATCH_ENV:-/nonexistent}/bin/python"
+fi
 BENCHMARK_SCRIPT="${REPO_ROOT}/scripts/benchmarks/benchmark_bisect_runner.py"
 RESULTS_DIR="${REPO_ROOT}/docs/benchmarks/bisection"
 WORKTREE_BASE="/tmp/luxar-bench"
@@ -57,7 +62,7 @@ echo ""
 # Check prerequisites
 if [ ! -f "${HATCH_PYTHON}" ]; then
     echo "ERROR: Hatch Python not found at ${HATCH_PYTHON}"
-    echo "       Set LUXAR_BENCH_PYTHON to the interpreter to use."
+    echo "       Run 'hatch env create' or set LUXAR_BENCH_PYTHON to the interpreter to use."
     exit 1
 fi
 
