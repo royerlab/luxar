@@ -515,6 +515,7 @@ def test_stale_findings_are_report_only(tmp_path: Path, capsys) -> None:
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
     assert "STALE a" in output
+    assert "media: a.webm 0.00 MiB, a.webp 0.00 MiB" in output
     assert "STALE b" in output
     assert "2 stale, 0 current" in output
 
@@ -565,7 +566,10 @@ def test_bad_rows_are_reported_unknown_without_hiding_other_tiles(
 
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
-    assert "UNKNOWN zzz: committed tile 'zzz' has no manifest entry" in output
+    assert (
+        "UNKNOWN zzz: committed tile 'zzz' has no manifest entry; "
+        "media: zzz.webm 0.00 MiB, zzz.webp 0.00 MiB" in output
+    )
     assert "CURRENT a" in output
     assert "CURRENT b" in output
     assert "0 stale, 2 current, 1 unknown" in output
