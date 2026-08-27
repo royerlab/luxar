@@ -399,9 +399,11 @@ app.init({ canvas, src }).catch((error) => {
 // Global error handler for unhandled initialization failures
 app.init({ canvas, src }).catch((error) => {
   console.error('Failed to start Luxar application:', error);
-  showError(startupErrorMessage(error), shortcutForAction, shortcutActions, {
-    autoDismiss: false,
-  });
+  const message =
+    error instanceof ArchiveFaultError
+      ? error.message
+      : 'Failed to start the application. Please check the console for details.';
+  showError(message, shortcutForAction, shortcutActions, { autoDismiss: false });
 });
 ```
 
@@ -594,9 +596,11 @@ async init(options: LuxarAppOptions): Promise<void> {
 
 // ✅ Good: Caller displays errors to user
 app.init({ canvas, src }).catch((error) => {
-  showError(startupErrorMessage(error), shortcutForAction, shortcutActions, {
-    autoDismiss: false,
-  });
+  const message =
+    error instanceof ArchiveFaultError
+      ? error.message
+      : 'Failed to start the application. Please check the console for details.';
+  showError(message, shortcutForAction, shortcutActions, { autoDismiss: false });
 });
 
 // ✅ Good: Provide fallbacks for optional values
