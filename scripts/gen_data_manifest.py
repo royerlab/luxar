@@ -485,6 +485,31 @@ DATASETS: dict[str, dict] = {
             ),
         },
     ),
+    # The whole 500-timepoint recording, of which the single-frame entry below
+    # is frame 150. Its OWN record (see RECORDS["droso-timelapse"]) rather than a
+    # 33rd file on cc-by, so Keller is credited as the data collector of THIS
+    # recording rather than as one name among four on a mixed record.
+    "gsplats_4d_drosophila_embryogenesis": dict(
+        bucket="zenodo",
+        record="droso-timelapse",
+        license="cc-by-4.0",
+        source="Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Royer/Keller)",
+        attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+        acquisition=dict(
+            # A clean 1:1 denominator, unusually: the fit consumed the WHOLE
+            # recording — all 500 timepoints, full spatial extent, the single
+            # channel — with no downscale and no crop. So the dataset as a whole
+            # really is comparable to the acquisition as a whole, which is what
+            # this block is for.
+            description=(
+                "the whole 500-timepoint SiMView recording "
+                "(500 x 108 x 1352 x 532 uint16), every timepoint fitted at full "
+                "resolution"
+            ),
+            comparable=True,
+            stored_bytes=19_333_771_628,  # DrosophilaHistone.zarr.zip as stored
+        ),
+    ),
     "gsplats_3d_drosophila_gastrulation": dict(
         bucket="zenodo",
         record="cc-by",
