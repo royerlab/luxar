@@ -76,6 +76,9 @@ with (
 
 **Key Features**:
 - Progressive writing (data written immediately, not cached)
+- Filterable oversized-node diagnostics via
+  `luxar.io.ElementCapacityWarning` (for example, promote them with
+  `warnings.simplefilter("error", ElementCapacityWarning)` in build checks)
 - Single-file `.zip` output with a normalized inner store name, published after successful finalization
 - **Scalar convenience**: Pass uniform values directly (no `np.full()` needed)
 - Morton/Hilbert spatial ordering for better compression

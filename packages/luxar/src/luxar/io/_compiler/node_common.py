@@ -587,7 +587,7 @@ def warn_if_over_element_cap(
         else "Split it with partition=dict(max_elements=...)"
     )
     warnings.warn(
-        f"⚠️  '{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
+        f"'{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
         f"{geometry_type} node can render on a 4096-class GPU. If the whole "
         f"node is committed at once, such a GPU can silently drop the tail — "
         f"and because elements are stored in Hilbert "
