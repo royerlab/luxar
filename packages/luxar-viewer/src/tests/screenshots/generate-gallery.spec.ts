@@ -84,6 +84,7 @@ import {
 import { resolveGalleryOnly } from './gallery-selection';
 import {
   checkGalleryMediaSize,
+  collectGalleryMediaSizeIssues,
   formatGalleryCaptureMetrics,
   formatMediaSize,
   galleryDroppedElementsWarning,
@@ -1267,10 +1268,8 @@ function convertFramesToWebp(framesDir: string, output: string): void {
 function statGalleryMedia(demoId: string, filePath: string): GalleryMediaFile | null {
   const stats = fs.statSync(filePath, { throwIfNoEntry: false });
   if (!stats) return null;
-  const extension = path.extname(filePath).slice(1) as GalleryMediaFile['extension'];
   return {
     demoId,
-    extension,
     fileName: path.basename(filePath),
     sizeBytes: stats.size,
   };
@@ -1513,6 +1512,7 @@ test('Gallery summary', async () => {
   console.log(`Output: ${OUTPUT_DIR}`);
   const checkedMediaFiles = new Set(capturedMedia.map((media) => media.fileName));
   const allMedia: GalleryMediaFile[] = [];
+  const uncheckedMedia: GalleryMediaFile[] = [];
   for (const demo of DEMOS) {
     const png = statGalleryMedia(demo.id, path.join(OUTPUT_DIR, `${demo.id}.png`));
     const webp = statGalleryMedia(demo.id, path.join(OUTPUT_DIR, `${demo.id}.webp`));
@@ -1522,14 +1522,14 @@ test('Gallery summary', async () => {
     );
     allMedia.push(...demoMedia);
     for (const media of demoMedia) {
-      if (checkedMediaFiles.has(media.fileName)) continue;
-      const { warning } = checkGalleryMediaSize(media);
-      if (warning) console.warn(warning);
+      if (!checkedMediaFiles.has(media.fileName)) uncheckedMedia.push(media);
     }
     console.log(
       `  ${png ? '[png]' : '[---]'} ${webp ? '[webp]' : '[----]'} ${webm ? '[webm]' : '[----]'} ${demo.id}`
     );
   }
+  const mediaIssues = collectGalleryMediaSizeIssues(uncheckedMedia);
+  for (const warning of mediaIssues.warnings) console.warn(warning);
   const mediaSummary = summarizeGalleryMedia(allMedia);
   console.log(mediaSummary.totalLine);
   if (mediaSummary.largestLines.length > 0) {
@@ -1537,4 +1537,5 @@ test('Gallery summary', async () => {
     for (const line of mediaSummary.largestLines) console.log(line);
   }
   console.log('');
+  if (mediaIssues.errors.length > 0) throw new Error(mediaIssues.errors.join('\n'));
 });

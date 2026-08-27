@@ -16,7 +16,6 @@ export const GALLERY_MEDIA_LIMIT_BYTES = 25 * MEBIBYTE;
 /** Encoded gallery file metadata used by the guard and run summary. */
 export interface GalleryMediaFile {
   demoId: string;
-  extension: 'png' | 'webp' | 'webm';
   fileName: string;
   sizeBytes: number;
 }
@@ -41,6 +40,24 @@ export function checkGalleryMediaSize(media: GalleryMediaFile): { warning: strin
         ? `[${media.demoId}] ${media.fileName} is ${size}; the Pages limit is ${limit}`
         : undefined,
   };
+}
+
+/** Collect warnings and failures without stopping at the first oversized file. */
+export function collectGalleryMediaSizeIssues(media: readonly GalleryMediaFile[]): {
+  warnings: string[];
+  errors: string[];
+} {
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  for (const file of media) {
+    try {
+      const { warning } = checkGalleryMediaSize(file);
+      if (warning) warnings.push(warning);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return { warnings, errors };
 }
 
 /** Summarize total encoded bytes and the largest files. */
