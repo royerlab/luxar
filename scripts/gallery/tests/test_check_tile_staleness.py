@@ -152,6 +152,29 @@ def test_stale_inputs_require_a_strictly_newer_commit() -> None:
     assert stale.stale_inputs(_stamp(20), inputs) == ["newer"]
 
 
+def test_media_flags_match_capture_threshold_boundaries() -> None:
+    path = Path("tile.webm")
+
+    assert (
+        stale._media_flag(
+            stale.GalleryMedia(path, stale.GALLERY_MEDIA_WARNING_BYTES - 1)
+        )
+        == ""
+    )
+    assert (
+        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_WARNING_BYTES))
+        == " [WARNING]"
+    )
+    assert (
+        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES - 1))
+        == " [WARNING]"
+    )
+    assert (
+        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES))
+        == " [OVER LIMIT]"
+    )
+
+
 def test_manifest_line_ranges_isolate_each_demo_entry() -> None:
     text = json.dumps(
         {
@@ -482,8 +505,10 @@ def test_media_sizes_use_committed_lfs_metadata_and_remain_report_only(
     repo = _repo(tmp_path)
     warning_path = repo / "docs/images/readme/gallery/a.webm"
     over_limit_path = repo / "docs/images/readme/gallery/b.webm"
+    regular_path = repo / "docs/images/readme/gallery/a.webp"
     warning_path.write_text(_lfs_pointer(stale.GALLERY_MEDIA_WARNING_BYTES))
     over_limit_path.write_text(_lfs_pointer(stale.GALLERY_MEDIA_LIMIT_BYTES))
+    regular_path.write_bytes(b"x" * 2048)
     _commit(repo, "grow gallery media", 22)
 
     warning_path.write_text(_lfs_pointer(1))
@@ -491,6 +516,7 @@ def test_media_sizes_use_committed_lfs_metadata_and_remain_report_only(
     report = stale.GalleryHistory(repo).report()
     sizes = {media.path.name: media.size_bytes for media in report.media}
     assert sizes["a.webm"] == stale.GALLERY_MEDIA_WARNING_BYTES
+    assert sizes["a.webp"] == 2048
     assert sizes["b.webm"] == stale.GALLERY_MEDIA_LIMIT_BYTES
 
     assert stale.main(["--repo-root", str(repo)]) == 0

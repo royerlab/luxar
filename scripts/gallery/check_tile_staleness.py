@@ -39,6 +39,7 @@ MEBIBYTE = 1024 * 1024
 GALLERY_MEDIA_WARNING_BYTES = 20 * MEBIBYTE
 GALLERY_MEDIA_LIMIT_BYTES = 25 * MEBIBYTE
 LARGEST_MEDIA_COUNT = 5
+MAX_LFS_POINTER_BYTES = 1024
 
 _BLAME_HEADER = re.compile(r"^([0-9a-f]+) \d+ \d+(?: \d+)?$")
 _LFS_POINTER_HEADER = b"version https://git-lfs.github.com/spec/v1\n"
@@ -198,13 +199,14 @@ class GalleryHistory:
             )
             raise StalenessError(f"git {' '.join(args)} failed: {detail}") from exc
 
-    def _git_bytes(self, *args: str) -> bytes:
+    def _git_bytes(self, *args: str, input_bytes: bytes | None = None) -> bytes:
         try:
             return subprocess.run(
                 ["git", *args],
                 cwd=self.repo_root,
                 check=True,
                 capture_output=True,
+                input=input_bytes,
             ).stdout
         except (OSError, subprocess.CalledProcessError) as exc:
             detail = (
@@ -291,10 +293,46 @@ class GalleryHistory:
             return None
         return self._git("show", f"HEAD:{path.as_posix()}")
 
-    def _media_size(self, object_id: str, blob_size: int) -> int:
-        if blob_size > 1024:
+    def _small_blob_contents(self, object_ids: Sequence[str]) -> dict[str, bytes]:
+        unique_ids = tuple(dict.fromkeys(object_ids))
+        if not unique_ids:
+            return {}
+        output = self._git_bytes(
+            "cat-file",
+            "--batch",
+            input_bytes=("\n".join(unique_ids) + "\n").encode(),
+        )
+        blobs: dict[str, bytes] = {}
+        cursor = 0
+        for expected_id in unique_ids:
+            header_end = output.find(b"\n", cursor)
+            if header_end < 0:
+                raise StalenessError("truncated git cat-file batch header")
+            object_id, object_type, size_text = output[cursor:header_end].split()
+            blob_size = int(size_text)
+            cursor = header_end + 1
+            blob = output[cursor : cursor + blob_size]
+            cursor += blob_size
+            if output[cursor : cursor + 1] != b"\n":
+                raise StalenessError("truncated git cat-file batch object")
+            cursor += 1
+            decoded_id = object_id.decode()
+            if decoded_id != expected_id or object_type != b"blob":
+                raise StalenessError(
+                    f"unexpected git cat-file batch object for {expected_id}"
+                )
+            blobs[decoded_id] = blob
+        return blobs
+
+    def _media_size(
+        self,
+        object_id: str,
+        blob_size: int,
+        small_blobs: dict[str, bytes],
+    ) -> int:
+        blob = small_blobs.get(object_id)
+        if blob is None:
             return blob_size
-        blob = self._git_bytes("cat-file", "blob", object_id)
         if not blob.startswith(_LFS_POINTER_HEADER):
             return blob_size
         match = _LFS_POINTER_SIZE.search(blob)
@@ -304,18 +342,28 @@ class GalleryHistory:
 
     def _tracked_tile_media(self) -> list[tuple[str, tuple[GalleryMedia, ...]]]:
         output = self._git("ls-tree", "-r", "-l", "HEAD", "--", TILES_DIR.as_posix())
-        media: list[GalleryMedia] = []
+        entries: list[tuple[Path, str, int]] = []
         for line in output.splitlines():
             metadata, path_text = line.split("\t", 1)
             _, object_type, object_id, size_text = metadata.split()
             path = Path(path_text)
             if object_type == "blob" and path.suffix in {".webp", ".webm"}:
-                media.append(
-                    GalleryMedia(
-                        path=path,
-                        size_bytes=self._media_size(object_id, int(size_text)),
-                    )
+                entries.append((path, object_id, int(size_text)))
+        small_blobs = self._small_blob_contents(
+            [
+                object_id
+                for _, object_id, blob_size in entries
+                if blob_size <= MAX_LFS_POINTER_BYTES
+            ]
+        )
+        media: list[GalleryMedia] = []
+        for path, object_id, blob_size in entries:
+            media.append(
+                GalleryMedia(
+                    path=path,
+                    size_bytes=self._media_size(object_id, blob_size, small_blobs),
                 )
+            )
         if not media:
             raise StalenessError("no committed README gallery tiles found")
         by_demo: dict[str, list[GalleryMedia]] = {}
