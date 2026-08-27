@@ -61,7 +61,11 @@ import type {
   MeshDataLoader,
   MeshViewState,
 } from '../../types/mesh';
-import type { MeshWholeNodeLoader } from './mesh-whole-node-loader';
+import {
+  meshPayloadBytes,
+  meshProjectionBytes,
+  type MeshWholeNodeLoader,
+} from './mesh-whole-node-loader';
 import type { MeshPreflightResult } from './preflight';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
@@ -732,7 +736,16 @@ export class MeshProgressiveLoader implements MeshDataLoader {
     // values are all 0 and their sum would be too. It is a node-level fact
     // anyway: the committed surface is the revealed prefix's concatenation, not
     // a quantity each level owns a share of.
-    return { ...this.monitor.getMetrics(), visibleElements: this._visibleTriangles };
+    const metrics = this.monitor.getMetrics();
+    const concatMemory =
+      this._concatCache && this._concatCache.lodCount > 1
+        ? meshPayloadBytes(this._concatCache.result) + meshProjectionBytes(this._concatCache.result)
+        : 0;
+    return {
+      ...metrics,
+      visibleElements: this._visibleTriangles,
+      memoryUsed: metrics.memoryUsed + concatMemory,
+    };
   }
 
   /** See `MeshWholeNodeLoader.recordVisibleElements`. */

@@ -8,9 +8,17 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { MeshProgressiveLoader } from '../../../../data/mesh/mesh-progressive-loader';
-import type { MeshWholeNodeLoader } from '../../../../data/mesh/mesh-whole-node-loader';
+import {
+  concatenateMeshData,
+  MeshProgressiveLoader,
+} from '../../../../data/mesh/mesh-progressive-loader';
+import {
+  meshPayloadBytes,
+  meshProjectionBytes,
+  type MeshWholeNodeLoader,
+} from '../../../../data/mesh/mesh-whole-node-loader';
 import type { LoaderMetrics } from '../../../../types/data-monitor-types';
+import type { LoadedMeshData } from '../../../../types/mesh';
 
 /** A level loader that reports the given telemetry and nothing else. */
 function level(path: string, over: Partial<LoaderMetrics> = {}) {
@@ -40,6 +48,36 @@ function ladder(levels: MeshWholeNodeLoader[]): MeshProgressiveLoader {
   return new MeshProgressiveLoader(levels, levels.length, '/surface');
 }
 
+function meshData(vertexOffset = 0): LoadedMeshData {
+  return {
+    vertices: new Float32Array([
+      vertexOffset,
+      0,
+      0,
+      vertexOffset + 1,
+      0,
+      0,
+      vertexOffset,
+      1,
+      0,
+    ]),
+    faces: new Uint32Array([0, 1, 2]),
+    normals: null,
+    colors: null,
+    vertexCount: 3,
+    faceCount: 1,
+    ndim: 3,
+    projection: {
+      position: new Float32Array(9),
+      displayDimsKey: null,
+      mask: new Uint8Array(3),
+      faceScratch: new Uint32Array(3),
+      fastPathBounds: null,
+      fastPathBoundsKey: null,
+    },
+  };
+}
+
 describe('MeshProgressiveLoader — monitor telemetry', () => {
   it('reports one aggregate keyed by the NODE path, not per level', () => {
     const loader = ladder([level('/surface/additive_0'), level('/surface/additive_1')]);
@@ -52,6 +90,32 @@ describe('MeshProgressiveLoader — monitor telemetry', () => {
     expect(m.elementsLoaded).toBe(200);
     expect(m.bytesLoaded).toBe(2000);
     expect(m.memoryUsed).toBe(4000);
+  });
+
+  it('includes only a multi-level concatenation in resident memory', () => {
+    const first = meshData();
+    const second = meshData(2);
+    const firstBytes = meshPayloadBytes(first) + meshProjectionBytes(first);
+    const secondBytes = meshPayloadBytes(second) + meshProjectionBytes(second);
+    const loader = ladder([
+      level('/surface/additive_0', { memoryUsed: firstBytes }),
+      level('/surface/additive_1', { memoryUsed: secondBytes }),
+    ]);
+    const internals = loader as unknown as {
+      loadedLODs: LoadedMeshData[];
+      _concatCache: { lodCount: number; result: LoadedMeshData } | null;
+    };
+
+    internals.loadedLODs = [first];
+    internals._concatCache = { lodCount: 1, result: first };
+    expect(loader.getMetrics().memoryUsed).toBe(firstBytes + secondBytes);
+
+    const concatenated = concatenateMeshData([first, second]);
+    internals.loadedLODs = [first, second];
+    internals._concatCache = { lodCount: 2, result: concatenated };
+    expect(loader.getMetrics().memoryUsed).toBe(
+      firstBytes + secondBytes + meshPayloadBytes(concatenated) + meshProjectionBytes(concatenated)
+    );
   });
 
   it('re-paths a level event to the node path', () => {
