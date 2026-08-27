@@ -102,6 +102,7 @@ function deriveKind(node: SceneNode): SceneGraphNode['kind'] {
  *   - points  → `pointCount` from `attrs.n_points`
  *   - lines   → `segmentCount` + `vertexCount` from `attrs.n_*`
  *   - gsplats → `splatCount` from `attrs.n_splats`
+ *   - mesh    → `faceCount` + `vertexCount` from `attrs.n_*`
  *   - other   → no extra stats
  *
  * Specialized groups (`kind=lod` / `kind=partition`) additionally carry
