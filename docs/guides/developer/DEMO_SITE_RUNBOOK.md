@@ -171,16 +171,17 @@ rm -rf datasets/demos/<key>.luxar.zarr    # or drop it and let the demo unpack
                                           # the current shipped Git-LFS asset
 ```
 
-Grep build logs for `Using cached scene` after any sweep. One demo in 89 took
-that path — few enough to miss, and the one that had a real defect behind it.
+Grep build logs for `Using cached scene` after any sweep. One gallery tile in
+the 86-entry manifest took that path — few enough to miss, and the one that had
+a real defect behind it.
 
 ### 2.5 Rebuild against the commit you think you are on
 
 A sweep is only valid for the code it ran against, and `dev` moves under a long
-one. A full 86-demo pass takes roughly ninety minutes here, during which several
-PRs can land. Record the HEAD the sweep started from, and re-check it at the
-end; if a store-affecting commit landed mid-sweep, the results are stale for
-every demo it touches.
+one. A full pass over the 86 gallery tiles takes roughly ninety minutes here,
+during which several PRs can land. Record the HEAD the sweep started from, and
+re-check it at the end; if a store-affecting commit landed mid-sweep, the
+results are stale for every demo it touches.
 
 Discarding a partial sweep and restarting at current `dev` is usually cheaper
 than finishing one you know is stale and then reasoning about which subset to
@@ -270,27 +271,41 @@ read. In practice the edge caches 404s too, so with a cache rule in place R2
 sees one per URL per PoP per TTL and the cost collapses. The real cost of a
 404 storm is **first-paint latency**, not the bill.
 
----
-
 ### 3.7 ffmpeg: every encoder option must precede the output filename
 
-Re-encoding captured media with a two-pass VP9 command whose `-passlogfile`
-trails the output produces:
+With ffmpeg 6.1.1, put `-passlogfile` after the pass-2 output filename:
 
-```
-frame=    0 fps=0.0 q=0.0 Lsize=N/A
-[out#0/null] Output file is empty, nothing was encoded
+```bash
+ffmpeg -y -i in.webm -c:v libvpx-vp9 -b:v 480k -pass 2 -an -row-mt 1 out.webm -passlogfile P
 ```
 
-Options placed after an output filename apply to the *next* output, so
-`-passlogfile` is silently orphaned, pass 2 finds no stats file, and nothing
-encodes.
+warns that the option is trailing:
+
+```
+Trailing option(s) found in the command: may be ignored.
+```
+
+Options placed after an output filename apply to the *next* output, so ffmpeg
+ignores the custom prefix and looks for the default `ffmpeg2pass-0.log` instead
+of the `P-0.log` that a correctly ordered pass 1 wrote. Pass 2 exits 251:
+
+```
+Error opening file ffmpeg2pass-0.log.
+[vost#0:0/libvpx-vp9] Error reading log file 'ffmpeg2pass-0.log' for pass-2 encoding
+Error opening output file out.webm.
+```
+
+The reverse mismatch is equally broken: a trailing pass-1 option writes its
+statistics to `ffmpeg2pass-0.log`, then a correctly ordered pass 2 looks for
+`P-0.log`. If both passes trail the option, they both use the default filename
+and can appear to work despite the broken ordering.
 
 What makes this worth a numbered hazard rather than a footnote is the *false
-explanation waiting next to it*. Playwright-recorded WebM genuinely carries no
-stream timestamps — `ffprobe` reports `duration_ts=N/A` and `nb_frames=N/A` —
-so "the input is undecodable" is both plausible and immediately checkable, and
-it is wrong. Confirm decodability before blaming the input:
+explanation waiting next to it*. WebM/Matroska output can carry no stream
+timestamps — including the gallery masters that ffmpeg assembles from explicit
+per-angle screenshots — so `ffprobe` reports `duration_ts=N/A` and
+`nb_frames=N/A`. "The input is undecodable" is therefore plausible and wrong.
+Confirm decodability before blaming the input:
 
 ```bash
 ffmpeg -v error -stats -i in.webm -f null -      # reports frame=120 -- it decodes fine
@@ -302,6 +317,10 @@ Correct ordering:
 ffmpeg -y -i in.webm -c:v libvpx-vp9 -b:v 480k -pass 1 -passlogfile P -an -f null /dev/null
 ffmpeg -y -i in.webm -c:v libvpx-vp9 -b:v 480k -pass 2 -passlogfile P -an -row-mt 1 out.webm
 ```
+
+The gallery harness normally encodes VP9 by quality (`-crf 24 -b:v 0`); a
+target-bitrate two-pass re-encode is a last resort after the recapture controls
+in §4.2.
 
 ### 3.8 Judge a re-encode on frames, never on byte count
 
@@ -315,6 +334,11 @@ Measured knee for that scene: 295 KB visibly degraded, 587 KB resolved
 throughout, 1174 KB indistinguishable from source. Dense point clouds and
 high-motion synthetic scenes need roughly double what a smooth microscopy
 volume does.
+
+For the normal size-control workflow, use the sanctioned `WEBM_CRF` or
+`WEBP_QUALITY` knobs in §4.2, recapture, and compare representative frames.
+
+---
 
 ## 4. Cloudflare configuration
 
@@ -345,7 +369,8 @@ written. It warns at 20 MiB, fails at the 25 MiB boundary, and prints the total
 plus the five largest files at the end of the run. Treat a warning as a prompt
 to choose a deliberate encoding adjustment with `WEBM_CRF` or `WEBP_QUALITY`
 in `generate-gallery.spec.ts`, then recapture and inspect the affected demos;
-do not silently trade quality for size with an automatic re-encode loop.
+do not silently trade quality for size with an automatic re-encode loop. Judge
+the result on matched frames rather than bytes alone (§3.8).
 
 ### 4.3 CORS on the R2 bucket
 
@@ -440,3 +465,7 @@ Gallery framing lives in `scripts/gallery/manifest.json`; see
   63%. `border-lit` is the better signal, but it too is inflated by legitimately
   bright limbs (a luminous cloud shell gains rim luminance seen edge-on). Look
   at the image.
+- **Worst-orbit-pose border-lit does not answer whether the still is framed
+  correctly.** An elongated subject projects wider as it rotates. Tribolium's
+  correct poster frame still measures 48.4% because the embryo reaches the edge
+  at `rock +15°`; shrinking it to satisfy that warning would underfill the tile.
