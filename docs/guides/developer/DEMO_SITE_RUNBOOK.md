@@ -44,7 +44,7 @@ the path. It should now appear on *nothing*:
 
 ```bash
 curl -sI "https://demos.luxarviewer.dev/media/earthquakes.webp" | grep -i x-luxar-fn
-curl -sI "https://data.luxarviewer.dev/data/<prefix>/<store>.luxar.zarr/zarr.json" | grep -i x-luxar-fn
+curl -sI "https://data.luxarviewer.dev/data/<prefix>/<store>.luxar.zarr/<existing-object>" | grep -i x-luxar-fn
 # no output from either = correct
 ```
 
@@ -61,8 +61,9 @@ its essentials are reproduced in §5.
 `https://luxarviewer.dev/?src=<absolute-url>` opens any store the browser can
 reach, which is the point of hosting the viewer at the apex — it is a general
 tool, not a demo appendage. That requires CORS on whatever origin holds the
-data (§4.3). The gallery's own embedded viewer keeps *relative* `src=/data/...`
-paths, because there the data and page are same-origin by construction.
+data (§4.3). The gallery uses the same absolute form because its data lives on
+the separate R2 hostname; a relative `/data/...` URL has no server on the Pages
+origin.
 
 ---
 
@@ -85,8 +86,8 @@ build the changed demos
 The published corpus deliberately uses `archive` rather than the general
 object-storage `hosting` profile. On a representative live store it reduced
 the chunk count from 5,004 to 224 (22×), accepting larger partial reads in
-exchange for far fewer objects and requests. Re-measure browser traffic and
-request cost before changing that tradeoff.
+exchange for far fewer stored objects. Re-measure browser traffic and request
+cost before changing that tradeoff.
 
 The page generator takes the data prefix as an argument, so pointing a wave at
 a new prefix is a parameter change, not an edit:
@@ -277,7 +278,7 @@ Verify both paths. Curl does not enforce CORS, so inspect the response headers
 explicitly:
 
 ```bash
-curl -sI -H "Origin: https://luxarviewer.dev" "$DIRECTORY_URL/zarr.json"
+curl -sI -H "Origin: https://luxarviewer.dev" "$DIRECTORY_OBJECT_URL"
 # want: access-control-allow-origin
 
 curl -sI -X OPTIONS -H "Origin: https://luxarviewer.dev" \
@@ -285,7 +286,7 @@ curl -sI -X OPTIONS -H "Origin: https://luxarviewer.dev" \
   -H "Access-Control-Request-Headers: range" "$ZIP_URL"
 # want: 204, access-control-allow-headers including "range"
 
-curl -sI -H "Origin: https://luxarviewer.dev" \
+curl -sD - -o /dev/null -H "Origin: https://luxarviewer.dev" \
   -H "Range: bytes=0-0" "$ZIP_URL"
 # want: 206, content-range, and access-control-expose-headers including it
 ```
