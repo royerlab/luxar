@@ -384,7 +384,8 @@ Each of these has burned a whole fit cycle. Check them before you launch a long 
 
 ## Choosing a LOD recipe (`lod --recipe`)
 
-Recipes are scale-ordered — pick by element count `N`:
+Recipes are scale-ordered — pick by element count `N`, then check the request
+floor below, which overrides this ordering when first paint is request-constrained:
 
 | Recipe | What it builds | Use when |
 | --- | --- | --- |
@@ -416,70 +417,95 @@ become hard barriers — e.g. a time or channel axis must stay a barrier).
 
 The table above answers "what fits in memory and renders fast". It does not answer
 "how many requests does the host serve before anything appears". On a
-request-constrained host — a per-deployment request cap that FAILS rather than bills
-— that count, not element count and not chunk size, is what picks the recipe.
+request-constrained host — one where request *count*, not bandwidth, is the binding
+limit, and exceeding it fails rather than bills — that count, not element count and
+not chunk size, is what picks the recipe.
 
 **Count eager rungs, not nodes.** `parts × levels × rungs` counts the tree; first
 paint pays only the part of it the loader fetches eagerly:
 
 ```
-eager rungs = eager parts × 1 level × min(3, rungs per level)
-requests    ≈ eager rungs × arrays per rung + one per extra chunk
+first-pass rungs = eager parts × 1 level × min(3, rungs per level)
+converged rungs  = eager parts × 1 level × rungs per level
+requests         ≈ eager rungs × arrays per rung + one per extra chunk
 ```
 
-A `kind=lod` group loads exactly ONE level eagerly — index `default_level`, which the
-compiler always writes as 0, the coarsest
-(`packages/luxar/src/luxar/io/_compiler/gsplat_tree.py:762`). Every other LOD-capable
-child is cheap-attached (placeholder + loader thunk, zero fetches), and a nested
-`kind=lod`/`kind=partition` child defers too — *unless it carries its own
-`transform`*, which sends it down the eager path
-(`packages/luxar-viewer/src/data/scene-loader/nodes/load-lod-group-node.ts:543`). A
-`kind=partition` group has no such selector: it loads EVERY part eagerly
-(`packages/luxar-viewer/src/data/scene-loader/nodes/load-partition-group-node.ts:305`).
-The one eager level commits 2 stream rungs on a cold load
-(`packages/luxar-viewer/src/data/loaders/progressive/streaming-policy.ts:76`) and
-unconditionally prefetches a third
-(`packages/luxar-viewer/src/data/gsplats/gsplats-progressive-loader.ts:500`);
-the rest refine after first paint, one pass per frame. The policy's rung-0
-`playback` cap (`streaming-policy.ts:64`) can never apply at first paint — its frame
-budget is null until a dimension animation is explicitly played — so assume the
-`refine` arm always. **And a rung is not one request**: `chunk_bounds` is a real
-one-chunk data read
-(`packages/luxar-viewer/src/data/loaders/chunk-bounds-loader.ts:63`), then `centers`,
-`amplitudes`, `cholesky_factors_diag`, `cholesky_factors_offdiag` and optionally
-`colors`, at one HTTP request per zarr chunk with no coalescing. Call a 3D rung
-**5–6 requests minimum**, plus one for every extra chunk any of those arrays spans.
-Array *metadata* is free on a Luxar-compiled store — one consolidated index for the
-whole scene; an arbitrary `?src=` store without one pays round trips per open.
+A `kind=lod` group loads exactly ONE level eagerly — index `default_level`, which
+every gsplat recipe and graft writes as 0, the coarsest
+(`io/_compiler/gsplat_tree.py`). Every other LOD-capable child is cheap-attached
+(placeholder + loader thunk, no array fetch), and a nested `kind=lod`/`kind=partition`
+child defers too — unless it carries its own `transform`, or the viewer has no LOD
+registry, either of which sends it down the eager path
+(`scene-loader/nodes/load-lod-group-node.ts::canDeferGroup`). A `kind=partition`
+group has no such selector: it loads EVERY part eagerly
+(`scene-loader/nodes/load-partition-group-node.ts`).
 
-**`overview` is the only large-N recipe whose first paint does not scale with part
-count.** Its root is a `kind=lod` over `[coarse_leaf, fine_partition]`, coarsest
-first with `default_level` 0 (`packages/luxar/src/luxar/gsplats/lod/recipes.py:547`),
-so the entire fine branch defers behind the selector: ~3 eager rungs, the same as
-`stream` and `levels`. `tiles` and `adaptive` make every part eager — ~3 × P eager
-rungs. `adaptive`'s per-part `levels` groups save the level factor, never the part
-factor.
+**The first pass is a floor, not a ceiling.** A cold pass commits 2 stream rungs
+(`loaders/progressive/streaming-policy.ts::shouldStopAfterLevel`) and prefetches a
+third (`gsplats/gsplats-progressive-loader.ts::prefetchNextLOD`) — but post-load
+refinement is kicked fire-and-forget from *inside* `loadScene` before it returns
+(`scene-loader/lifecycle/load-scene.ts`), one rung per frame, so the rest land
+alongside first paint and converge on the full eager-level ladder. Size a hard cap
+against `converged rungs`; `min(3, …)` only says what the user sees first.
+
+**And a rung is not one request.** `chunk_bounds` is a real one-chunk data read
+(`loaders/chunk-bounds-loader.ts`), then `centers`, `amplitudes`,
+`cholesky_factors_diag`, `cholesky_factors_offdiag` and optionally `colors`, at one
+HTTP request per zarr chunk with no coalescing. Call a 3D rung **5–6 requests
+minimum** plus one per extra chunk — but that is an array *list*, not a constant, so
+re-count it: a v3.0 store packs the Cholesky factors into one array, a colormapped
+fit carries no `colors`, and an nD rung whose slice query selects nothing costs only
+the `chunk_bounds` read. Array *metadata* is free on a Luxar-compiled store (one
+consolidated index for the whole scene); on an arbitrary `?src=` store without one a
+deferred tree pays a round trip per rung it never fetches — `parts × levels × rungs`,
+which then dominates.
+
+**Only a partition-anchored ladder actually keeps its one eager level.** The selector
+runs on the first frame and upgrades win outright with no hysteresis
+(`scene/lod-selector-math.ts`), and the anchors differ: a whole-object ladder sits at
+half-screen occupancy (`core/group/lod/group.py::WHOLE_OBJECT_FINEST_ANCHOR`), which
+the opening framing already satisfies, so a `levels` store promotes straight to a
+near-finest level; a partition-bound ladder sits at `PARTITION_FINEST_AREA` = 1.0 —
+the tile alone filling the screen — which it does not. So the recipes split where the
+scale ordering does not:
+
+- **`overview` — ~3 eager rungs, independent of part count.** Its root is a
+  `kind=lod` over `[coarse_leaf, fine_partition]`, coarsest first
+  (`gsplats/lod/recipes.py::build_overview`), so the entire fine branch defers
+  behind a fills-screen selector. The only large-N recipe that both defers its
+  parts and holds its eager level.
+- **`tiles`, `adaptive` — every part is eager**, so ~3 × P rungs on the first pass.
+  `adaptive`'s per-part `levels` groups save the level factor, never the part factor.
+- **`stream`, `levels` — one eager leaf/level at load**, but `levels` promotes on
+  frame 1 as above, so it is not the cheap option its depth suggests.
 
 **Measured, on one 1.58 GiB 4D timelapse.** Built with `adaptive`: 44 parts × 4
-levels × 4 rungs = 704 nodes, of which 44 × 1 × 3 = **132 eager rungs** — a 660–790
-request floor. First paint measured **689** requests after
-`luxar optimise --profile archive`, and 922 as built: the derivation brackets the
-archive figure, and the as-built excess is the extra-chunk term. The control is the
-same data as a single stacked 4D leaf with an 8-rung `stream` ladder — 8 nodes, and
-3.34 M splats against the `adaptive` store's 33,632 at first paint, so the *larger*
-store in every sense that matters. It pays 3 eager rungs: **39** requests at
-`archive`, 62 as built. Like chunk regime for like, 704 nodes cost **15–18× what 8
-nodes cost**. At fixed structure, re-chunking alone moves first paint 25–37%
-(922 → 689; 62 → 39) — a real second-order term, and `--profile archive` is still the
-right call, but it cannot touch the structure term.
+levels × 4 rungs = 704 nodes, of which 44 × 1 × 3 = **132 first-pass rungs** (176
+converged). First paint measured **689** requests after
+`luxar optimise --profile archive`, and 922 as built. 689 over 132 rungs is 5.2
+requests per rung — right at the array-list floor, which also says refinement had not
+converged when the poll fired (176 rungs could not come in under 880).
+
+The control is the same data as a single stacked 4D leaf with an 8-rung `stream`
+ladder — 8 nodes, and 3.34 M splats against the `adaptive` store's 33,632 at first
+paint, so the *larger* store in every sense that matters. It pays 3 eager rungs:
+**39** requests at `archive`, 62 as built — 13 per rung, three times h2afva's. **The
+floor is only tight when eager rungs are small.** h2afva's held ~255 splats each, so
+every array was one chunk; the control's held ~1.1 M, so the extra-chunk term
+dominated. Check which regime you are in before trusting the floor.
+
+Like chunk regime for like, 704 nodes cost **15–18× what 8 nodes cost** — and
+conservatively so: the single-leaf figures are local, where first paint equals
+converged, while the 689 is a true first-paint count (measured live at 684 and
+locally at 689 on the same store, which is what makes the comparison credible at
+all). At fixed structure, re-chunking alone moves *first paint* 25–37% (922 → 689;
+62 → 39) — a real second-order term, and `--profile archive` is still the right call
+(a full load gains far more), but it cannot touch the structure term.
 
 **Carry no fitted constant forward.** Across those five measured points
 `requests/node` spans 0.98 to 7.75, a 7.9× range: it is a ratio of two things that
 move independently — what fraction of the tree is eager, and how many chunks each
-array spans. Derive from eager rungs, never from a per-node rate. The single-leaf
-figures were measured locally, where first paint equals converged (everything arrives
-before the poll fires); the 689 was measured both live (684) and locally (689) on the
-same store, which is what makes the cross-harness comparison credible at all.
+array spans. Derive from eager rungs, never from a per-node rate.
 
 **Measure it rather than estimating it.** Open with `?debug` and read
 `window.__luxarDebug.cache.getStats().network.requestCount` right after the ready
@@ -491,10 +517,12 @@ zip-open probes, so it is a lower bound. `luxar info --stats` projects the full-
 chunk count for a store on disk — the offline companion.
 
 So when first paint is request-constrained: prefer `overview` over
-`adaptive`/`tiles` at huge N, or raise `--max-elements` to cut the part count, or keep
-the object a single stacked leaf with a `stream` ladder and let the substitutive and
-streaming laziness do the work. A large byte size on its own is not a reason to reach
-for `adaptive`.
+`adaptive`/`tiles` at huge N, or raise `--max-elements` to cut the part count — but
+not to one part, which makes the BSP return a single-part partition and drops both
+recipes back to the whole-object anchor (`gsplats/lod/recipes.py::build_adaptive`),
+promoting on frame 1. Or keep the object a single stacked leaf with a `stream` ladder
+and let the deferral do the work. A large byte size on its own is not a reason to
+reach for `adaptive`.
 
 ## Tiled fits (large volumes)
 
