@@ -174,7 +174,7 @@ Test the *cached* path, not a cache-busted one:
 
 ```bash
 curl -s -o /dev/null "$URL"                                   # warm it
-curl -sI -H "Origin: https://luxarviewer.dev" "$URL" \
+curl -sD - -o /dev/null -H "Origin: https://luxarviewer.dev" "$URL" \
   | grep -iE 'cf-cache-status|access-control-allow-origin'
 # want: cf-cache-status: HIT *and* the CORS header present
 ```
