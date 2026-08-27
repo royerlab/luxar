@@ -401,16 +401,26 @@ describe('SceneLoader', () => {
         }),
         dispose: vi.fn(),
       };
+      const ordinaryFailureLoader = {
+        updateView: vi.fn().mockRejectedValue(new Error('ordinary node failure')),
+        dispose: vi.fn(),
+      };
       const commitSpy = vi.spyOn(sceneLoader as any, 'updatePointsGeometry');
       const prefetch = vi.fn();
       const releaseShadows = vi.fn();
       (sceneLoader as any)._slicePrefetcher = { prefetch, releaseShadows, dispose: vi.fn() };
       const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
       loaders.clear();
+      loaders.set('/ordinary-failure', ordinaryFailureLoader);
+
+      await sceneLoader.updateView({ displayDims: [0, 1, 2] });
+
+      expect(sceneLoader.getFailedLoaders().has('/ordinary-failure')).toBe(true);
+
       loaders.set('/fault', failingLoader);
       loaders.set('/cached-success', successfulLoader);
 
-      await sceneLoader.updateView({ displayDims: [0, 1, 2] });
+      await sceneLoader.updateView({ slicePosition: [0, 0, 1] });
 
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledWith(fault.message, { persistent: true });
@@ -418,11 +428,12 @@ describe('SceneLoader', () => {
       expect(commitSpy).not.toHaveBeenCalled();
       expect(releaseShadows).toHaveBeenCalledOnce();
 
-      await sceneLoader.updateView({ slicePosition: [0, 0, 1] });
-      sceneLoader.prefetchSlice({ slicePosition: [0, 0, 2] }, 5);
+      await sceneLoader.updateView({ slicePosition: [0, 0, 2] });
+      sceneLoader.prefetchSlice({ slicePosition: [0, 0, 3] }, 5);
 
       expect(failingLoader.updateView).toHaveBeenCalledOnce();
       expect(successfulLoader.updateView).toHaveBeenCalledOnce();
+      expect(ordinaryFailureLoader.updateView).toHaveBeenCalledTimes(2);
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(prefetch).not.toHaveBeenCalled();
       expect((sceneLoader as any)._updateInProgress).toBe(false);
