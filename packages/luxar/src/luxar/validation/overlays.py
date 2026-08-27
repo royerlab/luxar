@@ -306,14 +306,17 @@ def validate_image_input(
     PIL Image, or anything imageio can read.
 
     Args:
-        image: Image data in any supported format
+        image: Image data in any supported format. Pre-encoded bytes and path
+            payloads must be PNG, JPEG, or WebP; a recognized path extension
+            must match the payload.
         fmt: Target encoding format for decoded inputs ('png', 'jpeg', 'webp')
 
     Returns:
         Tuple of (encoded_bytes, format_string)
 
     Raises:
-        ValueError: If image cannot be processed
+        ValueError: If the image cannot be processed, a pre-encoded payload is
+            unsupported, or a recognized path extension contradicts its payload.
     """
     fmt = validate_image_format(fmt)
 

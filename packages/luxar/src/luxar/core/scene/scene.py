@@ -468,7 +468,9 @@ class Scene(Group):
 
         Args:
             image: Image data. Accepts: file path (str/Path), raw bytes,
-                numpy array (HWC uint8 or float 0-1), PIL Image.
+                numpy array (HWC uint8 or float 0-1), PIL Image. Pre-encoded
+                bytes and path payloads must be PNG, JPEG, or WebP; a recognized
+                path extension must match the payload.
             position: (x, y) in normalized screen coords [0, 1].
             name: Optional overlay name. Auto-generated if None.
             size: Optional (width, height) as fractions of viewport dimensions.
