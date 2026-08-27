@@ -135,6 +135,7 @@ test('a host that ignores Range fails loudly without initializing an empty scene
   await expect
     .poll(() => consoleErrors.join('\n'), { timeout: 10_000 })
     .toMatch(/honours HTTP Range requests/);
+  await expect(page.locator('#luxar-error-message')).toBeVisible();
   expect(pageErrors).toEqual([]);
   expect(
     await page.evaluate(() => ({
