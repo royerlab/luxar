@@ -9,6 +9,7 @@ import { showError, clearError } from '../../../ui/error-overlay';
 beforeEach(() => {
   document.body.innerHTML = '';
   vi.useFakeTimers();
+  vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -28,6 +29,7 @@ afterEach(() => {
   // Clear all pending timers before teardown (defensive — should be 0)
   vi.clearAllTimers();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 
   document.body.innerHTML = '';
 });
@@ -148,6 +150,41 @@ describe('showError - dismissal', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
 
     expect(document.getElementById('luxar-error-message')).toBeNull();
+  });
+
+  it('does not install a document Escape handler for transient errors', () => {
+    const addEventListener = vi.spyOn(document, 'addEventListener');
+
+    showError('Transient error');
+
+    expect(addEventListener).not.toHaveBeenCalledWith('keydown', expect.any(Function));
+  });
+
+  it('removes persistent Escape handlers on click, clear, and replacement', () => {
+    const addEventListener = vi.spyOn(document, 'addEventListener');
+    const removeEventListener = vi.spyOn(document, 'removeEventListener');
+
+    showError('Click dismissal', undefined, undefined, { autoDismiss: false });
+    const clickHandler = addEventListener.mock.calls
+      .filter(([type]) => type === 'keydown')
+      .at(-1)?.[1];
+    expect(clickHandler).toEqual(expect.any(Function));
+    document.getElementById('luxar-error-message')?.click();
+    expect(removeEventListener).toHaveBeenCalledWith('keydown', clickHandler);
+
+    showError('Programmatic dismissal', undefined, undefined, { autoDismiss: false });
+    const clearHandler = addEventListener.mock.calls
+      .filter(([type]) => type === 'keydown')
+      .at(-1)?.[1];
+    clearError();
+    expect(removeEventListener).toHaveBeenCalledWith('keydown', clearHandler);
+
+    showError('Replaced error', undefined, undefined, { autoDismiss: false });
+    const replacedHandler = addEventListener.mock.calls
+      .filter(([type]) => type === 'keydown')
+      .at(-1)?.[1];
+    showError('Replacement error', undefined, undefined, { autoDismiss: false });
+    expect(removeEventListener).toHaveBeenCalledWith('keydown', replacedHandler);
   });
 });
 

@@ -2,9 +2,10 @@
  * Error dialog — user-friendly error overlay with guidance and optional auto-dismiss.
  *
  * Replaces any existing error dialog so a new failure doesn't stack on
- * top of an old one. Dismissible by click or Escape; transient errors also
- * auto-dismiss after `config.ui.timings.errorAutoDismissMs`. Traps focus inside
- * the dialog while it is open (Tab/Shift+Tab can't escape).
+ * top of an old one. Dismissible by click; persistent startup errors also own
+ * Escape directly, while initialized-app errors use the input router. Transient
+ * errors auto-dismiss after `config.ui.timings.errorAutoDismissMs`. Traps focus
+ * inside the dialog while it is open (Tab/Shift+Tab can't escape).
  */
 
 import { config } from '../config';
@@ -203,12 +204,14 @@ export function showError(
     dismissError();
   });
 
-  activeEscapeHandler = (event) => {
-    if (event.key === 'Escape') {
-      dismissError();
-    }
-  };
-  document.addEventListener('keydown', activeEscapeHandler);
+  if (options.autoDismiss === false) {
+    activeEscapeHandler = (event) => {
+      if (event.key === 'Escape') {
+        dismissError();
+      }
+    };
+    document.addEventListener('keydown', activeEscapeHandler);
+  }
 
   // Auto-dismiss after configured timeout. Timer id is stored at module
   // scope so dismissError()/clearError()/a replacement showError() can
@@ -227,7 +230,8 @@ export function showError(
   // Trap focus within the error dialog. Stored at module scope so the
   // clearError() teardown path can release it without going through
   // dismissError() (which is a closure scoped to this showError call).
-  activeReleaseTrap = trapFocus(errorDiv);
+  activeReleaseTrap = trapFocus(errorDiv, { autoFocusFirst: false });
+  dismissBtn.focus({ preventScroll: true });
 }
 
 /**

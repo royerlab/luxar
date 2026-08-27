@@ -145,6 +145,15 @@ test('a host that ignores Range shows a persistent actionable failure', async ({
   expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
   expect(dialogBounds!.y + dialogBounds!.height).toBeLessThanOrEqual(600);
   expect(await dialog.evaluate((element) => getComputedStyle(element).overflowY)).toBe('auto');
+  expect(await dialog.evaluate((element) => element.scrollTop)).toBe(0);
+  const titleBounds = await page.locator('#luxar-error-title').boundingBox();
+  expect(titleBounds).not.toBeNull();
+  expect(titleBounds!.y).toBeGreaterThanOrEqual(dialogBounds!.y);
+  expect(
+    await page.evaluate(() =>
+      document.activeElement?.classList.contains('luxar-error-dialog__dismiss')
+    )
+  ).toBe(true);
   expect(pageErrors).toEqual([]);
   expect(
     await page.evaluate(() => ({
