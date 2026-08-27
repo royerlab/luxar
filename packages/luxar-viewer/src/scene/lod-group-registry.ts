@@ -382,8 +382,8 @@ export interface LODGroupChild {
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
-   * Set when the failure is terminal for this dataset, such as an unreadable
-   * archive container. The registry never clears or retries this failure.
+   * Set when automatic cooldown retries must remain suppressed, such as after
+   * an unreadable archive-container fault. An explicit retry clears the latch.
    */
   permanentlyFailed?: boolean;
   /**
@@ -398,7 +398,7 @@ export interface LODGroupChild {
    * Idempotent fire-and-forget loader for a lazy child. Kicks the
    * deferred geometry load; on success sets ``ready=true`` and clears
    * ``loading``; on failure sets ``failed=true`` and clears ``loading``. A
-   * terminal dataset failure may additionally set ``permanentlyFailed``.
+   * container fault may additionally set ``permanentlyFailed``.
    * Must not touch ``object.visible`` — the registry owns the swap.
    */
   ensureLoaded?: () => void;
@@ -969,8 +969,8 @@ export class LODGroupRegistry {
    *
    * Returns ``true`` when a retry was kicked OR one is already in flight
    * (``loading``), ``false`` when no retryable lazy child with that leaf path
-   * exists. Permanently-failed children are not retryable within the same
-   * dataset; the caller drops their stale per-leaf failure record.
+   * exists. Explicit retries clear ``permanentlyFailed`` before re-kicking the
+   * child; automatic per-frame selection remains blocked while it is latched.
    * Fire-and-forget semantics: ``true`` means "retry started", not "retry
    * succeeded" — the thunk owns the ready/failed outcome, and a repeat
    * failure re-enters the normal cooldown cycle.
@@ -980,10 +980,10 @@ export class LODGroupRegistry {
     for (const entry of this.entries.values()) {
       for (const child of entry.children) {
         if (child.object.name !== path || !child.ensureLoaded) continue;
-        if (child.permanentlyFailed) return false;
         if (child.loading) return true; // retry already in flight
         child.failed = false;
         child.failedTick = undefined;
+        child.permanentlyFailed = false;
         this.kickDeferredLoad(child);
         return true;
       }

@@ -891,7 +891,9 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
   it('marks the child failed (not ready) when the deferred load throws', async () => {
     attachStubChildren();
-    loadGSplatsNodeExpensiveMock.mockRejectedValue(new Error('boom'));
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(
+      new Error('outer load failure', { cause: new Error('boom') })
+    );
     const reg = makeReg();
     const ctx = makeCtx(reg);
 
@@ -907,13 +909,16 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
     expect(deferred.ready).toBe(false);
     expect(deferred.loading).toBe(false);
+    expect(deferred.permanentlyFailed).not.toBe(true);
   });
 
   it('latches a wrapped archive fault as a permanent lazy-level failure', async () => {
     attachStubChildren();
     const archiveFault = new ArchiveFaultError('archive is no longer readable', '/scene.zip');
     loadGSplatsNodeExpensiveMock.mockRejectedValue(
-      new LoaderError('Network', '/lod/child_1', archiveFault)
+      new Error('outer load failure', {
+        cause: new LoaderError('Network', '/lod/child_1', archiveFault),
+      })
     );
     const reg = makeReg();
     const ctx = makeCtx(reg);
