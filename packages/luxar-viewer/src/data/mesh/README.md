@@ -42,13 +42,13 @@ a while appearing in the data-loading monitor's scene-graph tree and nowhere els
 
 What is reported follows from the loading strategy rather than from the geometry:
 
-| Field                                     | Mesh                                                                                                            |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `loads` / `bytesLoaded` / `avgLoadTime`   | The ONE fetch per loader (one per level on a reveal ladder, summed by `ProgressiveMonitorAdapter`). Bytes are DECODED bytes, as for the siblings. |
-| `elementsLoaded`                          | TRIANGLES — the drawn-primitive convention the whole monitor uses for mesh.                                       |
-| `memoryUsed`                              | Resident payload + the per-node projection scratch; the counterpart of the siblings' accumulator allocation. Zeroed on `dispose`. |
-| `queries` / `avgQueryTime` / `spatialIndex` | Zero / absent. No index, and a view change re-serves the resident mesh — a query sample here would be a ~0 ms entry for work that never touched the store. |
-| `visibleElements`                         | Pushed IN by `scene-loader/commit/commit-mesh-geometry.ts` (`recordVisibleElements`): projection, not the loader, decides which faces the index buffer receives. On a ladder the wrapper OVERRIDES rather than sums — the committed surface is a node-level fact. |
+| Field                                       | Mesh                                                                                                                                                                                                                                                              |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loads` / `bytesLoaded` / `avgLoadTime`     | The ONE fetch per loader (one per level on a reveal ladder, summed by `ProgressiveMonitorAdapter`). Bytes are DECODED bytes, as for the siblings.                                                                                                                 |
+| `elementsLoaded`                            | TRIANGLES — the drawn-primitive convention the whole monitor uses for mesh.                                                                                                                                                                                       |
+| `memoryUsed`                                | Resident payload + the per-node projection scratch; the counterpart of the siblings' accumulator allocation. Zeroed on `dispose`.                                                                                                                                 |
+| `queries` / `avgQueryTime` / `spatialIndex` | Zero / absent. No index, and a view change re-serves the resident mesh — a query sample here would be a ~0 ms entry for work that never touched the store.                                                                                                        |
+| `visibleElements`                           | Pushed IN by `scene-loader/commit/commit-mesh-geometry.ts` (`recordVisibleElements`): projection, not the loader, decides which faces the index buffer receives. On a ladder the wrapper OVERRIDES rather than sums — the committed surface is a node-level fact. |
 
 ## Why the progressive loader is half the size of its siblings
 
