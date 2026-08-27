@@ -123,6 +123,7 @@ Features
    guides/developer/ERROR_HANDLING_GUIDE
    guides/developer/DEBUG_INTERFACE_GUIDE
    guides/developer/INTENSITY_GAMMA_DESIGN
+   guides/developer/DEMO_SITE_RUNBOOK
 
 .. toctree::
    :maxdepth: 3
