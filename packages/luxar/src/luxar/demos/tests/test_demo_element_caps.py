@@ -20,6 +20,7 @@ _GEOMETRY_BY_ADDER = {
     "add_lines": "lines",
     "add_gsplats": "gsplats",
 }
+_GSPLAT_RECIPE_CALLS = {"build_gsplats_cache", "RecipeParams"}
 # Mesh is intentionally absent: its partition budget counts faces, and mesh has
 # no per-element texture or corresponding max_elements_per_node() capacity.
 # Existing ``link_attrs`` spreads contain only link-template render metadata;
@@ -80,6 +81,30 @@ def _default_budget_expression() -> ast.Constant:
     return ast.Constant(value=DEFAULT_MAX_ELEMENTS)
 
 
+def _dict_call_max_elements(expression: ast.Call, *, site: str) -> ast.expr:
+    if expression.args or any(keyword.arg is None for keyword in expression.keywords):
+        raise AssertionError(
+            f"{site}: demo partition= values cannot use opaque dict inputs because the "
+            "corpus-wide element-cap gate cannot silently miss their budget"
+        )
+    for keyword in expression.keywords:
+        if keyword.arg == "max_elements":
+            return keyword.value
+    return _default_budget_expression()
+
+
+def _dict_literal_max_elements(expression: ast.Dict, *, site: str) -> ast.expr:
+    for key, value in zip(expression.keys, expression.values):
+        if key is None:
+            raise AssertionError(
+                f"{site}: demo partition= values cannot use dictionary unpacking because "
+                "the corpus-wide element-cap gate cannot silently miss their budget"
+            )
+        if isinstance(key, ast.Constant) and key.value == "max_elements":
+            return value
+    return _default_budget_expression()
+
+
 def _partition_max_elements(expression: ast.expr, *, site: str) -> ast.expr | None:
     if isinstance(expression, ast.Constant):
         if expression.value is True:
@@ -88,31 +113,129 @@ def _partition_max_elements(expression: ast.expr, *, site: str) -> ast.expr | No
             return None
     if isinstance(expression, ast.Call) and isinstance(expression.func, ast.Name):
         if expression.func.id == "dict":
-            if expression.args or any(
-                keyword.arg is None for keyword in expression.keywords
-            ):
-                raise AssertionError(
-                    f"{site}: demo partition= values cannot use opaque dict inputs because the "
-                    "corpus-wide element-cap gate cannot silently miss their budget"
-                )
-            for keyword in expression.keywords:
-                if keyword.arg == "max_elements":
-                    return keyword.value
-            return _default_budget_expression()
+            return _dict_call_max_elements(expression, site=site)
     if isinstance(expression, ast.Dict):
-        for key, value in zip(expression.keys, expression.values):
-            if key is None:
-                raise AssertionError(
-                    f"{site}: demo partition= values cannot use dictionary unpacking because "
-                    "the corpus-wide element-cap gate cannot silently miss their budget"
-                )
-            if isinstance(key, ast.Constant) and key.value == "max_elements":
-                return value
-        return _default_budget_expression()
+        return _dict_literal_max_elements(expression, site=site)
     raise AssertionError(
         f"{site}: demo partition= values must be statically readable so the corpus-wide "
         "element-cap gate cannot silently miss their per-node budget"
     )
+
+
+def _call_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _reject_opaque_spreads(node: ast.Call, *, call_name: str | None, site: str) -> None:
+    has_opaque_spread = any(
+        keyword.arg is None
+        and not (
+            isinstance(keyword.value, ast.Name)
+            and keyword.value.id in _KNOWN_NON_BUDGET_SPREADS
+        )
+        for keyword in node.keywords
+    )
+    relevant_call = (
+        call_name == "LuxarZarrCompiler"
+        or call_name in _GEOMETRY_BY_ADDER
+        or call_name in _GSPLAT_RECIPE_CALLS
+    )
+    if has_opaque_spread and relevant_call:
+        raise AssertionError(
+            f"{site}: demo geometry, compiler, and recipe calls cannot use ** keyword "
+            "spreads because the corpus-wide element-cap gate cannot silently miss "
+            "their budgets"
+        )
+
+
+def _authored_budget(
+    path: Path,
+    node: ast.Call,
+    geometry_type: str,
+    expression: ast.expr,
+    constants: dict[str, int],
+    *,
+    site: str,
+) -> AuthoredElementBudget:
+    return AuthoredElementBudget(
+        path=path,
+        line=getattr(expression, "lineno", node.lineno),
+        geometry_type=geometry_type,
+        max_elements=_resolve_integer(expression, constants, site=site),
+    )
+
+
+def _explicit_budget_expression(
+    keywords: dict[str | None, ast.expr], name: str
+) -> ast.expr | None:
+    expression = keywords.get(name)
+    if isinstance(expression, ast.Constant) and expression.value is None:
+        return None
+    return expression
+
+
+def _budgets_for_call(
+    path: Path, node: ast.Call, constants: dict[str, int]
+) -> list[AuthoredElementBudget]:
+    site = f"{path.name}:{node.lineno}"
+    call_name = _call_name(node)
+    _reject_opaque_spreads(node, call_name=call_name, site=site)
+    keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+    if call_name == "LuxarZarrCompiler":
+        budget_expression = _explicit_budget_expression(
+            keywords, "auto_partition_max_elements"
+        )
+        if budget_expression is None:
+            return []
+        return [
+            _authored_budget(
+                path,
+                node,
+                geometry_type,
+                budget_expression,
+                constants,
+                site=site,
+            )
+            for geometry_type in ("points", "gsplats")
+        ]
+    if call_name in _GSPLAT_RECIPE_CALLS:
+        budget_expression = _explicit_budget_expression(keywords, "max_elements")
+        if budget_expression is None:
+            return []
+        return [
+            _authored_budget(
+                path,
+                node,
+                "gsplats",
+                budget_expression,
+                constants,
+                site=site,
+            )
+        ]
+    geometry_type = _GEOMETRY_BY_ADDER.get(call_name or "")
+    if geometry_type is None:
+        return []
+    budget_expression = (
+        _partition_max_elements(keywords["partition"], site=site)
+        if "partition" in keywords
+        else None
+    )
+    if budget_expression is None:
+        return []
+    return [
+        _authored_budget(
+            path,
+            node,
+            geometry_type,
+            budget_expression,
+            constants,
+            site=site,
+        )
+    ]
 
 
 def authored_element_budgets(path: Path) -> list[AuthoredElementBudget]:
@@ -120,70 +243,8 @@ def authored_element_budgets(path: Path) -> list[AuthoredElementBudget]:
     constants = _module_integer_constants(tree)
     budgets: list[AuthoredElementBudget] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        site = f"{path.name}:{node.lineno}"
-        opaque_spreads = [
-            keyword.value
-            for keyword in node.keywords
-            if keyword.arg is None
-            and not (
-                isinstance(keyword.value, ast.Name)
-                and keyword.value.id in _KNOWN_NON_BUDGET_SPREADS
-            )
-        ]
-        if opaque_spreads:
-            relevant_call = (
-                isinstance(node.func, ast.Name) and node.func.id == "LuxarZarrCompiler"
-            ) or (
-                isinstance(node.func, ast.Attribute)
-                and node.func.attr in _GEOMETRY_BY_ADDER
-            )
-            if relevant_call:
-                raise AssertionError(
-                    f"{site}: demo geometry and compiler calls cannot use ** keyword spreads "
-                    "because the corpus-wide element-cap gate cannot silently miss "
-                    "their budgets"
-                )
-        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
-        if isinstance(node.func, ast.Name) and node.func.id == "LuxarZarrCompiler":
-            budget_expression = keywords.get("auto_partition_max_elements")
-            if budget_expression is None or (
-                isinstance(budget_expression, ast.Constant)
-                and budget_expression.value is None
-            ):
-                continue
-            max_elements = _resolve_integer(budget_expression, constants, site=site)
-            for geometry_type in ("points", "gsplats"):
-                budgets.append(
-                    AuthoredElementBudget(
-                        path=path,
-                        line=getattr(budget_expression, "lineno", node.lineno),
-                        geometry_type=geometry_type,
-                        max_elements=max_elements,
-                    )
-                )
-            continue
-        if not isinstance(node.func, ast.Attribute):
-            continue
-        geometry_type = _GEOMETRY_BY_ADDER.get(node.func.attr)
-        if geometry_type is None:
-            continue
-        budget_expression = None
-        if "partition" in keywords:
-            budget_expression = _partition_max_elements(
-                keywords["partition"], site=site
-            )
-        if budget_expression is None:
-            continue
-        budgets.append(
-            AuthoredElementBudget(
-                path=path,
-                line=getattr(budget_expression, "lineno", node.lineno),
-                geometry_type=geometry_type,
-                max_elements=_resolve_integer(budget_expression, constants, site=site),
-            )
-        )
+        if isinstance(node, ast.Call):
+            budgets.extend(_budgets_for_call(path, node, constants))
     return sorted(budgets, key=lambda budget: budget.line)
 
 
@@ -252,6 +313,21 @@ def test_budget_discovery_covers_compiler_auto_partition(tmp_path: Path) -> None
     ] == [("points", 1_000_000), ("gsplats", 1_000_000)]
 
 
+def test_budget_discovery_covers_gsplat_recipe_budgets(tmp_path: Path) -> None:
+    demo = tmp_path / "demo_example.py"
+    demo.write_text(
+        "RECIPE_BUDGET = 1_000_000\n"
+        "build_gsplats_cache(src, cache, recipe='tiles', "
+        "max_elements=RECIPE_BUDGET)\n"
+        "RecipeParams(max_elements=500_000)\n",
+        encoding="utf-8",
+    )
+    assert [
+        (budget.geometry_type, budget.max_elements, budget.line)
+        for budget in authored_element_budgets(demo)
+    ] == [("gsplats", 1_000_000, 2), ("gsplats", 500_000, 3)]
+
+
 def test_budget_discovery_rejects_an_unreadable_partition(tmp_path: Path) -> None:
     demo = tmp_path / "demo_example.py"
     demo.write_text(
@@ -269,6 +345,8 @@ def test_budget_discovery_rejects_an_unreadable_partition(tmp_path: Path) -> Non
     [
         "scene.add_points('points', positions, **opts)\n",
         "LuxarZarrCompiler('out', **opts)\n",
+        "build_gsplats_cache(src, cache, recipe='tiles', **opts)\n",
+        "RecipeParams(**opts)\n",
     ],
 )
 def test_budget_discovery_rejects_keyword_spreads(tmp_path: Path, source: str) -> None:
