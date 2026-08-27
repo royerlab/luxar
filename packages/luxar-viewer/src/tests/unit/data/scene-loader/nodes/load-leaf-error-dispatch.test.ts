@@ -105,7 +105,9 @@ describe('loadLeafNode', () => {
     ).rejects.toBe(fault);
     expect(warnSpy).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Archive fault loading /points: Reading the archive failed after retries.')
+      expect.stringContaining(
+        'Archive fault loading /points: Reading the archive failed after retries.'
+      )
     );
   });
 
