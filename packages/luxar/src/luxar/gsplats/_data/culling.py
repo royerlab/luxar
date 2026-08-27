@@ -317,7 +317,23 @@ class CullingMixin(_GSplatDataOps):
         if method == "cumulative":
             sorted_indices = np.argsort(eff_amps)[::-1]
             sorted_amps = eff_amps[sorted_indices]
-            cumsum_amps = np.cumsum(sorted_amps)
+            # float64 ACCUMULATOR, not the float32 the amplitudes are stored in.
+            # This is not defensive: a float32 cumsum SATURATES on a large set
+            # and makes the cull silently more aggressive the bigger the data.
+            # The running sum is descending-sorted, so once it passes ~1e9 one
+            # float32 ULP (~64) exceeds the amplitudes still being added and the
+            # sum simply stops growing; `total_amp` is then understated too, so
+            # `retention` of a too-small total is reached far too early.
+            #
+            # Measured on one Drosophila timelapse at retention=0.960 (the
+            # correct answer, in float64, is 55.3% kept at every size):
+            #     5.12M splats -> float32 kept 53.5%   total 1.90e9 vs 1.92e9
+            #    25.6M splats -> float32 kept 37.7%   total 8.59e9 vs 9.60e9
+            #   128.0M splats -> float32 kept 11.6%   total 1.96e10 vs 4.80e10
+            # The shipped 500-timepoint merge came out at 12.4% — 5x over-culled
+            # — and nothing raised a warning. Small fixtures cannot catch this:
+            # at a few thousand splats the error is under a percent.
+            cumsum_amps = np.cumsum(sorted_amps, dtype=np.float64)
             total_amp = cumsum_amps[-1]
             if total_amp == 0:
                 mask = (
@@ -326,8 +342,8 @@ class CullingMixin(_GSplatDataOps):
                     else np.zeros(N_original, dtype=bool)
                 )
             else:
-                cumsum_norm = cumsum_amps / total_amp
-                n_keep = int(np.searchsorted(cumsum_norm, retention)) + 1
+                cumsum_amps /= total_amp
+                n_keep = int(np.searchsorted(cumsum_amps, retention)) + 1
                 n_keep = min(n_keep, N_original)
                 keep_indices = sorted_indices[:n_keep]
                 mask = np.zeros(N_original, dtype=bool)
@@ -348,7 +364,10 @@ class CullingMixin(_GSplatDataOps):
 
         result = self.filter(mask)
 
-        total_amp = np.sum(eff_amps)
+        # float64 for the same reason as the cumsum above: a float32 reduction
+        # over 100M+ values understates the total and would misreport
+        # `amplitude_retention`.
+        total_amp = np.sum(eff_amps, dtype=np.float64)
         result.stats.update(
             {
                 "culled": True,
@@ -356,7 +375,10 @@ class CullingMixin(_GSplatDataOps):
                 "n_original": N_original,
                 "n_culled": N_original - result.n_splats,
                 "amplitude_retention": (
-                    float(np.sum(effective_amplitudes(result)) / total_amp)
+                    float(
+                        np.sum(effective_amplitudes(result), dtype=np.float64)
+                        / total_amp
+                    )
                     if total_amp > 0
                     else 1.0
                 ),
