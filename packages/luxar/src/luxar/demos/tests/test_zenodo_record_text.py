@@ -743,7 +743,10 @@ def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
 
     assert counts == (1, 0, 1, 0)
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
-    assert written == absent[key]
+    assert written == {
+        **absent[key],
+        "unmeasured_reason": "unpinned-local-copy",
+    }
 
 
 def test_a_current_local_measurement_replaces_a_stale_staged_one(
@@ -887,6 +890,28 @@ def test_a_hand_recovered_null_digest_is_not_an_unpinned_marker(gen: Any) -> Non
     assert gen._why_absent(row, chars) == ""
     chars["ds/a.gsplats.zarr.zip"]["unmeasured_reason"] = "unpinned-local-copy"
     assert "not the pinned artifact" in gen._why_absent(row, chars)
+
+
+def test_rejected_read_marks_only_an_empty_retained_entry(gen: Any) -> None:
+    empty = {"quality_note": "not measured from archive bytes"}
+    recovered = {"n_splats": 123, "measured_sha256": None}
+    measured = {
+        "empty": {"measured_sha256": "local"},
+        "recovered": {"measured_sha256": "local"},
+    }
+
+    retained, rejected = gen._retain_preferred_measurements(
+        measured,
+        {"empty": empty, "recovered": recovered},
+        {"empty": "pinned", "recovered": "pinned"},
+    )
+
+    assert (retained, rejected) == (0, 2)
+    assert measured["empty"] == {
+        **empty,
+        "unmeasured_reason": "unpinned-local-copy",
+    }
+    assert measured["recovered"] == recovered
 
 
 def test_a_note_does_not_read_figures_from_unpinned_bytes(
@@ -1205,6 +1230,14 @@ class TestCheckExplainsAnAbsentFigure:
         "measured_sha256": None,
         "unmeasured_reason": "unpinned-local-copy",
     }
+
+    def test_committed_unpinned_rows_carry_the_reason(self, gen: Any) -> None:
+        chars = gen.load_characteristics()
+        for key in (
+            "gsplats_celegans/celegans_s1.gsplats.zarr.zip",
+            "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip",
+        ):
+            assert chars[key]["unmeasured_reason"] == "unpinned-local-copy"
 
     def test_an_unpinned_local_copy_is_named_as_the_cause(
         self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

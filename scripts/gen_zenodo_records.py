@@ -483,7 +483,30 @@ def _retain_preferred_measurements(
                     "unmeasured_reason": "unpinned-local-copy",
                 }
             else:
-                measured[key] = old_entry
+                measurement_fields = (
+                    "n_splats",
+                    "ndim",
+                    "format_version",
+                    "topology",
+                    "psnr_db",
+                    "foreground_psnr_db",
+                    "foreground_fraction",
+                    "source_shape",
+                    "source_dtype",
+                    "source_bytes",
+                    "frames",
+                )
+                measured[key] = (
+                    old_entry
+                    if any(
+                        old_entry.get(field) is not None
+                        for field in measurement_fields
+                    )
+                    else {
+                        **old_entry,
+                        "unmeasured_reason": "unpinned-local-copy",
+                    }
+                )
         elif (
             old_entry is not None
             and old_entry.get("measured_sha256") == pinned_digest
@@ -837,13 +860,13 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
 def _why_absent(row: dict[str, Any], chars: dict[str, Any]) -> str:
     """Name the cause when the sidecar already records one.
 
-    ``refresh`` writes an entry whose every measurement is null when it finds a
-    local copy whose bytes are NOT the pinned artifact: the figures are absent
-    on purpose, because measuring that copy would describe a generation the
-    record does not serve. That is a different job from an unmeasured archive --
-    fetch the hosted copy, rather than go and measure -- and printing the two
-    identically invites someone to "fix" the generator into publishing the very
-    numbers the marker withholds.
+    ``refresh`` stamps ``unmeasured_reason`` when it rejects a local copy whose
+    bytes are NOT the pinned artifact and no committed measurements can be
+    retained. The figures are absent on purpose, because measuring that copy
+    would describe a generation the record does not serve. That is a different
+    job from an unmeasured archive -- fetch the hosted copy, rather than go and
+    measure -- and printing the two identically invites someone to "fix" the
+    generator into publishing the very numbers the marker withholds.
     """
     info = chars.get(row.get("char_key", ""))
     if not info or info.get("unmeasured_reason") != "unpinned-local-copy":

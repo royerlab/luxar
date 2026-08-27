@@ -190,6 +190,7 @@
       "frames": null,
       "measured_from": null,
       "measured_sha256": null,
+      "unmeasured_reason": "unpinned-local-copy",
       "quality_note": "DELIBERATELY ABSENT, not unmeasured. Measured 2026-08-25 per timepoint against the *_preprocessed.npy volumes the fit consumed (global PSNR 35.57/30.03/19.65/21.11 dB and foreground 30.17/13.12/9.52/8.51 dB at t0/t100/t200/t300), and the foreground figures are NOT publishable: Otsu drifts 13.3x over the recording (0.0135 -> 0.1795), so 'foreground' is a different region at every timepoint. At t0 the low threshold admits 26.4% of a nearly-empty one-cell embryo, inflating that end, so the apparent trend mixes real quality loss with threshold drift. Real quality DOES fall across the recording -- MAX_SPLATS is a fixed 22,000 per timepoint while the embryo goes from one cell to hundreds of nuclei -- but a stable mask is needed to say by how much. Template: the zebrafish demo's fixed component-based definition (voxels inside 6-connected components of >= 27 voxels in the raw frame), which does not move with image content.",
       "quality_caveat": "PSNR is withheld rather than unmeasured. The fit consumed preprocessed volumes, so a figure against them scores the fit plus the preprocessing and is not comparable with the other archives here; per-frame values were measured and deliberately not published for that reason."
     },
@@ -490,6 +491,7 @@
       "frames": null,
       "measured_from": null,
       "measured_sha256": null,
+      "unmeasured_reason": "unpinned-local-copy",
       "quality_caveat": "PSNR is not recoverable for this archive, which is a property of the coordinate system rather than of the fit. The splats are authored in kilometres while the reference is a radar voxel grid, and raw reflectivity carries a no-data fill, so a direct comparison measures the regridding. The archive itself renders correctly."
     },
     "gsplats_opencell_map4/opencell_map4_ch0.gsplats.zarr.zip": {
