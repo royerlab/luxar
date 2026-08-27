@@ -7,8 +7,8 @@ three places in the tree cite the reasoning:
 `packages/luxar/src/luxar/tests/test_benchmark_floor_pin.py`,
 `scripts/benchmark_progressive_psnr.py`, and `changelog.d/1184.md`.
 
-> Relocated verbatim from `TODO.md` when that file's release section was
-> retired. The reasoning is unchanged; only its home moved.
+> Relocated and reformatted from `TODO.md` when that file's release section was
+> retired. The reasoning is unchanged.
 
 ## The short version
 
@@ -62,6 +62,9 @@ deviation for original-referenced comparability, not a statement about the tool.
    original-referenced PSNR for comparability, while `floor=auto` — the shipped
    default — is the more principled fit for real use, and noting
    background-relative evaluation as appropriate future work.
+
+The harness pin and Methods paragraph landed in `luxar-paper` PRs #8 and #7,
+respectively, on 2026-07-12; this decision is closed.
 
 ## Deferred
 

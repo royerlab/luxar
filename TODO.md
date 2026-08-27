@@ -7,11 +7,10 @@ This file tracks known issues, planned features, and improvements for the Luxar 
 ## Release planning
 
 The 813-line "Path to Release & Announcement" section that used to live here
-has been retired. It had drifted badly — it described work as pending that had
-already shipped (the depth-sorting arc, the gallery capture, the normal-mode
-gsplat demos), it recorded the Zenodo migration at a state several weeks stale,
-and it predated the demo-hosting stack entirely, so it never mentioned the two
-live sites that are now the project's most visible artifacts.
+has been retired. It had drifted badly — its Zenodo status was several weeks
+stale, its gallery plan no longer matched the residual curation work, and it
+predated the demo-hosting stack entirely, so it never mentioned the two live
+sites that are now the project's most visible artifacts.
 
 Release planning is tracked outside this repository. It names unpublished
 record identifiers, machine-specific paths and an in-progress collaborator
@@ -29,6 +28,14 @@ Two things that lived in the retired section have durable homes now:
 
 Everything below this line is ordinary engineering backlog and is still live.
 
+Legacy tags retained by code and documentation mean:
+
+- **R10:** depth sorting; **R10a:** normal-mode gsplat demos.
+- **R17:** retire git-LFS-heavy demo data to Zenodo — (1) fetch helper and
+  manifest, (2) upload and publish records, (3) repoint demos, (4) `git rm` the
+  payload.
+- **R19:** README and gallery refresh.
+
 ---
 
 ## Infrastructure & Polish
@@ -41,7 +48,7 @@ Everything below this line is ordinary engineering backlog and is still live.
 
 8 - **Panel visibility configuration**: Allow configuring which panels are visible (Logs, Rendering Controls, Data Monitor, Dimensions, etc.) from the Python side. Optionally lock panel visibility to enforce a particular look and prevent user modifications.
 
-9 - ~~**UI ergonomics**~~: **DONE** (#432, R8). Always-visible left **control rail** — one icon per panel (Help/Dimensions/Rendering/Layers/Data monitor/Datasets/Recording/Screenshot/Logs/View options/Performance), each firing the same command as its shortcut, with tooltips, event-driven active-state, collapse, idle-dim, first-run hint, and full theme integration. Next slice: panels dock into a tray beside the rail (Concept A step 2).
+9 - ~~**UI ergonomics**~~: **DONE** (#432). Always-visible left **control rail** — one icon per panel (Help/Dimensions/Rendering/Layers/Data monitor/Datasets/Recording/Screenshot/Logs/View options/Performance), each firing the same command as its shortcut, with tooltips, event-driven active-state, collapse, idle-dim, first-run hint, and full theme integration. Next slice: panels dock into a tray beside the rail (Concept A step 2).
 
 ## Bugs
 
@@ -65,7 +72,7 @@ Everything below this line is ordinary engineering backlog and is still live.
 
 ## Rendering & Performance (MEDIUM Priority)
 
-24 - **Depth sorting for proper alpha blending** (**RE-PROMOTED to pre-release [LAUNCH]** 2026-07-15 — see R10): Sort transparent geometry (Points, Lines, GSplats) back-to-front per frame so semi-transparent elements composite correctly. Without depth sorting, overlapping translucent primitives blend in submission order rather than depth order, producing incorrect colors and visible artifacts depending on view angle. Full phased plan (Option 3a — viewer-only, no format change): `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`. Status: spec Phases 0–3 MERGED for gsplats (#511/#523/#553: premultiplied alpha, texture-backed storage, SortWorker, camera-triggered re-sort); partial appends (spec Phase 4 Stage 2) landed for all three geometry types. GSplats-first; Points sorting symmetry LANDED (arc PR-B, spec §8); Lines storage + sorting symmetry LANDED (arc PR-C, spec §8) — all three geometry types now share the texture storage + SortWorker machinery. Volumetric Phase 3 (points: isotropic chord-integral emission–absorption + points RGBA alpha + mandelbulb showcase) LANDED (arc PR-D); volumetric Phase 4 (lines: transverse chord integral + lines RGBA per-vertex alpha, `effectiveGeometryMode` deleted — all three geometry types now render + depth-sort real volumetric) LANDED (arc PR-E) — **ARC COMPLETE**. **Successor arc (#1352, 2026-08, in progress → see item 30):** lines are being moved off the screen-space quad onto a cylindrically-symmetric **capsule primitive** (ρ = G₂D(r) × box(s)) — ray-integral math (#1419), primitive behind `?linePrimitive=capsule` (#1426/#1481), picking (#1451), sharpness via an Abel-transform radial LUT (#1458), deficit-rule joint composition (#1487), the **default flip (#1492)**, and the docs fix (#1516) are all merged/closed; the capsule-joint defect cluster (#1488/#1490/#1494/#1495/#1497/#1501/#1502) remains open as a post-flip drain (see item 30).
+24 - **Depth sorting for proper alpha blending** (**RE-PROMOTED to pre-release [LAUNCH]** 2026-07-15): Sort transparent geometry (Points, Lines, GSplats) back-to-front per frame so semi-transparent elements composite correctly. Without depth sorting, overlapping translucent primitives blend in submission order rather than depth order, producing incorrect colors and visible artifacts depending on view angle. Full phased plan (Option 3a — viewer-only, no format change): `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`. Status: spec Phases 0–3 MERGED for gsplats (#511/#523/#553: premultiplied alpha, texture-backed storage, SortWorker, camera-triggered re-sort); partial appends (spec Phase 4 Stage 2) landed for all three geometry types. GSplats-first; Points sorting symmetry LANDED (arc PR-B, spec §8); Lines storage + sorting symmetry LANDED (arc PR-C, spec §8) — all three geometry types now share the texture storage + SortWorker machinery. Volumetric Phase 3 (points: isotropic chord-integral emission–absorption + points RGBA alpha + mandelbulb showcase) LANDED (arc PR-D); volumetric Phase 4 (lines: transverse chord integral + lines RGBA per-vertex alpha, `effectiveGeometryMode` deleted — all three geometry types now render + depth-sort real volumetric) LANDED (arc PR-E) — **ARC COMPLETE**. **Successor arc (#1352, 2026-08, in progress → see item 30):** lines are being moved off the screen-space quad onto a cylindrically-symmetric **capsule primitive** (ρ = G₂D(r) × box(s)) — ray-integral math (#1419), primitive behind `?linePrimitive=capsule` (#1426/#1481), picking (#1451), sharpness via an Abel-transform radial LUT (#1458), deficit-rule joint composition (#1487), the **default flip (#1492)**, and the docs fix (#1516) are all merged/closed; the capsule-joint defect cluster (#1488/#1490/#1494/#1495/#1497/#1501/#1502) remains open as a post-flip drain (see item 30).
 
 30 - **Capsule line primitive — drain the joint follow-ups**
      (#1352, the successor arc to item 24's volumetric work; added 2026-08-11,
