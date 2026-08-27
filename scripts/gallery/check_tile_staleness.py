@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report committed README gallery tiles that predate their render inputs."""
+"""Report committed README gallery tile staleness and media sizes."""
 
 from __future__ import annotations
 
@@ -35,8 +35,14 @@ GLOBAL_INPUT_PATHSPECS = {
     ),
     "crop policy": ("packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",),
 }
+MEBIBYTE = 1024 * 1024
+GALLERY_MEDIA_WARNING_BYTES = 20 * MEBIBYTE
+GALLERY_MEDIA_LIMIT_BYTES = 25 * MEBIBYTE
+LARGEST_MEDIA_COUNT = 5
 
 _BLAME_HEADER = re.compile(r"^([0-9a-f]+) \d+ \d+(?: \d+)?$")
+_LFS_POINTER_HEADER = b"version https://git-lfs.github.com/spec/v1\n"
+_LFS_POINTER_SIZE = re.compile(rb"^size ([0-9]+)$", re.MULTILINE)
 
 
 class StalenessError(RuntimeError):
@@ -56,9 +62,16 @@ class LineRange:
 
 
 @dataclass(frozen=True)
+class GalleryMedia:
+    path: Path
+    size_bytes: int
+
+
+@dataclass(frozen=True)
 class TileStatus:
     demo_id: str
     tile: CommitStamp
+    media: tuple[GalleryMedia, ...]
     inputs: dict[str, CommitStamp]
     global_input_labels: tuple[str, ...]
     stale_inputs: tuple[str, ...]
@@ -68,12 +81,14 @@ class TileStatus:
 class UnknownStatus:
     demo_id: str
     reason: str
+    media: tuple[GalleryMedia, ...]
 
 
 @dataclass(frozen=True)
 class GalleryReport:
     global_inputs: dict[str, CommitStamp]
     statuses: tuple[TileStatus | UnknownStatus, ...]
+    media: tuple[GalleryMedia, ...]
 
 
 def stale_inputs(tile: CommitStamp, inputs: dict[str, CommitStamp]) -> list[str]:
@@ -183,6 +198,22 @@ class GalleryHistory:
             )
             raise StalenessError(f"git {' '.join(args)} failed: {detail}") from exc
 
+    def _git_bytes(self, *args: str) -> bytes:
+        try:
+            return subprocess.run(
+                ["git", *args],
+                cwd=self.repo_root,
+                check=True,
+                capture_output=True,
+            ).stdout
+        except (OSError, subprocess.CalledProcessError) as exc:
+            detail = (
+                exc.stderr.decode(errors="replace").strip()
+                if isinstance(exc, subprocess.CalledProcessError)
+                else str(exc)
+            )
+            raise StalenessError(f"git {' '.join(args)} failed: {detail}") from exc
+
     def _require_full_history(self) -> None:
         if self._git("rev-parse", "--is-shallow-repository") == "true":
             raise StalenessError(
@@ -260,23 +291,39 @@ class GalleryHistory:
             return None
         return self._git("show", f"HEAD:{path.as_posix()}")
 
-    def _tracked_tile_media(self) -> list[tuple[str, tuple[Path, ...]]]:
-        output = self._git(
-            "ls-tree", "-r", "--name-only", "HEAD", "--", TILES_DIR.as_posix()
-        )
-        media = [
-            Path(line)
-            for line in output.splitlines()
-            if Path(line).suffix in {".webp", ".webm"}
-        ]
+    def _media_size(self, object_id: str, blob_size: int) -> int:
+        if blob_size > 1024:
+            return blob_size
+        blob = self._git_bytes("cat-file", "blob", object_id)
+        if not blob.startswith(_LFS_POINTER_HEADER):
+            return blob_size
+        match = _LFS_POINTER_SIZE.search(blob)
+        if match is None:
+            raise StalenessError(f"invalid Git LFS pointer object: {object_id}")
+        return int(match.group(1))
+
+    def _tracked_tile_media(self) -> list[tuple[str, tuple[GalleryMedia, ...]]]:
+        output = self._git("ls-tree", "-r", "-l", "HEAD", "--", TILES_DIR.as_posix())
+        media: list[GalleryMedia] = []
+        for line in output.splitlines():
+            metadata, path_text = line.split("\t", 1)
+            _, object_type, object_id, size_text = metadata.split()
+            path = Path(path_text)
+            if object_type == "blob" and path.suffix in {".webp", ".webm"}:
+                media.append(
+                    GalleryMedia(
+                        path=path,
+                        size_bytes=self._media_size(object_id, int(size_text)),
+                    )
+                )
         if not media:
             raise StalenessError("no committed README gallery tiles found")
-        by_demo: dict[str, list[Path]] = {}
-        for path in media:
-            by_demo.setdefault(path.stem, []).append(path)
+        by_demo: dict[str, list[GalleryMedia]] = {}
+        for item in media:
+            by_demo.setdefault(item.path.stem, []).append(item)
         return [
-            (demo_id, tuple(sorted(paths)))
-            for demo_id, paths in sorted(by_demo.items())
+            (demo_id, tuple(sorted(items, key=lambda item: item.path)))
+            for demo_id, items in sorted(by_demo.items())
         ]
 
     def _demo_code_inputs(
@@ -320,14 +367,16 @@ class GalleryHistory:
         }
         shading_input = self._last_commit_for_pathspecs(*SHADING_PATHSPECS)
 
+        tracked_media = self._tracked_tile_media()
         statuses: list[TileStatus | UnknownStatus] = []
-        for demo_id, media_paths in self._tracked_tile_media():
+        for demo_id, media in tracked_media:
             entry: dict[str, Any] | None = entries.get(demo_id)
             if entry is None or demo_id not in ranges:
                 statuses.append(
                     UnknownStatus(
                         demo_id=demo_id,
                         reason=f"committed tile {demo_id!r} has no manifest entry",
+                        media=media,
                     )
                 )
                 continue
@@ -342,22 +391,29 @@ class GalleryHistory:
                 )
                 inputs["manifest entry"] = self._manifest_entry_commit(ranges[demo_id])
                 tile = min(
-                    (self._last_commit(path) for path in media_paths),
+                    (self._last_commit(item.path) for item in media),
                     key=lambda stamp: stamp.committed_at,
                 )
             except (SyntaxError, StalenessError) as exc:
-                statuses.append(UnknownStatus(demo_id=demo_id, reason=str(exc)))
+                statuses.append(
+                    UnknownStatus(demo_id=demo_id, reason=str(exc), media=media)
+                )
                 continue
             statuses.append(
                 TileStatus(
                     demo_id=demo_id,
                     tile=tile,
+                    media=media,
                     inputs=inputs,
                     global_input_labels=tuple(global_inputs),
                     stale_inputs=tuple(stale_inputs(tile, inputs)),
                 )
             )
-        return GalleryReport(global_inputs=global_inputs, statuses=tuple(statuses))
+        return GalleryReport(
+            global_inputs=global_inputs,
+            statuses=tuple(statuses),
+            media=tuple(item for _, media in tracked_media for item in media),
+        )
 
     def tile_statuses(self) -> list[TileStatus | UnknownStatus]:
         return list(self.report().statuses)
@@ -366,7 +422,10 @@ class GalleryHistory:
 def _format_status(status: TileStatus) -> str:
     tile_stamp = _format_stamp(status.tile)
     if not status.stale_inputs:
-        return f"CURRENT {status.demo_id}: tile {tile_stamp}"
+        return (
+            f"CURRENT {status.demo_id}: tile {tile_stamp}; "
+            f"media: {_format_tile_media(status.media)}"
+        )
     stale_per_tile = [
         label
         for label in status.stale_inputs
@@ -383,6 +442,7 @@ def _format_status(status: TileStatus) -> str:
     )
     if per_tile_details:
         details.append(f"newer per-tile inputs: {per_tile_details}")
+    details.append(f"media: {_format_tile_media(status.media)}")
     return f"STALE {status.demo_id}: tile {tile_stamp}; {'; '.join(details)}"
 
 
@@ -391,6 +451,26 @@ def _format_stamp(stamp: CommitStamp) -> str:
         timespec="seconds"
     )
     return f"{timestamp.replace('+00:00', 'Z')} ({stamp.sha[:8]})"
+
+
+def _format_media_size(size_bytes: int) -> str:
+    return f"{size_bytes / MEBIBYTE:.2f} MiB"
+
+
+def _media_flag(media: GalleryMedia) -> str:
+    if media.size_bytes >= GALLERY_MEDIA_LIMIT_BYTES:
+        return " [OVER LIMIT]"
+    if media.size_bytes >= GALLERY_MEDIA_WARNING_BYTES:
+        return " [WARNING]"
+    return ""
+
+
+def _format_tile_media(media: tuple[GalleryMedia, ...]) -> str:
+    return ", ".join(
+        f"{item.path.name} {_format_media_size(item.size_bytes)} "
+        f"({item.size_bytes:,} bytes){_media_flag(item)}"
+        for item in media
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -410,7 +490,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"global inputs: {global_details}\n")
     for status in report.statuses:
         if isinstance(status, UnknownStatus):
-            print(f"UNKNOWN {status.demo_id}: {status.reason}")
+            print(
+                f"UNKNOWN {status.demo_id}: {status.reason}; "
+                f"media: {_format_tile_media(status.media)}"
+            )
         else:
             print(_format_status(status))
     known_statuses = [
@@ -421,6 +504,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         f"\nGallery tile staleness: {stale_count} stale, "
         f"{len(known_statuses) - stale_count} current, {unknown_count} unknown"
+    )
+    total_bytes = sum(item.size_bytes for item in report.media)
+    print(
+        f"Gallery media: {_format_media_size(total_bytes)} total across "
+        f"{len(report.media)} files"
+    )
+    print("Largest gallery media:")
+    for item in sorted(
+        report.media,
+        key=lambda media: (-media.size_bytes, media.path.name),
+    )[:LARGEST_MEDIA_COUNT]:
+        print(
+            f"{_format_media_size(item.size_bytes):>11}  "
+            f"{item.path.name}{_media_flag(item)}"
+        )
+    warning_count = sum(
+        GALLERY_MEDIA_WARNING_BYTES <= item.size_bytes < GALLERY_MEDIA_LIMIT_BYTES
+        for item in report.media
+    )
+    over_limit_count = sum(
+        item.size_bytes >= GALLERY_MEDIA_LIMIT_BYTES for item in report.media
+    )
+    warning_label = "warning" if warning_count == 1 else "warnings"
+    over_limit_label = "file" if over_limit_count == 1 else "files"
+    print(
+        f"Gallery media limits: {warning_count} {warning_label} "
+        f"(>= {_format_media_size(GALLERY_MEDIA_WARNING_BYTES)}), "
+        f"{over_limit_count} over-limit {over_limit_label} "
+        f"(>= {_format_media_size(GALLERY_MEDIA_LIMIT_BYTES)})"
     )
     print(
         "Report only — inspect stale tiles and regenerate them when their render changed."

@@ -44,6 +44,14 @@ def _commit(repo: Path, message: str, day: int) -> None:
     _git(repo, "commit", "-m", message, day=day)
 
 
+def _lfs_pointer(size_bytes: int) -> str:
+    return (
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{'0' * 64}\n"
+        f"size {size_bytes}\n"
+    )
+
+
 def _write_manifest(repo: Path, title_b: str = "B", include_c: bool = False) -> None:
     demos = [
         {
@@ -466,6 +474,36 @@ def test_stale_findings_are_report_only(tmp_path: Path, capsys) -> None:
     assert "STALE a" in output
     assert "STALE b" in output
     assert "2 stale, 0 current" in output
+
+
+def test_media_sizes_use_committed_lfs_metadata_and_remain_report_only(
+    tmp_path: Path, capsys
+) -> None:
+    repo = _repo(tmp_path)
+    warning_path = repo / "docs/images/readme/gallery/a.webm"
+    over_limit_path = repo / "docs/images/readme/gallery/b.webm"
+    warning_path.write_text(_lfs_pointer(stale.GALLERY_MEDIA_WARNING_BYTES))
+    over_limit_path.write_text(_lfs_pointer(stale.GALLERY_MEDIA_LIMIT_BYTES))
+    _commit(repo, "grow gallery media", 22)
+
+    warning_path.write_text(_lfs_pointer(1))
+
+    report = stale.GalleryHistory(repo).report()
+    sizes = {media.path.name: media.size_bytes for media in report.media}
+    assert sizes["a.webm"] == stale.GALLERY_MEDIA_WARNING_BYTES
+    assert sizes["b.webm"] == stale.GALLERY_MEDIA_LIMIT_BYTES
+
+    assert stale.main(["--repo-root", str(repo)]) == 0
+    output = capsys.readouterr().out
+    assert "a.webm 20.00 MiB (20,971,520 bytes) [WARNING]" in output
+    assert "b.webm 25.00 MiB (26,214,400 bytes) [OVER LIMIT]" in output
+    assert output.index("25.00 MiB  b.webm") < output.index("20.00 MiB  a.webm")
+    assert "Gallery media: 45.00 MiB total across 4 files" in output
+    assert (
+        "Gallery media limits: 1 warning (>= 20.00 MiB), "
+        "1 over-limit file (>= 25.00 MiB)" in output
+    )
+    assert "Report only" in output
 
 
 def test_bad_rows_are_reported_unknown_without_hiding_other_tiles(

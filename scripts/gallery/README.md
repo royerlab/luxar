@@ -56,6 +56,11 @@ module imports it; shading tests/docs remain excluded.
 Global inputs are printed once above the rows, while per-demo failures print
 `UNKNOWN` and do not hide the rest of the report. All reads use committed
 `HEAD`, so an in-progress manifest edit cannot create a fake commit timestamp.
+Each row also reports the committed WebP/WebM sizes, warning at 20 MiB and
+flagging files at or above the 25 MiB Cloudflare Pages boundary. Git LFS pointer
+metadata supplies the deployed byte count even when the large object is not
+checked out. The footer prints the corpus total and five largest files; size
+findings remain report-only and do not change the command's exit status.
 The first version intentionally does not inspect external dataset pins or
 machine-local/LFS payload contents. The check refuses shallow clones rather than
 silently producing incomplete history; run it from a full checkout.
