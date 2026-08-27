@@ -84,7 +84,7 @@ def test_info_summarizes_nested_part_provenance_unless_full_is_requested(
     ]
     _print_fitting_value("part_provenance", records)
     summary = capsys.readouterr().out
-    assert "part_provenance: 1 parts, nested channels × timepoints" in summary
+    assert "part_provenance: 1 part, nested channels × timepoints" in summary
     assert "psnr_db" not in summary
 
     _print_fitting_value("part_provenance", records, show_full_provenance=True)

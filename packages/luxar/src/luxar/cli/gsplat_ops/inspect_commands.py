@@ -72,9 +72,15 @@ def _print_fitting_value(
     key: str, value: Any, *, show_full_provenance: bool = False
 ) -> None:
     if key == "part_provenance" and isinstance(value, list) and not show_full_provenance:
-        nested_labels = ("channels", "timepoints")[: _part_provenance_depth(value) - 1]
-        suffix = f", nested {' × '.join(nested_labels)}" if nested_labels else ""
-        aprint(f"  {key}: {len(value)} parts{suffix}")
+        depth = _part_provenance_depth(value)
+        if depth == 3:
+            suffix = ", nested channels × timepoints"
+        elif depth > 1:
+            suffix = f", nested component records ({depth} levels)"
+        else:
+            suffix = ""
+        part_word = "part" if len(value) == 1 else "parts"
+        aprint(f"  {key}: {len(value)} {part_word}{suffix}")
         return
     if isinstance(value, float):
         aprint(f"  {key}: {value:.6f}")

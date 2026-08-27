@@ -291,14 +291,18 @@ def _build_part_for_tile(
 
 
 def _single_part_provenance(part: "GSplatData") -> List[Dict[str, Any]]:
-    """Move whole-fit quality under an attributable K=1 component record."""
-    from luxar.gsplats._data.filtering import _CONTENT_SCOPED_STATS_KEYS
+    """Collect an attributable K=1 component record."""
     from luxar.gsplats.merged_quality import collect_part_provenance
 
-    provenance = collect_part_provenance([part], values=[0.0], fit_reference=None)
+    return collect_part_provenance([part], values=[0.0], fit_reference=None)
+
+
+def _drop_root_quality(part: "GSplatData") -> None:
+    """Keep component quality out of a bare merged root's scalar fields."""
+    from luxar.gsplats._data.filtering import _CONTENT_SCOPED_STATS_KEYS
+
     for key in _CONTENT_SCOPED_STATS_KEYS:
         part.stats.pop(key, None)
-    return provenance
 
 
 def volume_refit_source_error(
@@ -982,6 +986,7 @@ def _merge_partition(
                 # locality instead of relying on value-based auto-detect.
                 # `save` derives pipeline_info from `stats`, so the floor block
                 # goes in there rather than through the argument (#1175).
+                _drop_root_quality(part)
                 part.stats["part_provenance"] = single_part_provenance
                 part.stats.update(floor_stats)
                 part.save(final_path, barrier_dims=barrier_dims)
