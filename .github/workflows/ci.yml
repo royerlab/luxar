@@ -304,8 +304,13 @@ jobs:
             runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=${run_status}&per_page=100" \
               2>/dev/null) || runs=""
             if [ -z "$runs" ]; then
-              echo "run activity unreadable; routing to obsidian to avoid paid overflow"
-              echo "label=obsidian" >> "$GITHUB_OUTPUT"
+              if [ "$queued_obsidian" -gt 0 ]; then
+                echo "run activity unreadable after finding aged backlog -> routing to ubuntu-latest"
+                echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+              else
+                echo "run activity unreadable; routing to obsidian to avoid paid overflow"
+                echo "label=obsidian" >> "$GITHUB_OUTPUT"
+              fi
               exit 0
             fi
             run_ids=$(echo "$runs" | jq -r --arg status "$run_status" \
@@ -327,8 +332,13 @@ jobs:
               jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
                 2>/dev/null) || jobs=""
               if [ -z "$jobs" ]; then
-                echo "job activity unreadable; routing to obsidian to avoid paid overflow"
-                echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                if [ "$queued_obsidian" -gt 0 ]; then
+                  echo "job activity unreadable after finding aged backlog -> routing to ubuntu-latest"
+                  echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                else
+                  echo "job activity unreadable; routing to obsidian to avoid paid overflow"
+                  echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                fi
                 exit 0
               fi
               queued=$(echo "$jobs" | jq --argjson cutoff "$queue_cutoff" \
@@ -336,8 +346,13 @@ jobs:
                 | select(.labels | index("obsidian"))
                 | select((.created_at | fromdateiso8601) <= $cutoff)] | length' \
                 2>/dev/null) || {
-                  echo "job backlog unreadable; routing to obsidian to avoid paid overflow"
-                  echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                  if [ "$queued_obsidian" -gt 0 ]; then
+                    echo "job backlog unreadable after finding aged backlog -> routing to ubuntu-latest"
+                    echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "job backlog unreadable; routing to obsidian to avoid paid overflow"
+                    echo "label=obsidian" >> "$GITHUB_OUTPUT"
+                  fi
                   exit 0
                 }
               queued_obsidian=$(( queued_obsidian + queued ))

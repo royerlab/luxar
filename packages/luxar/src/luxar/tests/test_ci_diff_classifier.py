@@ -992,6 +992,8 @@ if os.environ["ROUTER_API_ERROR"] == "runs-json" and "/actions/runs?" in endpoin
     raise SystemExit(0)
 if os.environ["ROUTER_API_ERROR"] == "jobs" and "/runs/" in endpoint and "/jobs?" in endpoint:
     raise SystemExit(1)
+if os.environ["ROUTER_API_ERROR"] == "later-jobs" and "/runs/9999/jobs?" in endpoint:
+    raise SystemExit(1)
 if os.environ["ROUTER_API_ERROR"] == "jobs-json" and "/runs/" in endpoint and "/jobs?" in endpoint:
     print("not-json")
     raise SystemExit(0)
@@ -1119,6 +1121,22 @@ def test_pick_runner_fails_api_read_toward_obsidian(
     assert label == "obsidian"
 
 
+def test_pick_runner_preserves_observed_backlog_on_later_api_failure(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A later failed read cannot erase backlog already observed in this scan."""
+    result, label = _run_pick_runner(
+        workflow,
+        tmp_path,
+        other_run_active=True,
+        first_run_queued_obsidian_jobs=2,
+        api_error="later-jobs",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == "ubuntu-latest"
+
+
 @pytest.mark.parametrize("active_run_age_seconds", [10, 600])
 def test_pick_runner_routes_busy_box_to_obsidian(
     workflow: str, tmp_path: Path, active_run_age_seconds: int
@@ -1168,7 +1186,13 @@ def test_pick_runner_caps_busy_box_backlog_at_five_jobs(
 
 @pytest.mark.parametrize(
     ("max_queued_obsidian", "queued_obsidian_jobs", "expected"),
-    [("", 4, "obsidian"), ("", 5, "ubuntu-latest"), ("3", 3, "ubuntu-latest")],
+    [
+        ("", 4, "obsidian"),
+        ("", 5, "ubuntu-latest"),
+        ("3", 3, "ubuntu-latest"),
+        ("0", 5, "ubuntu-latest"),
+        ("garbage", 5, "ubuntu-latest"),
+    ],
 )
 def test_pick_runner_uses_configured_backlog_cap(
     workflow: str,
