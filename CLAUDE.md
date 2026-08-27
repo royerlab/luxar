@@ -1018,7 +1018,8 @@ npx playwright test line-join-artifact.spec.ts
 
 # Data & I/O
 npx playwright test data-integrity.spec.ts dataset-switching.spec.ts real-dataset-loading.spec.ts \
-  url-parameters.spec.ts python-typescript-integration.spec.ts luxar-serve-integration.spec.ts
+  url-parameters.spec.ts python-typescript-integration.spec.ts luxar-serve-integration.spec.ts \
+  zipped-store-loading.spec.ts
 
 # Spatial, cache & nD transforms
 npx playwright test spatial-index-accuracy.spec.ts cache-system.spec.ts nd-transforms.spec.ts \
