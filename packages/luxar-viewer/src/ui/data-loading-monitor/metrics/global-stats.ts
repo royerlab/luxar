@@ -44,6 +44,11 @@ export function aggregateGlobalStats({
   // four geometry types. Progressive multi-LOD nodes connect as a single
   // loader (their adapter re-paths inner events to the node path), so each
   // node contributes exactly one entry here — no per-LOD double-counting.
+  // `mesh-whole-node` is deliberately absent: it is a connected loader (so it
+  // counts in `totalLoaders`) but it owns no spatial index, so counting it as
+  // an ACTIVE SPATIAL loader would claim per-slice range querying that a
+  // whole-node loader does not do — and would flip the compact badge's
+  // "spatial-index streaming" label on for a scene that streams nothing.
   const isSpatialType = (type: string | undefined): boolean =>
     type === 'point-spatial-index' ||
     type === 'lines-spatial-index' ||
@@ -98,9 +103,11 @@ export function aggregateGlobalStats({
   // cycle by `updateVisibleCountsInMonitor` after nD clipping / LOD refine.
   // The display layer keeps per-type NAMED fields (each rendered with its own
   // label, unit noun and DOM id), so this is where the kind-keyed aggregation
-  // model is projected onto them. Only three are projected here: mesh has no
-  // headline field of its own — its triangle counts are shown per node in the
-  // scene-graph tree (`templates/scene-graph.ts`, `faceCount`).
+  // model is projected onto them — all FOUR types, so a mesh-only scene has a
+  // headline count instead of a permanent "LOADING …" card, and a mixed scene
+  // does not silently drop its mesh triangles. `GEOMETRY_TYPES` keeps the
+  // record complete on the aggregation side; this projection is the one place
+  // the names are spelled out.
   const { totalByType, visibleByType } = sceneGraph;
   return {
     totalLoaders: Math.max(0, loaders.size - lodLoaderExcess),
@@ -113,6 +120,8 @@ export function aggregateGlobalStats({
     visibleSegments: visibleByType.lines,
     datasetSplats: totalByType.gsplats,
     visibleSplats: visibleByType.gsplats,
+    datasetTriangles: totalByType.mesh,
+    visibleTriangles: visibleByType.mesh,
     totalQueries,
     totalLoads,
     avgQueryTime: totalQueries > 0 ? totalQueryTime / totalQueries : 0,

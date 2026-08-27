@@ -138,7 +138,12 @@ export class SceneGraphModel {
   /**
    * Merge the latest path counts into geometry nodes in place. Paths absent
    * from the latest walk are reset to `undefined`, preventing stale tooltips.
-   * Mesh is skipped because it loads whole and has no per-node visible-face field.
+   *
+   * All four types, mesh included: the walk in `monitor/visible-counts.ts`
+   * already stamps a mesh node's committed `visibleTriangleCount` into the
+   * per-path map, so skipping mesh here dropped a number that had already been
+   * measured — and left the tree's mesh badge unable to say how much of the
+   * surface the current slab actually indexes.
    */
   syncVisibleCountsIntoTree(): void {
     const index = this.ensureSceneGraphNodeIndex();
@@ -148,6 +153,7 @@ export class SceneGraphModel {
       if (node.type === 'points') node.visiblePointCount = visible;
       else if (node.type === 'lines') node.visibleSegmentCount = visible;
       else if (node.type === 'gsplats') node.visibleSplatCount = visible;
+      else if (node.type === 'mesh') node.visibleFaceCount = visible;
     }
   }
 

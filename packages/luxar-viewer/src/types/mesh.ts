@@ -559,12 +559,30 @@ export interface MeshDataLoader {
   /**
    * LoaderMonitor surface (optional, for the data-loading-monitor UI).
    * Mirrors the surface the sibling loaders expose — implementations that
-   * don't track metrics may omit these.
+   * don't track metrics may omit these. Both shipped implementations
+   * (`MeshWholeNodeLoader`, `MeshProgressiveLoader`) provide all four:
+   * `connectLoaderToMonitor` duck-types the complete set, so a partial
+   * implementation is silently skipped rather than partially reported.
    */
   addEventListener?(listener: MonitorEventListener): void;
   removeEventListener?(listener: MonitorEventListener): void;
   getMetrics?(): LoaderMetrics;
   getActiveQueries?(): QueryInfo[];
+
+  /**
+   * Report how many triangles the just-committed slice indexes, for
+   * `LoaderMetrics.visibleElements`.
+   *
+   * Pushed IN (by `commit-mesh-geometry.ts`) rather than read out, because the
+   * count is produced downstream of the loader: a mesh is resident in full and
+   * projection decides which faces reach the index buffer. The three sibling
+   * geometries set `visibleElements` inside their loaders instead, where the
+   * range query that produced the visible set lives.
+   *
+   * Optional for the same reason as the four above — a metrics-free
+   * implementation may omit it.
+   */
+  recordVisibleElements?(triangles: number): void;
 }
 
 /**
