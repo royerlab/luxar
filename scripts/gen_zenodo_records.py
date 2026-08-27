@@ -453,12 +453,27 @@ def _retain_preferred_measurements(
     existing: dict[str, Any],
     pinned_digests: dict[str, Optional[str]],
 ) -> tuple[int, int]:
-    """Blank unpinned reads and retain stronger measurements of pinned bytes.
+    """Blank unpinned reads and retain stronger committed measurements.
 
     Staged provenance outranks repo/cache even for identical bytes, avoiding
     sidecar churn when a later local refresh sees the same pinned archive.
+    Source-derived figures survive a stampless pinned read, while the read still
+    supplies archive metadata and provenance that the committed row lacks.
     """
     rank = {"staged": 2, "repo": 1, "cache": 1}
+    measurement_fields = (
+        "n_splats",
+        "ndim",
+        "format_version",
+        "topology",
+        "psnr_db",
+        "foreground_psnr_db",
+        "foreground_fraction",
+        "source_shape",
+        "source_dtype",
+        "source_bytes",
+        "frames",
+    )
     retained = 0
     rejected = 0
     for key, new_entry in list(measured.items()):
@@ -484,19 +499,6 @@ def _retain_preferred_measurements(
                     "unmeasured_reason": "unpinned-local-copy",
                 }
             else:
-                measurement_fields = (
-                    "n_splats",
-                    "ndim",
-                    "format_version",
-                    "topology",
-                    "psnr_db",
-                    "foreground_psnr_db",
-                    "foreground_fraction",
-                    "source_shape",
-                    "source_dtype",
-                    "source_bytes",
-                    "frames",
-                )
                 measured[key] = (
                     old_entry
                     if any(
@@ -507,6 +509,15 @@ def _retain_preferred_measurements(
                         "unmeasured_reason": "unpinned-local-copy",
                     }
                 )
+        elif old_entry is not None and old_entry.get("measured_sha256") is None:
+            recovered = {
+                field: old_entry[field]
+                for field in measurement_fields
+                if old_entry.get(field) is not None
+            }
+            if recovered:
+                measured[key] = {**new_entry, **recovered}
+                retained += 1
         elif (
             old_entry is not None
             and old_entry.get("measured_sha256") == pinned_digest

@@ -1104,6 +1104,37 @@ def test_flylight_recovered_figures_yield_to_a_pinned_archive_read(gen: Any) -> 
     assert measured[key]["measured_from"] == "repo"
 
 
+def test_source_derived_figures_survive_a_pinned_stampless_read(gen: Any) -> None:
+    key = "gsplats_3d_h2afva_decimation/h2afva_full.gsplats.zarr.zip"
+    existing = {key: gen.load_characteristics()[key]}
+    pinned_digest = "p" * 64
+    measured = {
+        key: {
+            "n_splats": 1_653_405,
+            "ndim": 3,
+            "format_version": "3.4",
+            "topology": "single level",
+            "psnr_db": None,
+            "foreground_psnr_db": None,
+            "source_bytes": None,
+            "measured_from": "staged",
+            "measured_sha256": pinned_digest,
+        }
+    }
+
+    retained, rejected = gen._retain_preferred_measurements(
+        measured, existing, {key: pinned_digest}
+    )
+
+    assert (retained, rejected) == (1, 0)
+    assert measured[key]["psnr_db"] == 63.66
+    assert measured[key]["foreground_psnr_db"] == 48.93
+    assert measured[key]["source_bytes"] == 3_414_163_456
+    assert measured[key]["topology"] == "single level"
+    assert measured[key]["measured_from"] == "staged"
+    assert measured[key]["measured_sha256"] == pinned_digest
+
+
 def test_every_committed_measurement_names_a_manifest_archive(gen: Any) -> None:
     manifest = json.loads(gen.MANIFEST.read_text())
     manifest_keys = {
