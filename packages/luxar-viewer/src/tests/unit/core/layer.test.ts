@@ -422,6 +422,31 @@ describe('LuxarLayer', () => {
       );
     });
 
+    it('does not arm blend warm-up when disposal starts during the first slice', async () => {
+      const root = new THREE.Group();
+      loadSceneMock.mockResolvedValueOnce(root);
+      let releaseSlice!: () => void;
+      updateSceneForDimensionsMock.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseSlice = resolve))
+      );
+      const layer = new LuxarLayer(makeOptions());
+
+      const loading = layer.load('http://example.test/scene.zarr');
+      while (!releaseSlice) await Promise.resolve();
+      const disposing = layer.dispose();
+      releaseSlice();
+      await Promise.all([loading, disposing]);
+
+      expect(configureBlendModeProgramWarmup).toHaveBeenCalledTimes(1);
+      expect(configureBlendModeProgramWarmup).toHaveBeenCalledWith({
+        enabled: false,
+        renderer: null,
+        camera: null,
+        targetScene: null,
+      });
+      expect(warmSceneBlendModePrograms).not.toHaveBeenCalled();
+    });
+
     it('waits for and cleans up a load before tearing down globals', async () => {
       const options = makeOptions();
       let release: (g: THREE.Group) => void = () => {};
@@ -1002,6 +1027,20 @@ describe('LuxarLayer', () => {
       expect(disposeDepthSort).toHaveBeenCalled();
     });
 
+    it('releases the host pipeline from blend warm-up on teardown', async () => {
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+
+      await layer.dispose();
+
+      expect(configureBlendModeProgramWarmup).toHaveBeenLastCalledWith({
+        enabled: false,
+        renderer: null,
+        camera: null,
+        targetScene: null,
+      });
+    });
+
     it('tears down the loader before the pools that serve it', async () => {
       const layer = new LuxarLayer(makeOptions());
       await layer.load('http://example.test/scene.zarr');
@@ -1050,7 +1089,9 @@ describe('LuxarLayer', () => {
       await layer.dispose();
       await layer.dispose();
       expect(disposeWorkerPool).toHaveBeenCalledTimes(1);
-      expect(clearBlendModeProgramWarmup).toHaveBeenCalledTimes(1);
+      expect(
+        configureBlendModeProgramWarmup.mock.calls.filter(([config]) => !config.enabled)
+      ).toHaveLength(1);
     });
 
     it('keeps tearing down after a step throws', async () => {

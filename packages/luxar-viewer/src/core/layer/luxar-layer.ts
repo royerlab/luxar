@@ -322,6 +322,7 @@ export class LuxarLayer {
     const dims = sceneDimsManager.getDims();
     if (dims) await updateSceneForDimensions(dims, root, LOADER_ID);
     this.applyRenderOrder();
+    if (this.disposed) return root;
     this.configureBlendWarmup();
     await warmSceneBlendModePrograms(root);
 
@@ -745,7 +746,12 @@ export class LuxarLayer {
       this.rootGroup = null;
     }
     this.pendingMatrix = null;
-    clearBlendModeProgramWarmup();
+    configureBlendModeProgramWarmup({
+      enabled: false,
+      renderer: null,
+      camera: null,
+      targetScene: null,
+    });
 
     // Same three-tier ordering LuxarApp uses: dimension state and the loader
     // (which holds worker references) before the pools that serve them, so no
