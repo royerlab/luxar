@@ -65,9 +65,10 @@ the rewriter has no source volume from which to remeasure it.
 
 Every scrub here is by KEY, never by dropping a whole nested container, and never
 reaches into a dict the caller still owns: ``GSplatData`` is conceptually
-immutable, and every call site hands over a result it has just built (a nested
-``pass_stats`` list is REPLACED with scrubbed copies rather than edited in place,
-because a shallow ``dict(self.stats)`` shares that list with the input).
+immutable, and every call site hands over a result it has just built (nested
+``pass_stats`` and ``part_provenance`` lists are REPLACED with scrubbed copies
+rather than edited in place, because a shallow ``dict(self.stats)`` shares those
+lists with the input).
 """
 
 from __future__ import annotations
@@ -81,6 +82,23 @@ from .base import _GSplatDataOps
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+
+
+#: Authored reduction-LOD stamp keys shared with
+#: :func:`luxar.gsplats.lod.restamp._has_ladder_stamps`. They live in core
+#: ``_data`` so this module can mirror ``refresh_reduction_lod_stats``' guard
+#: without importing the optional LOD package.
+_REDUCTION_LOD_LEVEL_STATS_KEYS = (
+    "quality",
+    "reference_energy",
+    "n_splats_total",
+    "refine_stats",
+)
+_REDUCTION_LOD_RUNG_STATS_KEYS = (
+    "energy_fraction_cum",
+    "lod_n_splats",
+    "lod_cumulative_n",
+)
 
 
 #: Source-provenance ``stats`` keys that describe the REGION the splats
@@ -112,6 +130,42 @@ _REGION_SCOPED_STATS_KEYS = (
     "occupancy",
     "voxels_per_splat",
 )
+
+
+def stamp_region_scoped_stats(
+    stats: "MutableMapping[str, Any]",
+    *,
+    source_shape: "Sequence[int]",
+    fitted_shape: "Sequence[int]",
+    n_splats: int,
+    occupancy: float,
+    source_itemsize: "int | None" = None,
+) -> None:
+    """Replace the source-grid record with one measured for this region.
+
+    ``source_declared`` stays absent because this grid was measured rather than
+    declared; ``source_stored_bytes`` describes the whole acquisition, not the
+    extracted region.
+    """
+    for key in _REGION_SCOPED_STATS_KEYS:
+        stats.pop(key, None)
+    source = [int(size) for size in source_shape]
+    fitted = [int(size) for size in fitted_shape]
+    source_voxels = int(np.prod(source)) if source else 0
+    fitted_voxels = int(np.prod(fitted)) if fitted else 0
+    stats.update(
+        {
+            "source_shape": source,
+            "source_voxels": source_voxels,
+            "fitted_shape": fitted,
+            "fitted_voxels": fitted_voxels,
+            "occupancy": float(occupancy),
+        }
+    )
+    if source_itemsize is not None:
+        stats["source_bytes"] = source_voxels * int(source_itemsize)
+    if fitted_voxels and n_splats:
+        stats["voxels_per_splat"] = float(fitted_voxels / n_splats)
 
 
 #: MEASURED reconstruction scores — every number that was obtained by rendering
@@ -312,6 +366,28 @@ _STRUCTURE_SCOPE_EXEMPT_KEYS = ("coarsen_dims",)
 _NESTED_STATS_LIST_KEYS = ("pass_stats",)
 
 
+def _drop_part_provenance_fitting_keys(
+    stats: "MutableMapping[str, Any]", dropped: "Sequence[str]"
+) -> None:
+    provenance = stats.get("part_provenance")
+    if not isinstance(provenance, list):
+        return
+    dropped_set = set(dropped)
+    scrubbed: list[Any] = []
+    for entry in provenance:
+        if not isinstance(entry, dict):
+            scrubbed.append(entry)
+            continue
+        record = dict(entry)
+        fitting = record.get("fitting")
+        if isinstance(fitting, dict):
+            record["fitting"] = {
+                key: value for key, value in fitting.items() if key not in dropped_set
+            }
+        scrubbed.append(record)
+    stats["part_provenance"] = scrubbed
+
+
 def drop_content_scoped_stats(stats: "MutableMapping[str, Any]") -> None:
     """Remove the measured reconstruction scores from ONE stats dict, in place.
 
@@ -321,17 +397,18 @@ def drop_content_scoped_stats(stats: "MutableMapping[str, Any]") -> None:
     a dataset — it also reaches each additive sub-LOD's own dict (the leaf's
     on-disk ``lod_stats``), where a progressive fit's per-pass scores live.
 
-    Mutates ``stats`` (which the caller owns) but nothing REACHABLE from it: a
-    nested ``pass_stats`` list is replaced with scrubbed copies rather than edited
+    Mutates ``stats`` (which the caller owns) but nothing REACHABLE from it:
+    nested lists are replaced with scrubbed copies rather than edited
     entry-by-entry. Every ``GSplatData`` call site reaches this through a shallow
-    ``dict(source.stats)``, which shares that list with the input — so editing the
-    entries would delete the input's own per-pass scores and break the
+    ``dict(source.stats)``, which shares those lists with the input — so editing
+    the entries would delete the input's own scores and break the
     "conceptually immutable, operations return new instances" contract (#1600
     review). The top-level dict is a copy, the nested list must be made one.
     """
     dropped = (*_CONTENT_SCOPED_STATS_KEYS, *_CONTENT_SCOPED_OP_RECORD_KEYS)
     for key in dropped:
         stats.pop(key, None)
+    _drop_part_provenance_fitting_keys(stats, dropped)
     for key in _NESTED_STATS_LIST_KEYS:
         nested = stats.get(key)
         if isinstance(nested, list):
@@ -486,6 +563,13 @@ def scrub_measured_stats(result: "GSplatData") -> None:
         drop_content_scoped_stats(stats)
 
 
+def scrub_region_scoped_stats(result: "GSplatData") -> None:
+    """Drop every source-grid stamp of ``result`` — top level and sub-LODs."""
+    for stats in _measured_stats_dicts(result):
+        for key in _REGION_SCOPED_STATS_KEYS:
+            stats.pop(key, None)
+
+
 def _stats_after_content_change(
     result: "GSplatData", *, changed: bool, source: _GSplatDataOps
 ) -> "GSplatData":
@@ -502,10 +586,49 @@ def _stats_after_content_change(
     Mutates ``result``'s own stats in place (never the caller's — see
     :func:`drop_content_scoped_stats`), for the same reasons spelled out on
     :func:`_stats_after_filter`.
+
+    LOD restamping belongs to the optional gsplats extra; the shared helper
+    keeps that deferred dependency boundary in one place.
     """
     if not changed:
         return result
     scrub_measured_stats(result)
+
+    return _refresh_reduction_lod_stats_if_needed(result, source)
+
+
+def _needs_reduction_lod_restamp(
+    result: _GSplatDataOps, source: _GSplatDataOps
+) -> bool:
+    """Whether a rewrite has authored LOD stamps to refresh.
+
+    This mirrors ``refresh_reduction_lod_stats``' first guard exactly, across
+    every substitutive level, without importing the optional LOD package.
+    """
+
+    source_levels = source.substitutive_levels
+    result_levels = result.substitutive_levels
+    return bool(
+        source_levels
+        and result_levels
+        and any(
+            any(key in level.stats for key in _REDUCTION_LOD_LEVEL_STATS_KEYS)
+            or any(
+                any(key in lod.stats for key in _REDUCTION_LOD_RUNG_STATS_KEYS)
+                for lod in level.additive_sublods
+            )
+            for level in source_levels
+        )
+    )
+
+
+def _refresh_reduction_lod_stats_if_needed(
+    result: "GSplatData", source: _GSplatDataOps
+) -> "GSplatData":
+    """Refresh authored LOD stamps without loading the extra for unstamped data."""
+    if not _needs_reduction_lod_restamp(result, source):
+        return result
+
     from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
 
     return refresh_reduction_lod_stats(result, source)
@@ -558,6 +681,7 @@ def _stats_after_filter(result: "GSplatData", *, cropped: bool) -> "GSplatData":
     for stats in (result.stats, *(lod.stats for lod in _all_sublods(result))):
         for key in _REGION_SCOPED_STATS_KEYS:
             stats.pop(key, None)
+        _drop_part_provenance_fitting_keys(stats, _REGION_SCOPED_STATS_KEYS)
     return result
 
 

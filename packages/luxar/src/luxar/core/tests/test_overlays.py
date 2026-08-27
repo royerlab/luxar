@@ -231,6 +231,39 @@ class TestAddImage:
         )
         assert image_path.exists()
 
+    def test_jpeg_bytes_use_payload_extension(self, tmp_path) -> None:
+        """Pre-encoded bytes use their detected format, not the format option."""
+        jpeg_bytes = b"\xff\xd8\xff\xe0"
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_image(jpeg_bytes, position=(0.9, 0.05), format="png")
+
+        image_path = (
+            tmp_path / "test.luxar.zarr" / "overlays" / "overlay_0" / "image.jpeg"
+        )
+        assert image_path.read_bytes() == jpeg_bytes
+
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
+        assert store["overlays/overlay_0"].attrs["image_file"] == "image.jpeg"
+
+    def test_jpg_path_uses_payload_extension(self, tmp_path) -> None:
+        """JPEG paths normalize .jpg to the stored .jpeg member name."""
+        jpeg_bytes = b"\xff\xd8\xff\xe0"
+        img_file = tmp_path / "logo.jpg"
+        img_file.write_bytes(jpeg_bytes)
+
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_image(img_file, position=(0.9, 0.05))
+
+        image_path = (
+            tmp_path / "test.luxar.zarr" / "overlays" / "overlay_0" / "image.jpeg"
+        )
+        assert image_path.read_bytes() == jpeg_bytes
+
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
+        assert store["overlays/overlay_0"].attrs["image_file"] == "image.jpeg"
+
     def test_image_jpeg_format(self, tmp_path) -> None:
         """JPEG format uses .jpeg extension."""
         arr = np.random.randint(0, 255, (16, 16, 3), dtype=np.uint8)

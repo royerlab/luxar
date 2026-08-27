@@ -10,6 +10,7 @@ when ``--tiling content`` is selected; this is no longer a standalone command.
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -27,6 +28,8 @@ from .fitting.fit_utils import (
 
 if TYPE_CHECKING:
     from luxar.gsplats.calibration import SplatDensity
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.planner import PlanBox
 
 
 def _parallel_staging_dir(output: Path, token: str) -> Path:
@@ -60,6 +63,78 @@ def _require_plan_volume_shape(volume: Any, fitplan: Any) -> None:
         raise typer.BadParameter(
             f"volume shape {actual} does not match the plan grid {expected}"
         )
+
+
+def _fill_source_dtype(fit_config: dict, source_dtype: Optional[str]) -> None:
+    """Use the loader dtype unless configured; mirrors fit._stamp_source_dtype."""
+    if not fit_config.get("source_dtype") and source_dtype:
+        fit_config["source_dtype"] = source_dtype
+
+
+def _stamp_content_box_output(
+    result: "GSplatData",
+    volume: Any,
+    box: "PlanBox",
+    device: Optional[str],
+    *,
+    verbose: bool,
+) -> None:
+    """Describe a standalone content box after its halo splats were removed.
+
+    The score measures the box in isolation. Neighbour contributions inside the
+    core are absent, so the boundary shell is a lower bound and the result is not
+    comparable to a whole-fit score. An internal marker from the parallel parent
+    suppresses this whole block for disposable box outputs whose stamps would be
+    scrubbed during merge.
+    """
+    from luxar.gsplats.planner.fit_planned_parallel import (
+        _SKIP_CONTENT_BOX_STAMP_ENV,
+    )
+
+    if os.environ.get(_SKIP_CONTENT_BOX_STAMP_ENV) == "1":
+        return
+
+    from luxar.gsplats.fit_basis import fit_image_min, reference_on_fit_basis
+    from luxar.gsplats.fitting.results import _occupied_fraction
+    from luxar.gsplats.fitting.validation import _resolve_source_dtype
+    from luxar.gsplats.gsplat_data import GSplatData, stamp_region_scoped_stats
+    from luxar.gsplats.merged_quality import stamp_merged_quality
+
+    z0, z1, y0, y1, x0, x1 = box.box
+    shape = (z1 - z0, y1 - y0, x1 - x0)
+    origin = np.asarray((z0, y0, x0), dtype=np.float32)
+    scored = GSplatData(
+        centers=(result.centers - origin).astype(np.float32, copy=False),
+        amplitudes=result.amplitudes,
+        cholesky_factors=result.cholesky_factors,
+        colors=result.colors,
+        truncation_radius=result.truncation_radius,
+    )
+    core = np.asarray(volume[z0:z1, y0:y1, x0:x1], dtype=np.float32)
+    stamp_merged_quality(
+        scored,
+        core,
+        volume_shape=shape,
+        grid_scale=None,
+        device=device,
+        verbose=verbose,
+        image_min=fit_image_min(result.stats),
+        stats=result.stats,
+    )
+
+    source_dtype = result.stats.get("source_dtype")
+    _, source_itemsize = _resolve_source_dtype(core, source_dtype)
+    intensity_range = float(result.stats.get("intensity_range", 1.0))
+    normalized = reference_on_fit_basis(core, fit_image_min(result.stats))
+    normalized = normalized / intensity_range
+    stamp_region_scoped_stats(
+        result.stats,
+        source_shape=shape,
+        fitted_shape=shape,
+        n_splats=result.n_splats,
+        occupancy=_occupied_fraction(normalized, int(np.prod(shape))),
+        source_itemsize=source_itemsize,
+    )
 
 
 def _save_fit_result(
@@ -167,6 +242,7 @@ def run_content_fit(
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
+    source_dtype: Optional[str] = None,
     verbose: bool = True,
 ) -> None:
     """Content-aware tiled fit: scan → BSP plan → budgeted fit → save.
@@ -232,6 +308,7 @@ def run_content_fit(
             # cannot disagree about what a preset-less content box is fitted at.
             command_defaults={"cull_retention": CONTENT_CULL_RETENTION},
         )
+        _fill_source_dtype(fk, source_dtype)
         fk.pop("seeds", None)
         fk.pop("device", None)
         fk["verbose"] = False
@@ -285,9 +362,16 @@ def run_content_fit(
             Path(str(output) + ".empty").write_text("")  # writer rejects empty stores
         else:
             # Save the fitted dataset AS IS: rebuilding it from bare arrays
-            # dropped the fit's truncation_radius (a `truncate: 3.5` config
-            # stored the 2.75 default) and its per-box stats (#1637).
-            box_result.save(output, include_fitting_info=False)
+            # dropped the fit's truncation_radius and per-box stats (#1637),
+            # and suppressing fitting info here discarded those stats on disk.
+            _stamp_content_box_output(
+                box_result,
+                vol,
+                fitplan.boxes[plan_box],
+                device,
+                verbose=verbose,
+            )
+            box_result.save(output)
         return
 
     # ── resolve density ──
@@ -527,7 +611,7 @@ def run_content_fit(
     if created_plan and not keep_boxes:
         Path(plan_json_path).unlink(missing_ok=True)
     elif created_plan and verbose:
-        # --keep-boxes retains the internal plan too; its token-suffixed name
+        # --keep-tiles retains the internal plan too; its token-suffixed name
         # is no longer predictable from the output path, so point at it.
         aprint(f"Kept plan at {plan_json_path}")
 

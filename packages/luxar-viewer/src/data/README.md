@@ -31,6 +31,10 @@ data/
 │                                  #   quantized codes; registered by zarr.ts as
 │                                  #   `numcodecs.luxar_delta_v1`; Python twin in
 │                                  #   luxar/encoding/_encoders/delta_codec.py)
+├── zip/                           # HTTP-range access to .zarr.zip stores (cached like any other)
+│   ├── entries.ts                 # Validates flat/nested archive layouts and normalizes keys
+│   ├── range-reader.ts            # Strict 206/Content-Range reader; retains + stitches the directory read
+│   └── store.ts                   # Lazily opens the archive; memoizes the directory only on success
 ├── scene-loader.ts                # Orchestrates hierarchical scene loading (spans all geometries)
 ├── scene-identity-watchdog.ts     # Re-probes the dataset's root .zattrs (interval + tab focus)
 │                                  #   and raises the scene-identity banner when the ?src=
@@ -146,6 +150,19 @@ data/
     ├── worker-pool.ts             # Pool manager with load balancing
     └── data-worker.ts             # Worker with WASM acceleration
 ```
+
+Zipped stores go through the same L1/L2 tiers as a directory store: the caching
+store reads through a `ChunkSource` rather than building chunk URLs, so an
+archive member is reachable without one. Caching earns more here than for a
+directory store — a member costs about two requests (the zip format puts a local
+file header immediately before each member's data), and a repeat read cannot
+fall back to the browser's HTTP cache, because every member read is a `Range`
+request against a single URL.
+
+Two costs the chunk cache cannot absorb, because the reader pays them below it
+rather than as chunk keys: the fixed directory preamble on every visit, and — on
+a cold read — that second request per member. See `cache/chunk-source/` for the
+port, and issue #1716 for the measurements.
 
 ### State Management Architecture
 

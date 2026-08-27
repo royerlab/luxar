@@ -11,12 +11,19 @@ import numpy as np
 import pytest
 
 from luxar.gsplats.batch.local_runner import (
+    _active_host_workers,
+    _active_worker_counts,
     _finalize_output,
     _staging_path,
     _task_voxels,
+    _worker_env,
     build_device_assignment,
 )
 from luxar.gsplats.batch.manifest import BatchManifest
+from luxar.gsplats.merged_quality import (
+    QUALITY_WORKERS_PER_DEVICE_ENV,
+    QUALITY_WORKERS_PER_HOST_ENV,
+)
 
 # ---------------------------------------------------------------------------
 # Device assignment (weighted round-robin)
@@ -40,6 +47,46 @@ def test_assignment_weighted_by_worker_count() -> None:
 
 def test_assignment_single_gpu() -> None:
     assert build_device_assignment([0, 1, 2], {3: 2}) == {0: 3, 1: 3, 2: 3}
+
+
+def test_gpu_worker_env_carries_same_device_concurrency() -> None:
+    assert _worker_env(3, {3: 4}, 7) == {
+        "CUDA_VISIBLE_DEVICES": "3",
+        QUALITY_WORKERS_PER_DEVICE_ENV: "4",
+        QUALITY_WORKERS_PER_HOST_ENV: "7",
+    }
+
+
+def test_cpu_worker_env_carries_same_host_concurrency() -> None:
+    assert _worker_env(-1, {-1: 8}, 8) == {
+        QUALITY_WORKERS_PER_DEVICE_ENV: "8",
+        QUALITY_WORKERS_PER_HOST_ENV: "8",
+    }
+
+
+def test_active_worker_counts_checks_each_task_once() -> None:
+    checked: list[int] = []
+
+    def _skip(task_id: int) -> bool:
+        checked.append(task_id)
+        return task_id in {1, 4}
+
+    counts = _active_worker_counts(
+        [0, 1, 2, 3, 4],
+        {0: 0, 1: 0, 2: 1, 3: 1, 4: 1},
+        {0: 4, 1: 2},
+        _skip,
+    )
+
+    assert checked == [0, 1, 2, 3, 4]
+    assert counts == {0: 1, 1: 2}
+
+
+def test_active_host_workers_sum_devices_and_clamp_to_runnable_tasks() -> None:
+    active_workers = {0: 2, 1: 2, 2: 2, 3: 2}
+
+    assert _active_host_workers(active_workers, n_run=8) == 8
+    assert _active_host_workers(active_workers, n_run=1) == 1
 
 
 # ---------------------------------------------------------------------------

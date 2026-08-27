@@ -3,7 +3,7 @@
 The Luxar viewer is a browser-based application for exploring nD scientific scenes
 containing points, lines, Gaussian splats, and triangle meshes. It renders with WebGL
 by default and has an opt-in WebGPU path (see the `renderer` URL parameter below), and
-it loads data from Zarr archives served over HTTP or from local files.
+it loads data from Zarr stores served over HTTP.
 
 ![Luxar viewer interface overview](../../images/docs/viewer-ui-overview.png)
 
@@ -36,6 +36,51 @@ pointing `src` at a running Luxar data server. Port `8000` is the default for
 
 Both trailing-slash forms are accepted. Prefer data source URLs without a
 trailing slash as the canonical spelling used in examples and logs.
+
+### Opening a Zipped Scene
+
+The viewer can open a `.luxar.zarr.zip` scene without extracting it.
+
+Produce an archive directly by naming it as the compiler output:
+
+```python
+from luxar import LuxarZarrCompiler
+
+with LuxarZarrCompiler("scene.luxar.zarr.zip") as compiler:
+    ...
+```
+
+You can also package an existing store by giving `luxar optimise` a `.zip`
+destination:
+
+```bash
+luxar optimise scene.luxar.zarr scene.luxar.zarr.zip
+```
+
+Serve the directory containing the archive, then select it in the dataset browser:
+
+```bash
+luxar serve /path/to/scenes --viewer
+```
+
+You can also pass the archive URL directly to `src`, for example:
+
+```
+http://localhost:5173/?src=http://127.0.0.1:8000/scene.luxar.zarr.zip
+```
+
+The data server must support HTTP byte ranges and return `206 Partial Content`.
+`luxar serve` provides the required behavior. Archives are read-only: commands
+that update an existing store in place refuse them, so write to a directory or
+new archive instead. The viewer has no browser local-file or drag-and-drop
+opening path for any scene format; serve the scene over HTTP instead.
+
+Choose an archive for distribution, not speed: it turns a scene with potentially
+hundreds of thousands of hosted objects into one artifact to upload, download, or
+attach to a paper. On the benchmark fixture, a first archive load used about 39%
+more requests and 48–60% more bytes than the directory form, adding 1–7% to time
+to first render. A warm revisit needed only 4–6 requests and about 88 kB, so the
+extra cost is concentrated in the cold load.
 
 ---
 
@@ -326,6 +371,21 @@ collections. For best performance on high-dim source data, pre-slice or
 pre-aggregate before export. See
 [LUXAR_ZARR_FORMAT.md → Viewer Constraints and Performance](LUXAR_ZARR_FORMAT.md#viewer-constraints-and-performance)
 for details.
+
+### Mesh nodes slice by whole triangles
+
+Every rule above describes per-element visibility, which is what Points, Lines
+and GSplats do. A **Mesh** is different: it draws a triangle only when *all
+three* of its vertices fall inside the slice window, so a cut surface has a
+ragged, triangle-following edge rather than a clean planar one, and on a
+*continuous* hidden dimension it shows a slab of finite thickness rather than an
+exact cross-section. A coarse mesh with a narrow window can drop whole regions.
+
+Discrete hidden dimensions — time, channel, anything categorical, which is the
+usual case for a mesh — are unaffected: a timepoint either matches or it does
+not. For the continuous case the slab half-width is authored per node via
+`slab_tolerance` (the slab spans `slice ± step × slab_tolerance`). See
+[LUXAR_ZARR_FORMAT.md → nD slicing: whole-triangle cull](LUXAR_ZARR_FORMAT.md#nd-slicing-whole-triangle-cull).
 
 ---
 

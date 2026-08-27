@@ -203,6 +203,7 @@ from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._lod_policy import save_with_lod
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.merged_quality import collect_part_provenance
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.utils.paths import get_demos_output_dir
 
@@ -1353,8 +1354,21 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
             f"  t={t:2d}  {g.n_splats:7,} splats  peak {float(g.amplitudes.max()):.4f}"
         )
 
+    values = [float(t) for t in range(len(processed))]
+    # Preserve the as-fitted stamps before the archived splats are rescaled.
+    part_provenance = collect_part_provenance(
+        gsplats_list,
+        values=values,
+        fit_reference={
+            "kind": "synthetic",
+            "note": "gridded radar volumes include synthetic clear-air sentinel frames",
+        },
+    )
     return GSplatData.combine_as_new_dimension(
-        processed, values=[float(t) for t in range(len(processed))], sigma=0.0
+        processed,
+        values=values,
+        sigma=0.0,
+        part_provenance=part_provenance,
     )
 
 

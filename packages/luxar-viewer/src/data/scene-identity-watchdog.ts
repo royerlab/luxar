@@ -34,11 +34,14 @@
  *   latch the terminal verdict: neither says anything about scene identity.
  *
  * Only `http(s)` sources are watched — there is nothing to race against on
- * an in-memory or file-backed store. All timers/listeners are removed by
+ * an in-memory or file-backed store. Zipped stores (`.zarr.zip`) are excluded
+ * too: their root attrs live inside the archive, so the probe URLs this class
+ * builds cannot resolve (see `isWatchable`). All timers/listeners are removed by
  * `dispose()`, which the SceneLoader calls on dataset switch and teardown.
  */
 
 import { ROOT_ATTR_DOCS, rootAttrDocOf, rootAttributes } from '../types/zarr-documents';
+import { isZippedStoreUrl } from './zip/entries';
 import { log, Modules } from '../utils/log';
 import { notifier } from '../utils/cross-layer/notifier';
 
@@ -205,7 +208,19 @@ export class SceneIdentityWatchdog {
 
   /** Whether this dataset URL is one the watchdog can meaningfully watch. */
   static isWatchable(datasetUrl: string): boolean {
-    return /^https?:\/\//i.test(datasetUrl);
+    if (!/^https?:\/\//i.test(datasetUrl)) return false;
+    // A zipped store keeps its root attrs INSIDE the archive, so the probe
+    // URLs this class builds (`archive.zip/zarr.json`, `archive.zip/.zattrs`)
+    // 404 unconditionally. 404 is deliberately not an inconclusive verdict, so
+    // watching an archive would report `changed` on the first probe and raise a
+    // permanent "scene changed" banner on every zipped scene. Re-probing an
+    // archive's identity means a HEAD/ETag on the archive itself. That probe now
+    // exists (`ZipChunkSource.probeIdentityToken`), and it stays where it is: it
+    // runs once at load, inside the cache's own validation, and its verdict
+    // clears cache tiers. This watchdog is a different job — a periodic poll
+    // whose verdict is a user-facing banner — and pointing it at the same probe
+    // would double the request rate for a second opinion on the same fact.
+    return !isZippedStoreUrl(datasetUrl);
   }
 
   /**

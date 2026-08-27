@@ -245,6 +245,7 @@ describe('commitPointsGeometry', () => {
     expect(disposeSpy).toHaveBeenCalledTimes(1);
     expect(points.geometry).not.toBe(firstGeometry);
     expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(3);
+    expect((points.userData as { requestedElementCount: number }).requestedElementCount).toBe(3);
   });
 
   it('bakes the radius footprint into boundingBox (three-geometry invariant)', () => {
@@ -963,6 +964,13 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
       commitPointsGeometry('/p', makeData(100), root, pool as never, mockNodeFactory, undefined, 0);
 
       expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(12);
+      expect((points.userData as { requestedElementCount: number }).requestedElementCount).toBe(
+        100
+      );
+      expect((points.userData as { droppedElementCount: number }).droppedElementCount).toBe(88);
+      commitPointsGeometry('/p', makeData(5), root, pool as never, mockNodeFactory, undefined, 1);
+      expect((points.userData as { requestedElementCount: number }).requestedElementCount).toBe(5);
+      expect((points.userData as { droppedElementCount: number }).droppedElementCount).toBe(0);
       const [, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
         THREE.Mesh,
         () => Float32Array,

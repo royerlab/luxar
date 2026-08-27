@@ -49,11 +49,99 @@ def _tiny_store(path: Path, n: int = 16) -> Path:
     save_gsplats(
         path,
         centers=rng.uniform(-5.0, 5.0, (n, 3)).astype(np.float32),
-        amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
+        amplitudes=rng.uniform(20.0, 100.0, n).astype(np.float32),
         cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
         colors=rng.uniform(0.1, 0.9, (n, 3)).astype(np.float32),
     )
     return path
+
+
+def test_build_composite_writes_gain_balanced_uint16(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volumes = {
+        0: np.full((2, 3, 4), 10, dtype=np.uint8),
+        1: np.full((2, 3, 4), 20, dtype=np.uint8),
+        2: np.full((2, 3, 4), 5, dtype=np.uint8),
+    }
+    volumes[0][0, 0, 0] = 30
+    volumes[1][0, 0, 0] = 40
+    volumes[2][0, 0, 0] = 15
+    monkeypatch.setattr(_demo, "signal_channel_indices", lambda _path: [0, 1, 2])
+    monkeypatch.setattr(_demo, "reference_channel_index", lambda _path: 3)
+    decoded = []
+
+    def decode(_path: Path, channel: int) -> np.ndarray:
+        decoded.append(channel)
+        return volumes[channel]
+
+    monkeypatch.setattr(_demo, "decode_h5j_channel", decode)
+    monkeypatch.setattr(_demo, "BALANCE_PERCENTILE", 50.0)
+
+    out = tmp_path / "composite.zarr"
+    _demo.build_composite(tmp_path / "source.h5j", out)
+
+    composite = np.asarray(zarr.open_group(str(out), mode="r")["composite"])
+    assert composite.dtype == np.uint16
+    assert composite[1, 1, 1] == 20
+    assert composite[0, 0, 0] == 60
+    assert decoded == [0, 1, 2, 0, 1, 2]
+
+
+def test_colour_preserves_hue_metadata_and_off_grid_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fit = tmp_path / "fit.gsplats.zarr"
+    centers = np.array([[0, 0, 0], [0, 0, 1], [-1, 0, 0]], dtype=np.float32)
+    save_gsplats(
+        fit,
+        centers=centers,
+        amplitudes=np.ones(3, dtype=np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (3, 1)).astype(np.float32),
+        fitting_info={"psnr_db": 41.5},
+        fitting_config={"n_iters": 5000},
+        provenance_info={"source_file": "source.h5j"},
+        description="stamped fit",
+        truncation_radius=2.5,
+    )
+    shape = (10, 10, 10)
+    volumes = {channel: np.full(shape, 10, dtype=np.uint8) for channel in range(3)}
+    for channel, (bright, dim) in enumerate(((250, 50), (50, 10), (20, 4))):
+        volumes[channel][0, 0, 0] = bright
+        volumes[channel][0, 0, 1] = dim
+    monkeypatch.setattr(_demo, "signal_channel_indices", lambda _path: [0, 1, 2])
+    monkeypatch.setattr(
+        _demo, "decode_h5j_channel", lambda _path, channel: volumes[channel]
+    )
+    monkeypatch.setattr(_demo, "BALANCE_PERCENTILE", 50.0)
+
+    out = tmp_path / "coloured.gsplats.zarr"
+    _demo.colour_from_channels(tmp_path / "source.h5j", fit, out)
+
+    loaded = _demo.load_gsplat_node(str(out))[0]
+    colors = np.asarray(loaded.additive_sublods[0].colors)
+    assert sorted(map(tuple, colors.tolist())) == [
+        (0, 0, 0),
+        (255, 51, 20),
+        (255, 51, 20),
+    ]
+    root = zarr.open_group(str(out), mode="r")
+    assert root["fitting"].attrs["psnr_db"] == pytest.approx(41.5)
+    assert root["fitting/config"].attrs["n_iters"] == 5000
+    assert root["provenance"].attrs["source_file"] == "source.h5j"
+    assert root.attrs["description"] == "stamped fit"
+    assert loaded.additive_sublods[0].truncation_radius == pytest.approx(2.5)
+
+
+def test_colour_requires_exactly_three_signal_channels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fit = _tiny_store(tmp_path / "fit.gsplats.zarr", n=2)
+    monkeypatch.setattr(_demo, "signal_channel_indices", lambda _path: [0, 1, 2, 3])
+    with pytest.raises(ValueError, match="exactly 3 signal channels"):
+        _demo.colour_from_channels(
+            tmp_path / "source.h5j", fit, tmp_path / "coloured.gsplats.zarr"
+        )
 
 
 class TestAuthoredCompositing:
@@ -69,6 +157,8 @@ class TestAuthoredCompositing:
         out = _demo.create_luxar_scene(src, tmp_path / "scene.luxar.zarr")
 
         attrs = dict(zarr.open_group(str(out), mode="r")["mcfo_neurons"].attrs)
+        assert "amplitude_normalization_factor" not in attrs
+        assert attrs["amplitude_data_range"][1] > 50.0
         assert attrs["blending_mode"] == "volumetric"
         assert attrs["absorption"] == pytest.approx(0.81)
         assert attrs["opacity"] == pytest.approx(0.02)
@@ -324,6 +414,34 @@ def test_levelling_angle_recovers_the_tilt_and_actually_levels(
     assert _inplane_ratio(rotated) >= 0.99 * _inplane_ratio(centers)
 
 
+def test_levelling_angle_has_the_cli_rotation_sign(tmp_path: Path, monkeypatch) -> None:
+    import luxar.gsplats.tree as tree_mod
+
+    leaf = _tilted_cloud(48.84, n=2000)
+    monkeypatch.setattr(tree_mod, "iter_leaves", lambda node: [node])
+    angle = _demo.levelling_angle_deg(leaf)
+    centers = leaf.additive_sublods[0].centers
+    source = tmp_path / "tilted.gsplats.zarr"
+    output = tmp_path / "levelled.gsplats.zarr"
+    save_gsplats(
+        source,
+        centers=centers,
+        amplitudes=np.ones(len(centers), dtype=np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (len(centers), 1)).astype(
+            np.float32
+        ),
+    )
+
+    _demo._luxar(
+        "gsplat", "transform", str(source), str(output), "--rotate-z", f"{angle:.8f}"
+    )
+
+    levelled = _demo.load_gsplat_node(str(output))[0]
+    transformed = np.asarray(levelled.additive_sublods[0].centers)
+    assert _inplane_ratio(transformed) > 4.0
+    assert _inplane_ratio(transformed) > 3.0 * _inplane_ratio(centers)
+
+
 # ---------------------------------------------------------------------------
 # The count the demo TELLS people must match the archive it ships.
 #
@@ -335,13 +453,13 @@ def test_levelling_angle_recovers_the_tilt_and_actually_levels(
 # ---------------------------------------------------------------------------
 
 
-def test_the_shipped_splat_count_matches_the_measured_archive() -> None:
-    """N_SPLATS must equal the sidecar's measurement for this archive.
+def test_the_hosted_splat_count_matches_the_measured_archive() -> None:
+    """N_SPLATS must equal the sidecar's hosted-generation measurement.
 
     The sidecar is written by `gen_zenodo_records.py --refresh` from the
-    archive's own stamps, so this ties the demo's user-visible strings to the
-    bytes. A refit that updates one and not the other fails here instead of
-    shipping a caption that misinforms viewers.
+    archive's own stamps, so this ties the documented recompute recipe to the
+    hosted bytes. Runtime strings use the loaded node's count because the
+    bundled fallback is a different generation.
     """
     # Walk up to the sidecar rather than hardcoding a parent depth: this test
     # runs from a worktree as often as from the main checkout, and a fixed
@@ -367,9 +485,8 @@ def test_the_shipped_splat_count_matches_the_measured_archive() -> None:
         "protect the caption -- re-run gen_zenodo_records.py --refresh"
     )
     assert _demo.N_SPLATS == measured, (
-        f"the demo states {_demo.N_SPLATS:,} splats but the archive measures "
-        f"{measured:,}. The count reaches the ON-SCREEN caption, so a mismatch "
-        f"ships a wrong number to viewers."
+        f"the hosted recipe states {_demo.N_SPLATS:,} splats but the sidecar "
+        f"measures {measured:,}"
     )
 
 
@@ -386,6 +503,7 @@ def test_no_stale_splat_count_literal_survives_in_a_user_visible_string() -> Non
         line.strip()
         for line in source.splitlines()
         if "653,759" in line
+        and "bundled fallback" not in line
         and "1000-iteration build" not in line
         and "which this one replaces" not in line
     ]

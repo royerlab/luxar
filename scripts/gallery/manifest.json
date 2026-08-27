@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit \u2014 an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees \u2014 orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), readme (true = a current top pick for the README gallery), note (free-text human annotation; the capture code never reads it).",
+  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. The authoritative field list is the DemoEntry interface in generate-gallery.spec.ts; this comment and scripts/gallery/README.md must be kept in step with it. REQUIRED: id (gallery media filename stem; must equal the demo key), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated; currently unused), dataset (authoritative store path under datasets/demos, relative to repo root). OPTIONAL: citation (dataset credit, copied verbatim from the demo's DEMO_META[\"citation\"][\"short\"] and pinned equal to it by test_demo_meta.py; present only for a demo that declares a real credit \u2014 an absent key means 'unknown or not yet recorded', which is NOT the same claim as 'nothing to credit'; the capture code never reads it), exposure (log2-stops override; omit for auto-exposure), autoFrame (default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (default true; set false to use the demo's baked exposure), fillTarget (per-demo screen-coverage target for fill-to-screen; default 0.95), zoom (multiplicative zoom after fill: >1 in, <1 out), distance (absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects), viewAngle ({azimuth, elevation} in degrees \u2014 orients the camera before framing), orbitUp ('x'|'y'|'z' world up-axis the rock revolves about; DEFAULT = derived from the camera's own up-vector, so a baked non-Y up is honoured automatically - set this only to override, and note it also re-parks the camera on that axis and so usually wants a viewAngle beside it), dimensionNav ({key, steps} for nD demos), timelapse ({framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still), lodFinest (default true; set false for a very heavy scene so the coverage-based LOD may pick a lighter level), note (free-text human annotation; the capture code never reads it).",
   "demos": [
     {
       "id": "lorenz",
@@ -8,8 +8,7 @@
       "category": "synthetic",
       "script": "demo_lorenz.py",
       "dataset": "datasets/demos/lorenz.luxar.zarr",
-      "exposure": 1.3,
-      "readme": true
+      "exposure": 1.3
     },
     {
       "id": "spiral_galaxy",
@@ -17,8 +16,7 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_spiral_galaxy.py",
-      "dataset": "datasets/demos/spiral_galaxy.luxar.zarr",
-      "readme": true
+      "dataset": "datasets/demos/spiral_galaxy.luxar.zarr"
     },
     {
       "id": "mandelbulb",
@@ -36,7 +34,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_rainbow_sphere.py",
-      "dataset": "datasets/demos/rainbow_sphere.luxar.zarr"
+      "dataset": "datasets/demos/rainbow_sphere.luxar.zarr",
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65: at the default 0.95 the tile was a featureless colour blur with no discernible sphere \u2014 3647/4316 border pixels (84.5%) lit."
     },
     {
       "id": "quantum_orbitals",
@@ -68,8 +68,7 @@
       "viewAngle": {
         "azimuth": 90,
         "elevation": 25
-      },
-      "readme": true
+      }
     },
     {
       "id": "gaia_milky_way",
@@ -80,8 +79,7 @@
       "dataset": "datasets/demos/gaia_milky_way.luxar.zarr",
       "citation": "Gaia Collaboration et al. 2023",
       "autoFrame": false,
-      "autoExpose": false,
-      "readme": true
+      "autoExpose": false
     },
     {
       "id": "asteroids_solar_system",
@@ -112,8 +110,7 @@
       "viewAngle": {
         "azimuth": 90,
         "elevation": 0
-      },
-      "readme": true
+      }
     },
     {
       "id": "gsplats_3d_ct_totalsegmentator",
@@ -123,7 +120,6 @@
       "script": "demo_gsplats_3d_ct_totalsegmentator.py",
       "dataset": "datasets/demos/gsplats_3d_ct_totalsegmentator.luxar.zarr",
       "citation": "Wasserthal et al. 2023",
-      "readme": true,
       "orbitUp": "z",
       "distance": 600,
       "note": "body lies along Z; up=Z gives upright coronal + turntable (not roll)"
@@ -162,7 +158,6 @@
         "elevation": 40
       },
       "fillTarget": 0.69,
-      "readme": true,
       "note": "the first SHADED tile. EXPOSURE: the offset-key capture's frame 0 measures p10 0.378, p50 0.506, p99 0.597, spread 0.219 over 32,845 lit pixels. The p50 landing on TARGET_MID confirms the auto-exposure flat-subject pass still fired under the wider asymmetric lighting distribution. This tile deliberately carries NO exposure override because the policy already puts its median on target; the final-frame spread is an outcome measurement, not the post-phase-1 gate input used to calibrate NARROW_SPREAD_MAX. ORBITUP+VIEWANGLE: the orbit hard-sets cam.up to the orbitUp axis, and the default WAS world-y at the time, which silently discarded this demo's baked up=(1,0,0) - the shipped animation was rolled ~90deg away from its own poster AND tumbled, subject aspect swinging 0.40..0.92 (130pct) over one rock. orbitUp x matches the baked up and makes the rock a real turntable, but positionForOrbitUp then parks the camera edge-on to this thin slab (aspect ~4.5, lit fraction 0.09, a sliver), so viewAngle 45/40 is REQUIRED alongside it, not optional; together they hold aspect at 1.46..1.50 (2.5pct swing). The default now derives from the camera's own up-vector and would reach x unaided, but orbitUp x is retained deliberately because it also triggers positionForOrbitUp, and the viewAngle 45/40 is calibrated against that parked pose. FILLTARGET: the fill loop closes on an OUTLIER-ROBUST percentile bbox, but what reaches the frame edge is exactly the outliers - detached membrane specks and the slab's far corners - so the robust metric reports a fit while the true extent is cropped. Measured over EVERY orbit frame (the README embeds the animation, not the still), border-lit pixels: 0.84 -> 3389, 0.75 -> 1256, 0.69 -> 0 across all 120 frames. Captured on an NVIDIA RTX PRO 6000; a macOS/Metal run reproduced the same three numbers within 1pct"
     },
     {
@@ -197,7 +192,6 @@
       "script": "demo_gsplats_4d_celegans_tracking.py",
       "dataset": "datasets/demos/gsplats_4d_celegans_tracking.luxar.zarr",
       "citation": "Santella et al. 2022",
-      "readme": true,
       "timelapse": {
         "framePoint": 0.87
       },
@@ -221,8 +215,7 @@
       "category": "genomics",
       "script": "demo_dipc_3d_genome.py",
       "dataset": "datasets/demos/dipc_3d_genome.luxar.zarr",
-      "citation": "Tan et al. 2018",
-      "readme": true
+      "citation": "Tan et al. 2018"
     },
     {
       "id": "dmri_tractography",
@@ -235,7 +228,6 @@
       "lodFinest": false,
       "autoFrame": false,
       "autoExpose": false,
-      "readme": true,
       "note": "87 tract bundles, 6.83M segments at the finest level. lodFinest:false so the coverage LOD serves the ~640K-element coarse levels \u2014 forcing every element never reaches networkidle inside the 120s goto budget. autoFrame/autoExpose off because both closed loops re-screenshot a scene this heavy until they converge (one run took an hour before timing out in measureLuminance), and because the demo's opening pose and its additive opacity/intensity window are deliberately baked \u2014 letting the harness retune them would undo the tuning"
     },
     {
@@ -296,17 +288,18 @@
     {
       "id": "earthquakes",
       "title": "Global Earthquakes (3D)",
-      "geometry": "points+lines",
+      "geometry": "mixed",
       "category": "geoscience",
       "script": "demo_earthquakes_3d.py",
       "dataset": "datasets/demos/earthquakes.luxar.zarr",
       "citation": "USGS ANSS Comprehensive Catalog",
-      "note": "real Earth + short spikes, no override needed"
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65: before #2176, at the default 0.95 the globe was cropped past its own limb and read as a noise wall rather than as Earth \u2014 3658/4316 border pixels (84.8%) lit. The value was originally derived against that 2M-point stippled shell and CARRIED OVER CORRECTLY when #2176 rebuilt the globe as a textured UV-sphere mesh: re-measured after that change at 0.0% border-lit and 72% coverage. The committed README tile predates the rebuild, so those post-mesh figures describe the current demo rather than the checked-in media. Worth keeping because the mesh limb is both harder-edged and brighter (the cloud shell is luminous on a slightly larger sphere, so the rim gains luminance seen edge-on), which pushes border-lit up at framing that is actually correct \u2014 judge this tile on the render, not the metric."
     },
     {
       "id": "global_rivers_earth",
       "title": "Rivers of Earth",
-      "geometry": "points+lines",
+      "geometry": "mixed",
       "category": "geoscience",
       "script": "demo_global_rivers_earth.py",
       "dataset": "datasets/demos/global_rivers_earth.luxar.zarr",
@@ -318,7 +311,7 @@
     {
       "id": "biodiversity_planetary_scale",
       "title": "Biodiversity at Planetary Scale",
-      "geometry": "points+lines",
+      "geometry": "mixed",
       "category": "geoscience",
       "script": "demo_biodiversity_planetary_scale.py",
       "dataset": "datasets/demos/biodiversity_planetary_scale.luxar.zarr",
@@ -351,13 +344,20 @@
       "category": "synthetic",
       "script": "demo_4d_fractals.py",
       "dataset": "datasets/demos/fractals_4d.luxar.zarr",
-      "dimensionNav": {
-        "key": "2",
-        "steps": 15
-      },
-      "zoom": 0.7,
-      "exposure": -1.5,
-      "note": "Calibrated against a PRE-#842 fractals_4d store, where `w` was continuous over [-2.5, 2.5] with step 0.1 and only ~1 position in 10 held a slice \u2014 hence 15 steps to reach the first populated one, and the zoom/exposure that frame a thin sparse slice. Since #842 the generator declares `w` discrete on the grid it writes (step = 2/grid_size), so a REGENERATED store is populated at its default slice and needs no dimensionNav: re-derive these three values (or drop them) after rebuilding the dataset."
+      "fillTarget": 0.85,
+      "zoom": 0.8,
+      "note": "The #2168 AO regeneration invalidated the old -1.5 exposure override and 0.7 zoom. Auto-exposure now converges at +1.09 stops (p50 0.710, p99 0.848, no clipping). fillTarget 0.85 plus zoom 0.8 keeps more subject area than 0.7 while measuring 0/4316 border-lit pixels across the orbit. dimensionNav stays absent: #842 made all 50 discrete w stops populated."
+    },
+    {
+      "id": "exotic_surfaces",
+      "title": "Exotic Mathematical Surfaces",
+      "geometry": "points",
+      "category": "synthetic",
+      "script": "demo_exotic_surfaces.py",
+      "dataset": "datasets/demos/exotic_surfaces.luxar.zarr",
+      "fillTarget": 0.62,
+      "citation": "von Schnering & Nesper 1991 (TPMS nodal approximations)",
+      "note": "The 3x3 grid is a flat WALL (~3.6 x 3.6 x 1.0), so viewAngle is deliberately omitted: an oblique view collapses the nine cells into one mass. fillTarget 0.72 was measured with additive transport; 0.62 keeps the wall safely framed with both additive and volumetric layers. There is also a hidden two-stop categorical `family` axis that swaps the entire wall (0 = triply-periodic minimal surfaces, 1 = algebraic); this tile shows family 0, which reads as the more coherent grid. A second tile could show family 1 via dimensionNav."
     },
     {
       "id": "galaxy_simulation",
@@ -375,8 +375,8 @@
       "script": "demo_atp_synthase.py",
       "dataset": "datasets/demos/atp_synthase.luxar.zarr",
       "citation": "Zhou et al. 2015",
-      "distance": 27,
-      "note": "absolute dist reliable vs off-center bbox-fill"
+      "distance": 25,
+      "note": "distance 25: 53\u201355% still coverage across captures and 0/4316 border pixels across 10 poses; distance 24 reached 3/4316 at rock -10\u00b0. Distance 25 was chosen under a stricter zero-border stopping rule than the warn-only harness; fillTarget 0.6 reached 58% but cropped 248/4316 at rock -10\u00b0, so the absolute distance is retained. A zoom nudge is the same degree of freedom on the distance path and was covered by the sweep"
     },
     {
       "id": "ocean",
@@ -429,7 +429,9 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_flylight_mcfo_neurons.py",
       "dataset": "datasets/demos/gsplats_3d_flylight_mcfo_neurons.luxar.zarr",
-      "citation": "Mais et al. 2024"
+      "citation": "Mais et al. 2024",
+      "fillTarget": 0.75,
+      "note": "fillTarget 0.75 reduced border-lit from 44.1% to 0.1%. At 0.95 the brighter tissue channel swamped the white neurons into a purple haze; pulling back re-metered auto-exposure by +0.98 stops and separated the neurons, red puncta and tissue again."
     },
     {
       "id": "gsplats_3d_kidney_multichannel_layers",
@@ -448,7 +450,8 @@
       "script": "demo_gsplats_3d_kidney_multichannel_toggles.py",
       "dataset": "datasets/demos/gsplats_6d_kidney_multichannel_toggles.luxar.zarr",
       "citation": "G. Buckley 2018 (scikit-image kidney)",
-      "note": "The scene authors its own opening state; regenerate the dataset with `--force` before capturing."
+      "note": "The scene authors its own opening state; regenerate the dataset with `--force` before capturing. fillTarget 0.7 reduced border-lit from 79.7% to 31.7% at 88.5% coverage. The residual is accepted: this is a flat slab whose own edges are legitimately in shot at the widest orbit pose, not a crop, so do not follow the generic warning to dolly out to 0.6.",
+      "fillTarget": 0.7
     },
     {
       "id": "gsplats_3d_opencell_map4",
@@ -466,7 +469,9 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_blastocyst_dapi_nuclei.py",
       "dataset": "datasets/demos/gsplats_3d_blastocyst_dapi_nuclei.luxar.zarr",
-      "citation": "Blin et al. 2019"
+      "citation": "Blin et al. 2019",
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65: at the default 0.95 the nuclei blurred into a single purple mass \u2014 3338/4316 border pixels (77.3%) lit. Its sibling gsplats_3d_blastocyst_multichannel renders the same specimen legibly at 0.0% border-lit because it carries an explicit distance override; this one had no framing hint at all."
     },
     {
       "id": "gsplats_3d_tribolium_embryo",
@@ -480,12 +485,16 @@
     },
     {
       "id": "gsplats_4d_zebrafish_timelapse",
-      "title": "4D Zebrafish Timelapse",
+      "title": "4D Zebrafish Gastrulation (endoderm)",
       "geometry": "mixed",
       "category": "microscopy",
       "script": "demo_gsplats_4d_zebrafish_timelapse.py",
       "dataset": "datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr",
-      "citation": "Aanstad 2018"
+      "citation": "Aanstad 2018",
+      "timelapse": {
+        "framePoint": 0.9
+      },
+      "note": "framePoint 0.9 because the specimen migrates and grows: the labelled endoderm is ~2\u20134 cells at t=0 and ~185 by t=300 min, while the scene bounds are the acquisition cage (859 \u00d7 859 \u00d7 316 \u00b5m), not the specimen. A bounds-based auto-fit at frame 0 therefore frames an almost-empty box with a dot in it \u2014 correct by every metric and useless as a tile. 0.9 rather than 1.0 keeps structure legible while the endoderm has spread across the yolk. fillTarget is deliberately left at the cage-based default: the cage IS the scale reference for a 2%-occupancy specimen, so cropping to the specimen would lose the idea."
     },
     {
       "id": "gsplats_4d_nexrad_supercell",
@@ -635,8 +644,7 @@
       "script": "demo_gsplats_3d_tng_cosmic_web.py",
       "dataset": "datasets/demos/gsplats_3d_tng_cosmic_web.luxar.zarr",
       "citation": "Nelson et al. 2019",
-      "autoExpose": false,
-      "readme": true
+      "autoExpose": false
     },
     {
       "id": "cubic_array",
@@ -644,7 +652,9 @@
       "geometry": "points",
       "category": "synthetic",
       "script": "demo_cubic_array.py",
-      "dataset": "datasets/demos/cubic_array.luxar.zarr"
+      "dataset": "datasets/demos/cubic_array.luxar.zarr",
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65: at the default 0.95 the camera sat inside the array and the tile was an illegible gradient wash with a few faint lines \u2014 3758/4316 border pixels (87.1%) lit. The demo is about depth of field across a regular lattice, which needs the lattice visible as a lattice."
     },
     {
       "id": "particle_collision_animated",
@@ -665,11 +675,14 @@
     {
       "id": "ocean_currents_earth",
       "title": "Ocean Currents of Earth",
-      "geometry": "points+lines",
+      "geometry": "mixed",
       "category": "geoscience",
       "script": "demo_ocean_currents_earth.py",
       "dataset": "datasets/demos/ocean_currents_earth.luxar.zarr",
-      "citation": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble"
+      "citation": "HYCOM GOFS 3.1 (Chassignet et al. 2007); NASA Blue Marble",
+      "lodFinest": false,
+      "fillTarget": 0.65,
+      "note": "fillTarget 0.65 to match its sibling earthquakes. With no framing hint it defaulted to 0.95 and captured at 3777/4316 border pixels (87.5%) lit \u2014 the globe's limb fell outside the frame entirely and the tile read as a flat current map rather than as Earth. At 0.65, final coverage=67.5%, with ~30/4316 border pixels (0.7%) lit. Note this is NOT the additive cloud-rim effect that inflates border-lit at correct framing on these globes: there was no rim in shot at all. The streamlines stay legible at 0.65 because they cover the whole ocean, and the sphere returns."
     },
     {
       "id": "zebrahub_velocity_streamlines",
@@ -808,6 +821,16 @@
       "citation": "Royer et al. 2016"
     },
     {
+      "id": "gsplats_3d_culling_study",
+      "title": "Splat Culling Study (Drosophila gastrulation)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_3d_culling_study.py",
+      "dataset": "datasets/demos/gsplats_3d_culling_study.luxar.zarr",
+      "citation": "Royer et al. 2016",
+      "note": "Ten cumulative-amplitude cull levels of one Drosophila gastrulation fit stacked on a categorical Cull selector. The tile deliberately shows the DEFAULT slice, which is the uncut level: the demo's point is the comparison you make by stepping the selector, and any single culled level would misrepresent it as a picture of damage. No dimensionNav for the same reason \u2014 it only positions a still. The generic timelapse sweep was considered but rejected because its warm-up starts this 0\u20139 range at index 1, omitting the uncut reference level from the video."
+    },
+    {
       "id": "gsplats_3d_h2afva_stack",
       "title": "Zebrafish Embryo, Single h2afva Stack",
       "geometry": "gsplats",
@@ -815,6 +838,19 @@
       "script": "demo_gsplats_3d_h2afva_stack.py",
       "dataset": "datasets/demos/gsplats_3d_h2afva_stack.luxar.zarr",
       "citation": "Lange et al. 2024 (Zebrahub)"
+    },
+    {
+      "id": "gsplats_4d_h2afva_timelapse",
+      "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_4d_h2afva_timelapse.py",
+      "dataset": "datasets/demos/gsplats_4d_h2afva_timelapse.luxar.zarr",
+      "timelapse": {
+        "framePoint": 0.9
+      },
+      "citation": "Lange et al. 2024 (Zebrahub)",
+      "fillTarget": 0.9
     },
     {
       "id": "gsplats_3d_decimation_study",

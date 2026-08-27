@@ -8,14 +8,18 @@ must be refused from. The pure validators live in
 
 from __future__ import annotations
 
+import re
+from typing import get_args
+
 import numpy as np
 import pytest
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import create_array
-from luxar.core.mesh import Mesh
+from luxar.core.mesh import Mesh, ShadingMode
 from luxar.io import LuxarScene, MeshData
+from luxar.io._compiler.geometry_writers.mesh import VALID_SHADING_MODES
 
 # A welded tetrahedron: 4 vertices, 4 faces, every vertex shared by 3 faces.
 _V = np.array(
@@ -80,6 +84,7 @@ def test_n_elements_counts_vertices_not_faces(tmp_path) -> None:
             "explicit_flat_overrides_normals",
         ),
         ({"shading": "smooth"}, "smooth", "explicit_smooth_without_normals_kept"),
+        ({"shading": "none"}, "none", "explicit_unlit_kept"),
     ],
 )
 def test_shading_resolution(tmp_path, kwargs, expected_shading, test_id) -> None:
@@ -93,6 +98,11 @@ def test_shading_resolution(tmp_path, kwargs, expected_shading, test_id) -> None
     store = _write(tmp_path, name=test_id, **kwargs)
     node = zarr.open_group(store, mode="r")[test_id]
     assert dict(node.attrs)["shading"] == expected_shading
+
+
+def test_shading_mode_type_matches_the_writer_contract() -> None:
+    """The public read type must cover every shading value the writer accepts."""
+    assert set(get_args(ShadingMode)) == set(VALID_SHADING_MODES)
 
 
 def test_double_sided_defaults_true_and_round_trips_false(tmp_path) -> None:
@@ -741,6 +751,410 @@ def test_dim_order_permutes_vertex_columns_without_breaking_faces(tmp_path) -> N
         ), f"face {face_index} no longer names its authored vertices"
 
 
+# --- dim_order and face winding (#2141) -------------------------------------
+#
+# `dim_order` renumbers the vertex COLUMNS. `normals` needs no companion transform
+# — `normal_dims` names SCENE dimension indices, so the components are already
+# expressed in the destination frame (the docstring's own example, "for a
+# (t, x, y, z) mesh those are (t, x, y)", is about the stored layout, and
+# `demo_lsystem_forest` says so inline: "The three scene dims the normals
+# describe"). This differs from gsplats, whose Cholesky factors ARE authored in
+# the source frame and so must be carried through the map.
+#
+# Face winding is the part `dim_order` can invalidate, and the part Luxar
+# deliberately does NOT repair: `cross(Ra, Rb) = det(R)·R·cross(a, b)`, so an
+# orientation-reversing permutation negates a triangle's geometric normal while
+# its corner order is untouched. Whether that is WRONG depends on which frame the
+# caller wound in, which only they know — so the writer reports and leaves the
+# data alone. These tests pin the report and, just as importantly, pin that
+# nothing is silently rewritten.
+
+_XYZ = ("x", "y", "z")
+
+
+def _xyz_dims():
+    """A plain 3D (x, y, z) scene — the frame every case below maps ONTO."""
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    return Dimensions(
+        [
+            Dimension(name=n, unit="um", range=(0, 30), step=1.0, display=True)
+            for n in _XYZ
+        ]
+    )
+
+
+_TRI_V = np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 4.0, 0.0]], dtype=np.float32)
+_TRI_F = np.array([[0, 1, 2]], dtype=np.uint32)
+_TRI_N = np.tile(np.array([[0.0, 0.0, 1.0]], dtype=np.float32), (3, 1))
+
+
+def _write_tri(tmp_path, name, **kwargs):
+    store = tmp_path / f"{name}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=_xyz_dims())
+        scene.add_mesh(name, _TRI_V, _TRI_F, **kwargs)
+    return LuxarScene.load(store).get_mesh(name)
+
+
+@pytest.mark.parametrize(
+    "dim_order,test_id",
+    [
+        (["x", "y", "z"], "identity"),
+        (["y", "z", "x"], "even_cycle"),
+        (["z", "y", "x"], "odd_reversal"),
+        (["y", "x", "z"], "odd_swap"),
+    ],
+)
+def test_dim_order_never_rewrites_faces_or_normals(
+    tmp_path, dim_order, test_id
+) -> None:
+    """`dim_order` touches vertex columns and NOTHING else.
+
+    The guard against a well-meant "fix". Repairing winding automatically looks
+    right until you notice `normal_dims` names SCENE dimensions: a caller who
+    followed that contract wound against the scene frame and is already correct,
+    so flipping their faces would corrupt working data. Same for permuting normal
+    components — they are already in the destination frame.
+
+    So the invariant is the strong one: faces and normals come out byte-identical
+    to what went in, for every permutation including the reversing ones.
+    """
+    mesh = _write_tri(
+        tmp_path, "m", normals=_TRI_N, normal_dims=[0, 1, 2], dim_order=dim_order
+    )
+    assert np.array_equal(mesh.faces, _TRI_F), f"{test_id}: faces were rewritten"
+    assert np.array_equal(mesh.normals, _TRI_N), f"{test_id}: normals were rewritten"
+    assert mesh.normal_dims == [0, 1, 2], f"{test_id}: normal_dims was rewritten"
+
+
+@pytest.mark.parametrize(
+    "dim_order,expect_warning,test_id",
+    [
+        (["x", "y", "z"], False, "identity_is_orientation_preserving"),
+        (["y", "z", "x"], False, "even_cycle_is_orientation_preserving"),
+        (["z", "y", "x"], True, "reversal_flips_handedness"),
+        (["y", "x", "z"], True, "single_swap_flips_handedness"),
+    ],
+)
+def test_dim_order_warns_exactly_when_handedness_reverses(
+    tmp_path, capsys, dim_order, expect_warning, test_id
+) -> None:
+    """The lint fires on the reversing permutations and only those.
+
+    The even cases are not padding: a lint that fired on any non-identity
+    `dim_order` would pass every reversing case and fail these, and it would cry
+    wolf on the shipped `demo_lsystem_forest`, whose `dim_order` is
+    orientation-PRESERVING.
+    """
+    _write_tri(
+        tmp_path,
+        f"m_{test_id}",
+        normals=_TRI_N,
+        normal_dims=[0, 1, 2],
+        dim_order=dim_order,
+        double_sided=False,
+    )
+    warned = "reverses handedness" in capsys.readouterr().out
+    assert warned is expect_warning, test_id
+
+
+def test_dim_order_winding_warning_includes_a_double_sided_mesh(
+    tmp_path, capsys
+) -> None:
+    """Stored-normal shading keeps winding observable when both sides draw.
+
+    ``gl_FrontFacing`` still chooses the stored normal's sign on a double-sided
+    material, so reversed winding flips the shading gradient even though coverage
+    is unchanged. ``double_sided`` defaults true, making this the common case.
+    """
+    _write_tri(
+        tmp_path,
+        "m",
+        normals=_TRI_N,
+        normal_dims=[0, 1, 2],
+        dim_order=["z", "y", "x"],
+        double_sided=True,
+    )
+    assert "reverses handedness" in capsys.readouterr().out
+
+
+def test_dim_order_winding_warning_is_silent_without_a_winding_frame(
+    tmp_path, capsys
+) -> None:
+    """No normals means no declared frame, so handedness is undecidable.
+
+    Spec §3.2: `sorted(normal_dims)` is the ONLY signal for which three axes the
+    author wound against. Warning on a guess would be noise, and the viewer
+    already renders such a mesh `DoubleSide` regardless of `double_sided`.
+    """
+    _write_tri(tmp_path, "m", dim_order=["z", "y", "x"], double_sided=False)
+    assert "reverses handedness" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "normal_dims,expected",
+    [
+        (
+            ["a", "b", "c"],
+            "normal_dims: Entry 0 must be an integer dimension index, got 'a' (str)",
+        ),
+        (
+            3,
+            "normal_dims: Expected a sequence of 3 dimension indices, got int",
+        ),
+    ],
+)
+def test_dim_order_winding_lint_defers_malformed_normal_dims_to_validator(
+    tmp_path, normal_dims, expected
+) -> None:
+    """The advisory lint must not replace the writer's actionable refusal."""
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        _write_tri(
+            tmp_path,
+            "m",
+            normals=_TRI_N,
+            normal_dims=normal_dims,
+            dim_order=["z", "y", "x"],
+        )
+
+
+def test_reveal_ladder_budget_is_charged_as_a_sum(tmp_path, monkeypatch) -> None:
+    """A ladder is charged on its levels' SUM, not on the flat surface.
+
+    The one place the flat write-time check is *multiplicatively* short rather
+    than merely incomplete: the viewer concatenates `additive_<i>` levels into one
+    node's buffers and keeps all of them resident, so it charges the total. A
+    shell ladder duplicates every boundary vertex, so the total exceeds the flat
+    mesh by a factor that grows with the level count — meaning an under-budget
+    surface could still write a ladder the viewer refuses.
+
+    The ceiling is shrunk rather than the fixture grown, and to a value the FLAT
+    surface fits inside so the assertion can only be satisfied by the sum: a build
+    that checked levels individually, or only the authored mesh, admits this.
+    """
+    from luxar.validation.base import mesh_decoded_value_count
+
+    flat_values = mesh_decoded_value_count(
+        _V.shape[0], _V.shape[1], int(_F.size // 3), normals=_N
+    )
+    # Between one flat surface and the ladder's duplicated total.
+    monkeypatch.setattr(
+        "luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES",
+        int(flat_values * 4 * 1.5),
+        raising=True,
+    )
+    with pytest.raises(ValueError, match="levels decode to"):
+        store = tmp_path / "ladder.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "m",
+                _V,
+                _F,
+                normals=_N,
+                normal_dims=[0, 1, 2],
+                additive_lod={"n_lods": 2},
+            )
+    root = zarr.open_group(str(store), mode="r")
+    assert list(root.groups()) == [], "the refused ladder was partly written"
+
+
+def test_dim_order_winding_warning_is_silent_when_frame_has_no_preimage(
+    tmp_path, capsys
+) -> None:
+    """A constant-filled frame axis is undecidable, not an authoring failure."""
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            Dimension(
+                name="t",
+                unit="s",
+                range=(0, 0),
+                step=1.0,
+                display=False,
+                discrete=True,
+            ),
+            Dimension(name="x", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="z", unit="um", range=(0, 30), step=1.0, display=True),
+        ]
+    )
+    store = tmp_path / "filled_frame.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_mesh(
+            "m",
+            _TRI_V,
+            _TRI_F,
+            normals=_TRI_N,
+            normal_dims=[0, 1, 2],
+            dim_order=["x", "y", "z"],
+            fill={"t": 0.0},
+            double_sided=False,
+        )
+    assert LuxarScene.load(store).get_mesh("m").normal_dims == [0, 1, 2]
+    assert "reverses handedness" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "route_kwargs,test_id",
+    [
+        ({}, "flat_leaf"),
+        ({"partition": {"max_elements": 2}}, "partition"),
+        ({"substitutive_lod": {"levels": 2}}, "substitutive_lod"),
+        ({"additive_lod": {"n_lods": 2}}, "additive_lod"),
+    ],
+)
+def test_dim_order_winding_lint_reaches_every_structural_route(
+    tmp_path, capsys, route_kwargs, test_id
+) -> None:
+    """One call site serves all four routes — this is what proves it.
+
+    `add_mesh_impl` runs the lint once, above the structural branches, and relies
+    on every recursive re-entry passing `dim_order=None` so it fires exactly once.
+    That is an argument, not a guarantee: a regression that moved the call below a
+    branch would leave `partition=`, `substitutive_lod=` and `additive_lod=`
+    authoring in silence while the flat leaf stayed green — a lint that is absent
+    on three quarters of the API and looks fine in every other test.
+
+    Uses the closed tetrahedron rather than the single triangle: `partition=`
+    needs enough faces to split and the LOD routes need something to coarsen.
+    """
+    store = tmp_path / f"{test_id}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(
+            "m",
+            _V,
+            _F,
+            normals=_N,
+            normal_dims=[0, 1, 2],
+            dim_order=["z", "y", "x"],
+            **route_kwargs,
+        )
+    assert "reverses handedness" in capsys.readouterr().out, (
+        f"{test_id}: the winding lint did not fire on this route"
+    )
+
+
+def test_dim_order_scene_semantics_hold_for_normal_dims(tmp_path) -> None:
+    """`normal_dims` indexes the SCENE dimensions, so it may exceed the authored width.
+
+    Pins the contract my own first reading of this code got backwards, and that
+    `demo_lsystem_forest` depends on: it authors 4 columns
+    (`dim_order=["season", "x", "y", "z"]`) and passes `normal_dims=[2, 3, 4]` —
+    scene indices, one of which is larger than any authored column index. A build
+    that treated `normal_dims` as authored columns rejects that demo outright.
+    """
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            Dimension(name="t", unit="s", range=(0, 3), step=1.0, display=False),
+            Dimension(name="x", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="z", unit="um", range=(0, 30), step=1.0, display=True),
+        ]
+    )
+    store = tmp_path / "scene_dims.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        # Three authored columns; normal_dims names scene 1..3, above that width.
+        scene.add_mesh(
+            "m",
+            _TRI_V,
+            _TRI_F,
+            normals=_TRI_N,
+            normal_dims=[1, 2, 3],
+            dim_order=["x", "y", "z"],
+            fill={"t": 0.0},
+        )
+    assert LuxarScene.load(store).get_mesh("m").normal_dims == [1, 2, 3]
+
+
+def test_add_mesh_refuses_a_mesh_over_the_viewers_decode_budget(
+    tmp_path, monkeypatch
+) -> None:
+    """The budget gate is WIRED into `add_mesh`, not merely defined.
+
+    The arithmetic is unit-tested in `test_mesh_validation.py`; what cannot be
+    checked there is whether anything calls it. Authoring a genuinely over-budget
+    mesh would mean allocating half a gigabyte of test fixture, so the ceiling is
+    shrunk instead — the validator reads the constant at call time, so a tiny
+    budget makes a four-vertex tetrahedron over-budget and proves the path runs.
+
+    Asserts on the store as well as the exception: a fail-fast gate that raises
+    AFTER writing arrays would leave a half-built node behind, which is the
+    failure mode `validate_mesh_arrays` exists to prevent. Checked on disk rather
+    than through `LuxarScene.load`, which refuses the whole store as incomplete
+    (the writer exited before finalizing) and so cannot tell a node that was
+    never created from one that was half-written.
+    """
+    monkeypatch.setattr(
+        "luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES", 16, raising=True
+    )
+    store = tmp_path / "over.luxar.zarr"
+    with pytest.raises(ValueError, match="over the viewer"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F)
+    root = zarr.open_group(str(store), mode="r")
+    assert "m" not in dict(root.groups()), "the refused node was partly written"
+
+
+def test_slab_tolerance_round_trips_under_exactly_that_key(tmp_path) -> None:
+    """`slab_tolerance` reaches zarr spelled the way the viewer reads it.
+
+    The viewer's `MeshMetadata` is a closed TypeScript interface, so its read
+    site is compile-checked — but nothing checks that the key Python WRITES is
+    the key TypeScript declares. `check-contract` does not model node appearance
+    attrs at all, and no fixture authors one, so the two spellings agree by
+    review alone. This pins the Python half against a rename, and names its twin
+    so a future rename has somewhere to look.
+
+    TWIN: `slab_tolerance` in `packages/luxar-viewer/src/types/mesh.ts`
+    (`MeshMetadata`), consumed at
+    `data/scene-loader/process/data-processor-mesh.ts` as the
+    `meshSlabTolerance` tolerance option.
+    """
+    store = _write(tmp_path, slab_tolerance=2.5)
+    node = zarr.open_group(str(store), mode="r")["m"]
+    assert node.attrs["slab_tolerance"] == 2.5
+
+
+@pytest.mark.parametrize(
+    "value,test_id",
+    [(0.0, "zero_would_render_nothing"), (-1.0, "negative"), (float("nan"), "nan")],
+)
+def test_slab_tolerance_rejects_a_non_positive_value(tmp_path, value, test_id) -> None:
+    """Zero is the one that matters, and it is refused for a concrete reason.
+
+    A zero slab reduces mesh's whole-triangle membership test to exact float
+    equality with the slice plane, so the node renders NOTHING — the same trap
+    that stops mesh reusing the Lines tolerance arm (spec §5.2.1). Accepting it
+    would hand the user a silent blank node.
+    """
+    with pytest.raises(ValueError, match="Slab tolerance"):
+        _write(tmp_path, name=f"m_{test_id}", slab_tolerance=value)
+
+
+def test_slab_tolerance_is_refused_on_the_other_geometry_types(tmp_path) -> None:
+    """Mesh-only, and enforced by the same guard as the shading controls.
+
+    It is a loading knob rather than an appearance one, so it rides in the set
+    named `MESH_ONLY_APPEARANCE_ATTRS` on a technicality. This pins the
+    behaviour that name is a technicality ABOUT: a points node must still refuse
+    it, or a user would silently author a no-op.
+    """
+    store = tmp_path / "pts.luxar.zarr"
+    with pytest.raises(ValueError, match="slab_tolerance"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("p", _V, slab_tolerance=2.0)
+
+
 @pytest.mark.filterwarnings("ignore:Dimension 't' has range")
 def test_extend_to_all_on_a_mesh(tmp_path) -> None:
     """A mesh stays visible across a named non-displayed dimension.
@@ -863,6 +1277,31 @@ def test_face_index_width_escalates_past_uint16(tmp_path) -> None:
     assert results[66_000].itemsize >= 4, (
         f"index width did not escalate above 65535 (got {results[66_000]})"
     )
+
+
+def test_add_mesh_rejects_geometry_and_texture_over_the_combined_budget(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two individually admissible terms must not author an unloadable node."""
+    monkeypatch.setattr(
+        "luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES", 1_000, raising=True
+    )
+    store = tmp_path / "combined-budget.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match="over the viewer"):
+            scene.add_mesh(
+                "m",
+                _V,
+                _F,
+                uvs=np.zeros((len(_V), 2), dtype=np.float32),
+                texture=np.zeros(69, dtype=np.uint8),
+                texture_encoding="png",
+                texture_width=16,
+                texture_height=16,
+                texture_channels=3,
+            )
+        assert "m" not in zarr.open_group(store, mode="r")
 
 
 def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_accepted(
@@ -2710,3 +3149,317 @@ def test_no_sub_LOD_carries_the_private_skip_scene_bounds_flag(tmp_path) -> None
         )
     # The flag must still DO its job: the parent describes the whole ladder.
     assert "position_bounds" in parent.attrs
+
+
+# --- textures end to end (#2175) -------------------------------------------
+
+_TEX_UV = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float32)
+_TEX_RGB = np.arange(8 * 4 * 3, dtype=np.uint8).reshape(8, 4, 3)
+
+
+def _write_textured(tmp_path, name="m", **kwargs):
+    """Write a textured tetrahedron. `uvs` defaults but stays overridable."""
+    kwargs.setdefault("uvs", _TEX_UV)
+    store = tmp_path / f"{name}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(name, _V, _F, **kwargs)
+    return LuxarScene.load(store).get_mesh(name)
+
+
+def test_raw_texture_round_trips_byte_exact_with_its_declared_dimensions(
+    tmp_path,
+) -> None:
+    """A raw texture survives the round trip, and declares what it decodes to.
+
+    The declared dimensions are asserted for a RAW texture even though they are
+    redundant with the array's own shape, because that redundancy is the point: a
+    reader must never have to open the payload to learn how large it decodes to.
+    The viewer's admission gate budgets a node from these numbers before it
+    fetches a single chunk.
+    """
+    mesh = _write_textured(tmp_path, texture=_TEX_RGB)
+    assert np.array_equal(mesh.texture, _TEX_RGB)
+    assert mesh.texture.dtype == np.uint8
+    assert np.array_equal(mesh.uvs, _TEX_UV)
+    assert mesh.metadata["has_texture"] is True
+    assert mesh.metadata["has_uvs"] is True
+    assert mesh.metadata["texture_encoding"] == "raw"
+    assert mesh.metadata["texture_height"] == 8
+    assert mesh.metadata["texture_width"] == 4
+    assert mesh.metadata["texture_channels"] == 3
+    # sRGB is the default because an ordinary PNG/JPEG is sRGB-encoded, and
+    # getting this wrong gives a subtly over-dark surface rather than an obvious
+    # failure.
+    assert mesh.metadata["texture_color_space"] == "srgb"
+
+
+def test_hdr_texture_keeps_its_range_and_stamps_a_window(tmp_path) -> None:
+    """A float texture above 1.0 is HDR, and says so the way colours do.
+
+    Follows the element-colour contract exactly rather than inventing a second
+    one: float dtype plus any value > 1.0 is HDR, and the RGB min/max is stamped
+    (alpha excluded) so the viewer derives a window from one shape whatever the
+    source. PRECISION keeps it float32 — the encoder deliberately refuses float16
+    for colours as measurably worse than its quantized alternative.
+    """
+    from luxar.encoding import EncodingMode
+
+    hdr = np.zeros((4, 4, 3), dtype=np.float32)
+    hdr[..., 0] = 6.5
+    store = tmp_path / "hdr.luxar.zarr"
+    with LuxarZarrCompiler(
+        store, encoding_mode=EncodingMode.PRECISION, compressor=None
+    ) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(
+            "m", _V, _F, uvs=_TEX_UV, texture=hdr, texture_color_space="linear"
+        )
+    mesh = LuxarScene.load(store).get_mesh("m")
+    assert mesh.texture.dtype == np.float32
+    assert float(mesh.texture.max()) == pytest.approx(6.5)
+    assert mesh.metadata["texture_data_range"] == [0.0, 6.5]
+    assert mesh.metadata["texture_color_space"] == "linear"
+
+
+def test_hdr_texture_refuses_srgb_transfer(tmp_path) -> None:
+    hdr = np.full((4, 4, 3), 2.0, dtype=np.float32)
+    with pytest.raises(ValueError, match="HDR values above 1.0 cannot use"):
+        _write_textured(tmp_path, texture=hdr)
+
+
+@pytest.mark.parametrize("color_space", ["sRGB", "banana", "rec2020"])
+def test_bad_texture_color_space_is_refused(tmp_path, color_space) -> None:
+    with pytest.raises(ValueError, match="texture_color_space must be one of"):
+        _write_textured(tmp_path, texture=_TEX_RGB, texture_color_space=color_space)
+
+
+def test_sdr_float_texture_stamps_no_hdr_window(tmp_path) -> None:
+    """A float texture entirely within [0, 1] is SDR, and gets no range attr.
+
+    The negative twin of the test above, and the one that pins the rule is on
+    VALUES rather than on dtype — a build keyed on "is it float?" would stamp a
+    window here.
+    """
+    sdr = np.full((4, 4, 3), 0.5, dtype=np.float32)
+    mesh = _write_textured(tmp_path, texture=sdr)
+    assert "texture_data_range" not in mesh.metadata
+
+
+def test_encoded_texture_round_trips_as_opaque_bytes(tmp_path) -> None:
+    """Encoded payloads are stored and returned byte-identical, undecoded.
+
+    The reader deliberately does not decode: `luxar.io` has no image-codec
+    dependency and should not acquire one. `texture_encoding` plus the declared
+    dimensions tell a consumer exactly what it is holding.
+
+    Uses a synthetic byte string rather than a real PNG on purpose — the writer
+    treats the payload as opaque, so requiring Pillow here would only test
+    Pillow.
+    """
+    blob = np.frombuffer(b"\x89PNG\r\n\x1a\n" + bytes(range(64)), dtype=np.uint8)
+    mesh = _write_textured(
+        tmp_path,
+        texture=blob,
+        texture_encoding="png",
+        texture_width=4,
+        texture_height=8,
+        texture_channels=3,
+    )
+    assert np.array_equal(mesh.texture, blob)
+    assert mesh.metadata["texture_encoding"] == "png"
+    # Declared, not derived — they cannot be read from encoded bytes without
+    # decoding them, which is exactly why they are mandatory.
+    assert mesh.metadata["texture_width"] == 4
+    assert mesh.metadata["texture_height"] == 8
+
+
+@pytest.mark.parametrize(
+    "kwargs,error_pattern,test_id",
+    [
+        (
+            dict(texture=_TEX_RGB, colors=np.zeros((4, 3), np.float32)),
+            "one base colour source",
+            "texture_and_colors",
+        ),
+        (
+            dict(texture=_TEX_RGB, scalars=np.zeros(4, np.float32), colormap="viridis"),
+            "one base colour source",
+            "texture_and_colormap",
+        ),
+        (
+            dict(texture=_TEX_RGB, partition={"max_elements": 2}),
+            "cannot be combined with partition",
+            "texture_and_partition",
+        ),
+        (
+            dict(texture=_TEX_RGB, substitutive_lod={"levels": 2}),
+            "cannot be combined with substitutive_lod",
+            "texture_and_substitutive_lod",
+        ),
+        (
+            dict(texture=_TEX_RGB, additive_lod={"n_lods": 2}),
+            "cannot be combined with additive_lod",
+            "texture_and_additive_lod",
+        ),
+    ],
+)
+def test_texture_composition_refusals(tmp_path, kwargs, error_pattern, test_id) -> None:
+    """Each unsupported texture combination is refused by name, with a reason.
+
+    The three structural routes are each coherent to want and each needs work
+    nothing does yet, so they are named as *not implemented* rather than as
+    meaningless — the distinction the sibling refusals in this adder are careful
+    to draw. A UV sphere needs none of them.
+    """
+    with pytest.raises(ValueError, match=error_pattern):
+        _write_textured(tmp_path, name=f"m_{test_id}", **kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs,error_pattern,test_id",
+    [
+        (dict(texture=_TEX_RGB), "'texture' requires 'uvs'", "texture_alone"),
+        (dict(uvs=_TEX_UV), "'uvs' requires 'texture'", "uvs_alone"),
+    ],
+)
+def test_uvs_and_texture_are_a_pair(tmp_path, kwargs, error_pattern, test_id) -> None:
+    """Neither half is accepted alone — the mesh peer of normals/normal_dims.
+
+    Both render *something* rather than failing, which is why both are refused
+    rather than warned: a texture with no UVs samples one arbitrary texel across
+    every triangle, and UVs with no texture cost a per-vertex array to affect
+    nothing. Silent-but-wrong is the case the normals pairing already argues must
+    be made loud.
+    """
+    store = tmp_path / f"pair_{test_id}.luxar.zarr"
+    with pytest.raises(ValueError, match=error_pattern):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F, **kwargs)
+
+
+def test_uvs_outside_the_unit_square_survive_the_round_trip(tmp_path) -> None:
+    """Tiling UVs are not clamped on the way to disk.
+
+    A UV outside [0, 1] is how you tile a detail texture under
+    `texture_wrap="repeat"`. Clamping at write time would silently destroy that,
+    and the loss would be invisible in every count-based assertion.
+    """
+    tiling = np.array(
+        [[0.0, 0.0], [4.0, 0.0], [0.0, 4.0], [4.0, 4.0]], dtype=np.float32
+    )
+    mesh = _write_textured(tmp_path, uvs=tiling, texture=_TEX_RGB)
+    assert float(mesh.uvs.max()) == pytest.approx(4.0)
+
+
+def test_texture_sampling_attrs_round_trip(tmp_path) -> None:
+    """`texture_filter` / `texture_wrap` reach the store as authored.
+
+    Authorable because the right answer is data-dependent and the viewer cannot
+    infer it: `nearest` is correct for a categorical or index-like texture, where
+    interpolating two class ids invents a third that means nothing, and `clamp`
+    is correct for a texture that is not meant to tile.
+    """
+    mesh = _write_textured(
+        tmp_path, texture=_TEX_RGB, texture_filter="nearest", texture_wrap="clamp"
+    )
+    assert mesh.metadata["texture_filter"] == "nearest"
+    assert mesh.metadata["texture_wrap"] == "clamp"
+
+
+def test_texture_sampling_attrs_are_absent_by_default(tmp_path) -> None:
+    """Unset means unset — the viewer owns the default, not the writer.
+
+    The negative twin of the round trip above. Stamping a default here would make
+    a store indistinguishable from one that authored the same value on purpose,
+    which is the distinction `shading` deliberately preserves by only ever
+    stamping what it resolved.
+    """
+    mesh = _write_textured(tmp_path, texture=_TEX_RGB)
+    assert "texture_filter" not in mesh.metadata
+    assert "texture_wrap" not in mesh.metadata
+
+
+@pytest.mark.parametrize(
+    "attrs,error_pattern,test_id",
+    [
+        (
+            dict(texture_filter="nearest"),
+            "'texture_filter' requires 'texture'",
+            "filter_without_texture",
+        ),
+        (
+            dict(texture_wrap="clamp"),
+            "'texture_wrap' requires 'texture'",
+            "wrap_without_texture",
+        ),
+        (
+            dict(texture_filter="nearest", texture_wrap="clamp"),
+            "require 'texture'",
+            "both_without_texture",
+        ),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_sampling_attrs_are_refused_without_a_texture(
+    tmp_path, attrs, error_pattern, test_id
+) -> None:
+    """A sampling attr on an untextured mesh is a silent no-op, so it is refused.
+
+    It would validate, persist, and read back exactly as authored while changing
+    no pixel — the same failure `reject_mesh_only_appearance` prevents when these
+    are set on a points node, reached from the other direction.
+    """
+    store = tmp_path / f"{test_id}.luxar.zarr"
+    with pytest.raises(ValueError, match=error_pattern):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F, **attrs)
+
+
+@pytest.mark.parametrize("filt", ["bilinear", "LINEAR", 3, None])
+def test_bad_texture_filter_is_refused(tmp_path, filt) -> None:
+    """The sampling vocabularies are closed, so a typo fails loudly."""
+    store = tmp_path / "bad_filter.luxar.zarr"
+    with pytest.raises(ValueError, match="Texture filter must be one of"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "m", _V, _F, uvs=_TEX_UV, texture=_TEX_RGB, texture_filter=filt
+            )
+
+
+def test_shading_none_is_stamped_as_authored(tmp_path) -> None:
+    """`shading='none'` is the unlit arm, and only ever explicit.
+
+    An unlit mesh is what a data basemap needs — a textured globe whose colours
+    carry meaning must not be reshaded by a view-anchored key — and it is what the
+    other three geometry types always do, being purely emissive.
+    """
+    mesh = _write_textured(tmp_path, texture=_TEX_RGB, shading="none")
+    assert mesh.metadata["shading"] == "none"
+
+
+def test_shading_none_is_never_a_default(tmp_path) -> None:
+    """Nothing resolves TO 'none'; defaulting to it would un-light every mesh.
+
+    Both default arms are checked, because "never a default" is a claim about the
+    whole resolution rather than about one branch of it.
+    """
+    with_normals = _write_textured(
+        tmp_path, name="lit", texture=_TEX_RGB, normals=_N, normal_dims=[0, 1, 2]
+    )
+    assert with_normals.metadata["shading"] == "smooth"
+    without = _write_textured(tmp_path, name="unlit", texture=_TEX_RGB)
+    assert without.metadata["shading"] == "flat"
+
+
+def test_unknown_shading_still_names_every_arm(tmp_path) -> None:
+    """A typo'd `shading` must advertise the new third arm, not just the old two."""
+    store = tmp_path / "bad_shading.luxar.zarr"
+    expected = f"shading must be one of {VALID_SHADING_MODES}, got 'phong'"
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F, shading="phong")

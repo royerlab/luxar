@@ -86,6 +86,16 @@ export interface MeshGeometryConfig {
    * `Float16Array` at itemSize 1 (§6.1.1).
    */
   scalars?: Float32Array | null;
+  /**
+   * Per-vertex texture coordinates (`vertexCount * 2`), or `null`/absent when the
+   * node has no texture. Bound as `uv`. Same creation-time set rule as `normals`.
+   *
+   * Named `uv` on the GPU rather than `aUv`, unlike `aScalar`: three.js's vertex
+   * prefix declares `position`/`normal`/`uv` for every program, so the standard
+   * name is already there to be filled and a custom one would need its own
+   * declaration in both shader backends for no gain.
+   */
+  uvs?: Float32Array | null;
   /** Vertices in the buffers (NOT the visible count — nothing is compacted). */
   vertexCount: number;
   /**
@@ -554,6 +564,18 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
       )
     );
   }
+  if (input.uvs) {
+    // `uv` joins the set HERE, like `normal` and `aScalar`, because its existence is
+    // a per-node constant (`has_uvs`) — and unlike them it is bound whenever the
+    // node HAS uvs, not whenever the shader reads them, which is the same rule for
+    // the same reason: WebGPU bakes the attribute set into the pipeline at first
+    // draw, so an attribute that appears later renders the node black.
+    geometry.setAttribute(
+      'uv',
+      new THREE.BufferAttribute(atCapacity(input.uvs, 2, input.vertexCount, capVertices), 2, false)
+    );
+    geometry.userData.hasUVs = true;
+  }
   if (input.scalars) {
     geometry.setAttribute(
       'aScalar',
@@ -584,7 +606,7 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
  * Bring one already-bound `float32` vertex attribute up to date, in place where
  * possible.
  *
- * Shared by `normal` and `aScalar`, which have identical lifecycles: both are
+ * Shared by `normal`, `aScalar` and `uv`, which have identical lifecycles: all are
  * per-node-constant in EXISTENCE (decided at creation from the metadata) and
  * uploaded-once in CONTENT PER LEVEL — a slice move rebuilds only the index, but
  * a reveal ladder's later levels genuinely grow the committed prefix.
@@ -622,15 +644,18 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
  */
 function replaceVertexAttribute(
   geometry: THREE.BufferGeometry,
-  name: 'normal' | 'aScalar',
+  name: 'normal' | 'aScalar' | 'uv',
   data: Float32Array | null | undefined,
-  itemSize: 1 | 3,
+  itemSize: 1 | 2 | 3,
   vertexCount: number,
   capacityVertexCount: number = vertexCount
 ): boolean {
   const existing = geometry.getAttribute(name) as THREE.BufferAttribute | undefined;
   if (!existing || !data) return false;
-  const key = name === 'normal' ? 'meshNormal' : 'meshAScalar';
+  // A DISTINCT currency key per attribute. Sharing one would make an epoch that
+  // uploaded normals look like it had uploaded uvs too, so the uv write would be
+  // skipped as already-current and the mesh would sample the 1-vertex stub.
+  const key = name === 'normal' ? 'meshNormal' : name === 'uv' ? 'meshUv' : 'meshAScalar';
   // A ladder's buffer is CAPACITY-sized while `data` is the committed prefix, so
   // the in-place copy is the steady state there too — the length test compares the
   // bound buffer against the capacity, and the copy writes only the prefix.
@@ -998,6 +1023,9 @@ export function updateMeshGeometry(
   if (
     replaceVertexAttribute(geometry, 'aScalar', input.scalars, 1, input.vertexCount, capVertices)
   ) {
+    attributesRebuilt = true;
+  }
+  if (replaceVertexAttribute(geometry, 'uv', input.uvs, 2, input.vertexCount, capVertices)) {
     attributesRebuilt = true;
   }
 

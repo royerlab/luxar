@@ -23,8 +23,31 @@ export interface HDRCapabilities {
   hdr: boolean;
   /** Display supports 10-bit or higher color depth */
   deepColor: boolean;
-  /** WebGL supports float textures */
+  /**
+   * The renderer can RENDER TO a float color buffer.
+   *
+   * Probed from `EXT_color_buffer_float` and friends. Deliberately distinct from
+   * {@link filterableFloatTextures} below — the two are separate extensions and a
+   * device may have either without the other, which is exactly why reusing this
+   * one to decide how to upload a sampled texture would be wrong.
+   */
   floatTextures: boolean;
+  /**
+   * The renderer can SAMPLE a 32-bit float texture with LINEAR filtering.
+   *
+   * A different capability from {@link floatTextures}, and the one an HDR mesh
+   * texture actually needs: `OES_texture_float_linear` on WebGL2,
+   * `float32-filterable` on WebGPU. Core WebGL2 allows a `FloatType` texture to
+   * exist and to be sampled with NEAREST, but linear filtering on it is an
+   * extension — and the failure when it is missing is silent, since the sampler
+   * falls back to nearest rather than erroring.
+   *
+   * Every float `DataTexture` in the tree before mesh textures used
+   * `NearestFilter` (the element store) or was 8-bit (the colormap LUTs), so
+   * nothing probed this. An HDR texture uploads as `HalfFloatType` — linearly
+   * filterable in core WebGL2 — unless this is present.
+   */
+  filterableFloatTextures: boolean;
   /** WebGL color buffer bit depth */
   colorDepth: {
     red: number;
@@ -76,6 +99,7 @@ export function detectDisplayCapabilities(): HDRCapabilities {
     hdr,
     deepColor,
     floatTextures: false, // overwritten by createRendererCapabilities
+    filterableFloatTextures: false, // overwritten by createRendererCapabilities
     colorDepth: { red: 8, green: 8, blue: 8 }, // overwritten by createRendererCapabilities
     recommendedColorSpace,
   };

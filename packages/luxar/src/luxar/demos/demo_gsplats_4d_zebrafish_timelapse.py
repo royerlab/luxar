@@ -321,7 +321,7 @@ OUTPUT:
 
 DEMO_META = {
     "key": "gsplats_4d_zebrafish_timelapse",
-    "title": "4D Zebrafish Timelapse",
+    "title": "4D Zebrafish Gastrulation (endoderm)",
     "description": (
         "Five hours of zebrafish gastrulation as one 4D Gaussian-splat node, "
         "inside a gridded cage that gives the sparse embryo a scale."
@@ -370,6 +370,7 @@ from luxar.demos import (
 from luxar.demos.registry import DEMO_CACHE_ROOT
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.merged_quality import collect_part_provenance
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -896,10 +897,20 @@ def combine_to_4d(
     brightness pop — would flatten the real signal growth from 0.2% to 1.4%
     occupancy that is the developmental story.
     """
+    # Preserve the as-fitted stamps before the archived splats are transformed.
+    part_provenance = collect_part_provenance(
+        per_timepoint,
+        values=times_min,
+        fit_reference={
+            "kind": "preprocessed",
+            "note": f"connected-component filter, minimum {MIN_COMPONENT_VOXELS} voxels",
+        },
+    )
     stacked = GSplatData.combine_as_new_dimension(
         [to_microns(g) for g in per_timepoint],
         values=times_min,
         sigma=0.0,  # a splat is instantaneous; it must not smear across frames
+        part_provenance=part_provenance,
     )
     aprint(f"Stacked {stacked.n_splats:,} splats over {len(per_timepoint)} timepoints")
     return stacked

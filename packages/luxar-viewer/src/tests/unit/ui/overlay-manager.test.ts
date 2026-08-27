@@ -163,6 +163,7 @@ describe('OverlayManager.loadOverlays', () => {
 
   afterEach(() => {
     manager.dispose();
+    vi.restoreAllMocks();
   });
 
   it('creates a div per overlay with the luxar-overlay class', async () => {
@@ -208,6 +209,168 @@ describe('OverlayManager.loadOverlays', () => {
     const el = document.querySelector('.luxar-overlay') as HTMLDivElement;
     expect(el.style.left).toBe('25%');
     expect(el.style.top).toBe('75%');
+  });
+
+  it('reads zipped image content through the store and revokes its typed object URL', async () => {
+    const imageBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const readFile = vi.fn().mockResolvedValue(imageBytes);
+    const createObjectURLSpy = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:overlay-image');
+    const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'archive-image',
+          type: 'overlay_image',
+          image_file: 'preview.png',
+          size: [0.25, 0.25],
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr.zip',
+      readFile
+    );
+
+    expect(readFile).toHaveBeenCalledExactlyOnceWith('/overlays/archive-image/preview.png');
+    expect(createObjectURLSpy).toHaveBeenCalledOnce();
+    const blob = createObjectURLSpy.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('image/jpeg');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(imageBytes);
+
+    const img = document.querySelector('.luxar-overlay--image img') as HTMLImageElement;
+    expect(img.src).toBe('blob:overlay-image');
+    expect(img.alt).toBe('archive-image');
+
+    manager.dispose();
+    expect(revokeObjectURLSpy).toHaveBeenCalledExactlyOnceWith('blob:overlay-image');
+  });
+
+  it('warns and omits zipped image content when the archive member is missing', async () => {
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const readFile = vi.fn().mockResolvedValue(undefined);
+    const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL');
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'archive-image',
+          type: 'overlay_image',
+          image_file: 'preview.png',
+          size: [0.25, 0.25],
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr.zip',
+      readFile
+    );
+
+    expect(readFile).toHaveBeenCalledExactlyOnceWith('/overlays/archive-image/preview.png');
+    expect(document.querySelector('.luxar-overlay--image img')).toBeNull();
+    expect(warningSpy).toHaveBeenCalledExactlyOnceWith(
+      Modules.UI,
+      expect.stringContaining('/overlays/archive-image/preview.png')
+    );
+    expect(createObjectURLSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns distinctly when a zipped image has no store reader', async () => {
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'archive-image',
+          type: 'overlay_image',
+          image_file: 'preview.png',
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr.zip'
+    );
+
+    expect(document.querySelector('.luxar-overlay--image img')).toBeNull();
+    expect(warningSpy).toHaveBeenCalledExactlyOnceWith(
+      Modules.UI,
+      expect.stringContaining('no store file reader')
+    );
+  });
+
+  it('warns and removes directory image content when the member fails to load', async () => {
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'directory-image',
+          type: 'overlay_image',
+          image_file: 'missing.png',
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+
+    const img = document.querySelector('.luxar-overlay--image img') as HTMLImageElement;
+    img.dispatchEvent(new Event('error'));
+
+    expect(document.querySelector('.luxar-overlay--image img')).toBeNull();
+    expect(warningSpy).toHaveBeenCalledExactlyOnceWith(
+      Modules.UI,
+      expect.stringContaining('overlays/directory-image/missing.png')
+    );
+  });
+
+  it('starts zipped image reads concurrently while preserving overlay order', async () => {
+    const resolvers = new Map<string, (bytes: Uint8Array) => void>();
+    const readFile = vi.fn(
+      (path: string) =>
+        new Promise<Uint8Array>((resolve) => {
+          resolvers.set(path, resolve);
+        })
+    );
+    vi.spyOn(URL, 'createObjectURL')
+      .mockReturnValueOnce('blob:first')
+      .mockReturnValueOnce('blob:second');
+
+    const loading = manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'first',
+          type: 'overlay_image',
+          image_file: 'first.png',
+        }),
+        makeTextOverlay({
+          name: 'second',
+          type: 'overlay_image',
+          image_file: 'second.png',
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr.zip',
+      readFile
+    );
+
+    await vi.waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
+    resolvers.get('/overlays/second/second.png')?.(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+    resolvers.get('/overlays/first/first.png')?.(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+    await loading;
+
+    expect(
+      Array.from(document.querySelectorAll('.luxar-overlay')).map(
+        (element) => (element as HTMLElement).dataset.overlayName
+      )
+    ).toEqual(['first', 'second']);
+  });
+
+  it('releases the store reader on dispose', async () => {
+    const readFile = vi.fn().mockResolvedValue(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:overlay-image');
+
+    await manager.loadOverlays(
+      [makeTextOverlay({ type: 'overlay_image', image_file: 'preview.png' })],
+      'https://example.com/scene.luxar.zarr.zip',
+      readFile
+    );
+    manager.dispose();
+
+    expect((manager as unknown as { readFile?: unknown }).readFile).toBeUndefined();
   });
 });
 

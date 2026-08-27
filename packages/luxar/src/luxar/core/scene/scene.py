@@ -242,7 +242,9 @@ class Scene(Group):
         """Get the path to the backing Zarr store.
 
         Returns:
-            Path to the Zarr store backing this scene
+            Path to the Zarr store backing this scene. Archive-backed writers
+            return their staging directory before finalization and the archive
+            path afterward.
         """
         if self._writer:
             return self._writer.store_path
@@ -466,7 +468,9 @@ class Scene(Group):
 
         Args:
             image: Image data. Accepts: file path (str/Path), raw bytes,
-                numpy array (HWC uint8 or float 0-1), PIL Image.
+                numpy array (HWC uint8 or float 0-1), PIL Image. Pre-encoded
+                bytes and path payloads must be PNG, JPEG, or WebP; a recognized
+                path extension must match the payload.
             position: (x, y) in normalized screen coords [0, 1].
             name: Optional overlay name. Auto-generated if None.
             size: Optional (width, height) as fractions of viewport dimensions.
@@ -474,7 +478,9 @@ class Scene(Group):
             anchor: Anchor point for positioning (default 'top-left').
             blend_mode: CSS blend mode: 'normal', 'multiply', 'screen',
                 'overlay', 'additive', or 'difference' (default 'normal').
-            format: Image encoding format: 'png', 'jpeg', 'webp' (default 'png').
+            format: Encoding format for array/PIL inputs: 'png', 'jpeg', or
+                'webp' (default 'png'). Pre-encoded bytes and paths retain their
+                detected format.
             visible_range: Optional dimension-based visibility filter.
             transition: Transition type: 'none' or 'fade' (default 'none').
             transition_duration: Transition duration in seconds (default 0.3).
@@ -639,32 +645,50 @@ class Scene(Group):
         ``LuxarZarrCompiler`` if additional writes are needed.
 
         Args:
-            path: Destination path for the copied Zarr store. The destination
+            path: Destination path for the Zarr store. A directory destination
                 must not already exist unless it is the current backing store.
+                For an archive-backed scene, the only supported destination is
+                the selected archive path, which is replaced if it exists.
+                To create an archive from a directory-backed scene, use
+                ``LuxarZarrCompiler`` or ``luxar optimise`` instead.
 
         Raises:
-            FileExistsError: If ``path`` already exists and is not the current
-                backing store.
-            ValueError: If the destination is inside the source store or the
-                source store is unavailable.
+            FileExistsError: If a directory destination already exists and is
+                not the current backing store.
+            ValueError: If the destination is inside the source store, the
+                source store is unavailable, or an archive-backed writer is
+                asked to publish anywhere except its selected archive path, or
+                a directory-backed writer is asked to copy to an archive path.
         """
         writer = self._writer
         if writer is None:
             raise ValueError("Scene has no backing writer; cannot export to Zarr")
 
         source = Path(self.get_store_path()).resolve()
+        final_source = Path(writer.final_store_path).resolve()
         destination = Path(path).expanduser().resolve()
 
-        if not source.exists() or not source.is_dir():
+        # The final destination may differ from the live staging directory.
+        # Matching it is still an explicit finalize operation, including when
+        # an older archive already exists there and will be replaced.
+        if destination == final_source:
+            aprint(f"Finalizing scene at {final_source}")
+            writer.finalize()
+            aprint(f"Finalized scene at {final_source}")
+            return
+
+        if source != final_source or not source.is_dir():
             raise ValueError(
-                f"Scene backing store is not an existing directory: {source}"
+                "Scene backing writer only supports its final destination: "
+                f"{final_source}"
             )
 
-        # Same-location export is useful as an explicit finalize operation.
-        if destination == source:
-            aprint(f"Finalizing scene at {source}")
-            writer.finalize()
-            return
+        if destination.name.endswith(".zip"):
+            raise ValueError(
+                "Scene.to_zarr() cannot copy a directory store to an archive path: "
+                f"{destination}. Create the scene with LuxarZarrCompiler({path!r}) "
+                "or run luxar optimise."
+            )
 
         if destination.exists():
             raise FileExistsError(
@@ -677,8 +701,14 @@ class Scene(Group):
                 f"Destination {destination} cannot be inside source Zarr store {source}"
             )
 
-        aprint(f"Exporting scene from {source} to {destination}")
         writer.finalize()
+        finalized_source = Path(self.get_store_path()).resolve()
+        if finalized_source != source:
+            raise ValueError(
+                "Scene backing writer relocated the store during finalization; "
+                f"use the finalized destination instead: {finalized_source}"
+            )
+        aprint(f"Exporting scene from {source} to {destination}")
         # CL-1: atomic copy — a failure mid-copy leaves no half-written
         # zarr store at `destination`.
         atomic_copytree(source, destination)

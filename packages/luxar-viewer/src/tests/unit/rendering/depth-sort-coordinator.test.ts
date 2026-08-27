@@ -1216,6 +1216,53 @@ describe('depth-sort coordinator', () => {
     expect(await orderFor([0, 1, 2])).toEqual([1, 2]);
   });
 
+  it('maps BSP split axes above column 2 when that column is displayed', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => cameraAt(0, 0, -1000),
+      requestRender: vi.fn(),
+      getDisplayDims: () => [1, 2, 3],
+    });
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper({ axis: 3, split: 0, left: { part: 0 }, right: { part: 1 } }, parts);
+    for (const mesh of parts) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([2, 1]);
+  });
+
+  it.each([
+    ['identity display dims', [0, 1, 2]],
+    ['empty display dims', []],
+    ['missing display dims accessor', undefined],
+  ] as const)('falls back when axis 3 is hidden with %s', async (_label, displayedDims) => {
+    const orderFor = async (withTree: boolean): Promise<number[]> => {
+      const coord = await loadCoordinator();
+      coord.configureDepthSort({
+        getCamera: () => cameraAt(0, 0, -1000),
+        requestRender: vi.fn(),
+        ...(displayedDims === undefined ? {} : { getDisplayDims: () => displayedDims }),
+      });
+      const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+      makePartitionWrapper(
+        withTree ? { axis: 3, split: 0, left: { part: 0 }, right: { part: 1 } } : undefined,
+        parts
+      );
+      for (const mesh of parts) {
+        coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      }
+      await flush();
+      coord.evaluateDepthSortPerFrame();
+      return parts.map((mesh) => mesh.renderOrder);
+    };
+
+    expect(await orderFor(true)).toEqual(await orderFor(false));
+  });
+
   it('falls back to the centroid heuristic when a split axis is not displayed', async () => {
     // displayDims == [1, 2] (a 2D view of 3D+ data) leaves center column 0 off
     // screen, so its split plane carries no on-screen depth information: the
@@ -1260,6 +1307,47 @@ describe('depth-sort coordinator', () => {
     // where the BSP's column-0 split and the centroid heuristic disagree.
     const onX: [number, number, number] = [-1000, 0, 0];
     expect(await run([0, 1, 2], bspTree, onX)).not.toEqual(await run([0, 1, 2], undefined, onX));
+  });
+
+  it('warns once when a valid BSP tree is rejected only by display-axis mapping', async () => {
+    const coord = await loadCoordinator();
+    let displayedDims = [0, 1, 2];
+    coord.configureDepthSort({
+      getCamera: () => cameraAt(0, 0, -1000),
+      requestRender: vi.fn(),
+      getDisplayDims: () => displayedDims,
+    });
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    const wrapper = makePartitionWrapper(
+      { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } },
+      parts
+    );
+    wrapper.name = '/hidden-first';
+    for (const mesh of parts) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    const { log } = await import('../../../utils/log');
+    expect(log.warning).not.toHaveBeenCalled();
+
+    displayedDims = [1, 2, 3];
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+
+    expect(log.warning).toHaveBeenCalledTimes(1);
+    expect(log.warning).toHaveBeenCalledWith(
+      'RENDERER',
+      expect.stringContaining(
+        'partition-kind group /hidden-first has a valid bsp_tree whose split axes are not all displayed'
+      )
+    );
+    expect(log.warning).toHaveBeenCalledWith(
+      'RENDERER',
+      expect.stringContaining('falling back to centroid ordering')
+    );
   });
 
   it('orders a partition wrapper without a bsp tree like the centroid-only path', async () => {

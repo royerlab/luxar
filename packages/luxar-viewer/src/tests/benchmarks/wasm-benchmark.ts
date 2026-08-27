@@ -225,8 +225,8 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       // Back-to-front splat ordering (depth-sorting Phase 2). The
       // translation pushes every splat in front of the camera so the
       // full three-pass counting sort runs, not the identity fallback.
-      // Budget: >= 100 M splats/s (enforced automatically by
-      // perf-budget.test.ts; this entry reports absolute throughput).
+      // Budget: >= 50 M splats/s (perf-budget.test.ts; report-only unless
+      // LUXAR_PERF_QUIET_HOST=1).
       const centers3 = generatePositions(size, 3);
       const modelView = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -100, 1]);
       const tsOrdering = new Uint32Array(size);

@@ -21,7 +21,8 @@ picked mesh's own attrs or by a nearer group — so neither a bare namespace
 group nor an existing ladder's own bookkeeping wrapper, nor this command's own
 re-stamped defaults, trigger a false alarm); nor are the picked mesh's own
 per-vertex ``labels`` / ``image_labels`` / ``keys`` (``MeshData`` has no field for
-them, so the reader never surfaces them). All of this is reported
+them, so the reader never surfaces them), nor its texture / UV coordinates (mesh
+LOD does not preserve node-level images). All of this is reported
 with an explicit warning naming what is dropped, after every validator that can
 still abort the run and before anything is written.
 """
@@ -425,6 +426,12 @@ def _report_drops(source: Any, node_path: str, leaf_name: str, data: Any) -> Non
             f"⚠️  {node_path!r} has per-vertex "
             f"{' and '.join(dropped_channels)}; `add_mesh` has no field "
             "for them, so they will NOT be carried into the new scene."
+        )
+    if data.metadata.get("has_texture"):
+        aprint(
+            f"⚠️  {node_path!r} has a texture and per-vertex UV coordinates; "
+            "mesh LOD does not preserve node-level images, so they will NOT be "
+            "carried into the new scene."
         )
 
 
@@ -928,6 +935,11 @@ def run_lod(
             "extend_to_all",
         }
         forwarded = {k: v for k, v in data.metadata.items() if k in forwardable}
+        # A texture cannot travel through either structural LOD route, so its
+        # sampling attrs cannot travel alone either. Leaving them in `forwarded`
+        # makes the adder reject the rewrite for an orphaned texture setting.
+        forwarded.pop("texture_filter", None)
+        forwarded.pop("texture_wrap", None)
 
         # The stored scalar window, FORWARDED rather than left to be recomputed
         # from the decoded values. The two agree for an ordinary mesh, but the

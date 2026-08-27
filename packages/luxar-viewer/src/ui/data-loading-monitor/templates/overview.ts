@@ -11,13 +11,15 @@ import {
   renderMetricCard,
   renderProgressBar,
 } from './primitives';
-import { formatBytes, formatNumber, getCacheMemoryColorClass } from './format';
+import { headlineTooltip, presentHeadlineCounts } from '../headline-counts';
+import { formatBytes, formatNumber, getCacheMemoryColorClass, networkSummary } from './format';
 
 /**
  * Map LoaderType identifier to its short display label / item-unit pair.
  * Keeps the loader-list rendering geometry-aware: a lines loader shows
  * "segs" (visibleElements counts visible segments — the queried unit for
- * lines), a gsplats loader shows "splats", points shows "pts".
+ * lines), a gsplats loader shows "splats", points shows "pts", and a mesh
+ * loader shows "tris" (the drawn primitive, as everywhere else for mesh).
  */
 function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: string } {
   switch (type) {
@@ -27,12 +29,18 @@ function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: stri
       return { label: 'gsplats', unit: 'splats' };
     case 'point-spatial-index':
       return { label: 'points', unit: 'pts' };
+    case 'mesh-whole-node':
+      // "mesh", not "mesh-whole-node": the row's job is to say which LAYER this
+      // loader serves. That it is whole-node rather than spatially indexed is
+      // visible in the row's own metrics (loads but no queries) and in the
+      // compact badge's loading-mode label.
+      return { label: 'mesh', unit: 'tris' };
     default:
       // A new `LoaderType` member is a COMPILE error here, not a silent mislabel.
       // `point-spatial-index` used to share this arm, so any future loader type fell
-      // through and was rendered as "points / pts" — and mesh is the concrete case
-      // waiting to hit it: `MeshWholeNodeLoader` has no `getMetrics` yet, so it is absent from
-      // the union today, and whichever phase adds mesh metrics needs a label here.
+      // through and was rendered as "points / pts" — which is exactly how mesh would
+      // have entered: it grew `getMetrics` and joined the union, and without an arm
+      // here every mesh row would have read "points / pts".
       // Runtime behaviour is unchanged (an unknown type still renders as points) —
       // only the silence is gone.
       void (type satisfies never);
@@ -44,18 +52,19 @@ function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: stri
  * Template for loader list item
  */
 export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
-  const statusColorClass = metrics.queries > 0 ? getColorClass('success') : getColorClass('muted');
+  const statusColorClass =
+    metrics.queries > 0 || metrics.loads > 0 ? getColorClass('success') : getColorClass('muted');
   const { label, unit } = loaderDisplay(metrics.type);
 
   return `
     <div class="luxar-loader-item" title="A loader is the component that streams one layer's data from the zarr store into the viewer — this one serves the ${escapeHtml(label)} layer at ${escapeHtml(path)}">
       <div class="luxar-loader-item__header">
-        <span class="luxar-loader-item__path ${statusColorClass}" title="Path of this layer inside the dataset (green = has answered queries this session, grey = idle so far)">${escapeHtml(path)}</span>
-        <span class="luxar-loader-item__status" title="Geometry type this loader streams (points, lines, or gsplats)">${escapeHtml(label)}</span>
+        <span class="luxar-loader-item__path ${statusColorClass}" title="Path of this layer inside the dataset (green = has loaded data or answered queries this session, grey = idle so far)">${escapeHtml(path)}</span>
+        <span class="luxar-loader-item__status" title="Geometry type this loader streams (points, lines, gsplats, or mesh)">${escapeHtml(label)}</span>
       </div>
       <div class="luxar-loader-item__metrics">
         <span title="Elements from this layer currently on screen (inside the active nD slice)">${metrics.visibleElements.toLocaleString()} ${escapeHtml(unit)}</span>
-        <span title="CPU memory this loader currently holds for loaded chunks and index data">${formatBytes(metrics.memoryUsed)}</span>
+        <span title="CPU memory this loader currently holds for loaded data and supporting structures">${formatBytes(metrics.memoryUsed)}</span>
       </div>
     </div>
   `;
@@ -67,23 +76,10 @@ export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
 export function renderSecondaryMetrics(
   memory: { used: number; limit: number },
   querySpeed: { avgTime: number; perSec: number },
-  network:
-    | {
-        bytesTransferred: number;
-        requestCount: number;
-        bandwidth: number;
-        totalBytesServed?: number;
-        totalRequestsServed?: number;
-      }
-    | undefined
+  network: NonNullable<CacheMetrics['network']> | undefined
 ): string {
   const memoryPercent = memory.limit > 0 ? (memory.used / memory.limit) * 100 : 0;
-  // Cumulative bytes delivered across all tiers (L1 + L2 + network).
-  // Falls back to network bytes for providers predating the field.
-  const dataLoaded = network ? (network.totalBytesServed ?? network.bytesTransferred) : 0;
-  // Demand reads served across all tiers; falls back to the network request
-  // count for providers predating the field (mirrors the bytes fallback).
-  const requestsServed = network ? (network.totalRequestsServed ?? network.requestCount) : 0;
+  const networkMetrics = networkSummary(network);
 
   return `
     <div class="luxar-secondary-metrics">
@@ -108,10 +104,10 @@ export function renderSecondaryMetrics(
       <div class="luxar-secondary-metrics__item">
         <span class="luxar-secondary-metrics__label" title="Total data delivered to the renderer since load, from all sources combined (memory caches + disk cache + network). The subtitle breaks out the network share — 'net' is what was actually downloaded, followed by current download bandwidth and the total request count. A big gap between loaded and net means the cache is doing its job">DATA LOADED</span>
         <div class="luxar-secondary-metrics__value" data-field="network-bytes">
-          ${network ? formatBytes(dataLoaded) : '0B'}
+          ${networkMetrics.dataLoaded}
         </div>
         <div class="luxar-secondary-metrics__subtitle" data-field="network-detail">
-          ${network ? `${formatBytes(network.bytesTransferred)} net · ${formatBytes(network.bandwidth)}/s · ${requestsServed.toLocaleString()} reqs` : '0B net'}
+          ${networkMetrics.detail}
         </div>
       </div>
     </div>
@@ -151,170 +147,64 @@ Retry re-runs each failed load with the current view state. Failed loads are als
  * Template for overview tab content
  */
 export function renderOverviewContent(stats: GlobalStats, cacheMetrics: CacheMetrics): string {
-  // Calculate visible percentage of points dataset
-  const visiblePointsPercent =
-    stats.datasetSize > 0 ? ((stats.visiblePoints / stats.datasetSize) * 100).toFixed(1) : '0';
+  // One hero card per geometry type PRESENT in the scene, from the shared
+  // headline table — all four types, so a mesh-only scene gets a real count
+  // instead of the "LOADING …" placeholder and a mixed scene shows its
+  // triangles next to its points/segments/splats.
+  const present = presentHeadlineCounts(stats);
 
-  // Calculate visible percentage of segments dataset
-  const visibleSegmentsPercent =
-    stats.datasetSegments > 0
-      ? ((stats.visibleSegments / stats.datasetSegments) * 100).toFixed(1)
-      : '0';
+  // Card size shrinks as the row fills, and the grid is `auto-fit` rather than
+  // a fixed column count: one row while the cards fit, wrapping to 2x2 in a
+  // narrow panel. (The old fixed classes also emitted a `--cols-3` that had no
+  // CSS rule at all, so three cards silently stacked in one column.)
+  const size = present.length === 1 ? 'large' : present.length === 2 ? 'medium' : 'small';
+  const gridClass =
+    present.length <= 1 ? 'luxar-overview-grid--cols-1' : 'luxar-overview-grid--auto';
 
-  // Determine what to show based on available data
-  const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
-  const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
-  const hasGSplats = stats.datasetSplats > 0 || stats.visibleSplats > 0;
+  const cards = present.map((c) => {
+    const percent = c.total > 0 ? ((c.visible / c.total) * 100).toFixed(1) : '0';
+    // Single-card layouts spell out " total"; a filled row has no room for it.
+    const suffix = present.length === 1 ? ' total' : '';
+    return renderMetricCard(
+      c.label,
+      formatNumber(c.visible),
+      `${percent}% of ${formatNumber(c.total)}${suffix}`,
+      countColorClass(c.visible),
+      size,
+      c.field,
+      headlineTooltip(c.noun)
+    );
+  });
 
-  // Count how many data types we have
-  const dataTypes = [hasPoints, hasLines, hasGSplats].filter(Boolean).length;
-  const showBoth = dataTypes === 2;
-  const showAll = dataTypes === 3;
-
-  // Calculate visible percentage for gsplats
-  const visibleSplatsPercent =
-    stats.datasetSplats > 0 ? ((stats.visibleSplats / stats.datasetSplats) * 100).toFixed(1) : '0';
-
-  // Build primary metrics section
-  let primaryMetrics: string;
-  if (showAll) {
-    // Show all three (points, lines, gsplats)
-    primaryMetrics = `
-      <div class="luxar-overview-grid luxar-overview-grid--cols-3">
-        ${renderMetricCard(
-          'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
-          countColorClass(stats.visiblePoints),
-          'small',
-          'visible-points',
-          'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
-        )}
-        ${renderMetricCard(
-          'VISIBLE LINES',
-          formatNumber(stats.visibleSegments),
-          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
-          countColorClass(stats.visibleSegments),
-          'small',
-          'visible-lines',
-          'How many line segments are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
-        )}
-        ${renderMetricCard(
-          'VISIBLE SPLATS',
-          formatNumber(stats.visibleSplats),
-          `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
-          countColorClass(stats.visibleSplats),
-          'small',
-          'visible-splats',
-          'How many Gaussian splats are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
-        )}
-      </div>
-    `;
-  } else if (showBoth) {
-    // Show two data types
-    const cards = [];
-    if (hasPoints) {
-      cards.push(
-        renderMetricCard(
-          'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)}`,
-          countColorClass(stats.visiblePoints),
-          'medium',
-          'visible-points',
-          'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
-        )
-      );
-    }
-    if (hasLines) {
-      cards.push(
-        renderMetricCard(
-          'VISIBLE LINES',
-          formatNumber(stats.visibleSegments),
-          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)}`,
-          countColorClass(stats.visibleSegments),
-          'medium',
-          'visible-lines',
-          'How many line segments are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
-        )
-      );
-    }
-    if (hasGSplats) {
-      cards.push(
-        renderMetricCard(
-          'VISIBLE SPLATS',
-          formatNumber(stats.visibleSplats),
-          `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)}`,
-          countColorClass(stats.visibleSplats),
-          'medium',
-          'visible-splats',
-          'How many Gaussian splats are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
-        )
-      );
-    }
-    primaryMetrics = `
-      <div class="luxar-overview-grid luxar-overview-grid--cols-2">
+  const primaryMetrics =
+    cards.length > 0
+      ? `
+      <div class="luxar-overview-grid ${gridClass}">
         ${cards.join('\n')}
       </div>
-    `;
-  } else if (hasPoints) {
-    // Show only points (large)
-    primaryMetrics = `
-      <div class="luxar-overview-grid luxar-overview-grid--cols-1">
-        ${renderMetricCard(
-          'VISIBLE POINTS',
-          formatNumber(stats.visiblePoints),
-          `${visiblePointsPercent}% of ${formatNumber(stats.datasetSize)} total`,
-          countColorClass(stats.visiblePoints),
-          'large',
-          'visible-points',
-          'How many points are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
-        )}
-      </div>
-    `;
-  } else if (hasLines) {
-    // Show only lines (large)
-    primaryMetrics = `
-      <div class="luxar-overview-grid luxar-overview-grid--cols-1">
-        ${renderMetricCard(
-          'VISIBLE LINES',
-          formatNumber(stats.visibleSegments),
-          `${visibleSegmentsPercent}% of ${formatNumber(stats.datasetSegments)} total`,
-          countColorClass(stats.visibleSegments),
-          'large',
-          'visible-lines',
-          'How many line segments are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
-        )}
-      </div>
-    `;
-  } else if (hasGSplats) {
-    // Show only gsplats (large)
-    primaryMetrics = `
-      <div class="luxar-overview-grid luxar-overview-grid--cols-1">
-        ${renderMetricCard(
-          'VISIBLE SPLATS',
-          formatNumber(stats.visibleSplats),
-          `${visibleSplatsPercent}% of ${formatNumber(stats.datasetSplats)} total`,
-          countColorClass(stats.visibleSplats),
-          'large',
-          'visible-splats',
-          'How many Gaussian splats are on screen right now versus how many the whole dataset holds. The two differ because only data inside the current nD slice is shown, and level-of-detail (LOD) streaming may not have loaded full resolution yet'
-        )}
-      </div>
-    `;
-  } else {
-    // No data yet
-    primaryMetrics = `
+    `
+      : `
       <div class="luxar-overview-grid luxar-overview-grid--cols-1">
         ${renderMetricCard('LOADING', '...', 'Waiting for data', getColorClass('muted'), 'large')}
       </div>
     `;
-  }
 
   return `
     <div class="luxar-tab-content--overview">
       <!-- Primary metrics -->
       ${primaryMetrics}
+
+      <div class="luxar-overview-grid luxar-overview-grid--cols-1">
+        ${renderMetricCard(
+          'DROPPED ELEMENTS',
+          formatNumber(stats.droppedElements),
+          'renderer capacity clamp — partition oversized nodes',
+          stats.droppedElements > 0 ? getColorClass('error') : getColorClass('success'),
+          'small',
+          'dropped-elements',
+          'Elements requested by visible points, lines, and Gaussian-splat nodes but omitted because a node exceeded the GPU element-texture capacity. Split the dataset into multiple nodes or partition it; mesh is not element-texture backed.'
+        )}
+      </div>
 
       <!-- Secondary metrics -->
       ${renderSecondaryMetrics(

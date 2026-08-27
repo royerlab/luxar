@@ -73,6 +73,14 @@ export interface TimingMetadata {
   /** Splats visible/loaded */
   splats?: number;
   /**
+   * Triangles visible/loaded (mesh) — the fourth per-type counter, so a mesh
+   * row gets the same formatted, tooltipped tag as its siblings AND sums
+   * across same-update sessions. Mesh used to ride as a free-text
+   * `info: "N faces"` string, which is last-write on merge: an aggregated row
+   * covering three mesh layers reported only the last one's face count.
+   */
+  triangles?: number;
+  /**
    * Elements processed by a geometry-agnostic pass (the depth-sort rows,
    * which sort points, line segments, Gaussian splats or mesh triangles
    * through one machinery) — kept separate from the per-type counts above
@@ -156,6 +164,7 @@ const SUMMED_METADATA_KEYS = [
   'points',
   'segments',
   'splats',
+  'triangles',
   'elements',
 ] as const;
 

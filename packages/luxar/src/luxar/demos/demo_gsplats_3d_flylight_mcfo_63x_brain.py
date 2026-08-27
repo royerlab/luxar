@@ -10,9 +10,11 @@ come up in distinguishable colours against an almost entirely empty volume.
 This is the **sparse-and-huge** shape. The source is 2573 x 2707 x 463 voxels —
 3.22 Gvoxel per channel, 12.9 Gvoxel over the four channels — of which only
 **0.014%** rises above 1% of the peak intensity (the volume's own 99th
-percentile sits at 0.05% of peak). Fitted to **660,035 Gaussian splats** that is
-about **4,900:1** against the source voxels, which is the regime splats are for:
-the empty 99.99% costs nothing.
+percentile sits at 0.05% of peak). The hosted refit contains **660,035 Gaussian
+splats**; the bundled fallback contains 653,759. The runtime caption reads the
+selected archive, so either is described accurately. Both are about **4,900:1**
+against the source voxels, which is the regime splats are for: the empty 99.99%
+costs nothing.
 
 WHY THE COMPOSITE IS FITTED ONCE, NOT PER CHANNEL:
     A neuron's MCFO hue is the RATIO of the three channels at the SAME voxels.
@@ -79,7 +81,7 @@ VOXEL SIZE:
     um, the right envelope for an adult Drosophila central brain plus optic
     lobes, which independently checks both the calibration and the orientation.
 
-PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here):
+PIPELINE (how the hosted refit was produced; re-run with ``--recompute``):
     1. Fetch ``VT019012-20140423_20_D5-f-63x-brain-GAL4-unaligned_stack.h5j``
        (199 MB) from the public S3 bucket.
     2. Decode it. H5J is an HDF5 container holding one H.265 elementary stream
@@ -97,11 +99,12 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
     8. ``gsplat transform --rotate-y 90`` (face-on), then a SECOND call for
        ``--scale 0.19,0.19,0.38``: one invocation applies ``--scale`` BEFORE
        ``--rotate-*``, which would put the axial pitch on a lateral axis.
-    9. ``gsplat transform --rotate-z 48.84`` -> level. The specimen sits
+    9. ``gsplat transform --rotate-z 48.71`` -> level. The specimen sits
        diagonally on the imaging canvas (the canvas is square because it is the
        union of five square tile positions, not because the brain is). The
        angle is the amplitude-weighted principal axis of the splat cloud in the
-       view plane; levelling takes the bounding box from 483 x 508 to 663 x 303
+       view plane and is recomputed for each fit. On the bundled fallback, the
+       analogous levelling takes the bounding box from 483 x 508 to 663 x 303
        um, so the viewer frames the brain instead of empty corners.
 
     The shipped centres are therefore in micrometres about an arbitrary origin
@@ -133,10 +136,11 @@ WHY ``--floor auto`` AND NOT A PERCENTILE:
     dim-band PSNR against unfloored data, never on how the render looks.
 
 USAGE:
-    python demo_gsplats_3d_flylight_mcfo_63x_brain.py [--no-serve] [--serve-only]
+    python demo_gsplats_3d_flylight_mcfo_63x_brain.py [--no-serve] [--serve-only] [--recompute]
 
     --no-serve:    Build the scene but don't launch the viewer.
     --serve-only:  Skip the build, just serve the already-built scene.
+    --recompute:   Rebuild the archive from Janelia's pinned raw H5J.
 
 OUTPUT:
     - Scene saved to: datasets/demos/gsplats_3d_flylight_mcfo_63x_brain.luxar.zarr
@@ -181,9 +185,11 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
     add_demo_caption,
+    detect_device,
     download_with_checksum,
     ensure_dataset,
     launch_viewer,
+    local_fit_path,
     parse_demo_flags,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
@@ -193,7 +199,7 @@ from luxar.demos._h5j import (
     signal_channel_indices,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.tree import center_bounds
+from luxar.gsplats.tree import center_bounds, total_splats
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -216,10 +222,9 @@ VOXEL_UM = (0.19, 0.19, 0.38)
 # so a 0-2.723 window is intensity 0.367, NOT 2.723. Passing the max directly
 # stores a window ~7x too narrow and the scene renders blown out.
 #
-# The window is in VIEWER units, downstream of the viewer's normalise-by-stored-
-# maximum, so it is only meaningful for this exact store — any refit or rescale
-# moves it. Re-tune in the panel and copy the numbers back here if the data is
-# ever rebuilt.
+# The window is in raw amplitude units for this direct-colour node, so it is only
+# meaningful for this exact store — any refit or rescale moves it. Re-tune in the
+# panel and copy the numbers back here if the data is ever rebuilt.
 #
 # It is NOT a percentile of the stored amplitudes, and it is worth knowing that
 # before trying to derive it. Measured on the 1000-iteration build (653,759
@@ -261,19 +266,20 @@ VOXEL_UM = (0.19, 0.19, 0.38)
 # that moves only the max is not a reason to touch it.
 DISPLAY_LO, DISPLAY_HI = 0.0, 2.723
 
-# Splat count of the archive this demo ships, stated in the docstring, the
-# pipeline provenance line, the scene description and the ON-SCREEN caption.
-# It lived as four separate literals until a refit changed the archive and the
-# caption kept telling viewers the old number; every gate passed, because they
-# all checked the archive and none compared it against the prose. One constant
-# now feeds the three runtime strings, and
-# test_the_shipped_splat_count_matches_the_measured_archive holds it to the
-# measurements sidecar so the next refit fails instead of shipping a wrong
-# number. The docstring literal cannot interpolate -- update it by hand.
+# These values were tuned against the archive's raw amplitude units. The scene
+# therefore opts out of insertion-time amplitude normalisation below; otherwise
+# the archive's p99.9 ~= 79 scale would dim both radiance and optical depth by
+# that factor while leaving this window and opacity unchanged.
+
+# Splat count of the hosted refit. The bundled fallback is an older generation,
+# so runtime descriptions and captions derive their count from whichever archive
+# is actually loaded. This pin remains as a cross-check against the committed
+# measurements sidecar and the hosted-generation recipe in the docstring.
 N_SPLATS = 660_035
 
-# Opacity is the exposure lever and wants to be tiny; scaling the amplitudes
-# instead does nothing, because the viewer normalises by the stored maximum.
+# Opacity is the exposure lever and wants to be tiny. Scaling amplitudes also
+# changes exposure because raw amplitude units reach this direct-colour node,
+# but opacity is the clearer scene-level control.
 # Absorption is much higher here (0.81) than on a hazier volume: with the
 # background gone, depth cueing can be strong without muddying anything.
 OPACITY = 0.02
@@ -374,7 +380,7 @@ H5J_SHA256 = "189595b1013af62f71158556fab75ae535c9a8d3765138fa9a462583f09eed98"
 #: to ride on one hot voxel.
 BALANCE_PERCENTILE = 99.99
 
-CACHE_DIR = Path.home() / ".cache" / "luxar" / "gsplats_flylight_mcfo_63x"
+RECOMPUTE_DIR = local_fit_path(DATASET, H5J_NAME).parent
 
 
 def _luxar(*args: str) -> None:
@@ -413,8 +419,8 @@ def fetch_h5j() -> Path:
     different sample someone left there, and the pinned hash exists because
     this demo describes ONE specimen.
     """
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    target = CACHE_DIR / H5J_NAME
+    RECOMPUTE_DIR.mkdir(parents=True, exist_ok=True)
+    target = RECOMPUTE_DIR / H5J_NAME
     with asection(f"Fetching {H5J_NAME}"):
         aprint(f"from {H5J_URL}")
         download_with_checksum(H5J_URL, target, expected_sha256=H5J_SHA256)
@@ -441,16 +447,27 @@ def build_composite(h5j_path: Path, out_zarr: Path) -> None:
     16-bit raw tiles, not from this 8-bit H5J at all.
     """
     from luxar._zarr_compat import create_array, open_group
+    from luxar.encoding.compression import WIDTH_AWARE_DEFAULT, resolve_compressor
 
     with asection("Building the gain-balanced composite"):
         signal = signal_channel_indices(h5j_path)
+        if len(signal) != 3:
+            raise ValueError(
+                f"MCFO colouring requires exactly 3 signal channels, got {signal}"
+            )
         aprint(
             f"signal channels {signal}, "
             f"reference channel {reference_channel_index(h5j_path)} (excluded)"
         )
 
-        chans = [decode_h5j_channel(h5j_path, c) for c in signal]
-        tops = [float(np.percentile(c, BALANCE_PERCENTILE)) for c in chans]
+        tops = []
+        shape = None
+        for channel in signal:
+            volume = decode_h5j_channel(h5j_path, channel)
+            if shape is None:
+                shape = volume.shape
+            tops.append(float(np.percentile(volume, BALANCE_PERCENTILE)))
+            del volume
         ceiling = max(tops)
         gains = [ceiling / t if t > 0 else 1.0 for t in tops]
         aprint(
@@ -458,10 +475,17 @@ def build_composite(h5j_path: Path, out_zarr: Path) -> None:
             f"gains {[round(g, 4) for g in gains]}"
         )
 
-        composite = np.zeros(chans[0].shape, dtype=np.float32)
-        for c, g in zip(chans, gains):
-            np.maximum(composite, c.astype(np.float32) * np.float32(g), out=composite)
-        del chans
+        assert shape is not None
+        composite = np.zeros(shape, dtype=np.uint16)
+        for channel, gain in zip(signal, gains):
+            volume = decode_h5j_channel(h5j_path, channel)
+            for start in range(0, shape[0], 16):
+                slab = slice(start, min(start + 16, shape[0]))
+                scaled = np.rint(volume[slab].astype(np.float32) * np.float32(gain))
+                np.maximum(
+                    composite[slab], scaled.astype(np.uint16), out=composite[slab]
+                )
+            del volume
         aprint(
             f"composite {composite.shape} max {composite.max():.1f} "
             f"nonzero {100.0 * np.count_nonzero(composite) / composite.size:.2f}%"
@@ -471,9 +495,9 @@ def build_composite(h5j_path: Path, out_zarr: Path) -> None:
             create_array(
                 grp,
                 "composite",
-                data=np.rint(composite).astype(np.uint16),
+                data=composite,
                 chunks=(64, 256, 256),
-                compressor="zstd",
+                compressor=resolve_compressor(WIDTH_AWARE_DEFAULT, np.uint16),
             )
 
 
@@ -488,6 +512,7 @@ def colour_from_channels(h5j_path: Path, fit_path: Path, out_path: Path) -> None
     Channels are sampled one at a time and released; three 3.2 Gvoxel float
     channels held together would be ~39 GB.
     """
+    from luxar._zarr_compat import open_group
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.io.save_gsplats import save_gsplats
 
@@ -498,15 +523,20 @@ def colour_from_channels(h5j_path: Path, fit_path: Path, out_path: Path) -> None
         aprint(f"{n:,} splats to colour")
 
         signal = signal_channel_indices(h5j_path)
+        if len(signal) != 3:
+            raise ValueError(
+                f"MCFO colouring requires exactly 3 signal channels, got {signal}"
+            )
         rgb = np.zeros((n, len(signal)), dtype=np.float32)
         idx = np.rint(centres).astype(np.int64)
+        valid: np.ndarray | None = None
         tops: list[float] = []
         for slot, ch in enumerate(signal):
             vol = decode_h5j_channel(h5j_path, ch)
-            sel = idx.copy()
-            for ax in range(3):
-                np.clip(sel[:, ax], 0, vol.shape[ax] - 1, out=sel[:, ax])
-            rgb[:, slot] = vol[sel[:, 0], sel[:, 1], sel[:, 2]]
+            if valid is None:
+                valid = np.all((idx >= 0) & (idx < np.asarray(vol.shape)), axis=1)
+            sel = idx[valid]
+            rgb[valid, slot] = vol[sel[:, 0], sel[:, 1], sel[:, 2]]
             # Take the balance percentile from the VOLUME while it is in hand.
             # A channel gain describes the CHANNEL, not the splat sample: taking
             # it from the sampled values instead re-weights the hue balance by
@@ -531,8 +561,6 @@ def colour_from_channels(h5j_path: Path, fit_path: Path, out_path: Path) -> None
         for slot, top in enumerate(tops):
             if top > 0:
                 rgb[:, slot] /= top
-        np.clip(rgb, 0.0, 1.0, out=rgb)
-
         # Then normalise each splat to FULL BRIGHTNESS, so colour carries HUE ONLY
         # and every scrap of magnitude lives in the amplitude.
         #
@@ -567,12 +595,25 @@ def colour_from_channels(h5j_path: Path, fit_path: Path, out_path: Path) -> None
         # not read, and the colours vanish with no error and no warning. The
         # symptom is has_colors=False on the written archive, which then survives
         # every downstream stage.
+        source = open_group(str(fit_path), mode="r")
+        fitting = dict(source["fitting"].attrs) if "fitting" in source else None
+        fitting_config = (
+            dict(source["fitting/config"].attrs) if "fitting/config" in source else None
+        )
+        provenance = (
+            dict(source["provenance"].attrs) if "provenance" in source else None
+        )
         save_gsplats(
             str(out_path),
             centers=np.asarray(data.centers),
             amplitudes=np.asarray(data.amplitudes),
             cholesky_factors=np.asarray(data.cholesky_factors),
             colors=colours,
+            fitting_info=fitting,
+            fitting_config=fitting_config,
+            provenance_info=provenance,
+            description=source.attrs.get("description"),
+            truncation_radius=data.truncation_radius,
         )
         written = GSplatData.load(str(out_path))
         if written.colors is None:
@@ -592,7 +633,8 @@ def levelling_angle_deg(node) -> float:
 
     The angle is the amplitude-weighted principal axis of the splat cloud in the
     view plane. It is DATA-DERIVED and moves with any refit, so it must be
-    recomputed rather than carried as a constant (the shipped run used 48.84).
+    recomputed rather than carried as a constant (the bundled fallback used
+    48.84; the hosted refit used 48.71).
     """
     from luxar.gsplats.tree import iter_leaves
 
@@ -631,18 +673,18 @@ def levelling_angle_deg(node) -> float:
 def recompute_archive() -> Path:
     """Rebuild the fitted archive from the raw H5J and return its path.
 
-    Each stage writes into the demo cache, so an interrupted run resumes at the
+    Each stage writes into the demo's ``local/`` cache, so an interrupted run resumes at the
     first missing artifact instead of starting over. The FIT is the stage that
     matters for provenance: it stamps ``psnr_db`` and ``foreground_psnr_db``.
     """
-    composite_zarr = CACHE_DIR / "composite.zarr"
-    cal_json = CACHE_DIR / "cal_h5j.json"
-    fit_path = CACHE_DIR / "fit.gsplats.zarr"
-    coloured = CACHE_DIR / "fit_coloured.gsplats.zarr"
-    laddered = CACHE_DIR / "fit_stream.gsplats.zarr"
-    faced = CACHE_DIR / "fit_faceon.gsplats.zarr"
-    scaled = CACHE_DIR / "fit_um.gsplats.zarr"
-    final = CACHE_DIR / "flylight_mcfo_63x.gsplats.zarr"
+    composite_zarr = RECOMPUTE_DIR / "composite.zarr"
+    cal_json = RECOMPUTE_DIR / "cal_h5j.json"
+    fit_path = RECOMPUTE_DIR / "fit.gsplats.zarr"
+    coloured = RECOMPUTE_DIR / "fit_coloured.gsplats.zarr"
+    laddered = RECOMPUTE_DIR / "fit_stream.gsplats.zarr"
+    faced = RECOMPUTE_DIR / "fit_faceon.gsplats.zarr"
+    scaled = RECOMPUTE_DIR / "fit_um.gsplats.zarr"
+    final = RECOMPUTE_DIR / "flylight_mcfo_63x.gsplats.zarr"
 
     with asection("Recomputing the FlyLight 63x archive from the raw H5J"):
         h5j = fetch_h5j()
@@ -666,7 +708,7 @@ def recompute_archive() -> Path:
                 "--k-star-metric",
                 "gain",
                 "--device",
-                "cuda",
+                detect_device(),
             )
 
         if not fit_path.exists():
@@ -685,7 +727,7 @@ def recompute_archive() -> Path:
                 "--floor",
                 "auto",
                 "--device",
-                "cuda",
+                detect_device(),
             )
 
         if not coloured.exists():
@@ -722,7 +764,10 @@ def recompute_archive() -> Path:
             node, _ = load_gsplat_node(str(scaled))
             angle = levelling_angle_deg(node)
             bmin, bmax = center_bounds(node)
-            aprint(f"levelling angle {angle:.2f} deg (shipped run: 48.84)")
+            aprint(
+                f"levelling angle {angle:.2f} deg "
+                "(bundled fallback: 48.84; hosted refit: 48.71)"
+            )
             _luxar(
                 "gsplat",
                 "transform",
@@ -736,7 +781,7 @@ def recompute_archive() -> Path:
             ext = np.round(np.asarray(lmax) - np.asarray(lmin), 0)
             aprint(
                 f"bbox {np.round(np.asarray(bmax) - np.asarray(bmin), 0)} -> {ext} um "
-                "(shipped run levelled 483x508 -> 663x303x167)"
+                "(bundled fallback levelled 483x508 -> 663x303x167)"
             )
             wide = np.sort(ext)[-2:]
             if wide[1] / max(wide[0], 1.0) < 1.5:
@@ -849,6 +894,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
     """Build the 3D scene from the pre-fitted, levelled, physically-scaled gsplats."""
     with asection("Creating FlyLight MCFO whole-brain scene"):
         node, _ = load_gsplat_node(str(data_path))
+        n_splats = total_splats(node)
         bmin, bmax = center_bounds(node)
         aprint(f"Scene bounds (um): min={np.round(bmin, 1)} max={np.round(bmax, 1)}")
         aprint(
@@ -904,7 +950,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 "MultiColor FlpOut, so individually-resolved neurons carry distinct "
                 "hues. Janelia's stitched 63x confocal stack — 2573x2707x463, with "
                 "99.99% of it below 1% of peak — fitted as "
-                f"{N_SPLATS:,} Gaussian splats, roughly 4,900:1. "
+                f"{n_splats:,} Gaussian splats, roughly 4,900:1. "
                 "Colour is sampled per-splat from the three MCFO channels. Press L "
                 "for the Layers panel."
             )
@@ -913,6 +959,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 scene.add_gsplats_from_file(
                     name="mcfo_neurons",
                     path=str(data_path),
+                    normalize_amplitudes=False,
                     # `volumetric` — emission–absorption. The neurons are sparse
                     # but the brain is 167 um deep, so additive summing along the
                     # ray saturates every dense arbor to white and the MCFO hues,
@@ -962,7 +1009,7 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
             )
             add_demo_caption(
                 scene,
-                f"Janelia FlyLight • 63x confocal • VT019012 • {N_SPLATS:,} splats",
+                f"Janelia FlyLight • 63x confocal • VT019012 • {n_splats:,} splats",
                 DEMO_META.get("citation"),
             )
 

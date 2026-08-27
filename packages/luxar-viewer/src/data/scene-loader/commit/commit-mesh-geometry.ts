@@ -32,7 +32,11 @@ import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { updateMeshGeometry } from '../../../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
-import { applyMeshSide, applyMeshShading } from '../../../rendering/node-factory/create-mesh-node';
+import {
+  applyMeshSide,
+  applyMeshShading,
+  applyMeshTexture,
+} from '../../../rendering/node-factory/create-mesh-node';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { computeFaceCentroids } from '../../../rendering/depth-sort-coordinator/triangle-ordering';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
@@ -102,6 +106,10 @@ export function commitMeshGeometry(
     // instead of re-deriving them), and scalars are view-independent by nature.
     normals: data.normals,
     scalars: data.scalars,
+    // Uploaded once for the same reason: a UV is authored per vertex against the
+    // texture, so it is view-independent — unlike `position`, which is re-extracted
+    // whenever `displayDims` changes.
+    uvs: data.uvs,
     vertexCount: data.vertexCount,
     // The node's TOTAL faces, which sizes the index buffer's capacity — not the
     // visible count, which changes every slice move and would reallocate (and leak)
@@ -141,6 +149,12 @@ export function commitMeshGeometry(
   // nothing here.
   applyMeshShading(object, nodeAttrs, projected.storedNormalsUsable);
 
+  // The decoded texture, installed on the commit that carries it. Unlike the two
+  // above this is NOT epoch state — the image never changes with the view — but it
+  // lives here because a texture is DATA: the node was created before any fetch, so
+  // this is the first moment it exists. Idempotent, so every later commit is free.
+  if (data.texture) applyMeshTexture(object, nodeAttrs, data.texture);
+
   // A first-commit vertex-attribute rebind (position grow / color install) leaves
   // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it
   // so the next draw rebuilds from the current attributes. WebGPU-gated — a no-op on
@@ -150,6 +164,14 @@ export function commitMeshGeometry(
 
   object.userData.visibleTriangleCount = projected.visibleFaceCount;
   object.userData.visibleVertexCount = projected.visibleVertexCount;
+  // The same number, pushed to the loader for `LoaderMetrics.visibleElements`
+  // (the data-loading monitor's per-loader row). It has to be pushed rather
+  // than read: a mesh is resident in full, so the loader has no view-dependent
+  // result to report — projection, here, is what decides which faces the index
+  // buffer receives. Optional call: the surface is optional on
+  // `MeshDataLoader`, and a metrics-free implementation is a no-op, not a
+  // crash.
+  object.userData.loader.recordVisibleElements?.(projected.visibleFaceCount);
   // The geometry's `position` attribute is now capacity-sized (#1521), so it can no
   // longer answer "how many vertices has this node committed" — that would report
   // the ladder's lifetime total from level 0 on. Stamped here, from the data the

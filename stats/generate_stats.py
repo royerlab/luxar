@@ -850,8 +850,6 @@ def _run_typescript_tests(
             "npx",
             "vitest",
             "--run",
-            "--exclude",
-            "**/wasm-performance.test.ts",
         ]
         # mtime of a pre-existing coverage summary we could NOT delete; used
         # below to tell "vitest rewrote it" from "the old file is still there".

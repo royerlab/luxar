@@ -9,12 +9,16 @@ The io package handles reading and writing Luxar scenes to Zarr format with spat
 Overview
 --------
 
-The I/O package provides two main classes:
+The I/O package provides two main classes and a filterable capacity warning:
 
 * **LuxarZarrCompiler**: Progressive writer for creating Zarr datasets
 * **LuxarScene**: Reader for loading and querying Zarr datasets
+* **ElementCapacityWarning**: An authored node may exceed the viewer's
+  conservative per-node element-texture capacity
 
 Both classes work together to enable efficient streaming of massive n-dimensional scenes with points, lines, Gaussian splats, and other primitives.
+
+.. autoexception:: luxar.io.ElementCapacityWarning
 
 LuxarZarrCompiler
 -----------------

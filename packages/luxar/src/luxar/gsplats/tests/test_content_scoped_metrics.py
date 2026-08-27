@@ -130,6 +130,18 @@ def _stats() -> Dict[str, Any]:
         **_OP_RECORD,
         **_DESCRIPTIVE,
         "pass_stats": [dict(d) for d in _PASS_STATS],
+        "part_provenance": [
+            {
+                "coordinate": 0,
+                "fit_reference": {"kind": "acquisition", "note": "raw stack"},
+                "fitting": {
+                    **_METRICS,
+                    **_OP_RECORD,
+                    **_REGION,
+                    **_DESCRIPTIVE,
+                },
+            }
+        ],
     }
 
 
@@ -431,8 +443,11 @@ _VIEW_CASES: List[
 #: a decision on the record rather than a gap.
 _UNAFFECTED = {
     "concatenate": "builds merged_stats from scratch (no metric keys)",
-    "combine_as_new_dimension": "goes through concatenate; fresh stats",
-    "merge_with_channel_colors": "goes through concatenate; fresh stats",
+    "combine_as_new_dimension": "goes through concatenate; fresh stats, then may "
+    "attach caller-supplied per-part provenance whose nested fitting keys follow "
+    "the same content/region scrub rules on later rewrites; record cardinality "
+    "cannot be pruned because the current record does not identify its center axis",
+    "merge_with_channel_colors": "builds its own merged_stats from scratch",
     "embed_dimension": "widens the center columns; dataset-level source-volume "
     "metrics survive, while promoted-dimensional count/energy stamps are "
     "recomputed and stale quality/refine measurements are removed",
@@ -795,6 +810,68 @@ def test_intensity_restamps_when_only_a_coarse_level_changes() -> None:
     assert "quality" not in coarse.stats
 
 
+@pytest.mark.parametrize(
+    ("level_stats", "lod_stats"),
+    [
+        pytest.param({}, {}, id="empty"),
+        pytest.param({"quality": 0.9}, {}, id="level-stamp"),
+        pytest.param({}, {"energy_fraction_cum": 1.0}, id="rung-stamp"),
+        pytest.param(
+            {"reference_energy": 1.0},
+            {"lod_cumulative_n": 2},
+            id="both-stamps",
+        ),
+        pytest.param({"label": "fine"}, {"note": "keep"}, id="other-metadata"),
+    ],
+)
+def test_restamp_prefilter_matches_exact_stamp_guard(
+    level_stats: Dict[str, Any], lod_stats: Dict[str, Any]
+) -> None:
+    from luxar.gsplats._data.filtering import _needs_reduction_lod_restamp
+    from luxar.gsplats.lod.restamp import _has_ladder_stamps
+
+    source_lod = _fitted(2).additive_sublods[0]
+    source = GSplatData.from_substitutive_levels(
+        [
+            SubstitutiveLevel(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=source_lod.centers,
+                        amplitudes=source_lod.amplitudes,
+                        cholesky_factors=source_lod.cholesky_factors,
+                        stats=lod_stats,
+                    )
+                ],
+                stats=level_stats,
+            )
+        ]
+    )
+    level = source.substitutive_levels[0]
+
+    assert _needs_reduction_lod_restamp(source, source) == _has_ladder_stamps(level)
+
+
+def test_restamp_prefilter_checks_coarse_only_stamps() -> None:
+    from luxar.gsplats._data.filtering import _needs_reduction_lod_restamp
+    from luxar.gsplats.lod.restamp import _has_ladder_stamps
+
+    fine = _fitted(4).substitutive_levels[0]
+    coarse = _fitted(2).substitutive_levels[0]
+    coarse = SubstitutiveLevel(
+        additive_sublods=coarse.additive_sublods,
+        compression_factor=2,
+        parent_method="kmeans_lloyd",
+        level_index=1,
+        stats={"refine_stats": {"mse_seed": 1.0}},
+    )
+    source = GSplatData.from_substitutive_levels([fine, coarse])
+    levels = source.substitutive_levels
+
+    assert not _has_ladder_stamps(levels[0])
+    assert _has_ladder_stamps(levels[1])
+    assert _needs_reduction_lod_restamp(source, source)
+
+
 def test_nonfinite_energy_is_reset_and_fraction_is_removed() -> None:
     source = _replace_level_amplitudes(_pyramid(), 0, [np.inf, 0.7, 0.4, 0.2])
     out = source.scale_intensity(0.5)
@@ -1065,6 +1142,34 @@ def test_nested_pass_stats_lose_the_score_but_keep_the_counts() -> None:
         assert entry["seeds_requested"] == _PASS_STATS[i]["seeds_requested"]
 
 
+def test_part_provenance_follows_content_and_region_scope() -> None:
+    """Nested component fits keep identity while stale measurements are scrubbed."""
+    source = _fitted()
+    original = source.stats["part_provenance"]
+
+    culled = source.cull(method="cumulative", retention=0.5)
+    culled_record = culled.stats["part_provenance"][0]
+    culled_fitting = culled_record["fitting"]
+    assert culled_record["coordinate"] == 0
+    assert culled_record["fit_reference"] == original[0]["fit_reference"]
+    assert not set(_CONTENT_SCOPED_STATS_KEYS) & culled_fitting.keys()
+    assert not set(_CONTENT_SCOPED_OP_RECORD_KEYS) & culled_fitting.keys()
+    for key, value in _REGION.items():
+        assert culled_fitting[key] == value
+    assert culled_fitting["fitter_name"] == _DESCRIPTIVE["fitter_name"]
+
+    cropped = source.filter_by(bbox=[(0.0, 50.0)] * 3)
+    cropped_fitting = cropped.stats["part_provenance"][0]["fitting"]
+    assert not set(_CONTENT_SCOPED_STATS_KEYS) & cropped_fitting.keys()
+    assert not set(_CONTENT_SCOPED_OP_RECORD_KEYS) & cropped_fitting.keys()
+    assert not set(_REGION_SCOPED_STATS_KEYS) & cropped_fitting.keys()
+    assert cropped_fitting["fitter_name"] == _DESCRIPTIVE["fitter_name"]
+
+    assert source.stats["part_provenance"] == original
+    assert culled.stats["part_provenance"] is not original
+    assert cropped.stats["part_provenance"] is not original
+
+
 def test_the_two_categories_stay_independent() -> None:
     """The regression guard for the region stamps: neither set subsumes the other.
 
@@ -1285,3 +1390,23 @@ def test_every_rewrite_method_is_classified() -> None:
     assert any(ch for _c, _m, _o, ch in _CASES)
     assert any(not ch for _c, _m, _o, ch in _CASES)
     assert _DROPS_SUBLOD_STATS <= set(ids), "a stats-free exemption names no case"
+
+
+def test_concatenate_never_inherits_content_scoped_metrics() -> None:
+    """Fresh merged stats are the contract on both non-empty and empty inputs."""
+    for n_splats in (0, 2):
+        inputs = []
+        for seed in (1, 2):
+            inputs.append(
+                GSplatData(
+                    centers=np.zeros((n_splats, 3), dtype=np.float32),
+                    amplitudes=np.ones(n_splats, dtype=np.float32),
+                    cholesky_factors=np.tile(
+                        np.array([1, 0, 1, 0, 0, 1], dtype=np.float32),
+                        (n_splats, 1),
+                    ),
+                    stats={**_METRICS, "seed": seed},
+                )
+            )
+        merged = GSplatData.concatenate(inputs)
+        assert not _CONTENT_SCOPED_STATS_KEYS & merged.stats.keys()

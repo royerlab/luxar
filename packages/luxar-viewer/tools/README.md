@@ -1,10 +1,9 @@
 # Viewer Developer Tools
 
-Standalone TypeScript drivers that automate a real Chromium against the
-running viewer — for AI-assisted debugging and for capturing publication-
-grade screenshots without a physical monitor. Sibling to `scripts/` (which
-holds build / quality / perf-diff utilities); these are interactive
-browser-driving tools, not part of any build pipeline.
+Standalone developer tools for driving a real Chromium, generating benchmark
+fixtures, and serving range-readable data. Sibling to `scripts/` (which holds
+build / quality / perf-diff utilities); these are local development helpers,
+not part of any build pipeline.
 
 The two browser drivers share the same recipe: launch headless Chromium
 via `@playwright/test` with GPU acceleration flags, navigate to a Luxar
@@ -20,7 +19,9 @@ tools/
 ├── agent-driver.ts          # Browser debugging driver
 ├── capture-hires.ts         # High-resolution figure capture for papers
 ├── e2e-server-identity.ts   # Checkout identity + Playwright preflight helpers
-└── e2e-workers.ts           # Local Playwright parallelism sized to the machine
+├── e2e-workers.ts           # Local Playwright parallelism sized to the machine
+├── make-zip-bench-fixtures.py # Build directory/STORED/DEFLATE benchmark fixtures
+└── range-http-server.py     # Static server with strict HTTP Range support
 ```
 
 ## `e2e-server-identity.ts`
@@ -30,8 +31,7 @@ servers rooted in another clone/worktree. It derives a deterministic
 identity from the checkout's canonical repository path, writes a small
 gitignored marker under `.luxar-e2e-identities/`, exposes the marker
 through Vite middleware, and validates the exact response during global
-setup. The repository-root `python3 -m http.server` serves the same
-marker directly.
+setup. The repository-root Python data servers serve the same marker directly.
 
 The standard, performance, screenshot, and video Playwright configs use
 the checkout-specific Vite marker as their `webServer.url` readiness
@@ -63,14 +63,13 @@ ceiling that differs from what was sized prints as
 `--workers=N`, `--ui`, a watch session and `playwright.perf.config.ts`'s own
 `workers: 1` all get there.
 
-Four workers is still the ceiling — the binding resource is the GIL-bound
-`python3 -m http.server 9000` dataset server, not the GPU — and the count is
-that ceiling scaled by the box's free fraction,
-`clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands are fractions of the
-box: 4 while at least 7/8 of it is free, 3 down to 5/8, 2 down to 3/8, 1 below
-that — on 16 cores, 4 up to load 2, 3 up to load 6, 2 up to load 10, then 1. An
-**idle** box of any size keeps the ceiling, so this only ever backs off under
-load. Measured on a 16-core box at a 1-minute load of 12–24,
+Four workers is still the ceiling — the binding resource is the Python dataset
+server on port 9000, not the GPU — and the count is that ceiling scaled by the
+box's free fraction, `clamp(round(4 * (cpus - load1) / cpus), 1, 4)`. The bands
+are fractions of the box: 4 while at least 7/8 of it is free, 3 down to 5/8, 2
+down to 3/8, 1 below that — on 16 cores, 4 up to load 2, 3 up to load 6, 2 up to
+load 10, then 1. An **idle** box of any size keeps the ceiling, so this only ever
+backs off under load. Measured on a 16-core box at a 1-minute load of 12–24,
 `dimension-animation.spec.ts` failed 15 of 21 tests at four workers and passed
 21 of 21 at one, every failure a bare action timeout with the element already
 visible/enabled/stable. Only those two counts were measured — 16 cores at load
@@ -190,8 +189,10 @@ current viewer sets the field to exactly that sum, so the max is inert on
 a live snapshot). The per-node counts `pointCloudCount`, `gsplatCount`,
 `lineCount` and `meshNodeCount` come along too, so a mesh-only or
 lines-only scene is recognised as loaded rather than reading as empty. A
-warning almost always means the slice position is wrong or the dataset
-URL is stale. The converse does not hold: the verdict measures the scene
+nonzero `totalDroppedElements` rejects the capture as renderer-truncated;
+split or partition the oversized node before capturing. Other warnings
+almost always mean the slice position is wrong or the dataset URL is
+stale. The converse does not hold: the verdict measures the scene
 graph (hidden nodes and all LOD levels included), so an all-hidden scene
 passes and can still capture blank.
 

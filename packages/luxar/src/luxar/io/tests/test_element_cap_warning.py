@@ -11,14 +11,18 @@ diagnosis where it is cheap to act on.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.conftest import find_repo_relative_file
+from luxar.conftest import viewer_source
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+from luxar.io import ElementCapacityWarning
 from luxar.io._compiler.node_common import warn_if_over_element_cap
 from luxar.typing_utils.constants import (
     ELEMENT_TEXELS_PER_ELEMENT,
@@ -46,15 +50,8 @@ def test_caps_match_the_viewer_element_texture_layout() -> None:
 
 
 def test_cap_inputs_match_the_viewer_source() -> None:
-    viewer_source = find_repo_relative_file(
-        Path("packages/luxar-viewer/src/rendering/element-texture-layout.ts"),
-        Path(__file__).resolve(),
-    )
-    assert viewer_source is not None, (
-        "cannot locate element-texture-layout.ts; if the viewer file moved, "
-        "update this contract test"
-    )
-    source = viewer_source.read_text(encoding="utf-8")
+    source_path = viewer_source("src/rendering/element-texture-layout.ts")
+    source = source_path.read_text(encoding="utf-8")
     width_match = re.search(r"ELEMENT_TEXTURE_MAX_WIDTH\s*=\s*(\d+)", source)
     assert width_match is not None
     assert int(width_match.group(1)) == ELEMENT_TEXTURE_MAX_WIDTH
@@ -89,9 +86,20 @@ def test_unknown_geometry_type_has_no_cap() -> None:
 )
 def test_over_cap_warns_and_at_cap_does_not(geometry_type: str, cap: int) -> None:
     """The boundary is inclusive: exactly at the cap still renders whole."""
-    assert warn_if_over_element_cap(geometry_type, cap + 1, "/node") is True
-    assert warn_if_over_element_cap(geometry_type, cap, "/node") is False
-    assert warn_if_over_element_cap(geometry_type, 1, "/node") is False
+    with pytest.warns(ElementCapacityWarning):
+        assert warn_if_over_element_cap(geometry_type, cap + 1, "/node") is True
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert warn_if_over_element_cap(geometry_type, cap, "/node") is False
+        assert warn_if_over_element_cap(geometry_type, 1, "/node") is False
+    assert caught == []
+
+
+def test_element_cap_warning_can_be_promoted_to_error() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ElementCapacityWarning)
+        with pytest.raises(ElementCapacityWarning, match="5,591,041 points"):
+            warn_if_over_element_cap("points", MAX_POINTS_PER_POINTS_NODE + 1, "/node")
 
 
 def test_a_geometry_type_without_an_element_texture_is_a_no_op() -> None:
@@ -101,42 +109,72 @@ def test_a_geometry_type_without_an_element_texture_is_a_no_op() -> None:
 
 def test_the_ocean_currents_overflow_would_have_warned() -> None:
     """The exact #1957 numbers: 11,440,000 segments in one un-partitioned node."""
-    assert warn_if_over_element_cap("lines", 11_440_000, "/currents") is True
+    with pytest.warns(ElementCapacityWarning):
+        assert warn_if_over_element_cap("lines", 11_440_000, "/currents") is True
 
 
-def test_a_partitioned_part_stays_quiet(capsys: pytest.CaptureFixture) -> None:
+def test_a_partitioned_part_stays_quiet() -> None:
     """Splitting the same 11.44M segments across 8 parts silences the warning.
 
     This is the fix the message tells the author to apply, so it has to work.
     """
     per_part = 11_440_000 // 8
-    for i in range(8):
-        assert (
-            warn_if_over_element_cap("lines", per_part, f"/currents/part_{i}") is False
-        )
-    assert "partition=" not in capsys.readouterr().out
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        for i in range(8):
+            assert (
+                warn_if_over_element_cap("lines", per_part, f"/currents/part_{i}")
+                is False
+            )
+    assert caught == []
 
 
-def test_the_warning_names_the_count_the_cap_and_the_remedy(
-    capsys: pytest.CaptureFixture,
-) -> None:
-    warn_if_over_element_cap("lines", 11_440_000, "/currents")
-    out = capsys.readouterr().out
-    assert "/currents" in out
-    assert "11,440,000" in out
-    assert "2,793,472" in out
-    assert "partition=dict(max_elements=...)" in out
-    assert "whole node is committed at once" in out
-    assert "current slice" in out
+def test_the_warning_names_the_count_the_cap_and_the_remedy() -> None:
+    with pytest.warns(ElementCapacityWarning) as caught:
+        warn_if_over_element_cap("lines", 11_440_000, "/currents")
+    message = str(caught[0].message)
+    assert "/currents" in message
+    assert "11,440,000" in message
+    assert "2,793,472" in message
+    assert "partition=dict(max_elements=...)" in message
+    assert "whole node is committed at once" in message
+    assert "current slice" in message
 
 
-def test_gsplat_warning_names_both_supported_remedies(
-    capsys: pytest.CaptureFixture,
-) -> None:
-    warn_if_over_element_cap("gsplats", MAX_SPLATS_PER_GSPLATS_NODE + 1, "/gs")
-    out = capsys.readouterr().out
-    assert "luxar gsplat lod --recipe tiles" in out
-    assert "partition=dict(max_elements=...)" in out
+def test_the_warning_displays_once_through_arbol() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import tempfile\n"
+            "import warnings\n"
+            "import numpy as np\n"
+            "from luxar.typing_utils.constants import ELEMENT_TEXELS_PER_ELEMENT\n"
+            "ELEMENT_TEXELS_PER_ELEMENT['points'] = 4096\n"
+            "from luxar import Dimensions, LuxarZarrCompiler\n"
+            "from luxar.io import ElementCapacityWarning\n"
+            "with warnings.catch_warnings():\n"
+            "    warnings.simplefilter('always', ElementCapacityWarning)\n"
+            "    with tempfile.TemporaryDirectory() as temp_dir:\n"
+            "        with LuxarZarrCompiler(f'{temp_dir}/scene.luxar.zarr') as compiler:\n"
+            "            scene = compiler.create_scene(dimensions=Dimensions.default_3d())\n"
+            "            scene.add_points('flat', np.zeros((5_000, 3), dtype=np.float32))\n",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    output = result.stdout
+    assert output.count("⚠️") == 1
+    assert "ElementCapacityWarning: '/flat' holds 5,000 points" in output
+
+
+def test_gsplat_warning_names_both_supported_remedies() -> None:
+    with pytest.warns(ElementCapacityWarning) as caught:
+        warn_if_over_element_cap("gsplats", MAX_SPLATS_PER_GSPLATS_NODE + 1, "/gs")
+    message = str(caught[0].message)
+    assert "luxar gsplat lod --recipe tiles" in message
+    assert "partition=dict(max_elements=...)" in message
 
 
 @pytest.mark.parametrize("geometry_type", ["points", "lines"])
@@ -144,22 +182,24 @@ def test_a_flat_node_warns_on_its_total(
     geometry_type: str,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture,
 ) -> None:
     """The leaf writers themselves must enforce the cap, not only the helper."""
     monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, geometry_type, 4096)
     positions = np.zeros((5_001, 3), dtype=np.float32)
 
-    with LuxarZarrCompiler(tmp_path / f"{geometry_type}.luxar.zarr") as compiler:
-        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        if geometry_type == "points":
-            scene.add_points("flat", positions[:5_000])
-        else:
-            scene.add_lines("flat", positions, widths=0.1)
+    with pytest.warns(ElementCapacityWarning) as caught:
+        with LuxarZarrCompiler(tmp_path / f"{geometry_type}.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            if geometry_type == "points":
+                scene.add_points("flat", positions[:5_000])
+            else:
+                scene.add_lines("flat", positions, widths=0.1)
 
-    out = capsys.readouterr().out
-    assert "'/flat'" in out
-    assert ("5,000 points" if geometry_type == "points" else "5,000 segments") in out
+    message = str(caught[0].message)
+    assert "'/flat'" in message
+    assert (
+        "5,000 points" if geometry_type == "points" else "5,000 segments"
+    ) in message
 
 
 @pytest.mark.parametrize("geometry_type", ["points", "lines"])
@@ -167,59 +207,61 @@ def test_an_additive_ladder_warns_on_its_total(
     geometry_type: str,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-    capsys: pytest.CaptureFixture,
 ) -> None:
     """Only the actionable parent path warns when the viewer concatenates levels."""
     monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, geometry_type, 4096)
     positions = np.zeros((5_001, 3), dtype=np.float32)
 
-    with LuxarZarrCompiler(tmp_path / f"{geometry_type}.luxar.zarr") as compiler:
-        compiler.create_scene(dimensions=Dimensions.default_3d())
-        if geometry_type == "points":
-            compiler.write_points_multi_lod(
-                "ladder",
-                [{"positions": positions[:5_000]}, {"positions": positions[:5_000]}],
-            )
-        else:
-            compiler.write_lines_multi_lod(
-                "ladder",
-                [
-                    {"vertices": positions, "widths": 0.1},
-                    {"vertices": positions, "widths": 0.1},
-                ],
-            )
+    with pytest.warns(ElementCapacityWarning) as caught:
+        with LuxarZarrCompiler(tmp_path / f"{geometry_type}.luxar.zarr") as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            if geometry_type == "points":
+                compiler.write_points_multi_lod(
+                    "ladder",
+                    [
+                        {"positions": positions[:5_000]},
+                        {"positions": positions[:5_000]},
+                    ],
+                )
+            else:
+                compiler.write_lines_multi_lod(
+                    "ladder",
+                    [
+                        {"vertices": positions, "widths": 0.1},
+                        {"vertices": positions, "widths": 0.1},
+                    ],
+                )
 
-    out = capsys.readouterr().out
+    assert len(caught) == 1
+    message = str(caught[0].message)
     expected = "10,000 points" if geometry_type == "points" else "10,000 segments"
-    assert "'/ladder'" in out
-    assert expected in out
-    assert "'/ladder/additive_0'" not in out
-    assert "'/ladder/additive_1'" not in out
-    assert out.count("above the") == 1
+    assert "'/ladder'" in message
+    assert expected in message
+    assert "'/ladder/additive_0'" not in message
+    assert "'/ladder/additive_1'" not in message
 
 
 def test_a_gsplat_leaf_warns_on_its_total(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, "gsplats", 4096)
     centers = np.zeros((5_000, 3), dtype=np.float32)
     cholesky = np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32)
 
-    with LuxarZarrCompiler(tmp_path / "gsplats.luxar.zarr") as compiler:
-        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        scene.add_gsplats("gs", centers, 1.0, cholesky)
+    with pytest.warns(ElementCapacityWarning) as caught:
+        with LuxarZarrCompiler(tmp_path / "gsplats.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats("gs", centers, 1.0, cholesky)
 
-    out = capsys.readouterr().out
-    assert "'/gs'" in out
-    assert "5,000 splats" in out
+    message = str(caught[0].message)
+    assert "'/gs'" in message
+    assert "5,000 splats" in message
 
 
 def test_an_additive_gsplat_ladder_warns_on_its_total(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setitem(ELEMENT_TEXELS_PER_ELEMENT, "gsplats", 4096)
     centers = np.zeros((3_000, 3), dtype=np.float32)
@@ -235,10 +277,12 @@ def test_an_additive_gsplat_ladder_warns_on_its_total(
         ]
     )
 
-    with LuxarZarrCompiler(tmp_path / "gsplat-ladder.luxar.zarr") as compiler:
-        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-        scene.add_gsplats_from_data("gs", result)
+    with pytest.warns(ElementCapacityWarning) as caught:
+        with LuxarZarrCompiler(tmp_path / "gsplat-ladder.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data("gs", result)
 
-    out = capsys.readouterr().out
-    assert "'/gs'" in out
-    assert "6,000 splats" in out
+    assert len(caught) == 1
+    message = str(caught[0].message)
+    assert "'/gs'" in message
+    assert "6,000 splats" in message

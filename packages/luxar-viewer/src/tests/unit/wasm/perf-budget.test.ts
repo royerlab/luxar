@@ -36,6 +36,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 import type { WasmModule } from '../../../wasm/types';
+import { expectQuietHostThroughput } from '../../helpers/quiet-host-throughput';
 import { loadWasmArtifact, wasmArtifactExists } from '../../helpers/wasm-artifact';
 
 /** Minimum acceptable WASM speedup over the TypeScript fallback. See file comment. */
@@ -185,13 +186,12 @@ describeIfWasm(
       // 1 M WORST-CASE spatially-incoherent splats (~96-114 M/s native;
       // the gap is WASM execution overhead plus the wasm-bindgen boundary
       // copies). Real gsplat data is Morton-coherent and sorts faster.
-      // The floor is set at 50 M/s — comfortably below the measured
-      // worst case so parallel-test CPU load can't flake it, while still
-      // catching real regressions (a debug build, an accidental
-      // comparison sort, or an alloc-per-element slip all land far
-      // below it). Spec §5's original 100 M/s target was a
-      // pre-implementation estimate; the measured delta is recorded in
-      // the spec's implementation-deltas note.
+      // The 50 M/s floor catches regressions that slow both WASM and the
+      // TypeScript control, but wall-clock throughput also tracks host
+      // contention. It is therefore report-only unless the run explicitly
+      // opts into quiet-host enforcement with LUXAR_PERF_QUIET_HOST=1.
+      // Spec §5's original 100 M/s target was a pre-implementation estimate;
+      // the measured delta is recorded in the spec's implementation-deltas note.
       const MIN_SPLATS_PER_SECOND = 50e6;
       const centers3 = generatePositions(SIZE, 3);
       // Push everything in front of the camera (view z < 0) so the sort
@@ -221,12 +221,13 @@ describeIfWasm(
         `sort_splats_by_depth: ${(splatsPerSecond / 1e6).toFixed(0)} M splats/s ` +
           `(median ${medianMs.toFixed(2)} ms @ ${SIZE.toLocaleString()}; speedup ${r.speedup.toFixed(2)}×)`
       );
-      expect(
+      expectQuietHostThroughput(
         splatsPerSecond,
+        MIN_SPLATS_PER_SECOND,
         `sort_splats_by_depth: ${(splatsPerSecond / 1e6).toFixed(0)} M splats/s ` +
           `(median ${medianMs.toFixed(2)} ms for ${SIZE.toLocaleString()} splats; ` +
           `floor ${(MIN_SPLATS_PER_SECOND / 1e6).toFixed(0)} M/s)`
-      ).toBeGreaterThanOrEqual(MIN_SPLATS_PER_SECOND);
+      );
     });
   }
 );

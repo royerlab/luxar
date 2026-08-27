@@ -84,9 +84,6 @@ export class DimensionSliders {
    */
   private scrollBody: HTMLElement;
 
-  /** Status bar displaying current slice position */
-  private statusBar: HTMLElement;
-
   /** Status text element in the title bar */
   private statusText: HTMLElement | null = null;
 
@@ -216,8 +213,6 @@ export class DimensionSliders {
     const { root, scroll } = this.createSlidersContainer();
     this.slidersContainer = root;
     this.scrollBody = scroll;
-    // Status bar removed - status now shown in title
-    this.statusBar = document.createElement('div'); // Keep for compatibility but hidden
 
     // Populate with actual sliders and initialize display
     this.createSliders();
@@ -277,8 +272,6 @@ export class DimensionSliders {
     return { root: container, scroll };
   }
 
-  // Status bar method removed - status now shown in title
-
   /**
    * Creates individual slider controls for all non-displayed dimensions.
    *
@@ -320,6 +313,7 @@ export class DimensionSliders {
 
     this.statusText = document.createElement('div');
     this.statusText.className = 'luxar-dimension-sliders__status';
+    this.statusText.setAttribute('aria-live', 'polite');
 
     titleContainer.appendChild(title);
     titleContainer.appendChild(this.statusText);
@@ -415,7 +409,6 @@ export class DimensionSliders {
     const range = this.dimensionRanges[dimIndex];
     const step = dimMeta?.step ?? 1;
     const isDiscrete = dimMeta?.discrete || false;
-
     // Must have either categories or be a discrete dimension with valid range
     if (!categories && !(isDiscrete && range)) return;
 
@@ -435,6 +428,8 @@ export class DimensionSliders {
     // Add tooltip with description if available
     if (dimMeta?.description) {
       label.title = dimMeta.description;
+    } else {
+      label.title = name;
     }
 
     // Create dropdown matching Luxar UI style
@@ -461,7 +456,7 @@ export class DimensionSliders {
       for (let value = min; value <= max; value += step) {
         const option = document.createElement('option');
         option.value = String(value);
-        option.textContent = String(Math.round(value)); // Round for display
+        option.textContent = String(Math.round(value));
         option.title = `Value: ${value}`;
         dropdown.appendChild(option);
       }
@@ -530,7 +525,6 @@ export class DimensionSliders {
     const dimMeta = this.dims.metadata?.[dimIndex];
     const categories = dimMeta?.categories;
     const range = this.dimensionRanges[dimIndex];
-
     // Determine the two labels
     let label0: string;
     let label1: string;
@@ -558,6 +552,8 @@ export class DimensionSliders {
 
     if (dimMeta?.description) {
       label.title = dimMeta.description;
+    } else {
+      label.title = name;
     }
 
     // Single button toggle — shows current value, click swaps to other
@@ -669,17 +665,30 @@ export class DimensionSliders {
     const label = document.createElement('div');
     label.className = 'luxar-dimension-slider__label';
 
+    // Resolved ONCE, because the underline affordance and the tooltip text are
+    // two decisions off the same fact and must not disagree. Compilers write an
+    // EMPTY description rather than omitting the key (the shipped
+    // `dimension_sliders_5d_example` does), so this has to be a truthiness test:
+    // reading it as `dimMeta?.description ?? name` left the real viewer with a
+    // `title=""` — the class ternary correctly saw no description while the
+    // tooltip used it anyway, and the full name became unrecoverable exactly
+    // where the CSS had just started truncating it.
+    const description = dimMeta?.description ? dimMeta.description : undefined;
+
     const dimName = document.createElement('span');
-    dimName.className = dimMeta?.description
+    dimName.className = description
       ? 'luxar-dimension-slider__name luxar-dimension-slider__name--with-tooltip'
       : 'luxar-dimension-slider__name';
     const name = this.dimensionNames[dimIndex] || `Dim ${dimIndex}`;
     dimName.textContent = name;
 
-    // Add tooltip with description if available
-    if (dimMeta?.description) {
-      dimName.title = dimMeta.description;
-    }
+    // The name is ellipsised by CSS once it would claim the value's reserved
+    // width, so it always needs a tooltip to stay recoverable — falling back to
+    // the bare name, exactly as the dropdown and toggle labels already do
+    // (`createDropdownInGrid` / `createToggleInGrid`). The dotted underline
+    // stays tied to an authored description: a tooltip that only repeats
+    // visible text should not advertise itself.
+    dimName.title = description ?? name;
 
     const valueLabel = document.createElement('span');
     valueLabel.id = `luxar-dim-value-${dimIndex}`;
@@ -950,13 +959,13 @@ export class DimensionSliders {
   /**
    * Updates the status bar text to reflect the current dimensional state.
    *
-   * The status bar provides a concise overview of the current navigation state,
-   * showing both which dimensions are being displayed in 3D and the current
-   * slice positions in all non-displayed dimensions.
+   * The status bar shows the current keyboard-navigation target and the
+   * dimensions displayed in 3D. Per-dimension values remain visible on their
+   * own controls.
    *
    * Format:
-   * - Categorical: "[/]: 1 · Channel | Display: X, Y, Z | Channel: DAPI | Time: 5.20s"
-   * - Numeric: "[/]: 1 · Time | Display: X, Y, Z | Time: 5.20s | Index: 2"
+   * - Available target: "[/]: 1 · Channel · Display: X, Y, Z"
+   * - No target: "[/]: unavailable · Display: X, Y, Z"
    *
    * @public
    */
@@ -978,36 +987,11 @@ export class DimensionSliders {
       .join(', ');
     parts.push(`Display: ${displayedNames}`);
 
-    // Show current slice position for each non-displayed dimension
-    for (let i = 0; i < this.dims.ndim; i++) {
-      if (!this.dims.displayed.includes(i)) {
-        const name = this.dimensionNames[i] || `Dim ${i}`;
-        const dimMeta = this.dims.metadata?.[i];
-        const categories = dimMeta?.categories;
+    const statusContent = parts.join(' · ');
 
-        let valueStr: string;
-        if (categories) {
-          // Categorical: show category label
-          const index = Math.round(this.dims.currentStep[i]);
-          const label = categories[index];
-          valueStr = label !== undefined ? label : `Invalid(${index})`;
-        } else {
-          // Numeric: show value with unit
-          const value = this.dims.currentStep[i].toFixed(2);
-          const unit = this.dimensionUnits[i] || '';
-          valueStr = `${value}${unit ? ' ' + unit : ''}`;
-        }
-
-        parts.push(`${name}: ${valueStr}`);
-      }
-    }
-
-    const statusContent = parts.join(' | ');
-    this.statusBar.textContent = statusContent;
-
-    // Also update the status text in title if it exists
-    if (this.statusText) {
+    if (this.statusText && this.statusText.textContent !== statusContent) {
       this.statusText.textContent = statusContent;
+      this.statusText.title = statusContent;
     }
   }
 
@@ -1461,8 +1445,7 @@ export class DimensionSliders {
    * Set visibility of slider interface (show or hide).
    *
    * Used by main application to control slider display based on dataset
-   * characteristics (nD vs 3D) or user preferences. Affects both slider
-   * container and status bar.
+   * characteristics (nD vs 3D) or user preferences.
    *
    * @param visible - true to show sliders, false to hide them
    *
@@ -1477,7 +1460,6 @@ export class DimensionSliders {
     // '' rather than 'block' when shown — the stylesheet's `display: flex`
     // must win (see toggle()).
     this.slidersContainer.style.display = visible ? '' : 'none';
-    this.statusBar.style.display = visible ? 'block' : 'none';
   }
 
   /**
@@ -1517,6 +1499,5 @@ export class DimensionSliders {
 
     // Remove DOM elements
     this.slidersContainer.remove();
-    this.statusBar.remove();
   }
 }

@@ -39,6 +39,8 @@ const ATTRS: MeshMetadata = {
   has_normals: false,
   has_colors: false,
   has_scalars: false,
+  has_uvs: false,
+  has_texture: false,
   shading: 'flat',
   double_sided: false,
   ordering: 'none',
@@ -213,6 +215,43 @@ describe('commitMeshGeometry', () => {
     // for a reveal ladder (#1521) and would otherwise report the ladder's
     // lifetime total rather than what this commit actually received (#1522).
     expect(mesh.userData.committedVertexCount).toBe(3);
+  });
+
+  it('reports the visible triangles to the loader for the monitor', async () => {
+    // The count is produced HERE, downstream of a loader that holds the whole
+    // mesh either way — so the data-loading monitor's per-loader row can only
+    // learn it if the commit pushes it in. Without this the mesh row would read
+    // 0 visible elements forever.
+    const spy = vi.fn();
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode(
+      '/surface',
+      ATTRS,
+      { recordVisibleElements: spy } as unknown as MeshDataLoader,
+      null
+    );
+    root.add(mesh);
+
+    const staged = await processMeshData('/surface', loaded(), VIEW, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+
+    // The same number the userData stamp carries — one source, two consumers.
+    expect(spy).toHaveBeenCalledWith(mesh.userData.visibleTriangleCount);
+    expect(spy).toHaveBeenCalledWith(1);
+  });
+
+  it('does not require a loader to implement the monitor surface', async () => {
+    // `recordVisibleElements` is optional on `MeshDataLoader`; a metrics-free
+    // implementation must be a no-op here, not a crash mid-commit.
+    const { root } = sceneWithMesh('/surface');
+    const staged = await processMeshData('/surface', loaded(), VIEW, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    expect(() => commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged)).not.toThrow();
   });
 
   it('applies the node transform to the placeholder, like the sibling factories', () => {
@@ -499,6 +538,55 @@ describe('processMeshData — membership tolerance', () => {
       { normal_dims: undefined, double_sided: true }
     );
     expect(overEdge.projected.visibleFaceCount).toBe(0);
+  });
+
+  it('an authored slab_tolerance widens the continuous slab', async () => {
+    // The knob's reason for existing (#2143). Triangle at w = 3 against a
+    // step-1 continuous axis: the default one-cell slab culls it, and an
+    // authored 5 cells keeps it. Same data, same view, only the attr differs —
+    // so this fails on any build where the attr is declared but never reaches
+    // `computeTolerance`, which is exactly how it shipped unreachable.
+    const view = () => viewWithDim(0.5, { name: 'w', discrete: false, step: 1 });
+
+    const byDefault = await processMeshData('/surface', loadedAtW(3), view(), {
+      normal_dims: undefined,
+      double_sided: true,
+    });
+    expect(byDefault.projected.visibleFaceCount).toBe(0);
+
+    const widened = await processMeshData('/surface', loadedAtW(3), view(), {
+      normal_dims: undefined,
+      double_sided: true,
+      slab_tolerance: 5,
+    });
+    expect(widened.projected.visibleFaceCount).toBe(1);
+  });
+
+  it('an authored slab_tolerance NARROWS the slab too, and does not touch a discrete axis', async () => {
+    // Both guards in one, because each rules out a different wrong build.
+    //
+    // Narrowing: a build that took `Math.max(1, slab_tolerance)` — or ignored
+    // the attr and always used one cell — passes the widening test above and
+    // fails this one.
+    const narrowed = await processMeshData(
+      '/surface',
+      loadedAtW(3),
+      viewWithDim(0.5, { name: 'w', discrete: false, step: 10 }),
+      { normal_dims: undefined, double_sided: true, slab_tolerance: 0.1 }
+    );
+    // step × 0.1 = 1, and |3| > 1.
+    expect(narrowed.projected.visibleFaceCount).toBe(0);
+
+    // Discrete axes take the half-cell membership rule and must ignore the knob
+    // entirely: a build that applied it to both arms would cull this (half-cell
+    // 5 × 0.1 = 0.5 < 3) instead of keeping it.
+    const discrete = await processMeshData(
+      '/surface',
+      loadedAtW(3),
+      viewWithDim(0.5, { name: 'w', discrete: true, step: 10 }),
+      { normal_dims: undefined, double_sided: true, slab_tolerance: 0.1 }
+    );
+    expect(discrete.projected.visibleFaceCount).toBe(1);
   });
 
   it('a large ride-along maxRadius no longer widens the continuous slab', async () => {

@@ -166,12 +166,54 @@ class TestMapThroughAffine:
         )
         assert map_serialized_bsp_tree(TREE, rot, np.zeros(3)) is None
 
-    def test_an_axis_mapped_beyond_the_third_is_refused(self) -> None:
-        # The serialized format admits split axes 0/1/2 only, so a permutation
-        # sending axis 0 to axis 3 has no representable image.
+    def test_an_axis_mapped_beyond_the_third_keeps_its_column_index(self) -> None:
         lin = np.zeros((4, 4))
         lin[3, 0] = lin[0, 1] = lin[1, 2] = lin[2, 3] = 1.0
-        assert map_serialized_bsp_tree(TREE, lin, np.zeros(4)) is None
+        mapped = map_serialized_bsp_tree(TREE, lin, np.zeros(4))
+        assert mapped is not None
+        assert mapped["axis"] == 3
+
+    @pytest.mark.parametrize("rule", ["median", "midpoint", "sah"])
+    def test_split_axes_are_serialized_as_original_position_columns(
+        self, rule: str
+    ) -> None:
+        points = np.array(
+            [
+                [-100.0, -3.0, 0.0, 0.0],
+                [100.0, -1.0, 0.0, 0.0],
+                [-100.0, 1.0, 0.0, 0.0],
+                [100.0, 3.0, 0.0, 0.0],
+            ]
+        )
+        tree = spatial_bsp_tree(points, max_elements=1, rule=rule, split_axes=[1])
+        serialized = tree.to_serializable()
+
+        assert serialized["axis"] == 1
+
+        def assert_axes(node: dict) -> None:
+            if "part" in node:
+                return
+            assert node["axis"] == 1
+            assert_axes(node["left"])
+            assert_axes(node["right"])
+
+        assert_axes(serialized)
+
+    @pytest.mark.parametrize("split_axes", [[], [0, 0], [4], [0, 1, 2, 3]])
+    def test_invalid_split_axes_are_rejected(self, split_axes: list[int]) -> None:
+        with pytest.raises(ValueError, match="split_axes"):
+            spatial_bsp_tree(np.zeros((4, 4)), 1, split_axes=split_axes)
+
+    def test_soundness_checks_accept_split_columns_above_two(self) -> None:
+        tree = {"axis": 3, "split": 0.0, "left": {"part": 0}, "right": {"part": 1}}
+        boxes = [
+            (np.array([0.0, 0.0, 0.0, -2.0]), np.array([1.0, 1.0, 1.0, -0.5])),
+            (np.array([0.0, 0.0, 0.0, 0.5]), np.array([1.0, 1.0, 1.0, 2.0])),
+        ]
+
+        assert serialized_bsp_tree_separates(tree, boxes)
+        assert serialized_bsp_tree_straddles_centers(tree, boxes)
+        assert serialized_bsp_tree_axis_overlap_floors(tree, boxes) == (0.0,) * 4
 
     def test_mapping_tracks_the_centers_it_describes(self) -> None:
         # The real invariant: after transforming BOTH the points and the tree,
@@ -326,6 +368,18 @@ class TestReconstructAndVerify:
             (np.array([5.0, 5.0, 5.0]), np.array([15.0, 15.0, 15.0])),
         ]
         assert reconstruct_serialized_bsp_tree(boxes) is None
+
+    def test_recovery_can_be_restricted_to_displayable_axes(self) -> None:
+        boxes = [
+            (np.array([0.0, 0.0, 0.0, 0.0]), np.array([10.0, 10.0, 10.0, 1.0])),
+            (np.array([5.0, 5.0, 5.0, 2.0]), np.array([15.0, 15.0, 15.0, 3.0])),
+        ]
+        assert reconstruct_serialized_bsp_tree(boxes, axes=(0, 1, 2)) is None
+
+        rebuilt = reconstruct_serialized_bsp_tree(boxes, axes=(3,))
+        assert rebuilt is not None
+        assert rebuilt["axis"] == 3
+        assert serialized_bsp_tree_separates(rebuilt, boxes)
 
     def test_no_boxes_yields_no_tree(self) -> None:
         assert reconstruct_serialized_bsp_tree([]) is None

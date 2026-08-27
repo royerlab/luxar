@@ -31,6 +31,25 @@ That is a property of the geometry, not a v1 shortcut. If it ever stops holding,
 `MeshWholeNodeLoader` implements the full `MeshDataLoader` interface, so a spatial-index
 implementation drops in behind it with no caller change.
 
+## Monitor telemetry
+
+Both loaders implement the `LoaderMonitor` surface (`addEventListener` /
+`removeEventListener` / `getMetrics` / `getActiveQueries`), reporting
+`type: 'mesh-whole-node'`. All four methods are required, not decorative:
+`scene-loader/nodes/connect-loader-to-monitor.ts` duck-types the complete set and
+skips a loader missing any of them **without logging** — which is how mesh spent
+a while appearing in the data-loading monitor's scene-graph tree and nowhere else.
+
+What is reported follows from the loading strategy rather than from the geometry:
+
+| Field                                       | Mesh                                                                                                                                                                                                                                                              |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loads` / `bytesLoaded` / `avgLoadTime`     | The ONE fetch per loader (one per level on a reveal ladder, summed by `ProgressiveMonitorAdapter`). Bytes are DECODED bytes, as for the siblings.                                                                                                                 |
+| `elementsLoaded`                            | TRIANGLES — the drawn-primitive convention the whole monitor uses for mesh.                                                                                                                                                                                       |
+| `memoryUsed`                                | Resident payload + the per-node projection scratch; the counterpart of the siblings' accumulator allocation. Zeroed on `dispose`.                                                                                                                                 |
+| `queries` / `avgQueryTime` / `spatialIndex` | Zero / absent. No index, and a view change re-serves the resident mesh — a query sample here would be a ~0 ms entry for work that never touched the store.                                                                                                        |
+| `visibleElements`                           | Pushed IN by `scene-loader/commit/commit-mesh-geometry.ts` (`recordVisibleElements`): projection, not the loader, decides which faces the index buffer receives. On a ladder the wrapper OVERRIDES rather than sums — the committed surface is a node-level fact. |
+
 ## Why the progressive loader is half the size of its siblings
 
 The same property, one level up. `points-` / `lines-` / `gsplats-progressive-loader.ts`
@@ -178,18 +197,27 @@ exist on `WasmModule` and in both backends.
 Winding is decidable only against the authored winding frame, which is
 `sorted(normal_dims)`. Three cases, and they are genuinely different:
 
-| Displayed triple vs frame              | Action                                                           |
-| -------------------------------------- | ---------------------------------------------------------------- |
-| Same triple, even parity               | Draw as authored                                                 |
-| Same triple, odd parity                | Swap two of each triangle's three indices (`side: 'front'` kept) |
-| A different triple, or no frame at all | `side: 'double'` for the epoch + a one-time notice               |
+| Displayed triple vs frame              | Action                                             |
+| -------------------------------------- | -------------------------------------------------- |
+| Same triple, even parity               | Draw as authored                                   |
+| Same triple, odd parity                | Swap two of each triangle's three indices          |
+| A different triple, or no frame at all | `side: 'double'` for the epoch + a one-time notice |
 
 The reversal is keyed to the _current_ `displayDims` parity, not to the event of
 `displayDims` changing, so it runs on **every** index build in an odd-parity epoch
 — initial load and slice moves included. Nothing restricts the opening view to
-ascending order, so the very first build can already need it. Without it a
+ascending order, so the very first build can already need it.
+
+Two consequences without it, and `double_sided` only covers the first. A
 `double_sided: false` mesh renders inside-out, which for an open surface means it
-vanishes.
+vanishes. And whenever the stored-normal variant is active, the fragment shader's
+`gl_FrontFacing ? N : -N` flip is inverted, so the surface lights as if facing
+away — `gl_FrontFacing` reports _projected_ winding, and a `DoubleSide` mesh's
+back face is still a back face. That second one bites even when both sides draw,
+which is why `resolveWinding` decides parity for a double-sided node too and
+`side` is decided separately (it follows the node's own `double_sided`: `'front'`
+when single-sided, `'double'` otherwise, and `'double'` regardless when the frame
+is undecidable).
 
 Two traps: swapping all three indices is a rotation and leaves winding
 _unchanged_; and reversing in the undecidable case is worse than doing nothing,

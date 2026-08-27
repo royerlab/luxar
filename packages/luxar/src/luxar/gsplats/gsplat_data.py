@@ -24,6 +24,15 @@ from luxar.gsplats._data.filtering import (
     drop_content_scoped_stats as drop_content_scoped_stats,
 )
 from luxar.gsplats._data.filtering import (
+    scrub_measured_stats as scrub_measured_stats,
+)
+from luxar.gsplats._data.filtering import (
+    scrub_region_scoped_stats as scrub_region_scoped_stats,
+)
+from luxar.gsplats._data.filtering import (
+    stamp_region_scoped_stats as stamp_region_scoped_stats,
+)
+from luxar.gsplats._data.filtering import (
     stats_after_structure_change as stats_after_structure_change,
 )
 from luxar.gsplats._data.intensity import IntensityMixin
@@ -66,7 +75,9 @@ class AdditiveSubLOD(_SplatArrayMixin):
     amplitudes : np.ndarray, shape (N,)
         Non-negative splat amplitudes.
     cholesky_factors : np.ndarray, shape (N, d*(d+1)//2)
-        Packed lower-triangular Cholesky factors.
+        Packed lower-triangular factor L of the covariance (Σ = L·Lᵀ). The
+        diagonal is scale-like: isotropic std σ uses [σ, 0, σ, 0, 0, σ], not
+        1/sigma.
     colors : Optional[np.ndarray], shape (N, 3) or (N, 4)
         Optional RGB(A) colors per splat. The optional alpha channel is
         per-splat opacity in [0, 1] (consumed by every blending mode; mapped
@@ -226,7 +237,9 @@ class GSplatData(
     amplitudes : np.ndarray, shape (N_total,)
         Cached concatenation of all LOD amplitudes.
     cholesky_factors : np.ndarray, shape (N_total, tril)
-        Cached concatenation of all LOD Cholesky factors.
+        Cached concatenation of all LOD packed lower-triangular factors L of the
+        covariance (Σ = L·Lᵀ), using the convenience-constructor convention:
+        isotropic std σ uses [σ, 0, σ, 0, 0, σ], not 1/sigma.
     colors : Optional[np.ndarray], shape (N_total, 3) or (N_total, 4)
         Cached concatenation of all LOD colors (None if no LOD has colors).
         The optional 4th column is per-splat opacity alpha in [0, 1].

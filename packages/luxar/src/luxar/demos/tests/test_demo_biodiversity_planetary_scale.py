@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import consolidate, open_group
-from luxar.conftest import find_repo_relative_file, read_ts_number_const
+from luxar.conftest import read_ts_number_const, viewer_source
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
 from luxar.core.group.partition import serialized_bsp_tree_separates
 from luxar.demos import demo_biodiversity_planetary_scale as demo_module
@@ -998,15 +998,7 @@ def _viewer_fill_factor() -> float:
     anchor move fail HERE, on this calibration, instead of only on that
     separate coupling test.
     """
-    rel = Path("packages") / "luxar-viewer" / "src" / "scene" / "lod-group-registry.ts"
-    start = Path(demo_module.__file__).resolve()
-    registry = find_repo_relative_file(rel, start)
-    assert registry is not None, (
-        f"cannot locate {rel} in any ancestor of {start}. If the viewer file moved, "
-        "update this test — do NOT delete it: it is what makes the "
-        "OCCURRENCE_COVERAGE calibration guards fail on a future anchor move "
-        "instead of silently going stale."
-    )
+    registry = viewer_source("src/scene/lod-group-registry.ts")
     source = registry.read_text(encoding="utf-8")
     return read_ts_number_const(source, "FILL_FACTOR")
 
@@ -1082,10 +1074,7 @@ def test_occurrence_coverage_refines_once_a_tile_fills_the_viewport() -> None:
     dead weight. Unlike the two calibration tests above this isn't a
     diagonal-era MEASUREMENT to convert — it's the viewer's own screen-fill
     definition, read live from both TypeScript constants."""
-    rel = Path("packages") / "luxar-viewer" / "src" / "scene" / "lod-group-registry.ts"
-    start = Path(demo_module.__file__).resolve()
-    registry = find_repo_relative_file(rel, start)
-    assert registry is not None
+    registry = viewer_source("src/scene/lod-group-registry.ts")
     source = registry.read_text(encoding="utf-8")
     fill_factor = read_ts_number_const(source, "FILL_FACTOR")
     screen_fill_diagonal_ratio = read_ts_number_const(
@@ -1094,3 +1083,73 @@ def test_occurrence_coverage_refines_once_a_tile_fills_the_viewport() -> None:
     metric = screen_fill_diagonal_ratio / fill_factor
     selected = max(i for i, c in enumerate(OCCURRENCE_COVERAGE) if c <= metric)
     assert selected == len(OCCURRENCE_COVERAGE) - 1
+
+
+def test_the_globe_is_built_at_the_scene_radius() -> None:
+    """The globe must be at ``RADIUS``, not at a hardcoded unit sphere.
+
+    This shipped wrong and was hard to recognise. Every occurrence goes through
+    the demo's own ``lonlat_to_xyz``, which multiplies by ``RADIUS`` (100), so a
+    globe built at radius 1.0 is a marble at the centre of a 100-unit point shell.
+    It renders perfectly — committed, textured, in frustum — and occupies about 1%
+    of the frame, which is why it read as "the terrain is missing" and why no
+    amount of node intensity fixed it. The stored bounds are what gave it away:
+    the occurrence layer spanned +/-100 while the globe spanned +/-1.
+
+    A scale mismatch between a backdrop and the data drawn on it is invisible to
+    every other check in this suite, so it gets its own.
+    """
+    source = Path(demo_module.__file__).read_text()
+    globe_call = source.split("build_earth(")[1].split("\n            )")[0]
+    assert "radius=RADIUS" in globe_call, (
+        "the globe must use the demo's RADIUS; a literal would silently rescale it"
+    )
+    assert "radius=1.0" not in globe_call
+
+
+def test_the_scene_does_not_open_on_an_empty_slice() -> None:
+    """The opening ``current_step`` must name a cell that has occurrences in it.
+
+    The viewer shows the INTERSECTION of the non-displayed slices, so an opening
+    pin at a cell no layer occupies yields a valid scene whose first frame is just
+    the context globe. That is what happened when the dense all-life summary layer
+    was removed from under an opening pin still aimed at ``(All life, All years)``:
+    the compile succeeded, the store validated, every array round-tripped, and the
+    demo simply came up with no data on it.
+
+    So the invariant is checked two ways, because the source-text half alone would
+    not have caught it (the pin *was* explicit and deliberate -- it just pointed at
+    a cell whose contents had been deleted elsewhere in the file):
+
+    * the pin does not name ``ALL_LIFE_SLOT``;
+    * and ``assert_opening_slice_is_populated`` actually rejects that cell, so the
+      build-time guard is not vacuous.
+    """
+    source = Path(demo_module.__file__).read_text()
+    step = source.split("current_step=[")[1].split("]")[0]
+    assert "taxon_slot(OPENING_TAXON_GROUP)" in step, (
+        "the opening taxon must be a real group, not the all-taxa corner"
+    )
+    assert "ALL_LIFE_SLOT" not in step
+
+    opening_taxon = float(demo_module.taxon_slot(demo_module.OPENING_TAXON_GROUP))
+    opening_period = float(demo_module.PERIOD_ALL_SLOT)
+    assert opening_taxon != float(demo_module.ALL_LIFE_SLOT)
+
+    # One occurrence at the opening cell, one at the (all taxa, decade) marginal.
+    positions = np.array(
+        [
+            [0.0, 0.0, 0.0, opening_taxon, opening_period],
+            [0.0, 0.0, 0.0, float(demo_module.ALL_LIFE_SLOT), 3.0],
+        ],
+        dtype=np.float32,
+    )
+    demo_module.assert_opening_slice_is_populated(
+        positions, opening_taxon, opening_period
+    )
+    # ... and the guard must REFUSE the corner the summary layer used to fill,
+    # which is what makes the assertion above worth anything.
+    with pytest.raises(RuntimeError, match="would open on"):
+        demo_module.assert_opening_slice_is_populated(
+            positions, float(demo_module.ALL_LIFE_SLOT), opening_period
+        )

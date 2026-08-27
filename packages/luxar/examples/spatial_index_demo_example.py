@@ -37,6 +37,33 @@ CHANNEL_RANGE = (0.0, 2.0)
 CHANNEL_STEP = 1.0
 
 
+def create_dimensions() -> Dimensions:
+    """Create authored dimension metadata from shared constants."""
+    return Dimensions(
+        [
+            Dimension("x", unit="um", display=True, range=(-60, 60)),
+            Dimension("y", unit="um", display=True, range=(-60, 60)),
+            Dimension("z", unit="um", display=True, range=(-60, 60)),
+            Dimension(
+                "time",
+                unit="s",
+                display=False,
+                range=TIME_RANGE,
+                step=TIME_STEP,
+                discrete=True,
+            ),
+            Dimension(
+                "channel",
+                unit="ch",
+                display=False,
+                range=CHANNEL_RANGE,
+                step=CHANNEL_STEP,
+                discrete=True,
+            ),
+        ]
+    )
+
+
 def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> tuple:
     """Create clustered 5D point data.
 
@@ -97,7 +124,7 @@ def create_5d_clusters(n_clusters: int = 10, points_per_cluster: int = 500) -> t
         )
 
         # Use a stride coprime with the 3-channel cycle so every channel gets
-        # large-radius points that span multiple time slices.
+        # large-radius points (for --clusters >= 5).
         if i % 2 == 0:
             large_indices = np.random.choice(points_per_cluster, size=50, replace=False)
             cluster_radii[large_indices] = np.random.uniform(3.0, 5.0, 50)
@@ -159,30 +186,7 @@ def main():
             f"   Spatial index: {'DISABLED' if args.no_spatial_index else 'ENABLED'}"
         )
 
-        # Define 5D dimensions
-        dims = Dimensions(
-            [
-                Dimension("x", unit="um", display=True, range=(-60, 60)),
-                Dimension("y", unit="um", display=True, range=(-60, 60)),
-                Dimension("z", unit="um", display=True, range=(-60, 60)),
-                Dimension(
-                    "time",
-                    unit="s",
-                    display=False,
-                    range=TIME_RANGE,
-                    step=TIME_STEP,
-                    discrete=True,
-                ),
-                Dimension(
-                    "channel",
-                    unit="ch",
-                    display=False,
-                    range=CHANNEL_RANGE,
-                    step=CHANNEL_STEP,
-                    discrete=True,
-                ),
-            ]
-        )
+        dims = create_dimensions()
         aprint(f"Defined {len(dims)} dimensions for 5D navigation")
 
     with asection("5D Clustered Data Generation"):
@@ -236,7 +240,7 @@ def main():
                 ),
                 observe=[
                     "Distinct clusters appear and disappear as you step through time.",
-                    "Large-radius points stay visible across several adjacent slices.",
+                    "Time/channel visibility follows point coordinates, not point radius.",
                     "Navigation stays smooth despite the 5D point count.",
                 ],
                 observe_label="Look for",
@@ -268,7 +272,9 @@ def main():
         aprint("🎮 Navigation tips:")
         aprint("   - Press 1 then [ ] to navigate through time")
         aprint("   - Press 2 then [ ] to navigate channels")
-        aprint("   - Notice how large-radius points remain visible across slices")
+        aprint(
+            "   - Notice that time/channel visibility follows coordinates, not radius"
+        )
 
         if not args.no_spatial_index:
             aprint("💡 Try comparing with non-indexed version:")

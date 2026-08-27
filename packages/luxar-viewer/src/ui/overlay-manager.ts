@@ -6,12 +6,17 @@
  * CSS transitions, blend modes, and configurable interaction.
  */
 
+import { isZippedStoreUrl } from '../data/zip/entries';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { log, Modules } from '../utils/log';
 import { getViewerContainer } from '../utils/viewer-container';
 import { escapeHtml } from '../utils/escape-html';
 import { substituteHoverTemplate } from '../utils/hover-template';
+import { detectMimeType } from '../utils/image-mime';
 import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
+
+/** Read one opaque file from the active scene store. */
+export type OverlayFileReader = (path: string) => Promise<Uint8Array | undefined>;
 
 /** Font preset mappings to CSS font-family stacks */
 export const FONT_PRESETS: Record<string, string> = {
@@ -184,7 +189,9 @@ interface HoverOverlayEntry {
 export class OverlayManager {
   private overlayElements = new Map<string, HTMLDivElement>();
   private configs = new Map<string, OverlayConfig>();
+  private objectUrls = new Set<string>();
   private baseUrl = '';
+  private readFile?: OverlayFileReader;
   private boundDimChangeHandler: () => void;
   /** Whether overlays are globally hidden by the user toggle (U key) */
   private globallyHidden = false;
@@ -205,14 +212,26 @@ export class OverlayManager {
    * Load overlays from parsed configs and render them.
    *
    * @param overlayConfigs - Array of overlay configurations from zarr
-   * @param baseUrl - Base URL of the zarr store (for image fetching)
+   * @param baseUrl - Base URL of the zarr store (for directory image fetching)
+   * @param readFile - Reader for opaque files held inside the active store
    */
-  async loadOverlays(overlayConfigs: OverlayConfig[], baseUrl: string): Promise<void> {
+  async loadOverlays(
+    overlayConfigs: OverlayConfig[],
+    baseUrl: string,
+    readFile?: OverlayFileReader
+  ): Promise<void> {
     this.baseUrl = baseUrl;
+    this.readFile = readFile;
 
-    for (const config of overlayConfigs) {
+    const imageReads = await Promise.allSettled(
+      overlayConfigs.map((config) => this.readArchivedImage(config))
+    );
+
+    for (const [index, config] of overlayConfigs.entries()) {
       try {
-        const el = this.createOverlayElement(config);
+        const imageRead = imageReads[index];
+        if (imageRead.status === 'rejected') throw imageRead.reason;
+        const el = this.createOverlayElement(config, imageRead.value);
         getViewerContainer().appendChild(el);
         this.overlayElements.set(config.name, el);
         this.configs.set(config.name, config);
@@ -441,6 +460,11 @@ export class OverlayManager {
     for (const el of this.overlayElements.values()) {
       el.remove();
     }
+    for (const url of this.objectUrls) {
+      URL.revokeObjectURL(url);
+    }
+    this.objectUrls.clear();
+    this.readFile = undefined;
     this.overlayElements.clear();
     this.configs.clear();
     this.hoverOverlays.clear();
@@ -448,8 +472,20 @@ export class OverlayManager {
 
   // ---------------------------------------------------------------- private
 
+  private async readArchivedImage(config: OverlayConfig): Promise<Uint8Array | undefined> {
+    if (
+      !isZippedStoreUrl(this.baseUrl) ||
+      config.type !== 'overlay_image' ||
+      !config.image_file ||
+      !this.readFile
+    ) {
+      return undefined;
+    }
+    return this.readFile(`/overlays/${config.name}/${config.image_file}`);
+  }
+
   /** Create a DOM element for a single overlay. */
-  private createOverlayElement(config: OverlayConfig): HTMLDivElement {
+  private createOverlayElement(config: OverlayConfig, archivedImage?: Uint8Array): HTMLDivElement {
     const el = document.createElement('div');
     el.className = 'luxar-overlay';
     el.dataset.overlayName = config.name;
@@ -488,7 +524,7 @@ export class OverlayManager {
         this.createTextContent(el, config);
         break;
       case 'overlay_image':
-        this.createImageContent(el, config);
+        this.createImageContent(el, config, archivedImage);
         break;
       case 'overlay_html':
         this.createHtmlContent(el, config);
@@ -623,16 +659,50 @@ export class OverlayManager {
   }
 
   /** Create image overlay content. */
-  private createImageContent(el: HTMLDivElement, config: OverlayConfig): void {
+  private createImageContent(
+    el: HTMLDivElement,
+    config: OverlayConfig,
+    archivedImage?: Uint8Array
+  ): void {
     el.classList.add('luxar-overlay--image');
 
     const img = document.createElement('img');
 
     // Construct image URL from base zarr URL
     if (config.image_file) {
-      const imageUrl = `${this.baseUrl}overlays/${config.name}/${config.image_file}`;
-      img.src = imageUrl;
-      img.alt = config.name;
+      if (isZippedStoreUrl(this.baseUrl)) {
+        const path = `/overlays/${config.name}/${config.image_file}`;
+        if (!this.readFile) {
+          log.warning(
+            Modules.UI,
+            `Image overlay "${config.name}" has no store file reader for ${path} — skipping`
+          );
+          return;
+        }
+        if (!archivedImage) {
+          log.warning(Modules.UI, `Image overlay "${config.name}" is missing ${path} — skipping`);
+          return;
+        }
+        // BlobPart requires an ArrayBuffer-backed view, while store reads may expose ArrayBufferLike.
+        const blobBytes = Uint8Array.from(archivedImage);
+        const objectUrl = URL.createObjectURL(
+          new Blob([blobBytes], { type: detectMimeType(blobBytes) })
+        );
+        this.objectUrls.add(objectUrl);
+        img.src = objectUrl;
+        img.alt = config.name;
+      } else {
+        const imageUrl = `${this.baseUrl}overlays/${config.name}/${config.image_file}`;
+        img.onerror = () => {
+          log.warning(
+            Modules.UI,
+            `Image overlay "${config.name}" is missing ${imageUrl} — skipping`
+          );
+          img.remove();
+        };
+        img.src = imageUrl;
+        img.alt = config.name;
+      }
     }
 
     // Size

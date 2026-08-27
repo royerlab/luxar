@@ -7,7 +7,10 @@ memory constraints.
 
 from __future__ import annotations
 
+import os
+import shutil
 import tempfile
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import (
@@ -103,7 +106,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     enabling processing of datasets larger than available RAM.
 
     Args:
-        store_path: Path where the Zarr store will be created
+        store_path: Path where the Zarr store will be created. A ``.zip`` path
+            normalizes the inner store name and publishes a single-file archive
+            after finalization.
         compressor: Compression configuration for datasets
         version: Luxar format version
         enable_spatial_index: Whether to build spatial indices for points
@@ -115,6 +120,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         >>> with LuxarZarrCompiler('output.luxar.zarr') as compiler:
         ...     scene = compiler.create_scene(dimensions=dims)
         ...     positions = np.random.randn(10000, 3).astype(np.float32)
+        ...     scene.add_points('points', positions)
+
+        Compile directly to a single-file archive:
+        >>> with LuxarZarrCompiler('output.luxar.zarr.zip') as compiler:
+        ...     scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         ...     scene.add_points('points', positions)
 
         With HDR colors and custom dimensions:
@@ -154,7 +164,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Initialize the Zarr compiler.
 
         Args:
-            store_path: Path for the Zarr store, or None for temporary
+            store_path: Path for the Zarr store, or None for temporary. A
+                ``.zip`` path normalizes the inner store name and publishes a
+                single-file archive after finalization.
             compressor: Compressor for datasets
             version: Luxar format version
             enable_spatial_index: Whether to use spatial ordering for points/gsplats (default: True)
@@ -177,25 +189,55 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Handle store path. Full scenes use the canonical ``.luxar.zarr``
         # extension; the path is normalized so callers that pass a bare name or
         # a plain ``.zarr`` still produce a canonically-named scene. Callers
-        # should read back the final path via the ``store_path`` property.
+        # should read back the final path via the ``store_path`` property. A
+        # ``.zip`` request writes to a hidden directory while active and
+        # publishes the archive only after finalization succeeds.
         # Local import to avoid a module-load cycle
         # (luxar.utils.__init__ → demos → io.compiler).
         from ..utils.paths import normalize_zarr_path
 
         self._tmpdir: Optional[tempfile.TemporaryDirectory[str]] = None
+        self._archive_path: Optional[Path] = None
+        self._archive_artifact_path: Optional[Path] = None
         if store_path is None:
             self._tmpdir = tempfile.TemporaryDirectory()
             self._store_path = Path(self._tmpdir.name) / "scene.luxar.zarr"
             aprint(f"📁 Using temporary directory: {self._store_path}")
         else:
             requested = Path(store_path)
-            self._store_path = normalize_zarr_path(requested, ".luxar.zarr")
-            if self._store_path.name != requested.name:
+            if requested.name.endswith(".zip"):
+                inner_name = requested.name[:-4]
+                if not inner_name:
+                    raise ValueError(
+                        "Archive output path must include a name before .zip"
+                    )
+                inner_path = requested.with_name(inner_name)
+                normalized = normalize_zarr_path(inner_path, ".luxar.zarr")
+                self._archive_path = Path(f"{normalized}.zip")
+                if self._archive_path.is_symlink():
+                    raise ValueError(
+                        f"LuxarZarrCompiler refuses to write to {self._archive_path}: "
+                        f"it is a symlink (→ {os.readlink(self._archive_path)}). The "
+                        "archive is renamed into place, which would replace the link "
+                        "rather than what it points at. Give the link's target as the "
+                        "output path, or remove the link first."
+                    )
+                self._archive_path.parent.mkdir(parents=True, exist_ok=True)
+                self._store_path = self._archive_path.parent / (
+                    f".{self._archive_path.name}.compile-"
+                    f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+                )
+                self._archive_artifact_path = Path(f"{self._store_path}.zip")
+                final_path = self._archive_path
+            else:
+                self._store_path = normalize_zarr_path(requested, ".luxar.zarr")
+                final_path = self._store_path
+            if final_path.name != requested.name:
                 aprint(
                     f"📁 Normalized scene path to canonical extension: "
-                    f"{requested.name} → {self._store_path.name}"
+                    f"{requested.name} → {final_path.name}"
                 )
-            aprint(f"📁 Creating scene at: {self._store_path}")
+            aprint(f"📁 Creating scene at: {final_path}")
 
         # Store spatial ordering configuration
         self.enable_spatial_index = enable_spatial_index
@@ -237,6 +279,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self.compressor = compressor
         self._metadata_cache: Dict[str, Any] = {}
         self._is_finalized = False
+        self._archive_finalize_failed = False
         # Transactions are re-entrant, not thread-local: scene authoring through
         # one compiler instance is single-threaded, like the writer itself.
         self._transaction_depth = 0
@@ -248,14 +291,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Scene reference for finalize-time hover overlay auto-injection
         self._scene: Optional["Scene"] = None
 
-        aprint(f"✅ Zarr compiler initialized at {self._store_path}")
+        output_path = self._archive_path or self._store_path
+        aprint(f"✅ Zarr compiler initialized at {output_path}")
 
     def __enter__(self) -> LuxarZarrCompiler:
         """Enter context manager."""
         return self
 
     def _check_not_finalized(self, op: str) -> None:
-        """Refuse mutating operations after finalize() has run.
+        """Refuse mutations after finalization or archive staging discard.
 
         CL-2: ``finalize()`` writes the consolidated zarr metadata; any
         subsequent ``write_*`` / ``create_*`` call would silently produce a
@@ -271,6 +315,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 "LuxarZarrCompiler context, before context exit or before "
                 "Scene.to_zarr() finalizes the store."
             )
+        if self._archive_finalize_failed:
+            raise RuntimeError(
+                f"Cannot {op} after archive staging was discarded. "
+                "Create a new LuxarZarrCompiler."
+            )
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit context manager, finalizing only on a clean exit.
@@ -278,7 +327,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         If an exception is propagating out of the ``with`` block (a write
         error, or Ctrl-C / KeyboardInterrupt) and the store was NOT already
         finalized, the store is left UNfinalized and a root ``incomplete``
-        marker is stamped so the half-written artifact is detectable.
+        marker is stamped so a directory artifact is detectable; archive
+        staging is discarded instead and the compiler becomes unusable.
         Finalizing here would seal a partial store as a valid, hash-stamped
         scene (the root ``type='scene'`` attr is written up front), silently
         corrupting downstream consumers. The marker is stamped only when the
@@ -292,18 +342,26 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if exc_type is not None and not self._is_finalized:
                 # An exception is propagating and the store is only partially
                 # written: do NOT finalize, mark it incomplete instead.
+                if self._archive_path is not None:
+                    self._archive_finalize_failed = True
                 try:
                     self.store.attrs["incomplete"] = True
-                    aprint(
-                        "⚠️ Build errored — leaving the store unfinalized "
-                        "and marked incomplete"
-                    )
+                    if self._archive_path is not None:
+                        aprint(
+                            "⚠️ Build errored — discarding incomplete archive "
+                            f"staging for {self._archive_path}"
+                        )
+                    else:
+                        aprint(
+                            "⚠️ Build errored — leaving the store unfinalized "
+                            "and marked incomplete"
+                        )
                 except BaseException:
                     # Best-effort marker: never raise a new exception that
                     # would mask the one already propagating out of the with
                     # block (a second Ctrl-C is a BaseException, not Exception).
                     pass
-            elif not self._is_finalized:
+            elif not self._is_finalized and not self._archive_finalize_failed:
                 # Clean exit: finalize. If finalize() itself fails it leaves a
                 # half-finalized store; mark it incomplete so it is rejected,
                 # then re-raise the original finalize error.
@@ -316,9 +374,51 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                         pass
                     raise
         finally:
+            self._cleanup_archive_staging()
             # Clean up temporary directory if used (every path).
             if self._tmpdir is not None:
                 self._tmpdir.cleanup()
+
+    def _cleanup_archive_staging(self) -> None:
+        """Remove compiler-owned archive staging paths, if any."""
+        if self._archive_artifact_path is not None:
+            try:
+                self._archive_artifact_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if self._archive_path is not None:
+            shutil.rmtree(self._store_path, ignore_errors=True)
+
+    def _publish_archive(self) -> None:
+        """Package the finalized directory store and atomically publish it."""
+        if self._archive_path is None or self._archive_artifact_path is None:
+            return
+        from .optimise import _package
+
+        try:
+            aprint(f"📦 Packaging scene archive at {self._archive_path}")
+            _package(self._store_path, self._archive_artifact_path)
+            os.replace(self._archive_artifact_path, self._archive_path)
+        finally:
+            try:
+                self._archive_artifact_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _check_archive_can_finalize(self) -> None:
+        """Refuse finalization after archive staging has been discarded."""
+        if self._archive_finalize_failed:
+            raise ValueError(
+                "Cannot finalize archive after its staging was discarded; "
+                "create a new LuxarZarrCompiler"
+            )
+
+    def _discard_failed_archive_staging(self) -> None:
+        """Poison an archive compiler and remove its failed staging store."""
+        if self._archive_path is None:
+            return
+        self._archive_finalize_failed = True
+        self._cleanup_archive_staging()
 
     @arbol_warnings()
     def create_scene(
@@ -737,6 +837,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             Union[NDArray[np.float32], List[float], Tuple[float, ...]]
         ] = None,
         scalars: Optional[Union[NDArray[np.float32], float]] = None,
+        uvs: Optional[NDArray[np.float32]] = None,
+        texture: Optional[NDArray[Any]] = None,
+        texture_encoding: str = "raw",
+        texture_width: Optional[int] = None,
+        texture_height: Optional[int] = None,
+        texture_channels: Optional[int] = None,
+        texture_color_space: str = "srgb",
         shading: Optional[str] = None,
         double_sided: bool = True,
         labels: Optional["Sequence[str]"] = None,
@@ -772,11 +879,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors: Colors — array ``(V, 3|4)``, RGB(A) tuple/list, or None. A 4th
                 component is per-vertex opacity.
             scalars: Scalars for colormap lookup — array ``(V,)``, scalar, or None.
-            shading: ``"smooth"`` or ``"flat"``. Defaults to ``"smooth"`` when
-                normals are supplied, else ``"flat"``. An explicit value is stored
-                as given: ``"flat"`` renders a faceted surface even with normals
-                present, and ``"smooth"`` without normals falls back to derived
-                flat normals at render time.
+            shading: ``"smooth"``, ``"flat"``, or unlit ``"none"``. Defaults to
+                ``"smooth"`` when normals are supplied, else ``"flat"``. An explicit
+                value is stored as given: ``"flat"`` renders a faceted surface even
+                with normals present, ``"smooth"`` without normals falls back to
+                derived flat normals at render time, and ``"none"`` computes no
+                lighting normal.
             double_sided: Whether back faces render. ``True`` by default.
             labels: Optional per-vertex strings for hover tooltips (CSR-encoded).
             image_labels: Optional per-vertex images for hover thumbnails.
@@ -784,25 +892,56 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 Stored as CSR-encoded key_offsets + key_bytes arrays for
                 ``link`` / ``copy`` templates to substitute as
                 ``{hover_key}``. Independent of ``labels``.
+            uvs: Optional ``(V, 2)`` per-vertex texture coordinates. Required
+                with ``texture`` and refused without it. Values outside
+                ``[0, 1]`` are legal and tile under ``texture_wrap="repeat"``.
+            texture: Optional base-colour image. ``(H, W, C)`` array under
+                ``texture_encoding="raw"``, else a 1-D ``uint8`` array of encoded
+                bytes. Mutually exclusive with ``colors`` and ``colormap`` — a
+                mesh has one base-colour source.
+            texture_encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg``. HDR
+                (float) textures require ``raw``: the image codecs are
+                integer-only and no browser decodes float.
+            texture_width: Declared width. Required for encoded payloads, where
+                it cannot be read without decoding; read off the array for
+                ``raw``, and refused if it disagrees.
+            texture_height: Declared height. Same contract as ``texture_width``.
+            texture_channels: Declared channels — 1, 3 or 4. Same contract.
+            texture_color_space: ``srgb`` (default) or ``linear``. An ordinary
+                PNG/JPEG is sRGB-encoded; declaring it wrong gives a subtly
+                over-dark or washed-out surface rather than an obvious failure.
+                HDR raw textures must be declared ``linear``.
             **attrs: Additional attributes.
 
         Returns:
             Metadata dictionary about the written mesh.
         """
         self._check_not_finalized("write_mesh")
+        # Keyword-forwarded, deliberately. This used to pass positionally, and
+        # inserting a parameter into `_write_mesh_impl`'s signature silently
+        # shifted every argument after it — mypy caught it, but only because the
+        # shifted types happened to disagree. Keywords make the forward
+        # insertion-order-proof.
         metadata = _write_mesh_impl(
             self._make_geometry_ctx(),
             path,
             vertices,
             faces,
-            normals,
-            normal_dims,
-            colors,
-            scalars,
-            shading,
-            double_sided,
-            labels,
-            image_labels,
+            normals=normals,
+            normal_dims=normal_dims,
+            colors=colors,
+            scalars=scalars,
+            uvs=uvs,
+            texture=texture,
+            texture_encoding=texture_encoding,
+            texture_width=texture_width,
+            texture_height=texture_height,
+            texture_channels=texture_channels,
+            texture_color_space=texture_color_space,
+            shading=shading,
+            double_sided=double_sided,
+            labels=labels,
+            image_labels=image_labels,
             keys=keys,
             **attrs,
         )
@@ -1310,7 +1449,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     else {}
                 ),
                 **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
-                **({"extend_to_all": extend_to_all} if extend_to_all else {}),
+                # `Dict[str, Any]`, not the inferred `dict[str, list[str]]`: a
+                # splat is checked against every parameter it could bind to,
+                # and `write_mesh` now has typed optional params (the texture
+                # ones) that a narrowly-typed splat cannot satisfy. The dict
+                # really is heterogeneous attrs — the annotation says so, rather
+                # than widening a signature to suit an inference artefact.
+                **(
+                    cast(Dict[str, Any], {"extend_to_all": extend_to_all})
+                    if extend_to_all
+                    else {}
+                ),
                 _skip_scene_bounds=True,
             )
             level_metas.append(level_meta)
@@ -1360,6 +1509,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             "normal_dims",
             "has_colors",
             "has_scalars",
+            # Both always False on this route — `texture=` is refused with
+            # `additive_lod=` (the image would be stored once per reveal shell)
+            # and `uvs=` is refused without a texture. They are carried anyway,
+            # because the ratchet this list exists for compares the parent's key
+            # SET against a flat write's: a descriptive attr the flat path stamps
+            # and the parent omits is exactly the class of bug the viewer's
+            # fixed-attribute-set rule turns from invisible into on-screen.
+            "has_uvs",
+            "has_texture",
             "shading",
             "double_sided",
             "ordering",
@@ -1703,6 +1861,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Finalize the Zarr store with metadata consolidation."""
         if self._is_finalized:
             return
+        self._check_archive_can_finalize()
 
         try:
             # A prior aborted attempt may have marked the store incomplete; a
@@ -1797,6 +1956,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Close the store again
             zarr_close(store)
 
+            self._publish_archive()
+
         except BaseException as e:
             # ANY failure (marker clearing, hover injection, or a finalize
             # phase) leaves the store half-finalized; mark it so
@@ -1817,6 +1978,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 pass
             # Preserve the historical wrapping for ordinary Exceptions, but let
             # a KeyboardInterrupt / SystemExit propagate unchanged.
+            self._discard_failed_archive_staging()
             if isinstance(e, Exception):
                 raise ValueError(f"Could not finalize Zarr store: {e}") from e
             raise
@@ -1826,8 +1988,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # which would stamp `incomplete` on a complete store that a repeat
         # finalize() (early return) could never un-mark.
         self._is_finalized = True
+        self._cleanup_archive_staging()
         try:
-            aprint(f"✅ Zarr store finalized at {self._store_path}")
+            aprint(f"✅ Zarr store finalized at {self.store_path}")
         except Exception:
             # Purely informational — a broken stdout (e.g. BrokenPipeError)
             # must not fail an already-complete finalization. A
@@ -1841,5 +2004,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     @property
     def store_path(self) -> str:
-        """Get the path to the Zarr store."""
+        """Get the live directory store, or the finalized archive path."""
+        if self._archive_path is not None and self._is_finalized:
+            return str(self._archive_path)
         return str(self._store_path)
+
+    @property
+    def final_store_path(self) -> str:
+        """Get the directory store or archive path produced by finalization."""
+        return str(self._archive_path or self._store_path)

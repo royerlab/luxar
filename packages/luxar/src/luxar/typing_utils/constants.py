@@ -182,6 +182,24 @@ MAX_POINTS_WARNING: Final[int] = 100_000_000  # 100M points
 # of. If you change one, change the other; a viewer test pins that side.
 MAX_MESH_VERTICES: Final[int] = 2**27  # 134,217,728 — pick vote-key stride
 
+# Per-node ceiling, in bytes, on what a mesh node may declare. The viewer's
+# whole-node mesh loader refuses a node over this before fetching a single chunk,
+# so a store above it does not render — it fails with a LoaderError.
+#
+# This is the write-time twin of that gate, and the twin is DELIBERATELY WEAKER:
+# see validate_mesh_decode_budget for exactly which terms it charges and why it
+# must under-count rather than over-count. The viewer's number is the authority;
+# this is here so `add_mesh` can refuse the cases that provably exceed it.
+#
+# MIRROR: MESH_DECODE_BUDGET_BYTES in
+# packages/luxar-viewer/src/config/constants.ts must hold this value.
+MESH_DECODE_BUDGET_BYTES: Final[int] = 512 * 1024 * 1024  # 536,870,912
+
+# Every decoder-routed array materializes as float32 in the viewer, so the
+# loader charges 4 bytes per LOGICAL value regardless of the stored dtype.
+# MIRROR: DECODED_BYTES_PER_VALUE in packages/luxar-viewer/src/data/mesh/preflight.ts
+MESH_DECODED_BYTES_PER_VALUE: Final[int] = 4
+
 # Compression constants
 COMPRESSION_LEVEL_MIN: Final[int] = 0  # No compression
 COMPRESSION_LEVEL_DEFAULT: Final[int] = 3

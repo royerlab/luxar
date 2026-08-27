@@ -23,6 +23,7 @@
 import type {
   LoaderMetrics,
   LoaderMonitor,
+  LoaderType,
   MonitorEvent,
   MonitorEventListener,
   QueryInfo,
@@ -37,10 +38,13 @@ export class ProgressiveMonitorAdapter {
    * @param getLoaders live accessor for the inner per-LOD loaders (a getter so
    *   it reflects post-`dispose()` clearing, where the array is emptied).
    * @param path the parent node path reported as this aggregate's identity.
+   * @param type this node's loader type, reported when the inner array is empty
+   *   (post-dispose) and there is nothing left to read it from.
    */
   constructor(
     private readonly getLoaders: () => LoaderMonitor[],
-    private readonly path: string
+    private readonly path: string,
+    private readonly type: LoaderType
   ) {}
 
   addEventListener(listener: MonitorEventListener): void {
@@ -71,7 +75,8 @@ export class ProgressiveMonitorAdapter {
   getMetrics(): LoaderMetrics {
     return aggregateLoaderMetrics(
       this.getLoaders().map((loader) => loader.getMetrics()),
-      this.path
+      this.path,
+      this.type
     );
   }
 }

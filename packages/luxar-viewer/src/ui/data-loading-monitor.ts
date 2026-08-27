@@ -40,6 +40,8 @@ import { PollingLoop } from './data-loading-monitor/polling-loop';
 import { MonitorProviderRegistry } from './data-loading-monitor/providers';
 import { SceneGraphModel } from './data-loading-monitor/scene-graph-model';
 import { updateSceneGraphBadges } from './data-loading-monitor/tabs/scene-graph-badges';
+import { compactTooltip, presentHeadlineCounts } from './data-loading-monitor/headline-counts';
+import { escapeHtml } from '../utils/escape-html';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { notifier } from '../utils/cross-layer/notifier';
@@ -482,6 +484,10 @@ export class DataLoadingMonitor {
     this.sceneGraphModel.updateVisibleCount(type, count);
   }
 
+  public updateDroppedElementCount(count: number): void {
+    this.sceneGraphModel.updateDroppedElementCount(count);
+  }
+
   /**
    * Per-node visible counts after nD slicing, keyed by scene-graph path.
    * Pushed by the SceneLoader's visible-counts walk (only rendered meshes
@@ -832,37 +838,24 @@ export class DataLoadingMonitor {
 
   /**
    * Build the compact-view element summary. Shows one count per geometry
-   * type actually present in the scene (points / lines / gsplats), using the
-   * same presence test as the overview tab (`updateOverviewTabValues`) so a
-   * lines- or gsplats-only dataset no longer mislabels its elements as
-   * "points". Falls back to a points entry when nothing has loaded yet.
+   * type actually present in the scene, from the same shared headline table
+   * the Overview tab's hero cards use (`headline-counts.ts`) — so the badge
+   * can't disagree with the expanded panel about which types exist, and a
+   * lines-, gsplats- or mesh-only dataset no longer mislabels its elements
+   * as "points". Falls back to a points entry when nothing has loaded yet.
    */
   private buildCompactGeomSummary(stats: GlobalStats): string {
-    const hasPoints = stats.datasetSize > 0 || stats.visiblePoints > 0;
-    const hasLines = stats.datasetSegments > 0 || stats.visibleSegments > 0;
-    const hasGSplats = stats.datasetSplats > 0 || stats.visibleSplats > 0;
+    const entry = (geom: string, count: number, noun: string, unit: string): string =>
+      `<span data-geom="${geom}" title="${escapeHtml(compactTooltip(noun))}">${templateFormatNumber(count)} ${unit}</span>`;
 
-    const entries: string[] = [];
-    if (hasPoints) {
-      entries.push(
-        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
-      );
-    }
-    if (hasLines) {
-      entries.push(
-        `<span data-geom="lines" title="Line segments currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visibleSegments)} lines</span>`
-      );
-    }
-    if (hasGSplats) {
-      entries.push(
-        `<span data-geom="splats" title="Gaussian splats currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visibleSplats)} splats</span>`
-      );
-    }
+    // `data-geom` keys off the geometry TYPE, not the unit noun, so the
+    // attribute stays stable if a unit label is ever reworded.
+    const entries = presentHeadlineCounts(stats).map((c) =>
+      entry(c.type, c.visible, c.noun, c.unit)
+    );
     // Nothing loaded yet → show a points placeholder so the row isn't empty.
     if (entries.length === 0) {
-      entries.push(
-        `<span data-geom="points" title="Points currently on screen (inside the active nD slice). Expand the monitor for totals and per-layer detail">${templateFormatNumber(stats.visiblePoints)} pts</span>`
-      );
+      return entry('points', stats.visiblePoints, 'points', 'pts');
     }
     return entries.join('');
   }
@@ -935,7 +928,7 @@ export class DataLoadingMonitor {
           ${this.buildCompactGeomSummary(stats)}
         </span>
 
-        <span class="luxar-monitor-compact__memory" title="CPU memory currently held by loaded geometry data, across all layers (points + lines + gsplats)">
+        <span class="luxar-monitor-compact__memory" title="CPU memory currently held by loaded geometry data, across all layers (points + lines + gsplats + mesh)">
           ${templateFormatBytes(stats.totalMemory)}
         </span>
 

@@ -25,12 +25,23 @@ function metrics(type: LoaderType, over: Partial<LoaderMetrics> = {}): LoaderMet
 }
 
 describe('aggregateLoaderMetrics', () => {
-  it('returns a zeroed point-spatial-index snapshot for an empty array', () => {
-    const out = aggregateLoaderMetrics([], '/node');
+  it('returns a zeroed snapshot of the CALLER-SUPPLIED type for an empty array', () => {
+    const out = aggregateLoaderMetrics([], '/node', 'point-spatial-index');
     expect(out.path).toBe('/node');
     expect(out.type).toBe('point-spatial-index');
     expect(out.queries).toBe(0);
     expect(out.elementsLoaded).toBe(0);
+  });
+
+  it('does not fall back to points for a non-points node with no levels left', () => {
+    // A disposed ladder has cleared its level loaders, so `emptyType` is the
+    // only thing left to name the node by. This used to be a hard-coded
+    // 'point-spatial-index', which relabelled a disposed mesh/lines/gsplats
+    // node as a points loader in the monitor's loader list.
+    expect(aggregateLoaderMetrics([], '/surface', 'mesh-whole-node').type).toBe('mesh-whole-node');
+    expect(aggregateLoaderMetrics([], '/curves', 'lines-spatial-index').type).toBe(
+      'lines-spatial-index'
+    );
   });
 
   it('sums counters and reports the supplied path + inner type', () => {
@@ -54,7 +65,8 @@ describe('aggregateLoaderMetrics', () => {
           memoryUsed: 25,
         }),
       ],
-      '/points'
+      '/points',
+      'point-spatial-index'
     );
     expect(out.type).toBe('point-spatial-index');
     expect(out.path).toBe('/points');
@@ -74,7 +86,8 @@ describe('aggregateLoaderMetrics', () => {
         metrics('gsplats-spatial-index', { queries: 1, avgQueryTime: 10 }),
         metrics('gsplats-spatial-index', { queries: 3, avgQueryTime: 30 }),
       ],
-      '/g'
+      '/g',
+      'point-spatial-index'
     );
     expect(out.queries).toBe(4);
     expect(out.avgQueryTime).toBeCloseTo(25);
@@ -83,7 +96,8 @@ describe('aggregateLoaderMetrics', () => {
   it('avgQueryTime is 0 when there were no queries', () => {
     const out = aggregateLoaderMetrics(
       [metrics('point-spatial-index'), metrics('point-spatial-index')],
-      '/p'
+      '/p',
+      'point-spatial-index'
     );
     expect(out.avgQueryTime).toBe(0);
   });
@@ -95,7 +109,8 @@ describe('aggregateLoaderMetrics', () => {
         metrics('gsplats-spatial-index', { loads: 1, avgLoadTime: 20 }),
         metrics('gsplats-spatial-index', { loads: 3, avgLoadTime: 60 }),
       ],
-      '/g'
+      '/g',
+      'point-spatial-index'
     );
     expect(out.loads).toBe(4);
     expect(out.avgLoadTime).toBeCloseTo(50);
@@ -107,7 +122,8 @@ describe('aggregateLoaderMetrics', () => {
         metrics('point-spatial-index', { avgLoadTime: 42 }),
         metrics('point-spatial-index', { avgLoadTime: 99 }),
       ],
-      '/p'
+      '/p',
+      'point-spatial-index'
     );
     expect(out.loads).toBe(0);
     expect(out.avgLoadTime).toBe(0);
@@ -144,7 +160,8 @@ describe('aggregateLoaderMetrics', () => {
           },
         }),
       ],
-      '/p'
+      '/p',
+      'point-spatial-index'
     );
     expect(out.spatialIndex).toBeDefined();
     expect(out.spatialIndex!.occupiedCells).toBe(16);
@@ -174,7 +191,8 @@ describe('aggregateLoaderMetrics', () => {
         // No spatialIndex, but 4 queries of its own.
         metrics('point-spatial-index', { queries: 4 }),
       ],
-      '/p'
+      '/p',
+      'point-spatial-index'
     );
     expect(out.queries).toBe(7);
     expect(out.spatialIndex!.avgCellsPerQuery).toBeCloseTo(4);
@@ -192,7 +210,8 @@ describe('aggregateLoaderMetrics', () => {
           optimization: { wasm: { loaded: true, queriesAccelerated: 999 } },
         }),
       ],
-      '/g'
+      '/g',
+      'point-spatial-index'
     );
     // The first REPORTING loader wins; the third's differing value is ignored.
     expect(out.optimization?.wasm?.queriesAccelerated).toBe(5);

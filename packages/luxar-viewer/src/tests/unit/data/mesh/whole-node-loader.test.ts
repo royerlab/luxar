@@ -246,6 +246,8 @@ function meshAttrs(overrides: Partial<MeshMetadata> = {}): MeshMetadata {
     has_normals: false,
     has_colors: false,
     has_scalars: false,
+    has_uvs: false,
+    has_texture: false,
     shading: 'flat',
     double_sided: true,
     ordering: 'none',
@@ -1352,5 +1354,180 @@ describe('MeshWholeNodeLoader — an ALREADY-aborted update', () => {
     // The failed fetch must not have latched: a later un-aborted update loads fine.
     const data = await loader.updateView(VIEW);
     expect(data.vertexCount).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The LoaderMonitor surface
+//
+// A mesh node used to reach `connectLoaderToMonitor` and fail its duck-typed
+// four-method check silently, so the data-loading monitor showed mesh in its
+// scene-graph tree and nowhere else. These assert the shape the check needs AND
+// that what it reports is a whole-node loader's honest telemetry rather than a
+// spatial-index loader's shape filled with zeros.
+// ---------------------------------------------------------------------------
+
+describe('MeshWholeNodeLoader — monitor telemetry', () => {
+  it('carries the whole four-method LoaderMonitor shape', () => {
+    // The exact predicate `connect-loader-to-monitor.ts` applies. Asserted as a
+    // set rather than per method because the check is all-or-nothing: three of
+    // four leaves the loader silently unwired, which is the bug being fixed.
+    const loader = makeLoader(
+      buildStore(meshAttrs(), tetArrays()),
+      meshAttrs()
+    ) as unknown as Record<string, unknown>;
+    for (const method of [
+      'addEventListener',
+      'removeEventListener',
+      'getMetrics',
+      'getActiveQueries',
+    ]) {
+      expect(typeof loader[method]).toBe('function');
+    }
+  });
+
+  it('reports zero loads and no bytes before anything is fetched', () => {
+    const loader = makeLoader(buildStore(meshAttrs(), tetArrays()), meshAttrs());
+    const before = loader.getMetrics();
+    expect(before.type).toBe('mesh-whole-node');
+    expect(before.path).toBe('/mesh');
+    expect(before.loads).toBe(0);
+    expect(before.bytesLoaded).toBe(0);
+    expect(before.memoryUsed).toBe(0);
+    // No spatial index here, so nothing to be in flight either.
+    expect(loader.getActiveQueries()).toEqual([]);
+  });
+
+  it('counts the ONE fetch, its triangles and its decoded bytes', async () => {
+    const attrs = meshAttrs({
+      has_normals: true,
+      normal_dims: [0, 1, 2],
+      has_scalars: true,
+      has_uvs: true,
+      has_texture: true,
+      texture_encoding: 'raw',
+      texture_width: 2,
+      texture_height: 1,
+      texture_channels: 4,
+      texture_color_space: 'srgb',
+    });
+    const store = buildStore(
+      attrs,
+      tetArrays({
+        normals: { shape: [4, 3], dtype: '<f4', data: new Array(12).fill(0.5) },
+        scalars: { shape: [4], dtype: '<f4', data: [1, 2, 3, 4] },
+        uvs: { shape: [4, 2], dtype: '<f4', data: [0, 0, 1, 0, 0, 1, 1, 1] },
+        texture: { shape: [1, 2, 4], dtype: '|u1', data: [1, 2, 3, 4, 5, 6, 7, 8] },
+      })
+    );
+    const loader = makeLoader(store, attrs);
+    await loader.loadMesh(VIEW);
+
+    const m = loader.getMetrics();
+    expect(m.loads).toBe(1);
+    // `elementsLoaded` counts the DRAWN PRIMITIVE: 4 triangles, not 4 vertices
+    // (which would be the same number here — hence a 4x3-face tetrahedron read
+    // as 4 faces / 4 vertices is a poor witness; the byte assertion below is
+    // what actually distinguishes the arrays).
+    expect(m.elementsLoaded).toBe(4);
+    // Decoded bytes: 12 float32 vertices + 12 uint32 faces + 12 float32
+    // normals + 4 float32 scalars + 8 float32 UVs + 8 uint8 texels
+    // = 48 + 48 + 48 + 16 + 32 + 8.
+    expect(m.bytesLoaded).toBe(200);
+    // Resident memory adds the projection scratch the loader keeps for the
+    // node's life: position (4*3 float32 = 48) + mask (4 uint8) + faceScratch
+    // (4*3 uint32 = 48).
+    expect(m.memoryUsed).toBe(200 + 48 + 4 + 48);
+    // No spatial query ran, so the panel's QUERY SPEED average gets no sample.
+    expect(m.queries).toBe(0);
+    expect(m.avgQueryTime).toBe(0);
+    expect(m.spatialIndex).toBeUndefined();
+  });
+
+  it('does not re-count a cached re-serve', async () => {
+    // The whole-node design's central claim, seen from the telemetry side: a
+    // slice scrub re-serves the resident mesh, so `loads` must stay at 1 rather
+    // than climbing once per view change.
+    const loader = makeLoader(buildStore(meshAttrs(), tetArrays()), meshAttrs());
+    await loader.loadMesh(VIEW);
+    await loader.updateView(VIEW);
+    await loader.updateView(VIEW);
+    expect(loader.getMetrics().loads).toBe(1);
+  });
+
+  it('emits one load event with the same numbers it recorded', async () => {
+    const loader = makeLoader(buildStore(meshAttrs(), tetArrays()), meshAttrs());
+    const events: { type: string; data: { elements?: number; memory?: number } }[] = [];
+    loader.addEventListener((e) => events.push(e));
+    await loader.loadMesh(VIEW);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('load');
+    expect(events[0].data.elements).toBe(4);
+    // 48 vertex bytes + 48 face bytes; the event's `memory` field is the load's
+    // bytes (what the monitor's bandwidth window integrates), NOT the resident
+    // footprint — which is why it excludes the projection scratch above.
+    expect(events[0].data.memory).toBe(96);
+    expect(loader.getMetrics().bytesLoaded).toBe(96);
+  });
+
+  it('records a real failure as an error, and reports it', async () => {
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.rejectKeyContaining = { needle: 'faces/0.0', error: new Error('boom') };
+    const loader = makeLoader(store, meshAttrs());
+    const events: { type: string }[] = [];
+    loader.addEventListener((e) => events.push(e));
+
+    await expect(loader.loadMesh(VIEW)).rejects.toThrow();
+    expect(loader.getMetrics().errors).toBe(1);
+    expect(events.map((e) => e.type)).toEqual(['error']);
+  });
+
+  it('does NOT record a deliberate abort as an error', async () => {
+    // A dataset switch aborts every in-flight read. Counting those would fire
+    // the advisor's "High Error Rate" recommendation every time the user
+    // switches scenes — the same exclusion the sibling loaders make.
+    const loader = makeLoader(buildStore(meshAttrs(), tetArrays()), meshAttrs());
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(loader.updateView(VIEW, undefined, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(loader.getMetrics().errors).toBe(0);
+  });
+
+  it('takes its visible-element count from the commit', async () => {
+    // Pushed in rather than read out: a mesh is resident in full, so the
+    // loader cannot know which faces the current slab indexes.
+    const loader = makeLoader(buildStore(meshAttrs(), tetArrays()), meshAttrs());
+    await loader.loadMesh(VIEW);
+    expect(loader.getMetrics().visibleElements).toBe(0);
+    loader.recordVisibleElements(3);
+    expect(loader.getMetrics().visibleElements).toBe(3);
+  });
+
+  it('drops its LIVE figures on dispose but keeps the session counters', async () => {
+    const loader = makeLoader(buildStore(meshAttrs(), tetArrays()), meshAttrs());
+    await loader.loadMesh(VIEW);
+    loader.recordVisibleElements(4);
+    loader.dispose();
+
+    const m = loader.getMetrics();
+    // The payload is gone, so claiming it as resident memory would leave the
+    // panel reporting memory for a torn-down node.
+    expect(m.memoryUsed).toBe(0);
+    expect(m.visibleElements).toBe(0);
+    // History stays: those bytes really were fetched this session.
+    expect(m.loads).toBe(1);
+    expect(m.bytesLoaded).toBe(96);
+  });
+
+  it('hands out snapshots, not its live record', async () => {
+    const loader = makeLoader(buildStore(meshAttrs(), tetArrays()), meshAttrs());
+    await loader.loadMesh(VIEW);
+    const snapshot = loader.getMetrics();
+    loader.recordVisibleElements(4);
+    expect(snapshot.visibleElements).toBe(0);
   });
 });

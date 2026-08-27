@@ -117,9 +117,16 @@ export async function loadAndStage(
     // extended mesh would otherwise commit on first load but cull on the first
     // slice move, when this sweep re-projects it.
     extend_to_all: meshAttrs?.extend_to_all,
+    slab_tolerance: meshAttrs?.slab_tolerance,
   });
   markPathHealthy();
-  session.setMetadata({ info: `${data.faceCount} faces` });
+  // The typed per-type counter, not a free-text `info` string: it gets the same
+  // formatted tag as the points/lines/gsplats rows AND it SUMS when several mesh
+  // layers merge into one aggregated row (a string is last-write, so the row used
+  // to report whichever mesh finished last). Loaded faces, matching what the
+  // siblings report (loaded points / segments / splats) — on a reveal ladder that
+  // is the revealed prefix's total.
+  session.setMetadata({ triangles: data.faceCount });
   // No predictive prefetch: a mesh is whole-node resident, so there is no
   // chunk subset to warm — the whole payload is already in hand.
   return staged;

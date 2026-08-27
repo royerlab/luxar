@@ -35,6 +35,15 @@ if TYPE_CHECKING:
     from ..scene import Scene
 
 TNode = TypeVar("TNode")
+_DEFAULT_NORMALIZE_AMPLITUDES = object()
+
+
+def _resolve_normalize_amplitudes_default(
+    parent: Node, normalize_amplitudes: Any
+) -> Any:
+    if normalize_amplitudes is not _DEFAULT_NORMALIZE_AMPLITUDES:
+        return normalize_amplitudes
+    return parent.attrs.get("kind") not in ("lod", "partition")
 
 
 class Group(Node):
@@ -409,7 +418,14 @@ class Group(Node):
         normal_dims: Optional[Sequence[int]] = None,
         colors: Optional[Any] = None,
         scalars: Optional[Any] = None,
+        uvs: Optional["np.ndarray"] = None,
+        texture: Optional[Any] = None,
         *,
+        texture_encoding: str = "raw",
+        texture_width: Optional[int] = None,
+        texture_height: Optional[int] = None,
+        texture_channels: Optional[int] = None,
+        texture_color_space: str = "srgb",
         shading: Optional[str] = None,
         double_sided: bool = True,
         labels: Optional[Sequence[str]] = None,
@@ -491,11 +507,12 @@ class Group(Node):
                 or None. A 4th component is per-vertex opacity.
             scalars: Per-vertex scalars ``(V,)`` or a single value for colormap
                 lookup. Requires a ``colormap`` attr.
-            shading: ``"smooth"`` or ``"flat"``. Defaults to ``"smooth"`` when
-                ``normals`` are given, else ``"flat"``. An explicit value is
-                stored as given — ``"flat"`` renders faceted even with normals
-                present, and ``"smooth"`` without normals falls back to derived
-                flat normals at render time.
+            shading: ``"smooth"``, ``"flat"``, or unlit ``"none"``. Defaults to
+                ``"smooth"`` when ``normals`` are given, else ``"flat"``. An
+                explicit value is stored as given — ``"flat"`` renders faceted
+                even with normals present, ``"smooth"`` without normals falls
+                back to derived flat normals at render time, and ``"none"``
+                computes no lighting normal.
             double_sided: Whether back faces render (default ``True``).
             labels: Optional per-vertex strings for hover tooltips.
             image_labels: Optional per-vertex images for hover thumbnails. Not
@@ -517,7 +534,11 @@ class Group(Node):
             extend_to_all: Dimension name(s) across which this mesh stays visible.
             dim_order: Names of the dimensions the ``vertices`` columns are in,
                 for remapping onto the scene's dimension order. ``faces`` is index
-                data addressing vertex rows and is never reordered.
+                data addressing vertex rows and is never reordered. An
+                orientation-reversing order flips face handedness relative to the
+                scene frame; the writer warns but does not repair it. Reverse the
+                corner order with ``faces[:, [0, 2, 1]]`` when needed; see the mesh
+                spec §3.7.
             fill: Fill values for scene dimensions absent from ``dim_order``.
             substitutive_lod: ``True`` / ``{...}`` to write a ``kind=lod`` group of
                 progressively DECIMATED copies of the surface (see above).
@@ -533,7 +554,18 @@ class Group(Node):
                 ``transform``, ``nd_transform``, ``blending_mode``, and the
                 mesh-only appearance controls ``ambient``, ``specular``,
                 ``alpha_cutoff`` (each in ``[0, 1]``), ``shade_exponent``, and
-                ``shininess`` (both strictly positive and finite). Note
+                ``shininess`` (both strictly positive and finite). Also mesh-only,
+                and a LOADING knob rather than an appearance one:
+                ``slab_tolerance`` (strictly positive and finite, default ``1.0``)
+                — the half-width, IN CELLS, of the nD membership slab a
+                *continuous* hidden dimension is culled against: a vertex is
+                inside when it is within ``slab_tolerance`` cells of the slice.
+                A mesh renders a triangle only when all three of its vertices
+                fall inside that slab, so on a continuous hidden axis it shows
+                "the surface near this slice" rather than a planar cut, and this
+                is the only control over how thick "near" is. It has no effect
+                on a discrete hidden axis (time, channel), which uses a half-cell
+                membership rule instead. Note
                 ``volumetric`` blending is rejected — it has no meaning for an
                 opaque surface. An explicit ``None`` for ``colormap`` or
                 ``coverage_fraction`` means "absent" — identical to omitting the
@@ -561,6 +593,13 @@ class Group(Node):
                 normal_dims=normal_dims,
                 colors=colors,
                 scalars=scalars,
+                uvs=uvs,
+                texture=texture,
+                texture_encoding=texture_encoding,
+                texture_width=texture_width,
+                texture_height=texture_height,
+                texture_channels=texture_channels,
+                texture_color_space=texture_color_space,
                 shading=shading,
                 double_sided=double_sided,
                 labels=labels,
@@ -607,7 +646,9 @@ class Group(Node):
             name: Name of the gsplats node
             centers: Array of shape (N, D) for splat centers
             amplitudes: (N,) array or scalar for intensities
-            cholesky_factors: (N, k) packed Cholesky factors, k=D*(D+1)/2
+            cholesky_factors: (N, k) packed lower-triangular factor L of the
+                covariance (Σ = L·Lᵀ), k=D*(D+1)/2. The diagonal is scale-like:
+                isotropic std σ uses [σ, 0, σ, 0, 0, σ], not 1/sigma.
             colors: Optional (N, 3) RGB or (N, 4) RGBA array (the alpha
                 column is per-splat opacity in [0, 1]), RGB tuple, or None
             labels: Optional list of strings, one per splat. Used for hover tooltips.
@@ -696,6 +737,7 @@ class Group(Node):
         fill_sigma: Optional[Dict[str, float]] = None,
         lod_group: Any = None,
         additive_lod: Any = None,
+        normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats from a GSplatData object.
@@ -764,6 +806,26 @@ class Group(Node):
             additive_lod: Additive-axis control, uniform across substitutive
                 levels. Same value vocabulary as ``lod_group``; ``dict(...)``
                 routes to :func:`make_additive_lod`.
+            normalize_amplitudes: Scale amplitudes so a robust upper
+                reference (the 99.9th percentile) lands at 1.0, applied as ONE
+                factor across every substitutive level and additive rung.
+                ``True`` / ``"auto"`` (the default outside a ``kind=lod`` or
+                ``kind=partition`` group) acts only when that reference exceeds
+                1.0, so data already in range is untouched. Children inserted
+                into those specialized groups default to ``False`` because
+                their exposure must be shared across siblings; pass ``True``
+                explicitly to override that rule. A positive number sets an
+                explicit target. The factor used is recorded as
+                ``amplitude_normalization_factor``.
+
+                On by default for standalone insertion because raw fitted
+                amplitudes cannot be corrected at display time. A fit stores
+                source units (detector counts),
+                and while the colormap window feeds only the LUT index —
+                clamped to ``[0, 1]``, so it picks a colour — emitted radiance
+                and volumetric optical depth are both LINEAR in the raw stored
+                amplitude and nothing windows them. See
+                :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 this method supplies from ``result``, which are refused; see the
@@ -788,6 +850,9 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_data import add_gsplats_from_data_impl
 
+        normalize_amplitudes = _resolve_normalize_amplitudes_default(
+            parent or self, normalize_amplitudes
+        )
         return self._transactional_add(
             name,
             parent,
@@ -802,6 +867,7 @@ class Group(Node):
                 fill_sigma=fill_sigma,
                 lod_group=lod_group,
                 additive_lod=additive_lod,
+                normalize_amplitudes=normalize_amplitudes,
                 **attrs,
             ),
         )
@@ -815,6 +881,7 @@ class Group(Node):
         dim_order: Optional[List[str]] = None,
         fill: Optional[Dict[str, float]] = None,
         fill_sigma: Optional[Dict[str, float]] = None,
+        normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
         **attrs: Any,
     ) -> Union[GSplats, "Group"]:
         """Add Gaussian splats by loading from a .gsplats.zarr file.
@@ -852,6 +919,26 @@ class Group(Node):
             dim_order: Map data columns to scene dimensions by name
             fill: Fixed coordinate values for unmapped dimensions
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
+            normalize_amplitudes: Scale amplitudes so a robust upper
+                reference (the 99.9th percentile) lands at 1.0, applied as ONE
+                factor across every substitutive level and additive rung.
+                ``True`` / ``"auto"`` (the default outside a ``kind=lod`` or
+                ``kind=partition`` group) acts only when that reference exceeds
+                1.0, so data already in range is untouched. Children inserted
+                into those specialized groups default to ``False`` because
+                their exposure must be shared across siblings; pass ``True``
+                explicitly to override that rule. A positive number sets an
+                explicit target. The factor used is recorded as
+                ``amplitude_normalization_factor``.
+
+                On by default for standalone insertion because raw fitted
+                amplitudes cannot be corrected at display time. A fit stores
+                source units (detector counts),
+                and while the colormap window feeds only the LUT index —
+                clamped to ``[0, 1]``, so it picks a colour — emitted radiance
+                and volumetric optical depth are both LINEAR in the raw stored
+                amplitude and nothing windows them. See
+                :mod:`luxar.core.group.gsplats_pipeline.amplitude_norm`.
             **attrs: Additional node attributes — the :meth:`add_gsplats`
                 vocabulary (including ``absorption``) MINUS the four channels
                 the file supplies, which are refused; see the rules above. On a
@@ -865,6 +952,9 @@ class Group(Node):
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 
+        normalize_amplitudes = _resolve_normalize_amplitudes_default(
+            parent or self, normalize_amplitudes
+        )
         return self._transactional_add(
             name,
             parent,
@@ -877,6 +967,7 @@ class Group(Node):
                 dim_order=dim_order,
                 fill=fill,
                 fill_sigma=fill_sigma,
+                normalize_amplitudes=normalize_amplitudes,
                 **attrs,
             ),
         )
@@ -900,6 +991,7 @@ class Group(Node):
         opacity: Optional[float] = None,
         absorption: Optional[float] = None,
         blending_mode: Optional[str] = None,
+        normalize_amplitudes: Any = _DEFAULT_NORMALIZE_AMPLITUDES,
         **fit_kwargs: Any,
     ) -> Union[GSplats, "Group"]:
         """Fit Gaussian splats to a volume and add them in one step.
@@ -926,10 +1018,21 @@ class Group(Node):
                 "volumetric" blending mode; kappa=0 renders like additive
             blending_mode: Blending mode ("normal", "additive", "max",
                 "opaque", "luminous", "volumetric")
+            normalize_amplitudes: Scale amplitudes so a robust upper
+                reference (the 99.9th percentile) lands at 1.0. The default is
+                enabled outside a ``kind=lod`` or ``kind=partition`` group and
+                disabled for children inserted directly into those groups so
+                sibling exposure stays shared. Pass ``True`` to override that
+                specialized-group default, ``False`` to preserve raw units, or
+                a positive number to set an explicit target. The factor used is
+                recorded as ``amplitude_normalization_factor``.
             **fit_kwargs: Extra kwargs for fitting function
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_volume_impl
 
+        normalize_amplitudes = _resolve_normalize_amplitudes_default(
+            parent or self, normalize_amplitudes
+        )
         return self._transactional_add(
             name,
             parent,
@@ -949,6 +1052,7 @@ class Group(Node):
                 dim_order=dim_order,
                 fill=fill,
                 fill_sigma=fill_sigma,
+                normalize_amplitudes=normalize_amplitudes,
                 opacity=opacity,
                 absorption=absorption,
                 blending_mode=blending_mode,

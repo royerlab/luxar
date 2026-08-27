@@ -74,12 +74,34 @@ describe('DimensionSliders - keyboard selection indicator', () => {
 
   it('shows the selected navigable key and dimension name in the panel header', () => {
     const sliders = buildSliders();
-    const status = document.querySelector('.luxar-dimension-sliders__status');
+    const status = document.querySelector<HTMLElement>('.luxar-dimension-sliders__status');
 
-    expect(status?.textContent).toContain('[/]: 1 · Frame');
+    expect(status?.textContent).toBe('[/]: 1 · Frame · Display: X, Y, Z');
+    expect(status?.title).toBe(status?.textContent);
+    expect(status?.getAttribute('aria-live')).toBe('polite');
 
     sliders.setSelectedDimension(1);
-    expect(status?.textContent).toContain('[/]: 2 · Channel');
+    expect(status?.textContent).toBe('[/]: 2 · Channel · Display: X, Y, Z');
+    expect(status?.title).toBe(status?.textContent);
+    sliders.dispose();
+  });
+
+  it('does not rewrite an unchanged live-region status during dimension updates', async () => {
+    const sliders = buildSliders();
+    const status = document.querySelector<HTMLElement>('.luxar-dimension-sliders__status')!;
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(status, {
+      attributes: true,
+      attributeFilter: ['title'],
+      childList: true,
+    });
+
+    sliders.update();
+    await Promise.resolve();
+
+    expect(mutations).toEqual([]);
+    observer.disconnect();
     sliders.dispose();
   });
 
@@ -90,6 +112,81 @@ describe('DimensionSliders - keyboard selection indicator', () => {
     sliders.setSelectedDimension(9);
     expect(status?.textContent).toContain('[/]: unavailable');
     expect(status?.textContent).not.toContain('[/]: 10 · Channel');
+    sliders.dispose();
+  });
+
+  // A slider row's name is now CSS-ellipsised once it would claim the value's
+  // reserved width, so the full text has to survive somewhere. jsdom does no
+  // layout and therefore cannot see the truncation itself — what it CAN pin is
+  // that nothing is left unrecoverable, which is the half that regressed when
+  // the ellipsis was added.
+  it('gives every slider name a tooltip carrying its full text', () => {
+    const sliders = buildSliders();
+    const names = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-dimension-slider__name')
+    );
+
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      expect(name.title).toBe(name.textContent);
+    }
+    sliders.dispose();
+  });
+
+  /**
+   * The tooltip text and the `--with-tooltip` dotted underline are two
+   * decisions off the SAME fact, so they are asserted together: the underline
+   * advertises that hovering reveals something new, and must not appear on a
+   * fallback tooltip that merely repeats the visible name.
+   *
+   * The empty-string row is the one that matters. Compilers write
+   * `description: ''` rather than omitting the key — the shipped
+   * `dimension_sliders_5d_example` does — and reading it with `??` (which falls
+   * through on null/undefined only) put `title=""` on every row of the real
+   * viewer: the class ternary saw no description, the tooltip used it anyway,
+   * and the full name became unrecoverable precisely where the CSS had begun
+   * truncating it. Nothing else in the suite covers a falsy-but-present
+   * description.
+   */
+  it.each([
+    { label: 'no description key', descriptionMetadata: {}, title: 'Frame', underlined: false },
+    {
+      label: 'an empty description',
+      descriptionMetadata: { description: '' },
+      title: 'Frame',
+      underlined: false,
+    },
+    {
+      label: 'an authored description',
+      descriptionMetadata: { description: 'Acquisition frame index' },
+      title: 'Acquisition frame index',
+      underlined: true,
+    },
+  ])('with $label the name reads title "$title"', ({ descriptionMetadata, title, underlined }) => {
+    const described: SimpleDims = {
+      ...dims,
+      metadata: dims.metadata!.map((meta, index) =>
+        index === 3 ? { ...meta, ...descriptionMetadata } : meta
+      ),
+    };
+    const sliders = new DimensionSliders({
+      container: document.getElementById('test-container')!,
+      dims: described,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 15],
+        [0, 2],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'Frame', 'Channel'],
+      selectedDimension: 0,
+    });
+
+    const frame = document.querySelector<HTMLElement>('.luxar-dimension-slider__name')!;
+    expect(frame.textContent).toBe('Frame');
+    expect(frame.title).toBe(title);
+    expect(frame.className.includes('luxar-dimension-slider__name--with-tooltip')).toBe(underlined);
     sliders.dispose();
   });
 });
@@ -339,6 +436,60 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
     const secondToggle = document.getElementById('luxar-dim-toggle-4')!;
     expect(secondToggle.textContent).toBe('On');
     expect(secondToggle.classList.contains('luxar-dimension-toggle--on')).toBe(true);
+
+    sliders.dispose();
+  });
+
+  it('keeps authored categorical labels unchanged when metadata also has units', () => {
+    const dims: SimpleDims = {
+      ndim: 5,
+      displayed: [0, 1, 2],
+      currentStep: [0, 0, 0, 1, 2],
+      metadata: [
+        { name: 'X', unit: '', scale: 1.0 },
+        { name: 'Y', unit: '', scale: 1.0 },
+        { name: 'Z', unit: '', scale: 1.0 },
+        { name: 'Phase', unit: 's', scale: 1.0, discrete: true, categories: ['0', '1'] },
+        {
+          name: 'Exposure',
+          unit: 'ms',
+          scale: 1.0,
+          discrete: true,
+          categories: ['0', '5', '10'],
+        },
+      ],
+    };
+
+    const sliders = new DimensionSliders({
+      container: document.getElementById('test-container')!,
+      dims,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 1],
+        [0, 2],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'Phase', 'Exposure'],
+      dimensionUnits: ['', '', '', 's', 'ms'],
+    });
+
+    const toggle = document.getElementById('luxar-dim-toggle-3')!;
+    expect(toggle.textContent).toBe('1');
+    expect(toggle.title).toContain('1');
+    expect(toggle.title).not.toContain('1 s');
+
+    const options = Array.from(
+      document.querySelectorAll<HTMLOptionElement>('#luxar-dim-dropdown-4 option')
+    );
+    expect(options.map((option) => option.textContent)).toEqual(['0', '5', '10']);
+    expect(options[2].title).toContain('10');
+    expect(options[2].title).not.toContain('10 ms');
+
+    const labels = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-dimension-dropdown__label')
+    );
+    expect(labels.map((label) => label.title)).toEqual(['Phase', 'Exposure']);
 
     sliders.dispose();
   });

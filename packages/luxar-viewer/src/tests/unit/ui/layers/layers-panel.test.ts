@@ -1188,6 +1188,68 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(rgbMat.updateOffset).toHaveBeenLastCalledWith(0);
   });
 
+  it('labels direct-colour and colormapped ranges with their mapping semantics', () => {
+    const stubMat = makeColormapRoutingStub();
+    const geometry = new THREE.BufferGeometry();
+    geometry.userData.hasScalars = true;
+    const mesh = new THREE.Mesh(geometry, stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: {
+            layer: true,
+            type: 'points',
+            has_scalars: true,
+            intensity: 2.4,
+            offset: 0,
+            scalar_data_range: [0.0001, 0.02],
+          },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const rangeLabel = container.querySelector('.luxar-range-slider__label') as HTMLElement;
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(1 / 2.4, 6);
+    expect(rangeLabel.textContent).toBe('Colour range');
+    expect(rangeLabel.title).toBe(
+      "Input RGB values in this range are mapped to the full output range. This controls colour gain and offset, not the layer's data extents."
+    );
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    )!;
+    cmSelect.value = 'viridis';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(0.02, 6);
+    expect(rangeLabel.textContent).toBe('Display range');
+    expect(rangeLabel.title).toBe(
+      'Scalar data values in this range are mapped across the colormap.'
+    );
+
+    cmSelect.value = '';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(rangeLabel.textContent).toBe('Colour range');
+    expect(rangeLabel.title).toContain("not the layer's data extents");
+  });
+
   it('switching between two active palettes keeps a user-adjusted scalar window', () => {
     // Re-defaulting the window is for the off↔on MODE flip only — the
     // rendered value is the same scalar on both sides of viridis → plasma,
@@ -1431,7 +1493,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
   function mountMeshLayer(
     container: HTMLElement,
     animationController: AnimationController,
-    blendingMode = 'opaque'
+    blendingMode = 'opaque',
+    attrs: Record<string, unknown> = {}
   ) {
     const calls = {
       ambient: vi.fn(),
@@ -1472,10 +1535,50 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     rootGroup.add(mesh);
 
     const panel = new LayersPanel(container, animationController);
-    panel.initFromScene(rootGroup, makeLayeredSceneGraph('mesh', { blending_mode: blendingMode }));
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('mesh', { blending_mode: blendingMode, ...attrs })
+    );
     panel.show();
     panel.layerState.select('/cloud', 'single');
     return { panel, calls };
+  }
+
+  function mountPartitionMeshLayer(shadings: Array<'flat' | 'none'>): LayersPanel {
+    const children = shadings.map((shading, index) => ({
+      name: `part_${index}`,
+      path: `/surface/part_${index}`,
+      type: 'mesh',
+      attrs: { type: 'mesh', shading, has_normals: true },
+      children: [],
+    }));
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'surface',
+          path: '/surface',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'mesh' },
+          children,
+        },
+      ],
+    } as unknown as SceneNode;
+    const rootGroup = new THREE.Group();
+    for (const child of children) {
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      mesh.name = child.path;
+      rootGroup.add(mesh);
+    }
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/surface', 'single');
+    return panel;
   }
 
   it('mesh shading sliders: shown for a mesh layer and hidden for every other type', () => {
@@ -1540,6 +1643,49 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     select.value = 'opaque';
     select.dispatchEvent(new Event('change', { bubbles: true }));
     expect(cutoff.style.display).not.toBe('none');
+  });
+
+  it('unlit mesh hides the four inert lighting controls but keeps Alpha cutoff', () => {
+    // `none` wins even when stored normals exist. The panel must use the same
+    // resolved shading rule as the material rather than treating normals as proof
+    // that the four lighting uniforms are active.
+    mountMeshLayer(container, animationController, 'opaque', {
+      shading: 'none',
+      has_normals: true,
+    });
+
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
+      expect(findControlGroup(container, label)!.style.display, `${label} on unlit mesh`).toBe(
+        'none'
+      );
+    }
+    expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
+  });
+
+  it('partitioned unlit mesh derives shading from its leaves', () => {
+    const panel = mountPartitionMeshLayer(['none']);
+
+    expect(panel.layerState.getLayer('/surface')!.shading).toBe('none');
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
+      expect(findControlGroup(container, label)!.style.display, `${label} on partition`).toBe(
+        'none'
+      );
+    }
+  });
+
+  it.each([
+    ['none', 'flat'],
+    ['flat', 'none'],
+  ] as const)('mixed partition stays lit for child order %s, %s', (...shadings) => {
+    const panel = mountPartitionMeshLayer([...shadings]);
+
+    expect(panel.layerState.getLayer('/surface')!.shading).toBe('flat');
+    for (const label of ['Ambient', 'Shade falloff', 'Specular', 'Shininess']) {
+      expect(
+        findControlGroup(container, label)!.style.display,
+        `${label} on mixed partition`
+      ).not.toBe('none');
+    }
   });
 
   it('dragging each mesh slider reaches its material setter with the slider value', () => {

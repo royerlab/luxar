@@ -16,9 +16,16 @@ Measurement is separate from rendering because the archives are LEAVING the
 repository. Reading them at render time meant the text could only be generated
 on a machine holding ~400 MB of demo data, and on a partial checkout it reported
 "no PSNR" for archives whose hosted copies are stamped — publishing an absent
-figure for data that has one. The committed measurements carry a
-``measured_sha256`` so ``--check`` can say when a figure was taken from bytes the
-manifest no longer pins, which is the drift a refit causes.
+figure for data that has one. Digest-backed archive measurements carry a
+``measured_sha256`` so ``--check`` can say when the bytes read by ``--refresh`` are
+no longer pinned, which is the drift a refit causes. Source-derived figures may
+retain their own provenance note after a later pinned archive read supplies that
+digest.
+
+``quality_note`` is internal provenance and is never rendered. ``quality_caveat``
+is reader-facing text rendered next to an absent figure. ``unmeasured_reason`` is
+written by ``--refresh`` when a local file exists but is not the pinned artifact
+and no committed measurement survives that rejected read.
 
 This script NEVER talks to Zenodo. It writes markdown for a human to paste into
 a draft, and publication stays a manual act.
@@ -189,6 +196,31 @@ def _span(frames: list[dict[str, Any]], key: str) -> Optional[tuple[float, float
     return (min(values), max(values))  # type: ignore[type-var]
 
 
+def _read_part_provenance(value: Any) -> Optional[dict[str, Any]]:
+    """Aggregate a stacked store's component fits without inventing a mean."""
+    if not isinstance(value, list) or not value:
+        return None
+    fittings: list[dict[str, Any]] = []
+    quotable = True
+    for part in value:
+        if not isinstance(part, dict) or not isinstance(part.get("fitting"), dict):
+            return None
+        fittings.append(part["fitting"])
+        reference = part.get("fit_reference")
+        quotable &= (
+            isinstance(reference, dict) and reference.get("kind") == "acquisition"
+        )
+    return {
+        "frames": len(value),
+        "quality_quotable": quotable,
+        "source_bytes": _total(fittings, "source_bytes"),
+        "psnr_db": _span(fittings, "psnr_db") if quotable else None,
+        "foreground_psnr_db": (
+            _span(fittings, "foreground_psnr_db") if quotable else None
+        ),
+    }
+
+
 def _immediate_children(groups: set[str], path: str) -> list[str]:
     """Group paths exactly one level below *path* (``""`` for the root)."""
     depth = 0 if not path else path.count("/") + 1
@@ -259,6 +291,7 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     ):
         return None
     fit = _attrs(zf, root, "fitting/")
+    part_info = _read_part_provenance(fit.get("part_provenance"))
     n_splats = _as_int(root_attrs.get("n_splats"))
     groups = {
         n[len(root) :].rsplit("/", 1)[0]
@@ -274,13 +307,20 @@ def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
         "ndim": root_attrs.get("ndim"),
         "format_version": root_attrs.get("format_version"),
         "topology": _describe_topology(root_attrs, groups),
-        "psnr_db": fit.get("psnr_db"),
-        "foreground_psnr_db": fit.get("foreground_psnr_db"),
+        "psnr_db": fit.get("psnr_db")
+        if fit.get("psnr_db") is not None
+        else (part_info or {}).get("psnr_db"),
+        "foreground_psnr_db": fit.get("foreground_psnr_db")
+        if fit.get("foreground_psnr_db") is not None
+        else (part_info or {}).get("foreground_psnr_db"),
         "foreground_fraction": fit.get("foreground_fraction"),
         "source_shape": fit.get("source_shape"),
         "source_dtype": fit.get("source_dtype"),
-        "source_bytes": fit.get("source_bytes"),
-        "frames": None,
+        "source_bytes": fit.get("source_bytes")
+        if fit.get("source_bytes") is not None
+        else (part_info or {}).get("source_bytes"),
+        "frames": (part_info or {}).get("frames"),
+        "quality_quotable": (part_info or {}).get("quality_quotable"),
     }
 
 
@@ -415,12 +455,36 @@ def _retain_preferred_measurements(
     existing: dict[str, Any],
     pinned_digests: dict[str, Optional[str]],
 ) -> tuple[int, int]:
-    """Blank unpinned reads and retain stronger measurements of pinned bytes.
+    """Blank unpinned reads and retain stronger committed measurements.
 
     Staged provenance outranks repo/cache even for identical bytes, avoiding
     sidecar churn when a later local refresh sees the same pinned archive.
+    Source-derived figures survive a stampless pinned read, while the read still
+    supplies archive metadata and provenance that the committed row lacks.
     """
     rank = {"staged": 2, "repo": 1, "cache": 1}
+    measurement_fields = (
+        "n_splats",
+        "ndim",
+        "format_version",
+        "topology",
+        "psnr_db",
+        "foreground_psnr_db",
+        "foreground_fraction",
+        "source_shape",
+        "source_dtype",
+        "source_bytes",
+        "frames",
+    )
+    recovered_fields = (
+        "psnr_db",
+        "foreground_psnr_db",
+        "foreground_fraction",
+        "source_shape",
+        "source_dtype",
+        "source_bytes",
+        "frames",
+    )
     retained = 0
     rejected = 0
     for key, new_entry in list(measured.items()):
@@ -443,9 +507,28 @@ def _retain_preferred_measurements(
                     "frames": None,
                     "measured_from": None,
                     "measured_sha256": None,
+                    "unmeasured_reason": "unpinned-local-copy",
                 }
             else:
-                measured[key] = old_entry
+                measured[key] = (
+                    old_entry
+                    if any(
+                        old_entry.get(field) is not None for field in measurement_fields
+                    )
+                    else {
+                        **old_entry,
+                        "unmeasured_reason": "unpinned-local-copy",
+                    }
+                )
+        elif old_entry is not None and old_entry.get("measured_sha256") is None:
+            recovered = {
+                field: old_entry[field]
+                for field in recovered_fields
+                if old_entry.get(field) is not None and new_entry.get(field) is None
+            }
+            if recovered:
+                measured[key] = {**new_entry, **recovered}
+                retained += 1
         elif (
             old_entry is not None
             and old_entry.get("measured_sha256") == pinned_digest
@@ -498,6 +581,11 @@ def refresh_characteristics(
                 # is precisely the state the hand-edited descriptions were in.
                 "measured_from": root,
                 "measured_sha256": measured_sha256,
+                **{
+                    field: existing[key][field]
+                    for field in ("quality_note", "quality_caveat")
+                    if key in existing and field in existing[key]
+                },
             }
 
     read = len(measured)
@@ -516,8 +604,15 @@ def refresh_characteristics(
                     "scripts/gen_zenodo_records.py --refresh. Committed so the "
                     "record text does not require holding the archives, which are "
                     "hosted on Zenodo rather than in this repository. "
-                    "measured_sha256 records WHICH bytes each figure came from; "
-                    "--check reports any that no longer match the manifest pin."
+                    "measured_sha256 records WHICH archive bytes refresh read; "
+                    "--check reports any non-null digest that no longer matches "
+                    "the manifest pin. A null digest means the figures were "
+                    "recovered from the stated source rather than archive bytes; "
+                    "a later pinned archive read may supply the digest while "
+                    "retaining those source-derived figures. "
+                    "quality_note is internal provenance; quality_caveat is "
+                    "published beside an absent figure. unmeasured_reason records "
+                    "why refresh deliberately withheld measurements."
                 ),
                 "archives": archives,
             },
@@ -616,7 +711,13 @@ def _dataset_rows(
         # otherwise documenting why one figure is missing silently deletes the
         # rest, and the only way to explain a gap is to widen it.
         if info is not None and "measured_sha256" not in info:
-            path = next(_locate(dataset, entry, variant, spec["name"]), None)
+            pinned = _pinned_digest(spec)
+            path, digest = _select_pinned_location(
+                _locate(dataset, entry, variant, spec["name"]),
+                pinned,
+            )
+            if digest != pinned:
+                path = None
             read = _read_archive(path) if path else None
             if read is not None:
                 info = {**read, **{k: v for k, v in info.items() if v is not None}}
@@ -652,6 +753,7 @@ def _dataset_rows(
                 # separate from `quality_note`, which is internal provenance and
                 # is never rendered -- see the module docstring.
                 "caveat": (info or {}).get("quality_caveat"),
+                "quality_quotable": info.get("quality_quotable") if info else None,
             }
         )
     return rows
@@ -779,26 +881,19 @@ def render_record(key: str, manifest: dict[str, Any]) -> str:
     return "".join(out)
 
 
-def _why_absent(
-    dataset: str,
-    entry: dict[str, Any],
-    row: dict[str, Any],
-    chars: dict[str, Any],
-) -> str:
+def _why_absent(row: dict[str, Any], chars: dict[str, Any]) -> str:
     """Name the cause when the sidecar already records one.
 
-    ``refresh`` writes an entry whose every measurement is null when it finds a
-    local copy whose bytes are NOT the pinned artifact: the figures are absent
-    on purpose, because measuring that copy would describe a generation the
-    record does not serve. That is a different job from an unmeasured archive --
-    fetch the hosted copy, rather than go and measure -- and printing the two
-    identically invites someone to "fix" the generator into publishing the very
-    numbers the marker withholds.
+    ``refresh`` stamps ``unmeasured_reason`` when it rejects a local copy whose
+    bytes are NOT the pinned artifact and no committed measurements can be
+    retained. The figures are absent on purpose, because measuring that copy
+    would describe a generation the record does not serve. That is a different
+    job from an unmeasured archive -- fetch the hosted copy, rather than go and
+    measure -- and printing the two identically invites someone to "fix" the
+    generator into publishing the very numbers the marker withholds.
     """
     info = chars.get(row.get("char_key", ""))
-    if not info or "measured_sha256" not in info:
-        return ""
-    if info.get("measured_sha256") is not None:
+    if not info or info.get("unmeasured_reason") != "unpinned-local-copy":
         return ""
     return (
         " (a local copy is present but its bytes are not the pinned artifact, "
@@ -826,20 +921,20 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
                 if row["is_fit"]:
                     unread.append(f"{name}/{row['file']}")
                 continue
-            missing = [
-                label
-                for label, value in (
-                    ("splats", row["splats"]),
+            expected = [
+                ("splats", row["splats"]),
+                ("compression", row["vs_raw"]),
+            ]
+            if row["quality_quotable"] is not False:
+                expected[1:1] = [
                     ("PSNR", row["psnr"]),
                     ("foreground PSNR", row["fg_psnr"]),
-                    ("compression", row["vs_raw"]),
-                )
-                if value == _ABSENT
-            ]
+                ]
+            missing = [label for label, value in expected if value == _ABSENT]
             if missing:
                 problems.append(
                     f"{name}/{row['file']}: no {', '.join(missing)}"
-                    + _why_absent(name, entry, row, chars)
+                    + _why_absent(row, chars)
                 )
         if not _files_of(entry):
             problems.append(f"{name}: no files uploaded")

@@ -357,13 +357,55 @@ describe('projectMeshTo3D — view-state guards', () => {
 });
 
 describe('resolveWinding', () => {
-  it('needs no decision for an authored double-sided mesh', () => {
-    // Both orientations draw, so parity is unobservable — and the notice must
-    // stay quiet for what is the overwhelmingly common case.
-    expect(resolveWinding([0, 2, 1], [0, 1, 2], true)).toEqual({
+  it('needs no decision for a double-sided mesh whose shader ignores winding', () => {
+    // Both orientations draw AND nothing reads `gl_FrontFacing`, so parity is
+    // genuinely unobservable — and the notice must stay quiet for what is the
+    // overwhelmingly common case.
+    //
+    // Note the second conjunct: `doubleSided` ALONE is not enough. That was the
+    // original reasoning and it was half true — see the next test.
+    expect(resolveWinding([0, 2, 1], [0, 1, 2], true, false)).toEqual({
       reverse: false,
       side: 'double',
     });
+  });
+
+  it('still reverses for a double-sided mesh when the stored-normal shader is active', () => {
+    // The case the `doubleSided` early return used to swallow. "Both
+    // orientations draw, so parity is unobservable" is true of rasterization
+    // COVERAGE and false of `gl_FrontFacing`, which the stored-normal fragment
+    // variant reads to flip the normal toward the camera. In an odd-parity epoch
+    // every projected winding is reversed, so that flip lands on the wrong side
+    // and the surface shades with an inverted gradient collapsing toward
+    // `uAmbient`.
+    //
+    // Spec §5.4 names this exactly: the shading flip "requires the index
+    // post-pass form, since the opposite side of a `DoubleSide` mesh is
+    // `DoubleSide`". And `double_sided` defaults TRUE, so the exemption covered
+    // the default configuration.
+    expect(resolveWinding([0, 2, 1], [0, 2, 1], true, true)).toEqual({
+      reverse: true,
+      // `side` still follows the node's own request — only `reverse` changes.
+      side: 'double',
+    });
+  });
+
+  it('does not reverse an even-parity epoch just because normals are active', () => {
+    // Guards the other direction: keying off `storedNormalsActive` instead of
+    // off parity would flip every smooth-shaded node.
+    expect(resolveWinding([0, 1, 2], [0, 1, 2], true, true)).toEqual({
+      reverse: false,
+      side: 'double',
+    });
+  });
+
+  it('stays quiet about an undecidable frame when the mesh is already double-sided', () => {
+    // `undecidableReason` explains a fallback AWAY from `FrontSide`. For a node
+    // that never asked for `FrontSide` there is no fallback to explain, so
+    // widening `reverse` must not start logging for double-sided nodes.
+    const result = resolveWinding([1, 2, 3], [0, 1, 2], true, false);
+    expect(result.side).toBe('double');
+    expect(result.undecidableReason).toBeUndefined();
   });
 
   it.each([
@@ -377,19 +419,19 @@ describe('resolveWinding', () => {
     // All six permutations, exhaustively: the three even ones must NOT reverse
     // and the three odd ones must. A build that keyed off "is it sorted?" would
     // get the two cycles wrong.
-    const result = resolveWinding(displayDims as number[], [0, 1, 2], false);
+    const result = resolveWinding(displayDims as number[], [0, 1, 2], false, false);
     expect(result).toEqual({ reverse, side: 'front' });
   });
 
   it('compares against the SORTED frame, so normal_dims order does not shift parity', () => {
     // The frame is sorted(normal_dims) (spec §3.2). Authoring normals as
     // (2, 0, 1) describes the same frame {0,1,2} as (0, 1, 2).
-    expect(resolveWinding([0, 1, 2], [2, 0, 1], false).reverse).toBe(false);
-    expect(resolveWinding([0, 2, 1], [2, 0, 1], false).reverse).toBe(true);
+    expect(resolveWinding([0, 1, 2], [2, 0, 1], false, false).reverse).toBe(false);
+    expect(resolveWinding([0, 2, 1], [2, 0, 1], false, false).reverse).toBe(true);
   });
 
   it('falls back to double-sided with no winding frame', () => {
-    const result = resolveWinding([0, 1, 2], undefined, false);
+    const result = resolveWinding([0, 1, 2], undefined, false, false);
     expect(result.side).toBe('double');
     expect(result.reverse).toBe(false);
     expect(result.undecidableReason).toMatch(/no stored normals/);
@@ -399,14 +441,14 @@ describe('resolveWinding', () => {
     // [0,1,2] -> [1,2,3]: projected orientation is per-triangle data-dependent,
     // so no index post-pass can correct it. Reversing anyway would be worse than
     // doing nothing — it would flip the triangles that were already correct.
-    const result = resolveWinding([1, 2, 3], [0, 1, 2], false);
+    const result = resolveWinding([1, 2, 3], [0, 1, 2], false, false);
     expect(result.side).toBe('double');
     expect(result.reverse).toBe(false);
     expect(result.undecidableReason).toMatch(/different triple/);
   });
 
   it('falls back to double-sided with fewer than 3 displayed dimensions', () => {
-    const result = resolveWinding([0, 1], [0, 1, 2], false);
+    const result = resolveWinding([0, 1], [0, 1, 2], false, false);
     expect(result.side).toBe('double');
     expect(result.undecidableReason).toMatch(/2 displayed dimensions/);
   });
@@ -980,8 +1022,8 @@ describe('storedNormalsUsable — ORDERED equality, unlike resolveWinding', () =
     expect(storedNormalsUsable([1, 0, 2], [0, 1, 2])).toBe(false);
     // ...while winding still considers that epoch decidable (a reversal fixes it),
     // which is precisely the divergence a single shared helper would have erased.
-    expect(resolveWinding([1, 0, 2], [0, 1, 2], false).side).toBe('front');
-    expect(resolveWinding([1, 0, 2], [0, 1, 2], false).reverse).toBe(true);
+    expect(resolveWinding([1, 0, 2], [0, 1, 2], false, false).side).toBe('front');
+    expect(resolveWinding([1, 0, 2], [0, 1, 2], false, false).reverse).toBe(true);
   });
 
   it('rejects a DIFFERENT triple', () => {

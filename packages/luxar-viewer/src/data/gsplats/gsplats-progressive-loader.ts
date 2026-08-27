@@ -255,7 +255,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     this.nLods = nLods;
     this.path = path;
     this.sliceCache = sliceCache ?? null;
-    this.monitor = new ProgressiveMonitorAdapter(() => this.lodLoaders, path);
+    this.monitor = new ProgressiveMonitorAdapter(
+      () => this.lodLoaders,
+      path,
+      'gsplats-spatial-index'
+    );
     this.energyTable =
       energyTable && energyTable.length === nLods && energyTable.every((e) => typeof e === 'number')
         ? (energyTable as number[])

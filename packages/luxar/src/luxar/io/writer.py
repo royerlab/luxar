@@ -209,7 +209,8 @@ class ZarrWriterProtocol(Protocol):
                 None
             scalars: Optional - array of shape (V,), scalar float, or None. Used
                 for colormap lookup when a colormap is applied.
-            shading: ``"smooth"`` / ``"flat"``; defaults by normal presence
+            shading: ``"smooth"`` / ``"flat"`` / unlit ``"none"``; defaults by
+                normal presence
             double_sided: Whether back faces render (default True)
             labels: Optional list of strings, one per vertex, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
@@ -396,9 +397,17 @@ class ZarrWriterProtocol(Protocol):
 
     @property
     def store_path(self) -> str:
-        """Get the path to the underlying Zarr store.
+        """Get the current path to the underlying Zarr store.
+
+        Writers may use a staging directory while active and return a different
+        published path after ``finalize()``.
 
         Returns:
-            Path to the Zarr store being written to
+            Current staging or finalized store path.
         """
+        ...
+
+    @property
+    def final_store_path(self) -> str:
+        """Get the path where the finalized Zarr store will be published."""
         ...

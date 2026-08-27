@@ -21,8 +21,12 @@
      scrolling body (which takes flex: 1; min-height: 0). */
   width: 80%;
   max-width: 800px;
-  min-width: 400px;
-  max-height: 240px;
+  /* The floor yields to the viewport instead of overflowing it: a flat 400px
+     combined with `left: 50%; translateX(-50%)` put the panel at left -6px /
+     right 386px in a 380px window — hanging off BOTH edges, with no scroll
+     affordance because the panel is `position: fixed`. */
+  min-width: min(400px, calc(100vw - 2 * var(--luxar-spacing-10)));
+  max-height: min(360px, 45vh);
   display: flex;
   flex-direction: column;
 
@@ -100,21 +104,30 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--luxar-spacing-4);
   margin-bottom: var(--luxar-spacing-5);
   padding-bottom: var(--luxar-spacing-3);
   border-bottom: 1px solid var(--luxar-border-strong);
 }
 
 .luxar-dimension-sliders__title {
+  flex: 0 0 auto;
   font-weight: var(--luxar-font-bold);
   font-size: var(--luxar-text-lg);
+  white-space: nowrap;
 }
 
 .luxar-dimension-sliders__status {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--luxar-font-mono);
   font-size: var(--luxar-text-md);
   color: var(--luxar-text-primary);
   opacity: 0.8;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ========== Individual Slider ========== */
@@ -127,11 +140,34 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--luxar-spacing-4);
   margin-bottom: var(--luxar-spacing-2);
+
+  /* Width held in reserve for the live value readout, so a long dimension NAME
+     can never squeeze it to nothing. The value is right-aligned, so a box wider
+     than its glyphs is invisible — the reservation costs nothing on the common
+     short value and only bites when the name would otherwise take the row. */
+  --luxar-dim-value-floor: 88px;
 }
 
 .luxar-dimension-slider__name {
+  /* Two bounds, and they answer different attacks — §7.6 protects a label from
+     a long VALUE, which `flex: 0 0 auto` still does here. But unlike a GUI
+     controller label ("Opacity"), this text is DATASET-controlled: it is the
+     dimension name straight out of the store. So it needs a bound of its own,
+     or it takes the whole row — a 62-char name measured 385px against a 400px
+     panel, leaving the value 0px wide and overflowing the row by 34px, which
+     `__scroll` (overflow-y: auto forces overflow-x to compute to auto) then
+     turned into a horizontal scrollbar inside the panel.
+     `max-width` rather than a shrink factor on purpose: flex shrink is weighted
+     by base size, so making the name shrinkable would let a long value shrink
+     it too — the exact regression §7.6 exists to prevent. */
+  flex: 0 0 auto;
+  max-width: calc(100% - var(--luxar-dim-value-floor) - var(--luxar-spacing-4));
   font-weight: var(--luxar-font-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .luxar-dimension-slider__name--with-tooltip {
@@ -139,17 +175,21 @@
   text-decoration: underline dotted;
 }
 
-.luxar-dimension-dropdown__label--with-tooltip {
-  cursor: help;
-  border-bottom: 1px dotted var(--luxar-text-muted);
-  display: inline-block;
-}
-
 .luxar-dimension-slider__value {
+  flex: 1 1 auto;
+  /* The other half of the row contract: the name may not claim the last
+     `--luxar-dim-value-floor` pixels, and the value may not be shrunk below
+     them. Both halves are needed — the name's `max-width` alone would leave the
+     floor unclaimed if a future edit made the value shrinkable past it. */
+  min-width: var(--luxar-dim-value-floor);
   font-family: var(--luxar-font-mono);
   font-size: var(--luxar-text-md);
   color: var(--luxar-text-primary);
   cursor: help;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ========== Animation Controls Wrapper ========== */
@@ -221,6 +261,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--luxar-spacing-2);
+  min-width: 0;
 }
 
 .luxar-dimension-dropdown__label {
@@ -228,6 +269,9 @@
   font-weight: var(--luxar-font-medium);
   color: var(--luxar-text-primary);
   margin-bottom: var(--luxar-spacing-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .luxar-dimension-dropdown__label--with-tooltip {
@@ -276,7 +320,10 @@
   border: 1px solid var(--luxar-border-strong);
   border-radius: var(--luxar-radius-sm);
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
   user-select: none;
+  white-space: nowrap;
   transition: var(--luxar-transition-fast);
 }
 

@@ -1842,7 +1842,7 @@ class TestGridBspTree:
         assert grid_bsp_tree([]) is None
 
     def test_a_grid_split_beyond_the_third_axis_is_refused(self) -> None:
-        """The serialized format admits split axes 0/1/2 only."""
+        """Stacked grid axes past the third are never displayed."""
         from luxar.gsplats.tiling import grid_bsp_tree
 
         specs = compute_tile_specs((16, 16, 16, 64), (16, 16, 16, 16), 0)

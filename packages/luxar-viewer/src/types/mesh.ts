@@ -40,6 +40,12 @@ import type { UpdateSession } from '../profiling/update-profiler';
  * - `'flat'` — derive a per-fragment normal from screen-space derivatives of
  *   the interpolated position, giving a faceted surface. Also the fallback
  *   whenever `'smooth'` cannot be honoured.
+ * - `'none'` — no lighting at all: the base colour reaches the screen
+ *   unmodulated, with the diffuse and specular terms suppressed. This is what
+ *   the other three geometry types always do (they are purely emissive), and
+ *   what a *data basemap* needs — a textured globe whose colours carry meaning
+ *   must not be reshaded by a view-anchored key. Never a default, only ever
+ *   explicit, since defaulting to it would un-light every existing mesh.
  *
  * The writer resolves this at write time and always stamps a concrete value
  * (`'smooth'` only when normals were supplied), so the viewer never has to
@@ -47,7 +53,39 @@ import type { UpdateSession } from '../profiling/update-profiler';
  * — an explicit `'smooth'` with no stored normals is legal and falls back, and
  * an explicit `'flat'` gives a faceted surface even when normals exist.
  */
-export type MeshShading = 'smooth' | 'flat';
+export type MeshShading = 'smooth' | 'flat' | 'none';
+
+/**
+ * How a mesh's `texture` array is stored.
+ *
+ * `'raw'` is an `(H, W, C)` numeric array the decoder materializes directly —
+ * the only arm that can carry HDR, since no browser-native image codec stores
+ * floats. The other three are a 1-D `uint8` array of codec bytes, decoded with
+ * `createImageBitmap`, exactly as `image_label_bytes` already does for hover
+ * thumbnails.
+ *
+ * A closed vocabulary on purpose: an unrecognised value must be a rejection and
+ * not a fall-through to "probably an image", because the decode path and the
+ * byte budget differ between the two arms.
+ */
+export type MeshTextureEncoding = 'raw' | 'png' | 'webp' | 'jpeg';
+
+/**
+ * Colour space the texture's values are in.
+ *
+ * `'srgb'` for a photographic basemap (every JPEG/PNG off the shelf); `'linear'`
+ * for values that are already linear-light, which is what Luxar's own authored
+ * colours are. Getting this wrong gives a washed-out or over-dark surface that
+ * still looks plausible, so it is stored explicitly rather than guessed from the
+ * encoding.
+ */
+export type MeshTextureColorSpace = 'srgb' | 'linear';
+
+/** Texture magnification/minification filter. `'linear'` also enables mipmaps. */
+export type MeshTextureFilter = 'linear' | 'nearest';
+
+/** Texture wrap mode, applied per-axis by the upload. */
+export type MeshTextureWrap = 'repeat' | 'clamp';
 
 /**
  * Mesh node metadata from zarr `.zattrs`.
@@ -88,6 +126,61 @@ export interface MeshMetadata {
 
   /** Whether per-vertex scalar values for colormap lookup are present */
   has_scalars: boolean;
+
+  /**
+   * Whether a per-vertex `uvs` array is present.
+   *
+   * Paired with {@link has_texture}: the writer refuses either alone, because
+   * each is inert without the other (UVs index into nothing; a texture with no
+   * mapping samples one arbitrary texel across every triangle).
+   */
+  has_uvs: boolean;
+
+  /** Whether a `texture` array is present */
+  has_texture: boolean;
+
+  /** How `texture` is stored. Present iff {@link has_texture}. */
+  texture_encoding?: MeshTextureEncoding;
+
+  /**
+   * Declared texture width in pixels. Present iff {@link has_texture}.
+   *
+   * These three dimension attrs are **load-bearing, not descriptive**. For an
+   * encoded texture they are the only thing that bounds the decode before any
+   * bytes are fetched — a 200 KB JPEG can declare 30000x30000 and expand to
+   * 3.6 GB — so the preflight charges the decoded surface from these numbers and
+   * Stage 2 re-checks the decoded bitmap against them. See `data/mesh/preflight.ts`.
+   */
+  texture_width?: number;
+
+  /** Declared texture height in pixels. Present iff {@link has_texture}. */
+  texture_height?: number;
+
+  /** Channels per texel: 1, 3 or 4. Present iff {@link has_texture}. */
+  texture_channels?: number;
+
+  /** Colour space of the texture's values. Present iff {@link has_texture}. */
+  texture_color_space?: MeshTextureColorSpace;
+
+  /**
+   * `[min, max]` of an HDR texture's RGB values, stamped only when the raw
+   * payload carried a value above 1.0.
+   *
+   * The texture peer of {@link color_data_range}, computed over RGB only (alpha
+   * excluded) so the viewer's window derivation reads one shape whatever the
+   * source.
+   */
+  texture_data_range?: [number, number];
+
+  /** Sampling filter; viewer-defaulted to `'linear'` when absent. */
+  texture_filter?: MeshTextureFilter;
+
+  /**
+   * Wrap mode; viewer-defaulted when absent to repeat-in-u / clamp-in-v, which
+   * is what an equirectangular basemap needs — tiling across the dateline seam
+   * without bleeding the north pole into the south.
+   */
+  texture_wrap?: MeshTextureWrap;
 
   /** How to obtain surface normals; always stamped by the writer */
   shading: MeshShading;
@@ -170,6 +263,29 @@ export interface MeshMetadata {
   /** `opaque`-mode alpha cutout threshold in `[0, 1]` (§6.2). */
   alpha_cutoff?: number;
 
+  /**
+   * Half-width, IN CELLS, of the nD membership slab a CONTINUOUS hidden dimension
+   * is culled against (§5.2.1): a vertex is inside when it is within
+   * `slab_tolerance` cells of the slice. Strictly positive; defaults to one cell.
+   *
+   * The only authored control mesh has over its nD approximation, and the only
+   * per-node input to `computeTolerance('mesh', …)`. Mesh culls whole triangles
+   * against the slab — a triangle draws only when all three of its vertices are
+   * inside — so on a continuous hidden axis it shows "the surface near this
+   * slice" as a thick slab, never a planar cut (§5.3). This says how far from
+   * the slice — the slab spans twice that.
+   *
+   * Mesh is the only geometry type whose continuous arm is tunable, and the
+   * reason is that it has nothing to measure: the other three derive their
+   * tolerance from a per-element extent (`radii` / `widths` / the truncated
+   * `sigma`) that a mesh vertex does not have, so the slab thickness is invented
+   * rather than read off the data.
+   *
+   * No effect on a DISCRETE hidden dimension (time, channel — the dominant real
+   * case), which takes the half-cell membership rule instead.
+   */
+  slab_tolerance?: number;
+
   blending_mode?: BlendingMode;
 
   /** Whether this node is exposed as a layer in the Layers panel */
@@ -195,6 +311,51 @@ export interface MeshMetadata {
  * `LoadedPointsData.colors`.
  */
 export type MeshColorArray = Float32Array | Uint8Array | Uint16Array;
+
+/**
+ * A decoded texture, in whichever form its encoding produced.
+ *
+ * A discriminated union rather than one struct with optional fields, because the
+ * two arms upload through genuinely different THREE.js classes (`DataTexture` vs
+ * `Texture` over an `ImageBitmap`) and an exhaustive `switch` on `kind` is the
+ * only way a future third arm becomes a compile error instead of a silently
+ * untextured mesh.
+ *
+ * `width`/`height`/`channels` are the *verified* dimensions, not the declared
+ * ones: the loader compares what it decoded against
+ * {@link MeshMetadata.texture_width} and friends and rejects a mismatch, so by
+ * the time a payload exists these two agree. Carrying them here rather than
+ * re-reading the attrs keeps the upload from having to trust the attrs again.
+ */
+export type MeshTextureData =
+  | {
+      kind: 'raw';
+      /**
+       * `height * width * channels` texels, row-major.
+       *
+       * `Float32Array` for an HDR or otherwise float-encoded texture — note the
+       * decoder always widens `geolog_perchannel_u16` back to float32, so the
+       * quantized-HDR case arrives here as floats too. `Uint8Array`/`Uint16Array`
+       * are kept native, exactly as per-vertex colours are, since the GPU
+       * normalizes them to `[0, 1]` for free.
+       */
+      pixels: MeshColorArray;
+      width: number;
+      height: number;
+      channels: number;
+    }
+  | {
+      kind: 'bitmap';
+      /**
+       * A decoded `ImageBitmap`, always 4-channel 8-bit regardless of what the
+       * source codec stored — which is why the byte budget charges `w * h * 4`
+       * for this arm no matter the declared `texture_channels`.
+       */
+      bitmap: ImageBitmap;
+      width: number;
+      height: number;
+      channels: number;
+    };
 
 /**
  * A whole decoded mesh, before display-space projection.
@@ -240,6 +401,19 @@ export interface LoadedMeshData {
 
   /** Per-vertex scalars for colormap lookup (`vertexCount`), or `undefined` */
   scalars?: Float32Array;
+
+  /**
+   * Per-vertex texture coordinates (`vertexCount * 2`), or `undefined`.
+   *
+   * Deliberately NOT clamped to `[0, 1]`: values outside it are how a texture
+   * tiles under `texture_wrap: 'repeat'`, so clamping would break the feature it
+   * looks like it protects. Non-finite values ARE refused, on both sides — a NaN
+   * UV pulls its whole triangle into an undefined sample.
+   */
+  uvs?: Float32Array;
+
+  /** The decoded texture, or `undefined` when the node has none */
+  texture?: MeshTextureData;
 
   /** Number of vertices loaded */
   vertexCount: number;
@@ -385,12 +559,30 @@ export interface MeshDataLoader {
   /**
    * LoaderMonitor surface (optional, for the data-loading-monitor UI).
    * Mirrors the surface the sibling loaders expose — implementations that
-   * don't track metrics may omit these.
+   * don't track metrics may omit these. Both shipped implementations
+   * (`MeshWholeNodeLoader`, `MeshProgressiveLoader`) provide all four:
+   * `connectLoaderToMonitor` duck-types the complete set, so a partial
+   * implementation is silently skipped rather than partially reported.
    */
   addEventListener?(listener: MonitorEventListener): void;
   removeEventListener?(listener: MonitorEventListener): void;
   getMetrics?(): LoaderMetrics;
   getActiveQueries?(): QueryInfo[];
+
+  /**
+   * Report how many triangles the just-committed slice indexes, for
+   * `LoaderMetrics.visibleElements`.
+   *
+   * Pushed IN (by `commit-mesh-geometry.ts`) rather than read out, because the
+   * count is produced downstream of the loader: a mesh is resident in full and
+   * projection decides which faces reach the index buffer. The three sibling
+   * geometries set `visibleElements` inside their loaders instead, where the
+   * range query that produced the visible set lives.
+   *
+   * Optional for the same reason as the four above — a metrics-free
+   * implementation may omit it.
+   */
+  recordVisibleElements?(triangles: number): void;
 }
 
 /**

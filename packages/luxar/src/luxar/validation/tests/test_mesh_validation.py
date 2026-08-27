@@ -15,14 +15,23 @@ import warnings
 
 import numpy as np
 import pytest
+import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
-from luxar.typing_utils.constants import MAX_MESH_VERTICES
+from luxar.typing_utils.constants import (
+    MAX_MESH_VERTICES,
+    MESH_DECODE_BUDGET_BYTES,
+    MESH_DECODED_BYTES_PER_VALUE,
+)
 from luxar.validation import ValidationError
 from luxar.validation.base import (
+    MESH_TEXTURE_DECODE_BUDGET_BYTES,
     validate_faces_for_writing,
+    validate_mesh_decode_budget,
     validate_normal_dims_for_writing,
     validate_normals_for_writing,
+    validate_texture_for_writing,
+    validate_uvs_for_writing,
     validate_vertices_for_writing,
 )
 
@@ -163,6 +172,19 @@ def test_vertex_cap_is_the_alias_free_bound() -> None:
     """
     assert MAX_MESH_VERTICES == 2**27
     assert MAX_MESH_VERTICES - 1 < 2**27
+
+
+def test_decode_budget_matches_the_viewer_ceiling() -> None:
+    """The write-time lower bound must track the viewer's admission ceiling.
+
+    MIRROR: ``MESH_DECODE_BUDGET_BYTES`` in
+    ``packages/luxar-viewer/src/config/constants.ts`` must hold this value. The
+    Python validator charges fewer terms deliberately, but it must compare them
+    against the same ceiling; a lower Python value would reject stores the viewer
+    accepts, while a higher one would weaken the fail-fast guarantee.
+    """
+    assert MESH_DECODE_BUDGET_BYTES == 512 * 1024 * 1024
+    assert MESH_DECODED_BYTES_PER_VALUE == 4
 
 
 # =============================================================================
@@ -434,3 +456,325 @@ def test_broadcast_color_and_scalar_accepted(tmp_path) -> None:
             "m2", _TETRA_V, _TETRA_F, scalars=0.5, colormap="viridis"
         )
         assert other.has_scalars
+
+
+# --- UVs and textures (#2175) ----------------------------------------------
+#
+# The two are a PAIR at the adder level (each is meaningless alone), but they
+# validate independently, so they are tested independently here and the pairing
+# refusal lives with the other composition gates in `test_mesh.py`.
+
+
+@pytest.mark.parametrize(
+    "uvs,error_pattern,test_id",
+    [
+        (
+            np.zeros((4, 3), np.float32),
+            "Expected shape",
+            "three_components_is_not_a_uv",
+        ),
+        (
+            np.zeros(8, np.float32),
+            "Expected shape",
+            "flat_array_rejected",
+        ),
+        (
+            np.zeros((3, 2), np.float32),
+            "3 rows but the mesh has 4",
+            "count_mismatch",
+        ),
+        (
+            np.array(
+                [[0.0, 0.0], [np.nan, 0.0], [0.0, 0.0], [0.0, 0.0]],
+                np.float32,
+            ),
+            "non-finite",
+            "nan_samples_an_undefined_texel",
+        ),
+    ],
+)
+def test_uv_rejections(tmp_path, uvs, error_pattern, test_id) -> None:
+    """Each malformed UV array is refused before anything reaches disk."""
+    texture = np.zeros((2, 2, 3), dtype=np.uint8)
+    store = tmp_path / f"{test_id}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match=error_pattern):
+            scene.add_mesh("m", _TETRA_V, _TETRA_F, uvs=uvs, texture=texture)
+    assert "m" not in zarr.open_group(store, mode="r")
+
+
+@pytest.mark.parametrize(
+    "uvs,test_id",
+    [
+        (np.array([[0.0, 0.0], [1.0, 1.0]], np.float32), "unit_square"),
+        # OUT of [0, 1] on purpose: this is the case a clamping validator would
+        # break, and tiling a detail texture is the ordinary reason to author it.
+        (np.array([[-2.0, 0.0], [7.5, 3.25]], np.float32), "outside_unit_square"),
+        (np.array([[0.0, 0.0], [0.0, 0.0]], np.float32), "degenerate_all_zero"),
+    ],
+)
+def test_uv_acceptances(uvs, test_id) -> None:
+    """UVs outside [0, 1] are legal — they tile under texture_wrap='repeat'."""
+    validate_uvs_for_writing(uvs, 2)
+
+
+@pytest.mark.parametrize(
+    "factory,error_pattern,test_id",
+    [
+        (
+            lambda: validate_texture_for_writing(np.zeros((2, 2, 3), np.uint8), "tiff"),
+            "Unknown texture_encoding",
+            "unknown_encoding",
+        ),
+        (
+            lambda: validate_texture_for_writing(np.zeros((2, 2), np.uint8), "raw"),
+            "expects an .H, W, C. array",
+            "greyscale_needs_an_explicit_channel_axis",
+        ),
+        (
+            lambda: validate_texture_for_writing(np.zeros((2, 2, 2), np.uint8), "raw"),
+            "Channels must be 1, 3 or 4",
+            "two_channels",
+        ),
+        (
+            # int32 is the dtype an unsuspecting `np.array([[...]])` produces on
+            # Linux, and the same refusal element colours give.
+            lambda: validate_texture_for_writing(np.zeros((2, 2, 3), np.int32), "raw"),
+            "must be uint8 or uint16",
+            "int32_refused_like_element_colours",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.full((2, 2, 3), np.nan, np.float32), "raw"
+            ),
+            "non-finite",
+            "nan_texel",
+        ),
+        (
+            # THE decompression-bomb refusal: encoded bytes with no declared size.
+            lambda: validate_texture_for_writing(
+                np.zeros(64, np.uint8), "png", None, None, None
+            ),
+            "requires explicit width, height and channels",
+            "encoded_without_declared_dims",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros((2, 2, 3), np.uint8), "png", 2, 2, 3
+            ),
+            "expects a 1-D uint8 array",
+            "raw_array_under_an_encoded_encoding",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros(0, np.uint8), "jpeg", 2, 2, 3
+            ),
+            "payload is empty",
+            "empty_encoded_payload",
+        ),
+        (
+            # A declared size that disagrees is refused rather than silently
+            # preferring one source — the viewer SPENDS the declared numbers.
+            lambda: validate_texture_for_writing(
+                np.zeros((8, 4, 3), np.uint8), "raw", 99, 8, 3
+            ),
+            "texture_width=99 disagrees",
+            "declared_width_disagrees_with_payload",
+        ),
+        (
+            # The shape the DECODE BUDGET cannot see. A 20000x2 texture is 120 KB
+            # and passes every byte accounting on both sides, then exceeds
+            # MAX_TEXTURE_SIZE on one axis and is silently clamped by the GPU at
+            # upload — so the mesh renders the wrong image with no diagnostic.
+            lambda: validate_texture_for_writing(
+                np.zeros((2, 20_000, 3), np.uint8), "raw"
+            ),
+            "per-axis limit",
+            "width_over_the_gpu_axis_limit",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros((20_000, 2, 3), np.uint8), "raw"
+            ),
+            "per-axis limit",
+            "height_over_the_gpu_axis_limit",
+        ),
+        (
+            # An ENCODED payload declares its dimensions rather than carrying
+            # them, so the same ceiling has to hold on a declaration it cannot
+            # cross-check against the bytes.
+            lambda: validate_texture_for_writing(
+                np.zeros(64, np.uint8), "png", 20_000, 2, 3
+            ),
+            "per-axis limit",
+            "declared_encoded_width_over_the_axis_limit",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros(64, np.uint8), "png", 16_000, 16_000, 3
+            ),
+            "over the 512 MiB per-node budget",
+            "declared_encoded_texture_over_the_decode_budget",
+        ),
+        (
+            lambda: validate_texture_for_writing(np.zeros((0, 4, 3), np.uint8), "raw"),
+            "Dimensions must be positive",
+            "zero_height",
+        ),
+    ],
+)
+def test_texture_rejections(factory, error_pattern, test_id) -> None:
+    """Each malformed texture payload is refused before anything reaches disk."""
+    with pytest.raises(ValidationError, match=error_pattern):
+        factory()
+
+
+@pytest.mark.parametrize(
+    "texture,encoding,dims,expected,test_id",
+    [
+        (np.zeros((8, 4, 3), np.uint8), "raw", (None, None, None), (8, 4, 3), "rgb_u8"),
+        (
+            np.zeros((2, 2, 4), np.uint16),
+            "raw",
+            (None, None, None),
+            (2, 2, 4),
+            "rgba_u16",
+        ),
+        (np.zeros((2, 2, 1), np.uint8), "raw", (None, None, None), (2, 2, 1), "grey"),
+        # HDR: float of any width is writable, exactly as for element colours.
+        (
+            np.full((2, 2, 3), 9.0, np.float32),
+            "raw",
+            (None, None, None),
+            (2, 2, 3),
+            "hdr_f32",
+        ),
+        (
+            np.full((2, 2, 3), 9.0, np.float16),
+            "raw",
+            (None, None, None),
+            (2, 2, 3),
+            "hdr_f16",
+        ),
+        (np.zeros(64, np.uint8), "png", (4, 8, 3), (8, 4, 3), "encoded_png"),
+        (np.zeros(64, np.uint8), "webp", (4, 8, 4), (8, 4, 4), "encoded_webp"),
+        (np.zeros(64, np.uint8), "jpeg", (4, 8, 3), (8, 4, 3), "encoded_jpeg"),
+    ],
+)
+def test_texture_acceptances(texture, encoding, dims, expected, test_id) -> None:
+    """The encoding x dtype matrix, and the resolved (h, w, c) it returns.
+
+    The return value matters as much as the acceptance: it is what the writer
+    stamps, and what the viewer's admission gate later spends.
+    """
+    w, h, c = dims
+    color_space = "linear" if test_id.startswith("hdr_") else "srgb"
+    assert (
+        validate_texture_for_writing(texture, encoding, w, h, c, color_space)
+        == expected
+    )
+
+
+# --- decode budget (#2145) --------------------------------------------------
+#
+# The write-time twin of the viewer's per-node admission ceiling. It charges only
+# the DECODED term, which makes it a strict lower bound on the loader's accounting
+# — see `validate_mesh_decode_budget`'s docstring for why under-counting is the
+# only safe direction for a hard error. These tests pin both ends of that: it
+# fires when it provably must, and it does NOT fire one value below.
+
+_BUDGET_VALUES = MESH_DECODE_BUDGET_BYTES // MESH_DECODED_BYTES_PER_VALUE
+
+
+def _largest_fitting_face_count(n_vertices: int, n_dims: int) -> int:
+    """The most triangles that still fit, given the vertex block's cost."""
+    return (_BUDGET_VALUES - n_vertices * n_dims) // 3
+
+
+def test_decode_budget_accepts_the_largest_mesh_that_fits() -> None:
+    """The boundary case must PASS, or the gate is a false-rejection machine.
+
+    This is the more important half of the pair. A hard error that over-counts
+    refuses stores the viewer would happily load — a worse bug than the one the
+    gate fixes — so the acceptance test ships alongside the rejection test rather
+    than after it.
+    """
+    n_vertices, n_dims = 1_000_000, 3
+    validate_mesh_decode_budget(
+        n_vertices, n_dims, _largest_fitting_face_count(n_vertices, n_dims)
+    )
+
+
+def test_texture_budget_uses_the_shared_mesh_ceiling() -> None:
+    assert MESH_TEXTURE_DECODE_BUDGET_BYTES == MESH_DECODE_BUDGET_BYTES
+
+
+def test_decode_budget_charges_uvs_and_texture_together() -> None:
+    geometry_bytes = (4 * 3 + 4 * 3 + 4 * 2) * MESH_DECODED_BYTES_PER_VALUE
+    texture_bytes = MESH_DECODE_BUDGET_BYTES - geometry_bytes + 1
+    with pytest.raises(ValidationError, match="over the viewer"):
+        validate_mesh_decode_budget(
+            4,
+            3,
+            4,
+            uvs=np.zeros((4, 2), dtype=np.float32),
+            texture_decoded_bytes=texture_bytes,
+        )
+
+
+@pytest.mark.parametrize(
+    "factory,error_pattern,test_id",
+    [
+        (
+            lambda: validate_mesh_decode_budget(
+                1_000_000, 3, _largest_fitting_face_count(1_000_000, 3) + 1
+            ),
+            "over the viewer",
+            "one_triangle_past_the_budget",
+        ),
+        (
+            # Normals are a third of a vertex block on their own, so a mesh that
+            # fits WITHOUT them can fail WITH them. A gate that ignored optional
+            # channels would pass this.
+            lambda: validate_mesh_decode_budget(
+                40_000_000,
+                3,
+                4_000_000,
+                normals=np.zeros((40_000_000, 3), dtype=np.float32),
+            ),
+            "over the viewer",
+            "normals_push_it_over",
+        ),
+        (
+            # A BROADCAST colour stores one row and decodes to n_vertices rows.
+            # Charging the stored row would under-count by ~4 bytes per vertex,
+            # which is exactly the trap the loader's decoded term exists to close.
+            lambda: validate_mesh_decode_budget(
+                43_000_000, 3, 1_000_000, colors=(1.0, 0.0, 0.0)
+            ),
+            "over the viewer",
+            "broadcast_colour_charged_at_its_expansion",
+        ),
+    ],
+)
+def test_decode_budget_rejections(factory, error_pattern, test_id) -> None:
+    """Each over-budget mesh is refused before anything reaches disk."""
+    with pytest.raises(ValidationError, match=error_pattern):
+        factory()
+
+
+def test_decode_budget_message_names_the_remedy_and_the_undercount() -> None:
+    """The message has to say what to do, and admit it is a lower bound.
+
+    A user who splits to just under the reported figure and is refused again
+    would reasonably call the first message a lie, so it says outright that the
+    real footprint is larger.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        validate_mesh_decode_budget(
+            1_000_000, 3, _largest_fitting_face_count(1_000_000, 3) + 1
+        )
+    text = str(excinfo.value)
+    assert "counts only decoded bytes" in text
+    assert "per node" in text

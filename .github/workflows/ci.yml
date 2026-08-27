@@ -14,35 +14,62 @@ on:
   pull_request:
     branches: [main, dev]
   schedule:
-    # Nightly full-suite run, and still the multi-version Python matrix: per-PR CI
-    # runs the FLOOR (3.12) only, so this is where the newest supported
-    # interpreter (3.14) gets exercised — within 24h rather than on every PR.
+    # A merge reaches dev about every 39 minutes while the required Python and
+    # TypeScript legs take considerably longer, so most push runs are cancelled by
+    # the next merge before they can produce a promotable commit. Schedule events
+    # have their own concurrency group, so dev merges cannot cancel them. Run one
+    # every three hours to supply deliberate green windows for promotion.
     #
-    # It buys a second thing too: a schedule event has no PR base, so the
-    # `changes` job below cannot path-filter anything and selects the WHOLE suite
-    # plus the documentation gate, catching a break in a job every recent PR
-    # happened to skip. Budget it as one whole CI run a day on the self-hosted box.
+    # Scheduled runs still share a group with EACH OTHER, so a window still in
+    # flight three hours later is cancelled by its successor -- which is itself a
+    # promotion window, so a lost window costs three hours, not the cadence.
+    # UNLOADED, a floor-only window is one Python leg beside `typescript-tests`,
+    # ~83-91 min against the 180 min of spacing (see the `timeout-minutes` note on
+    # `python-tests`); the 09:17 full-matrix window is three legs at
+    # `max-parallel: 2`, so two waves, ~166-182 min plus the hosted `changes` /
+    # `pick-runner` preamble -- AT the spacing rather than under it. Both figures
+    # are unloaded, and obsidian is deliberately SCHED_IDLE, so neither window is
+    # guaranteed to finish: the full-matrix one is simply the first to lose, and
+    # its 3.13/3.14 coverage then waits for the next day. A floor-only window
+    # needs about half as much quiet and is therefore the last to be lost;
+    # sustained contention at the documented 2.4-3.3x stretch can cancel both
+    # until the box quiets.
+    #
+    # Scheduled runs select the whole suite because they have no PR base. Keep the
+    # 09:17 UTC window on the full supported Python matrix so 3.13/3.14 have one
+    # dedicated daily window; the other seven use only the required 3.12 context.
+    # Every window consumes hosted minutes for its short jobs. `pick-runner` sends
+    # the long Python/TypeScript legs to obsidian when available and to hosted
+    # runners otherwise; 5 of 12 recent scheduled runs took the billed hosted path.
+    # Thus routing adds either self-hosted queue depth or those long legs to the
+    # hosted bill; the routed long legs alone expose roughly 200-240 hosted
+    # minutes/day at that observed rate.
     - cron: '17 9 * * *'
+    - cron: '17 0,3,6,12,15,18,21 * * *'
 
 concurrency:
-  # `github.event_name` is in the key ONLY to keep the nightly and push-to-dev
+  # `github.event_name` is in the key ONLY to keep scheduled and push-to-dev
   # in separate groups. A scheduled run's ref is `refs/heads/dev`, the same as a
   # merge's, so under one shared group whichever of the two starts SECOND cancels
   # the other -- and they collide constantly: over the 31 days before this was
-  # written a merge landed inside the nightly's ~30min window on 17 days, and
+  # written a merge landed inside the daily cron's ~30min window on 17 days, and
   # inside the half hour before it on 12.
   #
   # The expensive direction is the cron killing a merge's push run: a push run
-  # has no PR base either, so like the nightly it selects the WHOLE suite, and it
-  # is the only place the new `dev` commit gets that treatment. A cron has no
-  # business discarding it. The reverse is milder -- a merge that cancels the
-  # nightly runs the full suite itself -- but it still leaves "did every job pass
-  # today?" unanswerable at a glance.
+  # has no PR base either, so like a scheduled run it selects the WHOLE suite,
+  # and it is the only place the new `dev` commit gets that treatment. A cron has
+  # no business discarding it. The reverse is milder -- a merge that cancels the
+  # scheduled run executes the full suite itself -- but it still leaves "did
+  # every required job pass today?" unanswerable at a glance.
   #
-  # Nothing else changes -- PR runs already carry `refs/pull/N/merge` and so
-  # were never in the same group as a push, and two runs of the same PR still
-  # coalesce (same event, same ref).
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  # Fresh runs all have attempt 1, so PR and push runs still coalesce by event
+  # and ref exactly as before. Any rerun gets a distinct attempt number, so a
+  # newer fresh run does not cancel it (including superseded PR reruns).
+  # Neither rerun path restarts queue-watchdog. An obsidian-routed job left
+  # undispatched after its runners disappear can remain queued until GitHub's
+  # 24-hour ceiling; one dispatched before its slot recycles can instead reach
+  # its timeout before any step starts or runner name is recorded.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
 # Least privilege: these jobs only check out and test. Override per-job if a
@@ -128,15 +155,30 @@ jobs:
             # checking the baseline still MATCHES the tree, #1678), the Makefile
             # (test_python_version_declarations.py, test_demo_commands.py),
             # scripts/gallery/manifest.json (test_demo_meta.py cross-validates it
-            # against the demo registry), docs/guides/user/CLI_REFERENCE.md
-            # (test_docs_command_coverage.py), and the root and demos README files
-            # (test_readme_demo_docs.py, test_demo_import_spelling.py). Markdown
-            # alone runs only docs-quality, so these need explicit Python ownership.
+            # against the demo registry), generate-gallery.spec.ts (the gallery
+            # manifest field contract is parsed from it), docs/guides/user/CLI_REFERENCE.md
+            # (test_docs_command_coverage.py), the root and demos README files
+            # (test_readme_demo_docs.py, test_demo_import_spelling.py), plus the
+            # CLAUDE.md and visualization-skill projections checked by
+            # sync_demo_counts.py. The Cholesky documentation guard reads that same
+            # CLAUDE.md, all three skill pages and GSPLATS_DIMENSION_MAPPING.md.
+            # GATE_INPUTS in test_ci_diff_classifier.py is the declaration checked
+            # against this ERE. Markdown alone runs only docs-quality, so these need
+            # explicit Python ownership.
+            # Python contract tests also parse a narrow set of viewer TypeScript
+            # sources through viewer_source(); that same classifier test scans the
+            # literal calls and requires a GATE_INPUTS row for each. Name those files,
+            # not whole viewer subtrees: unrelated viewer edits should remain
+            # TypeScript-only and avoid the Python matrix.
             # test_docs_workflow.py also parses docs.yml and derives the published
             # LFS candidate set from .gitattributes, so both are Python gate inputs.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/guides/user/CLI_REFERENCE\.md$|^format-contract/|^\.github/workflows/docs\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/tests/(global-setup\.ts|README\.md)$|src/types/format-contract\.ts$|tests/fixtures/README\.md$))' && dom_py=true || true
-            # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config
-            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
+            # external-reference-audits.yml is one too: its schedule, permissions
+            # and token wiring are asserted by test_run_external_reference_audits.py,
+            # and a workflow file matches no other domain on its own.
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
+            # The gallery-selection unit test also reads the root README and gallery manifest.
+            printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^README\.md$|^scripts/gallery/manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
             printf '%s\n' "$changed" | grep -qE '(\.rs$|^wasm/|(^|/)Cargo\.(toml|lock)$)' && dom_rust=true || true
             printf '%s\n' "$changed" | grep -qE '(\.go$|^packages/luxar/src/luxar/cli/_launchers/|(^|/)go\.(mod|sum)$)' && dom_go=true || true
             # This workflow DEFINES how every suite is invoked, so it belongs to all
@@ -184,13 +226,18 @@ jobs:
   # an in-progress obsidian job in any repository run proves the busy box is live.
   #
   # Same-repo runs route to obsidian while the positive capacity timestamp is
-  # fresh OR another obsidian job is in progress, so busy-box overflow queues
-  # instead of consuming paid runners. A stale publisher with no active work
-  # degrades to GitHub-hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
+  # fresh OR another obsidian job is in progress. With no fresh capacity and
+  # fewer than ten eligible runs, five obsidian jobs waiting at least five
+  # minutes hit the backlog cap and burst new work to GitHub-hosted. At the
+  # ten-run scan bound, any aged obsidian backlog routes hosted; without that
+  # evidence, known liveness still wins. A stale publisher with no active work
+  # degrades to hosted. LUXAR_CI_FORCE_HOSTED is the manual escape hatch.
   #
-  # Freshness matters more than it looks: a job dispatched to a registered-but-
-  # offline self-hosted runner does not fail, it QUEUES — for up to 24 hours. So
-  # the failure mode this guards against is not a red CI, it is a CI that hangs.
+  # Freshness matters more than it looks: a job assigned to a registered-but-
+  # offline self-hosted label does not fail or fall back, it QUEUES for up to 24
+  # hours. So the failure mode this guards against is not a red CI, it is a CI
+  # that hangs. A leg dispatched before its slot recycles is the separate case
+  # that can reach its timeout before any step starts or runner name is recorded.
   # This check only covers the moment of routing; the `queue-watchdog` job below
   # covers the window AFTER it (box dies post-routing, jobs already queued).
   pick-runner:
@@ -198,15 +245,14 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read
+      contents: read
     outputs:
-      label: ${{ steps.pick.outputs.label }}
+      label: ${{ steps.guard.outputs.label || steps.checkout-fallback.outputs.label || steps.pick.outputs.label || 'ubuntu-latest' }}
     steps:
-      - id: pick
-        name: Pick runner from obsidian capacity and activity
+      - id: guard
+        name: Keep fork code and forced-hosted runs off obsidian
         env:
           FORCE_HOSTED: ${{ vars.LUXAR_CI_FORCE_HOSTED }}
-          GH_TOKEN: ${{ github.token }}
-          HEARTBEAT: ${{ vars.LUXAR_CI_HEARTBEAT }}
           # Empty on push events; the `|| github.repository` makes those read
           # as same-repo, which they are.
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
@@ -226,6 +272,31 @@ jobs:
             echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+      - id: scanner-checkout
+        name: Check out the stdlib queue scanner
+        if: steps.guard.outputs.label == ''
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+
+      - id: checkout-fallback
+        name: Route hosted if the queue scanner cannot be checked out
+        if: steps.guard.outputs.label == '' && steps.scanner-checkout.outcome != 'success'
+        run: |
+          echo "queue scanner checkout failed -> routing to ubuntu-latest"
+          echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+
+      - id: pick
+        if: steps.guard.outputs.label == '' && steps.scanner-checkout.outcome == 'success'
+        name: Pick runner from obsidian capacity, activity, and backlog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEARTBEAT: ${{ vars.LUXAR_CI_HEARTBEAT }}
+          MAX_QUEUED_OBSIDIAN: ${{ vars.LUXAR_CI_MAX_QUEUED_OBSIDIAN }}
+        run: |
           now=$(date +%s)
           hb=${HEARTBEAT:-0}
           if ! echo "$hb" | grep -qE '^[0-9]+$'; then hb=0; fi
@@ -244,52 +315,76 @@ jobs:
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
-            2>/dev/null) || runs=""
-          if [ -z "$runs" ]; then
-            echo "run liveness unreadable; routing to obsidian to avoid paid overflow"
+          max_queued_obsidian=${MAX_QUEUED_OBSIDIAN:-5}
+          if ! echo "$max_queued_obsidian" | grep -qE '^[1-9][0-9]*$'; then
+            max_queued_obsidian=5
+          fi
+          queue_grace_seconds=300
+          queue_cutoff=$(( now - queue_grace_seconds ))
+          max_scanned_runs=10
+          scan=$(python3 scripts/ci_queue_scan.py scan \
+            --repository "$GITHUB_REPOSITORY" \
+            --status in_progress --status queued \
+            --queued-before "$queue_cutoff" \
+            --max-runs "$max_scanned_runs" \
+            --stop-after-queued "$max_queued_obsidian") \
+            || scan='{"error":{"scope":"helper"}}'
+          queued_obsidian=$(echo "$scan" | jq '.queued | length' 2>/dev/null) || queued_obsidian=0
+          error_scope=$(echo "$scan" | jq -r '.error.scope // empty' 2>/dev/null) || error_scope=helper
+          if [ -n "$error_scope" ]; then
+            if [ "$queued_obsidian" -gt 0 ]; then
+              echo "$error_scope activity unreadable after finding aged backlog -> routing to ubuntu-latest"
+              echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+            else
+              echo "$error_scope activity unreadable; routing to obsidian to avoid paid overflow"
+              echo "label=obsidian" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          if [ "$queued_obsidian" -ge "$max_queued_obsidian" ]; then
+            echo "at least $queued_obsidian obsidian jobs have waited ${queue_grace_seconds}s -> routing to ubuntu-latest"
+            echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          truncated=$(echo "$scan" | jq -r '.truncated' 2>/dev/null) || truncated=true
+          if [ "$truncated" = "true" ] && [ "$queued_obsidian" -gt 0 ]; then
+            echo "backlog scan reached its ${max_scanned_runs}-run limit after finding aged backlog -> routing to ubuntu-latest"
+            echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          active_obsidian=$(echo "$scan" | jq '.running | length' 2>/dev/null) || active_obsidian=0
+          if [ "$active_obsidian" -gt 0 ]; then
+            echo "obsidian work is in progress with at least $queued_obsidian aged jobs queued -> routing to obsidian"
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          for run_id in $(echo "$runs" | jq -r '.workflow_runs[].id' 2>/dev/null); do
-            jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
-              2>/dev/null) || jobs=""
-            if [ -z "$jobs" ]; then
-              echo "job liveness unreadable; routing to obsidian to avoid paid overflow"
-              echo "label=obsidian" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            if echo "$jobs" | jq -e '.jobs[] | select(.status == "in_progress")
-              | select(.labels | index("obsidian"))' >/dev/null; then
-              echo "obsidian job is in progress in run $run_id -> routing to obsidian"
-              echo "label=obsidian" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
           echo "capacity heartbeat is unavailable or stale and no obsidian job is active -> routing to ubuntu-latest"
           echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
 
   # pick-runner's heartbeat check is a snapshot: it proves obsidian was alive
   # when the run was ROUTED, not that it survives long enough to pick the jobs
   # up. GitHub never re-evaluates `runs-on` — a job assigned to the `obsidian`
-  # label whose runners then vanish does not fail or fall back, it sits QUEUED
-  # for up to 24 hours, and job-level `timeout-minutes` only starts counting
-  # once a job is running. This job covers the first 10 minutes from the hosted
-  # side: while any obsidian-routed job is still queued it checks in-progress
-  # obsidian jobs across repository runs. If none are visible it cancels the run.
+  # label whose runners then vanish does not fall back. If it is never dispatched,
+  # it can remain queued until GitHub's 24-hour ceiling; job-level timeout has not
+  # started. If it was dispatched before its slot recycled, the timeout can run
+  # with no steps or runner name recorded and eventually cancel the required leg.
+  # This job covers the first 10 minutes from the hosted side: while any
+  # obsidian-routed job is still queued, it checks in-progress obsidian jobs across
+  # repository runs. If none are visible it cancels the run.
   # The workflow token cannot read repository-variable updates, so the publisher
   # is unavailable here; a stale GitHub `in_progress` state can therefore keep a
-  # dead runner covered. A box that dies after this window can still
-  # leave the run queued until GitHub's 24-hour timeout; set LUXAR_CI_FORCE_HOSTED=1
-  # and re-run ALL jobs to recover ("re-run failed" reuses the previous router
-  # output).
+  # dead runner covered. A box that dies after this window can still leave an
+  # undispatched leg queued until the 24-hour ceiling, or a dispatch-lost leg
+  # running down its timeout. Set LUXAR_CI_FORCE_HOSTED=1 and re-run ALL jobs to
+  # recover ("re-run failed" reuses the previous router output).
   #
-  # On push/nightly, max-parallel deliberately holds one Python leg queued
-  # while two Python legs and TypeScript occupy the three slots. GitHub reports
-  # that held leg as `queued` with the `obsidian` label (observed 2026-08-24).
-  # The current run's active obsidian jobs keep the held leg covered. When this
-  # run is wholly queued, a periodic repository-wide scan looks for work on other
-  # runs. Two scans with no active obsidian work are required before cancellation.
+  # On a push or the daily full-matrix schedule, max-parallel deliberately holds
+  # one Python leg queued while two Python legs and TypeScript occupy the three
+  # slots. GitHub reports that held leg as `queued` with the `obsidian` label
+  # (observed 2026-08-24). The current run's active obsidian jobs keep the held
+  # leg covered. When this run is wholly queued, a periodic repository-wide scan
+  # looks for work on other runs. Two scans with no active obsidian work are
+  # required before cancellation.
   # The watchdog fails plumbing errors toward NOT cancelling.
   queue-watchdog:
     needs: [pick-runner]
@@ -297,21 +392,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      # Job-level grant (replaces the workflow's contents:read for this job):
-      # cancelling the run and inspecting repository jobs both live under the
-      # actions scope. Nothing here checks out code.
       actions: write
+      # The scanner is repository code, so checkout needs read-only contents.
+      # Credentials stay disabled; only scripts/ is materialised.
+      contents: read
     steps:
+      # The job-level guard inherits pick-runner's fork check, so this checkout
+      # never materialises a fork's merge ref in the actions:write job.
+      - id: scanner-checkout
+        name: Check out the stdlib queue scanner
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+
+      - name: Leave the run alone if the queue scanner cannot be checked out
+        if: steps.scanner-checkout.outcome != 'success'
+        run: echo "queue scanner checkout failed; not cancelling on a plumbing failure"
+
       - name: Cancel the run if obsidian dies while jobs are still queued
+        if: steps.scanner-checkout.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Self-bounded below the job timeout. If jobs are STILL queued when
           # the window closes but obsidian stayed live the whole time, the box is
-          # busy, not dead (3 slots; 4 obsidian-routed test jobs on a push or the
-          # nightly, 2 on a PR — and a merge landing during the nightly now
-          # queues both sets at once, since the two no longer cancel each other
-          # — draining) — leave the run alone.
+          # busy, not dead (a push or daily full-matrix schedule routes 4 test
+          # jobs to obsidian, while a PR or frequent schedule routes 2;
+          # overlapping event groups do not cancel one another, so queued work
+          # can be healthy and draining) — leave the run alone.
           start=$(date +%s)
           end=$(( start + 10 * 60 ))
           materialize_end=$(( start + 3 * 60 ))
@@ -328,16 +438,20 @@ jobs:
               echo "jobs API read failed; retrying"
               sleep 30; continue
             fi
-            visible=$(echo "$jobs" | jq '[.jobs[] | select(.labels | index("obsidian"))] | length') \
-              || { no_activity_checks=0; echo "jobs API response was not parseable; retrying"; sleep 30; continue; }
-            queued=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "queued")
-                                                     | select(.labels | index("obsidian"))
-                                                     | .name] | join(", ")') \
-              || { no_activity_checks=0; echo "queued-job selection failed; retrying"; sleep 30; continue; }
-            running=$(echo "$jobs" | jq -r '[.jobs[] | select(.status == "in_progress")
-                                                      | select(.labels | index("obsidian"))
-                                                      | .name] | join(", ")') \
-              || { no_activity_checks=0; echo "running-job selection failed; retrying"; sleep 30; continue; }
+            classified=$(echo "$jobs" | python3 scripts/ci_queue_scan.py classify) \
+              || classified='{"error":{"scope":"helper"}}'
+            classify_error=$(echo "$classified" | jq -r '.error.scope // empty' 2>/dev/null) || classify_error=helper
+            if [ -n "$classify_error" ]; then
+              no_activity_checks=0
+              echo "jobs API response was not parseable; retrying"
+              sleep 30; continue
+            fi
+            visible=$(echo "$classified" | jq '.visible | length') \
+              || { no_activity_checks=0; echo "job classification failed; retrying"; sleep 30; continue; }
+            queued=$(echo "$classified" | jq -r '.queued | join(", ")') \
+              || { no_activity_checks=0; echo "job classification failed; retrying"; sleep 30; continue; }
+            running=$(echo "$classified" | jq -r '.running | join(", ")') \
+              || { no_activity_checks=0; echo "job classification failed; retrying"; sleep 30; continue; }
             fanout_pending=$(echo "$jobs" | jq -r '[.jobs[] | select(.name == "changes")
                                                             | select(.status == "queued" or .status == "in_progress")
                                                             | .name] | join(", ")') \
@@ -371,31 +485,27 @@ jobs:
               echo "waiting for the next repository liveness scan; still queued: $queued"
               sleep 30; continue
             fi
-            other_runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
-              2>/dev/null) || other_runs=""
-            if [ -z "$other_runs" ]; then
+            liveness=$(python3 scripts/ci_queue_scan.py scan \
+              --repository "$GITHUB_REPOSITORY" \
+              --status in_progress \
+              --max-runs 100 \
+              --exclude-run "$GITHUB_RUN_ID" \
+              --stop-after-running 1) \
+              || liveness='{"error":{"scope":"helper"}}'
+            liveness_error=$(echo "$liveness" | jq -r '.error.scope // empty' 2>/dev/null) || liveness_error=helper
+            if [ "$liveness_error" = "runs" ] || [ "$liveness_error" = "helper" ]; then
               no_activity_checks=0
               echo "run liveness unreadable; not cancelling on a fluke — retrying"
               sleep 30; continue
             fi
-            other_running=""
-            for run_id in $(echo "$other_runs" | jq -r '.workflow_runs[].id' 2>/dev/null); do
-              if [ "$run_id" = "$GITHUB_RUN_ID" ]; then continue; fi
-              other_jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
-                2>/dev/null) || other_jobs=""
-              if [ -z "$other_jobs" ]; then
-                other_running=__api_error__
-                break
-              fi
-              other_running=$(echo "$other_jobs" | jq -r '[.jobs[] | select(.status == "in_progress")
-                | select(.labels | index("obsidian")) | .name] | join(", ")') || other_running=__api_error__
-              if [ -n "$other_running" ]; then break; fi
-            done
-            if [ "$other_running" = "__api_error__" ]; then
+            if [ "$liveness_error" = "jobs" ]; then
               no_activity_checks=0
               echo "job liveness unreadable; not cancelling on a fluke — retrying"
               sleep 30; continue
             fi
+            # The API request itself is capped at 100 runs, so max-runs=100
+            # cannot truncate this single-status liveness scan.
+            other_running=$(echo "$liveness" | jq -r '.running | join(", ")')
             if [ -n "$other_running" ]; then
               no_activity_checks=0
               echo "other runs have active obsidian jobs ($other_running); still queued: $queued"
@@ -497,31 +607,37 @@ jobs:
     # The suite runs under pytest-xdist ON THE SELF-HOSTED BOX ONLY (see
     # PYTEST_ADDOPTS below; hosted runners stay serial). The old note
     # here said xdist "doesn't help on the 1-core runner" — true of a 2-core
-    # GitHub VM, and false on the 16-core self-hosted box, where it cut each leg
-    # from ~45 min to ~16. Combined with the thread pinning below; neither works
-    # without the other.
+    # GitHub VM, and false on the 16-core self-hosted box, where the original
+    # `-n 4` benchmark cut each leg from ~45 min to ~16. Combined with the thread
+    # pinning below; neither works without the other. The memory-safe `-n 2`
+    # runner-equivalent coverage runs took 1:16:49-1:25:17 under the runner's
+    # CPU and memory limits.
     #
-    # 120, not 60, because the self-hosted runners are deliberately SCHED_IDLE
+    # 180, not 60, because the self-hosted runners are deliberately SCHED_IDLE
     # (see luxar-ci-slot@.service): CI only gets CPU nobody else on that box
     # wants, so a sustained burst from the other workloads there can stretch a
     # leg arbitrarily. That is starvation, not a hang, and the heartbeat cannot
     # detect it — an idle-priority job is perfectly healthy, just slow. A
-    # timeout here would be a self-inflicted red. Measured: 16.9 min under xdist,
-    # 47.5 min in the pre-xdist serial worst case.
-    timeout-minutes: 120
+    # timeout here would be a self-inflicted red. Including the ~5.5 min outside
+    # the coverage step, the capped runs imply ~83-91 min jobs before contention;
+    # completed obsidian legs have stretched 2.4-3.3x over their unloaded time.
+    timeout-minutes: 180
     strategy:
       # Report every interpreter's verdict in one run: fail-fast would cancel the
       # siblings on the first red leg, losing precisely the per-version information
       # you need when the legs genuinely differ.
       fail-fast: false
       # With the obsidian fleet size documented by queue-watchdog, keep one
-      # slot available so `typescript-tests` starts immediately rather than
-      # queueing behind the third Python leg. PRs have one Python leg and are
-      # unaffected; push/nightly runs execute two legs, then the third. Keep the
-      # GitHub-hosted fallback elastic: its matrix legs run on separate VMs.
+      # slot from being monopolised by one run's Python matrix. The shared
+      # repository queue may still put other work ahead of this run's
+      # `typescript-tests`; pushes and the daily full-matrix schedule execute two
+      # Python legs, then the third. PRs and the seven floor-only scheduled
+      # windows have one Python leg and are unaffected. Keep the GitHub-hosted
+      # fallback elastic: its matrix legs run on separate VMs.
       max-parallel: ${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}
       matrix:
-        # FLOOR on every PR, floor + NEWEST on push-to-dev and the nightly.
+        # FLOOR on every event, floor + NEWEST on push-to-dev and the daily
+        # 09:17 UTC schedule.
         #
         # 3.12 is the floor (`requires-python = ">=3.12"`, what zarr 3.2+ needs)
         # and is the required status context under branch protection, so it runs
@@ -529,18 +645,22 @@ jobs:
         # `install-hatch` bootstrap explicitly prefers them, and a developer's
         # `hatch env` picks the newest interpreter on the box — so testing only the
         # floor would leave the version most people actually run unexercised.
-        # Hence 3.14 on the events that already run the whole suite.
+        # Hence 3.14 on merge pushes and one dedicated daily schedule, both
+        # of which run the whole suite. The other seven scheduled promotion
+        # windows intentionally carry only the required 3.12 context.
         #
         # If newer interpreters are ever deliberately unsupported, the honest fix
         # is a `requires-python` upper bound, not a quiet single-leg matrix.
         #
-        # The non-PR set is EVERY version the wheel's classifiers advertise, so
+        # The full set is EVERY version the wheel's classifiers advertise, so
         # "declared" and "tested" cannot drift apart: 3.13 was claimed but never
         # exercised, which is the same species of lie as an untested 3.10 claim.
-        # Three legs off-PR is also what this job carried before the floor moved
+        # Three legs on pushes is also what this job carried before the floor moved
         # (3.10/3.11/3.12). `max-parallel` above controls their fan-out without
         # weakening the version coverage.
-        python-version: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.12", "3.13", "3.14"]') }}
+        # Pull requests and the seven frequent schedules are the fallthrough. If
+        # another trigger is added, classify its version coverage explicitly.
+        python-version: ${{ (github.event_name == 'push' || github.event.schedule == '17 9 * * *') && fromJSON('["3.12", "3.13", "3.14"]') || fromJSON('["3.12"]') }}
     env:
       # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
       # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to
@@ -548,12 +668,12 @@ jobs:
       # every leg ~1.9x SLOWER than the same leg on a GitHub VM (which never
       # contends, because each matrix leg gets its own machine).
       #
-      # Pinning frees ~13 of 16 cores, which `-n 4` (pytest-xdist, see
-      # PYTEST_ADDOPTS below) then spends on real parallelism: 45.5/44.0/47.5 min ->
-      # 15.8/16.6/16.9, i.e. faster than the 21.3/23.8/23.4 GitHub baseline.
-      # Same 6261 passed / 288 skipped and the same 86.44% coverage either way.
+      # Pinning frees ~13 of 16 cores, which pytest-xdist (see PYTEST_ADDOPTS
+      # below) spends on real parallelism. The original `-n 4` benchmark cut
+      # 45.5/44.0/47.5 min to 15.8/16.6/16.9 with the same 6261 passed / 288
+      # skipped and 86.44% coverage, but CPU quota is not the only bound.
       #
-      # Do NOT "improve" `-n 4` to `-n auto`. xdist's auto reads os.cpu_count(),
+      # Do NOT "improve" `-n 2` to `-n auto`. xdist's auto reads os.cpu_count(),
       # which inside the runner container reports the HOST's 16 -- not the 4-CPU
       # cgroup quota (sched_getaffinity says 16 too; only /sys/fs/cgroup/cpu.max
       # tells the truth). `auto` would start 16 workers per leg against 4 CPUs.
@@ -565,18 +685,26 @@ jobs:
       OPENBLAS_NUM_THREADS: '1'
       MKL_NUM_THREADS: '1'
       NUMEXPR_NUM_THREADS: '1'
-      # Worker count must match the MACHINE, not be uniform across machines.
+      # Worker count must fit both the MACHINE and the runner cgroup. Four
+      # coverage-traced workers plus the controller repeatedly reached the
+      # obsidian slot's exact 12 GiB memory.max. Three workers still reached
+      # 12.59 GB in a matching capped run (9.60 GB anonymous RSS), leaving under
+      # 300 MB. Two workers completed at a 10.28 GB peak with zero cgroup max,
+      # OOM, or OOM-kill events, retaining parallelism without the hard limit.
+      # `--dist loadfile` also keeps each file's shared fixtures on one worker,
+      # matching the repository's parallel test contract instead of rebuilding
+      # them as xdist's default load scheduler moves individual tests around.
+      #
       # `-n 4` on a GitHub-hosted VM killed all three legs at 97-98% complete
       # with exit 143 + "the runner has received a shutdown signal" -- four
       # workers each importing torch/napari/scipy exhaust a 2-core hosted VM and
       # the OOM killer takes the runner agent with them. That would have broken
       # the fallback path, i.e. exactly the safety net obsidian relies on.
       #
-      # Both endpoints here are empirically green: serial on hosted
-      # (21.3/23.8/23.4 min) and -n 4 on the 16-core box (15.8/16.6/16.9).
+      # Hosted stays serial (about 1h17m in recent fallback runs).
       # PYTEST_ADDOPTS is read by pytest itself, so the shared `test-cov` script
       # stays machine-agnostic for local use.
-      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 4' || '' }}
+      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2 --dist loadfile' || '' }}
     steps:
       - name: Free disk space (hosted-runner fallback)
         # The full suite exhausts the ~14 GB GitHub-hosted runner and fails with
@@ -653,7 +781,7 @@ jobs:
 
       - name: Type check (mypy)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        run: hatch run mypy packages/luxar/src/luxar/
+        run: hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py
 
       - name: Layer check (import-linter)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
@@ -679,6 +807,12 @@ jobs:
         # above).
         run: hatch run check-data-manifest
 
+      - name: Demo documentation count drift
+        if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
+        # README.md, CLAUDE.md and the visualization skill must match the live
+        # demo registry and focused-example glob.
+        run: hatch run check-demo-counts
+
       - name: Security (bandit)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
         # Gates on unwaived medium/high findings. Low findings (subprocess
@@ -695,11 +829,15 @@ jobs:
     # `changes` job.
     if: ${{ !cancelled() }}
     runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
-    # 60, not 30: same SCHED_IDLE starvation argument as python-tests. Measured
-    # at 15.5 min alongside the xdist matrix, so 30 left under 2x — the thinnest
-    # margin of any obsidian-routed job. release-readiness keeps 30 on its
-    # GitHub-hosted runner, where SCHED_IDLE starvation does not apply.
-    timeout-minutes: 60
+    # 120, not 60: a successful TypeScript attempt ran 17m53s of real steps; at
+    # the documented 3.3x SCHED_IDLE extreme, a healthy starved run projects to
+    # roughly 59 minutes, leaving the former 60-minute budget no headroom for any
+    # pre-step dispatch latency. A dispatch-lost leg can spend the same budget
+    # without starting a step. The cost is doubled time-to-red and delayed stale
+    # repair for that leg; on the hosted fallback it also doubles hang detection
+    # and worst-case billed time. release-readiness keeps 30 because its hosted
+    # runner is not exposed to SCHED_IDLE starvation.
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: packages/luxar-viewer
@@ -990,6 +1128,87 @@ jobs:
           find dist/assets -maxdepth 1 -type f -name 'sort-worker-*.js' -print -quit | grep -q . \
             || { echo "::error::viewer dist missing the depth-sort worker"; exit 1; }
           echo "Wheel viewer application and critical assets are present."
+
+  # A scheduled run can put fresh successful checks on the same SHA as an older
+  # cancelled push run, but branch protection's rollup can retain the cancelled
+  # duplicate for each required context. Once this run has proved the five
+  # protected contexts green, rerun the cancelled required jobs from that push
+  # so the push suite itself converges to the verdict branch protection reads.
+  repair-cancelled-push-checks:
+    needs:
+      [python-tests, typescript-tests, release-readiness, wheel-viewer, docs-quality]
+    if: ${{ github.event_name == 'schedule' && always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: Rerun cancelled required push jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          required=(
+            "python-tests (3.12)"
+            "typescript-tests"
+            "release-readiness"
+            "wheel-viewer"
+            "docs-quality"
+          )
+          current_jobs=$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100")
+          for context in "${required[@]}"; do
+            conclusion=$(jq -r --arg context "$context" \
+              '[.[] | .jobs[] | select(.name == $context)] | max_by(.id).conclusion // "absent"' \
+              <<<"$current_jobs")
+            if [ "$conclusion" != "success" ]; then
+              echo "Required scheduled context is not green: $context=$conclusion"
+              exit 0
+            fi
+          done
+
+          push_run=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&event=push&status=completed&per_page=100" \
+            --jq '[.workflow_runs[] | select(.name == "CI")] | max_by(.id).id // empty')
+          if [ -z "$push_run" ]; then
+            echo "No push CI run found for ${GITHUB_SHA}"
+            exit 0
+          fi
+
+          push_jobs=$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/jobs?filter=latest&per_page=100")
+          required_json=$(printf '%s\n' "${required[@]}" \
+            | jq -Rsc 'split("\n") | map(select(length > 0))')
+          cancelled_jobs=$(jq -r --argjson required "$required_json" '
+            [.[] | .jobs[]]
+            | group_by(.name)[]
+            | max_by(.id)
+            | select(
+                .conclusion == "cancelled"
+                and (.name | IN($required[]))
+              )
+            | [.id, .name]
+            | @tsv
+          ' <<<"$push_jobs")
+          if [ -z "$cancelled_jobs" ]; then
+            echo "No cancelled required push jobs found"
+            exit 0
+          fi
+
+          cancelled_count=$(wc -l <<<"$cancelled_jobs")
+          if [ "$cancelled_count" -gt 1 ]; then
+            echo "Rerunning unsuccessful push jobs after finding $cancelled_count cancelled required jobs"
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/rerun-failed-jobs" >/dev/null \
+              || echo "::warning::rerun rejected for push run $push_run ($cancelled_count cancelled required jobs)"
+            exit 0
+          fi
+
+          IFS=$'\t' read -r job_id job_name <<<"$cancelled_jobs"
+          echo "Rerunning cancelled push job: $job_name ($job_id)"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/jobs/$job_id/rerun" >/dev/null \
+            || echo "::warning::rerun rejected for $job_name ($job_id)"
 
   go-launcher:
     needs: changes

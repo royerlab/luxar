@@ -4,12 +4,12 @@
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
-.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest \
+.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest sync-demo-counts \
         lint-python lint-typescript type-check-python type-check-typescript security check-complexity \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
-        check-all check-typescript check-rust check-knip check-wasm-deps setup-dev \
+        check-all check-typescript check-rust check-knip check-gallery-staleness check-wasm-deps setup-dev \
         check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
@@ -642,6 +642,10 @@ gen-data-manifest:  ## Regenerate demos/data_manifest.json from the demos/data t
 	@echo "📄 Regenerating the demo-data manifest..."
 	$(HATCH) run gen-data-manifest
 
+sync-demo-counts:  ## Synchronize live documentation counts with demos and examples
+	@echo "📄 Synchronizing documented demo and example counts..."
+	$(HATCH) run sync-demo-counts
+
 # Code quality checks (using Hatch)
 lint-python:  ## Run ruff linting on Python code
 	$(HATCH) run python -m ruff check packages/luxar/src/luxar/ scripts scripts/benchmarks
@@ -658,7 +662,7 @@ lint-typescript:  ## Run ESLint on TypeScript code
 	cd packages/luxar-viewer && pnpm run lint
 
 type-check-python:  ## Run mypy type checking on Python code
-	$(HATCH) run mypy packages/luxar/src/luxar/
+	$(HATCH) run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py
 
 type-check-typescript:  ## Run TypeScript type checking
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -889,6 +893,11 @@ check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI 
 
 check-external-references:  ## Run all network-backed reference audits (report-only)
 	$(HATCH) run python scripts/run_external_reference_audits.py
+
+check-gallery-staleness:  ## Report README gallery tiles older than their render inputs
+	@# Deliberately report-only: stale media are review work, not a CI failure.
+	@# Git blame/log must see full history, so this remains an opt-in local check.
+	$(HATCH) run python scripts/gallery/check_tile_staleness.py
 
 clean-docs:  ## Clean built documentation
 	@echo "🧹 Cleaning documentation build artifacts..."

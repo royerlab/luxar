@@ -433,9 +433,7 @@
           "hosted_sha256": "74fbe3a7b3ebcb344df21fdab4be6b54d557d8358b91b748cf1eb8c648e5d3fb",
           "hosted_bytes": 7650636,
           "superseded_sha256": [
-            "1356c696ec346c313215d647561b983f86dfe9844c10620e6b2fb528a74d6201",
-            "2b09d92b730f9956159c8ac1b6d8a7c9856434ca75a54698ddeec3a324f0012d",
-            "cfecfcd7dce6af8a8f12b01bd1f6fc25427d155836f3bd79afad58f3e7dee117"
+            "1356c696ec346c313215d647561b983f86dfe9844c10620e6b2fb528a74d6201"
           ]
         }
       ]

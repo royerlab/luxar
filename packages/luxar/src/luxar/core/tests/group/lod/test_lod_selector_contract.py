@@ -591,6 +591,13 @@ _EXEMPT_LOD_GROUP_CALLERS = {
         "detached-tree graft; selector comes from gsplats.tree."
         "gate_authored_selector (stored-tree question, not explicit-vs-derived)"
     ),
+    # This demo hand-builds a ladder with no user-supplied explicit-threshold
+    # branch; it always derives screen-area thresholds, choosing the anchor from
+    # the realized BSP part count so a one-part partition remains whole-object.
+    "demos/demo_ocean_currents_earth.py": (
+        "hand-built demo ladder; thresholds are always derived and its anchor "
+        "depends on the realized BSP part count"
+    ),
 }
 
 #: The full expected set of production ``add_lod_group(...)`` call sites.
@@ -599,9 +606,8 @@ _LOD_GROUP_CALLERS = frozenset(_LADDER_PRODUCERS) | frozenset(_EXEMPT_LOD_GROUP_
 #: How many ``add_lod_group(...)`` CALLS each of those modules makes. Asserted as
 #: well as the key set, because a SECOND call added inside an already-listed
 #: module changes no key and would otherwise slip past every structural guard
-#: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Every module has
-#: exactly one today, hence the comprehension; a module that legitimately grows a
-#: second call site becomes an explicit entry here.
+#: (see :func:`test_no_unrouted_producer_builds_a_lod_group`). Every listed
+#: module has exactly one call today.
 _EXPECTED_CALLS_PER_MODULE: Dict[str, int] = {rel: 1 for rel in _LOD_GROUP_CALLERS}
 
 
@@ -807,7 +813,8 @@ def test_no_unrouted_producer_builds_a_lod_group() -> None:
         "the number of production add_lod_group(...) calls per module changed.\n"
         f"  discovered: {counts}  (lines: { {k: v for k, v in sorted(found.items())} })\n"
         f"  expected:   {dict(sorted(_EXPECTED_CALLS_PER_MODULE.items()))}\n"
-        "Every listed module builds exactly ONE kind=lod group today. If you added "
+        "Most listed modules build exactly one kind=lod group today; "
+        "_EXPECTED_CALLS_PER_MODULE carries the exceptions. If you added "
         f"another, make sure it takes BOTH thresholds and selector from lod.group."
         f"{_RESOLVER} (or belongs in _EXEMPT_LOD_GROUP_CALLERS for a stated "
         "reason), then raise that module's count in _EXPECTED_CALLS_PER_MODULE "

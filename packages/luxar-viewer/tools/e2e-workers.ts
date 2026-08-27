@@ -47,9 +47,9 @@ import * as os from 'node:os';
 /**
  * Most workers a local run may use, whatever the box's capacity.
  *
- * The binding constraint is NOT the GPU — it is the dataset server, a GIL-bound
- * `python3 -m http.server 9000` (`playwright.config.ts` `webServer[1]`) streaming thousands of
- * small zarr chunks to every worker at once. Evidence already in the tree:
+ * The binding constraint is NOT the GPU — it is the Python dataset server
+ * (`playwright.config.ts` `webServer[1]`) streaming thousands of small zarr
+ * chunks to every worker at once. Evidence already in the tree:
  * `all-examples-smoke-test.spec.ts` raised its own timeout to 120 s to "absorb HTTP-server
  * contention when several worker-pool tabs decode mid-size datasets concurrently". Raise this
  * past 4 only together with a measurement, and if the server saturates, replace it rather than

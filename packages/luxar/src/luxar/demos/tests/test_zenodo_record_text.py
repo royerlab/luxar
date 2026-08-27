@@ -53,9 +53,10 @@ def _write_frame(
     path: Path,
     *,
     n_splats: int = 100,
-    psnr: float = 40.0,
-    source_bytes: int = 1_000_000,
+    psnr: float | None = 40.0,
+    source_bytes: int | None = 1_000_000,
     gsplats: bool = True,
+    part_provenance: list[dict[str, Any]] | None = None,
 ) -> None:
     """One single-store `.gsplats.zarr.zip`, as a bundle's frames are."""
     root = f"{path.name.split('.')[0]}.gsplats.zarr"
@@ -71,10 +72,14 @@ def _write_frame(
             ),
         )
         zf.writestr(f"{root}/fitting/.zgroup", json.dumps({"zarr_format": 2}))
-        zf.writestr(
-            f"{root}/fitting/.zattrs",
-            json.dumps({"psnr_db": psnr, "source_bytes": source_bytes}),
-        )
+        fitting = {}
+        if psnr is not None:
+            fitting["psnr_db"] = psnr
+        if source_bytes is not None:
+            fitting["source_bytes"] = source_bytes
+        if part_provenance is not None:
+            fitting["part_provenance"] = part_provenance
+        zf.writestr(f"{root}/fitting/.zattrs", json.dumps(fitting))
 
 
 def _write_bundle(path: Path, frames: list[dict[str, Any]], tmp_path: Path) -> None:
@@ -281,6 +286,124 @@ class TestABundleIsDescribedWhole:
         assert info["frames"] == 3
         assert info["n_splats"] is None
         assert info["psnr_db"] is None
+
+
+class TestAStackedStoreIsDescribedFromItsPartProvenance:
+    @staticmethod
+    def _parts(kind: str | None) -> list[dict[str, Any]]:
+        parts = []
+        for coordinate, psnr in ((0.0, 31.2), (5.0, 54.9), (10.0, 40.0)):
+            part: dict[str, Any] = {
+                "coordinate": coordinate,
+                "fitting": {
+                    "psnr_db": psnr,
+                    "foreground_psnr_db": psnr - 10.0,
+                    "source_bytes": 1000,
+                },
+            }
+            if kind is not None:
+                part["fit_reference"] = {"kind": kind}
+            parts.append(part)
+        return parts
+
+    def test_acquisition_referenced_parts_publish_a_range(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "movie.gsplats.zarr.zip"
+        _write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            part_provenance=self._parts("acquisition"),
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] == 3
+        assert info["source_bytes"] == 3000
+        assert gen._db(info["psnr_db"]) == "31.2–54.9"
+        assert gen._db(info["foreground_psnr_db"]) == "21.2–44.9"
+        assert info["quality_quotable"] is True
+
+    @pytest.mark.parametrize("kind", [None, "preprocessed", "synthetic"])
+    def test_non_acquisition_parts_are_not_quoted(
+        self, gen: Any, tmp_path: Path, kind: str | None
+    ) -> None:
+        path = tmp_path / f"movie-{kind}.gsplats.zarr.zip"
+        _write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            part_provenance=self._parts(kind),
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] == 3
+        assert info["source_bytes"] == 3000
+        assert info["psnr_db"] is None
+        assert info["foreground_psnr_db"] is None
+        assert info["quality_quotable"] is False
+
+    def test_check_does_not_demand_scores_classified_as_unquotable(
+        self, gen: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = {
+            "bucket": "zenodo",
+            "dir": "movie",
+            "files": [{"name": "stack.gsplats.zarr.zip", "bytes": 1000}],
+        }
+        key = gen._char_key("movie", "", "stack.gsplats.zarr.zip")
+        monkeypatch.setattr(
+            gen,
+            "load_characteristics",
+            lambda: {
+                key: {
+                    "n_splats": 100,
+                    "source_bytes": 10_000,
+                    "psnr_db": None,
+                    "foreground_psnr_db": None,
+                    "quality_quotable": False,
+                }
+            },
+        )
+
+        problems, unread = gen._gaps({"datasets": {"movie": entry}})
+
+        assert unread == []
+        assert problems == []
+
+    @pytest.mark.parametrize(
+        "include_quality_flag",
+        [True, False],
+        ids=["quotable", "unclassified"],
+    )
+    def test_check_demands_missing_scores_unless_classified_as_unquotable(
+        self,
+        gen: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        include_quality_flag: bool,
+    ) -> None:
+        entry = {
+            "bucket": "zenodo",
+            "dir": "movie",
+            "files": [{"name": "stack.gsplats.zarr.zip", "bytes": 1000}],
+        }
+        key = gen._char_key("movie", "", "stack.gsplats.zarr.zip")
+        characteristics = {
+            "n_splats": 100,
+            "source_bytes": 10_000,
+            "psnr_db": None,
+            "foreground_psnr_db": None,
+        }
+        if include_quality_flag:
+            characteristics["quality_quotable"] = True
+        monkeypatch.setattr(gen, "load_characteristics", lambda: {key: characteristics})
+
+        problems, unread = gen._gaps({"datasets": {"movie": entry}})
+
+        assert unread == []
+        assert problems == ["movie/stack.gsplats.zarr.zip: no PSNR, foreground PSNR"]
 
 
 class TestFiguresAreAbsentRatherThanInvented:
@@ -620,7 +743,10 @@ def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
 
     assert counts == (1, 0, 1, 0)
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
-    assert written == absent[key]
+    assert written == {
+        **absent[key],
+        "unmeasured_reason": "unpinned-local-copy",
+    }
 
 
 def test_a_current_local_measurement_replaces_a_stale_staged_one(
@@ -727,14 +853,83 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
         "frames": None,
         "measured_from": None,
         "measured_sha256": None,
+        "unmeasured_reason": "unpinned-local-copy",
     }
-    (row,) = gen._dataset_rows(
-        "ds",
-        _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])["datasets"]["ds"],
-        archives,
+
+
+def test_refresh_preserves_quality_prose_on_a_successful_read(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = "ds/a.gsplats.zarr.zip"
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    _write_frame(archive)
+    digest = gen._sha256_of(archive)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {
+            key: {
+                "quality_note": "internal provenance",
+                "quality_caveat": "reader-facing caveat",
+            }
+        },
     )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+
+    gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
+
+    entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert entry["quality_note"] == "internal provenance"
+    assert entry["quality_caveat"] == "reader-facing caveat"
+
+
+def test_a_hand_recovered_null_digest_is_not_an_unpinned_marker(gen: Any) -> None:
+    row = {"char_key": "ds/a.gsplats.zarr.zip"}
+    chars = {"ds/a.gsplats.zarr.zip": {"measured_sha256": None}}
+    assert gen._why_absent(row, chars) == ""
+    chars["ds/a.gsplats.zarr.zip"]["unmeasured_reason"] = "unpinned-local-copy"
+    assert "not the pinned artifact" in gen._why_absent(row, chars)
+
+
+def test_rejected_read_marks_only_an_empty_retained_entry(gen: Any) -> None:
+    empty = {"quality_note": "not measured from archive bytes"}
+    recovered = {"n_splats": 123, "measured_sha256": None}
+    measured = {
+        "empty": {"measured_sha256": "local"},
+        "recovered": {"measured_sha256": "local"},
+    }
+
+    retained, rejected = gen._retain_preferred_measurements(
+        measured,
+        {"empty": empty, "recovered": recovered},
+        {"empty": "pinned", "recovered": "pinned"},
+    )
+
+    assert (retained, rejected) == (0, 2)
+    assert measured["empty"] == {
+        **empty,
+        "unmeasured_reason": "unpinned-local-copy",
+    }
+    assert measured["recovered"] == recovered
+
+
+def test_a_note_does_not_read_figures_from_unpinned_bytes(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    _write_frame(archive, n_splats=30)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {"ds/a.gsplats.zarr.zip": {"quality_note": "hand note"}},
+    )
+    entry = _entry(archive.name, "d" * 64)
+
+    (row,) = gen._dataset_rows("ds", _fake_manifest([entry])["datasets"]["ds"])
+
     assert row["splats"] == gen._ABSENT
-    assert row["topology"] == gen._ABSENT
 
 
 def test_refresh_summary_distinguishes_rejected_and_retained_reads(
@@ -885,6 +1080,64 @@ def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None
     assert gen._stale_characteristics(manifest) == []
 
 
+def test_flylight_recovered_figures_yield_to_a_pinned_archive_read(gen: Any) -> None:
+    key = "gsplats_flylight_mcfo_63x/flylight_mcfo_63x.gsplats.zarr.zip"
+    existing = {key: gen.load_characteristics()[key]}
+    pinned_digest = existing[key]["measured_sha256"]
+    measured = {
+        key: {
+            "n_splats": 660_035,
+            "ndim": 3,
+            "format_version": "3.4",
+            "topology": "adaptive",
+            "measured_from": "repo",
+            "measured_sha256": pinned_digest,
+        }
+    }
+
+    retained, rejected = gen._retain_preferred_measurements(
+        measured, existing, {key: pinned_digest}
+    )
+
+    assert (retained, rejected) == (0, 0)
+    assert measured[key]["topology"] == "adaptive"
+    assert measured[key]["measured_from"] == "repo"
+
+
+def test_source_derived_figures_fill_only_missing_pinned_archive_stamps(
+    gen: Any,
+) -> None:
+    key = "gsplats_3d_h2afva_decimation/h2afva_full.gsplats.zarr.zip"
+    existing = {key: gen.load_characteristics()[key]}
+    pinned_digest = "p" * 64
+    measured = {
+        key: {
+            "n_splats": 999_999,
+            "ndim": 3,
+            "format_version": "3.4",
+            "topology": "single level",
+            "psnr_db": 12.34,
+            "foreground_psnr_db": None,
+            "source_bytes": None,
+            "measured_from": "staged",
+            "measured_sha256": pinned_digest,
+        }
+    }
+
+    retained, rejected = gen._retain_preferred_measurements(
+        measured, existing, {key: pinned_digest}
+    )
+
+    assert (retained, rejected) == (1, 0)
+    assert measured[key]["psnr_db"] == 12.34
+    assert measured[key]["foreground_psnr_db"] == 48.93
+    assert measured[key]["source_bytes"] == 3_414_163_456
+    assert measured[key]["n_splats"] == 999_999
+    assert measured[key]["topology"] == "single level"
+    assert measured[key]["measured_from"] == "staged"
+    assert measured[key]["measured_sha256"] == pinned_digest
+
+
 def test_every_committed_measurement_names_a_manifest_archive(gen: Any) -> None:
     manifest = json.loads(gen.MANIFEST.read_text())
     manifest_keys = {
@@ -1033,7 +1286,16 @@ class TestCheckExplainsAnAbsentFigure:
         "topology": None,
         "measured_from": None,
         "measured_sha256": None,
+        "unmeasured_reason": "unpinned-local-copy",
     }
+
+    def test_committed_unpinned_rows_carry_the_reason(self, gen: Any) -> None:
+        chars = gen.load_characteristics()
+        for key in (
+            "gsplats_celegans/celegans_s1.gsplats.zarr.zip",
+            "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip",
+        ):
+            assert chars[key]["unmeasured_reason"] == "unpinned-local-copy"
 
     def test_an_unpinned_local_copy_is_named_as_the_cause(
         self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1050,6 +1312,7 @@ class TestCheckExplainsAnAbsentFigure:
     ) -> None:
         """The diagnosis must not fire for an archive that was really measured."""
         sidecar = dict(self._ADJUDICATED, measured_sha256="a" * 64, n_splats=10)
+        sidecar.pop("unmeasured_reason")
 
         problems = self._gaps_for(gen, tmp_path, monkeypatch, sidecar)
 

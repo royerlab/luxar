@@ -80,6 +80,7 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 **Module state** (render-order.ts):
 
 - `partitionRankCache: Map<THREE.Object3D, Map<number, number> | null>` — per-frame BSP rank cache (cleared every frame)
+- `warnedAxisMappingWrappers: WeakSet<THREE.Object3D>` — session-lifetime deduplication for wrappers whose BSP axes cannot be mapped through the live display dimensions
 - `orderSlots: OrderSlot[]` — per-frame collect buffer (fresh array every frame)
 - `scratch: RenderOrderScratch` — per-frame allocation-free scratch (lazily allocated on first use)
 
@@ -364,7 +365,7 @@ Native `partition=` adders and gsplat spatial-partition producers (`tiles`/`adap
 
 ### Centroid Fallback
 
-When a wrapper has no `bspTree`, or for a single-leaf mesh, the slot's `partRank = -1` and ordering falls back to `viewZ` (bounding-sphere center pushed through the model-view). Approximate, and it degenerates when the camera is inside the volume.
+When a wrapper has no `bspTree`, when any stored split axis is absent from the live `displayDims`, or for a single-leaf mesh, the slot's `partRank = -1` and ordering falls back to `viewZ` (bounding-sphere center pushed through the model-view). An axis-mapping rejection logs once per wrapper. The fallback is approximate and degenerates when the camera is inside the volume.
 
 ### OrderSlot Structure
 
@@ -384,6 +385,8 @@ Fresh array every frame (a grow-only pool would pin disposed meshes across frame
 - **`partitionRankCache: Map<THREE.Object3D, Map<number, number> | null>`** — per-frame cache of a wrapper's back-to-front part order; `null` marks a wrapper with no usable `bspTree`. Cleared at the top of every frame.
 - **`orderSlots: OrderSlot[]`** — per-frame collect buffer, built during the node loop, consumed by `assignGlobalRenderOrder`, then reset to `[]`.
 - **`scratch: RenderOrderScratch`** — per-frame allocation-free scratch (wrapper-inverse matrix, eye-local vector, center vector). Lazily allocated on first use (several unit-test files partially mock 'three', and an import-time `new THREE.Matrix4()` would break every test that transitively imports this module).
+
+`warnedAxisMappingWrappers` is intentionally not frame-scoped: its weak entries suppress repeated diagnostics without retaining disposed wrappers.
 
 ## Configuration
 

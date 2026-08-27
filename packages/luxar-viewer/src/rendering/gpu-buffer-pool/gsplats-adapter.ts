@@ -188,7 +188,7 @@ export class GSplatsBufferAdapter {
     host._lastAcquireRebuilt = true;
     // Growth headroom (1.5×) can itself cross the texture bound; clamp
     // the chosen capacity too (still >= splatCount, which was clamped).
-    const capacity = clampSplatCapacity(chooseCapacity(splatCount));
+    const capacity = clampSplatCapacity(chooseCapacity(splatCount), false);
     const geometry = createGSplatsGeometry(capacity);
     // Self-invalidation — see the points adapter's twin comment.
     host.registerPooledGeometryInvalidation(geometry);

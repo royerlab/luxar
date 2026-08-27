@@ -8,15 +8,24 @@ kwarg:
   centers to the scene's full dimensionality.
 * :func:`apply_dim_order_cholesky` — reorder + embed packed Cholesky
   factors so the GSplats writer can consume them.
+* :func:`warn_if_dim_order_reverses_winding` — report (never repair) a Mesh
+  whose face winding disagrees with the scene frame after the remap.
 
-Both take a ``Scene`` reference and produce pure NumPy arrays. No
+The second exists because reordering coordinate columns silently invalidates
+anything that describes a DIRECTION in them: gsplats' Cholesky factors have to be
+carried through the map. Mesh needs no such transform — ``normal_dims`` names
+SCENE dimensions, so its normals are already expressed in the destination frame —
+but its face winding is a direction that Luxar cannot repair without knowing
+which frame the caller wound in, so the third function reports instead.
+
+They take a ``Scene`` reference and produce pure NumPy arrays. No
 ``Group`` / ``self`` coupling — the prior ``self._apply_dim_order_*``
 methods never used ``self`` for anything beyond dispatch.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 from arbol import aprint
@@ -117,3 +126,126 @@ def apply_dim_order_cholesky(
         return embed_cholesky_packed(
             cholesky_factors, d_data, scene_ndim, dim_mapping, fill_sigma_indexed
         )
+
+
+def permutation_parity_is_odd(order: Sequence[int]) -> bool:
+    """Whether sorting ``order`` ascending takes an odd number of transpositions.
+
+    Counts inversions rather than composing cycles: for three elements that is
+    three comparisons and it stays obviously correct. The viewer's
+    ``permutationParityIsOdd`` helper in
+    ``packages/luxar-viewer/src/data/mesh/projection.ts`` uses the same inversion-
+    parity rule after ranking its frame; both sides have to agree about what
+    "front-facing" means.
+
+    Args:
+        order: A sequence of distinct comparable indices.
+
+    Returns:
+        ``True`` when the permutation that sorts ``order`` is odd.
+    """
+    inversions = 0
+    for i in range(len(order)):
+        for j in range(i + 1, len(order)):
+            if order[i] > order[j]:
+                inversions += 1
+    return inversions % 2 == 1
+
+
+def dim_order_reverses_winding(
+    normal_dims: Optional[Sequence[int]],
+    scene: "Scene",
+    dim_order: Optional[List[str]],
+) -> bool:
+    """Whether ``dim_order`` reverses handedness on a mesh's winding frame.
+
+    ``dim_order`` renumbers the vertex COLUMNS, and a column permutation with
+    ``det = -1`` reflects space: since ``cross(Ra, Rb) = det(R)·R·cross(a, b)``, a
+    triangle's geometric normal is negated relative to the pure permutation while
+    its stored corner order is untouched. Faces that were counter-clockwise in the
+    caller's own column order are clockwise afterwards.
+
+    **This function only reports; it changes nothing.** That restraint is the whole
+    point, and the reason is that Luxar cannot know which frame the caller wound
+    in. ``normal_dims`` names SCENE dimension indices — the layout AFTER
+    ``dim_order`` — so a caller who reads the contract literally winds against the
+    scene frame too, and for them the stored winding is already right; silently
+    flipping it would break them. A caller who instead wound against their own
+    authored column order has a store that violates §3.2, and only they can say
+    which they did. So the writer warns, names the consequence, and gives the
+    one-line remedy.
+
+    Undecidable cases return ``False`` (no warning) rather than guessing:
+
+    * no ``normal_dims`` — ``sorted(normal_dims)`` is the only declared winding
+      frame there is (§3.2), so without it nothing is decidable, and the viewer
+      already renders such a mesh ``DoubleSide`` regardless of ``double_sided``;
+    * malformed ``normal_dims`` — this advisory lint defers to the writer's
+      authoritative validator and must not replace its actionable error;
+    * a frame axis that no authored column maps onto (an unmapped scene dimension
+      filled with a constant) — it has no preimage, so the restricted map is not a
+      permutation at all.
+
+    Args:
+        normal_dims: The three SCENE dimension indices the normals describe.
+        scene: The scene whose dimension order is being mapped onto.
+        dim_order: Scene dimension names, one per authored column.
+
+    Returns:
+        ``True`` when the caller's authored column order and the scene frame
+        disagree about handedness.
+    """
+    if dim_order is None or normal_dims is None:
+        return False
+    try:
+        raw_normal_dims = list(normal_dims)
+        scene_indices = sorted(int(d) for d in raw_normal_dims)
+    except (TypeError, ValueError):
+        return False
+    if len(raw_normal_dims) != 3:
+        return False
+
+    scene_names = scene._dimensions.names
+    # src authored column -> dst scene index, the same map
+    # `apply_dim_order_cholesky` builds for the gsplat factors.
+    dim_mapping = [scene_names.index(name) for name in dim_order]
+
+    # Walk the frame in ascending SCENE order and record which authored column
+    # each axis came from. If those columns are not themselves ascending, the
+    # restricted map is an odd permutation and handedness flips.
+    preimage: List[int] = []
+    for scene_index in scene_indices:
+        if scene_index not in dim_mapping:
+            return False  # filled dimension: no preimage, nothing to decide
+        preimage.append(dim_mapping.index(scene_index))
+    return permutation_parity_is_odd(preimage)
+
+
+def warn_if_dim_order_reverses_winding(
+    name: str,
+    normal_dims: Optional[Sequence[int]],
+    scene: "Scene",
+    dim_order: Optional[List[str]],
+) -> None:
+    """Warn once when ``dim_order`` reverses handedness on the winding frame.
+
+    Warn-only, in the manner of the mesh writer's unwelded-vertices lint (§3.6):
+    it catches a likely authoring mistake without refusing a store that may be
+    perfectly deliberate. See :func:`dim_order_reverses_winding` for why this
+    cannot be fixed automatically.
+
+    Double-sided drawing does not make the mismatch harmless: stored-normal
+    shading uses ``gl_FrontFacing`` to choose the normal sign, so reversed winding
+    flips the shading gradient even when rasterization coverage is unchanged.
+    """
+    if not dim_order_reverses_winding(normal_dims, scene, dim_order):
+        return
+    aprint(
+        f"  ⚠️ Mesh '{name}': dim_order={list(dim_order or [])} reverses handedness "
+        "on the winding frame. `normal_dims` names SCENE dimensions, so faces are "
+        "expected counter-clockwise in the SCENE column order too. If you wound "
+        "them in your own authored column order they are now clockwise. A "
+        "single-sided open surface can vanish, and stored-normal shading flips "
+        "even when double_sided=True. Pass faces[:, [0, 2, 1]], or verify that "
+        "the faces were already wound in the scene frame."
+    )

@@ -107,7 +107,7 @@ with LuxarZarrCompiler('output.luxar.zarr') as compiler:
 - `add_text(text, position, ...)` - Screen-space text overlay (returns `Overlay`)
 - `add_image(image, position, ...)` - Screen-space image overlay (returns `Overlay`)
 - `add_html(html, position, ...)` - Screen-space sanitized-HTML overlay (returns `Overlay`)
-- `to_zarr(path)` - Finalize the writer and copy the backing store to `path`
+- `to_zarr(path)` - Finalize the writer and export to its supported destination
 - `dimensions` (property) - Get/set scene-level dimensions (required at construction)
 - `viewer_config` (property) - Get/set ViewerConfig hints
 - `overlays` (property) - List of `Overlay` descriptors added to the scene
@@ -478,7 +478,7 @@ becomes drawable; today both sets include `mesh`.
 - nD `vertices` plus a `faces` triangle-index array (`(F, 3)` or flat `(3F,)`)
 - Optional per-vertex `normals`, with a **required** `normal_dims` companion
 - Per-vertex colors (RGB or RGBA) and scalars for colormap lookup
-- `shading` (`"smooth"` / `"flat"`) and `double_sided`
+- `shading` (`"smooth"` / `"flat"` / `"none"`) and `double_sided`
 - `add_mesh(partition=True | {"max_elements": N, "rule": …})` → a `kind=partition`
   wrapper; the BSP cuts face centroids (`max_elements` counts faces, no triangle
   split), and each part re-indexes its own vertices — cut ones duplicated,
@@ -564,7 +564,7 @@ explicit turns an invisible wrong-orientation render into a checkable equality.
 - `has_colors` / `has_scalars` - Optional per-vertex appearance channels
 - `has_labels` / `has_image_labels` - Hover tooltips / thumbnails
 - `has_keys` - Per-vertex machine-readable keys (`{hover_key}` for `link` / `copy`)
-- `shading` - `"smooth"` or `"flat"`
+- `shading` - `"smooth"`, `"flat"`, or unlit `"none"`
 - `double_sided` - Whether back faces render
 - `ordering` - Always `"none"` in v1 (no spatial index)
 
@@ -814,10 +814,14 @@ The core module is designed to work with Luxar's progressive writing system:
 3. **Data Writing**: Data written immediately to Zarr via writer
 4. **Memory Efficiency**: Data never kept in memory after writing
 
-`Scene.to_zarr(path)` is an export/copy helper for this progressive model: it
-finalizes the current backing store and copies the on-disk Zarr directory to
-`path`. Because finalization closes the writer, do not add more nodes to a scene
-after calling `to_zarr()`; use a new `LuxarZarrCompiler` for additional writes.
+`Scene.to_zarr(path)` is an export helper for this progressive model. A
+directory-backed scene is copied to a new directory destination, unless `path`
+is its current backing store for an explicit finalize-in-place. An
+archive-backed scene is finalized at its selected archive path, replacing an
+existing archive there. A directory-backed scene cannot be copied directly to
+a `.zip` destination; create the archive with `LuxarZarrCompiler` or use
+`luxar optimise`. Because finalization closes the writer, do not add more nodes
+to a scene after calling `to_zarr()`; use a new compiler for additional writes.
 
 ### Scene Graph Structure
 

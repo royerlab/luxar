@@ -42,27 +42,48 @@
  * slash without first auditing every consumer of
  * `rootGroup.userData.zarrBaseUrl` and every `ctx.normalizeURL` call site.
  *
+ * EXCEPTION — zipped stores. A `.zarr.zip` is a single file, so it gets NO
+ * trailing slash: the rationale above is about making directory children
+ * concatenable, and an archive has no URL-addressable children (its members are
+ * read through the store).
+ *
+ * Archive members, including image overlays, are read through the store via
+ * `rootGroup.userData.readOverlayFile` rather than built as child URLs.
+ *
  * @module data/scene-loader/lifecycle/url-normalization
  */
 
+import { isZippedStoreUrl } from '../../zip/entries';
+
 /**
- * Normalize a dataset URL to absolute, slash-terminated form.
+ * Normalize a dataset URL to absolute form, slash-terminated for directories.
  *
  * - Absolute URLs (http://, https://, case-insensitive): return as-is,
- *   ensuring a trailing slash. The case-insensitive match prevents a
+ *   ensuring a trailing slash unless the URL names a `.zarr.zip` file. The
+ *   case-insensitive match prevents a
  *   mixed-case `HTTPS://...` (which `normalizeDataSourceUrl` already
  *   accepts via `URL.protocol`) from being treated as a relative path
  *   here.
  * - Relative paths: prepend the supplied `windowOrigin`, ensuring a leading
- *   slash on the path and a trailing slash on the result.
+ *   slash on the path and a trailing slash on the result, except for a
+ *   `.zarr.zip` file.
  *
- * The trailing slash on the output is part of the function's contract —
- * see the module docstring for the rationale (downstream string-concat
- * consumers).
+ * The trailing slash on directory outputs is part of the function's contract;
+ * zipped stores are the file-shaped exception. See the module docstring for
+ * the rationale and downstream string-concat consumers.
  *
  * Pure given an explicit origin.
  */
 export function normalizeURL(url: string, windowOrigin: string): string {
+  // A zipped store is a FILE, not a directory: `scene.luxar.zarr.zip/` is a
+  // different resource that 404s, and the trailing-slash contract below exists
+  // only to make directory children concatenable. Archives have no such
+  // children — members are read through the store, never by URL — so the slash
+  // is both wrong and unnecessary here.
+  if (isZippedStoreUrl(url)) {
+    if (/^https?:\/\//i.test(url)) return url;
+    return windowOrigin + (url.startsWith('/') ? url : '/' + url);
+  }
   if (/^https?:\/\//i.test(url)) {
     return url.endsWith('/') ? url : url + '/';
   }

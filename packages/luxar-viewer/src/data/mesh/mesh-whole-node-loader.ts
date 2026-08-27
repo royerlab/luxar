@@ -53,14 +53,24 @@ import {
   type MeshPreflightResult,
 } from './preflight';
 import { validateFaceIndices, validateMaterializedLength } from './validate';
+import { decodeMeshTexture } from './texture-decode';
 import type { FaceIndexSource } from './validate';
 import { combineSignals } from '../../workers/worker-pool/timeout/combine-signals';
+import { isAbortError } from '../loaders/abort-error';
+import { LoaderEventEmitter } from '../loaders/monitor-events';
+import { makeInitialLoaderMetrics, recordLoadEvent } from '../loaders/loader-metrics';
 import type { UpdateSession } from '../../profiling/update-profiler';
+import type {
+  LoaderMetrics,
+  MonitorEventListener,
+  QueryInfo,
+} from '../../types/data-monitor-types';
 import type {
   LoadedMeshData,
   MeshColorArray,
   MeshDataLoader,
   MeshMetadata,
+  MeshTextureData,
   MeshViewState,
 } from '../../types/mesh';
 
@@ -77,6 +87,8 @@ const OPTIONAL_ARRAYS = [
   ['normals', 'has_normals'],
   ['colors', 'has_colors'],
   ['scalars', 'has_scalars'],
+  ['uvs', 'has_uvs'],
+  ['texture', 'has_texture'],
   ['labelOffsets', 'has_labels'],
   ['labelBytes', 'has_labels'],
   ['imageLabelOffsets', 'has_image_labels'],
@@ -84,6 +96,65 @@ const OPTIONAL_ARRAYS = [
   ['keyOffsets', 'has_keys'],
   ['keyBytes', 'has_keys'],
 ] as const satisfies readonly (readonly [keyof MeshArrayHandles, keyof MeshMetadata])[];
+
+/**
+ * Decoded bytes of one mesh payload — what the monitor reports as `bytesLoaded`
+ * (and the resident half of `memoryUsed`).
+ *
+ * Measured from the materialized arrays, matching the sibling loaders, whose
+ * `recordLoadMetrics` charges `output.byteLength` per array: this is DECODED
+ * size, not wire size. The two differ (chunks arrive compressed, and a
+ * quantized u16 array widens to float32 on decode), and decoded is the honest
+ * answer for "how much data does this layer amount to in the viewer". Wire
+ * bytes are the Cache tab's job, which measures them at the store boundary
+ * where every tier can be attributed.
+ *
+ * A `bitmap` texture is charged `w * h * 4` because an `ImageBitmap` is always
+ * 4-channel 8-bit once decoded regardless of the source codec — the same charge
+ * `preflight.ts` budgets it at, so the admission gate and the telemetry cannot
+ * disagree about what a textured mesh costs. Textures dominate this figure when
+ * present: an 8192² basemap is 268 MB against a few MB of geometry.
+ *
+ * Charged PER NODE, so an array two nodes share through an `array_ref` (the two
+ * halves of a partitioned globe sharing one basemap) is counted once for each —
+ * the same convention the byte budget in `preflight.ts` uses, which likewise
+ * follows the ref and charges the target per node. Reporting shared payloads
+ * once would need a store-wide ledger that neither the gate nor this telemetry
+ * has; the alternative (charging the `(0, k)` stub) understates a gigabyte read
+ * as ~48 bytes.
+ *
+ * Exported for unit test.
+ */
+export function meshPayloadBytes(data: LoadedMeshData): number {
+  let bytes = data.vertices.byteLength + data.faces.byteLength;
+  bytes += data.normals?.byteLength ?? 0;
+  bytes += data.colors?.byteLength ?? 0;
+  bytes += data.scalars?.byteLength ?? 0;
+  bytes += data.uvs?.byteLength ?? 0;
+  const texture = data.texture;
+  if (texture) {
+    bytes +=
+      texture.kind === 'raw' ? texture.pixels.byteLength : texture.width * texture.height * 4;
+  }
+  return bytes;
+}
+
+/**
+ * Bytes of the per-node projection scratch (`position` / `mask` /
+ * `faceScratch`), allocated once per node and held for its whole life.
+ *
+ * Counted into `memoryUsed` but NOT into `bytesLoaded`: nothing fetched it, but
+ * the loader's payload really does keep it resident, and it is not small — the
+ * display-space `position` buffer alone is 12 bytes per vertex. This is the
+ * mesh counterpart of what the siblings report as their accumulator allocation.
+ *
+ * Exported for unit test.
+ */
+export function meshProjectionBytes(data: LoadedMeshData): number {
+  const p = data.projection;
+  if (!p) return 0;
+  return p.position.byteLength + p.mask.byteLength + p.faceScratch.byteLength;
+}
 
 export class MeshWholeNodeLoader implements MeshDataLoader {
   private readonly decoder: ArrayDecoder;
@@ -167,6 +238,15 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    */
   private generation = 0;
 
+  /**
+   * Monitor telemetry for this node — see the LoaderMonitor section at the
+   * bottom of the class for what a whole-node loader can honestly report.
+   */
+  private readonly metrics: LoaderMetrics;
+
+  /** Monitor listeners, shared implementation with the three sibling facades. */
+  private readonly events = new LoaderEventEmitter();
+
   constructor(
     private readonly path: string,
     private readonly attrs: MeshMetadata,
@@ -177,6 +257,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     this.rangeLoader = new RangeLoader(deps.arrayRefRegistry);
     this.rangeLoader.setSignalSource(() => this.fetchSignal);
     this.zarrStore = deps.zarrStore;
+    this.metrics = makeInitialLoaderMetrics('mesh-whole-node', path);
   }
 
   /**
@@ -376,6 +457,55 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
       validateMaterializedLength(this.path, 'colors', colors.length, nVertices * colorComponents);
     }
 
+    let uvs: Float32Array | undefined;
+    if (handles.uvs) {
+      // COORDINATE-encoded on the write side, exactly like `normals`, so it must
+      // go through the decoder rather than a raw read — a quantized store holds
+      // per-channel u16 codes, not floats.
+      const decoded = await this.decoder.decode(
+        handles.uvs,
+        handles.uvs.attrs as unknown as ArrayMetadata,
+        nVertices * 2,
+        storeRoot,
+        signal
+      );
+      validateMaterializedLength(this.path, 'uvs', decoded.length, nVertices * 2);
+      // Non-finite UVs are refused on both sides. A NaN coordinate does not
+      // merely mis-sample its own vertex: it interpolates across every triangle
+      // that shares it, so one bad vertex smears an undefined sample over a
+      // patch of surface with nothing to attribute it to. The write side rejects
+      // it too, but a third-party store never went through the write side.
+      for (let i = 0; i < decoded.length; i++) {
+        if (!Number.isFinite(decoded[i])) {
+          throw new LoaderError(
+            'Validation',
+            this.path,
+            new Error(
+              `uvs contains a non-finite value at index ${i} (vertex ` +
+                `${Math.floor(i / 2)}). A NaN or infinite texture coordinate ` +
+                'interpolates across every triangle sharing that vertex.'
+            )
+          );
+        }
+      }
+      uvs = decoded;
+    }
+
+    let texture: MeshTextureData | undefined;
+    if (handles.texture && pre.texture) {
+      // Fed the PREFLIGHT's validated declaration, never `this.attrs`: these are
+      // the numbers the byte budget admitted the node on, and allocating from a
+      // second unvalidated copy is how a ceiling stops meaning anything.
+      texture = await decodeMeshTexture(
+        this.path,
+        handles.texture,
+        pre.texture,
+        this.decoder,
+        storeRoot,
+        signal
+      );
+    }
+
     let scalars: Float32Array | undefined;
     if (handles.scalars) {
       const decoded = await this.decoder.decode(
@@ -396,6 +526,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
       colors,
       colorComponents,
       scalars,
+      uvs,
+      texture,
       vertexCount: nVertices,
       faceCount: nFaces,
       ndim,
@@ -452,13 +584,27 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     const scope = combineSignals(signal, this.aborter.signal);
     const fetchSignal = scope?.signal ?? this.aborter.signal;
     this.fetchSignal = fetchSignal;
+    // Wall-clock start of the ONE fetch this loader makes, for `avgLoadTime`.
+    // Taken here rather than inside `fetch()` so it spans the metadata open and
+    // preflight too — the panel's load latency should be what the user waited
+    // for, not just the chunk reads.
+    const startedAt = Date.now();
     const mine: Promise<LoadedMeshData> = this.fetch(fetchSignal)
       .then((data) => {
         // Only publish if this loader has not been disposed since the fetch began.
         // The caller still receives the data — it is view-independent, so it is not
         // wrong, just unwanted — but the loader does not retain it.
-        if (generation === this.generation) this.data = data;
+        const retained = generation === this.generation;
+        if (retained) this.data = data;
+        // Counted either way (the bytes really were fetched and decoded), but a
+        // payload the loader did not retain must not be reported as resident
+        // memory — see `recordLoad`.
+        this.recordLoad(data, startedAt, retained);
         return data;
+      })
+      .catch((error: unknown) => {
+        this.recordError(error);
+        throw error;
       })
       .finally(() => {
         scope?.dispose();
@@ -528,6 +674,121 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     return { data, allResident };
   }
 
+  // ────────────────────────────────────────────────────────────────────
+  // LoaderMonitor surface
+  //
+  // The same four methods the three spatial-index facades expose, so a mesh
+  // node passes the duck-typed shape check in `connect-loader-to-monitor.ts`
+  // and reaches the data-loading monitor. Without them that check skipped mesh
+  // SILENTLY — the panel had no mesh loader row, no mesh bytes in its
+  // loader-memory total, and no mesh load in its loads/bandwidth windows or in
+  // the advisor's slow-load detection, while still showing mesh nodes in its
+  // scene-graph tree. Nothing reported a problem; mesh was simply absent.
+  //
+  // What a whole-node loader can honestly report differs from its siblings, and
+  // the difference is the point rather than a gap:
+  //   - `queries` / `avgQueryTime` / `spatialIndex` stay zero/absent. There is
+  //     no spatial index and no per-slice range query here; a view change
+  //     re-serves the resident mesh (see `updateView`). Counting `updateView`
+  //     calls as queries would feed ~0 ms samples for work that never touched
+  //     the store into the panel's QUERY SPEED average, flattering it — and
+  //     would make the compact badge claim spatial-index streaming for a scene
+  //     that streams nothing (`metrics/global-stats.ts`, `isSpatialType`).
+  //   - `loads` / `bytesLoaded` / `avgLoadTime` cover the ONE fetch this loader
+  //     makes (one per level on a reveal ladder, rolled up by
+  //     `ProgressiveMonitorAdapter`).
+  //   - `elementsLoaded` counts TRIANGLES, the drawn-primitive convention the
+  //     whole monitor uses for mesh.
+  //   - `memoryUsed` is the resident payload plus the per-node projection
+  //     scratch — the mesh counterpart of the siblings' accumulator allocation.
+  // ────────────────────────────────────────────────────────────────────
+
+  addEventListener(listener: MonitorEventListener): void {
+    this.events.add(listener);
+  }
+
+  removeEventListener(listener: MonitorEventListener): void {
+    this.events.remove(listener);
+  }
+
+  getMetrics(): LoaderMetrics {
+    // Copied, like the siblings: the monitor holds snapshots per tick and must
+    // not observe later mutation of a record it already recorded.
+    return { ...this.metrics };
+  }
+
+  /**
+   * Always empty: a whole-node loader runs no spatial queries, so none can be
+   * in flight. The in-flight FETCH is reported through `loads` instead.
+   */
+  getActiveQueries(): QueryInfo[] {
+    return [];
+  }
+
+  /**
+   * Record how many of this node's triangles the current slice indexes.
+   *
+   * Called by `commit-mesh-geometry.ts` from the same place it stamps
+   * `userData.visibleTriangleCount`, because that count is produced DOWNSTREAM
+   * of the loader: projection decides which faces the index buffer receives,
+   * and the loader (which holds the whole mesh either way) cannot know it. The
+   * three sibling loaders set `visibleElements` themselves for the opposite
+   * reason — for them the query result IS the visible set.
+   */
+  recordVisibleElements(triangles: number): void {
+    this.metrics.visibleElements = triangles;
+  }
+
+  /**
+   * Fold one completed fetch into the metrics and emit the monitor `load` event
+   * that feeds the panel's load-rate and bandwidth windows.
+   *
+   * `retained` is false when the loader was disposed while the fetch was in
+   * flight. The cumulative counters still take it — those bytes were really
+   * spent — but `memoryUsed` is a LIVE footprint, and the payload was dropped
+   * rather than published, so claiming it would leave the panel reporting
+   * resident memory for a torn-down node.
+   */
+  private recordLoad(data: LoadedMeshData, startedAt: number, retained: boolean): void {
+    const bytes = meshPayloadBytes(data);
+    const loadTime = Date.now() - startedAt;
+    // Triangles, not vertices — `elementsLoaded` is the geometry-neutral
+    // throughput counter and mesh counts its drawn primitive everywhere.
+    recordLoadEvent(this.metrics, data.faceCount, bytes, loadTime);
+    this.metrics.memoryUsed = retained ? bytes + meshProjectionBytes(data) : 0;
+    this.events.emit({
+      type: 'load',
+      loader: 'mesh-whole-node',
+      timestamp: Date.now(),
+      data: {
+        path: this.path,
+        elements: data.faceCount,
+        memory: bytes,
+        latency: loadTime,
+      },
+    });
+  }
+
+  /**
+   * Record a failed fetch — EXCEPT a deliberate abort.
+   *
+   * A dataset switch or a dispose during load aborts the in-flight reads
+   * ({@link dispose}), which is a control path, not a failure: counting it
+   * would raise the advisor's error-rate recommendation every time the user
+   * switches scenes. Same exclusion the sibling loaders apply through
+   * {@link isAbortError}.
+   */
+  private recordError(error: unknown): void {
+    if (isAbortError(error)) return;
+    this.metrics.errors += 1;
+    this.events.emit({
+      type: 'error',
+      loader: 'mesh-whole-node',
+      timestamp: Date.now(),
+      data: { path: this.path, error: String(error) },
+    });
+  }
+
   /**
    * Clear all cached state.
    *
@@ -543,10 +804,30 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     // re-initialize path below starts with a live signal.
     this.aborter.abort();
     this.aborter = new AbortController();
+    // An `ImageBitmap` holds a decoded surface OUTSIDE the JS heap, so dropping
+    // the last reference does not free it — the spec requires an explicit
+    // `close()`. A 2048x1024 basemap is 8 MB of native memory per node, and a
+    // dataset switch disposes every node at once, so leaking it is how a few
+    // switches turn into hundreds of megabytes the GC cannot reclaim and no heap
+    // profiler attributes to us.
+    if (this.data?.texture?.kind === 'bitmap') {
+      this.data.texture.bitmap.close();
+    }
     this.handles = null;
     this.preflight = null;
     this.data = null;
     this.inFlight = null;
     this.initInFlight = null;
+    // The LIVE monitor figures only. `memoryUsed` and `visibleElements`
+    // describe what the loader holds and shows RIGHT NOW, and it now holds and
+    // shows nothing; the cumulative counters (`loads` / `bytesLoaded` /
+    // `errors`) are session history and stay.
+    this.metrics.memoryUsed = 0;
+    this.metrics.visibleElements = 0;
+    // Listeners are deliberately NOT dropped here, unlike the sibling facades:
+    // this dispose is documented as state-clearing rather than terminal (a
+    // later `loadMesh` re-initializes), and clearing them would leave that
+    // re-load invisible to the monitor it is still connected to. Teardown
+    // disconnects the loader from the monitor explicitly instead.
   }
 }

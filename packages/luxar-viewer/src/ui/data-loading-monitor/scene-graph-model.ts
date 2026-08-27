@@ -29,6 +29,7 @@ function emptySceneGraphState(): SceneGraphState {
     nodesByType: zeroCounters(),
     totalByType: zeroCounters(),
     visibleByType: zeroCounters(),
+    droppedElements: 0,
   };
 }
 
@@ -131,6 +132,10 @@ export class SceneGraphModel {
     this.sceneGraphState.visibleByType[type] = count;
   }
 
+  updateDroppedElementCount(count: number): void {
+    this.sceneGraphState.droppedElements = count;
+  }
+
   updateVisibleCountsByPath(counts: ReadonlyMap<string, number>): void {
     this.visibleCountsByPath = counts;
   }
@@ -138,16 +143,44 @@ export class SceneGraphModel {
   /**
    * Merge the latest path counts into geometry nodes in place. Paths absent
    * from the latest walk are reset to `undefined`, preventing stale tooltips.
-   * Mesh is skipped because it loads whole and has no per-node visible-face field.
+   *
+   * All four types, mesh included: the walk in `monitor/visible-counts.ts`
+   * already stamps a mesh node's committed `visibleTriangleCount` into the
+   * per-path map, so skipping mesh here dropped a number that had already been
+   * measured — and left the tree's mesh badge unable to say how much of the
+   * surface the current slab actually indexes.
+   *
+   * A `never`-tailed switch rather than an if/else chain, matching
+   * `elementCountOf` above: the stamp fields are named after each type's own
+   * element noun so they cannot be keyed by type name, but the DISPATCH can be
+   * compile-checked. An unhandled type would silently leave its badge with no
+   * visible count — verbatim how mesh went missing here in the first place.
    */
   syncVisibleCountsIntoTree(): void {
     const index = this.ensureSceneGraphNodeIndex();
     if (!index) return;
     for (const node of index.values()) {
       const visible = this.visibleCountsByPath.get(node.path);
-      if (node.type === 'points') node.visiblePointCount = visible;
-      else if (node.type === 'lines') node.visibleSegmentCount = visible;
-      else if (node.type === 'gsplats') node.visibleSplatCount = visible;
+      switch (node.type) {
+        case 'points':
+          node.visiblePointCount = visible;
+          break;
+        case 'lines':
+          node.visibleSegmentCount = visible;
+          break;
+        case 'gsplats':
+          node.visibleSplatCount = visible;
+          break;
+        case 'mesh':
+          node.visibleFaceCount = visible;
+          break;
+        case 'scene':
+        case 'group':
+          // Containers carry no elements of their own.
+          break;
+        default:
+          void (node.type satisfies never);
+      }
     }
   }
 
@@ -188,7 +221,13 @@ export class SceneGraphModel {
       for (const type of GEOMETRY_TYPES) totalByType[type] += stats.totalByType[type];
     }
 
-    return { totalNodes, nodesByType, totalByType, visibleByType: { ...totalByType } };
+    return {
+      totalNodes,
+      nodesByType,
+      totalByType,
+      visibleByType: { ...totalByType },
+      droppedElements: 0,
+    };
   }
 
   private ensureSceneGraphNodeIndex(): Map<string, SceneGraphNode> | null {

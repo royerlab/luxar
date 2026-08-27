@@ -4,9 +4,10 @@
 The local counterpart of the Slurm fit array + merge: given a planned
 :class:`BatchManifest`, fit every ``(t, c, slot)`` task with a multi-GPU
 subprocess pool, then run the existing streaming merge to a ``kind=partition``
-``.gsplats.zarr``.  Workers are pinned to GPUs via ``CUDA_VISIBLE_DEVICES``
-(:mod:`task_pool`'s env hook); per-GPU concurrency is sized from each card's free
-VRAM.  Resumable: a task whose output already exists is skipped.
+``.gsplats.zarr``.  The :mod:`task_pool` env hook pins GPU workers via
+``CUDA_VISIBLE_DEVICES`` and exposes their host/device quality-memory shares;
+per-GPU concurrency is sized from each card's free VRAM.  Resumable: a task
+whose output already exists is skipped.
 
 This engine consumes only the manifest + already-parsed merge options, so it has
 no dependency on the CLI layer.
@@ -18,8 +19,9 @@ import math
 import os
 import shutil
 import socket
+from collections import Counter
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 from arbol import aprint, asection
 
@@ -27,6 +29,10 @@ from luxar.gsplats.batch.fit_command import build_task_fit_argv
 from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
 from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
 from luxar.gsplats.batch.task_pool import TaskResult, run_task_pool
+from luxar.gsplats.merged_quality import (
+    QUALITY_WORKERS_PER_DEVICE_ENV,
+    QUALITY_WORKERS_PER_HOST_ENV,
+)
 from luxar.gsplats.utils.device import resolve_gpu_selection, resolve_jobs_per_gpu
 
 
@@ -84,6 +90,42 @@ def build_device_assignment(
     if not slots:
         slots = [next(iter(workers))]
     return {tid: slots[i % len(slots)] for i, tid in enumerate(task_ids)}
+
+
+def _worker_env(gpu: int, workers: dict[int, int], host_workers: int) -> dict[str, str]:
+    """Pin one worker and expose its fair share of quality-memory budgets."""
+    quality_workers = str(max(1, workers.get(gpu, 1)))
+    quality_host_workers = str(max(1, host_workers))
+    if gpu < 0:
+        return {
+            QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
+            QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
+        }
+    return {
+        "CUDA_VISIBLE_DEVICES": str(gpu),
+        QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
+        QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
+    }
+
+
+def _active_worker_counts(
+    task_ids: list[int],
+    assignment: dict[int, int],
+    workers: dict[int, int],
+    skip_if: Callable[[int], bool],
+) -> dict[int, int]:
+    """Count active workers per device with one resume check per task."""
+    active_tasks = Counter(
+        assignment.get(task_id, -1) for task_id in task_ids if not skip_if(task_id)
+    )
+    return {
+        gpu: max(1, min(count, active_tasks[gpu])) for gpu, count in workers.items()
+    }
+
+
+def _active_host_workers(active_workers: dict[int, int], n_run: int) -> int:
+    """Count workers sharing host RAM, capped by runnable tasks."""
+    return max(1, min(sum(active_workers.values()), n_run))
 
 
 def _staging_path(out: Path, token: str | int) -> Path:
@@ -255,6 +297,10 @@ def run_batch_local(
         out = _out_path(job_by_id[task_id])
         return resume and (out.exists() or Path(str(out) + ".empty").exists())
 
+    active_workers = _active_worker_counts(task_ids, assignment, workers, _skip)
+    n_run = sum(0 if _skip(task_id) else 1 for task_id in task_ids)
+    active_host_workers = _active_host_workers(active_workers, n_run)
+
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]
         out = _out_path(job)
@@ -273,9 +319,8 @@ def run_batch_local(
 
     def _env(task_id: int) -> dict[str, str]:
         gpu = assignment.get(task_id, -1)
-        return {} if gpu < 0 else {"CUDA_VISIBLE_DEVICES": str(gpu)}
+        return _worker_env(gpu, active_workers, active_host_workers)
 
-    n_run = sum(0 if _skip(t) else 1 for t in task_ids)
     dev_desc = "CPU" if not gpu_indices else f"GPU(s) {gpu_indices}"
     with asection(
         f"Local batch fit: {n_run}/{len(task_ids)} tasks on {dev_desc}, "

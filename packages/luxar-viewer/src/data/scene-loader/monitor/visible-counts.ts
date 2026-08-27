@@ -1,15 +1,17 @@
 /**
  * Aggregate per-mesh `visiblePointCount` / `visibleSegmentCount` /
- * `visibleSplatCount` userData (points + lines + gsplats, symmetrically)
- * across the scene graph and report the totals to the data-loading
- * monitor. Called once per update cycle after the points/lines/gsplats
- * commits so the monitor's HUD shows the post-clipping (and
- * post-progressive-refinement) visible counts rather than the raw loaded
- * counts.
+ * `visibleSplatCount` / `visibleTriangleCount` userData across the scene graph —
+ * all four geometry types, symmetrically — together with `droppedElementCount`
+ * (points + lines + gsplats only: mesh is not element-texture backed, so it has
+ * no capacity clamp to drop against), and report the totals to the
+ * data-loading monitor. Called once per update cycle after the geometry commits
+ * so the monitor's HUD shows the post-clipping (and post-progressive-refinement)
+ * visible counts rather than the raw loaded counts.
  *
  * Alongside the totals, a per-path map (mesh `name` is the scene-graph
  * path) is pushed via `updateVisibleCountsByPath` so the monitor's
- * scene-graph tree can show per-node visible counts in badge tooltips.
+ * scene-graph tree can show per-node visible counts in badge tooltips; the
+ * aggregate dropped count is pushed via `updateDroppedElementCount`.
  *
  * Only meshes that are actually rendered are counted: the walk skips any
  * subtree whose root is `visible === false`. This excludes the inactive
@@ -85,6 +87,7 @@ export function updateVisibleCountsInMonitor(
     number
   >;
   const byPath = new Map<string, number>();
+  let droppedElements = 0;
 
   // Manual recursion rather than THREE's `traverse`, which visits every
   // descendant regardless of visibility. Pruning at `visible === false`
@@ -107,9 +110,13 @@ export function updateVisibleCountsInMonitor(
           break;
         }
       }
-      if (visible !== undefined && object.name) {
-        // Mesh `name` is the scene-graph path (set by node-factory).
-        byPath.set(object.name, (byPath.get(object.name) ?? 0) + visible);
+      if (visible !== undefined) {
+        if (object.name) {
+          // Mesh `name` is the scene-graph path (set by node-factory).
+          byPath.set(object.name, (byPath.get(object.name) ?? 0) + visible);
+        }
+        droppedElements +=
+          (object.userData as { droppedElementCount?: number }).droppedElementCount ?? 0;
       }
     }
     for (const child of object.children) visit(child);
@@ -119,5 +126,6 @@ export function updateVisibleCountsInMonitor(
   for (const child of rootGroup.children) visit(child);
 
   for (const t of GEOMETRY_TYPES) monitor.updateVisibleCount(t, totals[t]);
+  monitor.updateDroppedElementCount(droppedElements);
   monitor.updateVisibleCountsByPath(byPath);
 }

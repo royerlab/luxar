@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Measured characteristics of the demo gsplat archives, read from each archive's own fitting/ stamps by scripts/gen_zenodo_records.py --refresh. Committed so the record text does not require holding the archives, which are hosted on Zenodo rather than in this repository. measured_sha256 records WHICH bytes each figure came from; --check reports any that no longer match the manifest pin.",
+  "description": "Measured characteristics of the demo gsplat archives, read from each archive's own fitting/ stamps by scripts/gen_zenodo_records.py --refresh. Committed so the record text does not require holding the archives, which are hosted on Zenodo rather than in this repository. measured_sha256 records WHICH archive bytes refresh read; --check reports any non-null digest that no longer matches the manifest pin. A null digest means the figures were recovered from the stated source rather than archive bytes; a later pinned archive read may supply the digest while retaining those source-derived figures. quality_note is internal provenance; quality_caveat is published beside an absent figure. unmeasured_reason records why refresh deliberately withheld measurements.",
   "archives": {
     "gsplats_3d_drosophila_gastrulation/droso_gastrulation.gsplats.zarr.zip": {
       "n_splats": 200023,
@@ -19,8 +19,8 @@
       "source_bytes": 155361024,
       "frames": null,
       "measured_from": null,
-      "measured_sha256": null,
-      "quality_note": "REFIT 2026-08-26 from DrosophilaHistone.zarr.zip [data] tp150 \u2014 the 500-TIMEPOINT recording the demo documents. A first attempt used Dme_E1_His2AvRFP_..._corrected (1507 timepoints, same spatial grid), whose tp150 is a post-gastrulation embryo; every automated check passed on it and only visual inspection caught the wrong stage. Source is now asserted by timepoint count before the fit runs. Figures are the ARCHIVE measured with `gsplat compare` (41.65 / 37.07), not the fit-time stamp (41.76 / 37.15) \u2014 they agree to 0.1 dB here because `--preset standard` leaves little to cull (55,977 of 256,000). At the API default of n_iters=1000 the same fit culled 98,349 and the stamp overstated the archive by 9.7 dB, so a stamp is only trustworthy on a trained fit. 200,023 splats against the previously shipped 200,155 indicates the original also ran standard; the demo documents 39.89 dB, so this is marginally better."
+      "measured_sha256": "2ea85b379fdea7465ae16260a51f4bdd674c1336ba9222a28a213fcc3fca57c1",
+      "quality_note": "REFIT 2026-08-26 from DrosophilaHistone.zarr.zip [data] tp150 \u2014 the 500-TIMEPOINT recording the demo documents. A first attempt used Dme_E1_His2AvRFP_..._corrected (1507 timepoints, same spatial grid), whose tp150 is a post-gastrulation embryo; every automated check passed on it and only visual inspection caught the wrong stage. Source is now asserted by timepoint count before the fit runs. Figures are the ARCHIVE measured with `gsplat compare` (41.65 / 37.07), not the fit-time stamp (41.76 / 37.15) \u2014 they agree to 0.1 dB here because `--preset standard` leaves little to cull (55,977 of 256,000). At the API default of n_iters=1000 the same fit culled 98,349 and the stamp overstated the archive by 9.7 dB, so a stamp is only trustworthy on a trained fit. 200,023 splats against the previously shipped 200,155 indicates the original also ran standard; the demo previously documented 39.89 dB, so this is marginally better."
     },
     "gsplats_3d_h2afva_decimation/h2afva_full.gsplats.zarr.zip": {
       "n_splats": 1653405,
@@ -190,6 +190,7 @@
       "frames": null,
       "measured_from": null,
       "measured_sha256": null,
+      "unmeasured_reason": "unpinned-local-copy",
       "quality_note": "DELIBERATELY ABSENT, not unmeasured. Measured 2026-08-25 per timepoint against the *_preprocessed.npy volumes the fit consumed (global PSNR 35.57/30.03/19.65/21.11 dB and foreground 30.17/13.12/9.52/8.51 dB at t0/t100/t200/t300), and the foreground figures are NOT publishable: Otsu drifts 13.3x over the recording (0.0135 -> 0.1795), so 'foreground' is a different region at every timepoint. At t0 the low threshold admits 26.4% of a nearly-empty one-cell embryo, inflating that end, so the apparent trend mixes real quality loss with threshold drift. Real quality DOES fall across the recording -- MAX_SPLATS is a fixed 22,000 per timepoint while the embryo goes from one cell to hundreds of nuclei -- but a stable mask is needed to say by how much. Template: the zebrafish demo's fixed component-based definition (voxels inside 6-connected components of >= 27 voxels in the raw frame), which does not move with image content.",
       "quality_caveat": "PSNR is withheld rather than unmeasured. The fit consumed preprocessed volumes, so a figure against them scores the fit plus the preprocessing and is not comparable with the other archives here; per-frame values were measured and deliberately not published for that reason."
     },
@@ -358,9 +359,9 @@
       "source_dtype": "uint16",
       "source_bytes": 6449692786,
       "frames": null,
-      "measured_from": "staged",
+      "measured_from": null,
       "measured_sha256": "74fbe3a7b3ebcb344df21fdab4be6b54d557d8358b91b748cf1eb8c648e5d3fb",
-      "quality_note": "Measured 2026-08-26 at fit time on the 5000-iteration refit, against the fit's own composite volume on the voxel grid BEFORE any spatial transform. That is the only point at which this archive can be scored: its shipped form has been rotated, scaled and centred, and an attempt to invert that recovered a render correlation of 0.17. MSE 0.0894406, SSIM 0.9984, foreground over 0.07% of voxels at Otsu > 26.67; the basis is shifted by image_min=1 from the dataset so scores are background-relative and match the render. The 1000-iteration build it replaces scored 60.13 / 36.00 dB, so the gain is +2.90 dB foreground. Splat count rose 653,759 -> 660,035 (1.010x) while the stored size FELL 8,150,095 -> 7,650,636 bytes. Colour verified after writing: 660,035 RGB triples present, 97.2% of lit splats at full peak, confirming colour carries hue only. EXPOSURE CAVEAT, added after the fact: the commit shipping this build reasoned that the display window survives the refit because the stored distribution keeps its shape (median/max 0.0398 -> 0.0392). That assumed the viewer's normalise-by-stored-maximum governs, which was verified on a COLORMAP node; this is a direct-colour node whose demo opts out of insertion-time normalisation because raw amplitude units reach it. If that holds, the governing figure is the 8% fall in absolute max (188.81 -> 173.64) and the refit dims the scene by about that much. Unsettled, and not settleable from these numbers -- it needs a render. The measured quantities above are unaffected."
+      "quality_note": "Measured 2026-08-26 at fit time on the 5000-iteration refit, against the fit's own composite volume on the voxel grid BEFORE any spatial transform. That is the only point at which this archive can be scored: its shipped form has been rotated, scaled and centred, and an attempt to invert that recovered a render correlation of 0.17. MSE 0.0894406, SSIM 0.9984, foreground over 0.07% of voxels at Otsu > 26.67; the basis is shifted by image_min=1 from the dataset so scores are background-relative and match the render. The 1000-iteration build it replaces scored 60.13 / 36.00 dB, so the gain is +2.90 dB foreground. Splat count rose 653,759 -> 660,035 (1.010x) while the stored size FELL 8,150,095 -> 7,650,636 bytes. Colour verified after writing: 660,035 RGB triples present, 97.2% of lit splats at full peak, confirming colour carries hue only. Exposure was settled by rendering both builds through the demo at a fixed camera: amplitude sum moved -1.4%, rendered total light -2.1%, mean foreground -1.4%, and p99 -0.7%; the -7.5% median-lit-pixel change is confined to faint neuropil. The existing 2.723 display window therefore remains appropriate for this build."
     },
     "gsplats_kidney/kidney_ch0.gsplats.zarr.zip": {
       "n_splats": 51015,
@@ -490,6 +491,7 @@
       "frames": null,
       "measured_from": null,
       "measured_sha256": null,
+      "unmeasured_reason": "unpinned-local-copy",
       "quality_caveat": "PSNR is not recoverable for this archive, which is a property of the coordinate system rather than of the fit. The splats are authored in kilometres while the reference is a radar voxel grid, and raw reflectivity carries a no-data fill, so a direct comparison measures the regridding. The archive itself renders correctly."
     },
     "gsplats_opencell_map4/opencell_map4_ch0.gsplats.zarr.zip": {

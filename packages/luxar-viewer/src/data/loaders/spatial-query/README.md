@@ -183,7 +183,7 @@ barrier-ness at all. `computeTolerance` is called from `SpatialQueryBuilder`'s
 geometry-aware path and directly from
 `data/scene-loader/process/data-processor-lines.ts` (lines projection clipping,
 MEMBERSHIP role) and `data-processor-mesh.ts` (mesh slab membership — mesh has no
-query role and passes no options).
+query role and passes only the authored `meshSlabTolerance`).
 
 ## RangeLoader
 

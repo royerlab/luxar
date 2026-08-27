@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 const loadSceneNodesMock = vi.fn();
 
 import { loadPartitionGroupNode } from '../../../../../data/scene-loader/nodes/load-partition-group-node';
+import { EAGER_CHILD_LOAD_CONCURRENCY } from '../../../../../data/scene-loader/nodes/load-children-concurrently';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
@@ -178,6 +179,122 @@ describe('loadPartitionGroupNode', () => {
       '/partition/part_1',
       '/partition/part_2',
     ]);
+  });
+
+  it('loads parts with bounded concurrency while preserving authored order and indices', async () => {
+    const children = Array.from({ length: 10 }, (_, index) =>
+      makePartNode(`/partition/part_${index}`, 'points', { child_index: index })
+    );
+    const releases: Array<() => void> = [];
+    const gates = children.map(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+    let active = 0;
+    let maxActive = 0;
+    let started = 0;
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      const index = children.indexOf(child);
+      started++;
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await gates[index];
+      const object = new THREE.Group();
+      object.name = child.path;
+      parentThree.add(object);
+      active--;
+    });
+
+    const loadPromise = loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    await Promise.resolve();
+    const firstWave = started;
+    for (let index = releases.length - 1; index >= 0; index--) releases[index]();
+    const wrapper = await loadPromise;
+
+    expect(firstWave).toBe(EAGER_CHILD_LOAD_CONCURRENCY);
+    expect(maxActive).toBe(EAGER_CHILD_LOAD_CONCURRENCY);
+    expect(wrapper.children.map((child) => child.name)).toEqual(
+      children.map((child) => child.path)
+    );
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual(
+      children.map((_, index) => index)
+    );
+  });
+
+  it('stamps partition slots while their children are still loading', async () => {
+    const child = makePartNode('/partition/part_0', 'points', { child_index: 7 });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    loadSceneNodesMock.mockImplementation(async () => gate);
+    const parent = new THREE.Group();
+
+    const loadPromise = loadPartitionGroupNode(
+      makePartitionGroupNode([child]),
+      parent,
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+
+    await Promise.resolve();
+    expect(parent.children[0].children[0].userData.partIndex).toBe(7);
+    release();
+    await loadPromise;
+  });
+
+  it('keeps every object from a part contiguous and stamps each with the same part index', async () => {
+    const children = [
+      makePartNode('/partition/part_a', 'points', { child_index: 7 }),
+      makePartNode('/partition/part_b', 'points', { child_index: 3 }),
+    ];
+    const releases: Array<() => void> = [];
+    const gates = children.map(
+      () =>
+        new Promise<void>((resolve) => {
+          releases.push(resolve);
+        })
+    );
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      const index = children.indexOf(child);
+      await gates[index];
+      for (const suffix of ['first', 'second']) {
+        const object = new THREE.Group();
+        object.name = `${child.path}/${suffix}`;
+        parentThree.add(object);
+      }
+    });
+
+    const loadPromise = loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeCtx(),
+      loadSceneNodesMock
+    );
+    await Promise.resolve();
+    releases[1]();
+    await Promise.resolve();
+    releases[0]();
+    const wrapper = await loadPromise;
+
+    expect(wrapper.children.map((child) => child.name)).toEqual([
+      '/partition/part_a/first',
+      '/partition/part_a/second',
+      '/partition/part_b/first',
+      '/partition/part_b/second',
+    ]);
+    expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([7, 7, 3, 3]);
   });
 
   it('all children stay visible after load (no LOD-style selector)', async () => {
@@ -390,6 +507,31 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.userData.bspTree).toEqual(bspTree);
   });
 
+  it('keeps a valid nD bsp_tree whose split uses a displayed column above 2', async () => {
+    attachStubChildren();
+    const ctx = makeCtx();
+    const bspTree = { axis: 3, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const parts = [
+      makePartNode('/partition/part_0', 'points', {
+        position_bounds: { min: [0, 0, 0, -2], max: [1, 1, 1, 0.5] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        position_bounds: { min: [0, 0, 0, -0.5], max: [1, 1, 1, 2] },
+      }),
+    ];
+    const node = makePartitionGroupNode(parts, { bsp_tree: bspTree });
+
+    const wrapper = await loadPartitionGroupNode(
+      node,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    expect(wrapper.userData.bspTree).toEqual(bspTree);
+  });
+
   it('keeps a sparse grid bsp_tree using the measured per-axis overlap floor', async () => {
     attachStubChildren();
     const ctx = makeCtx();
@@ -530,7 +672,7 @@ describe('loadPartitionGroupNode', () => {
     ['has no right subtree', { axis: 0, split: 0, left: { part: 0 } }, 2],
     ['has a null right subtree', { axis: 0, split: 0, left: { part: 0 }, right: null }, 2],
     ['uses a non-integer axis', { axis: 0.5, split: 0, left: { part: 0 }, right: { part: 1 } }, 2],
-    ['uses an out-of-range axis', { axis: 5, split: 0, left: { part: 0 }, right: { part: 1 } }, 2],
+    ['uses a negative axis', { axis: -1, split: 0, left: { part: 0 }, right: { part: 1 } }, 2],
     [
       'uses a non-finite split',
       { axis: 0, split: Infinity, left: { part: 0 }, right: { part: 1 } },

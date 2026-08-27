@@ -3,6 +3,23 @@ Luxar Documentation
 
 Welcome to Luxar's documentation! Luxar is a high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes containing points, lines, Gaussian splats, and triangle meshes. Luxar delivers visualization performance limited only by your graphics card, display resolution, and network bandwidth—not by software constraints.
 
+.. admonition:: See it running before you install anything
+   :class: tip
+
+   `demos.luxarviewer.dev <https://demos.luxarviewer.dev>`_ hosts 85 of the
+   bundled demos as live, interactive scenes — real compiled archives streamed
+   from object storage, not videos.
+
+   The viewer is also deployed on its own at
+   `luxarviewer.dev <https://luxarviewer.dev>`_ and takes any reachable scene as
+   a URL parameter, so you can point it at your own compiled archive::
+
+      https://luxarviewer.dev/?src=https://example.org/path/to/scene.luxar.zarr
+
+   The host serving that URL needs to allow cross-origin reads. See
+   :doc:`guides/developer/DEMO_SITE_RUNBOOK` for how the demo corpus itself is
+   hosted.
+
 Quick Start
 -----------
 
@@ -123,6 +140,7 @@ Features
    guides/developer/ERROR_HANDLING_GUIDE
    guides/developer/DEBUG_INTERFACE_GUIDE
    guides/developer/INTENSITY_GAMMA_DESIGN
+   guides/developer/DEMO_SITE_RUNBOOK
 
 .. toctree::
    :maxdepth: 3
@@ -132,6 +150,7 @@ Features
    api/io
    api/encoding
    api/validation
+   api/demos
    api/utils
    api/typing_utils
    api/cli
@@ -154,6 +173,7 @@ Core Packages
 * **luxar.io** - Read/write Zarr files with spatial indexing
 * **luxar.encoding** - Array encoding with semantic types and quantization
 * **luxar.validation** - Data validation with helpful error messages
+* **luxar.demos** - Dataset, download, and runtime helpers for executable demos
 * **luxar.utils** - Utilities and demo data generators
 * **luxar.typing_utils** - Type definitions and constants
 * **luxar.cli** - Command-line interface

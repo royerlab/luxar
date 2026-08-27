@@ -190,7 +190,9 @@ how you fit). Pass `--floor none` to reproduce the legacy hard-min numbers.
 `--recipe` is REQUIRED. Recipes scale-ordered by element count N:
 `flat` < `stream` < `levels` < `tiles` < `overview` < `adaptive`. `stream` is
 additive (refines one leaf); `levels` is substitutive (coarse↔fine swap);
-`overview`/`adaptive` compose the two over spatial tiles.
+`overview`/`adaptive` compose the two over spatial tiles. Scale is not the only
+axis: when first paint is request-constrained, the eager-rung count picks the
+recipe instead — see "First paint cost" in SKILL.md.
 
 ### Additive ladder (stream / tiles / overview / levels)
 | Flag | Default | Meaning |

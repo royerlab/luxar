@@ -49,7 +49,7 @@ never deleted by `demo cache clear`, by key, under `--all` or under `--orphans`.
 
 A `local/` subdirectory inside a cache dir holds artifacts **this machine
 computed for itself** — a demo's own refit, when its hosted data could not be
-reached — written there by `luxar.utils.data_fetch.local_fit_path`. That is a
+reached — written there by `luxar.demos.local_fit_path`. That is a
 separate namespace from the manifest's own `~/.cache/luxar/<dataset>/<file>`,
 which the fetch checksums and quarantines; a local fit stored under the hosted
 name is destroyed and recomputed on every launch (#1618). `demo cache clear`
@@ -68,6 +68,9 @@ channel through a 3-D volume share the implementation in
 `_roundtrip_common.py`; the other six keep their own — laid out over 2-D
 images, over sampled timepoints, or with demo-specific titles for a
 single-channel volume.
+
+The two FlyLight MCFO demos share `_h5j.py`, which identifies reference and
+signal channels from H5J metadata and decodes the stitched HEVC channel payloads.
 
 The LOD topology a fitting demo writes its cached artifact with is chosen in
 `_lod_policy.py`, not left to whichever fitter the demo happened to call
@@ -379,7 +382,8 @@ Time-animated version of the particle collision demo. Watch particle tracks grow
 #### demo_4d_fractals.py - 4D Geometric Fractal Explorer
 Interactive exploration of 6 different 4D geometric fractals with categorical dimension.
 
-**Run**: `luxar demo run fractals_4d [-- --grid=64]`
+**Run**: `luxar demo run fractals_4d [-- --grid=64]` (default: 147 MB,
+~25 min, ~24 GB peak memory)
 
 **Demonstrates**: 4D spatial navigation (XYZ + W dimension, every W slider stop shows structure), categorical dimension (select between 6 fractal types), large dataset (~44.5M points, up to ~7.5M per fractal), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
 
@@ -629,22 +633,22 @@ Variant of the Chromatrace demo with an 89-step slider stepping through each fin
 ### Data-Driven Demos (External Datasets)
 
 #### demo_global_rivers_earth.py - Rivers of Earth
-A topographic ETOPO globe (Points) plus every HydroRIVERS reach (Lines) in geographic 3D.
+A relief-displaced textured mesh globe plus every HydroRIVERS reach (Lines) in geographic 3D.
 
 **Run**: `luxar demo run global_rivers_earth`
 
-**Demonstrates**: Mixed Points+Lines geometry in one scene, geographic (lat/lon/elevation) coordinate mapping, large real-world datasets with local caching (~1 GB download on first run).
+**Demonstrates**: Mixed Mesh+Lines geometry, tiled high-resolution textures, geographic (lat/lon/elevation) coordinate mapping, and large real-world datasets with local caching (~1 GB download on first run).
 
 ---
 
 #### demo_ocean_currents_earth.py - Ocean Currents of Earth
-HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) draped over a jittered-Fibonacci NASA Blue Marble globe — a "Perpetual Ocean"-style visualization of the Gulf Stream, Kuroshio, and Antarctic Circumpolar Current.
+HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) draped over a textured NASA Blue Marble mesh globe — a "Perpetual Ocean"-style visualization of the Gulf Stream, Kuroshio, and Antarctic Circumpolar Current.
 
 **Run**: `luxar demo run ocean_currents_earth`
 
-**Requires**: Internet access on first run (~72 MB: HYCOM GLBy0.08 surface u/v + Blue Marble texture; cached under `~/.cache/luxar/ocean_currents_earth/`).
+**Requires**: Internet access on first run (HYCOM GLBy0.08 surface u/v under `~/.cache/luxar/ocean_currents_earth/`, plus the shared NASA Blue Marble imagery under `~/.cache/luxar/blue_marble/` — ~28 MB, downloaded once and reused by all four Earth demos).
 
-**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, `stream:` additive LOD for fast first paint on an 8M-point globe.
+**Demonstrates**: Mixed Mesh+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, tiled globe textures, and a **partition-of-LOD current layer** — 16 per-tile `kind=lod` ladders keep the opening whole-globe view from retaining every ribbon. Coarse levels preserve whole streamlines and widen them linearly so the field's apparent ink stays stable across switches; `LOD_COMPRESSION` / `LOD_LEVELS` tune the residency-versus-disk trade.
 
 ---
 
@@ -1288,11 +1292,11 @@ same information inside its own error message.
 Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
 
-`luxar.demos` is the ONLY spelling for these helpers: never import the guarded
-concern modules under `luxar.utils` (including `luxar.utils.data_fetch`,
-`luxar.utils.download`, and `luxar.utils.remote_zip`) or private demo helpers
-such as `luxar.demos._support._fields` directly from a demo, even though that is
-where they live. The authoritative guarded set is
+`luxar.demos` is the ONLY spelling for these helpers: never import guarded
+`luxar.demos._support.*` concern modules (including dataset, download, and
+remote-ZIP support), `luxar.utils.colors`, `luxar.utils.scenes`, or private demo
+helpers such as `luxar.demos._support._fields` directly from a demo, even though
+that is where they live. The authoritative guarded set is
 `tests/test_demo_import_spelling.py`'s `DEEP_MODULES`. That test fails the build
 on every deep spelling, including relative forms, in every demo module here and
 in the three `gsplats/**/demos` trees, and also on a name the barrel does not
