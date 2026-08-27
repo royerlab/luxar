@@ -110,6 +110,36 @@ RECORDS = {
         "base_url": None,
         "published": False,
     },
+    # Its OWN record rather than a 33rd file on `cc-by`, decided by Loic on
+    # 2026-08-26. The deciding argument was attribution granularity: on a mixed
+    # record "Keller, DataCollector" is one name among four attached to nothing
+    # in particular, while here he is the data collector *of this recording*.
+    #
+    # The shipped single frame in `cc-by` IS frame 150 of this same recording,
+    # so one recording spans two DOIs. That is deliberate and handled by a
+    # cross-reference in both descriptions rather than by co-location — moving
+    # the existing file would break its pins.
+    #
+    # PUBLICATION GATE, beyond the standing never-publish rule: this record
+    # additionally waits on a conversation with Philipp J. Keller, whose imaging
+    # it is, and which as of 2026-08-26 had not happened. Loic confirmed that and
+    # chose the sequencing: upload to the draft, gate the publish. An upload here
+    # implies no consent to publish. Recorded in the repo on purpose — Zenodo's
+    # `notes` and `description` are both PUBLISHED metadata, so an internal
+    # process gate written there would ship with the record.
+    # The timelapse dataset below points at this record; publishing remains
+    # gated on the conversation above even after the archive is uploaded.
+    "droso-timelapse": {
+        "title": (
+            "Drosophila melanogaster embryogenesis: a 500-timepoint "
+            "light-sheet timelapse as Gaussian splats"
+        ),
+        "license": "cc-by-4.0",
+        "zenodo_doi": "10.5281/zenodo.22118695",
+        "zenodo_record": "22118695",
+        "base_url": None,
+        "published": False,
+    },
 }
 
 # Curated per-dataset metadata. `dir` is the demos/data subdir (or "" for
@@ -455,6 +485,31 @@ DATASETS: dict[str, dict] = {
                 note="Full 253-timepoint timelapse — opt-in (large download).",
             ),
         },
+    ),
+    # The whole 500-timepoint recording, of which the single-frame entry below
+    # is frame 150. Its OWN record (see RECORDS["droso-timelapse"]) rather than a
+    # 33rd file on cc-by, so Keller is credited as the data collector of THIS
+    # recording rather than as one name among four on a mixed record.
+    "gsplats_4d_drosophila_embryogenesis": dict(
+        bucket="zenodo",
+        record="droso-timelapse",
+        license="cc-by-4.0",
+        source="Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Royer/Keller)",
+        attribution="Royer & Keller labs — Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+        acquisition=dict(
+            # A clean 1:1 denominator, unusually: the fit consumed the WHOLE
+            # recording — all 500 timepoints, full spatial extent, the single
+            # channel — with no downscale and no crop. So the dataset as a whole
+            # really is comparable to the acquisition as a whole, which is what
+            # this block is for.
+            description=(
+                "the whole 500-timepoint SiMView recording "
+                "(500 x 108 x 1352 x 532 uint16), every timepoint fitted at full "
+                "resolution"
+            ),
+            comparable=True,
+            stored_bytes=19_333_771_628,  # DrosophilaHistone.zarr.zip as stored
+        ),
     ),
     "gsplats_3d_drosophila_gastrulation": dict(
         bucket="zenodo",

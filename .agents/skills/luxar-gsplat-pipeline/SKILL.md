@@ -401,6 +401,50 @@ cost" below, which overrides this ordering when first paint is request-constrain
 (swaps a coarse level for a finer one as the object grows on screen). `overview` and
 `adaptive` compose the two over spatial tiles.
 
+### Scale-ordered is the wrong first question. Ask about the VIEW.
+
+**Default to `stream`, and make anything costlier justify itself.** Element count
+alone is a poor guide: a 128M-splat timelapse wants `stream`, while a 0.7M-splat
+galaxy legitimately wants `levels`. Three questions decide it, and all three
+matter (measured 2026-08-26):
+
+**Is it ONE object, always fully in frame?** Then there is nothing to
+frustum-cull and parts cost a request per node to bootstrap for no return.
+Measured first paint: **63 requests** for a single stacked leaf (8 nodes) vs
+**689** for a `kind=partition` of 44 parts x 4 levels x 4 rungs (704 nodes) —
+~15-18x, like-for-like on chunking. The scaling is SUBLINEAR (88x nodes, ~16x
+requests), so halving a node count does not halve the cost.
+
+**Is it viewed WHOLE, or at range?** The LOD selector is screen-occupancy based,
+so at a full-frame view the *finest* substitutive level shows and coarse levels
+are bytes nobody fetches. They pay off only when the object is genuinely small
+on screen. `cryoem_virus` (a compact particle, always full-frame) moved
+`levels -> stream` for **-28%** when regenerated (16.03 -> 11.50 MB, 16 -> 4
+nodes; publishing the regenerated archive remains #1879);
+`milky_way_dust` keeps `levels` because the galaxy really is orbited at range,
+and pays +39% on purpose.
+
+**Does the RESIDENT set fit?** `MAX_SPLATS_PER_GSPLATS_NODE` is 4,194,304 on a
+4096-class GPU (8.38M at 8192). Above it the viewer reports the clamp at load
+time and drops the tail; since storage is Hilbert-ordered that tail is one
+contiguous lobe — a clean-edged hole, not noise. **Only the resident slice
+counts**: an nD node sliced on a hidden axis is measured per-slice, so a
+500-timepoint node holding 128M splats at ~256k/frame is fine. The compiler also
+warns on the node total rather than the resident slice, so that warning is
+expected for a sliced nD node that satisfies the runtime limit. For a STATIC
+object over the cap, parts are load-bearing.
+
+**On a time-stacked 4D node, a partition buys nothing at all.** The writer
+lexsorts by the time barrier, so a timepoint's splats are already contiguous and
+chunk-local without any partition. Measured: partition-per-timepoint cost +9%
+bytes for zero benefit; substitutive levels cost +49%.
+
+**One catch that comes with `stream`:** a flat store needs re-chunking or
+scrubbing gets WORSE. Measured per timepoint step on a 4D leaf: **173 requests
+as-built, 2 after `luxar optimise --profile archive`** — the as-built figure is
+worse than a partitioned store's re-chunked 12. Additive-only and re-chunking
+are a package, not alternatives.
+
 ```bash
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe tiles --max-elements 250000
