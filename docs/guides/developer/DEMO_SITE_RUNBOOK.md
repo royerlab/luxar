@@ -224,6 +224,50 @@ sees one per URL per PoP per TTL and the cost collapses. The real cost of a
 
 ---
 
+### 3.7 ffmpeg: every encoder option must precede the output filename
+
+Re-encoding captured media with a two-pass VP9 command whose `-passlogfile`
+trails the output produces:
+
+```
+frame=    0 fps=0.0 q=0.0 Lsize=N/A
+[out#0/null] Output file is empty, nothing was encoded
+```
+
+Options placed after an output filename apply to the *next* output, so
+`-passlogfile` is silently orphaned, pass 2 finds no stats file, and nothing
+encodes.
+
+What makes this worth a numbered hazard rather than a footnote is the *false
+explanation waiting next to it*. Playwright-recorded WebM genuinely carries no
+stream timestamps — `ffprobe` reports `duration_ts=N/A` and `nb_frames=N/A` —
+so "the input is undecodable" is both plausible and immediately checkable, and
+it is wrong. Confirm decodability before blaming the input:
+
+```bash
+ffmpeg -v error -stats -i in.webm -f null -      # reports frame=120 -- it decodes fine
+```
+
+Correct ordering:
+
+```bash
+ffmpeg -y -i in.webm -c:v libvpx-vp9 -b:v 480k -pass 1 -passlogfile P -an -f null /dev/null
+ffmpeg -y -i in.webm -c:v libvpx-vp9 -b:v 480k -pass 2 -passlogfile P -an -row-mt 1 out.webm
+```
+
+### 3.8 Judge a re-encode on frames, never on byte count
+
+Hitting a size target says nothing about whether the tile still depicts its
+subject. `hilbert_curve_3d` re-encoded from 10 MB to 295 KB hit a 300 KB target
+exactly and lost the fine wire detail that *is* the subject — the cube's outline
+survived, so every automated check passed. Extract matched frames from source
+and output and look at them.
+
+Measured knee for that scene: 295 KB visibly degraded, 587 KB resolved
+throughout, 1174 KB indistinguishable from source. Dense point clouds and
+high-motion synthetic scenes need roughly double what a smooth microscopy
+volume does.
+
 ## 4. Cloudflare configuration
 
 ### 4.1 Cache rule on the data subdomain
