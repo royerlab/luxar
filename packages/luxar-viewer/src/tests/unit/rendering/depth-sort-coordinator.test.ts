@@ -1262,6 +1262,47 @@ describe('depth-sort coordinator', () => {
     expect(await run([0, 1, 2], bspTree, onX)).not.toEqual(await run([0, 1, 2], undefined, onX));
   });
 
+  it('warns once when a valid BSP tree is rejected only by display-axis mapping', async () => {
+    const coord = await loadCoordinator();
+    let displayedDims = [0, 1, 2];
+    coord.configureDepthSort({
+      getCamera: () => cameraAt(0, 0, -1000),
+      requestRender: vi.fn(),
+      getDisplayDims: () => displayedDims,
+    });
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    const wrapper = makePartitionWrapper(
+      { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } },
+      parts
+    );
+    wrapper.name = '/hidden-first';
+    for (const mesh of parts) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    const { log } = await import('../../../utils/log');
+    expect(log.warning).not.toHaveBeenCalled();
+
+    displayedDims = [1, 2, 3];
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+
+    expect(log.warning).toHaveBeenCalledTimes(1);
+    expect(log.warning).toHaveBeenCalledWith(
+      'RENDERER',
+      expect.stringContaining(
+        'partition-kind group /hidden-first has a valid bsp_tree whose split axes are not all displayed'
+      )
+    );
+    expect(log.warning).toHaveBeenCalledWith(
+      'RENDERER',
+      expect.stringContaining('falling back to centroid ordering')
+    );
+  });
+
   it('orders a partition wrapper without a bsp tree like the centroid-only path', async () => {
     // `undefined` is the state a rejected tree leaves; the loader half of that
     // contract is covered in load-partition-group-node.test.ts.
