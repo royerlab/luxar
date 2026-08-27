@@ -197,19 +197,30 @@ class GalleryHistory:
         return CommitStamp(sha=sha, committed_at=datetime.fromisoformat(committed_at))
 
     def _require_tracked_head_files(self, label: str, *pathspecs: str) -> None:
-        candidates = self._git(
-            "ls-files", "--cached", "--with-tree=HEAD", "--", *pathspecs
-        ).splitlines()
-        tracked = (
-            self._git("ls-tree", "-r", "--name-only", "HEAD", "--", *candidates)
-            if candidates
-            else ""
+        exclusions = tuple(
+            pathspec for pathspec in pathspecs if pathspec.startswith(":(exclude)")
         )
-        if not tracked:
-            raise StalenessError(
-                f"configured gallery input {label!r} has no tracked files at HEAD: "
-                f"{', '.join(pathspecs)}"
+        for pathspec in pathspecs:
+            if pathspec in exclusions:
+                continue
+            candidates = self._git(
+                "ls-files",
+                "--cached",
+                "--with-tree=HEAD",
+                "--",
+                pathspec,
+                *exclusions,
+            ).splitlines()
+            tracked = (
+                self._git("ls-tree", "-r", "--name-only", "HEAD", "--", *candidates)
+                if candidates
+                else ""
             )
+            if not tracked:
+                raise StalenessError(
+                    f"configured gallery input {label!r} has no tracked files at HEAD: "
+                    f"{pathspec}"
+                )
 
     def _last_commit(self, path: Path) -> CommitStamp:
         return self._last_commit_for_pathspecs(path.as_posix())

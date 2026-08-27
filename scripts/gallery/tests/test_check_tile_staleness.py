@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -328,19 +329,33 @@ def test_gallery_capture_tracks_all_render_configuration(
     assert all(status.stale_inputs == ("gallery capture",) for status in statuses)
 
 
-def test_renamed_configured_input_is_rejected(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("label", "relative_path"),
+    [
+        (
+            "gallery capture",
+            "packages/luxar-viewer/src/tests/screenshots/orbit-axis.ts",
+        ),
+        (
+            "crop policy",
+            "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",
+        ),
+    ],
+)
+def test_renamed_configured_input_is_rejected(
+    tmp_path: Path,
+    label: str,
+    relative_path: str,
+) -> None:
     repo = _repo(tmp_path)
-    _git(
-        repo,
-        "mv",
-        "packages/luxar-viewer/src/tests/screenshots/crop-policy.ts",
-        "packages/luxar-viewer/src/tests/screenshots/crop-rules.ts",
-    )
-    _commit(repo, "rename crop policy", 22)
+    original = Path(relative_path)
+    renamed = original.with_name(f"{original.stem}-renamed{original.suffix}")
+    _git(repo, "mv", original.as_posix(), renamed.as_posix())
+    _commit(repo, "rename configured input", 22)
 
     with pytest.raises(
         stale.StalenessError,
-        match="crop policy.*no tracked files at HEAD",
+        match=rf"{label}.*no tracked files at HEAD.*{re.escape(relative_path)}",
     ):
         stale.GalleryHistory(repo).report()
 
