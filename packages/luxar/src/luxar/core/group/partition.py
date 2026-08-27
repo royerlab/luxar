@@ -190,9 +190,9 @@ def resolve_partition_spec(partition: Any) -> Tuple[int, str]:
 class BSPNode:
     """A node of the recursive BSP the spatial splitters build.
 
-    An **internal** node carries the split plane it applied: ``axis`` (one of
-    the first-3 spatial axes, ``0``/``1``/``2``) and the ``split`` coordinate
-    (in the positions' own coordinate space), plus its two children. A
+    An **internal** node carries the split plane it applied: ``axis`` (a
+    position-column index) and the ``split`` coordinate (in the positions' own
+    coordinate space), plus its two children. A
     **leaf** carries the index array of the elements it contains. The split
     convention matches the splitters exactly: the ``left`` subtree holds
     ``coord < split`` and ``right`` holds ``coord >= split``.
@@ -663,8 +663,7 @@ def _axis_image(
     A plane ``coord[axis] == s`` stays axis-aligned only when the affine sends
     that axis to a single other axis and nothing else lands on it: column
     ``axis`` must have one nonzero, at row ``b``, and row ``b`` one nonzero, at
-    column ``axis``. Returns ``(b, coefficient, offset[b])``; ``b`` must be one
-    of the three axes the serialized format admits.
+    column ``axis``. Returns ``(b, coefficient, offset[b])``.
     """
     ndim = int(linear.shape[0])
     if axis >= ndim:
@@ -676,8 +675,6 @@ def _axis_image(
     if rows.size != 1:
         return None
     image = int(rows[0])
-    if image > 2:
-        return None
     cols = np.flatnonzero(np.abs(linear[image, :]) > atol)
     if cols.size != 1 or int(cols[0]) != axis:
         return None
@@ -708,8 +705,7 @@ def map_serialized_bsp_tree(
 
     Returns ``None`` when a split axis actually used by the tree has no such
     image: an arbitrary rotation shears the cells out of axis-alignment and the
-    serialized format cannot express the result. ``b`` must also land in
-    ``0``/``1``/``2``, the only axes the format admits.
+    serialized format cannot express the result.
 
     ``linear`` is the linear part and ``shift`` the translation of
     ``p -> linear @ p + shift``; either may be ``None`` for identity/zero, and

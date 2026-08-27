@@ -1216,6 +1216,25 @@ describe('depth-sort coordinator', () => {
     expect(await orderFor([0, 1, 2])).toEqual([1, 2]);
   });
 
+  it('maps BSP split axes above column 2 when that column is displayed', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({
+      getCamera: () => cameraAt(0, 0, -1000),
+      requestRender: vi.fn(),
+      getDisplayDims: () => [1, 2, 3],
+    });
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+    makePartitionWrapper({ axis: 3, split: 0, left: { part: 0 }, right: { part: 1 } }, parts);
+    for (const mesh of parts) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(parts.map((mesh) => mesh.renderOrder)).toEqual([2, 1]);
+  });
+
   it('falls back to the centroid heuristic when a split axis is not displayed', async () => {
     // displayDims == [1, 2] (a 2D view of 3D+ data) leaves center column 0 off
     // screen, so its split plane carries no on-screen depth information: the

@@ -519,7 +519,7 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
   "kind": "partition",
   "display_type": "points",     // All children resolve to this type.
   "max_elements": 1000000,      // Per-part cap that drove the BSP recursion.
-  "bsp_tree": {                 // Optional recursive tree; axis is a center-column
+  "bsp_tree": {                 // Optional recursive tree; axis is a position-column
     "axis": 0,                  //   index mapped through displayDims by the viewer;
                                 //   any unmapped split axis rejects the whole tree.
     "split": 0.0,

@@ -120,12 +120,10 @@ function traverseBspBackToFront(
  * Map each BSP split axis (a CENTER-COLUMN index of the stored data) to the
  * local x/y/z component that column is currently displayed as.
  *
- * The producer splits on the first up-to-three center columns, so a serialized
- * `axis` is 0/1/2 in STORED-COLUMN space (`partition.py::spatial_bsp_tree`).
- * `eyeLocal`, however, is in the wrapper's local 3D space, where x/y/z are
- * `displayDims[0..2]`. The two coincide only for `displayDims == [0, 1, 2]`;
- * a 4D scene displaying `[1, 2, 3]` would otherwise order along the wrong axis
- * — silently, since the result is still a valid permutation of the parts.
+ * A serialized `axis` is in STORED-COLUMN space. `eyeLocal`, however, is in the
+ * wrapper's local 3D space, where x/y/z are `displayDims[0..2]`. The two
+ * coincide only for `displayDims == [0, 1, 2]`; a 4D scene displaying
+ * `[1, 2, 3]` needs column 3 mapped to z.
  *
  * Read from the LIVE dims rather than a value stamped at load: display dims can
  * change at runtime (nD navigation) while the stored tree stays valid, so a
@@ -150,8 +148,8 @@ function bspAxisToComponent(
 
   // A split axis is usable only if that stored column is on screen.
   const map: number[] = [];
-  for (let axis = 0; axis < 3; axis++) {
-    map[axis] = displayed.indexOf(axis);
+  for (let component = 0; component < displayed.length; component++) {
+    map[displayed[component]] = component;
   }
   return bspTreeAxesAreMapped(tree, map) ? map : null;
 }
