@@ -1369,6 +1369,46 @@ def _resolve_encoded_texture_dims(
     return int(height), int(width), int(channels)
 
 
+def _validate_texture_codec_options(
+    encoding: str,
+    ktx2_mode: str,
+    ktx2_quality: Optional[int],
+    context: str,
+) -> None:
+    if encoding != "ktx2" and (ktx2_mode != "uastc" or ktx2_quality is not None):
+        raise ValidationError(
+            f"{context}: texture_ktx2_mode/texture_ktx2_quality require "
+            "texture_encoding='ktx2'",
+            "Remove the KTX2-only options or select texture_encoding='ktx2'",
+        )
+
+
+def _validate_ktx2_texture_array(
+    arr: NDArray[Any], encoding: str, channels: int, context: str
+) -> None:
+    if encoding != "ktx2":
+        return
+    if arr.dtype != np.dtype(np.uint8):
+        raise ValidationError(
+            f"{context}: texture_encoding='ktx2' accepts only uint8 LDR input, "
+            f"got {arr.dtype}",
+            "Use uint8 RGB/RGBA input, or texture_encoding='raw' for HDR/float data",
+        )
+    if channels == 1:
+        raise ValidationError(
+            f"{context}: texture_encoding='ktx2' supports only RGB or RGBA, got 1 channel",
+            "Use texture_encoding='raw' for a single-channel texture",
+        )
+
+
+def _texture_decoded_bytes(
+    encoding: str, width: int, height: int, channels: int
+) -> int:
+    if encoding == "ktx2":
+        return (width * height * 4 + 2) // 3
+    return width * height * (4 if encoding != "raw" else max(channels, 1) * 4)
+
+
 def validate_texture_for_writing(
     texture: Any,
     encoding: str,
@@ -1429,12 +1469,7 @@ def validate_texture_for_writing(
             "HDR), 'ktx2' for uint8 RGB/RGBA input, or 'png'/'webp'/'jpeg' for "
             "encoded bytes",
         )
-    if encoding != "ktx2" and (ktx2_mode != "uastc" or ktx2_quality is not None):
-        raise ValidationError(
-            f"{context}: texture_ktx2_mode/texture_ktx2_quality require "
-            "texture_encoding='ktx2'",
-            "Remove the KTX2-only options or select texture_encoding='ktx2'",
-        )
+    _validate_texture_codec_options(encoding, ktx2_mode, ktx2_quality, context)
 
     arr = np.asarray(texture)
     res_h, res_w, res_c = (
@@ -1445,18 +1480,7 @@ def validate_texture_for_writing(
         )
     )
 
-    if encoding == "ktx2":
-        if arr.dtype != np.dtype(np.uint8):
-            raise ValidationError(
-                f"{context}: texture_encoding='ktx2' accepts only uint8 LDR input, "
-                f"got {arr.dtype}",
-                "Use uint8 RGB/RGBA input, or texture_encoding='raw' for HDR/float data",
-            )
-        if res_c == 1:
-            raise ValidationError(
-                f"{context}: texture_encoding='ktx2' supports only RGB or RGBA, got 1 channel",
-                "Use texture_encoding='raw' for a single-channel texture",
-            )
+    _validate_ktx2_texture_array(arr, encoding, res_c, context)
 
     if (
         encoding == "raw"
@@ -1490,16 +1514,13 @@ def validate_texture_for_writing(
             "with its own texture (a partition cannot carry one: a part "
             "re-indexes vertices, but the image is node-level)",
         )
-    # A texture can sit inside the per-axis limit and still be unloadable. An
-    # Browser bitmap codecs decode to a 4-channel surface regardless of what they
+    # A texture can sit inside the per-axis limit and still be unloadable. Browser
+    # bitmap codecs decode to a 4-channel surface regardless of what they
     # stored, so their charge is w * h * 4; a raw texture decodes to its own value
     # count at 4 bytes each. KTX2 remains GPU-compressed and carries a full mip
     # chain, so keep its 4/3 formula aligned with viewer preflight and the mesh
     # writer's aggregate-budget calculation.
-    if encoding == "ktx2":
-        decoded_bytes = (res_w * res_h * 4 + 2) // 3
-    else:
-        decoded_bytes = res_w * res_h * (4 if encoding != "raw" else max(res_c, 1) * 4)
+    decoded_bytes = _texture_decoded_bytes(encoding, res_w, res_h, res_c)
     if decoded_bytes > MESH_TEXTURE_DECODE_BUDGET_BYTES:
         budget_mib = MESH_TEXTURE_DECODE_BUDGET_BYTES // (1024 * 1024)
         raise ValidationError(

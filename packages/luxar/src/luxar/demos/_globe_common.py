@@ -849,6 +849,31 @@ def encode_texture(
     return payload, fmt, width, height, 4 if want_alpha else 3
 
 
+def _prepare_globe_texture(
+    image: np.ndarray, fmt: str, quality: int
+) -> Tuple[np.ndarray, str, int, int, int, dict[str, int]]:
+    if fmt.lower() == "ktx2":
+        payload = np.asarray(image)
+        if np.issubdtype(payload.dtype, np.floating):
+            payload = np.clip(payload * 255.0, 0, 255).astype(np.uint8)
+        elif payload.dtype != np.uint8:
+            payload = payload.astype(np.uint8)
+        height, width, channels = payload.shape
+        return (
+            payload,
+            "ktx2",
+            width,
+            height,
+            channels,
+            {"texture_ktx2_quality": quality},
+        )
+
+    payload, encoding, width, height, channels = encode_texture(
+        image, fmt=fmt, quality=quality, channels=3
+    )
+    return payload, encoding, width, height, channels, {}
+
+
 def add_textured_globe(
     scene: Any,
     name: str,
@@ -1024,18 +1049,9 @@ def add_textured_globe(
         else:
             right = src[:, c1 % src_w : (c1 % src_w) + 1]
             slice_rgb = np.concatenate([src[:, c0:c1], right], axis=1)
-        if fmt.lower() == "ktx2":
-            payload = np.asarray(slice_rgb)
-            if np.issubdtype(payload.dtype, np.floating):
-                payload = np.clip(payload * 255.0, 0, 255).astype(np.uint8)
-            elif payload.dtype != np.uint8:
-                payload = payload.astype(np.uint8)
-            encoding = "ktx2"
-            th, tw, tc = payload.shape
-        else:
-            payload, encoding, tw, th, tc = encode_texture(
-                slice_rgb, fmt=fmt, quality=resolved_quality, channels=3
-            )
+        payload, encoding, tw, th, tc, texture_kwargs = _prepare_globe_texture(
+            slice_rgb, fmt, resolved_quality
+        )
         target.add_mesh(
             f"part_{t}" if tiles > 1 else name,
             vertices=vertices,
@@ -1046,9 +1062,7 @@ def add_textured_globe(
             texture_width=tw,
             texture_height=th,
             texture_channels=tc,
-            **(
-                {"texture_ktx2_quality": resolved_quality} if encoding == "ktx2" else {}
-            ),
+            **texture_kwargs,
             normals=normals,
             normal_dims=[0, 1, 2],
             shading=shading,

@@ -219,6 +219,15 @@ def _write_mesh_texture_arrays(
     return meta
 
 
+def _texture_decoded_bytes(
+    encoding: str, width: int, height: int, channels: int
+) -> int:
+    if encoding == "ktx2":
+        # Same 4/3 mip-chain charge as validation/base.py and viewer preflight.ts.
+        return (width * height * 4 + 2) // 3
+    return width * height * (4 if encoding != "raw" else channels * 4)
+
+
 def validate_mesh_arrays(
     vertices: Any,
     faces: Any,
@@ -336,15 +345,9 @@ def validate_mesh_arrays(
             ktx2_mode=texture_ktx2_mode,
             ktx2_quality=texture_ktx2_quality,
         )
-        if texture_encoding == "ktx2":
-            # Same 4/3 mip-chain charge as validation/base.py and viewer preflight.ts.
-            texture_decoded_bytes = (texture_width * texture_height * 4 + 2) // 3
-        else:
-            texture_decoded_bytes = (
-                texture_width
-                * texture_height
-                * (4 if texture_encoding != "raw" else texture_channels * 4)
-            )
+        texture_decoded_bytes = _texture_decoded_bytes(
+            texture_encoding, texture_width, texture_height, texture_channels
+        )
     validate_mesh_decode_budget(
         n_vertices,
         n_dims,
