@@ -57,10 +57,12 @@ import type { DebugState } from './debug-state';
  */
 export interface CaptureReadinessSummary {
   /**
-   * `true` iff `totalElements` is greater than zero — i.e. the scene graph
-   * carries drawable elements. HIDDEN nodes count, and every level of a
-   * substitutive `kind=lod` group counts, exactly as in {@link DebugState}; so
-   * `ok: true` does not guarantee a non-blank screenshot.
+   * `true` iff `totalElements` is greater than zero and no elements were
+   * dropped by renderer capacity limits. HIDDEN nodes count, and every level
+   * of a substitutive `kind=lod` group counts, exactly as in {@link DebugState};
+   * so `ok: true` does not guarantee a non-blank screenshot. A false verdict
+   * can therefore mean either "retry later" or "loaded but truncated"; callers
+   * must use `reason` to distinguish them.
    */
   ok: boolean;
   /**
@@ -244,14 +246,10 @@ export function summarizeCaptureReadiness(
     totalDroppedElements,
   };
 
-  if (totalDroppedElements > 0) {
-    return {
-      ok: false,
-      reason: `${totalDroppedElements} elements were dropped by renderer capacity limits`,
-      ...totals,
-      ...counts,
-    };
-  }
+  const droppedReason =
+    totalDroppedElements > 0
+      ? `${totalDroppedElements} elements were dropped by renderer capacity limits`
+      : undefined;
 
   /**
    * The counts this call had to give up on, named: `<fields> present but not
@@ -282,21 +280,32 @@ export function summarizeCaptureReadiness(
     const understated = unreadable(nonFiniteFields.filter((field) => field !== 'totalElements'));
     if (understated) {
       return {
-        ok: true,
-        reason: `${understated} — counted as zero, so the reported counts under-state the scene`,
+        ok: !droppedReason,
+        reason: [
+          droppedReason,
+          `${understated} — counted as zero, so the reported counts under-state the scene`,
+        ]
+          .filter(Boolean)
+          .join('; '),
         ...totals,
         ...counts,
       };
     }
     if (nonFiniteFields.length > 0) {
       return {
-        ok: true,
-        reason:
-          'totalElements present but not finite (Infinity/NaN) — re-derived from ' +
-          'the per-type totals',
+        ok: !droppedReason,
+        reason: [
+          droppedReason,
+          'totalElements present but not finite (Infinity/NaN) — re-derived from the per-type totals',
+        ]
+          .filter(Boolean)
+          .join('; '),
         ...totals,
         ...counts,
       };
+    }
+    if (droppedReason) {
+      return { ok: false, reason: droppedReason, ...totals, ...counts };
     }
     return { ok: true, ...totals, ...counts };
   }
@@ -304,9 +313,14 @@ export function summarizeCaptureReadiness(
   const lost = unreadable(nonFiniteFields);
   return {
     ok: false,
-    reason: lost
-      ? `${lost} — counted as zero, nothing usable to capture`
-      : 'zero points, gsplats, lines and triangles — nothing loaded',
+    reason: [
+      droppedReason,
+      lost
+        ? `${lost} — counted as zero, nothing usable to capture`
+        : 'zero points, gsplats, lines and triangles — nothing loaded',
+    ]
+      .filter(Boolean)
+      .join('; '),
     ...totals,
     ...counts,
   };

@@ -83,6 +83,17 @@ describe('summarizeCaptureReadiness', () => {
     expectNoNaN(summary);
   });
 
+  it('reports dropped elements together with unreadable totals', () => {
+    const summary = summarizeCaptureReadiness(
+      makeState({ totalPoints: Infinity, totalDroppedElements: 20 })
+    );
+
+    expect(summary.ok).toBe(false);
+    expect(summary.reason).toContain('20 elements were dropped by renderer capacity limits');
+    expect(summary.reason).toContain('totalPoints present but not finite');
+    expectNoNaN(summary);
+  });
+
   it('reports a MESH-ONLY scene as ready, with its mesh node count', () => {
     const summary = summarizeCaptureReadiness(
       makeState({

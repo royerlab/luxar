@@ -384,9 +384,6 @@ export interface GSplatsUserData {
   /** Elements omitted by the latest successful commit's GPU capacity clamp. */
   droppedElementCount?: number;
 
-  /** Elements omitted by the latest successful commit's GPU capacity clamp. */
-  droppedElementCount?: number;
-
   /**
    * The ``SceneLoader._updateVersion`` this mesh's committed geometry was
    * loaded for. Written by ``commitGSplatsGeometry`` on every commit and read
