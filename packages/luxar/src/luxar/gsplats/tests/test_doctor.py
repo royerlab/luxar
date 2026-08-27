@@ -775,6 +775,28 @@ class TestSplitPlanesCheck:
         assert factors == (2.0, 1.0, 1.0, 1.0)
         assert not frame_scale_supported
 
+    def test_frame_scale_recovery_repairs_an_nd_split_axis(self) -> None:
+        from luxar.gsplats.doctor.checks import _recover_frame_scale
+
+        stored = {
+            "axis": 3,
+            "split": 1.0,
+            "left": {"part": 0},
+            "right": {"part": 1},
+        }
+        boxes = [
+            (np.array([0.0, 0.0, 0.0, 0.0]), np.array([1.0, 1.0, 1.0, 2.0])),
+            (np.array([0.0, 0.0, 0.0, 2.0]), np.array([1.0, 1.0, 1.0, 4.0])),
+        ]
+
+        recovered = _recover_frame_scale(stored, boxes)
+
+        assert recovered is not None
+        repaired, factors, frame_scale_supported = recovered
+        assert repaired["split"] == 2.0
+        assert factors == (1.0, 1.0, 1.0, 2.0)
+        assert not frame_scale_supported
+
     def test_unrecoverable_overlap_violation_names_the_actual_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _uniform_tiled_store(Path(tmp))

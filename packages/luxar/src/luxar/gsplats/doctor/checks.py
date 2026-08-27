@@ -223,8 +223,9 @@ def _recover_frame_scale(
     overlap_floors = serialized_bsp_tree_axis_overlap_floors(stored, boxes)
     if overlap_floors is None:
         return None
-    ratios: Dict[int, List[float]] = {0: [], 1: [], 2: []}
-    ranges: Dict[int, List[Tuple[float, float]]] = {0: [], 1: [], 2: []}
+    axes = range(len(boxes[0][0]))
+    ratios: Dict[int, List[float]] = {axis: [] for axis in axes}
+    ranges: Dict[int, List[Tuple[float, float]]] = {axis: [] for axis in axes}
     if not _collect_frame_scale_ranges(stored, boxes, overlap_floors, ratios, ranges):
         return None
     factors = _resolve_frame_factors(ratios, ranges, len(boxes[0][0]))
