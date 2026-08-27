@@ -367,7 +367,18 @@ export async function createProgressiveMeshLoader(
         `${node.path === '/' ? '' : node.path}/additive_${i}`,
         lodAttrsComposed,
         lodLoc,
-        { zarrStore: deps.zarrStore, arrayRefRegistry: deps.arrayRefRegistry }
+        {
+          zarrStore: deps.zarrStore,
+          arrayRefRegistry: deps.arrayRefRegistry,
+          // Forwarded for the same reason the leaf path forwards it. A
+          // Luxar-written ladder cannot carry a texture at all (the writer
+          // refuses `texture=` alongside every structural route), but a
+          // hand-written store can declare one, and without this the level
+          // fails with "no renderer-owned decoder configured" — blaming the
+          // viewer's init order for a decoder that exists and was simply not
+          // handed over.
+          decodeKTX2: deps.decodeKTX2 ?? undefined,
+        }
       )
     );
   }

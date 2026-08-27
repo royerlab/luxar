@@ -327,6 +327,11 @@
   letter-spacing: 0.06em;
 }
 
+.luxar-range-slider__label--with-tooltip {
+  cursor: help;
+  text-decoration: underline dotted;
+}
+
 .luxar-range-slider__values {
   font-family: var(--luxar-font-mono);
   color: var(--luxar-text-primary);

@@ -468,7 +468,9 @@ class Scene(Group):
 
         Args:
             image: Image data. Accepts: file path (str/Path), raw bytes,
-                numpy array (HWC uint8 or float 0-1), PIL Image.
+                numpy array (HWC uint8 or float 0-1), PIL Image. Pre-encoded
+                bytes and path payloads must be PNG, JPEG, or WebP; a recognized
+                path extension must match the payload.
             position: (x, y) in normalized screen coords [0, 1].
             name: Optional overlay name. Auto-generated if None.
             size: Optional (width, height) as fractions of viewport dimensions.
@@ -476,7 +478,9 @@ class Scene(Group):
             anchor: Anchor point for positioning (default 'top-left').
             blend_mode: CSS blend mode: 'normal', 'multiply', 'screen',
                 'overlay', 'additive', or 'difference' (default 'normal').
-            format: Image encoding format: 'png', 'jpeg', 'webp' (default 'png').
+            format: Encoding format for array/PIL inputs: 'png', 'jpeg', or
+                'webp' (default 'png'). Pre-encoded bytes and paths retain their
+                detected format.
             visible_range: Optional dimension-based visibility filter.
             transition: Transition type: 'none' or 'fade' (default 'none').
             transition_duration: Transition duration in seconds (default 0.3).

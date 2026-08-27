@@ -77,6 +77,14 @@ describe('LoadingAdvisor', () => {
       expect(slow).toBeDefined();
       expect(slow?.value).toBe(1000);
     });
+
+    it('does not apply chunk-size slow-load advice to whole-node mesh loads', () => {
+      advisor.analyzeEvent(
+        makeEvent({ type: 'load', loader: 'mesh-whole-node', data: { latency: 1000 } })
+      );
+
+      expect(advisor.getRecommendations().find((r) => r.id === 'slow-load')).toBeUndefined();
+    });
   });
 
   describe('analyzeMetrics', () => {

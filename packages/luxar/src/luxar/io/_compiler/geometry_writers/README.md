@@ -200,7 +200,7 @@ for is an *additive* ladder inside a single leaf.
      - `validate_positions_for_writing(vertices, context="vertices")` → `(n_vertices, n_dims)`, then `validate_vertices_for_writing(vertices)` for the `MAX_MESH_VERTICES` (2^27) ceiling. Order matters: the cap reads `shape[0]`, meaningful only once the array is known 2D
      - `validate_faces_for_writing(faces, n_vertices)` — layout `(F,3)` or flat `(3F,)`, integer dtype, `min >= 0`, `max < n_vertices`, `F >= 1`. Runs BEFORE the `uint32` cast, which is what makes the bounds check meaningful
      - `normals` / `normal_dims` enforced as a **pair in both directions** — each is meaningless alone
-     - `shading` must be `"smooth"` / `"flat"`; `double_sided` must be a bool
+     - `shading` must be `"smooth"` / `"flat"` / `"none"`; `double_sided` must be a bool
      - `validate_colors_for_writing(..., channels=(3,4))` or `validate_broadcast_color`, `validate_scalars_preflight`, `validate_labels_for_writing` — the last one twice, once for `labels` and once for `keys` (`context="keys", noun="Keys"`)
      - `validate_image_labels_for_writing(image_labels, n_vertices)` — length (dense) / index bounds (sparse dict) + per-item type, if `image_labels is not None` (#1491)
    - `prepare_transform_attrs(attrs, ctx.store)` — not idempotent, so exactly once

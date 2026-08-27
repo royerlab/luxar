@@ -47,11 +47,8 @@
  * concatenable, and an archive has no URL-addressable children (its members are
  * read through the store).
  *
- * The consequence is that URL-concatenating consumers have nothing valid to
- * build for a zipped scene. IMAGE OVERLAYS ARE THEREFORE UNSUPPORTED on a
- * zipped store until they are read through the store instead of by URL;
- * `ui/overlay-manager.ts` skips them with a warning rather than firing a
- * malformed request. This is a known gap, not a solved problem.
+ * Archive members, including image overlays, are read through the store via
+ * `rootGroup.userData.readOverlayFile` rather than built as child URLs.
  *
  * @module data/scene-loader/lifecycle/url-normalization
  */

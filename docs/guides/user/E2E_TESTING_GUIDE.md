@@ -135,7 +135,7 @@ The authoritative list is the directory itself — run
 | **webgpu-native-smoke.spec.ts** | WebGPU smoke; native-only tests auto-skip without a real WebGPU adapter |
 | **worker-wasm-integration.spec.ts** | Worker + WASM integration |
 | **y-orientation.spec.ts** | `renderToImageData()` Y-orientation parity across WebGL/WebGPU backends |
-| **zipped-store-loading.spec.ts** | STORED/DEFLATE archive parity with a directory scene (needs the range-capable data server) |
+| **zipped-store-loading.spec.ts** | STORED/DEFLATE archive parity with a directory scene (needs the range-capable data server), plus a Range-ignoring host that must fail loudly instead of initializing an empty scene |
 
 ---
 

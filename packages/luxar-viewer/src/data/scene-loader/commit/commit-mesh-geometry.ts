@@ -164,6 +164,14 @@ export function commitMeshGeometry(
 
   object.userData.visibleTriangleCount = projected.visibleFaceCount;
   object.userData.visibleVertexCount = projected.visibleVertexCount;
+  // The same number, pushed to the loader for `LoaderMetrics.visibleElements`
+  // (the data-loading monitor's per-loader row). It has to be pushed rather
+  // than read: a mesh is resident in full, so the loader has no view-dependent
+  // result to report — projection, here, is what decides which faces the index
+  // buffer receives. Optional call: the surface is optional on
+  // `MeshDataLoader`, and a metrics-free implementation is a no-op, not a
+  // crash.
+  object.userData.loader.recordVisibleElements?.(projected.visibleFaceCount);
   // The geometry's `position` attribute is now capacity-sized (#1521), so it can no
   // longer answer "how many vertices has this node committed" — that would report
   // the ladder's lifetime total from level 0 on. Stamped here, from the data the

@@ -63,7 +63,8 @@ describe('ProgressiveMonitorAdapter', () => {
     const b = makeInnerLoader('/points/additive_1');
     const adapter = new ProgressiveMonitorAdapter(
       () => [a, b] as unknown as LoaderMonitor[],
-      '/points'
+      '/points',
+      'point-spatial-index'
     );
 
     const received: MonitorEvent[] = [];
@@ -87,7 +88,11 @@ describe('ProgressiveMonitorAdapter', () => {
 
   it('removeEventListener detaches the wrapped listener from every inner loader', () => {
     const a = makeInnerLoader('/p/additive_0');
-    const adapter = new ProgressiveMonitorAdapter(() => [a] as unknown as LoaderMonitor[], '/p');
+    const adapter = new ProgressiveMonitorAdapter(
+      () => [a] as unknown as LoaderMonitor[],
+      '/p',
+      'point-spatial-index'
+    );
     const listener = vi.fn();
 
     adapter.addEventListener(listener);
@@ -101,7 +106,11 @@ describe('ProgressiveMonitorAdapter', () => {
 
   it('is idempotent: adding the same listener twice does not double-register', () => {
     const a = makeInnerLoader('/p/additive_0');
-    const adapter = new ProgressiveMonitorAdapter(() => [a] as unknown as LoaderMonitor[], '/p');
+    const adapter = new ProgressiveMonitorAdapter(
+      () => [a] as unknown as LoaderMonitor[],
+      '/p',
+      'point-spatial-index'
+    );
     const received: MonitorEvent[] = [];
     const listener: MonitorEventListener = (e) => received.push(e);
 
@@ -115,7 +124,11 @@ describe('ProgressiveMonitorAdapter', () => {
 
   it('removeEventListener is a no-op for an unknown listener', () => {
     const a = makeInnerLoader('/p/additive_0');
-    const adapter = new ProgressiveMonitorAdapter(() => [a] as unknown as LoaderMonitor[], '/p');
+    const adapter = new ProgressiveMonitorAdapter(
+      () => [a] as unknown as LoaderMonitor[],
+      '/p',
+      'point-spatial-index'
+    );
     expect(() => adapter.removeEventListener(vi.fn())).not.toThrow();
     expect(a.removeEventListener).not.toHaveBeenCalled();
   });
@@ -123,7 +136,11 @@ describe('ProgressiveMonitorAdapter', () => {
   it('getMetrics aggregates inner metrics under the parent path', () => {
     const a = makeInnerLoader('/p/additive_0', { queries: 2, elementsLoaded: 100 });
     const b = makeInnerLoader('/p/additive_1', { queries: 3, elementsLoaded: 50 });
-    const adapter = new ProgressiveMonitorAdapter(() => [a, b] as unknown as LoaderMonitor[], '/p');
+    const adapter = new ProgressiveMonitorAdapter(
+      () => [a, b] as unknown as LoaderMonitor[],
+      '/p',
+      'point-spatial-index'
+    );
     const m = adapter.getMetrics();
     expect(m.path).toBe('/p');
     expect(m.queries).toBe(5);
@@ -138,7 +155,11 @@ describe('ProgressiveMonitorAdapter', () => {
       { id: 'y', path: '/p/additive_1' } as QueryInfo,
       { id: 'z', path: '/p/additive_1' } as QueryInfo,
     ]);
-    const adapter = new ProgressiveMonitorAdapter(() => [a, b] as unknown as LoaderMonitor[], '/p');
+    const adapter = new ProgressiveMonitorAdapter(
+      () => [a, b] as unknown as LoaderMonitor[],
+      '/p',
+      'point-spatial-index'
+    );
     const queries = adapter.getActiveQueries();
     expect(queries).toHaveLength(3);
     expect(queries.every((q) => q.path === '/p')).toBe(true);
@@ -150,11 +171,15 @@ describe('ProgressiveMonitorAdapter', () => {
     let loaders = [makeInnerLoader('/p/additive_0')];
     const adapter = new ProgressiveMonitorAdapter(
       () => loaders as unknown as LoaderMonitor[],
-      '/p'
+      '/p',
+      'mesh-whole-node'
     );
     loaders = []; // simulate dispose() clearing lodLoaders
     expect(adapter.getActiveQueries()).toEqual([]);
     expect(adapter.getMetrics().path).toBe('/p');
+    // With no levels left, the node is named by the type the adapter was
+    // constructed with — not the historical hard-coded points fallback.
+    expect(adapter.getMetrics().type).toBe('mesh-whole-node');
     expect(() => adapter.addEventListener(vi.fn())).not.toThrow();
   });
 });

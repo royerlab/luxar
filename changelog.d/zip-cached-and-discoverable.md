@@ -20,9 +20,8 @@ covers the whole store at once rather than one document, and shows in the cache 
 same decoded chunks but different key namespaces, and sharing a bucket would let one serve
 the other's members undetected.
 
-Image overlays and local drag-and-drop of an archive remain unsupported; both need a path
-that does not exist yet (reading an overlay through the store rather than by URL, and
-loading a dataset from a file rather than a URL).
+Local drag-and-drop of an archive remains unsupported because loading a dataset from a
+browser file still needs a separate non-URL entry point.
 
 Reading an archive also stops re-downloading part of its own index. The zip reader is
 given a fixed 65,557-byte window to locate the end-of-central-directory record, and then

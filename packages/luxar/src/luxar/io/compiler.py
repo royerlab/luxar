@@ -881,11 +881,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors: Colors — array ``(V, 3|4)``, RGB(A) tuple/list, or None. A 4th
                 component is per-vertex opacity.
             scalars: Scalars for colormap lookup — array ``(V,)``, scalar, or None.
-            shading: ``"smooth"`` or ``"flat"``. Defaults to ``"smooth"`` when
-                normals are supplied, else ``"flat"``. An explicit value is stored
-                as given: ``"flat"`` renders a faceted surface even with normals
-                present, and ``"smooth"`` without normals falls back to derived
-                flat normals at render time.
+            shading: ``"smooth"``, ``"flat"``, or unlit ``"none"``. Defaults to
+                ``"smooth"`` when normals are supplied, else ``"flat"``. An explicit
+                value is stored as given: ``"flat"`` renders a faceted surface even
+                with normals present, ``"smooth"`` without normals falls back to
+                derived flat normals at render time, and ``"none"`` computes no
+                lighting normal.
             double_sided: Whether back faces render. ``True`` by default.
             labels: Optional per-vertex strings for hover tooltips (CSR-encoded).
             image_labels: Optional per-vertex images for hover thumbnails.
