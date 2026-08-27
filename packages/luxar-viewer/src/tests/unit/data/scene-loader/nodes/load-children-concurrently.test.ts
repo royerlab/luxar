@@ -12,8 +12,9 @@ function makeChildren(count: number): SceneNode[] {
     path: `/group/child_${index}`,
     type: 'group',
     attrs: {},
+    hasSpatialIndex: false,
     children: [],
-  })) as SceneNode[];
+  }));
 }
 
 function makeStubLoc() {

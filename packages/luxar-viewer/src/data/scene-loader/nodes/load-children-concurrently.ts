@@ -3,6 +3,8 @@ import * as zarr from '../../zarr';
 import type { SceneNode } from '../../data-loader-types';
 import type { NodeBuildCtx } from './build-ctx';
 
+// High enough to collapse the serial network waterfall while bounding decode,
+// commit, and temporary-placeholder pressure on the main thread.
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
 export type LoadSceneChild = (
