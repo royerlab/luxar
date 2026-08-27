@@ -851,6 +851,27 @@ def test_restamp_prefilter_matches_exact_stamp_guard(
     assert _needs_reduction_lod_restamp(source, source) == _has_ladder_stamps(level)
 
 
+def test_restamp_prefilter_checks_coarse_only_stamps() -> None:
+    from luxar.gsplats._data.filtering import _needs_reduction_lod_restamp
+    from luxar.gsplats.lod.restamp import _has_ladder_stamps
+
+    fine = _fitted(4).substitutive_levels[0]
+    coarse = _fitted(2).substitutive_levels[0]
+    coarse = SubstitutiveLevel(
+        additive_sublods=coarse.additive_sublods,
+        compression_factor=2,
+        parent_method="kmeans_lloyd",
+        level_index=1,
+        stats={"refine_stats": {"mse_seed": 1.0}},
+    )
+    source = GSplatData.from_substitutive_levels([fine, coarse])
+    levels = source.substitutive_levels
+
+    assert not _has_ladder_stamps(levels[0])
+    assert _has_ladder_stamps(levels[1])
+    assert _needs_reduction_lod_restamp(source, source)
+
+
 def test_nonfinite_energy_is_reset_and_fraction_is_removed() -> None:
     source = _replace_level_amplitudes(_pyramid(), 0, [np.inf, 0.7, 0.4, 0.2])
     out = source.scale_intensity(0.5)

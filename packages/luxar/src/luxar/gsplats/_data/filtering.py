@@ -84,6 +84,10 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
 
+#: Authored reduction-LOD stamp keys shared with
+#: :func:`luxar.gsplats.lod.restamp._has_ladder_stamps`. They live in core
+#: ``_data`` so this module can mirror ``refresh_reduction_lod_stats``' guard
+#: without importing the optional LOD package.
 _REDUCTION_LOD_LEVEL_STATS_KEYS = (
     "quality",
     "reference_energy",
@@ -596,7 +600,11 @@ def _stats_after_content_change(
 def _needs_reduction_lod_restamp(
     result: _GSplatDataOps, source: _GSplatDataOps
 ) -> bool:
-    """Whether a rewrite has authored LOD stamps to refresh."""
+    """Whether a rewrite has authored LOD stamps to refresh.
+
+    This mirrors ``refresh_reduction_lod_stats``' first guard exactly, across
+    every substitutive level, without importing the optional LOD package.
+    """
 
     source_levels = source.substitutive_levels
     result_levels = result.substitutive_levels
