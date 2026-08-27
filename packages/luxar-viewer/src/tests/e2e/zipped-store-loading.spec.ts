@@ -1,19 +1,21 @@
 /**
- * Positive browser coverage for HTTP-ranged `.zarr.zip` scene loading.
+ * Browser coverage for HTTP-ranged `.zarr.zip` scene loading.
  *
  * The unit tests pin the store and reader pieces, but only a real browser load
  * catches the routing failure where an archive can reach `initialized` with an
  * empty scene. This spec packages an existing generated fixture, loads both
  * forms through the normal E2E data server, and requires identical element
- * counts. The DEFLATE fixture is smaller than unzipit's end-of-directory search
- * window, so it is retained in one read; the STORED case covers windowed reads.
+ * counts. It also emulates a host that ignores Range and pins the loud startup
+ * failure instead of an initialized empty scene. The DEFLATE fixture is smaller
+ * than unzipit's end-of-directory search window, so it is retained in one read;
+ * the STORED case covers windowed reads.
  */
 
 import { fileURLToPath } from 'url';
 import * as fs from 'fs';
 import * as path from 'path';
 import { zipSync } from 'fflate';
-import { test, expect, type Page } from './fixtures';
+import { test, expect, ALLOW_CONSOLE_ERRORS, type Page } from './fixtures';
 import {
   getLuxarState,
   waitForLuxarReady,
@@ -99,3 +101,47 @@ for (const format of archiveFormats) {
     expect(archiveCounts).toEqual(directoryCounts);
   });
 }
+
+test('a host that ignores Range fails loudly without initializing an empty scene', async ({
+  page,
+}, testInfo) => {
+  testInfo.annotations.push({
+    type: ALLOW_CONSOLE_ERRORS,
+    description: 'The console error is the user-visible behavior under test.',
+  });
+
+  const archiveBytes = zipSync(collectArchiveEntries(fixturePath), { level: 0 });
+  const archiveURL = `${dataBaseURL}/range-ignored.luxar.zarr.zip`;
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.route(archiveURL, async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'access-control-allow-origin': '*',
+        'content-length': String(archiveBytes.byteLength),
+        'content-type': 'application/zip',
+      },
+      body: route.request().method() === 'HEAD' ? undefined : Buffer.from(archiveBytes),
+    });
+  });
+
+  await page.goto(`/?src=${encodeURIComponent(archiveURL)}&debug`);
+
+  await expect
+    .poll(() => consoleErrors.join('\n'), { timeout: 10_000 })
+    .toMatch(/honours HTTP Range requests/);
+  await expect(page.locator('#luxar-error-message')).toBeVisible();
+  expect(pageErrors).toEqual([]);
+  expect(
+    await page.evaluate(() => ({
+      initialized: window.__luxarDebug?.app.initialized,
+      runtimeReady: window.__luxarDebug?.runtimeReady,
+      hasGetState: typeof window.__luxarDebug?.getState === 'function',
+    }))
+  ).toEqual({ initialized: false, runtimeReady: undefined, hasGetState: false });
+});
