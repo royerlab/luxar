@@ -330,7 +330,7 @@ def validate_image_input(
         if not path.exists():
             raise ValueError(f"Image file not found: {path}")
         image_bytes = path.read_bytes()
-        detected_fmt = _detect_encoded_image_format(image_bytes)
+        detected_fmt = _detect_encoded_image_format(image_bytes, context=path)
         suffix_fmt = _IMAGE_SUFFIX_FORMATS.get(path.suffix.lower())
         if suffix_fmt is not None and suffix_fmt != detected_fmt:
             raise ValueError(
@@ -371,7 +371,10 @@ def validate_image_input(
     )
 
 
-def _detect_encoded_image_format(image: bytes) -> str:
+def _detect_encoded_image_format(
+    image: bytes,
+    context: Optional[Path] = None,
+) -> str:
     """Detect a supported encoded image format from its signature."""
     if image.startswith(b"\x89PNG"):
         return "png"
@@ -379,9 +382,10 @@ def _detect_encoded_image_format(image: bytes) -> str:
         return "jpeg"
     if image.startswith(b"RIFF") and image[8:12] == b"WEBP":
         return "webp"
-    raise ValueError(
-        "Unsupported encoded image format. Expected PNG, JPEG, or WebP payload."
-    )
+    message = "Unsupported encoded image format. Expected PNG, JPEG, or WebP payload"
+    if context is not None:
+        message += f": {context}"
+    raise ValueError(message)
 
 
 def _pil_to_bytes(image: Any, fmt: str) -> bytes:

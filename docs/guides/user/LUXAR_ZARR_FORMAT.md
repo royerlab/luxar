@@ -168,7 +168,7 @@ scene.luxar.zarr/
     └── <overlay_name>/     # Individual overlay
         ├── .zattrs         # Overlay metadata (type, position, style, visible_range, hover)
         ├── .zgroup
-        └── image.png       # Raw image file (image overlays only; exact name; bytes folded into content_hash at compile time)
+        └── image.<png|jpeg|webp>  # Raw image file (image overlays only; exact name matches payload; bytes folded into content_hash at compile time)
 ```
 
 ### Compression & the `luxar_delta_v1` filter
@@ -1349,10 +1349,14 @@ Overlays are NOT part of the 3D scene graph — they use normalized screen coord
   "z_index": 1
 }
 ```
-The image file (PNG/JPEG/WebP) is stored directly in the overlay's zarr directory.
-Its bytes are folded into the `content_hash` at compile time, so two builds
-differing only in the image get different hashes; editing the file inside an
-already-finalized store restamps nothing, since nothing re-hashes on the fly.
+The image file is stored directly in the overlay's zarr directory. Compiler-written
+overlays use exactly `image.png`, `image.jpeg`, or `image.webp`, matching the PNG,
+JPEG, or WebP payload bytes. These canonical names avoid case-insensitive metadata
+collisions for compiler-written overlays; hand-authored stores must still follow the
+payload-name rules below. The image bytes are folded into the `content_hash` at
+compile time, so two builds differing only in the image get different hashes; editing
+the file inside an already-finalized store restamps nothing, since nothing re-hashes
+on the fly.
 For a payload name that differs from a zarr metadata document only by case
 (`Zarr.json`, `.ZATTRS`, ...), the authored spelling must appear exactly in the
 store's immediate-child listing before any read. Otherwise it is not treated as
