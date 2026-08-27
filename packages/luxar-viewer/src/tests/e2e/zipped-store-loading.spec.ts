@@ -105,6 +105,7 @@ for (const format of archiveFormats) {
 test('a host that ignores Range shows a persistent actionable failure', async ({
   page,
 }, testInfo) => {
+  await page.setViewportSize({ width: 1024, height: 600 });
   testInfo.annotations.push({
     type: ALLOW_CONSOLE_ERRORS,
     description: 'The console error is the user-visible behavior under test.',
@@ -137,6 +138,12 @@ test('a host that ignores Range shows a persistent actionable failure', async ({
     .toMatch(/honours HTTP Range requests/);
   const message = page.locator('#luxar-error-message-text');
   await expect(message).toContainText(/honours HTTP Range requests/);
+  const dialog = page.locator('.luxar-error-dialog');
+  const dialogBounds = await dialog.boundingBox();
+  expect(dialogBounds).not.toBeNull();
+  expect(dialogBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(dialogBounds!.y + dialogBounds!.height).toBeLessThanOrEqual(600);
+  expect(await dialog.evaluate((element) => getComputedStyle(element).overflowY)).toBe('auto');
   expect(pageErrors).toEqual([]);
   expect(
     await page.evaluate(() => ({
