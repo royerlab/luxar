@@ -214,7 +214,8 @@ def _warn_sorted_overlap_clusters(
         advice.append(
             'For compatible clusters, merge the nodes and pass partition={"max_elements": N} '
             "to order disjoint BSP cells back-to-front. This preserves placement and appearance "
-            "for same-type, same-mode, same-opacity Points, Lines, Mesh, and Gaussian Splats."
+            "for same-type, same-mode, same-effective-opacity Points, Lines, Mesh, and Gaussian "
+            "Splats."
         )
         expected_displayed_dimensions = tuple(range(len(displayed_dimensions)))
         if displayed_dimensions != expected_displayed_dimensions:

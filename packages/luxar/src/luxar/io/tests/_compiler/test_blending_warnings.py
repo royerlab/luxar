@@ -723,6 +723,39 @@ def test_mixed_opacity_sorted_overlap_does_not_suggest_merging(capsys) -> None:
     assert "partition=" not in output
 
 
+def test_shared_advice_covers_mergeable_and_unmergeable_clusters(capsys) -> None:
+    root = _root(n_dims=4)
+    scene_dimensions = root.attrs["scene_dimensions"]
+    for index, dimension in enumerate(scene_dimensions["dimensions"]):
+        dimension["display"] = index in {1, 2, 3}
+        dimension["discrete"] = index == 0
+    root.attrs["scene_dimensions"] = scene_dimensions
+    for name, geometry_type, minimum, maximum in (
+        ("merge_outer", "points", [0.0] * 4, [10.0] * 4),
+        ("merge_inner", "points", [1.0] * 4, [2.0] * 4),
+        ("mixed_outer", "points", [20.0, 0.0, 0.0, 0.0], [30.0, 10.0, 10.0, 10.0]),
+        ("mixed_inner", "mesh", [21.0, 1.0, 1.0, 1.0], [22.0, 2.0, 2.0, 2.0]),
+    ):
+        _leaf(
+            root,
+            name,
+            geometry_type,
+            minimum=minimum,
+            maximum=maximum,
+            blending_mode="normal",
+            opacity=0.9,
+        )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert output.count("overlapping order-dependent nodes") == 2
+    assert output.count('partition={"max_elements": N}') == 1
+    assert output.count("Displayed dimensions are position columns") == 1
+    assert output.count("Merging cannot preserve this cluster") == 1
+    assert output.count("For an emissive medium") == 1
+
+
 def test_additive_warning_precedes_sorted_overlap_cluster(capsys) -> None:
     root = _root()
     _leaf(root, "additive", "points", maximum=[1.0, 1.0, 1.0])
