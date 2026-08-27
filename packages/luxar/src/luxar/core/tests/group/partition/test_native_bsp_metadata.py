@@ -162,7 +162,7 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
     mesh_faces = np.arange(12, dtype=np.uint32).reshape(4, 3)
     dimensions = Dimensions(
         [
-            Dimension("state", display=False, discrete=True, range=(-7.0, 7.0)),
+            Dimension("state", display=False, spatial=True, range=(-6.2, 6.2)),
             Dimension("x", display=True),
             Dimension("y", display=True),
             Dimension("z", display=True),
@@ -249,17 +249,27 @@ def test_add_partition_group_warns_for_hidden_descendant_axis(tmp_path, capsys) 
         ]
     )
 
-    with LuxarZarrCompiler(tmp_path / "manual-partition.luxar.zarr") as compiler:
+    output = tmp_path / "manual-partition.luxar.zarr"
+    with LuxarZarrCompiler(output) as compiler:
         scene = compiler.create_scene(dimensions=dimensions)
-        scene.add_partition_group(
+        wrapper = scene.add_partition_group(
             "manual",
             display_type="points",
             max_elements=10,
             bsp_tree=tree,
         )
+        wrapper.add_points(
+            "part_0", np.array([[0.0, -1.0, 0.0, 0.0]], dtype=np.float32)
+        )
+        wrapper.add_points("part_1", np.array([[0.0, 1.0, 0.0, 0.0]], dtype=np.float32))
+        wrapper.add_points("part_2", np.array([[2.0, 1.0, 0.0, 0.0]], dtype=np.float32))
 
-    output = capsys.readouterr().out
-    assert "partition 'manual' splits on undisplayed position column(s) [0]" in output
+    output_text = capsys.readouterr().out
+    assert (
+        "partition 'manual' splits on undisplayed position column(s) [0]" in output_text
+    )
+    group = zarr.open_group(str(output), mode="r")["manual"]
+    assert set(group.keys()) == {"part_0", "part_1", "part_2"}
 
 
 def test_partition_axis_warning_has_no_false_positive(tmp_path, capsys) -> None:
