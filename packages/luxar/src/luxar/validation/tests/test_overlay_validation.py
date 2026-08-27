@@ -201,6 +201,18 @@ class TestValidateImageInput:
         assert data == b"\xff\xd8"
         assert fmt == "jpeg"
 
+    def test_file_path_without_suffix(self, tmp_path):
+        image_bytes, _ = validate_image_input(
+            np.zeros((2, 2, 3), dtype=np.uint8)
+        )
+        test_file = tmp_path / "test"
+        test_file.write_bytes(image_bytes)
+
+        data, fmt = validate_image_input(test_file)
+
+        assert data == image_bytes
+        assert fmt == "png"
+
     def test_file_suffix_must_match_payload(self, tmp_path):
         test_file = tmp_path / "test.png"
         test_file.write_bytes(b"\xff\xd8")

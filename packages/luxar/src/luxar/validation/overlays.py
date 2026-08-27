@@ -321,7 +321,7 @@ def validate_image_input(
     if isinstance(image, bytes):
         return image, _detect_encoded_image_format(image)
 
-    # File paths must declare the same supported format as their payload.
+    # Recognized file suffixes must agree with the payload format.
     if isinstance(image, (str, Path)):
         path = Path(image)
         if not path.exists():
@@ -329,12 +329,7 @@ def validate_image_input(
         image_bytes = path.read_bytes()
         detected_fmt = _detect_encoded_image_format(image_bytes)
         suffix_fmt = _IMAGE_SUFFIX_FORMATS.get(path.suffix.lower())
-        if suffix_fmt is None:
-            raise ValueError(
-                f"Unsupported image file extension '{path.suffix or '<none>'}'. "
-                f"Must be one of: {sorted(_IMAGE_SUFFIX_FORMATS)}"
-            )
-        if suffix_fmt != detected_fmt:
+        if suffix_fmt is not None and suffix_fmt != detected_fmt:
             raise ValueError(
                 f"Image file extension '{path.suffix}' does not match "
                 f"the {detected_fmt} payload"
