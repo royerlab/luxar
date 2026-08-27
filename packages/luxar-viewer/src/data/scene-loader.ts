@@ -709,7 +709,7 @@ export class SceneLoader {
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       getFailedLoaderPaths: () => Array.from(this.failedLoaders.keys()),
       getFailedLoaderReasons: () =>
-        Array.from(this.failedLoaders.values(), (info) => info.error.message),
+        Array.from(this.failedLoaders.values(), (info) => info.error?.message || info.kind || ''),
       getFailedLoadsProvider: () => this.getFailedLoadsProvider(),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
       drainPendingViewState: () => this.viewStateQueue.drain((state) => this.updateView(state)),
