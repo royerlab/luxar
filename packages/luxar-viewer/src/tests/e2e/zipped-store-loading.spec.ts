@@ -28,10 +28,11 @@ const fixtureName = 'test_image_overlay.luxar.zarr';
 const fixturePath = path.join(viewerRoot, 'tests/fixtures', fixtureName);
 const dataBaseURL = 'http://127.0.0.1:9000';
 const overlayName = 'archive-image';
+const endOfDirectorySearchWindowBytes = 65_557;
 
 const archiveFormats = [
-  { name: 'STORED', level: 0, compressionMethod: 0 },
-  { name: 'DEFLATE', level: 6, compressionMethod: 8 },
+  { name: 'STORED', level: 0, compressionMethod: 0, windowedRead: true },
+  { name: 'DEFLATE', level: 6, compressionMethod: 8, windowedRead: false },
 ] as const;
 
 function collectArchiveEntries(root: string): Record<string, Uint8Array> {
@@ -108,12 +109,15 @@ for (const format of archiveFormats) {
       archiveBytes.byteLength
     );
     expect(archiveView.getUint16(8, true)).toBe(format.compressionMethod);
+    expect(archiveBytes.byteLength > endOfDirectorySearchWindowBytes).toBe(format.windowedRead);
     fs.writeFileSync(archivePath, archiveBytes);
 
     const directoryState = await loadSceneState(page, fixtureURL(fixturePath));
     const archiveState = await loadSceneState(page, fixtureURL(archivePath));
 
     expect(directoryState.elements.totalPoints).toBeGreaterThan(0);
+    expect(directoryState.elements.totalLines).toBeGreaterThan(0);
+    expect(directoryState.elements.totalGSplats).toBeGreaterThan(0);
     expect(archiveState.elements).toEqual(directoryState.elements);
     expect(directoryState.overlay).toEqual({ width: 1, height: 1, sourceKind: 'http' });
     expect(archiveState.overlay).toEqual({ width: 1, height: 1, sourceKind: 'blob' });
