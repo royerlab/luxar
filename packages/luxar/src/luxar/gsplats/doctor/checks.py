@@ -291,11 +291,12 @@ def _resolve_frame_factors(
 ) -> "Optional[Tuple[float, ...]]":
     factors = []
     for axis in range(ndim):
-        if not ranges[axis]:
+        axis_ranges = ranges.get(axis)
+        if not axis_ranges:
             factors.append(1.0)
             continue
-        low = max(bounds[0] for bounds in ranges[axis])
-        high = min(bounds[1] for bounds in ranges[axis])
+        low = max(bounds[0] for bounds in axis_ranges)
+        high = min(bounds[1] for bounds in axis_ranges)
         if low > high:
             return None
         estimate = float(np.median(ratios[axis]))
