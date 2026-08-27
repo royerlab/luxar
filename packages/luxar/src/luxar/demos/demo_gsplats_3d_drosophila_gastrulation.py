@@ -134,6 +134,7 @@ SCENE_NAME = "gsplats_3d_drosophila_gastrulation.luxar.zarr"
 # Physical voxel size (Z, Y, X) in microns — already baked into the centers by
 # the fit pipeline (step 5 above). Kept here because the scene's dimension
 # ranges are read off the data, but the UNITS are ours to declare.
+#: The ONLY post-fit transform; also passed to ``gsplat transform --scale``.
 VOXEL_UM = (1.93, 0.40625, 0.40625)
 
 # The fitted archive stores amplitudes as RAW DETECTOR COUNTS (min 5.0, p50 70,
@@ -196,8 +197,6 @@ TIMEPOINT = 150  # gastrulation: the cephalic furrow is forming
 SEEDS = 256_000
 PRESET = "standard"
 FLOOR = "auto"
-#: (Z, Y, X) microns per voxel. The ONLY post-fit transform.
-VOXEL_UM = (1.93, 0.40625, 0.40625)
 LOD_TARGET_MS = 200
 
 RECOMPUTE_NOTES = """\
