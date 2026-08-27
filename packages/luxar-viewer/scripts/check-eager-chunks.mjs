@@ -28,6 +28,7 @@ const ASSETS = join(DIST, 'assets');
 
 /** Chunk-name stems that must never be reachable eagerly from the entry. */
 const LAZY_ONLY = ['three-webgpu', 'three-ktx2'];
+const KTX2_ZSTD_DECODER_MARKER = 'emscripten_notify_memory_growth';
 
 const failures = [];
 const notes = [];
@@ -142,6 +143,12 @@ if (entryHref) {
       source = readFileSync(join(ASSETS, name), 'utf8');
     } catch {
       continue; // not an emitted asset (e.g. an external specifier)
+    }
+    if (source.includes(KTX2_ZSTD_DECODER_MARKER)) {
+      fail(
+        `Chunk '${name}' contains Three's KTX2 zstd decoder and is reachable from the entry ` +
+          `chunk. Keep zstddec.module.js in the lazy 'three-ktx2' chunk.`
+      );
     }
     for (const spec of staticImportsOf(source)) {
       const dep = spec.split('/').pop();
