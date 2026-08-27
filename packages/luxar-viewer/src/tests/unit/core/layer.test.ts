@@ -225,6 +225,23 @@ describe('LuxarLayer', () => {
       });
     });
 
+    it('disables WebGL blend-program warm-up for a WebGPU renderer', async () => {
+      const options = makeOptions({
+        renderer: {
+          getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
+        } as unknown as LuxarLayerOptions['renderer'],
+      });
+      const layer = new LuxarLayer(options);
+      await layer.load('http://example.test/scene.zarr');
+
+      expect(configureBlendModeProgramWarmup).toHaveBeenCalledWith({
+        enabled: false,
+        renderer: null,
+        camera: expect.any(THREE.Camera),
+        targetScene: options.scene,
+      });
+    });
+
     it('skips depth-sort wiring when disabled', () => {
       new LuxarLayer(makeOptions({ depthSort: false }));
       expect(configureDepthSort).not.toHaveBeenCalled();
@@ -655,6 +672,8 @@ describe('LuxarLayer', () => {
       const layer = new LuxarLayer(makeOptions({ requestRender }));
       await layer.load('http://example.test/scene.zarr');
       updateCameraParams.mockClear();
+      configureBlendModeProgramWarmup.mockClear();
+      warmSceneBlendModePrograms.mockClear();
 
       const versionBefore = attribute.version;
       layer.handleContextRestored();
@@ -666,6 +685,8 @@ describe('LuxarLayer', () => {
         sceneLoaderStub.nodeFactory.rebuildAfterContextRestore.mock.invocationCallOrder[0]
       );
       expect(updateCameraParams).toHaveBeenCalledTimes(1);
+      expect(configureBlendModeProgramWarmup).toHaveBeenCalledTimes(1);
+      expect(warmSceneBlendModePrograms).toHaveBeenCalledWith(root);
       expect(requestRender).toHaveBeenCalled();
     });
   });
