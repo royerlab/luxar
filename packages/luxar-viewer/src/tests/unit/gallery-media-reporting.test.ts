@@ -24,13 +24,20 @@ describe('gallery media reporting', () => {
     ).toEqual({ warning: undefined });
     expect(
       checkGalleryMediaSize(mediaFile('drifting', 'webm', GALLERY_MEDIA_WARNING_BYTES))
-    ).toEqual({ warning: '[drifting] drifting.webm is 20.00 MiB; the Pages limit is 25.00 MiB' });
+    ).toEqual({
+      warning:
+        '[drifting] drifting.webm is 20.00 MiB (20,971,520 bytes); the Pages limit is 25.00 MiB',
+    });
     expect(
       checkGalleryMediaSize(mediaFile('near-limit', 'webm', GALLERY_MEDIA_LIMIT_BYTES - 1)).warning
-    ).toContain('[near-limit] near-limit.webm is 25.00 MiB');
+    ).toBe(
+      '[near-limit] near-limit.webm is 25.00 MiB (26,214,399 bytes); the Pages limit is 25.00 MiB'
+    );
     expect(() =>
       checkGalleryMediaSize(mediaFile('oversized', 'webm', GALLERY_MEDIA_LIMIT_BYTES))
-    ).toThrow('[oversized] oversized.webm is 25.00 MiB; Pages requires each file below 25.00 MiB');
+    ).toThrow(
+      '[oversized] oversized.webm is 25.00 MiB (26,214,400 bytes); Pages requires each file below 25.00 MiB'
+    );
   });
 
   it('summarizes total bytes and the largest files in descending order', () => {
