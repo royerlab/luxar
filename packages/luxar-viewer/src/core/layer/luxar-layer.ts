@@ -42,16 +42,25 @@
  *   nodes it owns; a host with its own transparent geometry should set explicit
  *   values rather than rely on insertion order.
  *
- * ## A scene's tone mapping does NOT apply in layer mode
+ * ## A scene's post/camera/UI config does NOT apply in layer mode
  *
- * Luxar tone-maps in the mega-shader, which is a **post-processing pass** —
- * `PostProcessingManager` even forces `renderer.toneMapping = NoToneMapping`
- * because of it. The layer owns no post-processing, so a scene's
- * `viewer_config.tone_mapping` reaches nothing here and is silently inert. It
- * is not a per-material setting that could be pushed onto the nodes.
+ * Everything a scene declares under `viewer_config` that is applied by
+ * `ui/rendering-controls.ts` rather than by the node path is **silently inert**
+ * here — `tone_mapping`, `exposure`, `global_gamma`, `global_offset`, the
+ * `bloom_*` family, `background_color`, and the whole `camera` block. The layer
+ * owns no post-processing, no camera, and no UI, so nothing consumes them. Only
+ * per-node appearance (colormap, blending mode, opacity, absorption, the
+ * intensity/offset window) travels with the geometry and takes effect.
  *
- * The practical consequence is worth stating plainly, because it is invisible
- * from the scene file: **emissive geometry in a host with no tone mapping clips
+ * Tone mapping is the one worth calling out, because it is invisible from the
+ * scene file and changes what the data looks like. Luxar tone-maps in the
+ * mega-shader, a post-processing pass — `PostProcessingManager` even forces
+ * `renderer.toneMapping = NoToneMapping` because of it — so it is not a
+ * per-material setting that could be pushed onto the nodes. Measured in a host application: a scene
+ * authored with ACES rendered pixel-identical to one authored with `None`.
+ * (Measured, not asserted — no test in this repo covers it.)
+ *
+ * The consequence: **emissive geometry in a host with no tone mapping clips
  * flat**. `additive` blending sums contributions into a framebuffer that clamps
  * at 1.0, and normalising amplitudes fixes the per-splat scale, not the
  * accumulated one. Without a filmic rolloff, overlapping bright structure goes
@@ -88,6 +97,7 @@ import { createRendererCapabilities } from '../../rendering/renderer-capabilitie
 import { getGpuByteBudget } from '../../rendering/gpu-byte-budget';
 import {
   configureDepthSort,
+  setDepthSortEnabled,
   evaluateDepthSortPerFrame,
   warmUpDepthSortWorker,
   disposeDepthSort,
@@ -100,6 +110,7 @@ import {
   getOrthoFrustumHeight,
   type LuxarCamera,
 } from '../../utils/camera-utils';
+import { config } from '../../config';
 import { isLuxarMaterial } from '../../ui/layers/luxar-material';
 import { log, Modules } from '../../utils/log';
 import type { Renderer } from '../../rendering/renderer-capabilities';
@@ -186,6 +197,8 @@ export class LuxarLayer {
 
   private rootGroup: THREE.Group | null = null;
   private disposed = false;
+  /** Guards against overlapping `load()` calls — see {@link LuxarLayer.load}. */
+  private inFlightLoad = false;
   // Placement survives across load(), so alignTo() and load() may be called in
   // either order (see alignTo).
   private pendingMatrix: THREE.Matrix4 | null = null;
@@ -231,13 +244,44 @@ export class LuxarLayer {
    *
    * Resolves once the first slice has committed, so a caller that awaits this
    * can frame the camera on real bounds rather than an empty group.
+   *
+   * Calling it a second time is a **dataset switch**: the previous root is
+   * detached (`loadScene` has already disposed its loader, so leaving it
+   * attached would draw over disposed backing stores). Calling it again while a
+   * load is still in flight **throws** — see the comment in the body.
    */
   async load(src: string): Promise<THREE.Group> {
     this.assertLive();
+    // Concurrent loads corrupt each other: the second's `createLoaderAsync`
+    // disposes the first's loader mid-flight, and whichever resolves LAST wins
+    // the root slot — so the losing race can leave a group backed by a disposed
+    // loader attached to the host scene. Sequential switches are fine (the old
+    // root is detached below); overlapping ones are refused rather than
+    // silently producing dead geometry.
+    if (this.inFlightLoad) {
+      throw new Error(
+        'LuxarLayer.load() is already in progress; await it before loading another scene.'
+      );
+    }
+    this.inFlightLoad = true;
+    try {
+      return await this.loadInner(src);
+    } finally {
+      this.inFlightLoad = false;
+    }
+  }
 
+  private async loadInner(src: string): Promise<THREE.Group> {
     const root = await loadScene(src, this.options.loaderConfig, this.loaderId);
     // A dispose() that lands mid-load must not leave the group attached.
     if (this.disposed) return root;
+
+    // A second load() is a dataset switch: `loadScene` has already disposed the
+    // previous SceneLoader, so leaving the old group attached would keep the
+    // host drawing geometry over disposed backing stores.
+    if (this.rootGroup && this.rootGroup !== root) {
+      this.options.scene.remove(this.rootGroup);
+    }
 
     root.renderOrder = this.options.renderOrder ?? 10;
     this.options.scene.add(root);
@@ -281,6 +325,14 @@ export class LuxarLayer {
    * Push the host's camera projection and drawing-buffer size into the
    * material manager. Call after a viewport resize, a DPR change, or a change
    * to the camera's FOV / ortho frustum.
+   *
+   * Does NOT push a near-cull distance. `SceneManager` derives one from its
+   * dynamic scene-bounds cache and passes it as a fourth argument, which fades
+   * geometry approaching the near plane; without it the shared near fade stays
+   * at its default and elements pop instead. Wiring it here would mean
+   * reproducing the bounds cache, so it is a known limitation rather than an
+   * oversight — a host that cares can keep its own near plane clear of the
+   * data.
    */
   resize(): void {
     if (this.disposed) return;
@@ -345,6 +397,11 @@ export class LuxarLayer {
    *
    * Resolves when the slice this call led to has committed. Callers driving
    * playback should NOT await it — see {@link prefetchDimensionValue}.
+   *
+   * A no-op before {@link load}: the dimension set comes from the scene, and
+   * `initFromScene` would overwrite any pre-load value with the scene's own
+   * defaults anyway. Hosts restoring a saved timepoint should apply it after
+   * `load()` resolves.
    */
   async setDimensionValue(index: number, value: number): Promise<void> {
     this.assertLive();
@@ -474,7 +531,13 @@ export class LuxarLayer {
 
       let base = this.authoredOpacity.get(mat);
       if (base === undefined) {
-        base = readOpacityUniform(mat);
+        // Prefer the fade's own snapshot over the live uniform. During an LOD
+        // cross-fade `uOpacity` is `_lodFadeBase * product`, so a material first
+        // seen mid-fade would otherwise cache a fractional value as its
+        // "authored" one — permanently, in the WeakMap. That is the likely case
+        // rather than the exotic one: `update()` re-asserts exposure on nodes
+        // the moment they commit, which is exactly when they start fading in.
+        base = (mesh.userData._lodFadeBase as number | undefined) ?? readOpacityUniform(mat);
         this.authoredOpacity.set(mat, base);
       } else if (this.appliedExposure.get(mat) === this.exposure) {
         return; // already at this exposure
@@ -530,9 +593,13 @@ export class LuxarLayer {
    * Tear down everything the layer owns: the scene group, the loader and its
    * caches, the data-worker pool, and the depth-sort worker.
    *
-   * Async because loader teardown drains the caching store and flushes OPFS
-   * metadata; a synchronous dispose would strand that work and a subsequent
-   * `load()` could race it.
+   * Awaits loader teardown for real, via `destroyAllAsync()`: every
+   * prefetcher, caching store, and L0 cache is drained before the pools that
+   * serve them are torn down. `disposeInstance()` alone is explicitly
+   * fire-and-forget, so a host that awaits this would otherwise get a promise
+   * that guarantees nothing and a subsequent `load()` could race the drain.
+   * This is stronger than what `LuxarApp` does at shutdown, and deliberately
+   * so — a host may remount repeatedly within one page lifetime.
    *
    * The host's renderer, camera, and scene are left untouched.
    */
@@ -551,7 +618,17 @@ export class LuxarLayer {
     // in-flight call outlives its owner.
     const steps: Array<[string, () => void | Promise<void>]> = [
       ['sceneDims', () => sceneDimsManager.reset()],
-      ['sceneLoaderManager', () => SceneLoaderManager.disposeInstance()],
+      [
+        'sceneLoaderManager',
+        async () => {
+          // Await the drain, THEN drop the singleton. `disposeInstance()` runs
+          // `destroyAll()`, which fires disposes without awaiting them; by the
+          // time it runs here the loaders map is already empty, so it is a
+          // cheap no-op that just clears the instance.
+          await SceneLoaderManager.getInstance().destroyAllAsync();
+          SceneLoaderManager.disposeInstance();
+        },
+      ],
       ['materialManager', () => materialManager.dispose()],
       ['workerPool', () => disposeWorkerPool()],
       ['depthSort', () => disposeDepthSort()],
@@ -572,8 +649,17 @@ export class LuxarLayer {
         new LODGroupRegistry({
           getCamera: () => this.options.getCamera(),
           getViewportSize: () => this.options.getViewportSize(),
-          getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [0, 1, 2],
+          // Empty, not [0, 1, 2], before dims resolve: the registry's
+          // `displayDims.length < 2` early-return then skips evaluation, whereas
+          // the plausible-looking default projects a 2D scene onto a phantom Z.
+          // Matches `core/app/init/pipeline.ts`.
+          getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
           getResidentByteBudget: () => getGpuByteBudget(),
+          // Both halves of the budget are required: `lod-eviction` bails on
+          // `!getResidentBytes`, so supplying only the budget makes it
+          // decorative and no cold level is ever demoted — an unbounded VRAM
+          // climb over a long host session, with nothing to see until it fails.
+          getResidentBytes: () => owner.gpuBufferPool?.getResidentBytes() ?? 0,
           getViewVersion: () => owner.currentViewVersion,
           getCrossFadeEnabled: () => lodFade,
           getEnergyCompEnabled: () => lodEnergyComp,
@@ -588,7 +674,15 @@ export class LuxarLayer {
   }
 
   private installDepthSort(): void {
-    if (this.options.depthSort === false) return;
+    // The module-level flag is what actually gates registration, the per-frame
+    // cross-node renderOrder pass, and worker spawn. Returning early without
+    // clearing it leaves `depthSort: false` doing nothing at all.
+    // AND with the build config the same way the app does, so a config that
+    // ships depth sorting off is honoured in layer mode too. No behavioural
+    // difference while the config default is true — it bites only if that flips.
+    const enabled = config.depthSort.enabled && this.options.depthSort !== false;
+    setDepthSortEnabled(enabled);
+    if (!enabled) return;
     configureDepthSort({
       getCamera: () => this.options.getCamera(),
       requestRender: () => this.options.requestRender?.(),

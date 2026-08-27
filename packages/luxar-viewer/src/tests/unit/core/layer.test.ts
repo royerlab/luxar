@@ -46,9 +46,16 @@ const sceneLoaderStub = {
   updateView: vi.fn(),
 };
 
+const destroyAllAsync = vi.fn(async () => {});
+
 vi.mock('../../../data/scene-loader-manager', () => ({
   SceneLoaderManager: {
-    getInstance: () => ({ setLODGroupRegistryFactory, setRequestRender, getProfiler }),
+    getInstance: () => ({
+      setLODGroupRegistryFactory,
+      setRequestRender,
+      getProfiler,
+      destroyAllAsync: () => destroyAllAsync(),
+    }),
     disposeInstance: () => disposeInstance(),
   },
   getSceneLoader: () => sceneLoaderStub,
@@ -69,11 +76,12 @@ const dimsState = {
 const initFromScene = vi.fn();
 const setDimensionValueMock = vi.fn();
 const resetDims = vi.fn();
+const getDimsMock = vi.fn(() => dimsState as typeof dimsState | null);
 
 vi.mock('../../../scene/scene-dims-manager', () => ({
   sceneDimsManager: {
     initFromScene: (...a: unknown[]) => initFromScene(...a),
-    getDims: () => dimsState,
+    getDims: () => getDimsMock(),
     getDimensionNames: () => ['x', 'y', 'z', 'time'],
     getDimensionMetadata: () => [],
     getDimensionRanges: () => [],
@@ -100,11 +108,13 @@ vi.mock('../../../rendering/renderer-capabilities', () => ({
 vi.mock('../../../rendering/gpu-byte-budget', () => ({ getGpuByteBudget: () => 1024 }));
 
 const configureDepthSort = vi.fn();
+const setDepthSortEnabled = vi.fn();
 const evaluateDepthSortPerFrame = vi.fn();
 const warmUpDepthSortWorker = vi.fn();
 const disposeDepthSort = vi.fn();
 vi.mock('../../../rendering/depth-sort-coordinator', () => ({
   configureDepthSort: (...a: unknown[]) => configureDepthSort(...a),
+  setDepthSortEnabled: (...a: unknown[]) => setDepthSortEnabled(...a),
   evaluateDepthSortPerFrame: () => evaluateDepthSortPerFrame(),
   warmUpDepthSortWorker: () => warmUpDepthSortWorker(),
   disposeDepthSort: () => disposeDepthSort(),
@@ -138,6 +148,7 @@ describe('LuxarLayer', () => {
     vi.clearAllMocks();
     loadSceneMock.mockImplementation(async () => new THREE.Group());
     updateSceneForDimensionsMock.mockResolvedValue(undefined);
+    getDimsMock.mockReturnValue(dimsState);
   });
 
   describe('construction', () => {
@@ -177,6 +188,79 @@ describe('LuxarLayer', () => {
       new LuxarLayer(makeOptions({ depthSort: false }));
       expect(configureDepthSort).not.toHaveBeenCalled();
       expect(warmUpDepthSortWorker).not.toHaveBeenCalled();
+      // Not wiring is not the same as disabling: the module-level flag gates
+      // registration, the per-frame renderOrder pass, and worker spawn, so
+      // returning early without clearing it leaves the option doing nothing.
+      expect(setDepthSortEnabled).toHaveBeenCalledWith(false);
+    });
+
+    it('enables the depth-sort module flag by default', () => {
+      new LuxarLayer(makeOptions());
+      expect(setDepthSortEnabled).toHaveBeenCalledWith(true);
+    });
+
+    it('supplies every LOD-registry dep the eviction path needs', () => {
+      // A dep that is merely ABSENT degrades silently: `lod-eviction` bails on
+      // `!getResidentBytes`, so passing the budget without the measurement
+      // makes the budget decorative and nothing is ever evicted. Snapshotting
+      // the key set is the cheap way to catch a dep going missing.
+      new LuxarLayer(makeOptions());
+      const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
+        deps: Record<string, unknown>;
+      };
+      const { deps } = factory({ currentViewVersion: 1, gpuBufferPool: undefined });
+
+      expect(Object.keys(deps).sort()).toEqual(
+        [
+          'getCamera',
+          'getCrossFadeEnabled',
+          'getDisplayDims',
+          'getEnergyCompEnabled',
+          'getForceFinestLOD',
+          'getResidentByteBudget',
+          'getResidentBytes',
+          'getViewVersion',
+          'getViewportSize',
+          'registerMaterial',
+          'requestRender',
+        ].sort()
+      );
+    });
+
+    it('reports no resident bytes rather than throwing when the pool is absent', () => {
+      new LuxarLayer(makeOptions());
+      const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
+        deps: { getResidentBytes: () => number };
+      };
+      const { deps } = factory({ currentViewVersion: 1, gpuBufferPool: undefined });
+      expect(deps.getResidentBytes()).toBe(0);
+    });
+
+    it('reports no display dims before the scene resolves them', () => {
+      // NOT [0, 1, 2]: that default projects a 2D scene onto a phantom Z. An
+      // empty list trips the registry's own `length < 2` early return instead.
+      getDimsMock.mockReturnValueOnce(null);
+      new LuxarLayer(makeOptions());
+      const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
+        deps: { getDisplayDims: () => number[] };
+      };
+      const { deps } = factory({ currentViewVersion: 1 });
+      expect(deps.getDisplayDims()).toEqual([]);
+    });
+
+    it('threads the LOD flags through to the registry', () => {
+      new LuxarLayer(makeOptions({ lodFade: false, lodEnergyComp: false, lodFinest: true }));
+      const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
+        deps: {
+          getCrossFadeEnabled: () => boolean;
+          getEnergyCompEnabled: () => boolean;
+          getForceFinestLOD: () => boolean;
+        };
+      };
+      const { deps } = factory({ currentViewVersion: 1 });
+      expect(deps.getCrossFadeEnabled()).toBe(false);
+      expect(deps.getEnergyCompEnabled()).toBe(false);
+      expect(deps.getForceFinestLOD()).toBe(true);
     });
   });
 
@@ -192,6 +276,52 @@ describe('LuxarLayer', () => {
       expect(initFromScene.mock.invocationCallOrder[0]).toBeGreaterThan(0);
       expect(updateSceneForDimensionsMock.mock.invocationCallOrder[0]).toBeGreaterThan(
         initFromScene.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('detaches the previous root on a second load', async () => {
+      // `loadScene` disposes the previous SceneLoader, so a stale group left
+      // attached keeps the host drawing over disposed backing stores.
+      const options = makeOptions();
+      const first = new THREE.Group();
+      const second = new THREE.Group();
+      loadSceneMock.mockImplementationOnce(async () => first);
+      loadSceneMock.mockImplementationOnce(async () => second);
+
+      const layer = new LuxarLayer(options);
+      await layer.load('http://example.test/a.zarr');
+      await layer.load('http://example.test/b.zarr');
+
+      expect(options.scene.children).toContain(second);
+      expect(options.scene.children).not.toContain(first);
+      expect(layer.root).toBe(second);
+    });
+
+    it('refuses a concurrent load rather than racing two loaders', async () => {
+      // The second load's createLoaderAsync disposes the first's loader
+      // mid-flight, and whichever resolves LAST wins the root slot — so the
+      // loser can leave a group backed by a disposed loader in the host scene.
+      let release!: (g: THREE.Group) => void;
+      loadSceneMock.mockImplementationOnce(() => new Promise<THREE.Group>((r) => (release = r)));
+      const layer = new LuxarLayer(makeOptions());
+
+      const first = layer.load('http://example.test/a.zarr');
+      await expect(layer.load('http://example.test/b.zarr')).rejects.toThrow(/already in progress/);
+
+      release(new THREE.Group());
+      await first;
+      // The guard clears, so a sequential switch still works.
+      await expect(layer.load('http://example.test/b.zarr')).resolves.toBeInstanceOf(THREE.Group);
+    });
+
+    it('forwards loaderConfig to the loader', async () => {
+      const loaderConfig = { noCache: true } as LuxarLayerOptions['loaderConfig'];
+      const layer = new LuxarLayer(makeOptions({ loaderConfig }));
+      await layer.load('http://example.test/scene.zarr');
+      expect(loadSceneMock).toHaveBeenCalledWith(
+        'http://example.test/scene.zarr',
+        loaderConfig,
+        expect.any(String)
       );
     });
 
@@ -350,6 +480,122 @@ describe('LuxarLayer', () => {
     });
   });
 
+  describe('resize', () => {
+    it('reports an ortho frustum height and the ortho flag', () => {
+      // A real branch: the ortho path feeds a frustum height rather than a FOV,
+      // and materials size points from a different formula depending on it.
+      const camera = new THREE.OrthographicCamera(-2, 2, 1.5, -1.5, 0.1, 100);
+      const layer = new LuxarLayer(makeOptions({ getCamera: () => camera }));
+      updateCameraParams.mockClear();
+
+      layer.resize();
+
+      expect(updateCameraParams).toHaveBeenCalledWith(expect.any(Number), expect.anything(), true);
+      expect(updateCameraParams.mock.calls[0][0]).toBeCloseTo(3); // top - bottom
+    });
+
+    it('is a no-op after dispose', async () => {
+      const layer = new LuxarLayer(makeOptions());
+      await layer.dispose();
+      updateCameraParams.mockClear();
+      layer.resize();
+      expect(updateCameraParams).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('visibility and bounds', () => {
+    it('hides via the root flag rather than detaching', async () => {
+      // Detaching would drop the caches and in-flight streams; the point of the
+      // toggle is that re-showing costs no refetch.
+      const options = makeOptions();
+      const layer = new LuxarLayer(options);
+      const root = await layer.load('http://example.test/scene.zarr');
+
+      layer.setVisible(false);
+      expect(root.visible).toBe(false);
+      expect(layer.isVisible()).toBe(false);
+      expect(options.scene.children).toContain(root);
+
+      layer.setVisible(true);
+      expect(layer.isVisible()).toBe(true);
+    });
+
+    it('reports not-visible and null bounds before load', () => {
+      const layer = new LuxarLayer(makeOptions());
+      expect(layer.isVisible()).toBe(false);
+      expect(layer.getBounds()).toBeNull();
+    });
+
+    it('measures world bounds from the loaded root', async () => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
+      loadSceneMock.mockImplementation(async () => {
+        const g = new THREE.Group();
+        g.add(mesh);
+        return g;
+      });
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+
+      const box = layer.getBounds();
+      expect(box).not.toBeNull();
+      expect(box!.min.x).toBeCloseTo(-1);
+      expect(box!.max.x).toBeCloseTo(1);
+    });
+  });
+
+  describe('requestRender wiring', () => {
+    it('reaches the loader manager and the registry', () => {
+      const requestRender = vi.fn();
+      new LuxarLayer(makeOptions({ requestRender }));
+
+      expect(setRequestRender).toHaveBeenCalledWith(requestRender);
+
+      // A commit that repaints goes through the registry's own callback, so it
+      // has to be threaded too — not just handed to the manager.
+      const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
+        deps: { requestRender: () => void };
+      };
+      factory({ currentViewVersion: 1 }).deps.requestRender();
+      expect(requestRender).toHaveBeenCalled();
+    });
+
+    it('is not registered when the host renders continuously', () => {
+      new LuxarLayer(makeOptions());
+      expect(setRequestRender).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('awaitDimensionUpdate', () => {
+    it('resolves immediately when nothing is in flight', async () => {
+      const layer = new LuxarLayer(makeOptions());
+      await expect(layer.awaitDimensionUpdate()).resolves.toBeUndefined();
+    });
+
+    it('waits for an in-flight slice update to settle', async () => {
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr'); // resolves via the default mock
+
+      // Only now make the next slice update block, so the load itself is not
+      // the thing being awaited.
+      let release!: () => void;
+      updateSceneForDimensionsMock.mockImplementation(
+        () => new Promise<void>((r) => (release = r))
+      );
+      void layer.setDimensionValue(3, 5);
+
+      let settled = false;
+      const waiter = layer.awaitDimensionUpdate().then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      release();
+      await waiter;
+      expect(settled).toBe(true);
+    });
+  });
+
   describe('setExposure', () => {
     /** A stand-in for a Luxar geometry material: `uOpacity` plus the updaters. */
     function splatMesh(authored: number): THREE.Mesh {
@@ -424,6 +670,26 @@ describe('LuxarLayer', () => {
       expect(opacityOf(present)).toBeCloseTo(0.1);
     });
 
+    it('takes the authored base from the fade snapshot, not a mid-fade uniform', async () => {
+      // During a cross-fade `uOpacity` is `_lodFadeBase * product`. A material
+      // first seen mid-fade would cache that fraction as its authored value —
+      // permanently — and every later exposure would compound the dimming.
+      // Likely rather than exotic: update() re-asserts exposure on nodes the
+      // moment they commit, which is exactly when they begin fading in.
+      const mesh = splatMesh(0.05); // live uniform: mid-fade
+      mesh.userData._lodFadeBase = 0.2; // what it was authored with
+      loadSceneMock.mockImplementation(async () => {
+        const g = new THREE.Group();
+        g.add(mesh);
+        return g;
+      });
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+
+      layer.setExposure(2);
+      expect(mesh.userData._lodFadeBase).toBeCloseTo(0.4); // 2 x authored 0.2
+    });
+
     it('rebases an in-flight LOD fade instead of writing the uniform', async () => {
       // lod-fade.ts recomputes `_lodFadeBase x product` every frame, so a direct
       // write here is clobbered on the next fade frame and the edit lost.
@@ -474,6 +740,20 @@ describe('LuxarLayer', () => {
 
       expect(disposeInstance.mock.invocationCallOrder[0]).toBeLessThan(
         disposeWorkerPool.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('awaits the loader drain before dropping the singleton', async () => {
+      // `disposeInstance()` alone fires disposes without awaiting them, so a
+      // host awaiting dispose() would get a promise guaranteeing nothing and a
+      // following load() could race the drain.
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+      await layer.dispose();
+
+      expect(destroyAllAsync).toHaveBeenCalled();
+      expect(destroyAllAsync.mock.invocationCallOrder[0]).toBeLessThan(
+        disposeInstance.mock.invocationCallOrder[0]
       );
     });
 

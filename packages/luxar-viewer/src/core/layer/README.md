@@ -151,14 +151,41 @@ authored it, and the host's is a different one.
   `sceneDimsManager`, `materialManager`, and the worker pool are process
   singletons. Two owners share, then corrupt, each other's state. Same
   restriction as `LuxarApp`, same reason.
+- **No near-cull is pushed.** `SceneManager` derives a near-cull distance from
+  its dynamic scene-bounds cache and passes it as a fourth argument to
+  `updateCameraParams`, which fades geometry approaching the near plane.
+  `resize()` omits it, so the shared near fade stays at its default and elements
+  pop instead of fading. Wiring it would mean reproducing the bounds cache. A
+  host that cares should keep its near plane clear of the data.
+- **`setDimensionValue()` before `load()` is a no-op.** The dimension set comes
+  from the scene, and `initFromScene` would overwrite a pre-load value with the
+  scene's own defaults anyway. Restore a saved timepoint _after_ `load()`
+  resolves.
+- **A second `load()` is a dataset switch, and overlapping loads throw.** The
+  previous root is detached, because `loadScene` has already disposed its loader
+  and leaving it attached would draw over disposed backing stores. Two
+  _concurrent_ loads cannot be resolved that way — the second's
+  `createLoaderAsync` disposes the first's loader mid-flight, and whichever
+  resolves last wins the root slot — so `load()` refuses to start while another
+  is in flight rather than silently producing dead geometry.
 - **No UI.** No panels, no picking UI, no monitor, no keyboard handling. The
   cross-layer `notifier` stays unregistered, so Luxar's toasts and error
   overlays are silently dropped unless the host registers a backend.
-- **A scene's `tone_mapping` is inert.** Luxar tone-maps in the mega-shader,
-  which is a post-processing pass the layer does not own (`PostProcessingManager`
-  even forces `renderer.toneMapping = NoToneMapping` because of it). It is not a
-  per-material setting that could be pushed onto the nodes, so
-  `viewer_config.tone_mapping` reaches nothing and changing it has no effect.
+- **A scene's post-processing / camera / UI config is inert.** Everything under
+  `viewer_config` that `ui/rendering-controls.ts` applies rather than the node
+  path reaches nothing here: `tone_mapping`, `exposure`, `global_gamma`,
+  `global_offset`, the `bloom_*` family, `background_color`, and the whole
+  `camera` block. The layer owns no post-processing, no camera, and no UI. Only
+  per-node appearance — colormap, blending mode, opacity, absorption, the
+  intensity/offset window — travels with the geometry.
+
+  Tone mapping is the one that bites, because it changes what the data looks
+  like and nothing surfaces it. Luxar tone-maps in the mega-shader, a
+  post-processing pass (`PostProcessingManager` even forces
+  `renderer.toneMapping = NoToneMapping` because of it), so it is not a
+  per-material setting that could be pushed onto the nodes. Measured in a host application, a scene authored with
+  ACES rendered pixel-identical to one authored with `None` — measured, not
+  asserted by a test in this repo.
 
   This matters more than it sounds. `additive` blending sums contributions into a
   framebuffer that clamps at 1.0, and normalising amplitudes fixes the per-splat
