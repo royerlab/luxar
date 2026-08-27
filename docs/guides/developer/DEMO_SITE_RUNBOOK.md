@@ -17,23 +17,38 @@ Three hostnames on the `luxarviewer.dev` zone, each serving a different thing:
 | Hostname | Serves | Backed by |
 |---|---|---|
 | `luxarviewer.dev` | The viewer alone, at the root | Cloudflare Pages project `luxar-viewer` |
-| `demos.luxarviewer.dev` | The gallery page + its embedded viewer | Cloudflare Pages project `luxar-demos` |
+| `demos.luxarviewer.dev` | The gallery page, its media, and its viewer | Cloudflare Pages project `luxar-demos` |
 | `data.luxarviewer.dev` | The `.luxar.zarr` stores | Cloudflare R2 bucket `luxar-demos`, **direct** |
 
-Two properties of that split matter operationally:
+**Neither Pages project has a `functions/` directory or an R2 binding.** Both
+are pure static assets. This is the single most important property of the
+setup, and it is deliberate: Pages Functions share the Workers free limit of
+100,000 requests/day, a limit that *fails* rather than bills. Serving the
+corpus through a Function put one invocation on every chunk fetch, which does
+not survive real traffic.
 
-- **`luxar-viewer` has no `functions/` directory and no R2 binding.** It is
-  static assets only. This is deliberate: Pages Functions are billed per
-  invocation, and the viewer does not need one.
-- **`data.luxarviewer.dev` is an R2 custom domain, so it bypasses Pages
-  Functions entirely.** A request there never runs a Worker. The way to confirm
-  this is the *absence* of the `x-luxar-fn: r2` marker header that the gallery's
-  Function sets:
+Instead:
 
-  ```bash
-  curl -sI https://data.luxarviewer.dev/data/<prefix>/<store>.luxar.zarr/zarr.json | grep -i x-luxar-fn
-  # no output = R2 direct, Function bypassed (this is what you want)
-  ```
+- **Scene data** is fetched **cross-origin** from `data.luxarviewer.dev`, an R2
+  custom domain that bypasses Workers entirely. The gallery emits absolute
+  `?src=https://data.luxarviewer.dev/...` URLs for this reason. (Requires CORS —
+  §4.3.)
+- **Gallery media** (`/media/*`, ~180 files, ~485 MiB) are **deployed files**,
+  served by Pages' CDN for free and unmetered.
+
+The historical marker header `x-luxar-fn: r2` is how to confirm no Worker is in
+the path. It should now appear on *nothing*:
+
+```bash
+curl -sI "https://demos.luxarviewer.dev/media/earthquakes.webp" | grep -i x-luxar-fn
+curl -sI "https://data.luxarviewer.dev/data/<prefix>/<store>.luxar.zarr/zarr.json" | grep -i x-luxar-fn
+# no output from either = correct
+```
+
+Beware when checking this: responses cached *before* the Function was removed
+still carry the header. Add a cache-busting query string, or you will conclude
+the Worker is still deployed when it is not (§3.2 again, applied to your own
+verification).
 
 A verify-everything sweep of the whole chain lives in the operator's harness;
 its essentials are reproduced in §5.
@@ -58,10 +73,24 @@ build the changed demos
   -> luxar optimise --profile archive        # 1 MB chunk target
   -> hash-compare against the LAST LOCAL BUILD
   -> upload only what changed, to a NEW dated prefix
-  -> bump CACHE_EPOCH, rebuild the page, deploy
+  -> rebuild the page against that prefix, with an ABSOLUTE data host
+  -> deploy (page + media as static assets)
   -> audit the live site
   -> purge the superseded prefix
 ```
+
+The page generator takes the data prefix as an argument, so pointing a wave at
+a new prefix is a parameter change, not an edit:
+
+```bash
+python gen_landing.py gallery.json deploy/index.html \
+    https://data.luxarviewer.dev/data/<new-prefix>
+```
+
+Passing a site-relative `/data/<prefix>` there is the mistake to avoid: it
+still renders a working page, but every chunk fetch becomes same-origin and
+needs something on the gallery origin to serve it. The audit asserts the URLs
+are absolute for exactly this reason.
 
 ### 2.1 Always publish to a new dated prefix
 
@@ -106,14 +135,23 @@ Always assert freshness alongside the hash.
 Every item here produced a plausible wrong answer in production rather than an
 error. They are grouped by what lies to you.
 
-### 3.1 `CACHE_EPOCH` — stale media
+### 3.1 Stale media (historical — and how the fix works now)
 
-Scene URLs are dated; **media URLs are not**. Re-uploading a still or video to
-the same key leaves every edge and browser serving the old bytes. The gallery
-Function (`pages/functions/_r2.js`) carries a `CACHE_EPOCH` constant appended
-as a cache-buster; **bump it on any wave that re-captures media**. Symptom if
-you forget: the page is correct, the data is correct, and the thumbnails are
-last week's.
+Scene URLs are dated; **media URLs are not**. When media was served from R2
+through a Pages Function, re-uploading a still to the same key left every edge
+serving the old bytes, and the only remedy was a `CACHE_EPOCH` constant in
+`pages/functions/_r2.js` that had to be bumped by hand on every wave that
+re-captured media. Forgetting it produced a correct page with last week's
+thumbnails — and it did, at least once.
+
+Moving media to Pages static assets removed that failure mode rather than
+mitigating it: a deployment replaces the asset and Pages invalidates its own
+CDN, so there is no epoch to remember. **Re-capturing media now just means
+re-running the deploy.**
+
+Do not reintroduce a hand-maintained cache-buster. If media ever moves back
+behind a long-TTL rule on another host, it needs hashed filenames instead —
+see §4.2.
 
 ### 3.2 A cache policy change does not reach cached objects
 
@@ -198,15 +236,35 @@ longer wants a purge in the change procedure.
 
 ### 4.2 Media has no such protection
 
-`/media/*` URLs are **not** dated. If media ever moves behind the same
-long-TTL rule it needs either a short TTL or hashed filenames first, otherwise
-§3.1 becomes unfixable without a full purge.
+`/media/*` URLs are **not** dated. They are currently Pages static assets, which
+is safe because a deploy invalidates them (§3.1). If media ever moves onto
+`data.luxarviewer.dev` or any other host behind the long-TTL cache rule, it
+needs a short TTL or hashed filenames *first*, otherwise a re-captured still is
+unfixable without a full purge.
+
+Two Pages limits bound this set: **25 MiB per file** and **20,000 files**. The
+count is comfortable (180), but the largest clip sits at **24.87 MiB** —
+0.13 MiB under the cap. A single oversized file fails the whole deployment, so
+cap the capture bitrate rather than discovering this on a deploy.
 
 ### 4.3 CORS on the R2 bucket
 
-Required for the apex viewer to read cross-origin. `AllowedHeaders` **must**
-include `range` — the viewer issues partial reads, and without it every chunk
-fetch fails preflight while `zarr.json` appears to work fine.
+Required for **both** viewers now, since the gallery also fetches data
+cross-origin. `AllowedOrigins` must list every hostname that hosts a viewer:
+
+```
+https://luxarviewer.dev          apex viewer
+https://demos.luxarviewer.dev    gallery viewer
+https://luxar-demos.pages.dev    Pages fallback URL
+```
+
+Per-deployment preview URLs (`<hash>.luxar-demos.pages.dev`) cannot be
+enumerated, so **data will not load in a Pages preview deploy**. Verify against
+the canonical hostname.
+
+`AllowedHeaders` **must** include `range` — the viewer issues partial reads, and
+without it every chunk fetch fails preflight while `zarr.json` appears to work
+fine. That combination presents as an empty scene, not an error.
 
 Verify with a real preflight, not a GET carrying an `Origin` header (curl does
 not enforce CORS; browsers do):
