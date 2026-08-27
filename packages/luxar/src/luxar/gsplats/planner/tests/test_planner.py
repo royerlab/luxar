@@ -416,6 +416,9 @@ def _fake_box_builder(
             GSplatData(centers=centers, amplitudes=amps,
                        cholesky_factors=chol{radius},
                        stats={{"time_seconds": {_FAKE_BOX_TIME_SECONDS!r},
+                              "psnr_db": 42.0,
+                              "source_shape": [16, 16, 16],
+                              "source_voxels": 4096,
                               "floor": {image_min!r}, "image_min": {image_min!r},
                               "image_max": {image_min + 1.0!r},
                               "intensity_range": 1.0}},
@@ -1125,6 +1128,37 @@ class TestContentFitCullRetention:
 
 
 class TestFitPlannedParallel:
+    @pytest.mark.parametrize(
+        ("keep_boxes", "expected"),
+        [(False, "1"), (True, "unset")],
+    )
+    def test_only_disposable_box_workers_suppress_restamping(
+        self, tmp_path, keep_boxes, expected
+    ):
+        marker = tmp_path / f"worker-env-{keep_boxes}"
+        base = _fake_box_builder(5)
+
+        def builder(i: int, out_path: Path) -> list[str]:
+            cmd = base(i, out_path)
+            cmd[-1] = (
+                "import os; from pathlib import Path; "
+                f"Path(r'{marker}').write_text("
+                "os.environ.get('LUXAR_INTERNAL_SKIP_CONTENT_BOX_STAMP', 'unset')); "
+                + cmd[-1]
+            )
+            return cmd
+
+        fit_planned_parallel(
+            _toy_plan(n_boxes=1),
+            jobs=1,
+            tmp_dir=tmp_path / f"boxes-{keep_boxes}",
+            worker_cmd_builder=builder,
+            keep_boxes=keep_boxes,
+            verbose=False,
+        )
+
+        assert marker.read_text() == expected
+
     def test_merges_all_budgeted_boxes(self, tmp_path):
         plan = _toy_plan(n_boxes=3)
         d = tmp_path / "boxes"
@@ -1505,6 +1539,37 @@ class TestPlannedFitTruncationRadius:
         )
         assert any(b.budget > 0 for b in plan.boxes)
         return V, plan
+
+    def test_internal_parallel_worker_skips_disposable_box_restamp(self, monkeypatch):
+        from luxar.cli.gsplat_ops.planner import _stamp_content_box_output
+        from luxar.gsplats import merged_quality
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner import PlanBox
+
+        stats = {"floor": 0.0, "image_min": 0.0, "intensity_range": 1.0}
+        result = GSplatData(
+            centers=np.zeros((1, 3), np.float32),
+            amplitudes=np.ones(1, np.float32),
+            cholesky_factors=np.ones((1, 6), np.float32),
+            stats=stats.copy(),
+        )
+        box = PlanBox(box=[0, 1, 0, 1, 0, 1], n_features=1, budget=1)
+
+        def fail_if_scored(*args, **kwargs):
+            raise AssertionError("disposable parallel box was scored")
+
+        monkeypatch.setenv("LUXAR_INTERNAL_SKIP_CONTENT_BOX_STAMP", "1")
+        monkeypatch.setattr(merged_quality, "stamp_merged_quality", fail_if_scored)
+
+        _stamp_content_box_output(
+            result,
+            np.ones((1, 1, 1), np.float32),
+            box,
+            "cpu",
+            verbose=False,
+        )
+
+        assert result.stats == stats
 
     def test_flat_leaf_keeps_the_configured_radius(self):
         """Sequential ``partition=False``: the flat leaf carries ``truncate``."""
@@ -1894,20 +1959,26 @@ class TestPlannedFitTruncationRadius:
         assert merged.truncation_radius == pytest.approx(3.5)
 
     def test_plan_box_worker_saves_the_configured_radius(self, tmp_path):
-        """`fit --plan-box K --config` — also the content batch-fit array task."""
+        """A content batch-fit tile keeps its radius and fitting stamps."""
         from typer.testing import CliRunner
 
+        from luxar._zarr_compat import read_node_attrs
         from luxar.cli.gsplat_commands import app_gsplat
         from luxar.gsplats.gsplat_data import GSplatData
 
         V, plan = self._tiny_volume_and_plan()
         vol = tmp_path / "vol.npy"
-        np.save(vol, V)
+        stored = np.round(V * np.iinfo(np.uint16).max).astype(np.uint16)
+        np.save(vol, stored)
         plan_json = tmp_path / "plan.json"
         plan.to_json(plan_json)
         cfg = tmp_path / "fit.yaml"
         cfg.write_text("truncate: 3.5\nn_iters: 5\nearly_stop_patience: 5\n")
-        box_idx = next(i for i, b in enumerate(plan.boxes) if b.budget > 0)
+        box_idx = next(
+            i
+            for i, box in enumerate(plan.boxes)
+            if box.budget > 0 and any(box.box[axis] > 0 for axis in (0, 2, 4))
+        )
         out = tmp_path / "box.gsplats.zarr"
 
         result = CliRunner().invoke(
@@ -1931,8 +2002,31 @@ class TestPlannedFitTruncationRadius:
             # fmt: on
         )
         assert result.exit_code == 0, result.output
+        assert "Merged quality: PSNR=" in result.output
         assert out.exists(), result.output
         assert GSplatData.load(out).truncation_radius == pytest.approx(3.5)
+        fitting = read_node_attrs(out / "fitting")
+        assert fitting["psnr_db"] > 30
+        assert fitting["foreground_psnr_db"] > 10
+        assert fitting["source_shape"] == plan.boxes[box_idx].dims
+        assert fitting["source_dtype"] == "uint16"
+        assert fitting["source_bytes"] == int(np.prod(plan.boxes[box_idx].dims)) * 2
+        pipeline = read_node_attrs(out / "pipeline")
+        z0, z1, y0, y1, x0, x1 = plan.boxes[box_idx].box
+        core = stored[z0:z1, y0:y1, x0:x1].astype(np.float32)
+        normalized = np.clip(
+            (core - pipeline["image_min"]) / pipeline["intensity_range"], 0.0, None
+        )
+        assert fitting["occupancy"] == pytest.approx(
+            np.count_nonzero(normalized > 0.01) / normalized.size
+        )
+
+    def test_content_source_dtype_keeps_an_explicit_config_value(self):
+        from luxar.cli.gsplat_ops.planner import _fill_source_dtype
+
+        fit_config = {"source_dtype": "uint16"}
+        _fill_source_dtype(fit_config, "float32")
+        assert fit_config["source_dtype"] == "uint16"
 
     def test_parallel_flat_merge_keeps_the_boxes_radius(self, tmp_path):
         """``fit -j N --flat``: the reloaded boxes' radius survives the merge."""
@@ -2006,13 +2100,16 @@ class TestPlannedFitTruncationRadius:
 
         assert captured == [500.0, 500.0]
 
-    def test_parallel_partition_parts_keep_the_box_stats_and_radius(self, tmp_path):
-        """``fit -j N`` (the default partition): each part carries its own box.
+    def test_parallel_partition_parts_scrub_box_scoped_stats(self, tmp_path):
+        """``fit -j N`` matches sequential part provenance.
 
         The radius and the per-box fit stats reach a part by a different route
         than the sequential path's in-memory hand-off — through the box store: the
         leaf writer stamps a box's stats as its `lod_stats`, and the reload asks
-        for top-level `stats` while also restoring them onto the sub-LOD.
+        for top-level `stats` while also restoring them onto the sub-LOD. The
+        standalone worker's remeasured score and source grid describe its box
+        store, not the merged partition part, so the reload must scrub them just
+        as `_fit_one_box` does before the sequential hand-off.
         """
         node = fit_planned_parallel(
             _toy_plan(n_boxes=2),
@@ -2028,6 +2125,9 @@ class TestPlannedFitTruncationRadius:
             sub = leaf.additive_sublods[0]
             assert sub.truncation_radius == pytest.approx(3.5)
             assert sub.stats["time_seconds"] == pytest.approx(_FAKE_BOX_TIME_SECONDS)
+            assert "psnr_db" not in sub.stats
+            assert "source_shape" not in sub.stats
+            assert "source_voxels" not in sub.stats
 
 
 class TestMaxPaddedBoxVoxels:

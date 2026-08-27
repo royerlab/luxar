@@ -45,11 +45,10 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   / `fitted_shape` / `fitted_voxels` / `occupancy` / `voxels_per_splat` /
   `source_declared`) goes whenever the padded crop is larger than the core box or
   the core mask removed splats, and `n_splats` is restamped to the kept count. The
-  rest (`psnr_db` / `ssim` / `mse`, the `final_*` losses, the cull provenance
-  `n_original` / `n_culled` / `amplitude_retention`) still describes the box's own
-  fit — the padded crop, with the pre-mask splat set — which is the same fit
-  provenance a uniform tile-part carries (a tile-part keeps its grid stamps too,
-  because a tile keeps every splat it fitted; a core-masked box does not).
+  measured scores, `final_*` losses, and cull provenance are dropped under that
+  same predicate because they describe the padded crop and pre-mask splat set.
+  A uniform tile-part keeps its grid stamps because it keeps every splat it fitted;
+  a core-masked box does not.
   Non-finite values are dropped as well: the leaf writer stamps `lod_stats` raw, so
   a signal-free box's `psnr_db = inf` would reach a part's attrs as a bare
   `Infinity` token that a strict JSON parser refuses. Flat and partition merges are
@@ -78,7 +77,11 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   cull identically. The CLI also hands the parent process's reference volume to
   the merge, so parallel flat and partition results get the same whole-volume
   score as the sequential path; direct callers that omit it receive an explicit
-  notice.
+  notice. Each standalone `fit --plan-box` worker persists its own re-measured
+  fitting block, but the parent scrubs those measured and region-scoped stamps
+  before merging so parts match the sequential path. Disposable `-j N` workers
+  skip that discarded scoring work; `--keep-tiles` retains the outputs and opts
+  their workers back into scoring.
 - **`CONTENT_CULL_RETENTION = 0.999`** (`fit_planned.py`) — the near-lossless
   post-fit retention every content box is fitted at, instead of the fitter's own
   0.95 (whose bottom-5% cull would compound across the re-merged boxes).
