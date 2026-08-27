@@ -239,6 +239,62 @@ def verify(
             shutil.rmtree(cache_dir, ignore_errors=True)
 
 
+def _listing_state(manifest: dict[str, Any], name: str, variant: Optional[str]) -> str:
+    spec = manifest["datasets"][name]
+    if spec.get("bucket") != "zenodo":
+        return "not hosted"
+    return "reachable" if is_reachable(manifest, name, variant) else "dormant"
+
+
+def _result_exit_code(
+    *,
+    failures: int,
+    skipped: int,
+    checked: int,
+    explicit: bool,
+    allow_skip: bool,
+    require_verified: Optional[int],
+) -> int:
+    if failures:
+        print(
+            "\nA failure here means a stranger cannot obtain this dataset. Do NOT\n"
+            "remove its in-repo payload — 13 demos would silently start refitting\n"
+            "instead of reporting an error.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # A tolerant skip branch is the same fails-open shape as a bad guard: it turns
+    # "we could not check" into a clean exit, and the caller reads exit 0 as
+    # permission to delete the only copy. So a skip is a pass only when nobody
+    # asked for that dataset by name.
+    if skipped and explicit and not allow_skip:
+        print(
+            f"\nerror: {skipped} explicitly requested dataset(s) were NOT verified "
+            "— you asked for them by name and got no answer. This is not a pass. "
+            "Pass --allow-skip only when exploring, never when deciding whether a "
+            "payload can be removed.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if require_verified is not None and checked < require_verified:
+        print(
+            f"\nerror: {checked} dataset(s) verified, --require-verified "
+            f"{require_verified} demanded.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if checked == 0:
+        print(
+            "NOTE: nothing was actually verified — every target was skipped. "
+            "That is expected while no record is published, and is NOT evidence "
+            "any payload is safe to remove."
+        )
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -303,14 +359,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     targets = verification_targets(manifest, names)
     if args.list:
         for name, variant in targets:
-            spec = manifest["datasets"][name]
-            if spec.get("bucket") != "zenodo":
-                state = "not hosted"
-            else:
-                state = (
-                    "reachable" if is_reachable(manifest, name, variant) else "dormant"
-                )
-            print(f"{target_label(name, variant):<40} {state}")
+            print(
+                f"{target_label(name, variant):<40} "
+                f"{_listing_state(manifest, name, variant)}"
+            )
         return 0
 
     failures = 0
@@ -334,44 +386,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     checked = len(targets) - skipped - failures
     print()
     print(f"cold fetch: {checked} verified, {skipped} skipped, {failures} failed")
-    if failures:
-        print(
-            "\nA failure here means a stranger cannot obtain this dataset. Do NOT\n"
-            "remove its in-repo payload — 13 demos would silently start refitting\n"
-            "instead of reporting an error.",
-            file=sys.stderr,
-        )
-        return 1
-
-    # A tolerant skip branch is the same fails-open shape as a bad guard: it turns
-    # "we could not check" into a clean exit, and the caller reads exit 0 as
-    # permission to delete the only copy. So a skip is a pass only when nobody
-    # asked for that dataset by name.
-    if skipped and explicit and not args.allow_skip:
-        print(
-            f"\nerror: {skipped} explicitly requested dataset(s) were NOT verified "
-            "— you asked for them by name and got no answer. This is not a pass. "
-            "Pass --allow-skip only when exploring, never when deciding whether a "
-            "payload can be removed.",
-            file=sys.stderr,
-        )
-        return 1
-
-    if args.require_verified is not None and checked < args.require_verified:
-        print(
-            f"\nerror: {checked} dataset(s) verified, --require-verified "
-            f"{args.require_verified} demanded.",
-            file=sys.stderr,
-        )
-        return 1
-
-    if checked == 0:
-        print(
-            "NOTE: nothing was actually verified — every target was skipped. "
-            "That is expected while no record is published, and is NOT evidence "
-            "any payload is safe to remove."
-        )
-    return 0
+    return _result_exit_code(
+        failures=failures,
+        skipped=skipped,
+        checked=checked,
+        explicit=explicit,
+        allow_skip=args.allow_skip,
+        require_verified=args.require_verified,
+    )
 
 
 if __name__ == "__main__":
