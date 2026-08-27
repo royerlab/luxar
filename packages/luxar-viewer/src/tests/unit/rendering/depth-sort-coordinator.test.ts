@@ -1264,10 +1264,11 @@ describe('depth-sort coordinator', () => {
 
   it('warns once when a valid BSP tree is rejected only by display-axis mapping', async () => {
     const coord = await loadCoordinator();
+    let displayedDims = [0, 1, 2];
     coord.configureDepthSort({
       getCamera: () => cameraAt(0, 0, -1000),
       requestRender: vi.fn(),
-      getDisplayDims: () => [1, 2, 3],
+      getDisplayDims: () => displayedDims,
     });
     const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
     const wrapper = makePartitionWrapper(
@@ -1281,9 +1282,14 @@ describe('depth-sort coordinator', () => {
     await flush();
 
     coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
 
     const { log } = await import('../../../utils/log');
+    expect(log.warning).not.toHaveBeenCalled();
+
+    displayedDims = [1, 2, 3];
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+
     expect(log.warning).toHaveBeenCalledTimes(1);
     expect(log.warning).toHaveBeenCalledWith(
       'RENDERER',

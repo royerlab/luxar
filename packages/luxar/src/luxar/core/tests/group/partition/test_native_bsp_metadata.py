@@ -171,7 +171,9 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
     output = tmp_path / "hidden-first-partitions.luxar.zarr"
     with LuxarZarrCompiler(output) as compiler:
         scene = compiler.create_scene(dimensions=dimensions)
-        scene.add_points("points", centers, partition={"max_elements": 1})
+        scene.add_points(
+            "points", centers, partition={"max_elements": 1}, extend_to_all=[]
+        )
         scene.add_lines(
             "lines",
             line_vertices,
@@ -179,14 +181,22 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
             indices=line_indices,
             line_type="indexed",
             partition={"max_elements": 2},
+            extend_to_all=[],
         )
-        scene.add_mesh("mesh", mesh_vertices, mesh_faces, partition={"max_elements": 1})
+        scene.add_mesh(
+            "mesh",
+            mesh_vertices,
+            mesh_faces,
+            partition={"max_elements": 1},
+            extend_to_all=[],
+        )
         scene.add_gsplats(
             "gsplats",
             centers=centers,
             amplitudes=np.ones(centers.shape[0], dtype=np.float32),
             cholesky_factors=np.array([1, 0, 1, 0, 0, 1, 0, 0, 0, 1], dtype=np.float32),
             partition={"max_elements": 1},
+            extend_to_all=[],
         )
 
     output_text = capsys.readouterr().out
@@ -194,6 +204,51 @@ def test_native_partition_adders_warn_when_bsp_columns_are_not_displayed(
         assert f"partition '{name}'" in output_text
     assert output_text.count("viewer will discard this bsp_tree") == 4
     assert "displayed dimensions first" in output_text
+
+
+def test_partition_axis_warning_has_no_false_positive(tmp_path, capsys) -> None:
+    """Displayed-first and unsplit partitions do not emit the diagnostic."""
+    positions = np.array(
+        [
+            [-6.0, 0.0, 0.0, 0.0],
+            [-2.0, 0.0, 0.0, 1.0],
+            [2.0, 0.0, 0.0, 0.0],
+            [6.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    displayed_first = Dimensions(
+        [
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+            Dimension("state", display=False, categories=["a", "b"]),
+        ]
+    )
+    hidden_first = Dimensions(
+        [
+            Dimension("state", display=False, categories=["a", "b"]),
+            Dimension("x", display=True),
+            Dimension("y", display=True),
+            Dimension("z", display=True),
+        ]
+    )
+
+    with LuxarZarrCompiler(tmp_path / "displayed-first.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=displayed_first)
+        scene.add_points(
+            "split", positions, partition={"max_elements": 1}, extend_to_all=[]
+        )
+    with LuxarZarrCompiler(tmp_path / "unsplit.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=hidden_first)
+        scene.add_points(
+            "unsplit",
+            positions[:, [3, 0, 1, 2]],
+            partition={"max_elements": 10},
+            extend_to_all=[],
+        )
+
+    assert "viewer will discard this bsp_tree" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("geometry", ["points", "gsplats"])

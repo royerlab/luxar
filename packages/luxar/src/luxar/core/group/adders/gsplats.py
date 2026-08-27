@@ -181,7 +181,6 @@ def add_gsplats_impl(
                 bsp_leaf_parts,
                 resolve_partition_spec,
                 spatial_bsp_tree,
-                warn_if_partition_axes_not_displayed,
                 warn_if_oversized_single_part,
             )
 
@@ -199,9 +198,6 @@ def add_gsplats_impl(
                 len(parts), int(parts[0].size) if parts else 0, max_elements, name
             )
             if len(parts) > 1:
-                warn_if_partition_axes_not_displayed(
-                    ctr_arr.shape[1], scene.dimensions.displayed, name
-                )
                 preflight_extend_to_all(scene, extend_to_all, ctr_arr, "splats")
                 return add_gsplats_partition_wrapper_impl(
                     group,
@@ -327,6 +323,12 @@ def add_gsplats_partition_wrapper_impl(
         keys=keys,
     )
     uniform_color = is_broadcast_color(colors)
+
+    from ..partition import warn_if_partition_axes_not_displayed
+
+    warn_if_partition_axes_not_displayed(
+        ctr_arr.shape[1], group._find_scene().dimensions.displayed, name
+    )
 
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
