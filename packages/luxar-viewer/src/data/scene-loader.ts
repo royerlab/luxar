@@ -253,6 +253,8 @@ export class SceneLoader {
   // Serialized update queue: prevents concurrent updateView calls from corrupting shared buffers
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
+  // Terminal for this loader: loadScene is one-shot, and dataset switches create
+  // a fresh SceneLoader through SceneLoaderManager.createLoaderAsync.
   private _archiveFault: ArchiveFaultError | null = null;
   /**
    * True for the duration of a progressive-LOD refinement run
