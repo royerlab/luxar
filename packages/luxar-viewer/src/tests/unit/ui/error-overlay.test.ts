@@ -33,6 +33,15 @@ afterEach(() => {
 });
 
 describe('showError - ARIA Attributes', () => {
+  it('keeps non-auto-dismissing errors visible until explicitly cleared', () => {
+    showError('Fatal startup error', undefined, undefined, { autoDismiss: false });
+
+    vi.advanceTimersByTime(60_000);
+    expect(document.getElementById('luxar-error-message-text')?.textContent).toBe(
+      'Fatal startup error'
+    );
+  });
+
   it('should have proper ARIA attributes for alertdialog', () => {
     showError('Test error message');
     const errorDialog = document.getElementById('luxar-error-message');

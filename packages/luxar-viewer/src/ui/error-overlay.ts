@@ -20,6 +20,10 @@ export interface ErrorShortcutActions {
   help: string;
 }
 
+export interface ErrorDisplayOptions {
+  autoDismiss?: boolean;
+}
+
 /**
  * Warning-triangle glyph in the rail icon contract (24×24, geometry-only,
  * painted by CSS via currentColor stroke) — replaces the ⚠️ emoji, which
@@ -67,11 +71,14 @@ function releaseActiveTrap(): void {
  * @param shortcutForAction Optional live shortcut-label lookup.
  * @param shortcutActions Action ids to resolve. Authored labels are used when
  * input has not been initialized yet or an action is unbound.
+ * @param options Display behavior. Set `autoDismiss` to false for fatal errors
+ * that must remain visible until the user dismisses them.
  */
 export function showError(
   message: string,
   shortcutForAction?: ShortcutForAction,
-  shortcutActions?: ErrorShortcutActions
+  shortcutActions?: ErrorShortcutActions,
+  options: ErrorDisplayOptions = {}
 ) {
   // Remove any existing error messages first — and cancel the timer
   // + release the focus trap that the previous showError() scheduled
@@ -188,12 +195,14 @@ export function showError(
   // Auto-dismiss after configured timeout. Timer id is stored at module
   // scope so dismissError()/clearError()/a replacement showError() can
   // cancel it (audit G17 — was a real timer leak).
-  autoDismissTimerId = setTimeout(() => {
-    autoDismissTimerId = null;
-    if (errorDiv.parentNode) {
-      dismissError();
-    }
-  }, UI_CONFIG.timings.errorAutoDismissMs);
+  if (options.autoDismiss !== false) {
+    autoDismissTimerId = setTimeout(() => {
+      autoDismissTimerId = null;
+      if (errorDiv.parentNode) {
+        dismissError();
+      }
+    }, UI_CONFIG.timings.errorAutoDismissMs);
+  }
 
   getViewerContainer().appendChild(errorDiv);
 
