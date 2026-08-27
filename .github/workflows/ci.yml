@@ -62,10 +62,12 @@ concurrency:
   # scheduled run executes the full suite itself -- but it still leaves "did
   # every required job pass today?" unanswerable at a glance.
   #
-  # Nothing else changes -- PR runs already carry `refs/pull/N/merge` and so
-  # were never in the same group as a push, and two runs of the same PR still
-  # coalesce (same event, same ref).
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  # Fresh runs all have attempt 1, so PR and push runs still coalesce by event
+  # and ref exactly as before. Any rerun gets a distinct attempt number, so a
+  # newer fresh run does not cancel it (including superseded PR reruns).
+  # Neither rerun path restarts queue-watchdog, so an obsidian-routed
+  # job whose runner disappears can remain queued until GitHub's 24-hour limit.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
 # Least privilege: these jobs only check out and test. Override per-job if a
@@ -158,13 +160,14 @@ jobs:
             # CLAUDE.md and visualization-skill projections checked by
             # sync_demo_counts.py. The Cholesky documentation guard reads that same
             # CLAUDE.md, all three skill pages and GSPLATS_DIMENSION_MAPPING.md.
-            # #2170 tracks deriving this hand-maintained input inventory. Markdown
-            # alone runs only docs-quality, so these need explicit Python ownership.
+            # GATE_INPUTS in test_ci_diff_classifier.py is the declaration checked
+            # against this ERE. Markdown alone runs only docs-quality, so these need
+            # explicit Python ownership.
             # Python contract tests also parse a narrow set of viewer TypeScript
-            # sources for FOV/blending defaults, texture and LOD limits, query and
-            # exposure thresholds, and the shared fixture-staleness exit code.
-            # Name those files, not whole viewer subtrees: unrelated viewer edits
-            # should remain TypeScript-only and avoid the Python matrix.
+            # sources through viewer_source(); that same classifier test scans the
+            # literal calls and requires a GATE_INPUTS row for each. Name those files,
+            # not whole viewer subtrees: unrelated viewer edits should remain
+            # TypeScript-only and avoid the Python matrix.
             # test_docs_workflow.py also parses docs.yml and derives the published
             # LFS candidate set from .gitattributes, so both are Python gate inputs.
             # external-reference-audits.yml is one too: its schedule, permissions
@@ -1052,6 +1055,87 @@ jobs:
           find dist/assets -maxdepth 1 -type f -name 'sort-worker-*.js' -print -quit | grep -q . \
             || { echo "::error::viewer dist missing the depth-sort worker"; exit 1; }
           echo "Wheel viewer application and critical assets are present."
+
+  # A scheduled run can put fresh successful checks on the same SHA as an older
+  # cancelled push run, but branch protection's rollup can retain the cancelled
+  # duplicate for each required context. Once this run has proved the five
+  # protected contexts green, rerun the cancelled required jobs from that push
+  # so the push suite itself converges to the verdict branch protection reads.
+  repair-cancelled-push-checks:
+    needs:
+      [python-tests, typescript-tests, release-readiness, wheel-viewer, docs-quality]
+    if: ${{ github.event_name == 'schedule' && always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: Rerun cancelled required push jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          required=(
+            "python-tests (3.12)"
+            "typescript-tests"
+            "release-readiness"
+            "wheel-viewer"
+            "docs-quality"
+          )
+          current_jobs=$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100")
+          for context in "${required[@]}"; do
+            conclusion=$(jq -r --arg context "$context" \
+              '[.[] | .jobs[] | select(.name == $context)] | max_by(.id).conclusion // "absent"' \
+              <<<"$current_jobs")
+            if [ "$conclusion" != "success" ]; then
+              echo "Required scheduled context is not green: $context=$conclusion"
+              exit 0
+            fi
+          done
+
+          push_run=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${GITHUB_SHA}&event=push&status=completed&per_page=100" \
+            --jq '[.workflow_runs[] | select(.name == "CI")] | max_by(.id).id // empty')
+          if [ -z "$push_run" ]; then
+            echo "No push CI run found for ${GITHUB_SHA}"
+            exit 0
+          fi
+
+          push_jobs=$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/jobs?filter=latest&per_page=100")
+          required_json=$(printf '%s\n' "${required[@]}" \
+            | jq -Rsc 'split("\n") | map(select(length > 0))')
+          cancelled_jobs=$(jq -r --argjson required "$required_json" '
+            [.[] | .jobs[]]
+            | group_by(.name)[]
+            | max_by(.id)
+            | select(
+                .conclusion == "cancelled"
+                and (.name | IN($required[]))
+              )
+            | [.id, .name]
+            | @tsv
+          ' <<<"$push_jobs")
+          if [ -z "$cancelled_jobs" ]; then
+            echo "No cancelled required push jobs found"
+            exit 0
+          fi
+
+          cancelled_count=$(wc -l <<<"$cancelled_jobs")
+          if [ "$cancelled_count" -gt 1 ]; then
+            echo "Rerunning unsuccessful push jobs after finding $cancelled_count cancelled required jobs"
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/rerun-failed-jobs" >/dev/null \
+              || echo "::warning::rerun rejected for push run $push_run ($cancelled_count cancelled required jobs)"
+            exit 0
+          fi
+
+          IFS=$'\t' read -r job_id job_name <<<"$cancelled_jobs"
+          echo "Rerunning cancelled push job: $job_name ($job_id)"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/jobs/$job_id/rerun" >/dev/null \
+            || echo "::warning::rerun rejected for $job_name ($job_id)"
 
   go-launcher:
     needs: changes

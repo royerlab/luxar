@@ -11,6 +11,10 @@ from arbol import aprint
 
 from luxar.gsplats.fit_basis import MISSING_BASIS_HINT, reference_on_fit_basis
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.io.save_gsplats import _FITTING_INFO_KEYS
+from luxar.io._compiler.gsplat_tree import json_safe_value
+
+_FIT_REFERENCE_KINDS = frozenset(("acquisition", "preprocessed", "synthetic"))
 
 #: Upper bound, in GiB, on the memory a merged-quality score may hold resident.
 #: Above it the score is SKIPPED — and says so out loud, because an archive that
@@ -102,6 +106,56 @@ def _quality_budget_gb() -> float:
 #: every shape: ``luxar gsplat compare`` reads the written archive whatever tree
 #: it is, ``kind=partition`` included (#1978), so nothing needs flattening first.
 _COMPARE_RECOURSE = "Run `luxar gsplat compare` on the written archive instead."
+
+
+def collect_part_provenance(
+    datasets: Sequence[GSplatData],
+    *,
+    values: Sequence[float],
+    fit_reference: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Collect JSON-safe per-fit stamps for a caller-defined stacked axis.
+
+    The caller supplies the reference classification because only it knows what
+    each fit was scored against. The returned records describe the component
+    fits; they are not a scalar quality claim for the transformed union.
+    """
+    if len(values) != len(datasets):
+        raise ValueError(
+            f"Number of values ({len(values)}) must match number of datasets "
+            f"({len(datasets)})"
+        )
+    kind = fit_reference.get("kind")
+    if kind not in _FIT_REFERENCE_KINDS:
+        allowed = ", ".join(sorted(_FIT_REFERENCE_KINDS))
+        raise ValueError(f"fit_reference.kind must be one of: {allowed}")
+    note = fit_reference.get("note")
+    if note is not None and (not isinstance(note, str) or not note.strip()):
+        raise ValueError("fit_reference.note must be a non-empty string when provided")
+    safe_reference = {"kind": kind}
+    if note is not None:
+        safe_reference["note"] = note
+
+    records: list[dict[str, Any]] = []
+    for coordinate, dataset in zip(values, datasets):
+        ok, safe_coordinate = json_safe_value(coordinate)
+        if not ok or not isinstance(safe_coordinate, (int, float)):
+            raise ValueError(f"stack coordinate {coordinate!r} is not a finite number")
+        fitting: dict[str, Any] = {}
+        for key in _FITTING_INFO_KEYS:
+            if key not in dataset.stats or key == "part_provenance":
+                continue
+            ok, safe_value = json_safe_value(dataset.stats[key])
+            if ok:
+                fitting[key] = safe_value
+        records.append(
+            {
+                "coordinate": safe_coordinate,
+                "fit_reference": dict(safe_reference),
+                "fitting": fitting,
+            }
+        )
+    return records
 
 
 def announce_unscored_merge(reason: str) -> None:
@@ -286,6 +340,7 @@ def stamp_merged_quality(
 
 __all__ = [
     "announce_unscored_merge",
+    "collect_part_provenance",
     "resolve_merged_reference",
     "stamp_merged_quality",
 ]
