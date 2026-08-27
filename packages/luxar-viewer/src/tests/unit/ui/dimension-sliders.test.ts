@@ -149,19 +149,24 @@ describe('DimensionSliders - keyboard selection indicator', () => {
    * description.
    */
   it.each([
-    { label: 'no description key', description: undefined, title: 'Frame', underlined: false },
-    { label: 'an empty description', description: '', title: 'Frame', underlined: false },
+    { label: 'no description key', descriptionMetadata: {}, title: 'Frame', underlined: false },
+    {
+      label: 'an empty description',
+      descriptionMetadata: { description: '' },
+      title: 'Frame',
+      underlined: false,
+    },
     {
       label: 'an authored description',
-      description: 'Acquisition frame index',
+      descriptionMetadata: { description: 'Acquisition frame index' },
       title: 'Acquisition frame index',
       underlined: true,
     },
-  ])('with $label the name reads title "$title"', ({ description, title, underlined }) => {
+  ])('with $label the name reads title "$title"', ({ descriptionMetadata, title, underlined }) => {
     const described: SimpleDims = {
       ...dims,
       metadata: dims.metadata!.map((meta, index) =>
-        index === 3 ? { ...meta, description } : meta
+        index === 3 ? { ...meta, ...descriptionMetadata } : meta
       ),
     };
     const sliders = new DimensionSliders({

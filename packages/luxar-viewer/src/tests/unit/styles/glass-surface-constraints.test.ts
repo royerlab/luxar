@@ -204,7 +204,7 @@ describe('dimension-sliders.css — the row survives a long dimension NAME (foll
     // panel at left -6px / right 386px in a 380px window — off BOTH edges, and
     // unreachable because the panel is `position: fixed`.
     const root = ruleBody(css, '.luxar-dimension-sliders');
-    expect(root).toMatch(/min-width:\s*min\([^;]*100vw[^;]*\)/);
+    expect(root).toMatch(/min-width:\s*min\([^;]*100vw[^;]*var\(--luxar-spacing-10\)[^;]*\)/);
     expect(root).not.toMatch(/min-width:\s*\d+px/);
   });
 
