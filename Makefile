@@ -894,6 +894,11 @@ check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI 
 check-external-references:  ## Run all network-backed reference audits (report-only)
 	$(HATCH) run python scripts/run_external_reference_audits.py
 
+check-gallery-staleness:  ## Report README gallery tiles older than their render inputs
+	@# Deliberately report-only: stale media are review work, not a CI failure.
+	@# Git blame/log must see full history, so this remains an opt-in local check.
+	$(HATCH) run python scripts/gallery/check_tile_staleness.py
+
 clean-docs:  ## Clean built documentation
 	@echo "🧹 Cleaning documentation build artifacts..."
 	rm -rf docs/_build/
