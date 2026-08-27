@@ -78,21 +78,27 @@ def _encode_ktx2(
     executable = shutil.which("toktx")
     if executable is None:
         raise RuntimeError(
-            "texture_encoding='ktx2' requires the optional KTX authoring tools: "
-            "install Pillow with `pip install 'luxar[ktx2]'` and install the "
-            "Khronos `toktx` executable, or use texture_encoding='raw'/'jpeg'"
+            "texture_encoding='ktx2' requires the Khronos `toktx` executable; "
+            "install KTX-Software or use texture_encoding='raw'/'jpeg'"
         )
-    try:
-        from PIL import Image
-    except ImportError as exc:
-        raise RuntimeError(
-            "texture_encoding='ktx2' requires Pillow; install `luxar[ktx2]`"
-        ) from exc
 
     with tempfile.TemporaryDirectory(prefix="luxar-ktx2-") as tmp:
-        source = Path(tmp) / "source.png"
+        pixels = np.asarray(texture)
+        source = Path(tmp) / ("source.ppm" if pixels.shape[2] == 3 else "source.pam")
         output = Path(tmp) / "texture.ktx2"
-        Image.fromarray(np.asarray(texture)).save(source)
+        with source.open("wb") as stream:
+            if pixels.shape[2] == 3:
+                stream.write(
+                    f"P6\n{pixels.shape[1]} {pixels.shape[0]}\n255\n".encode("ascii")
+                )
+            else:
+                stream.write(
+                    (
+                        f"P7\nWIDTH {pixels.shape[1]}\nHEIGHT {pixels.shape[0]}\n"
+                        "DEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n"
+                    ).encode("ascii")
+                )
+            pixels.tofile(stream)
         command = [executable, "--t2", "--genmipmap"]
         if mode == "uastc":
             command += [
@@ -152,7 +158,14 @@ def write_texture(
     from ....validation.base import validate_texture_for_writing
 
     res_h, res_w, res_c = validate_texture_for_writing(
-        texture, encoding, width, height, channels, color_space
+        texture,
+        encoding,
+        width,
+        height,
+        channels,
+        color_space,
+        ktx2_mode=ktx2_mode,
+        ktx2_quality=ktx2_quality,
     )
     arr = np.asarray(texture)
 

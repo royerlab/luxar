@@ -3309,21 +3309,13 @@ def test_ktx2_encoder_defaults_to_uastc_and_preserves_rgba_input(
 
     seen = {}
 
-    class FakeImage:
-        def save(self, path):
-            Path(path).write_bytes(b"png")
-
-    def fake_fromarray(array):
-        seen["array"] = array.copy()
-        return FakeImage()
-
     def fake_run(command, **kwargs):
         seen["command"] = command
+        seen["source"] = Path(command[-1]).read_bytes()
         Path(command[-2]).write_bytes(b"ktx2")
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
-    monkeypatch.setattr("PIL.Image.fromarray", fake_fromarray)
     monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
     rgba = np.zeros((2, 3, 4), dtype=np.uint8)
     rgba[..., 3] = [[0, 64, 255], [255, 64, 0]]
@@ -3339,14 +3331,18 @@ def test_ktx2_encoder_defaults_to_uastc_and_preserves_rgba_input(
         "--zcmp",
     ]
     assert seen["command"][8:11] == ["3", "--assign_oetf", "srgb"]
-    assert np.array_equal(seen["array"][..., 3], rgba[..., 3])
+    header, pixels = seen["source"].split(b"ENDHDR\n", 1)
+    assert b"TUPLTYPE RGB_ALPHA" in header
+    assert np.array_equal(
+        np.frombuffer(pixels, dtype=np.uint8).reshape(rgba.shape), rgba
+    )
 
 
 def test_ktx2_encoder_missing_binary_has_actionable_fallback(monkeypatch) -> None:
     from luxar.io._compiler.dataset_writers import texture as texture_writer
 
     monkeypatch.setattr(texture_writer.shutil, "which", lambda name: None)
-    with pytest.raises(RuntimeError, match=r"luxar\[ktx2\].*toktx.*raw.*jpeg"):
+    with pytest.raises(RuntimeError, match=r"toktx.*raw.*jpeg"):
         texture_writer._encode_ktx2(
             np.zeros((2, 2, 3), dtype=np.uint8), "uastc", None, "srgb"
         )

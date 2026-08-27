@@ -229,6 +229,8 @@ def validate_mesh_arrays(
     texture_height: Optional[int] = None,
     texture_channels: Optional[int] = None,
     texture_color_space: str = "srgb",
+    texture_ktx2_mode: str = "uastc",
+    texture_ktx2_quality: Optional[int] = None,
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Any = None,
@@ -326,8 +328,11 @@ def validate_mesh_arrays(
             texture_height,
             texture_channels,
             texture_color_space,
+            ktx2_mode=texture_ktx2_mode,
+            ktx2_quality=texture_ktx2_quality,
         )
         if texture_encoding == "ktx2":
+            # Same 4/3 mip-chain charge as validation/base.py and viewer preflight.ts.
             texture_decoded_bytes = (texture_width * texture_height * 4 + 2) // 3
         else:
             texture_decoded_bytes = (
@@ -424,6 +429,8 @@ def write_mesh(
         texture_height=texture_height,
         texture_channels=texture_channels,
         texture_color_space=texture_color_space,
+        texture_ktx2_mode=texture_ktx2_mode,
+        texture_ktx2_quality=texture_ktx2_quality,
         shading=shading,
         double_sided=double_sided,
         labels=labels,

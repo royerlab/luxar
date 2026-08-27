@@ -580,6 +580,30 @@ def test_uv_acceptances(uvs, test_id) -> None:
         ),
         (
             lambda: validate_texture_for_writing(
+                np.zeros(16, np.uint8),
+                "webp",
+                2,
+                2,
+                3,
+                ktx2_mode="bogus",
+            ),
+            "KTX2-only options",
+            "ktx2_mode_rejected_for_webp",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros(16, np.uint8),
+                "jpeg",
+                2,
+                2,
+                3,
+                ktx2_quality=2,
+            ),
+            "KTX2-only options",
+            "ktx2_quality_rejected_for_jpeg",
+        ),
+        (
+            lambda: validate_texture_for_writing(
                 np.zeros(0, np.uint8), "jpeg", 2, 2, 3
             ),
             "payload is empty",

@@ -1370,6 +1370,8 @@ def validate_texture_for_writing(
     channels: Optional[int] = None,
     color_space: str = "srgb",
     context: str = "texture",
+    ktx2_mode: str = "uastc",
+    ktx2_quality: Optional[int] = None,
 ) -> Tuple[int, int, int]:
     """Validate a mesh texture payload and resolve its declared dimensions.
 
@@ -1419,6 +1421,12 @@ def validate_texture_for_writing(
             "Use 'raw' for an (H, W, C) array (the only encoding that carries "
             "HDR), 'ktx2' for uint8 RGB/RGBA input, or 'png'/'webp'/'jpeg' for "
             "encoded bytes",
+        )
+    if encoding != "ktx2" and (ktx2_mode != "uastc" or ktx2_quality is not None):
+        raise ValidationError(
+            f"{context}: texture_ktx2_mode/texture_ktx2_quality require "
+            "texture_encoding='ktx2'",
+            "Remove the KTX2-only options or select texture_encoding='ktx2'",
         )
 
     arr = np.asarray(texture)
@@ -1478,7 +1486,8 @@ def validate_texture_for_writing(
     # A texture can sit inside the per-axis limit and still be unloadable. An
     # encoded payload decodes to a 4-channel bitmap regardless of what it stored,
     # so the charge is w * h * 4; a raw one decodes to its own value count at
-    # 4 bytes each.
+    # 4 bytes each. Keep the KTX2 formula aligned with viewer preflight and the
+    # mesh writer's aggregate-budget calculation.
     if encoding == "ktx2":
         decoded_bytes = (res_w * res_h * 4 + 2) // 3
     else:

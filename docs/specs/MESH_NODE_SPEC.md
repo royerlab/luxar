@@ -146,7 +146,7 @@ to `loader_types` (the Phase-3 switch-on, #1241) re-ran `gen-contract` for the v
 | `colors` | uint8/uint16/float32 | `(V, 3\|4)` | no | color helpers | RGB or RGBA; the 4th component is a **load-bearing** per-vertex opacity — see §6.2 |
 | `scalars` | float32/float16/uint8 | `(V,)` | no | scalar helpers | Colormap lookup |
 | `uvs` | float32 | `(V, 2)` | no | `COORDINATE` | Required iff `texture`; values outside `[0, 1]` are legal |
-| `texture` | raw numeric or encoded uint8 bytes | `(H, W, C)` or `(B,)` | no | `COLOR` for raw | Per-node base colour; mutually exclusive with other base-colour sources |
+| `texture` | raw numeric or encoded uint8 bytes | `(H, W, C)` for `raw`; `(B,)` for codec payloads including `ktx2` | no | `COLOR` for raw | Per-node base colour; mutually exclusive with other base-colour sources |
 | `label_offsets`/`label_bytes` | — | CSR | no | — | Per-vertex hover tooltips |
 | `image_label_*` | — | CSR | no | — | Per-vertex hover thumbnails |
 
@@ -154,6 +154,12 @@ to `loader_types` (the Phase-3 switch-on, #1241) re-ran `gen-contract` for the v
 reason `Lines.segments` does: the loader reads it as raw chunked zarr and does not resolve `array_ref`,
 so dedup would silently drop geometry for a byte-identical sibling, and LUT encoding of grid-snapped
 values would decode as garbage topology.
+
+KTX2 is authored from uint8 `(H, W, 3|4)` pixels but stored as an opaque `(B,)`
+container. Admission charges `ceil(width * height * 4 / 3)` bytes for the native
+compressed surface plus its full mip tail. A renderer with no native ASTC,
+ETC1/2, S3TC/BC or PVRTC target rejects the node; an uncompressed RGBA8 transcode
+fallback is not permitted because it would exceed that device-independent charge.
 
 **Winding convention:** faces are wound counter-clockwise as seen with the mesh's authored spatial
 triple in ascending index order (front-facing under `FrontSide`, §6.1). For a 3D mesh that frame is

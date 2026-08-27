@@ -859,7 +859,7 @@ def add_textured_globe(
     n_lat: int = 256,
     tiles: int = 1,
     fmt: str = "webp",
-    quality: int = 90,
+    quality: Optional[int] = None,
     shading: str = "smooth",
     relief: Any = 0.0,
     **mesh_kwargs: Any,
@@ -915,8 +915,8 @@ def add_textured_globe(
         tiles: Number of longitude bands. 1 = a single node.
         fmt: Texture codec. ``ktx2`` passes RGB tiles to the mesh writer for
             optional ``toktx`` authoring; other values use :func:`encode_texture`.
-        quality: Codec quality. KTX2 uses the UASTC 0-4 scale; other codecs use
-            their existing image-codec scale.
+        quality: Codec quality. ``None`` selects 2 for KTX2/UASTC and 90 for
+            bitmap codecs; explicit KTX2 values use the UASTC 0-4 scale.
         shading: ``smooth`` | ``flat`` | ``none``.
         relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
         **mesh_kwargs: Forwarded to ``add_mesh`` (blending_mode, opacity, ...).
@@ -940,6 +940,13 @@ def add_textured_globe(
     tile_src_w = src_w // tiles
     lon_per_tile = 360.0 / tiles
     relief_grid = np.asarray(relief, dtype=np.float32)
+    resolved_quality = (
+        2
+        if quality is None and fmt.lower() == "ktx2"
+        else 90
+        if quality is None
+        else quality
+    )
 
     # Displaced terrain needs TRUE surface normals, and they must be computed on
     # the WHOLE sphere before it is sliced. Computing them per band would leave
@@ -1021,7 +1028,7 @@ def add_textured_globe(
             th, tw, tc = payload.shape
         else:
             payload, encoding, tw, th, tc = encode_texture(
-                slice_rgb, fmt=fmt, quality=quality, channels=3
+                slice_rgb, fmt=fmt, quality=resolved_quality, channels=3
             )
         target.add_mesh(
             f"part_{t}" if tiles > 1 else name,
@@ -1033,7 +1040,9 @@ def add_textured_globe(
             texture_width=tw,
             texture_height=th,
             texture_channels=tc,
-            **({"texture_ktx2_quality": quality} if encoding == "ktx2" else {}),
+            **(
+                {"texture_ktx2_quality": resolved_quality} if encoding == "ktx2" else {}
+            ),
             normals=normals,
             normal_dims=[0, 1, 2],
             shading=shading,
@@ -1307,8 +1316,8 @@ def build_earth(
     n_lat: int = 256,
     texture_width: int = 16384,
     tiles: int = 2,
-    fmt: str = "ktx2",
-    quality: int = 2,
+    fmt: str = "webp",
+    quality: Optional[int] = None,
     shading: str = "smooth",
     relief: Any = 0.0,
     basemap: Optional[np.ndarray] = None,

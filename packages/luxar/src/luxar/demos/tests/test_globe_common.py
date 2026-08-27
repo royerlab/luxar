@@ -310,19 +310,54 @@ def test_globe_ktx2_rescales_float_pixels() -> None:
     assert np.all(texture == 127)
 
 
-def test_shared_earth_builder_defaults_to_ktx2_uastc() -> None:
-    """All four Earth demos inherit the compressed basemap path by default."""
+def test_shared_earth_builder_keeps_portable_webp_defaults() -> None:
+    """Gallery generation must not require a non-Python authoring binary."""
     import inspect
 
     signature = inspect.signature(_globe_common.build_earth)
-    assert signature.parameters["fmt"].default == "ktx2"
-    assert signature.parameters["quality"].default == 2
+    assert signature.parameters["fmt"].default == "webp"
+    assert signature.parameters["quality"].default is None
 
     earthquake_source = (
         Path(_globe_common.__file__).parent / "demo_earthquakes_3d.py"
     ).read_text()
-    assert 'GLOBE_TEXTURE_FORMAT = "ktx2"' in earthquake_source
-    assert "GLOBE_TEXTURE_QUALITY = 2" in earthquake_source
+    assert 'GLOBE_TEXTURE_FORMAT = "webp"' in earthquake_source
+    assert "GLOBE_TEXTURE_QUALITY = 90" in earthquake_source
+
+
+@pytest.mark.parametrize(("fmt", "expected_quality"), [("webp", 90), ("ktx2", 2)])
+def test_globe_quality_default_follows_the_selected_format(
+    monkeypatch: pytest.MonkeyPatch, fmt: str, expected_quality: int
+) -> None:
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    seen: dict[str, int] = {}
+
+    def fake_encode(image: np.ndarray, **kwargs: object):
+        seen["quality"] = int(kwargs["quality"])
+        return np.array([1], dtype=np.uint8), "webp", image.shape[1], image.shape[0], 3
+
+    monkeypatch.setattr(_globe_common, "encode_texture", fake_encode)
+    target = Target()
+    add_textured_globe(
+        target,
+        "earth",
+        basemap=np.zeros((2, 4, 3), dtype=np.uint8),
+        radius=1.0,
+        n_lon=4,
+        n_lat=2,
+        fmt=fmt,
+    )
+
+    if fmt == "ktx2":
+        assert target.meshes[0]["texture_ktx2_quality"] == expected_quality
+    else:
+        assert seen["quality"] == expected_quality
 
 
 def test_non_integral_relief_resampling_area_averages_at_demo_resolution() -> None:
