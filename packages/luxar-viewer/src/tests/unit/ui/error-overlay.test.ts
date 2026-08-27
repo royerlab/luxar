@@ -32,7 +32,7 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('showError - ARIA Attributes', () => {
+describe('showError - auto-dismiss', () => {
   it('auto-dismisses transient errors by default', () => {
     showError('Transient error');
 
@@ -48,7 +48,9 @@ describe('showError - ARIA Attributes', () => {
       'Fatal startup error'
     );
   });
+});
 
+describe('showError - ARIA Attributes', () => {
   it('should have proper ARIA attributes for alertdialog', () => {
     showError('Test error message');
     const errorDialog = document.getElementById('luxar-error-message');
