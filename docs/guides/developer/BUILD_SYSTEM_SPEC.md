@@ -974,21 +974,27 @@ documentation gate as well.
 GitHub branch protection does not necessarily replace a cancelled push check with a
 later successful scheduled check of the same name on the same SHA. After a scheduled
 run has completed the five protected contexts successfully,
-`repair-cancelled-push-checks` inspects the completed push run for that SHA and reruns
-cancelled jobs for any of those five protected contexts. A single cancelled context uses
-a job-level rerun. Two or more use one failed-jobs rerun because GitHub returns `403`
+`repair-cancelled-push-checks` enumerates every commit still in `main..GITHUB_SHA`,
+newest first, and inspects each completed push run. This covers commits skipped by the
+three-hour schedule instead of repairing only the scheduled tip. Cancelled jobs for any
+of the five protected contexts are rerun. A single cancelled context uses a job-level
+rerun. Two or more use one failed-jobs rerun because GitHub returns `403`
 once the first job-level rerun has moved the run into a new attempt; the run-level path
 also re-enqueues cancelled or failed non-required matrix legs such as Python 3.13/3.14.
 A schedule whose own protected contexts are not all green performs no repair, and a
 rejected rerun is reported as a warning. A failed repaired job is terminal for that SHA
 unless it is included in the multi-job failed-jobs rerun; otherwise recovery requires a
-manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
-later merge cannot cancel the repaired attempt. That exemption applies to ordinary PR
-reruns too, and neither rerun path restarts `queue-watchdog`. An obsidian-routed job
+manual rerun. Fresh runs keep coalescing by event and ref, while reruns use their
+original run id in the concurrency key. A later merge therefore cannot cancel a
+repaired attempt, and repairs for different backlog commits cannot cancel each other;
+a later attempt of the same original run still supersedes its earlier attempt. That
+exemption applies to ordinary PR reruns too, and neither rerun path restarts
+`queue-watchdog`. An obsidian-routed job
 left undispatched after its runners disappear can therefore remain queued until
 GitHub's 24-hour ceiling; one dispatched before its slot recycles can instead reach its
 timeout before any step starts or runner name is recorded. The repair job has only
-`actions: write` permission and runs on GitHub-hosted Linux; recovered long legs reuse
+`actions: write` and `contents: read` permissions and runs on GitHub-hosted Linux;
+recovered long legs reuse
 their original runner-routing decision and repay work that the scheduled run already
 performed. On the multi-job path, up to four long legs routed to obsidian can therefore
 run alongside the next push run, increasing self-hosted contention. When the original
