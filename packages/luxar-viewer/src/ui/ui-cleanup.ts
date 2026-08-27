@@ -8,6 +8,7 @@
 
 import { hideHelpOverlay } from './help-overlay';
 import { hideSceneIdentityBanner } from './scene-identity-banner';
+import { clearError } from './error-overlay';
 
 /**
  * Remove every helper overlay this folder can leave behind: the loading
@@ -24,10 +25,7 @@ export function cleanupUI() {
     loadingDiv.remove();
   }
 
-  const errorDiv = document.getElementById('luxar-error-message');
-  if (errorDiv) {
-    errorDiv.remove();
-  }
+  clearError();
 
   // hideHelpOverlay handles its own click-listener teardown
   hideHelpOverlay();
