@@ -217,13 +217,6 @@ def _warn_sorted_overlap_clusters(
             "for same-type, same-mode, same-effective-opacity Points, Lines, Mesh, and Gaussian "
             "Splats."
         )
-        expected_displayed_dimensions = tuple(range(len(displayed_dimensions)))
-        if displayed_dimensions != expected_displayed_dimensions:
-            advice.append(
-                f"Displayed dimensions are position columns {displayed_dimensions}, not "
-                f"{expected_displayed_dimensions}. Put the displayed dimensions first to keep "
-                "exact BSP ordering."
-            )
     if has_unmergeable_cluster:
         advice.append(
             "Merging cannot preserve clusters whose geometry types, blending modes, or "

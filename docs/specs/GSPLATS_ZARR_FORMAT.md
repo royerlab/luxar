@@ -387,11 +387,12 @@ recursion), a uniform-tiled fit and the batch-fit streaming merge:
   "right": { "part": 2 } }
 ```
 
-An internal node holds the split `axis` (always a spatial axis `0`/`1`/`2` —
-splits only ever fall on the first three center dims) and `split` coordinate
-(in the centers' own space), with `left` = the side where `coord < split` and
-`right` = `coord >= split`. A leaf holds `{"part": i}`, referencing `part_<i>`
-(the same index as its `child_index`), numbered in left-first DFS order.
+An internal node holds the split `axis` (a position-column index; gsplat
+producers currently split only the first three center dims) and `split`
+coordinate (in the centers' own space), with `left` = the side where
+`coord < split` and `right` = `coord >= split`. A leaf holds `{"part": i}`,
+referencing `part_<i>` (the same index as its `child_index`), numbered in
+left-first DFS order.
 
 Because these are BSP cells, a viewer can order the parts **exactly**
 back-to-front (painter's algorithm, Fuchs–Kedem–Naylor): recurse the far side

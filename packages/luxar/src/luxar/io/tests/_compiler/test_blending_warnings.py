@@ -751,7 +751,7 @@ def test_shared_advice_covers_mergeable_and_unmergeable_clusters(capsys) -> None
     output = capsys.readouterr().out
     assert output.count("overlapping order-dependent nodes") == 2
     assert output.count('partition={"max_elements": N}') == 1
-    assert output.count("Displayed dimensions are position columns") == 1
+    assert "Put the displayed dimensions first" not in output
     assert output.count("Merging cannot preserve this cluster") == 1
     assert output.count("For an emissive medium") == 1
 
@@ -787,7 +787,7 @@ def test_additive_warning_precedes_sorted_overlap_cluster(capsys) -> None:
     assert "overlapping order-dependent nodes" in warning_lines[1]
 
 
-def test_nonstandard_displayed_dimensions_are_named_in_warning(capsys) -> None:
+def test_nonstandard_displayed_dimensions_do_not_add_obsolete_advice(capsys) -> None:
     root = _root(n_dims=4)
     scene_dimensions = root.attrs["scene_dimensions"]
     for index, dimension in enumerate(scene_dimensions["dimensions"]):
@@ -813,10 +813,9 @@ def test_nonstandard_displayed_dimensions_are_named_in_warning(capsys) -> None:
     warn_overlapping_blending(root)
 
     output = capsys.readouterr().out
-    assert (
-        "Displayed dimensions are position columns (1, 2, 3), not (0, 1, 2)" in output
-    )
-    assert "Put the displayed dimensions first to keep exact BSP ordering" in output
+    assert 'partition={"max_elements": N}' in output
+    assert "Displayed dimensions are position columns" not in output
+    assert "Put the displayed dimensions first" not in output
 
 
 def test_two_dimensional_scene_omits_displayed_dimension_caveat(capsys) -> None:

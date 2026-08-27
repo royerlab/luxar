@@ -300,8 +300,7 @@ def serialized_bsp_leaf_cells(
     This is the tile's true boundary, which is NOT the same as the hull of the
     splats it happens to contain: a splat sits somewhere inside its cell, so the
     hull is strictly tighter and using it would crop away signal the tile is
-    responsible for. Only axes below ``min(3, ndim)`` are ever split
-    (:func:`spatial_bsp_tree`), so higher dims come back unbounded.
+    responsible for. Axes not split by the supplied tree come back unbounded.
     """
     cells: Dict[int, List[Tuple[float, float]]] = {}
 
@@ -634,9 +633,8 @@ def _node_separates(
     if "part" in node:
         return True
     axis = int(node.get("axis", -1))
-    # 0/1/2 is what the format admits, and the parts must actually HAVE that
-    # axis — a 2D partition's boxes have two columns, so a tree naming axis 2
-    # describes something other than these parts.
+    # The parts must actually have the named column — a 2D partition's boxes
+    # have two columns, so a tree naming axis 2 describes something else.
     if axis < 0 or (boxes and axis >= len(boxes[0][0])):
         return False
     split = float(node["split"])
@@ -1046,6 +1044,8 @@ def warn_if_partition_axes_not_displayed(
     Call only after a real >1-part tree is committed. The result is exact for
     the display configuration in force at write time; the viewer repeats the
     check because nD navigation can later select a different displayed triple.
+    Changing ``scene.dimensions`` after authoring can likewise invalidate this
+    verdict before the scene is finalized.
     """
     split_columns: set[int] = set()
 
@@ -1212,8 +1212,8 @@ def _polyline_centroids_and_sizes(
     vertices: NDArray,
     polyline_indices: List[NDArray[np.intp]],
     split_axes: Optional[Sequence[int]],
-) -> Tuple[NDArray[np.float64], NDArray[np.intp]]:
-    """Return split coordinates and atomic vertex counts for each polyline."""
+) -> Tuple[NDArray[np.float64], NDArray[np.intp], List[int]]:
+    """Return split coordinates, atomic vertex counts, and resolved axes."""
     n_polylines = len(polyline_indices)
     axes = _resolve_split_axes(vertices, split_axes)
     spatial = vertices[:, axes]
@@ -1224,7 +1224,7 @@ def _polyline_centroids_and_sizes(
             continue
         centroids[polyline_index] = spatial[members].mean(axis=0)
         sizes[polyline_index] = members.size
-    return centroids, sizes
+    return centroids, sizes, axes
 
 
 def _polyline_bsp_node(
@@ -1285,8 +1285,7 @@ def spatial_bsp_polyline_tree(
 
     Args:
         vertices: ``(N, d)`` array of vertex positions. At least 2
-            spatial dimensions required (planar data splits fine; only the
-            first 3 drive the split).
+            spatial dimensions required (planar data splits fine).
         polyline_indices: List of per-polyline vertex-index arrays — the
             output of :func:`luxar.core.group.lod.lines.identify_polylines`.
         max_elements: Cap on a single part's vertex count. The BSP
@@ -1295,6 +1294,8 @@ def spatial_bsp_polyline_tree(
             its own (oversized) part rather than being broken up.
 
         rule: ``"median"`` or ``"midpoint"``.
+        split_axes: Up to three position columns to split. Defaults to the
+            first up-to-three columns.
 
     Returns:
         The split-plane tree, or ``None`` for no polylines. Its leaf payloads
@@ -1303,7 +1304,7 @@ def spatial_bsp_polyline_tree(
     _validate_polyline_bsp_inputs(vertices, max_elements, rule)
     if not polyline_indices:
         return None
-    centroids, sizes = _polyline_centroids_and_sizes(
+    centroids, sizes, axes = _polyline_centroids_and_sizes(
         vertices, polyline_indices, split_axes
     )
     tree = _polyline_bsp_node(
@@ -1313,7 +1314,6 @@ def spatial_bsp_polyline_tree(
         max_elements,
         rule,
     )
-    axes = _resolve_split_axes(vertices, split_axes)
     _restore_bsp_position_columns(tree, axes)
     return tree
 

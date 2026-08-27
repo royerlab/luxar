@@ -697,12 +697,13 @@ class TestSahPolylineCentroids:
         np.testing.assert_allclose(centroids[0], [0.0, 0.0, 0.0])
         np.testing.assert_allclose(centroids[1], [1.0, 2.0, 3.0])
 
-    def test_nd_vertices_use_first_three_dims(self) -> None:
-        """>3D input: centroids span the first-3-spatial columns only."""
+    def test_nd_vertices_preserve_every_position_column(self) -> None:
+        """>3D input keeps columns available for display-aware SAH splitting."""
         from luxar.core.group.adders.lines import _sah_polyline_centroids
 
         v = np.array([[0.0, 0.0, 0.0, 9.0], [2.0, 4.0, 6.0, 9.0]], dtype=np.float32)
         plys = [np.array([0, 1], dtype=np.intp), np.array([], dtype=np.intp)]
         centroids = _sah_polyline_centroids(v, plys)
-        assert centroids.shape == (2, 3)
-        np.testing.assert_allclose(centroids[0], [1.0, 2.0, 3.0])
+        assert centroids.shape == (2, 4)
+        np.testing.assert_allclose(centroids[0], [1.0, 2.0, 3.0, 9.0])
+        np.testing.assert_allclose(centroids[1], [0.0, 0.0, 0.0, 0.0])
