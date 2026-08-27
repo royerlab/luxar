@@ -299,6 +299,41 @@ def _result_exit_code(
     return 0
 
 
+def _run_targets(
+    targets: list[tuple[str, Optional[str]]],
+    manifest: dict[str, Any],
+    args: argparse.Namespace,
+) -> tuple[int, int, int]:
+    failures = 0
+    skipped = 0
+    not_hosted = 0
+    for name, variant in targets:
+        ok, detail, kept_path = verify(
+            name,
+            manifest,
+            args.keep,
+            variant=variant,
+            cache_root=args.cache_root,
+        )
+        print(f"{target_label(name, variant):<40} {detail}")
+        if kept_path is not None:
+            print(f"      kept: {kept_path}")
+        if not ok:
+            failures += 1
+        elif detail.startswith("SKIP  not hosted"):
+            not_hosted += 1
+        elif detail.startswith("SKIP"):
+            skipped += 1
+
+    checked = len(targets) - skipped - not_hosted - failures
+    print()
+    summary = f"cold fetch: {checked} verified, {skipped} skipped"
+    if not_hosted:
+        summary += f", {not_hosted} not hosted"
+    print(f"{summary}, {failures} failed")
+    return failures, skipped, not_hosted
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -369,33 +404,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
         return 0
 
-    failures = 0
-    skipped = 0
-    not_hosted = 0
-    for name, variant in targets:
-        ok, detail, kept_path = verify(
-            name,
-            manifest,
-            args.keep,
-            variant=variant,
-            cache_root=args.cache_root,
-        )
-        print(f"{target_label(name, variant):<40} {detail}")
-        if kept_path is not None:
-            print(f"      kept: {kept_path}")
-        if not ok:
-            failures += 1
-        elif manifest["datasets"][name].get("bucket") != "zenodo":
-            not_hosted += 1
-        elif detail.startswith("SKIP"):
-            skipped += 1
-
+    failures, skipped, not_hosted = _run_targets(targets, manifest, args)
     checked = len(targets) - skipped - not_hosted - failures
-    print()
-    summary = f"cold fetch: {checked} verified, {skipped} skipped"
-    if not_hosted:
-        summary += f", {not_hosted} not hosted"
-    print(f"{summary}, {failures} failed")
     return _result_exit_code(
         failures=failures,
         skipped=skipped,
