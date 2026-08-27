@@ -7,7 +7,7 @@
 
 import type { CacheMetrics, GlobalStats } from '../../../types/data-monitor-types';
 import { formatBytes, formatNumber, getCacheMemoryColorClass } from '../templates/format';
-import { countColorClass } from '../templates/primitives';
+import { countColorClass, getColorClass } from '../templates/primitives';
 import { patchField, updateColorClass } from './dom-helpers';
 
 export function updateOverviewTab(
@@ -42,6 +42,14 @@ export function updateOverviewTab(
   if (hasPoints) patchCount('visible-points', stats.visiblePoints, stats.datasetSize);
   if (hasLines) patchCount('visible-lines', stats.visibleSegments, stats.datasetSegments);
   if (hasGSplats) patchCount('visible-splats', stats.visibleSplats, stats.datasetSplats);
+  const droppedElement = container.querySelector('[data-field="dropped-elements"]');
+  patchField(container, 'dropped-elements', formatNumber(stats.droppedElements));
+  if (droppedElement) {
+    updateColorClass(
+      droppedElement as HTMLElement,
+      stats.droppedElements > 0 ? getColorClass('error') : getColorClass('success')
+    );
+  }
 
   patchField(container, 'memory-used', formatBytes(cacheMetrics.totalCacheMemory));
   patchField(container, 'query-speed', `${stats.avgQueryTime.toFixed(0)}ms`);

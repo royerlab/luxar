@@ -145,7 +145,9 @@ in `timing-panel.ts`.
   lines / gsplats. The walk prunes non-visible subtrees, so nodes whose
   path is absent from the latest map (hidden layer, switched-away
   substitutive level) have their count cleared back to unknown — the
-  suffix disappears rather than showing a stale number.
+  suffix disappears rather than showing a stale number. The same walk pushes
+  the visible-scene dropped-element aggregate to the overview card via
+  `updateDroppedElementCount`.
 - **Timing panel expand/collapse state is module-level** on purpose so
   it survives full DOM repaints triggered by tab switches.
 - **All user-supplied strings flow through `utils/escape-html`** before

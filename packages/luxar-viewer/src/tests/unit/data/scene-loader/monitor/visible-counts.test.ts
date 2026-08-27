@@ -12,9 +12,11 @@ import type { SceneLoaderMonitorPort } from '../../../../../data/scene-loader-mo
 function makeMonitor() {
   return {
     updateVisibleCount: vi.fn(),
+    updateDroppedElementCount: vi.fn(),
     updateVisibleCountsByPath: vi.fn(),
   } as unknown as SceneLoaderMonitorPort & {
     updateVisibleCount: ReturnType<typeof vi.fn>;
+    updateDroppedElementCount: ReturnType<typeof vi.fn>;
     updateVisibleCountsByPath: ReturnType<typeof vi.fn>;
   };
 }
@@ -55,6 +57,18 @@ describe('updateVisibleCountsInMonitor', () => {
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('lines', 30);
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('gsplats', 1000);
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('mesh', 640);
+  });
+
+  it('reports commit-stamped dropped elements', () => {
+    const monitor = makeMonitor();
+    const root = new THREE.Group();
+    root.add(meshWith({ nodeType: 'points', visiblePointCount: 80, droppedElementCount: 20 }));
+    root.add(meshWith({ nodeType: 'lines', visibleSegmentCount: 40, droppedElementCount: 10 }));
+    root.add(meshWith({ nodeType: 'mesh', visibleTriangleCount: 12 }));
+
+    updateVisibleCountsInMonitor(root, monitor);
+
+    expect(monitor.updateDroppedElementCount).toHaveBeenCalledWith(30);
   });
 
   it('treats missing visible-count userData as zero', () => {

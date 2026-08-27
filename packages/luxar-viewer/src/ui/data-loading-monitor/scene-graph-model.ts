@@ -29,6 +29,7 @@ function emptySceneGraphState(): SceneGraphState {
     nodesByType: zeroCounters(),
     totalByType: zeroCounters(),
     visibleByType: zeroCounters(),
+    droppedElements: 0,
   };
 }
 
@@ -131,6 +132,10 @@ export class SceneGraphModel {
     this.sceneGraphState.visibleByType[type] = count;
   }
 
+  updateDroppedElementCount(count: number): void {
+    this.sceneGraphState.droppedElements = count;
+  }
+
   updateVisibleCountsByPath(counts: ReadonlyMap<string, number>): void {
     this.visibleCountsByPath = counts;
   }
@@ -188,7 +193,13 @@ export class SceneGraphModel {
       for (const type of GEOMETRY_TYPES) totalByType[type] += stats.totalByType[type];
     }
 
-    return { totalNodes, nodesByType, totalByType, visibleByType: { ...totalByType } };
+    return {
+      totalNodes,
+      nodesByType,
+      totalByType,
+      visibleByType: { ...totalByType },
+      droppedElements: 0,
+    };
   }
 
   private ensureSceneGraphNodeIndex(): Map<string, SceneGraphNode> | null {

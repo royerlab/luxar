@@ -28,6 +28,9 @@ export interface PointCloudInfo {
   hasColors: boolean;
   hasRadii: boolean;
   hasSharpness: boolean;
+  requestedElementCount: number;
+  grantedElementCount: number;
+  droppedElementCount: number;
 }
 
 /** Per-mesh gsplat info reported by getState(). */
@@ -35,6 +38,9 @@ export interface GSplatMeshInfo {
   name: string;
   splatCount: number;
   visible: boolean;
+  requestedElementCount: number;
+  grantedElementCount: number;
+  droppedElementCount: number;
 }
 
 /** Per-mesh line-instance info reported by getState(). */
@@ -43,6 +49,9 @@ export interface LineMeshInfo {
   segmentCount: number;
   visible: boolean;
   hasColormap: boolean;
+  requestedElementCount: number;
+  grantedElementCount: number;
+  droppedElementCount: number;
 }
 
 /**
@@ -130,6 +139,11 @@ export interface DebugState {
    */
   totalTriangles: number;
   totalElements: number;
+  /**
+   * Elements omitted by per-node element-texture capacity clamps across ALL nodes,
+   * including hidden nodes and every substitutive-LOD level. Mesh is not texture-backed.
+   */
+  totalDroppedElements: number;
   pointClouds: PointCloudInfo[];
   gsplatMeshes: GSplatMeshInfo[];
   /** Per-mesh line summary. */
@@ -255,6 +269,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
   let totalGSplats = 0;
   let totalLines = 0;
   let totalTriangles = 0;
+  let totalDroppedElements = 0;
   const pointClouds: PointCloudInfo[] = [];
   const gsplatMeshes: GSplatMeshInfo[] = [];
   const lineMeshes: LineMeshInfo[] = [];
@@ -298,6 +313,13 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
           ? geometry.instanceCount
           : (visiblePointCount ?? 0);
+      // Production nodes are created empty and stamped at commit. The fallback
+      // covers synthetic debug/test nodes created directly with geometry data.
+      const requestedElementCount =
+        (object.userData as { requestedElementCount?: number }).requestedElementCount ?? pointCount;
+      const droppedElementCount =
+        (object.userData as { droppedElementCount?: number }).droppedElementCount ?? 0;
+      totalDroppedElements += droppedElementCount;
       totalPoints += pointCount;
       // Per-point data lives in the point texture (fixed 3-texel layout;
       // absent fields get identity fills), so field presence can no
@@ -313,6 +335,9 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         hasColors: !!presence?.hasColors,
         hasRadii: !!presence?.hasRadii,
         hasSharpness: !!presence?.hasSharpness,
+        requestedElementCount,
+        grantedElementCount: pointCount,
+        droppedElementCount,
       });
     }
 
@@ -322,11 +347,19 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       object.geometry instanceof THREE.InstancedBufferGeometry
     ) {
       const splatCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
+      const requestedElementCount =
+        (object.userData as { requestedElementCount?: number }).requestedElementCount ?? splatCount;
+      const droppedElementCount =
+        (object.userData as { droppedElementCount?: number }).droppedElementCount ?? 0;
+      totalDroppedElements += droppedElementCount;
       totalGSplats += splatCount;
       gsplatMeshes.push({
         name: object.name || 'unnamed',
         splatCount,
         visible: object.visible,
+        requestedElementCount,
+        grantedElementCount: splatCount,
+        droppedElementCount,
       });
     }
 
@@ -337,6 +370,12 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       object.geometry instanceof THREE.InstancedBufferGeometry
     ) {
       const segmentCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
+      const requestedElementCount =
+        (object.userData as { requestedElementCount?: number }).requestedElementCount ??
+        segmentCount;
+      const droppedElementCount =
+        (object.userData as { droppedElementCount?: number }).droppedElementCount ?? 0;
+      totalDroppedElements += droppedElementCount;
       totalLines += segmentCount;
       // ShaderMaterial (GLSL) and NodeMaterial (TSL) both expose
       // `defines` — read structurally so this works on either backend.
@@ -357,6 +396,9 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         segmentCount,
         visible: object.visible,
         hasColormap,
+        requestedElementCount,
+        grantedElementCount: segmentCount,
+        droppedElementCount,
       });
     }
 
@@ -444,6 +486,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     // footing as segments and splats: it is the primitive the mesh actually draws, and
     // the noun the monitor and the visible-counts walk already use for it.
     totalElements: totalPoints + totalGSplats + totalLines + totalTriangles,
+    totalDroppedElements,
     pointClouds,
     gsplatMeshes,
     lineMeshes,

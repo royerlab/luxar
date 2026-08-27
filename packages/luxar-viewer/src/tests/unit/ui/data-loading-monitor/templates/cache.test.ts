@@ -49,6 +49,7 @@ function makeGlobalStats(): GlobalStats {
     visibleSegments: 0,
     datasetSplats: 0,
     visibleSplats: 0,
+    droppedElements: 0,
     totalQueries: 0,
     totalLoads: 0,
     avgQueryTime: 0,
