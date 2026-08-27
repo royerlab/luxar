@@ -270,9 +270,10 @@ metadata and chunks with simple GETs. They require
 `Access-Control-Allow-Origin`, but no `Range` request header or preflight.
 
 Zipped `.zarr.zip` stores use byte-range requests. Their host must honour
-`Range`, include `range` in `AllowedHeaders`, and include `content-range` in
-`Access-Control-Expose-Headers` so the viewer can validate each partial
-response.
+`Range`, include `range` in `AllowedHeaders`, and expose `Content-Range`,
+`Content-Length`, `Accept-Ranges`, and `ETag`. The range headers let the viewer
+validate partial responses; `ETag` preserves archive identity across
+cross-origin cache validation.
 
 Verify both paths. Curl does not enforce CORS, so inspect the response headers
 explicitly:
@@ -288,7 +289,7 @@ curl -sI -X OPTIONS -H "Origin: https://luxarviewer.dev" \
 
 curl -sD - -o /dev/null -H "Origin: https://luxarviewer.dev" \
   -H "Range: bytes=0-0" "$ZIP_URL"
-# want: 206, content-range, and access-control-expose-headers including it
+# want: 206 and access-control-expose-headers listing all four headers above
 ```
 
 ### 4.4 One hostname, one Pages project

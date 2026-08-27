@@ -271,7 +271,9 @@ Requirements on the host serving the data depend on the store shape:
   so byte-range support is not required.
 * **Zipped ``.zarr.zip`` stores** additionally need byte-range support. The
   host must honour ``Range``, allow the ``Range`` request header in CORS, and
-  expose ``Content-Range`` so the viewer can validate partial responses.
+  expose ``Content-Range``, ``Content-Length``, ``Accept-Ranges``, and ``ETag``.
+  The range headers validate partial responses; ``ETag`` preserves archive
+  identity across cross-origin cache validation.
 
 A plain static file host with CORS enabled is sufficient for directory stores.
 Use this when the recipient just needs to *look* at the scene and you would
