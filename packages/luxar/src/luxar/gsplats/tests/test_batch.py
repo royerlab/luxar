@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -1438,6 +1439,10 @@ class TestMergeOrchestrator:
             for c in range(2):
                 for k in range(2):
                     path = tiles_dir / output_filename(t, c, k, 2, 2, 2)
+                    if c == 0 and k == 1:
+                        shutil.rmtree(path)
+                        Path(f"{path}.empty").touch()
+                        continue
                     tile = GSplatData.load(path)
                     if (t, c, k) != (1, 1, 1):
                         tile.stats.update(
@@ -1463,8 +1468,8 @@ class TestMergeOrchestrator:
         assert all("fit_reference" not in part for part in parts)
 
         channels = parts[1]["fitting"]["part_provenance"]
-        assert [channel["coordinate"] for channel in channels] == [0.0, 1.0]
-        timepoints = channels[1]["fitting"]["part_provenance"]
+        assert [channel["coordinate"] for channel in channels] == [1.0]
+        timepoints = channels[0]["fitting"]["part_provenance"]
         assert [timepoint["coordinate"] for timepoint in timepoints] == [0.0, 1.0]
         assert timepoints[0]["fitting"]["psnr_db"] == 46.0
         assert "psnr_db" not in timepoints[1]["fitting"]

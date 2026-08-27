@@ -119,8 +119,9 @@ def test_unknown_reference_and_nested_provenance_are_preserved() -> None:
     assert "fit_reference" not in provenance[0]
     assert provenance[0]["fitting"]["part_provenance"] == component
 
-    reduced = stack.filter_by(amplitude_min=0.5)
-    nested = reduced.stats["part_provenance"]
+    composed = _fit(4, part_provenance=provenance)
+    reduced = composed.filter_by(amplitude_min=0.5)
+    nested = reduced.stats["part_provenance"][0]["fitting"]["part_provenance"]
     assert "psnr_db" not in nested[0]["fitting"]
     assert nested[1]["fitting"] == {}
 

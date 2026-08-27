@@ -220,7 +220,7 @@ def collect_part_provenance(
     values: Sequence[float],
     fit_reference: Optional[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Collect JSON-safe per-fit stamps for a caller-defined stacked axis.
+    """Collect JSON-safe per-fit stamps for caller-defined component coordinates.
 
     The caller supplies the reference classification when it knows what each fit
     was scored against; ``None`` records the contract's unknown-reference case.

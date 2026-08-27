@@ -846,14 +846,15 @@ rewrite, the list length is provenance cardinality from stack time, not a
 surviving-frame count; re-stack the rewritten components to refresh it.
 
 Composition may nest the same record recursively in an entry's `fitting` block.
-`batch-fit merge` uses this for its two-level fan-in: root entries are spatial
+`batch-fit merge` uses this for its multi-level fan-in: root entries are spatial
 partition parts, optional inner entries are channels, and their inner entries are
 stacked timepoints carrying the original tile stamps. Coordinates at each level
 are the real slot, channel, or timepoint indices. Because the batch manifest does
 not state what preprocessing preceded the selected input array, these generated
 records omit `fit_reference` (unknown) rather than claiming acquisition scores.
-An unstamped tile remains present with an empty `fitting` dictionary, so a mixed
-store re-merged after a partial re-fit is explicit rather than silently partial.
+An unstamped tile remains present without quality or source keys in its `fitting`
+dictionary, so a mixed store re-merged after a partial re-fit is explicit rather
+than silently partial.
 
 On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
 of the finest surviving parts, after each part's post-fit cull, measured on that

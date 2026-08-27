@@ -265,7 +265,7 @@ def _build_part_for_tile(
     # length match. A multi-channel dataset where only one channel survives in this
     # tile still tints that channel (its color), which is correct.
     channel_provenance = None
-    if len(per_channel) > 1:
+    if len(c_indices) > 1:
         channel_provenance = collect_part_provenance(
             per_channel,
             values=[float(c_indices[position]) for position in kept_positions],
