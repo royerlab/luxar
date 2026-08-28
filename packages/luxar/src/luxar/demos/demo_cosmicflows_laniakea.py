@@ -735,10 +735,11 @@ def write_laniakea_scene(
                     opacity=0.36,
                     intensity=0.75,
                     blending_mode="additive",
-                    # The framework refuses an additive ladder for every indexed
-                    # Lines node. False makes that implicit refusal explicit and
-                    # silences its notice; the substitutive ladder still preserves
-                    # the original indexed Lines leaf as its finest child.
+                    # Under a substitutive ladder the framework refuses an additive
+                    # ladder for indexed Lines nodes; a plain leaf is not guarded and
+                    # silently rebuilds chains. False makes that refusal explicit and
+                    # silences its notice; the substitutive ladder still preserves the
+                    # original indexed Lines leaf as its finest child.
                     additive_lod=False,
                     substitutive_lod=basin_lod,
                     layer=True,
