@@ -159,9 +159,21 @@ stale, then finishes with `Dataset generated at …` and exit status 0. A wave
 driver reading exit codes learns nothing.
 
 The staleness it warned about was real and had shipped: both LOD ladders held a
-finest-level node of 9,751,955 points against a 4,000,000-point demo ceiling,
-which "can silently lose their tail on a 4096-class GPU". The published tile
-carried that for six days.
+finest-level node of 9,751,955 points against its own 4,000,000-point demo
+ceiling, which "can silently lose their tail on a 4096-class GPU". The published
+tile carried that for six days.
+
+That 4,000,000 is **not** a universal cap — it is a safety margin local to that
+demo (`SCENE_MAX_POINTS_PER_NODE`, and its comment says so). The real per-node
+caps are per geometry type, in `typing_utils/constants.py`:
+
+| geometry | cap |
+|---|---:|
+| Lines | 2,793,472 segments |
+| Points | 5,591,040 points |
+| GSplats | 4,194,304 splats |
+
+Comparing a points node against 4,000,000 over-flags it.
 
 Two remedies, both printed by the demo itself:
 
@@ -490,7 +502,23 @@ Summing across levels instead reported that store as "11,123,187 elements" when
 it holds 9,751,955 with 1.37M of ladder redundancy above it.
 
 A logical node's size is likewise the **sum over its parts**, not the largest
-single array. The same store's finest level reads 900,000 if you take the biggest
+single array.
+
+And the rule that moves the most numbers: **only the RESIDENT slice counts.** A
+node stacked on a hidden axis is measured per hidden coordinate, not by its
+total — `demos/_lod_policy.py` states this. `human_multiome_peak_umap` totals
+6,248,730 across six attribute views but is **1,041,455 resident**; measuring the
+total over-flags it against any cap.
+
+Two traps inside that, both found the hard way by the session doing the demo
+rework:
+
+- Measuring **one part** under-reports by the part count — a first pass read
+  `nuclear_pore_complex` at 164,633 when it is 4,937,064, a 30x error, because
+  the path measured was a single `part_N`.
+- Summing **each part's largest slice** over-reports, because different parts
+  peak on different hidden coordinates. Group globally by hidden coordinate
+  first, *then* take the max. The same store's finest level reads 900,000 if you take the biggest
 `positions` array and 9,751,955 if you total its parts.
 
 ### 7.2 `shape=[0]` arrays are normal
