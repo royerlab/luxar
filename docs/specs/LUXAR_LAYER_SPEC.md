@@ -65,6 +65,8 @@ future frame when progressive geometry, a lazy LOD level, or a retry commits asy
 | `setExposure(multiplier)` / `getExposure()` | Scale opacity relative to authored values. |
 | `getBounds()` | Return world-space bounds for the current root, or `null`. |
 | `alignTo(matrix)` | Place the root in host world space before or after `load()`. |
+| `onDatasetFault(listener)` | Subscribe to `{ src, error }` archive faults, replaying the current fault immediately; returns an unsubscribe function. |
+| `getDatasetFault()` | Return the current `{ src, error }` archive fault, or `null` before one occurs or after replacement or disposal. |
 | `handleContextLost()` / `handleContextRestored()` | Re-arm Luxar-owned GPU resources around host context recovery. |
 | `dispose()` | Asynchronously release the layer and process-wide Luxar resources. |
 
@@ -144,7 +146,8 @@ and tear down each other's state.
 - KTX2 mesh textures decode through a renderer-owned decoder installed by the layer. Other host
   texture and renderer resources remain the host's responsibility.
 - The UI-layer `notifier` is not registered, so Luxar toasts and error overlays are silently
-  dropped. Hosts must provide their own user-facing status and error surface.
+  dropped. Hosts must provide their own user-facing status and error surface. Archive failures
+  remain observable through `onDatasetFault()` and `getDatasetFault()`.
 
 ## Coverage note
 
