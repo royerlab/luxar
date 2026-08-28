@@ -9,11 +9,13 @@ stale store on disk.
 
 from __future__ import annotations
 
+from ast import AST
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+import luxar.utils.source_fingerprints as source_fingerprints
 from luxar._zarr_compat import consolidate, open_group
 from luxar.demos._support.runtime.flags import parse_demo_flags
 from luxar.demos._support.runtime.provenance import (
@@ -120,6 +122,38 @@ def test_fingerprint_follows_transitive_relative_demo_imports(tmp_path: Path) ->
     nested.write_text("VALUE = 2\n")
 
     assert demo_source_fingerprint(source, package_root=package_root) != before
+
+
+def test_demo_fingerprints_reuse_parsed_shared_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "luxar"
+    demos_root = package_root / "demos"
+    shared = package_root / "shared.py"
+    demos_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text("")
+    (demos_root / "__init__.py").write_text("")
+    first = demos_root / "first.py"
+    second = demos_root / "second.py"
+    first.write_text("from luxar import shared\nFIRST = 1\n")
+    second.write_text("from luxar import shared\nSECOND = 2\n")
+    shared_payload = b"SHARED_SENTINEL = 123\n"
+    shared.write_bytes(shared_payload)
+    real_parse = source_fingerprints.ast.parse
+    shared_parse_count = 0
+
+    def count_shared_parse(source: bytes) -> AST:
+        nonlocal shared_parse_count
+        if source == shared_payload:
+            shared_parse_count += 1
+        return real_parse(source)
+
+    monkeypatch.setattr(source_fingerprints.ast, "parse", count_shared_parse)
+
+    demo_source_fingerprint(first, package_root=package_root)
+    demo_source_fingerprint(second, package_root=package_root)
+
+    assert shared_parse_count == 1
 
 
 @pytest.mark.parametrize(
