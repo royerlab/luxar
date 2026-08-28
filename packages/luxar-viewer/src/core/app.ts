@@ -363,12 +363,12 @@ export class LuxarApp {
         openCacheStatsView: () => this.openCacheStatsView(),
       });
       this.currentDatasetSrc = src;
+      const sceneLoader = getSceneLoader();
+      this.datasetFaultLoader = sceneLoader ?? undefined;
       // A replayed terminal fault is post-load state, so preserve the public
       // ordering: the dataset becomes available before its fault is reported.
       this.embedderEvents.emit('dataset-loaded', { src });
-      const sceneLoader = getSceneLoader();
       if (sceneLoader) {
-        this.datasetFaultLoader = sceneLoader;
         this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
           (error) => this.embedderEvents.emit('dataset-fault', { src, error }),
           { replayCurrent: true }

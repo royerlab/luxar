@@ -1427,12 +1427,17 @@ describe('LuxarApp', () => {
       let secondLoader: ReturnType<typeof manager.createLoader>;
       const onFault = vi.fn();
       const eventOrder: string[] = [];
-      app.on('dataset-loaded', () => eventOrder.push('loaded'));
+      let faultAtDatasetLoaded: ReturnType<typeof app.getDatasetFault>;
+      app.on('dataset-loaded', () => {
+        eventOrder.push('loaded');
+        faultAtDatasetLoaded = app.getDatasetFault();
+      });
       app.on('dataset-fault', onFault);
       app.on('dataset-fault', () => eventOrder.push('fault'));
       mockFetch.mockResolvedValue({ ok: true });
 
       await app.init({ canvas: mockCanvas, src: SRC });
+      expect(faultAtDatasetLoaded!).toEqual({ src: SRC, error: firstFault });
       expect(onFault).toHaveBeenCalledWith({ src: SRC, error: firstFault });
       expect(eventOrder).toEqual(['loaded', 'fault']);
 
