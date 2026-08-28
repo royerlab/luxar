@@ -469,3 +469,89 @@ Gallery framing lives in `scripts/gallery/manifest.json`; see
   correctly.** An elongated subject projects wider as it rotates. Tribolium's
   correct poster frame still measures 48.4% because the embryo reaches the edge
   at `rock +15°`; shrinking it to satisfy that warning would underfill the tile.
+
+---
+
+## 7. Reading a scene's LOD and partition structure
+
+Structure decisions get made from these numbers, so getting the accounting
+right matters more than it looks. Every rule below is here because assuming the
+obvious reading produced a wrong answer.
+
+### 7.1 Substitutive levels are alternatives; additive rungs are deltas
+
+A `kind=lod` group's `child_0/1/2` are **decimated copies of one another**, so a
+scene's content is the **max** over levels, never the sum. Within one level, the
+`additive_N` rungs are **deltas** and do sum — verified on `desi_galaxies`, whose
+`child_0` rungs run 2000, 2000, 4000, 8000, 16000 … and total exactly 152,262,
+matching the level.
+
+Summing across levels instead reported that store as "11,123,187 elements" when
+it holds 9,751,955 with 1.37M of ladder redundancy above it.
+
+A logical node's size is likewise the **sum over its parts**, not the largest
+single array. The same store's finest level reads 900,000 if you take the biggest
+`positions` array and 9,751,955 if you total its parts.
+
+### 7.2 `shape=[0]` arrays are normal
+
+Additive rung nodes carry `centers` / `positions` of shape `[0]` or `[0, 3]`
+beside non-empty `colors` / `cholesky_factors`. That is the format, not
+corruption — the scene loads 10,056,479 elements across 12 nodes with zero
+failures. Do not "repair" it.
+
+### 7.3 The BSP tree is `bsp_tree`, on the geometry node
+
+Not on the `kind=partition` wrapper. A check that inspects only `kind=partition`
+groups finds nothing and reports, wrongly, that partitions carry no BSP
+metadata.
+
+The serialized form is a nested dict with `left` / `right` and an `axis` per
+internal node. The algebra on it lives in `core/group/partition.py`:
+`prune_serialized_bsp_tree`, `map_serialized_bsp_tree`,
+`reconstruct_serialized_bsp_tree`, `serialized_bsp_tree_separates`,
+`serialized_bsp_tree_straddles_centers`,
+`serialized_bsp_tree_axis_overlap_floors`, and `persist_pruned_bsp_tree`.
+
+Measured on the published corpus (2026-08-28):
+
+| store | node | depth | leaves | axes |
+|---|---|---:|---:|---|
+| `ocean_currents_earth` | `currents` | 4 | 16 | 0,1,2 |
+| `nuclear_pore_complex` | root | 5 | 32 | 0,1,2 |
+| `biodiversity_planetary_scale` | `Migrations by slice` | 2 | 3 | 0,1 |
+| `biodiversity_planetary_scale` | `By taxon & period` | 1 | 2 | 2 |
+| `desi_galaxies` | `<branch>/child_2` | 2 | 4 | 0,1 |
+
+A depth-1 single-axis entry like `By taxon & period` is a planar cut rather than
+a spatial tree, and is worth checking: the serialized `axis` is a **centre-column
+index** the viewer maps through `displayDims`, so a split on a non-displayed
+dimension culls nothing.
+
+### 7.4 `indexed` lines cannot carry an additive ladder
+
+`adders/lines.py` refuses it, because the additive writer discards the explicit
+edge list and rebuilds each connected component as a chain in **ascending vertex
+order** — inventing edges wherever a component is not already such a chain.
+
+The refusal is a `UserWarning`, **not an error**, so requesting one produces a
+scene that looks laddered and loads all-at-once.
+
+The apparent workaround does not work either. Of `segments` / `polyline` /
+`loop` / `indexed`, only `segments` permits a ladder — but `identify_polylines`
+returns `n // 2` arrays of shape `(2,)` for it, so the laddering unit is a single
+**segment**. A prefix is then scattered segments, i.e. fragmented polylines.
+Only `indexed` yields whole-polyline units, via
+`lod/lines.py::_indexed_connected_components`.
+
+Making this work needs a **verified** opt-in: check that every component really
+is an ascending chain (its edge set equals its consecutive-vertex pairs) and
+raise, not warn, when an explicit request cannot be honoured.
+
+### 7.5 Compare like with like
+
+Published and local copies of the same store can differ **structurally**, not
+just in freshness. `desi_galaxies` has no partition when published and a
+depth-2 BSP locally; `nuclear_pore_complex` is 41,288 elements published and
+9,874,128 locally after a demo change. Label the source of every number, and
+never put both in one table.
