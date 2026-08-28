@@ -1789,6 +1789,7 @@ export class SceneLoader {
       getFailedReason: (path) => {
         const info = this.failedLoaders.get(path);
         if (info) return info.error?.message || info.kind || undefined;
+        if (this._archiveFault?.url === path) return this._archiveFault.message;
         return this.lodGroupRegistry?.getFailedLazyChildReason(path);
       },
     };
@@ -1798,6 +1799,7 @@ export class SceneLoader {
     return Array.from(
       new Set([
         ...this.failedLoaders.keys(),
+        ...(this._archiveFault ? [this._archiveFault.url] : []),
         ...(this.lodGroupRegistry?.getFailedLazyChildPaths() ?? []),
       ])
     );
@@ -1825,6 +1827,7 @@ export class SceneLoader {
    */
   hasAutoRetryableFailures(): boolean {
     return (
+      this._archiveFault !== null ||
       this.registry.hasAutoRetryableFailures() ||
       (this.lodGroupRegistry?.getFailedLazyChildPaths().length ?? 0) > 0
     );
@@ -1951,7 +1954,11 @@ export class SceneLoader {
       ? this.registry.autoRetryablePaths()
       : Array.from(this.failedLoaders.keys());
     const lazyPaths = this.lodGroupRegistry?.getFailedLazyChildPaths() ?? [];
-    const failedPaths = Array.from(new Set([...loaderPaths, ...lazyPaths]));
+    const recordedPaths = new Set([...loaderPaths, ...lazyPaths]);
+    const archiveFaultPath = this._archiveFault?.url;
+    const failedPaths = Array.from(
+      new Set([...recordedPaths, ...(archiveFaultPath ? [archiveFaultPath] : [])])
+    );
 
     if (failedPaths.length === 0) {
       log.info(Modules.SCENE_LOADER, 'No failed loaders to retry');
@@ -1987,8 +1994,11 @@ export class SceneLoader {
       }
       const succeeded: string[] = [];
       const failed: string[] = [];
-      if (lazyPaths.length > 0) {
+      if (archiveFaultPath) {
         this.clearArchiveFaultForRetry();
+        if (!recordedPaths.has(archiveFaultPath)) succeeded.push(archiveFaultPath);
+      }
+      if (lazyPaths.length > 0) {
         for (const path of lazyPaths) {
           if (this.lodGroupRegistry?.retryLazyChildByNodePath(path)) succeeded.push(path);
           else failed.push(path);

@@ -284,6 +284,7 @@ describe('LuxarLayer', () => {
           'getDisplayDims',
           'getEnergyCompEnabled',
           'getForceFinestLOD',
+          'hasArchiveFault',
           'getResidentByteBudget',
           'getResidentBytes',
           'getViewVersion',

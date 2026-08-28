@@ -1891,6 +1891,8 @@ export class LODGroupRegistry {
    * the shared fetch gate, the worker pool, and VRAM with the layer the user is
    * actually looking at (measured: a hidden 9.75M-point level finished FIRST,
    * roughly doubling scene load time). So: no group visible ⇒ no new loads.
+   * The same gate refuses every automatic kick while the owning loader has a
+   * latched archive fault; explicit retry remains the only bypass.
    *
    * Scope is deliberately narrow — this only stops STARTING work:
    *   - it never hides or unloads anything already resident (a hidden layer

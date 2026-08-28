@@ -1421,6 +1421,34 @@ describe('SceneLoader', () => {
       expect(internals.makeLoadSceneCtx().getFailedLoaderReasons()).toEqual(['Unexpected']);
     });
 
+    it('surfaces and retries an archive fault with no recorded node failure', async () => {
+      const archiveFault = new ArchiveFaultError('archive unavailable', '/scene.zip');
+      const pending = { displayDims: [0, 1, 2], slicePosition: [3], tolerance: [0] };
+      const updateViewSpy = vi
+        .spyOn(sceneLoader, 'updateView')
+        .mockResolvedValue(undefined as never);
+      const internals = sceneLoader as unknown as {
+        _archiveFault: ArchiveFaultError | null;
+        viewStateQueue: { setPending(state: unknown): void; hasPending(): boolean };
+      };
+      internals._archiveFault = archiveFault;
+      internals.viewStateQueue.setPending(pending);
+
+      const provider = sceneLoader.getFailedLoadsProvider();
+      expect(provider.getFailedPaths()).toEqual(['/scene.zip']);
+      expect(provider.getFailedReason?.('/scene.zip')).toBe('archive unavailable');
+      expect(sceneLoader.hasAutoRetryableFailures()).toBe(true);
+
+      await expect(provider.retryAll()).resolves.toEqual({
+        succeeded: ['/scene.zip'],
+        failed: [],
+      });
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(notifierMocks.clearError).toHaveBeenCalledOnce();
+      expect(internals.viewStateQueue.hasPending()).toBe(false);
+      expect(updateViewSpy).toHaveBeenCalledWith(pending);
+    });
+
     it('surfaces and retries a latched anonymous deferred LOD branch', async () => {
       const camera = new THREE.Camera();
       const registry = new LODGroupRegistry({
