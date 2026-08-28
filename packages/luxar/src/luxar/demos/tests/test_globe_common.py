@@ -237,6 +237,131 @@ def test_globe_wrap_only_overrides_the_tiled_case(
             assert mesh_kwargs["texture_wrap"] == expected_wrap
 
 
+def test_globe_ktx2_passes_rgb_tiles_to_the_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KTX2 authoring receives pixels, never a pre-compressed image blob."""
+
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_group(self, _name: str, **_kwargs: object) -> "Target":
+            return self
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    monkeypatch.setattr(
+        _globe_common,
+        "encode_texture",
+        lambda *_args, **_kwargs: pytest.fail("KTX2 must bypass bitmap encoding"),
+    )
+    target = Target()
+    basemap = np.arange(4 * 8 * 3, dtype=np.uint8).reshape(4, 8, 3)
+
+    add_textured_globe(
+        target,
+        "earth",
+        basemap=basemap,
+        radius=1.0,
+        n_lon=8,
+        n_lat=4,
+        tiles=2,
+        fmt="ktx2",
+        quality=3,
+    )
+
+    assert len(target.meshes) == 2
+    for mesh_kwargs in target.meshes:
+        texture = mesh_kwargs["texture"]
+        assert isinstance(texture, np.ndarray)
+        assert texture.dtype == np.uint8
+        assert texture.ndim == 3 and texture.shape[2] == 3
+        assert mesh_kwargs["texture_width"] == texture.shape[1]
+        assert mesh_kwargs["texture_height"] == texture.shape[0]
+        assert mesh_kwargs["texture_encoding"] == "ktx2"
+        assert mesh_kwargs["texture_ktx2_quality"] == 3
+
+
+def test_globe_ktx2_rescales_float_pixels() -> None:
+    """The KTX2 path preserves the helper's documented float [0, 1] input."""
+
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    target = Target()
+    add_textured_globe(
+        target,
+        "earth",
+        basemap=np.full((2, 4, 3), 0.5, dtype=np.float32),
+        radius=1.0,
+        n_lon=4,
+        n_lat=2,
+        fmt="ktx2",
+        quality=2,
+    )
+
+    texture = target.meshes[0]["texture"]
+    assert isinstance(texture, np.ndarray)
+    assert texture.dtype == np.uint8
+    assert np.all(texture == 127)
+
+
+def test_shared_earth_builder_keeps_portable_webp_defaults() -> None:
+    """Gallery generation must not require a non-Python authoring binary."""
+    import inspect
+
+    signature = inspect.signature(_globe_common.build_earth)
+    assert signature.parameters["fmt"].default == "webp"
+    assert signature.parameters["quality"].default is None
+
+    earthquake_source = (
+        Path(_globe_common.__file__).parent / "demo_earthquakes_3d.py"
+    ).read_text()
+    assert 'GLOBE_TEXTURE_FORMAT = "webp"' in earthquake_source
+    assert "GLOBE_TEXTURE_QUALITY = 90" in earthquake_source
+
+
+@pytest.mark.parametrize(("fmt", "expected_quality"), [("webp", 90), ("ktx2", 2)])
+def test_globe_quality_default_follows_the_selected_format(
+    monkeypatch: pytest.MonkeyPatch, fmt: str, expected_quality: int
+) -> None:
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    seen: dict[str, int] = {}
+
+    def fake_encode(image: np.ndarray, **kwargs: object):
+        seen["quality"] = int(kwargs["quality"])
+        return np.array([1], dtype=np.uint8), "webp", image.shape[1], image.shape[0], 3
+
+    monkeypatch.setattr(_globe_common, "encode_texture", fake_encode)
+    target = Target()
+    add_textured_globe(
+        target,
+        "earth",
+        basemap=np.zeros((2, 4, 3), dtype=np.uint8),
+        radius=1.0,
+        n_lon=4,
+        n_lat=2,
+        fmt=fmt,
+    )
+
+    if fmt == "ktx2":
+        assert target.meshes[0]["texture_ktx2_quality"] == expected_quality
+    else:
+        assert seen["quality"] == expected_quality
+
+
 def test_non_integral_relief_resampling_area_averages_at_demo_resolution() -> None:
     """A source-cell spike is diluted, not selected whole or dropped."""
     target_width, target_height = 2049, 1025
