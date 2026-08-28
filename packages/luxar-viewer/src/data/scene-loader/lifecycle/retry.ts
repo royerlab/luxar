@@ -90,7 +90,8 @@ export interface RetryCtx {
  * registry — except for a lazy LOD level, where true means "retry
  * kicked" and the record is kept until the thunk settles), false on
  * continued failure (registry updated with new retry count), or false
- * if the path is no longer in failed-loaders.
+ * if the path is no longer in failed-loaders. A registered lines path
+ * waits for the session working-set gate before loading.
  */
 export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Promise<boolean> {
   const { registry } = ctx;
@@ -192,10 +193,11 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
 }
 
 /**
- * Retry the supplied set of failed paths in parallel without touching
- * the orchestrator's update lock. Caller is expected to hold the lock
- * (parity with the single-path helper above). Returns the path split
- * into succeeded / still-failing buckets.
+ * Retry the supplied set of failed paths with concurrency bounded at
+ * `EAGER_CHILD_LOAD_CONCURRENCY`, without touching the orchestrator's
+ * update lock. Caller is expected to hold the lock (parity with the
+ * single-path helper above). Returns the path split into succeeded /
+ * still-failing buckets.
  */
 export async function retryAllFailedLoadersUnlocked(
   failedPaths: string[],

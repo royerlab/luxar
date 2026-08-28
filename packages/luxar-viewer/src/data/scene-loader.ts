@@ -1837,6 +1837,8 @@ export class SceneLoader {
    *          means the deferred reload was KICKED (fire-and-forget) — the lazy
    *          thunk owns the eventual ready/failed outcome, and a repeat failure
    *          re-records itself for another retry.
+   *          Registered lines paths first wait for the session working-set gate,
+   *          so this call can remain pending behind an eager scene walk.
    *
    * @example
    * ```typescript

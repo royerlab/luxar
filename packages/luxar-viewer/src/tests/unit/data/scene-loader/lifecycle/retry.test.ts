@@ -562,10 +562,10 @@ describe('retryAllFailedLoadersUnlocked — partition', () => {
     expect(ctx.registry.failedLoaders.has('/c')).toBe(false);
   });
 
-  it('starts every retry before any settles (Promise.all parallelism)', async () => {
-    // Each retry's updateView resolves AFTER the next microtask, so if the
-    // retries were sequential we'd see them start one-at-a-time. We assert
-    // all three are entered before any resolves by recording call order.
+  it('starts every retry in a sub-cap batch before any settles', async () => {
+    // This three-path batch is deliberately below EAGER_CHILD_LOAD_CONCURRENCY.
+    // Each updateView resolves after the next microtask, so record call order
+    // to assert every admitted retry enters before any resolves.
     const callOrder: string[] = [];
     const makeSlowLoader = (p: string) =>
       makePointsLoader(async () => {

@@ -48,8 +48,8 @@ construction, slice updates, and retry-after-failure.
   working-set estimate from half of the measured heap's shared non-cache
   remainder, capped at 512 MiB and falling back to 256 MiB where the heap is
   unavailable. The gate is owned by the `SceneLoader` session and shared by
-  every `NodeBuildCtx` plus manual retry batches, so nested parent pools and
-  recovery attempts cannot multiply several million-vertex decode,
+  every `NodeBuildCtx` plus registered line retries, so nested parent pools
+  and recovery attempts cannot multiply several million-vertex decode,
   projection, staging, and texture allocations. A small waiter may pass a large
   one that does not fit yet, while an oversized head still progresses when the
   gate empties. The conservative estimate uses authored whole-node totals, so it
