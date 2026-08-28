@@ -10,7 +10,8 @@ Polyline-identification per ``line_type``:
 * ``segments`` — each consecutive pair of vertices is its own polyline
   of length 2. N/2 polylines.
 * ``indexed``  — connected-components walk over the explicit segments;
-  one component = one polyline.
+  one component = one polyline. When a multi-level additive ladder is
+  emitted, each component's edge multiset must equal its consecutive-vertex chain.
 * ``polyline`` / ``loop`` — ONE polyline encompassing all vertices. A
   multi-LOD ladder over a single polyline is a no-op (would require
   vertex-subsampling, which breaks the "polyline-level, no topology
@@ -198,6 +199,80 @@ def _indexed_connected_components(
     )
     # ``np.split`` returns zero-copy views into the shared permutation.
     return [chunk for chunk in np.split(order, starts[1:])]
+
+
+def _indexed_ladder_edge_multisets(
+    indices: NDArray,
+    polylines: List[NDArray[np.intp]],
+) -> Tuple[NDArray[np.intp], NDArray[np.intp]]:
+    """Return canonical undirected edge multisets with multiplicity preserved."""
+    authored = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+    if polylines:
+        lengths = np.fromiter(
+            (members.size for members in polylines),
+            dtype=np.intp,
+            count=len(polylines),
+        )
+        members = np.concatenate(polylines)
+        if members.size >= 2:
+            keep = np.ones(members.size - 1, dtype=bool)
+            keep[np.cumsum(lengths[:-1]) - 1] = False
+            rebuilt = np.column_stack((members[:-1][keep], members[1:][keep]))
+        else:
+            rebuilt = np.empty((0, 2), dtype=np.intp)
+    else:
+        rebuilt = np.empty((0, 2), dtype=np.intp)
+
+    def canonical_edges(edges: NDArray[np.intp]) -> NDArray[np.intp]:
+        if edges.size == 0:
+            return np.empty((0, 2), dtype=np.intp)
+        canonical = np.sort(edges, axis=1)
+        return canonical[np.lexsort((canonical[:, 1], canonical[:, 0]))]
+
+    return canonical_edges(authored), canonical_edges(rebuilt)
+
+
+def _indexed_ladder_preserves_edges(
+    indices: NDArray,
+    polylines: List[NDArray[np.intp]],
+) -> bool:
+    """Compare undirected edge multisets, ignoring edge direction and row order."""
+    authored, rebuilt = _indexed_ladder_edge_multisets(indices, polylines)
+    return np.array_equal(authored, rebuilt)
+
+
+def _validate_indexed_ladder_edges(
+    line_type: str,
+    indices: Optional[NDArray],
+    polylines: List[NDArray[np.intp]],
+    levels: List[List[NDArray[np.intp]]],
+) -> None:
+    """Reject multi-level indexed ladders that would change authored edges."""
+    if len(levels) <= 1 or line_type != "indexed":
+        return
+    assert indices is not None
+    if _indexed_ladder_preserves_edges(indices, polylines):
+        return
+
+    authored, rebuilt = _indexed_ladder_edge_multisets(indices, polylines)
+    combined = np.concatenate((authored, rebuilt), axis=0)
+    unique_edges, inverse = np.unique(combined, axis=0, return_inverse=True)
+    split = authored.shape[0]
+    authored_counts = np.bincount(inverse[:split], minlength=unique_edges.shape[0])
+    rebuilt_counts = np.bincount(inverse[split:], minlength=unique_edges.shape[0])
+    mismatch = int(np.flatnonzero(authored_counts > rebuilt_counts)[0])
+    missing_edge = tuple(map(int, unique_edges[mismatch]))
+    raise ValueError(
+        "line_type='indexed' additive LOD cannot preserve the explicit edge list: "
+        "every connected component's undirected edge multiset must equal its consecutive "
+        "vertex pairs (edge direction and row order do not matter). "
+        f"Authored {authored.shape[0]} edges but the component chains produce "
+        f"{rebuilt.shape[0]}; offending authored edge {missing_edge} is not matched "
+        f"by the component chains (authored multiplicity {authored_counts[mismatch]}, "
+        f"chain multiplicity {rebuilt_counts[mismatch]}). "
+        "Remove additive_lod= and use partition= alone, or re-author the edges with "
+        "line_type='segments'."
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -519,6 +594,7 @@ def make_additive_lod_lines(
                 ]
                 out.append(level_polylines)
             cursor += count
+        _validate_indexed_ladder_edges(line_type, indices, polylines, out)
         return out
 
     # random / salience: slice the polyline permutation by breakpoints.
@@ -580,6 +656,7 @@ def make_additive_lod_lines(
     if start < p:
         level_polylines = [polylines[int(i)] for i in perm[start:p]]
         out.append(level_polylines)
+    _validate_indexed_ladder_edges(line_type, indices, polylines, out)
     return out
 
 
