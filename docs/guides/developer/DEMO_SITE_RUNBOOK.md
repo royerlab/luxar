@@ -173,7 +173,9 @@ demo (`SCENE_MAX_POINTS_PER_NODE`, and its comment says so). The conservative
 | Points | 5,591,040 points |
 | GSplats | 4,194,304 splats |
 
-Comparing a points node against 4,000,000 over-flags it.
+DESI's 9,751,955 breaches the real 5,591,040 Points cap too, so that warning
+was not a false positive. Comparing a points node against 4,000,000 over-flags
+only the band from 4,000,000 to 5,591,040.
 
 Two remedies, both printed by the demo itself:
 
@@ -761,7 +763,8 @@ informational message.
 
 Making this work needs a **verified** opt-in: check that every component really
 is an ascending chain (its edge set equals its consecutive-vertex pairs) and
-raise, not warn, when an explicit request cannot be honoured.
+raise, not warn, when an explicit request cannot be honoured. Track that writer
+fix in #2320.
 
 ### 7.5 Compare like with like
 
