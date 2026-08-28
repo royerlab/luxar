@@ -784,7 +784,7 @@ jobs:
 
       - name: Type check (mypy)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'
-        run: hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py
+        run: hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py scripts/ci_queue_redispatch.py
 
       - name: Layer check (import-linter)
         if: matrix.python-version == '3.12' && needs.changes.outputs.dom_py != 'false'

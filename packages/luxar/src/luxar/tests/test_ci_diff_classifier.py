@@ -45,6 +45,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
+QUEUE_REDISPATCH_WORKFLOW = REPO / ".github/workflows/ci-queue-redispatch.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
@@ -822,6 +823,23 @@ def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
         "every pick-runner-routed job needs at least 120 minutes of timeout "
         f"headroom; under-budget jobs: {insufficient}"
     )
+
+
+def test_queue_redispatch_workflow_is_bounded_and_durable() -> None:
+    workflow = QUEUE_REDISPATCH_WORKFLOW.read_text(encoding="utf-8")
+    parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
+    job = parsed["jobs"]["redispatch"]
+
+    assert parsed["permissions"] == {"actions": "write", "contents": "read"}
+    assert parsed["concurrency"]["cancel-in-progress"] == "false"
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == "5"
+    assert "persist-credentials: false" in workflow
+    assert "sparse-checkout: scripts" in workflow
+    assert "${MAX_QUEUE_RESIDENCY_MINUTES:-30}" in workflow
+    assert "--max-runs 100" in workflow
+    assert "ci_queue_redispatch.py scan" in workflow
+    assert "ci_queue_redispatch.py finish" in workflow
 
 
 def test_scheduled_ci_supplies_a_green_window_every_three_hours(

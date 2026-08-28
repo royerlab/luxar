@@ -412,7 +412,7 @@ format = [
 lint = [
     "ruff check packages/luxar/src scripts scripts/benchmarks stats hatch_build.py",
     "check-complexity",
-    "mypy packages/luxar/src/luxar scripts/ci_queue_scan.py"
+    "mypy packages/luxar/src/luxar scripts/ci_queue_scan.py scripts/ci_queue_redispatch.py"
 ]
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
 # Enforce layer direction: domain (gsplats/io/core/encoding) must not import cli.

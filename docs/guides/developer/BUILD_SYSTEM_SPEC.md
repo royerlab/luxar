@@ -947,6 +947,20 @@ so the cap deliberately limits how often those larger budgets burst onto paid ru
 Router decisions are concurrent snapshots, so a burst can still overshoot the cap
 before its newly routed jobs materialise.
 
+Queue entry is also bounded after routing. `ci-queue-redispatch.yml` scans every five
+minutes and, by default, selects one first-attempt run with an obsidian job queued for
+at least 30 minutes, no obsidian job running in that same run, and active obsidian work
+in another run. `LUXAR_CI_MAX_QUEUE_RESIDENCY_MINUTES` overrides the validated positive
+threshold. The scan reuses `scripts/ci_queue_scan.py`, acts only on a complete scan of
+at most 100 active runs, and fails unreadable or truncated data toward leaving runs
+alone. Before cancelling the whole target run it dispatches a separate hosted recovery
+run; that durable handoff waits for the cancellation to settle and then requests a full
+run rerun. The rerun re-enters `pick-runner`, so the aged backlog is evaluated again
+instead of reusing the stranded obsidian label. Only attempt 1 is eligible, which caps
+automatic recovery at one rerun and prevents a persistent saturation signal from
+forming a cancellation loop. Cancelling an individual required job remains forbidden:
+it strands the protected context and a job-level rerun preserves the original routing.
+
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
 documentation gate.

@@ -116,6 +116,10 @@ def test_scan_repository_filters_runs_and_stops_at_queue_limit(
 
     assert result.queued == ["queued one", "queued two"]
     assert result.running == ["running"]
+    assert result.runs == [
+        ci_queue_scan.RunScan(10, queued=["queued one"], running=["running"]),
+        ci_queue_scan.RunScan(20, queued=["queued two"]),
+    ]
     assert result.scanned_runs == 2
     assert result.stopped is True
     assert not any("runs/21/jobs" in call for call in calls)
