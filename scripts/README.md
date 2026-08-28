@@ -45,7 +45,7 @@ scripts/
 | `benchmark_progressive_psnr.py` | Benchmark progressive gsplat fitting (PSNR/SSIM) |
 | `refit_gsplat_demos.sh` | Force-refit every gsplat demo (sequential) |
 | `run_demo_recompute.sh` | Sequential demo recompute from scratch |
-| `run_examples.py` | Regenerate `datasets/examples/` when the example builders or Luxar writer changed; `--check` is the E2E freshness gate |
+| `run_examples.py` | Regenerate only the `datasets/examples/` producers whose source or statically imported Python modules changed, or whose recorded outputs are missing; dynamic imports, non-Python inputs, and `pyproject.toml` are not fingerprinted, so use `--force` after those change; `--check` is the E2E freshness gate |
 
 ## Demo Ladder Structural Gate
 

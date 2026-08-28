@@ -535,12 +535,21 @@ LINE_INTENSITY: Final = 1.0 / 74.976
 SUBSTITUTIVE_LOD: Final = dict(compression_factor=256, levels=2)
 
 # NOTE — `additive_lod=False` is deliberate. This indexed layout now qualifies
-# for a composed ladder, but the shipped sizing would add three rungs to each of
-# 87 already-small nodes (about 261 groups). Every bundle stays below the
-# 200K-vertex un-laddered-leaf gate and the nodes already stream independently,
-# so that metadata and traversal cost buys little. Keeping the finest Lines
-# level single-shot also leaves its per-vertex hover-label CSR directly on the
-# substitutive child rather than moving it to an additive rung parent.
+# for a composed ladder (every streamline is an ascending simple path, so the
+# writer's fabricated per-component chain is faithful — see
+# `indexed_components_are_chains`), but the shipped sizing would add three rungs
+# to each of 87 already-small nodes (about 261 groups). Every bundle stays below
+# the 200K-vertex un-laddered-leaf gate and the nodes already stream
+# independently, so that metadata and traversal cost buys little. Keeping the
+# finest Lines level single-shot also leaves its per-vertex hover-label CSR
+# directly on the substitutive child rather than moving it to an additive rung
+# parent.
+#
+# `False` opts the synthesized coarse gsplat children out too (it short-circuits
+# before any per-child policy), which costs nothing here: at compression factor
+# 256 the coarse levels are two orders of magnitude smaller than the fine one
+# (59 / 14,865 beads on AF_L, measured above), far under the default
+# 39,062-element first chunk, so a ladder there would collapse to one commit.
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]

@@ -314,7 +314,7 @@ def add_points_impl(
             resolve_additive_axis_points(additive_lod)
             warnings.warn(
                 f"'{name}': the requested streaming ladder cannot be honoured "
-                "(image_labels is set); levels will load all-at-once.",
+                "(image_labels is set); writing a flat node.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -822,25 +822,41 @@ def add_points_substitutive_lod_wrapper_impl(
         resolve_lod_ladder,
     )
     from ..lod.points import resolve_additive_axis_points
-    from ..lod.reveal import preflight_reveal_centre
+    from ..lod.reveal import is_reveal_additive_method, preflight_reveal_centre
 
-    # Resolve the streaming ladder ONCE for the whole group; each level is
-    # specialized from it below. Default ON — a substitutive level is by
-    # construction the largest node in the scene and the last one loaded.
-    composed_additive = compose_additive_under_substitutive(
+    # The coarse gsplat children never carry image_labels, so only the original
+    # Points child must refuse its additive ladder when image_labels is present.
+    # Keep the existing element-domain stream counts for composed coarse
+    # children. Retuning those counts for gsplat bytes-per-element is a separate
+    # cross-geometry policy change, not part of suppression scoping.
+    coarse_additive = compose_additive_under_substitutive(
+        additive_lod,
+        resolve=resolve_additive_axis_points,
+        name=name,
+    )
+    reveal_note = (
+        " Coarse levels use self_energy ordering, so reveal_centre is not applied."
+        if coarse_additive is not None
+        and is_reveal_additive_method(str(coarse_additive.get("method")))
+        else ""
+    )
+    finest_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_points,
         name=name,
         # The multi-LOD writer has no image_labels channel, so laddering would
         # silently drop them. Refuse the ladder, not the labels.
         suppress_reason="image_labels is set" if image_labels is not None else None,
+        suppression_outcome=(
+            "the finest level will load all-at-once; coarse levels keep their "
+            "ladder where one applies."
+            f"{reveal_note}"
+        ),
     )
     # Same reason as the channel check above: the finest child is written LAST, so
     # a reveal_centre that does not match the DERIVED shell axes would otherwise
     # raise once every coarse level is already on disk.
-    preflight_reveal_centre(
-        composed_additive, group._find_scene(), pos_arr, "positions"
-    )
+    preflight_reveal_centre(finest_additive, group._find_scene(), pos_arr, "positions")
     compression_factor = int(spec["compression_factor"])
 
     # Scalar+colormap points have no per-splat scalar channel on gsplats, so bake
@@ -935,7 +951,7 @@ def add_points_substitutive_lod_wrapper_impl(
                 extend_to_all=extend_to_all,
                 max_elements=max_elements,
                 bsp_tree=bsp_tree,
-                additive_lod=composed_additive,
+                additive_lod=finest_additive,
                 **attrs,
             )
         return add_points_impl(
@@ -955,7 +971,7 @@ def add_points_substitutive_lod_wrapper_impl(
             # Forward the ladder: a cloud too small to coarsen is not
             # necessarily too small to stream, and dropping it here was how the
             # ladder silently vanished on the degenerate path.
-            additive_lod=composed_additive,
+            additive_lod=finest_additive,
             **attrs,
         )
 
@@ -1011,7 +1027,7 @@ def add_points_substitutive_lod_wrapper_impl(
         # the sibling-aware first chunk on all but the coarsest. Levels smaller
         # than one chunk resolve to a single level and stay flat leaves.
         lvl_spec = level_additive_lod(
-            composed_additive,
+            coarse_additive,
             level_n=int(lvl_data.n_splats),
             compression_factor=compression_factor,
             is_coarsest=(idx == 0),
@@ -1048,7 +1064,7 @@ def add_points_substitutive_lod_wrapper_impl(
             extend_to_all=extend_to_all,
             max_elements=max_elements,
             bsp_tree=bsp_tree,
-            additive_lod=composed_additive,
+            additive_lod=finest_additive,
             wrapper_coverage_fraction=coverage_vals[-1],
             **child_attrs,
         )
@@ -1071,7 +1087,7 @@ def add_points_substitutive_lod_wrapper_impl(
         fill=None,
         partition=False,
         additive_lod=level_additive_lod(
-            composed_additive,
+            finest_additive,
             level_n=n_points,
             compression_factor=compression_factor,
             is_coarsest=False,
