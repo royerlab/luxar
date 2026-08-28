@@ -254,12 +254,13 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
     that is sized to land in a single zarr chunk because its EAGER COARSEST
     SUBSTITUTIVE LEVEL is what paints first. An additive-only leaf has no coarse
     level, so its first rung IS first paint, and a 2,000-point opening frame buys
-    latency nobody asked for while costing rungs. Measured group counts (wrapper
-    + rungs) for the six embedding demos: at 2,000 they are 12/12/14/15/17/18
-    against 13/13/18/17/17/18 today — no reduction at all. At the budget chunk
-    they are **7/7/9/11/13/13**, because every rung saved is a node saved, and
-    on the published, post-``optimise --profile archive`` store, hosted first
-    paint costs roughly one request per node.
+    latency nobody asked for while costing rungs. In the same order as the
+    runbook table — mouse, ESM3, zebrahub, cellxgene, human and arxiv — measured
+    group counts (wrapper + rungs) at 2,000 are 12/12/15/14/17/18 against
+    13/13/17/18/17/18 today, so there is no reduction at all. At the budget
+    chunk they are **7/7/11/9/13/13**, because every rung saved is a node saved,
+    and on the published, post-``optimise --profile archive`` store, hosted
+    first paint costs roughly one request per node.
 
     **Capped increments**, via :func:`~luxar.utils.lod_breakpoints.
     capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``

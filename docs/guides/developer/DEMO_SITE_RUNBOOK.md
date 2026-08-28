@@ -1174,13 +1174,17 @@ returns `n // 2` arrays of shape `(2,)`, so the laddering unit becomes a single
 segment. A prefix is then scattered segments, i.e. fragmented polylines rather
 than whole ones.
 
-Additive LOD composed under `substitutive_lod=` behaves differently: only the
-**finest** indexed level is suppressed, and unconditionally — the composed path
-keys on the line type alone, so it refuses even edges that would round-trip the
-check above. That level loads all-at-once, while the coarse levels — lifted
-gsplat clouds, not indexed lines — keep their ladder where one applies. An
-explicit additive request emits a `UserWarning`; the default composed ladder is
-skipped with an informational message.
+Additive LOD composed under `substitutive_lod=` uses the same
+`indexed_components_are_chains` contract. Only a finest indexed level whose
+topology fails that check loses its ladder; the coarse levels are lifted gsplat
+clouds and keep their ladder where one applies. An explicit additive request
+emits a `UserWarning`; the default composed ladder is skipped with an
+informational message.
+
+`partition=` plus indexed Lines and an explicit additive ladder is preflighted
+against the whole node before the first part is written. That eager check is
+intentionally stricter than waiting for each part's resolved ladder, but avoids
+leaving a partially written partition when the topology cannot be preserved.
 
 The refusal shipped in `172b686e6` (#2321):
 `lod/lines.py::_validate_indexed_ladder_edges` runs at both multi-level return

@@ -597,8 +597,8 @@ GREAT_CIRCLE_MAX_STEP_DEG: Final = 1.5
 # 5,591,040 on a 4096-class GPU. Overflow is a SILENT clamp (one console
 # warning, tail never rendered), so every leaf is asserted below this.
 MAX_POINTS_PER_NODE: Final = 5_000_000
-# Target finest-level size per spatial tile. 2M keeps each tile a comfortable
-# WebGL batch and puts the 15M default at 8 tiles, the 100M ceiling at 64.
+# Historical target retained in the source fingerprint while `add_lod_tiles`
+# remains as an uncalled policy marker; the shipped occurrence cloud is flat.
 TARGET_TILE_POINTS: Final = 2_000_000
 
 #: View-dependent LOD for the two big summary layers. A `stream:` ladder alone is
