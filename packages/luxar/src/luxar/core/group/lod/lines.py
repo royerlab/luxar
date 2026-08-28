@@ -231,6 +231,23 @@ def _indexed_ladder_preserves_edges(
     return np.array_equal(canonical_edges(authored), canonical_edges(rebuilt))
 
 
+def _validate_indexed_ladder_edges(
+    line_type: str,
+    indices: Optional[NDArray],
+    polylines: List[NDArray[np.intp]],
+) -> None:
+    if line_type != "indexed":
+        return
+    assert indices is not None
+    if _indexed_ladder_preserves_edges(indices, polylines):
+        return
+    raise ValueError(
+        "line_type='indexed' additive LOD cannot preserve the explicit edge list: "
+        "every connected component's edge list must exactly equal its consecutive "
+        "vertex pairs in ascending vertex order"
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Per-polyline ordering
 # ─────────────────────────────────────────────────────────────────────
@@ -509,14 +526,7 @@ def make_additive_lod_lines(
     if p == 0:
         return []
 
-    if line_type == "indexed":
-        assert indices is not None
-        if not _indexed_ladder_preserves_edges(indices, polylines):
-            raise ValueError(
-                "line_type='indexed' additive LOD cannot preserve the explicit "
-                "edge list: every connected component must use consecutive vertex "
-                "pairs in ascending vertex order"
-            )
+    _validate_indexed_ladder_edges(line_type, indices, polylines)
 
     if p == 1 and line_type in ("polyline", "loop") and n_lods > 1:
         warnings.warn(
