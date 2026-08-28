@@ -84,6 +84,14 @@ def _legacy_gsplat_store(tmp: Path) -> Path:
     return path
 
 
+def _unreadable_gsplat_store(tmp: Path) -> Path:
+    path = tmp / "unreadable.gsplats.zarr"
+    root = zc_open_group(str(path), mode="w")
+    root.attrs["format_type"] = "gsplats_zarr"
+    root.attrs["format_version"] = "3.4"
+    return path
+
+
 def _scene_without_split_planes(tmp: Path) -> Path:
     from luxar import Dimensions, LuxarZarrCompiler
 
@@ -236,6 +244,20 @@ def test_info_command_exits_when_report_rejects_a_legacy_store() -> None:
         assert result.exit_code == 1, result.stdout
         assert "migrate-format" in result.stdout
         assert "Traceback" not in result.stdout
+
+
+def test_doctor_rejects_a_supported_but_unreadable_store() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _unreadable_gsplat_store(Path(tmp))
+
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+
+        assert result.exit_code == 1, result.stdout
+        assert "Info report failed; continuing to the diagnosis" in result.stdout
+        assert "Diagnosing:" in result.stdout
+        assert "[/] gsplat store cannot be read" in result.stdout
+        assert "KeyError('centers')" in result.stdout
+        assert "1 problem(s) outstanding" in result.stdout
 
 
 def test_doctor_summarizes_nested_provenance_unless_full_is_requested() -> None:

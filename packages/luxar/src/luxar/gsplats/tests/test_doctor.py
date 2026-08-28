@@ -570,6 +570,21 @@ class TestSplitPlanesCheck:
             assert not finding.fixable
             assert "migrate-format" in finding.remedy
 
+    def test_supported_but_unreadable_store_is_diagnosed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _legacy_gsplat_store(Path(tmp), "3.4")
+
+            report = diagnose_store(path)
+
+            assert not report.healthy
+            (finding,) = report.findings
+            assert finding.check == "readability"
+            assert finding.severity == "error"
+            assert finding.path == ""
+            assert "cannot be read" in finding.summary
+            assert "KeyError('centers')" in finding.detail
+            assert not finding.fixable
+
     def test_missing_planes_are_diagnosed_and_recovered(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _partition_store(Path(tmp))

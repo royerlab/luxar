@@ -48,24 +48,40 @@ def check_format_version(root: "zarr.Group") -> List[Finding]:
     from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
 
     version = root.attrs.get("format_version")
-    if version in SUPPORTED_FORMAT_VERSIONS:
-        return []
-    return [
-        Finding(
-            check="format-version",
-            severity="error",
-            path="",
-            summary=f"unsupported gsplat format version {version!r}",
-            detail=(
-                "The current Luxar reader cannot open this store; supported "
-                f"versions are {SUPPORTED_FORMAT_VERSIONS}."
-            ),
-            remedy=(
-                "Convert it with `luxar gsplat migrate-format <input> "
-                "<output.gsplats.zarr>`."
-            ),
-        )
-    ]
+    if version not in SUPPORTED_FORMAT_VERSIONS:
+        return [
+            Finding(
+                check="format-version",
+                severity="error",
+                path="",
+                summary=f"unsupported gsplat format version {version!r}",
+                detail=(
+                    "The current Luxar reader cannot open this store; supported "
+                    f"versions are {SUPPORTED_FORMAT_VERSIONS}."
+                ),
+                remedy=(
+                    "Convert it with `luxar gsplat migrate-format <input> "
+                    "<output.gsplats.zarr>`."
+                ),
+            )
+        ]
+
+    from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+    try:
+        read_gsplat_node(root, root)
+    except Exception as exc:
+        return [
+            Finding(
+                check="readability",
+                severity="error",
+                path="",
+                summary="gsplat store cannot be read",
+                detail=f"The current Luxar reader rejected this store: {exc!r}.",
+                remedy="Restore the incomplete store or regenerate it from its source.",
+            )
+        ]
+    return []
 
 
 def _part_boxes(
