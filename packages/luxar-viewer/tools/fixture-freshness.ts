@@ -2,8 +2,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   FIXTURES_REPO_RELATIVE_PATH,
@@ -16,31 +16,46 @@ const PROJECT_ROOT = resolve(VIEWER_ROOT, '../..');
 
 type FixtureGenerator = (scriptPath: string) => void;
 
-/**
- * Every Python file whose content can change what the generator writes.
- *
- * The wide production set is deliberate: compiler behavior also depends on
- * root-level compatibility code and `core/`, not only `encoding/` and `io/`.
- * Test trees, `__pycache__`, and `conftest.py` cannot change a fixture byte and
- * are excluded so test-only edits do not trigger a costly regeneration.
- */
+const IMPORT_CLOSURE_PROGRAM = `
+import json
+import sys
+from pathlib import Path
+
+from luxar.utils.source_fingerprints import imported_source_files
+
+project_root = Path(sys.argv[1]).resolve()
+generator = Path(sys.argv[2])
+import_roots = tuple(Path(path) for path in sys.argv[3:])
+sources = imported_source_files(generator, import_roots, within=project_root)
+print(json.dumps([path.relative_to(project_root).as_posix() for path in sources]))
+`;
+
+/** Every local Python source reachable from the fixture generator's imports. */
 export function fixtureInputFiles(
   projectRoot: string = PROJECT_ROOT,
   fixturesDir: string = resolve(projectRoot, FIXTURES_REPO_RELATIVE_PATH)
 ): string[] {
   const generatorPath = resolve(fixturesDir, 'generate_test_data.py');
-  const files = [generatorPath];
-  const sourceRoot = resolve(projectRoot, 'packages/luxar/src/luxar');
-  if (!existsSync(sourceRoot)) return files;
-  for (const entry of readdirSync(sourceRoot, { recursive: true }) as string[]) {
-    if (!entry.endsWith('.py')) continue;
-    const parts = entry.split(/[\\/]/);
-    if (parts.includes('tests') || parts.includes('__pycache__')) continue;
-    if (parts[parts.length - 1] === 'conftest.py') continue;
-    const full = join(sourceRoot, entry);
-    if (existsSync(full)) files.push(full);
+  const output = execFileSync(
+    'hatch',
+    [
+      'run',
+      'fixtures:python',
+      '-c',
+      IMPORT_CLOSURE_PROGRAM,
+      projectRoot,
+      generatorPath,
+      resolve(projectRoot, 'packages/luxar/src'),
+      fixturesDir,
+    ],
+    { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 120_000 }
+  );
+  const encodedPaths = output.trim().split(/\r?\n/).at(-1);
+  const paths: unknown = JSON.parse(encodedPaths ?? '[]');
+  if (!Array.isArray(paths) || paths.some((path) => typeof path !== 'string')) {
+    throw new Error('Fixture import resolver returned an invalid source list');
   }
-  return files.sort();
+  return paths.map((path) => resolve(projectRoot, path)).sort();
 }
 
 /** Content digest of paths, including project-relative names so renames count. */

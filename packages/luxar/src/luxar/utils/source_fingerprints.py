@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import hashlib
 import os
-from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -159,34 +158,6 @@ def fingerprint_imported_sources(
         module_cache=module_cache,
     )
     return fingerprint_source_files(root.resolve(), sources)
-
-
-def fingerprint_production_sources(package_root: Path | None = None) -> str:
-    """Hash production Luxar Python sources under one package root."""
-    root = (
-        Path(__file__).resolve().parents[1]
-        if package_root is None
-        else Path(package_root).resolve()
-    )
-    paths = tuple(
-        path
-        for path in root.rglob("*.py")
-        if "tests" not in path.relative_to(root).parts
-        and "__pycache__" not in path.relative_to(root).parts
-        and path.name != "conftest.py"
-    )
-    if not paths:
-        return ""
-    try:
-        return fingerprint_source_files(root, paths)
-    except OSError:
-        return ""
-
-
-@lru_cache(maxsize=None)
-def production_source_fingerprint(package_root: Path | None = None) -> str:
-    """Hash production sources once per package root and process."""
-    return fingerprint_production_sources(package_root)
 
 
 def store_writer_environment() -> dict[str, str | None]:
