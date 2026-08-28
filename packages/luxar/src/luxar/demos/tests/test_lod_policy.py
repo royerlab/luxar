@@ -570,12 +570,12 @@ def test_every_recipe_grafts_into_a_scene_from_its_file(
 def test_a_multi_part_adaptive_tree_grafts_with_its_colormap(tmp_path: Path) -> None:
     """The many-part shape the real datasets have.
 
-    ``save_with_lod`` caps tiles at 250,000 splats, so a test-sized fit always
-    comes out as ONE part — which would leave the interesting case (a partition
-    with many children, each its own level ladder) untested. Build that shape
-    directly and check both that it grafts and that the per-channel colormap
-    reaches the levels, since ``colormap`` is copied down to the leaves while
-    ``blending_mode`` stays on the wrapper.
+    ``save_with_lod`` uses the adaptive recipe's 1,000,000-splat tile cap, so a
+    test-sized fit always comes out as ONE part — which would leave the
+    interesting case (a partition with many children, each its own level ladder)
+    untested. Build that shape directly and check both that it grafts and that
+    the per-channel colormap reaches the levels, since ``colormap`` is copied
+    down to the leaves while ``blending_mode`` stays on the wrapper.
     """
     from luxar import Dimension, Dimensions, LuxarZarrCompiler
     from luxar._zarr_compat import open_group

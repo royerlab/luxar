@@ -795,6 +795,48 @@ class TestAddLinesAdditiveLod:
         # No multi-LOD subgroups; falls through to single-shot write.
         assert "n_additive_sublods" not in grp.attrs
 
+    def test_indexed_graph_single_level_preserves_authored_edges(
+        self, tmp_path
+    ) -> None:
+        """A collapsed ladder writes the original indexed graph unchanged."""
+        output = tmp_path / "t.luxar.zarr"
+        vertices = np.arange(18, dtype=np.float32).reshape(6, 3)
+        indices = np.array([[0, 1], [1, 2], [1, 3], [3, 4], [4, 5]], dtype=np.uint32)
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "fork",
+                vertices,
+                widths=np.full(6, 0.1, dtype=np.float32),
+                indices=indices,
+                line_type="indexed",
+                additive_lod=dict(n_lods=3, method="random", seed=0),
+            )
+
+        group = zarr.open(str(output), mode="r")["fork"]
+        assert "n_additive_sublods" not in group.attrs
+
+        from luxar.io.reader import LuxarScene
+
+        loaded = LuxarScene.load(output).get_lines("fork")
+        authored_edges = {
+            tuple(sorted((tuple(vertices[start]), tuple(vertices[end]))))
+            for start, end in indices
+        }
+        recovered_edges = {
+            tuple(
+                sorted(
+                    (
+                        tuple(loaded.vertices[start]),
+                        tuple(loaded.vertices[end]),
+                    )
+                )
+            )
+            for start, end in loaded.segments
+        }
+        assert recovered_edges == authored_edges
+
     def test_single_shot_path_still_works(self, tmp_path) -> None:
         """No additive_lod → existing single-LOD layout."""
         output = tmp_path / "t.luxar.zarr"

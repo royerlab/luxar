@@ -45,6 +45,15 @@ _GATED_KEYWORDS = frozenset({"substitutive_lod", "partition"})
 #: so a gate keyed only on the keywords would miss them entirely.
 _GATED_CALLS = frozenset({"add_partition_group", "add_lod_group"})
 
+_CONVERTED_ADDITIVE_TARGETS = {
+    "demo_arxiv_embeddings_kaggle.py": "arxiv_papers_kaggle",
+    "demo_cellxgene_census_umap.py": "cells",
+    "demo_esm3_protein_landscape.py": "proteins",
+    "demo_human_multiome_peak_umap.py": "Cells",
+    "demo_mouse_multiome_peak_umap.py": "Cells",
+    "demo_zebrahub_multiome_peak_umap.py": "Cells",
+}
+
 #: Module -> reason, for every module that legitimately builds one of these.
 #:
 #: A reason must say WHY the cheap default is insufficient for that data, in terms
@@ -136,6 +145,23 @@ def gated_features(source: str, filename: str = "<source>") -> set[str]:
     return found
 
 
+def additive_ladder_targets(source: str, filename: str = "<source>") -> set[str]:
+    """Literal node names carrying a non-disabled ``additive_lod=`` request."""
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source, filename=filename)):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        target = node.args[0]
+        if not isinstance(target, ast.Constant) or not isinstance(target.value, str):
+            continue
+        if any(
+            kw.arg == "additive_lod" and not _is_disabled(kw.value)
+            for kw in node.keywords
+        ):
+            found.add(target.value)
+    return found
+
+
 def _corpus() -> dict[str, set[str]]:
     """Module name -> the gated structures it requests. Empty entries dropped."""
     out: dict[str, set[str]] = {}
@@ -213,6 +239,17 @@ def test_the_corpus_still_has_demos_using_these() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("module_name", "target"), sorted(_CONVERTED_ADDITIVE_TARGETS.items())
+)
+def test_converted_embedding_demo_keeps_its_additive_ladder(
+    module_name: str, target: str
+) -> None:
+    """Removing any converted demo's opt-in ladder must fail in CI."""
+    path = next(path for path in scanned_demo_modules() if path.name == module_name)
+    assert target in additive_ladder_targets(path.read_text(), path.name)
+
+
 @pytest.mark.parametrize("dropped", sorted(JUSTIFIED))
 def test_the_gate_fires_when_an_entry_is_missing(dropped: str) -> None:
     """Every entry is load-bearing: drop it and the gate goes red.
@@ -285,6 +322,14 @@ class TestGatedFeatureDetection:
     )
     def test_non_requests_are_not_detected(self, source: str) -> None:
         assert gated_features(source) == set()
+
+    def test_additive_ladder_targets_ignore_opt_outs_and_dynamic_names(self) -> None:
+        source = """
+scene.add_points('kept', p, additive_lod=stream_ladder(n))
+scene.add_points('disabled', p, additive_lod=False)
+scene.add_points(name, p, additive_lod=stream_ladder(n))
+"""
+        assert additive_ladder_targets(source) == {"kept"}
 
     def test_a_new_demo_without_a_reason_would_be_caught(self) -> None:
         """The negative arm end-to-end: a module not in JUSTIFIED trips the gate.

@@ -473,28 +473,7 @@ def add_lines_impl(
 
             additive_spec = resolve_additive_axis_lines(additive_lod)
             if additive_spec is not None:
-                # Topology first, and BEFORE make_additive_lod_lines — same
-                # reshape hazard as the partition branch above.
                 validate_line_indices_before_split(indices, n_vertices, line_type)
-                # An indexed edge list is NOT carried through the multi-LOD
-                # writer: it re-derives one by chaining each connected
-                # component's members in ascending vertex order
-                # (``add_lines_multi_lod_wrapper_impl`` below). That is faithful
-                # only when every component already IS an ascending simple path,
-                # so verify it instead of assuming a producer's convention.
-                # Raise rather than warn: reaching here means the caller passed
-                # an explicit ``additive_lod=``, and the alternative is a scene
-                # whose edges are quietly wrong — which is what happened before
-                # this check existed. The substitutive path applies the same test
-                # through ``compose_additive_under_substitutive``.
-                _verified_indexed_additive(
-                    name,
-                    additive_lod=additive_lod,
-                    line_type=line_type,
-                    indices=indices,
-                    n_vertices=n_vertices,
-                    already_verified=indexed_additive_verified,
-                )
                 widths_arr = (
                     widths
                     if isinstance(widths, np.ndarray) and widths.shape == (n_vertices,)
@@ -531,6 +510,19 @@ def add_lines_impl(
                     ),
                 )
                 if len(polyline_levels) > 1:
+                    # An indexed edge list is NOT carried through the multi-LOD
+                    # writer: it re-derives one by chaining each connected
+                    # component's members in ascending vertex order. Verify only
+                    # once a real ladder will be written; a one-level result
+                    # falls through to the flat writer with the authored indices.
+                    _verified_indexed_additive(
+                        name,
+                        additive_lod=additive_lod,
+                        line_type=line_type,
+                        indices=indices,
+                        n_vertices=n_vertices,
+                        already_verified=indexed_additive_verified,
+                    )
                     return add_lines_multi_lod_wrapper_impl(
                         group,
                         name=name,

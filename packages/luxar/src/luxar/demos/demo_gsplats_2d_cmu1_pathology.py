@@ -509,29 +509,13 @@ def create_luxar_scene(
     that is a ``kind=partition`` tree with no flat matrix form, so
     ``add_gsplats_from_file`` is the entry point that grafts one whole.
 
-    Grafting is deliberately shape-agnostic, and it has to be, because **two
-    generations of these archives exist under the same file names** and which one
-    a build grafts depends on the machine. ``data_manifest.json`` pins both: the
-    in-repo LFS payload (``sha256`` / ``bytes`` — 38.2, 39.2, 36.4 MB) and the
-    artifact the Zenodo record serves (``hosted_sha256`` / ``hosted_bytes`` —
-    84.5, 93.2, 100.3 MB). They diverged when a refit replaced the hosted copy
-    without touching the in-repo one, and ``data_fetch`` resolves the in-repo
-    payload FIRST, so a checkout with a stale LFS object keeps serving the older
-    generation.
-
-    The two are structurally unrelated, not just different sizes: the in-repo
-    generation is a flat laddered leaf (no ``kind`` attr anywhere, 4 additive
-    rungs), while the hosted generation carries a ``kind=partition`` with per-tile
-    ``kind=lod`` groups. So this demo builds a FLAT scene on a host holding the
-    in-repo payload and a TILED one on a host holding the hosted artifact — with
-    no code change and nothing visible in a diff.
-
-    Two consequences worth keeping in mind. A locally measured scene shape says
-    nothing about what a fresh machine builds, and the discriminator is to hash
-    the cached file and see which of the two digests it matches — byte size is
-    only suggestive. And ``add_gsplats_from_file`` must keep routing a
-    matrix-shaped file down the ordinary data path and a partition through the
-    graft, because it genuinely receives both.
+    Grafting is deliberately shape-agnostic, because the two paths do not agree
+    yet: the hosted archives were written before the recipe was chosen and are
+    still flat leaves, and they stay that way until they are refitted and
+    reuploaded (the manifest pins their checksums). ``add_gsplats_from_file``
+    routes a matrix-shaped file down the ordinary data path and a partition
+    through the graft, so the default path renders either one — it just does not
+    get spatial tiles until the published bytes catch up.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel
