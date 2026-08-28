@@ -7,8 +7,6 @@ its ``main()``, and assert that an output zarr exists.
 
 Heavy examples are explicitly excluded:
 
-- ``temporal_spiral_sphere_4d_example`` — generates ~102M point-records;
-  intended as a stress fixture, not a smoke target.
 - ``dense_cubic_gradient_example`` — 1.5M points; same rationale.
 - ``rainbow_sphere_spiral_example`` — 200K points; slow on CI.
 - ``performance_benchmark_example`` — runs 100 nodes × 1K points;
@@ -39,7 +37,6 @@ EXAMPLES_DIR = Path(__file__).resolve().parent.parent
 
 HEAVY_EXAMPLES = frozenset(
     {
-        "temporal_spiral_sphere_4d_example",
         "dense_cubic_gradient_example",
         "rainbow_sphere_spiral_example",
         "performance_benchmark_example",
@@ -98,6 +95,17 @@ def _parametrize_stems(stems: Iterable[str]) -> list[pytest.param]:
             marks = (pytest.mark.slow,)
         params.append(pytest.param(stem, marks=marks))
     return params
+
+
+def test_temporal_spiral_sphere_stays_within_preflight_budget():
+    """The 4D navigation example must remain practical for ``run-examples``."""
+    module = _load_example("temporal_spiral_sphere_4d_example")
+
+    point_records = module.N_POINTS_PER_FRAME * module.N_FRAMES
+
+    assert module.N_POINTS_PER_FRAME >= 1_000
+    assert module.N_FRAMES >= 32
+    assert point_records <= 1_000_000
 
 
 @pytest.mark.parametrize("n_clusters", [8, 19, 20, 40])
