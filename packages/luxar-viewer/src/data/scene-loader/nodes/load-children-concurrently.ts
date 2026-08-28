@@ -38,15 +38,16 @@ class WorkingSetGate {
 
   private drain(): void {
     while (this.waiters.length > 0) {
-      const waiter = this.waiters[0];
-      if (
-        this.activeBytes > 0 &&
-        this.activeBytes + waiter.bytes > EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES
-      ) {
-        return;
-      }
+      const waiterIndex =
+        this.activeBytes === 0
+          ? 0
+          : this.waiters.findIndex(
+              (waiter) =>
+                this.activeBytes + waiter.bytes <= EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES
+            );
+      if (waiterIndex < 0) return;
 
-      this.waiters.shift();
+      const [waiter] = this.waiters.splice(waiterIndex, 1);
       this.activeBytes += waiter.bytes;
       let released = false;
       waiter.resolve(() => {
@@ -77,13 +78,13 @@ function estimateWorkingSetBytes(node: SceneNode): number {
   const vertexCount = readCount(node.attrs.n_vertices);
   const segmentCount = readCount(node.attrs.n_segments) || vertexCount;
   const rawNdim = readCount(node.attrs.ndim);
-  const ndim = Math.min(16, rawNdim || 3);
+  const ndim = rawNdim || 3;
   const vertexBytes = 10 * ndim + 70;
 
   // Accumulator growth can briefly retain old + new vertex/segment buffers;
   // projection then emits endpoint attributes, and the committed geometry owns
   // a 6-texel RGBA32F texture plus ordering storage per segment. Vertex pressure
-  // is `2.5 × (4 × ndim + 28)` rounded to `10 × ndim + 70` bytes: the 1.5x
+  // is `2.5 × (4 × ndim + 28)` = `10 × ndim + 70` bytes: the 1.5x
   // accumulator grow can retain both old and new capacities. Segment pressure
   // rounds the remaining overlap to 220 B/segment. Legacy nodes without
   // n_segments use the accumulator's conservative 1:1 fallback. Admission only

@@ -141,6 +141,33 @@ describe('loadChildrenConcurrently', () => {
     expect(started).toEqual(children.map((child) => child.path));
   });
 
+  it('admits a small line sibling past a large waiter that does not fit yet', async () => {
+    const children = [
+      ...makeLineChildren(2, 500_000),
+      { ...makeLineChildren(1, 10_000)[0], path: '/group/lines_small' },
+    ];
+    const started: string[] = [];
+    const releases = new Map<string, () => void>();
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async (child) => {
+        started.push(child.path);
+        await new Promise<void>((resolve) => releases.set(child.path, resolve));
+      }
+    );
+
+    await vi.waitFor(() => expect(started).toEqual([children[0].path, children[2].path]));
+    releases.get(children[2].path)?.();
+    expect(started).toEqual([children[0].path, children[2].path]);
+    releases.get(children[0].path)?.();
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    releases.get(children[1].path)?.();
+    await loadPromise;
+  });
+
   it('charges declared segment pressure independently of vertex count', async () => {
     const children = makeLineChildren(2, 10_000, 1_500_000);
     const started: string[] = [];
@@ -163,8 +190,8 @@ describe('loadChildrenConcurrently', () => {
     await loadPromise;
   });
 
-  it('includes nD position growth in the line working-set estimate', async () => {
-    const children = makeLineChildren(2, 400_000, 400_000, 16);
+  it('includes uncapped nD position growth in the line working-set estimate', async () => {
+    const children = makeLineChildren(2, 250_000, 250_000, 32);
     const started: string[] = [];
     const releases: Array<() => void> = [];
     const loadPromise = loadChildrenConcurrently(
