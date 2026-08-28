@@ -10,8 +10,8 @@ Polyline-identification per ``line_type``:
 * ``segments`` — each consecutive pair of vertices is its own polyline
   of length 2. N/2 polylines.
 * ``indexed``  — connected-components walk over the explicit segments;
-  one component = one polyline. Additive LOD requires each component's
-  edge list to equal its ascending consecutive-vertex chain.
+  one component = one polyline. When a multi-level additive ladder is
+  emitted, each component's edge multiset must equal its consecutive-vertex chain.
 * ``polyline`` / ``loop`` — ONE polyline encompassing all vertices. A
   multi-LOD ladder over a single polyline is a no-op (would require
   vertex-subsampling, which breaks the "polyline-level, no topology
@@ -244,8 +244,10 @@ def _validate_indexed_ladder_edges(
         return
     raise ValueError(
         "line_type='indexed' additive LOD cannot preserve the explicit edge list: "
-        "every connected component's edge list must exactly equal its consecutive "
-        "vertex pairs in ascending vertex order"
+        "every connected component's undirected edge multiset must equal its consecutive "
+        "vertex pairs (edge direction and row order do not matter). Drop "
+        "additive_lod=, use partition=, or re-author the edges with "
+        "line_type='segments'."
     )
 
 
@@ -527,8 +529,6 @@ def make_additive_lod_lines(
     if p == 0:
         return []
 
-    _validate_indexed_ladder_edges(line_type, indices, polylines)
-
     if p == 1 and line_type in ("polyline", "loop") and n_lods > 1:
         warnings.warn(
             f"line_type={line_type!r} produces a single polyline; "
@@ -570,6 +570,8 @@ def make_additive_lod_lines(
                 ]
                 out.append(level_polylines)
             cursor += count
+        if len(out) > 1:
+            _validate_indexed_ladder_edges(line_type, indices, polylines)
         return out
 
     # random / salience: slice the polyline permutation by breakpoints.
@@ -631,6 +633,8 @@ def make_additive_lod_lines(
     if start < p:
         level_polylines = [polylines[int(i)] for i in perm[start:p]]
         out.append(level_polylines)
+    if len(out) > 1:
+        _validate_indexed_ladder_edges(line_type, indices, polylines)
     return out
 
 

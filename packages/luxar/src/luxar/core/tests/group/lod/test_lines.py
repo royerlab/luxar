@@ -19,6 +19,7 @@ import zarr
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.lines import (
     _indexed_connected_components,
+    _indexed_ladder_preserves_edges,
     compute_additive_order_lines,
     identify_polylines,
     make_additive_lod_lines,
@@ -100,6 +101,41 @@ class TestIdentifyPolylines:
     ) -> None:
         polys = _indexed_connected_components(n_vertices, segments)
         assert [poly.tolist() for poly in polys] == expected
+
+    @pytest.mark.parametrize(
+        ("n_vertices", "indices", "expected"),
+        [
+            (3, [[0, 1], [1, 2]], True),
+            (3, [[2, 1], [1, 0]], True),
+            (4, [[0, 1], [1, 2]], True),
+            (3, [], True),
+            (2, [[0, 1], [0, 1]], False),
+            (1, [[0, 0]], False),
+            (3, [[0, 1], [1, 2], [2, 0]], False),
+            (3, [[0, 2], [2, 1]], False),
+            (4, [[0, 1], [0, 2], [0, 3]], False),
+        ],
+        ids=[
+            "ascending-chain",
+            "reversed-reordered-chain",
+            "chain-with-isolated-vertex",
+            "edge-less",
+            "duplicate-edge",
+            "self-loop",
+            "cycle",
+            "non-ascending-path",
+            "branching-star",
+        ],
+    )
+    def test_indexed_ladder_preserves_exact_edge_multiset(
+        self,
+        n_vertices: int,
+        indices: list[list[int]],
+        expected: bool,
+    ) -> None:
+        edge_array = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+        polylines = identify_polylines(n_vertices, "indexed", edge_array)
+        assert _indexed_ladder_preserves_edges(edge_array, polylines) is expected
 
     def test_indexed_many_small_components_cover_vertices_once(self) -> None:
         # Representative ribbon-heavy shape: many short disjoint chains. The
@@ -696,6 +732,68 @@ class TestAddLinesAdditiveLod:
                 )
 
         assert "stars" not in zarr.open(str(output), mode="r")
+
+    @pytest.mark.parametrize(
+        ("component_count", "n_lods"),
+        [(1, 3), (6, 1)],
+        ids=["single-component", "single-requested-level"],
+    )
+    def test_indexed_branching_graph_writes_flat_when_no_ladder_is_emitted(
+        self,
+        tmp_path,
+        component_count: int,
+        n_lods: int,
+    ) -> None:
+        from luxar.encoding import ArrayDecoder
+
+        output = tmp_path / "t.luxar.zarr"
+        vertices = np.array(
+            [
+                [component, offset, 0.0]
+                for component in range(component_count)
+                for offset in range(4)
+            ],
+            dtype=np.float32,
+        )
+        indices = np.array(
+            [
+                (start, start + spoke)
+                for start in range(0, len(vertices), 4)
+                for spoke in range(1, 4)
+            ],
+            dtype=np.uint32,
+        )
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "stars",
+                vertices,
+                widths=np.ones(len(vertices), dtype=np.float32),
+                indices=indices,
+                line_type="indexed",
+                additive_lod={"n_lods": n_lods},
+            )
+
+        node = zarr.open(str(output), mode="r")["stars"]
+        assert "n_additive_sublods" not in node.attrs
+        stored_vertices = np.asarray(ArrayDecoder().decode(node["vertices"]))
+        stored_edges = [
+            tuple(
+                sorted(
+                    (
+                        tuple(stored_vertices[endpoint_a]),
+                        tuple(stored_vertices[endpoint_b]),
+                    )
+                )
+            )
+            for endpoint_a, endpoint_b in np.asarray(node["segments"])
+        ]
+        expected_edges = [
+            tuple(sorted((tuple(vertices[endpoint_a]), tuple(vertices[endpoint_b]))))
+            for endpoint_a, endpoint_b in indices
+        ]
+        assert sorted(stored_edges) == sorted(expected_edges)
 
     def test_image_labels_suppress_ladder_and_are_kept(self, tmp_path) -> None:
         # Regression: the plain additive multi-LOD writer has no image_labels
