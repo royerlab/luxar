@@ -2,9 +2,9 @@ import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { log, Modules } from '../../../utils/log';
 
 /**
- * Narrow view of the SceneLoader the online-retry listener needs. Matches
- * `SceneLoader.hasFailures` / `retryAllFailedLoaders` structurally so the
- * lifecycle layer doesn't import the loader class.
+ * Narrow view of the SceneLoader the online-retry listener needs. Matches the
+ * SceneLoader retry/reset methods structurally so the lifecycle layer doesn't
+ * import the loader class.
  */
 export interface RetryCapableLoader {
   hasFailures(): boolean;

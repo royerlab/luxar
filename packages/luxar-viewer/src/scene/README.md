@@ -402,7 +402,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    cooldown budget. Connectivity restoration resets those budgets
    unconditionally; the monitor's Retry-all does so when a recorded loader
    failure exposes that control. Surfacing an otherwise silent exhausted
-   branch in the monitor is tracked separately. Ordinary subtree failures
+   branch in the monitor is tracked in #2291. Ordinary subtree failures
    keep retrying after each cooldown without a fixed attempt cap.
 9. **Never-downgrade display gate**: a lazy level flips `ready` after
    its _first_ additive chunk commits, so an ungated swap to a
