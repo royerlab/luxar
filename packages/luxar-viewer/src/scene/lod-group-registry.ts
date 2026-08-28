@@ -930,6 +930,7 @@ export class LODGroupRegistry {
    * object per entry. That cost is genuinely irrelevant here.
    */
   isCaptureQuiescent(): boolean {
+    if (this.deps.hasArchiveFault?.()) return true;
     const version = this.deps.getViewVersion?.();
     for (const entry of this.entries.values()) {
       // Deliberately excluded: an off-screen group is held coarse on purpose
@@ -1890,7 +1891,7 @@ export class LODGroupRegistry {
    * ``retryLazyChildByNodePath`` (an explicit user retry of a FAILED level)
    * deliberately bypasses this and calls ``kickDeferredLoad`` directly: an
    * explicit request for a retryable child is honoured whatever the layer's
-   * visibility.
+   * visibility or the current archive-fault latch.
    */
   private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
     if (this.deps.hasArchiveFault?.() || !isEffectivelyVisible(entry.groupObject)) return;

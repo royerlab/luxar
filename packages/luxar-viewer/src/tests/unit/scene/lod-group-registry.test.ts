@@ -1684,12 +1684,10 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(children[1].failed).not.toBe(true);
   });
 
-  it('does not retry lazy levels while the owning loader has an archive fault', () => {
+  it('pauses automatic lazy loads during an archive fault and resumes on the next frame', () => {
     const ensureLoaded = vi.fn();
     const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
     children[1].nodePath = '/g/child_1';
-    children[1].failed = true;
-    children[1].permanentlyFailed = true;
     let hasArchiveFault = true;
     const reg = makeRegistry(
       [0, 1, 2],
@@ -1703,11 +1701,12 @@ describe('LODGroupRegistry — lazy children', () => {
     reg.register(makeEntry(children, 0, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 1 });
 
-    for (let i = 0; i < 300; i++) reg.evaluatePerFrame();
-
+    reg.evaluatePerFrame();
     expect(ensureLoaded).not.toHaveBeenCalled();
-    expect(children[1].failed).toBe(true);
-    expect(children[1].failedTick).toBeUndefined();
+
+    hasArchiveFault = false;
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
   });
 
   it('does not auto-retry a permanently failed child after the loader fault clears', () => {
@@ -3841,6 +3840,32 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     // Control — the exclusion is what makes it quiescent, not the entry being
     // vacuously settled: the same entry visible blocks on the pending level.
     layer.visible = true;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('treats an archive-faulted scene as settled until automatic loading resumes', () => {
+    let hasArchiveFault = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => hasArchiveFault
+    );
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    const entry = makeEntry(children, 0, '/g');
+    reg.register(entry);
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    reg.evaluatePerFrame();
+    expect(entry.desiredChildIndex).toBe(1);
+    expect(entry.activeChildIndex).toBe(0);
+    expect(children[1].loading).toBeFalsy();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    hasArchiveFault = false;
     expect(reg.isCaptureQuiescent()).toBe(false);
   });
 
