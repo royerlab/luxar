@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import hashlib
 import json
 import shutil
@@ -14,7 +13,10 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import luxar
-from luxar.utils.source_fingerprints import store_writer_environment
+from luxar.utils.source_fingerprints import (
+    imported_source_files,
+    store_writer_environment,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = REPO_ROOT / "datasets/examples"
@@ -22,77 +24,6 @@ MARKER_NAME = ".fixture-build.json"
 MARKER_VERSION = 3
 # Keep synchronized with packages/luxar-viewer/tools/example-fixture-freshness.ts.
 STALE_EXIT_CODE = 3
-
-
-def _module_path(
-    repo_root: Path, module: str, cache: dict[str, Path | None]
-) -> Path | None:
-    if module in cache:
-        return cache[module]
-    if module == "luxar" or module.startswith("luxar."):
-        root = repo_root / "packages/luxar/src"
-    elif "." not in module:
-        root = repo_root / "packages/luxar/examples"
-    else:
-        cache[module] = None
-        return None
-    relative = Path(*module.split(".")) if module.startswith("luxar") else Path(module)
-    module_file = root / relative.with_suffix(".py")
-    if module_file.is_file():
-        cache[module] = module_file
-        return module_file
-    package_file = root / relative / "__init__.py"
-    resolved = package_file if package_file.is_file() else None
-    cache[module] = resolved
-    return resolved
-
-
-def _module_name(repo_root: Path, path: Path) -> str:
-    package_root = repo_root / "packages/luxar/src"
-    examples_root = repo_root / "packages/luxar/examples"
-    if path.is_relative_to(package_root):
-        relative = path.relative_to(package_root)
-        parts = list(relative.with_suffix("").parts)
-        if parts[-1] == "__init__":
-            parts.pop()
-        return ".".join(parts)
-    return path.relative_to(examples_root).stem
-
-
-def _imported_modules(path: Path, module: str, cache: dict[Path, set[str]]) -> set[str]:
-    if path in cache:
-        return cache[path]
-    try:
-        tree = ast.parse(path.read_text())
-    except (OSError, SyntaxError, UnicodeError):
-        return set()
-    imported: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imported.update(alias.name for alias in node.names)
-            continue
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        if node.level:
-            package = module.split(".")
-            if path.name != "__init__.py":
-                package.pop()
-            ascend = node.level - 1
-            if ascend > len(package):
-                continue
-            prefix = package[: len(package) - ascend]
-            base = ".".join([*prefix, *(node.module or "").split(".")]).rstrip(".")
-        else:
-            base = node.module or ""
-        if base:
-            imported.add(base)
-        imported.update(
-            f"{base}.{alias.name}" if base else alias.name
-            for alias in node.names
-            if alias.name != "*"
-        )
-    cache[path] = imported
-    return imported
 
 
 def example_source_files(
@@ -103,25 +34,17 @@ def example_source_files(
     module_cache: dict[str, Path | None] | None = None,
 ) -> list[Path]:
     """Return local sources imported by one example, including shared helpers."""
-    imports = {} if import_cache is None else import_cache
-    modules = {} if module_cache is None else module_cache
-    sources = {script}
-    pending = list(_imported_modules(script, script.stem, imports))
-    visited: set[str] = set()
-    while pending:
-        module = pending.pop()
-        if module in visited:
-            continue
-        visited.add(module)
-        if module.startswith("luxar."):
-            parts = module.split(".")
-            pending.extend(".".join(parts[:index]) for index in range(1, len(parts)))
-        path = _module_path(repo_root, module, modules)
-        if path is None or path in sources:
-            continue
-        sources.add(path)
-        pending.extend(_imported_modules(path, _module_name(repo_root, path), imports))
-    return sorted(sources, key=lambda path: path.relative_to(repo_root).as_posix())
+    return list(
+        imported_source_files(
+            script,
+            (
+                repo_root / "packages/luxar/src",
+                repo_root / "packages/luxar/examples",
+            ),
+            import_cache=import_cache,
+            module_cache=module_cache,
+        )
+    )
 
 
 def example_fingerprint(

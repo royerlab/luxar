@@ -140,6 +140,18 @@ def test_example_fingerprint_covers_imported_example_helper(tmp_path: Path) -> N
     assert run_examples.example_fingerprint(repo, example) != initial
 
 
+def test_example_sources_honour_source_encoding_cookie(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    helper = repo / "packages/luxar/examples/_helper.py"
+    helper.write_text("VALUE = 1\n")
+    example = repo / "packages/luxar/examples/one_example.py"
+    example.write_bytes(
+        b'# -*- coding: latin-1 -*-\nfrom _helper import VALUE\nNAME = "caf\xe9"\n'
+    )
+
+    assert helper in run_examples.example_source_files(repo, example)
+
+
 def test_current_marker_requires_every_recorded_output(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _write_example(repo, "one", "print('one')\n")
