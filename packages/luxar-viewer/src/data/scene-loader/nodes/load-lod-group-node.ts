@@ -137,7 +137,6 @@ function attachLazyChild(
         // NOTE: the level is deliberately NOT registered into the per-slice
         // update sweep (see the function doc). It commits independently here;
         // the registry reloads it on a settled slice change.
-        entryChild.automaticRetriesRemaining = undefined;
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;

@@ -390,7 +390,6 @@ export interface LODGroupChild {
   /**
    * Optional bound on automatic cooldown retries. ``undefined`` preserves the
    * normal unlimited transient-recovery policy; zero suppresses further kicks.
-   * A successful load clears the bound.
    */
   automaticRetriesRemaining?: number;
   /**

@@ -973,6 +973,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(deferred.release).toBeUndefined();
       expect(deferred.loading).toBe(false);
       expect(deferred.permanentlyFailed).not.toBe(true);
+      expect(deferred.automaticRetriesRemaining).toBe(MAX_AUTO_RETRY_ATTEMPTS);
       expect(reg.retryLazyChildByLeafPath('')).toBe(false);
       expect(reg.retryLazyChildByLeafPath('/lod/child_1')).toBe(false);
 
@@ -996,6 +997,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(attempts).toHaveLength(MAX_AUTO_RETRY_ATTEMPTS + 1);
       expect(deferred.failed).toBe(true);
       expect(deferred.loading).toBe(false);
+      expect(deferred.automaticRetriesRemaining).toBe(0);
     } finally {
       warningSpy.mockRestore();
     }
@@ -1037,6 +1039,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
       }
 
       expect(deferred.permanentlyFailed).not.toBe(true);
+      expect(deferred.automaticRetriesRemaining).toBeUndefined();
       expect(deferred.loading).toBe(false);
     } finally {
       warningSpy.mockRestore();
