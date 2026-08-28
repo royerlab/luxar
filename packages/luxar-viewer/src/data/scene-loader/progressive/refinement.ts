@@ -1,8 +1,8 @@
 /**
  * Generic progressive-LOD refinement loop.
  *
- * Factored from `data/gsplats/lod-refinement.ts` so all three leaf
- * types (Points, Lines, GSplats) can drive the same
+ * Factored from `data/gsplats/lod-refinement.ts` so all four geometry
+ * types (Points, Lines, GSplats, Mesh) can drive the same
  * `requestAnimationFrame()` yield + cancellable-via-queue contract
  * with their own typed loader / processor / commit closures.
  *
@@ -36,8 +36,8 @@ import { scheduleFrame } from '../../../utils/schedule-frame';
 export const MAX_CONSECUTIVE_REFINEMENT_FAILURES = 3;
 
 /**
- * Per-run failure bookkeeping shared by the three per-geometry refinement
- * wrappers (Points / Lines / GSplats — three-geometry symmetry). Each
+ * Per-run failure bookkeeping shared by the four per-geometry refinement
+ * wrappers (Points / Lines / GSplats / Mesh). Each
  * wrapper instantiates one tracker per run and:
  *
  *   - skips loaders whose path {@link isExhausted},
@@ -102,8 +102,9 @@ export interface ProgressiveRefinementCtx<TLoader> {
    * Per-iteration processor. Handles ONE loader: derive query state,
    * fetch the next LOD via the loader's `updateView`, process, commit.
    * If the loader has no more LODs (or query state says skip), this
-   * is a no-op. Exceptions are caught + logged by the caller's
-   * closure so the loop continues on per-loader failure.
+   * returns false without work. A successful attempt returns true;
+   * failures and cancellations return false so their existing retry
+   * policies take precedence over the no-progress guard.
    */
   processLoader(path: string, loader: TLoader): Promise<boolean>;
   /**
