@@ -62,7 +62,7 @@ import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-regi
 import type { LODGroupMetadata, LODGroupSelectorMode } from '../../../types/lod-group';
 import { supportsLod } from '../../../types/geometry-capabilities';
 import type { NodeBuildCtx } from './build-ctx';
-import type { LoadSceneChildren } from './load-children-concurrently';
+import { acquireEagerWorkingSet, type LoadSceneChildren } from './load-children-concurrently';
 
 /**
  * Default raw bounds for a malformed / missing ``position_bounds``
@@ -593,7 +593,12 @@ export async function loadLodGroupNode(
 
     // Eager path: load fully via the generic recursion (handles any
     // geometry type), then look up the attached THREE node by name.
-    await loadChildren(child, lodThreeGroup, childLoc, ctx);
+    const releaseWorkingSet = await acquireEagerWorkingSet(child, ctx);
+    try {
+      await loadChildren(child, lodThreeGroup, childLoc, ctx);
+    } finally {
+      releaseWorkingSet();
+    }
 
     const childObject = lodThreeGroup.getObjectByName(child.path);
     if (!childObject) {
