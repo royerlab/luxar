@@ -33,6 +33,9 @@ const layer = new LuxarLayer({
     frameRequested = true;
   },
 });
+layer.onDatasetFault(({ src: faultSrc, error }) => {
+  status.textContent = `Dataset fault for ${faultSrc}: ${error.message}`;
+});
 
 function resize() {
   const width = Math.max(1, viewport.clientWidth);
@@ -146,7 +149,9 @@ try {
   await layer.load(src);
   frameLayer();
   loaded = true;
-  status.textContent = `Loaded ${new URL(src).pathname.split('/').pop()}`;
+  if (!layer.getDatasetFault()) {
+    status.textContent = `Loaded ${new URL(src).pathname.split('/').pop()}`;
+  }
   frameRequested = true;
 } catch (error) {
   status.textContent = `Load failed: ${error instanceof Error ? error.message : String(error)}`;
