@@ -15,10 +15,7 @@ import zarr
 ZARR_FORMAT_ENV_VAR = "LUXAR_ZARR_FORMAT"
 
 
-def fingerprint_source_files(
-    root: Path,
-    paths: Iterable[Path],
-) -> str:
+def fingerprint_source_files(root: Path, paths: Iterable[Path]) -> str:
     """Hash source paths and contents in a stable, boundary-safe order."""
     digest = hashlib.sha256()
     for path in sorted(paths, key=lambda item: item.relative_to(root).as_posix()):

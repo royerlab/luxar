@@ -35,9 +35,9 @@ def demo_source_fingerprint(
     """Short content hash of a demo and the local code that writes it.
 
     Call as ``demo_source_fingerprint(__file__)``. The hash covers that demo
-    module's reachable local imports and the Zarr writer environment, so edits
-    to its producers or encoding-environment changes invalidate the cached
-    scene without unrelated Luxar modules doing so.
+    module's reachable imports inside the Luxar package tree and the Zarr
+    writer environment, so edits to its producers or encoding-environment
+    changes invalidate the cached scene without unrelated modules doing so.
 
     Args:
         module_file: Path to the demo module (normally ``__file__``).
@@ -61,7 +61,7 @@ def demo_source_fingerprint(
             fingerprint_root,
             module_path,
             (root.parent,),
-            within=root if module_path.is_relative_to(root) else None,
+            within=root,
             import_cache=_DEMO_IMPORT_CACHE,
             module_cache=module_cache,
         )

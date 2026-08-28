@@ -106,6 +106,25 @@ def test_fingerprint_ignores_unrelated_production_source(tmp_path: Path) -> None
     assert demo_source_fingerprint(source, package_root=package_root) == before
 
 
+def test_fingerprint_confines_out_of_tree_module_imports(tmp_path: Path) -> None:
+    import_root = tmp_path / "site-packages"
+    package_root = import_root / "luxar"
+    sibling_root = import_root / "thirdparty"
+    source = import_root / "user_demo.py"
+    sibling_helper = sibling_root / "heavy.py"
+    package_root.mkdir(parents=True)
+    sibling_root.mkdir()
+    (package_root / "__init__.py").write_text("")
+    (sibling_root / "__init__.py").write_text("")
+    source.write_text("import thirdparty.heavy\n")
+    sibling_helper.write_text("VALUE = 1\n")
+
+    before = demo_source_fingerprint(source, package_root=package_root)
+    sibling_helper.write_text("VALUE = 2\n")
+
+    assert demo_source_fingerprint(source, package_root=package_root) == before
+
+
 def test_fingerprint_follows_transitive_relative_demo_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "luxar"
     source = package_root / "demos/demo_thing.py"
