@@ -840,6 +840,10 @@ def test_queue_redispatch_workflow_is_bounded_and_durable() -> None:
     assert "--max-runs 100" in workflow
     assert "ci_queue_redispatch.py scan" in workflow
     assert "ci_queue_redispatch.py finish" in workflow
+    finish_step = job["steps"][2]
+    assert finish_step["env"]["TARGET_RUN_ID"] == "${{ inputs.target_run_id }}"
+    assert "^[1-9][0-9]*$" in finish_step["run"]
+    assert "${{ inputs.target_run_id }}" not in finish_step["run"]
 
 
 def test_scheduled_ci_supplies_a_green_window_every_three_hours(

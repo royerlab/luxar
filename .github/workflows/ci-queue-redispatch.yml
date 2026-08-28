@@ -47,7 +47,12 @@ jobs:
         if: inputs.target_run_id != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          TARGET_RUN_ID: ${{ inputs.target_run_id }}
         run: |
+          if ! echo "$TARGET_RUN_ID" | grep -qE '^[1-9][0-9]*$'; then
+            echo "invalid target run id"
+            exit 1
+          fi
           python3 scripts/ci_queue_redispatch.py finish \
             --repository "$GITHUB_REPOSITORY" \
-            --run-id "${{ inputs.target_run_id }}"
+            --run-id "$TARGET_RUN_ID"
