@@ -851,7 +851,8 @@ regimes. The following counts come from the consolidated metadata at published
 prefix `2026-08-27b`; `arrays` excludes zero-shaped `array_ref` placeholders,
 `chunks` is the root `chunk_layout.chunks_after` value, and the eager columns apply
 the viewer's `default_level` deferral rule in
-`packages/luxar-viewer/src/data/scene-loader/nodes/load-lod-group-node.ts`:
+`packages/luxar-viewer/src/data/scene-loader/nodes/load-lod-group-node.ts`. They
+count every array under that default-level subtree, including all additive rungs:
 
 | store | groups | arrays | chunks | eager arrays | eager chunks | whole chunks:arrays |
 |---|---:|---:|---:|---:|---:|---:|
@@ -861,16 +862,19 @@ the viewer's `default_level` deferral rule in
 | `cosmicflows_laniakea_full` | 15 | 79 | 224 | 79 | 224 | 2.84 |
 | `gsplats_2d_cmu1_pathology` | 18 | 60 | 508 | 60 | 508 | **8.47** |
 
-Use the eager columns for a first-paint claim and the whole-store ratio for the
-cost to reach full detail. They differ only where substitutive levels defer
+Use the eager columns for the converged default-level load and the whole-store
+ratio for the cost to reach full detail. For a first-paint claim, count only the
+first rung inside the eager subtree: 860 arrays/chunks for `codex_pancreas` and 10
+for `desi_galaxies` (3.15). The totals differ only where substitutive levels defer
 non-default children.
 
 Two regimes, and the ratio tells you which one you are in:
 
 - **Node-bound (ratio ≈ 1).** Every eager array is a single chunk, so removing an
-  eagerly loaded array removes approximately one first-paint fetch.
-  `codex_pancreas` is exactly 1.00 both store-wide and for its eager subset; the
-  viewer initially fetches 3,440 arrays/chunks, not all 10,320. The 63-request
+  eagerly loaded array removes approximately one request from the converged
+  default-level load. `codex_pancreas` is exactly 1.00 both store-wide and for
+  its eager subset; that load converges at 3,440 arrays/chunks, not all 10,320,
+  while its first committed rung needs 860. The 63-request
   stacked-leaf versus 689-request partition measurement in
   `packages/luxar/src/luxar/demos/_lod_policy.py` is not a reusable sublinear
   node-to-request law: it compares a byte-bound leaf with a node-bound partition.
@@ -899,9 +903,9 @@ optimise).
 
 So a node reduction's payoff is **contingent on the publish step**: optimisation
 can move a small-array store into the node-bound regime, but it does not guarantee
-that outcome. Halving eager arrays is a direct request win on a node-bound
-published artefact and close to meaningless on a byte-bound as-built one. The win
-belongs to the combination, not to the authoring change alone.
+that outcome. Halving eager arrays is a direct total-load request win on a
+node-bound published artefact and close to meaningless on a byte-bound as-built
+one. The win belongs to the combination, not to the authoring change alone.
 
 Practical consequence: **before claiming a node reduction buys a faster load, check
 the chunks:arrays ratio of the artefact you will actually serve** — post-optimise,
