@@ -104,8 +104,10 @@ layer.setExposure(0.5); // half the scene's authored exposure; 1 = as authored
 ```
 
 `setVisible` toggles `visible` on the root rather than detaching it, so
-re-showing is instant and costs no refetch. The setting survives initial load
-and later dataset switches.
+caches and in-flight fetches survive. Lazy LOD loads pause while hidden and
+resume on the next update after re-showing; under GPU-budget pressure, resident
+levels in a hidden layer are evicted before visible ones. The setting survives
+initial load and later dataset switches.
 
 `setExposure` scales the _authored_ opacity, not the live value, so the result
 does not depend on how a slider was dragged, and it is re-applied as geometry
@@ -128,7 +130,7 @@ authored it, and the host's is a different one.
 | `setDimensionValue(i, v)`          | Move a non-displayed axis; coalesces                              |
 | `prefetchDimensionValue(i, v)`     | Warm a slice without committing it                                |
 | `awaitDimensionUpdate()`           | Resolve once no slice update is in flight                         |
-| `setVisible(v)` / `isVisible()`    | Show/hide without discarding caches                               |
+| `setVisible(v)` / `isVisible()`    | Show/hide while preserving caches and in-flight fetches           |
 | `setExposure(m)` / `getExposure()` | Scale exposure relative to authored                               |
 | `handleContextLost()`              | Back off the Luxar GPU budget after WebGL context loss            |
 | `handleContextRestored()`          | Rebuild Luxar resources after host WebGL context recovery         |

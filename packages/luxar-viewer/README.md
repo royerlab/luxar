@@ -218,9 +218,11 @@ if (t !== null) {
 normalizes its own coordinates); it may be called before or after `load()`.
 Read `getDimensionNames()` rather than assuming a centre-column order — producers
 disagree, and guessing renders a silently transposed scene. `setVisible()` hides
-without discarding caches, and `setExposure()` scales exposure relative to the
-scene's authored value, which a host needs because that value was tuned against a
-different post chain than its own.
+without discarding caches or in-flight fetches; lazy LOD loads resume on the next
+update after re-showing, while hidden resident levels are preferred for eviction
+under GPU-budget pressure. `setExposure()` scales exposure relative to the scene's
+authored value, which a host needs because that value was tuned against a different
+post chain than its own.
 
 Note that a scene's `tone_mapping` does **not** apply in layer mode: Luxar
 tone-maps in a post-processing pass the layer does not own, so a host wanting a
