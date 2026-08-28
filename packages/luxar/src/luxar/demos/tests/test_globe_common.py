@@ -278,6 +278,8 @@ def test_globe_ktx2_passes_rgb_tiles_to_the_writer(
         assert isinstance(texture, np.ndarray)
         assert texture.dtype == np.uint8
         assert texture.ndim == 3 and texture.shape[2] == 3
+        assert mesh_kwargs["texture_width"] == texture.shape[1]
+        assert mesh_kwargs["texture_height"] == texture.shape[0]
         assert mesh_kwargs["texture_encoding"] == "ktx2"
         assert mesh_kwargs["texture_ktx2_quality"] == 3
 
