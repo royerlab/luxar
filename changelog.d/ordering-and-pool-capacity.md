@@ -11,12 +11,13 @@ impossible until the render side was counted instead: a Lines geometry is 96 B/s
 of RGBA32F element texture plus 8 B/segment of ordering pair, and `chooseCapacity` was
 adding 1.5x on top unconditionally. The nine nodes wanted 1702 MiB of pool — 85% of
 budget before a single source array — and the byte evictor could not help, because it
-disposes only *pooled* buffers and an eager load holds all nine *active*. Capacity
+disposes only _pooled_ buffers and an eager load holds all nine _active_. Capacity
 headroom is now capped at 262,144 elements: it exists to absorb a per-slice count
 wobble of a few thousand, not a fixed share of however large a node is. That returns
 333 MiB. (Complementary to the eager-load admission gate, which bounds how many large
-siblings may allocate at once rather than how much each one over-reserves.) The three data accumulators had the same shape of bug for a different reason —
-their `while (cap < needed) cap *= 1.5` loop landed on a term of the growth *sequence*
+siblings may allocate at once rather than how much each one over-reserves.) The three
+data accumulators had the same shape of bug for a different reason —
+their `while (cap < needed) cap *= 1.5` loop landed on a term of the growth _sequence_
 rather than on the count the loader already knew, so six of the nine nodes grew to the
 identical 1,594,323 vertices and 27.4% of the reserved slots were never used.
 
@@ -29,7 +30,7 @@ a commit lands at every timepoint. The guard meant to preserve the previous orde
 required an unchanged element count, and an nD re-slice changes the resident count at
 almost every step (this demo walks 27834 -> 27643 -> 27416 -> ...), so it never fired.
 Commits now hand the adapter the previous count so the existing permutation is
-*rebuilt* over the new population instead of discarded, and eligible instanced commits
+_rebuilt_ over the new population instead of discarded, and eligible instanced commits
 are sorted synchronously within a shared 250,000-element frame budget, so common
 single-node playback starts the frame already correct without letting multi-node slices
 multiply the main-thread cost. Measured as the fraction of element pairs composited in
