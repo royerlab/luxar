@@ -1246,7 +1246,7 @@ _SEVERITY_MARK = {"error": "❌", "warning": "⚠️ ", "note": "ℹ️ "}
 def _print_finding(finding: "Finding") -> None:
     """One doctor finding: what it is, what it costs, and where it stands."""
     mark = _SEVERITY_MARK.get(finding.severity, "•")
-    aprint(f"{mark} [{finding.path}] {finding.summary}")
+    aprint(f"{mark} [{finding.path or '/'}] {finding.summary}")
     if finding.detail:
         aprint(f"     {finding.detail}")
     if finding.fixed:
