@@ -807,9 +807,17 @@ Rules:
   slower link, or a bigger store.
 - **Report the wait.** If `loadWaitMs` comes back near the window length, the run
   was load-phase-bound and the verdict is void whatever it says.
-- **Report the population the effect lives in, separately.** "0 unsorted" is
-  meaningless without "of how many count-changed"; a zero denominator is not a
-  pass. Prefer an explicit `INCONCLUSIVE` verdict over a green one.
+- **Print the denominator next to every ratio.** `0 unsorted` and `0 of 0` render
+  identically in a summary line and mean opposite things — one is a pass, the other
+  is no measurement. A zero denominator is never a pass; emit an explicit
+  `INCONCLUSIVE` verdict instead of a green one.
+- **Assert that the driver ran, not just that the output looks clean.** The effect
+  here lives on time-axis steps, so the probe must report how many *distinct*
+  axis positions it observed. One host saw 89 distinct timepoints with counts
+  ranging 10,229–30,296; another saw 85 commits at a single position, and only the
+  step-count field distinguishes "the fix works" from "nothing was exercised".
+  Where a probe depends on the system animating itself, have it detect that and
+  drive the axis directly when it is not.
 
 Note both failures here were the *same* mistake by different hands: a fixed 8 s
 warm-up written by the session that had already documented that a stopping rule is
