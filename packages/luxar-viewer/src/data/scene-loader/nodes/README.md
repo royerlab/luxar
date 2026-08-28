@@ -47,16 +47,18 @@ construction, slice updates, and retry-after-failure.
   bound for small siblings. Line leaves additionally reserve a conservative
   working-set estimate from half of the measured heap's shared non-cache
   remainder, capped at 512 MiB and falling back to 256 MiB where the heap is
-  unavailable. The gate is shared by `NodeBuildCtx` for one scene-loading walk,
-  so nested parent pools cannot multiply several million-vertex decode,
+  unavailable. The gate is owned by the `SceneLoader` session and shared by
+  every `NodeBuildCtx` plus manual retry batches, so nested parent pools and
+  recovery attempts cannot multiply several million-vertex decode,
   projection, staging, and texture allocations. A small waiter may pass a large
   one that does not fit yet, while an oversized head still progresses when the
   gate empties. The conservative estimate uses authored whole-node totals, so it
   overstates spatial-index partial slices and progressive ladders, and includes
   resident line texture/index bytes as a total-heap proxy even though the
   renderer's GPU budget also accounts for them. Admission covers eager pool
-  siblings, partition parts, and eager LOD rungs; deferred lazy LOD activation
-  remains outside this gate. Points, gsplats, mesh, and groups reserve no bytes:
+  siblings, partition parts, eager LOD rungs, and registered line retries;
+  deferred lazy LOD activation remains outside this gate. Retry batches also
+  use the same eight-slot cap as eager sibling loads. Points, gsplats, mesh, and groups reserve no bytes:
   their eager concurrency remains slot-only until equivalent working-set models
   are validated.
 - **Three-geometry symmetry.** `load-points-node.ts`,

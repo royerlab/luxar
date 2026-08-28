@@ -1137,6 +1137,22 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('eager working-set admission', () => {
+    it('shares one gate across node-build and retry contexts', () => {
+      const internals = sceneLoader as unknown as {
+        makeNodeBuildCtx(): { lineWorkingSetGate: unknown };
+        makeRetryCtx(): { lineWorkingSetGate: unknown };
+      };
+
+      const firstBuild = internals.makeNodeBuildCtx();
+      const secondBuild = internals.makeNodeBuildCtx();
+      const retry = internals.makeRetryCtx();
+
+      expect(secondBuild.lineWorkingSetGate).toBe(firstBuild.lineWorkingSetGate);
+      expect(retry.lineWorkingSetGate).toBe(firstBuild.lineWorkingSetGate);
+    });
+  });
+
   describe('releaseLazyGSplats — depth-sort release on LOD demotion', () => {
     // B4 fix: demoting a lazy gsplats LOD level must ALSO release the node's
     // depth-sort coordinator state (worker-side transferred centers,

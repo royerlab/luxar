@@ -27,6 +27,8 @@ import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
+import { EAGER_CHILD_LOAD_CONCURRENCY } from '../nodes/load-children-concurrently';
+import type { LineWorkingSetGate, LineWorkingSetNode } from '../nodes/build-ctx';
 
 /**
  * Result of `deriveNodeViewState` — always a `{ skip: false; viewState }`
@@ -42,6 +44,8 @@ type DerivedViewState = { skip: false; viewState: ViewState };
  */
 export interface RetryCtx {
   registry: LoaderRegistry;
+  /** Same session-scoped line admission used by the eager scene walk. */
+  lineWorkingSetGate: LineWorkingSetGate;
   /**
    * Optional LOD-group registry for the lazy-level fallback: lazy
    * substitutive levels never join the loader maps (they're registry-driven
@@ -189,14 +193,34 @@ export async function retryAllFailedLoadersUnlocked(
   const succeeded: string[] = [];
   const failed: string[] = [];
 
-  const results = await Promise.all(
-    failedPaths.map(async (path) => {
-      const success = await retryFailedLoaderUnlocked(path, ctx);
-      return { path, success };
-    })
+  const results: Array<{ path: string; success: boolean } | undefined> = new Array(
+    failedPaths.length
   );
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= failedPaths.length) return;
+      const path = failedPaths[index];
+      const object = ctx.rootGroup?.getObjectByName(path);
+      const attrs = object?.userData?.attrs as LineWorkingSetNode['attrs'] | undefined;
+      const node: LineWorkingSetNode | null =
+        attrs && ctx.registry.linesLoaders.has(path) ? { path, type: 'lines', attrs } : null;
+      const releaseWorkingSet = node ? await ctx.lineWorkingSetGate.acquire(node) : () => undefined;
+      try {
+        results[index] = { path, success: await retryFailedLoaderUnlocked(path, ctx) };
+      } finally {
+        releaseWorkingSet();
+      }
+    }
+  };
 
-  for (const { path, success } of results) {
+  const workerCount = Math.min(EAGER_CHILD_LOAD_CONCURRENCY, failedPaths.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  for (const result of results) {
+    if (!result) throw new Error('Retry worker exited without recording a result');
+    const { path, success } = result;
     if (success) {
       succeeded.push(path);
     } else {

@@ -37,6 +37,10 @@ import type {
 } from '../../../../../data/data-loader-types';
 import type { LinesDataLoader, LoadedLinesData } from '../../../../../types/lines';
 import type { GSplatsDataLoader, LoadedGSplatsData } from '../../../../../types/gsplats';
+import {
+  createLineWorkingSetGate,
+  EAGER_CHILD_LOAD_CONCURRENCY,
+} from '../../../../../data/scene-loader/nodes/load-children-concurrently';
 
 // ============================================================================
 // Local fixtures — flat ctx-stubbing per the data/scene-loader test pattern.
@@ -56,7 +60,7 @@ function makeViewState(): ViewState {
  * helper's `rootGroup.getObjectByName(path)` lookups exercise real
  * scene-graph traversal rather than a mocked getter.
  */
-function makeRootGroupWith(path: string, attrs?: { extend_to_all?: string[] }): THREE.Group {
+function makeRootGroupWith(path: string, attrs?: Record<string, unknown>): THREE.Group {
   const root = new THREE.Group();
   root.name = 'LuxarScene';
   const mesh = new THREE.Mesh();
@@ -100,6 +104,7 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
 
   const ctx: RetryCtx = {
     registry: new LoaderRegistry(),
+    lineWorkingSetGate: createLineWorkingSetGate(),
     rootGroup: null,
     deriveNodeViewState,
     processPointsData,
@@ -520,5 +525,86 @@ describe('retryAllFailedLoadersUnlocked — partition', () => {
     const firstResolveIdx = callOrder.findIndex((s) => s.startsWith('resolve:'));
     expect(firstResolveIdx).toBe(3);
     expect(callOrder.slice(0, 3).sort()).toEqual(['enter:/x', 'enter:/y', 'enter:/z']);
+  });
+
+  it('caps retry fan-out at the eager child concurrency', async () => {
+    const paths = Array.from({ length: EAGER_CHILD_LOAD_CONCURRENCY + 1 }, (_, i) => `/p-${i}`);
+    const root = new THREE.Group();
+    const started: string[] = [];
+    const settle: Array<() => void> = [];
+    const ctx = makeRetryCtx({ rootGroup: root });
+
+    for (const path of paths) {
+      const mesh = new THREE.Mesh();
+      mesh.name = path;
+      root.add(mesh);
+      ctx.registry.registerPointsLoader(
+        path,
+        makePointsLoader(
+          () =>
+            new Promise((resolve) => {
+              started.push(path);
+              settle.push(() => resolve({ pointCount: 0 } as unknown as LoadedPointsData));
+            })
+        )
+      );
+      ctx.registry.recordFailure(path, new Error('offline'));
+    }
+
+    const retry = retryAllFailedLoadersUnlocked(paths, ctx);
+    await vi.waitFor(() => expect(started).toHaveLength(EAGER_CHILD_LOAD_CONCURRENCY));
+    expect(started).toEqual(paths.slice(0, EAGER_CHILD_LOAD_CONCURRENCY));
+
+    settle.shift()!();
+    await vi.waitFor(() => expect(started).toEqual(paths));
+    for (const resolve of settle.splice(0)) resolve();
+
+    await expect(retry).resolves.toEqual({ succeeded: paths, failed: [] });
+  });
+
+  it('serializes oversized line retries and releases admission after the batch', async () => {
+    const paths = ['/line-a', '/line-b', '/line-c'];
+    const root = new THREE.Group();
+    const started: string[] = [];
+    const settle: Array<() => void> = [];
+    const ctx = makeRetryCtx({ rootGroup: root });
+
+    for (const path of paths) {
+      const mesh = new THREE.Mesh();
+      mesh.name = path;
+      mesh.userData.attrs = {
+        type: 'lines',
+        n_vertices: 1_600_000,
+        n_segments: 1_600_000,
+        ndim: 3,
+      };
+      root.add(mesh);
+      ctx.registry.registerLinesLoader(
+        path,
+        makeLinesLoader(
+          () =>
+            new Promise((resolve) => {
+              started.push(path);
+              settle.push(() => resolve({} as LoadedLinesData));
+            })
+        )
+      );
+    }
+
+    ctx.registry.recordFailure(paths[0], new Error('allocation failed'));
+    ctx.registry.recordFailure(paths[1], new Error('allocation failed'));
+    const firstBatch = retryAllFailedLoadersUnlocked(paths.slice(0, 2), ctx);
+
+    await vi.waitFor(() => expect(started).toEqual([paths[0]]));
+    settle.shift()!();
+    await vi.waitFor(() => expect(started).toEqual(paths.slice(0, 2)));
+    settle.shift()!();
+    await expect(firstBatch).resolves.toEqual({ succeeded: paths.slice(0, 2), failed: [] });
+
+    ctx.registry.recordFailure(paths[2], new Error('allocation failed'));
+    const secondBatch = retryAllFailedLoadersUnlocked([paths[2]], ctx);
+    await vi.waitFor(() => expect(started).toEqual(paths));
+    settle.shift()!();
+    await expect(secondBatch).resolves.toEqual({ succeeded: [paths[2]], failed: [] });
   });
 });
