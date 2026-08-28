@@ -2,7 +2,7 @@ import { expect, test } from './fixtures';
 import { captureCanvasRGBA } from './helpers';
 import type { Page } from '@playwright/test';
 
-const EXAMPLE_URL = '/examples/layer/';
+const EXAMPLE_URL = '/examples/layer';
 const DATA_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
 const LOD_FIXTURE = `${DATA_BASE}/test_lod_group.luxar.zarr`;
 const DIMENSION_FIXTURE = `${DATA_BASE}/test_layer_4d_gsplats.luxar.zarr`;
