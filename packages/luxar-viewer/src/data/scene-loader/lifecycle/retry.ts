@@ -47,7 +47,7 @@ export interface RetryCtx {
    * substitutive levels never join the loader maps (they're registry-driven
    * — see load-lod-group-node.ts), so when a failed path resolves to no
    * map entry the retry re-kicks the level's ``ensureLoaded`` through
-   * ``retryLazyChildByLeafPath`` instead of discarding the failure.
+   * ``retryLazyChildByNodePath`` instead of discarding the failure.
    * Optional so headless/test ctxs without a registry keep working.
    */
   lodGroupRegistry?: LODGroupRegistry | null;
@@ -152,7 +152,7 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       // success the lazy loader clears the record
       // (load-{points,lines,gsplats}-node.ts); on a repeat failure
       // `recordFailure` preserves the accumulated counter.
-      if (ctx.lodGroupRegistry?.retryLazyChildByLeafPath(path)) {
+      if (ctx.lodGroupRegistry?.retryLazyChildByNodePath(path)) {
         log.info(Modules.SCENE_LOADER, `Retry kicked for lazy LOD level: ${path}`);
         return true;
       }

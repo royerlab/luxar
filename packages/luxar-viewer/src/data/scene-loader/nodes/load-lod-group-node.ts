@@ -109,6 +109,7 @@ function attachLazyChild(
   const positionBounds = readPositionBounds(child.attrs);
   const entryChild: LODGroupChild = {
     object: placeholder,
+    nodePath: child.path,
     coverageFraction,
     positionBounds,
     lodBounds: readLodBounds(child.attrs, child.path, positionBounds),
@@ -138,8 +139,7 @@ function attachLazyChild(
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;
-        // Anonymous group placeholders cannot be reached by retryLazyChildByLeafPath.
-        const archiveFault = entryChild.object.name ? archiveFaultFrom(error) : undefined;
+        const archiveFault = archiveFaultFrom(error);
         if (archiveFault) {
           entryChild.permanentlyFailed = true;
           entryChild.failedTick = undefined;

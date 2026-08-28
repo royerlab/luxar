@@ -217,6 +217,7 @@ export async function runInitPipeline(
       // registry's existing ``displayDims.length < 2`` early-return
       // skips evaluation in this state.
       getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
+      hasArchiveFault: () => owner.archiveFault !== null,
       // Resident-byte budget for loaded LOD geometry = the single,
       // adaptive GPU-geometry budget shared with the buffer pool (one VRAM
       // authority). Read dynamically so context-loss backoff applies live.

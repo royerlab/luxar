@@ -89,6 +89,8 @@ export interface LODGroupRegistryOwner {
   readonly currentViewVersion: number;
   /** The owning loader's GPU buffer pool (null pre-setup / pooling off). */
   readonly gpuBufferPool: GPUBufferPool | null;
+  /** Terminal archive fault latched by the owning loader, if any. */
+  readonly archiveFault: ArchiveFaultError | null;
 }
 
 /**
@@ -1780,14 +1782,26 @@ export class SceneLoader {
    */
   getFailedLoadsProvider(): FailedLoadsProviderPort {
     return {
-      getFailedPaths: () => Array.from(this.failedLoaders.keys()),
+      getFailedPaths: () => this.getMonitorFailedPaths(),
       retryAll: () => this.retryAllFailedLoaders(),
       getFailedReason: (path) => {
         const info = this.failedLoaders.get(path);
-        if (!info) return undefined;
-        return info.error?.message || info.kind || undefined;
+        if (info) return info.error?.message || info.kind || undefined;
+        if (this.lodGroupRegistry?.getFailedLazyChildPaths().includes(path)) {
+          return this._archiveFault?.message;
+        }
+        return undefined;
       },
     };
+  }
+
+  private getMonitorFailedPaths(): string[] {
+    return Array.from(
+      new Set([
+        ...this.failedLoaders.keys(),
+        ...(this.lodGroupRegistry?.getFailedLazyChildPaths() ?? []),
+      ])
+    );
   }
 
   /**
@@ -1840,8 +1854,8 @@ export class SceneLoader {
    * ```
    */
   async retryFailedLoader(path: string): Promise<boolean> {
-    // Check if this path is actually in failed loaders
-    if (!this.failedLoaders.has(path)) {
+    const lazyFailure = this.lodGroupRegistry?.getFailedLazyChildPaths().includes(path) === true;
+    if (!this.failedLoaders.has(path) && !lazyFailure) {
       log.warning(Modules.SCENE_LOADER, `Path "${path}" is not in failed loaders list`);
       return false;
     }
@@ -1863,6 +1877,10 @@ export class SceneLoader {
 
     this._updateInProgress = true;
     try {
+      if (lazyFailure) {
+        this._archiveFault = null;
+        return this.lodGroupRegistry?.retryLazyChildByNodePath(path) ?? false;
+      }
       return await retryFailedLoaderUnlocked(path, this.makeRetryCtx());
     } finally {
       this._updateInProgress = false;
@@ -1920,9 +1938,13 @@ export class SceneLoader {
     failed: string[];
     deferred?: boolean;
   }> {
-    const failedPaths = opts.onlyAutoRetryable
+    const loaderPaths = opts.onlyAutoRetryable
       ? this.registry.autoRetryablePaths()
       : Array.from(this.failedLoaders.keys());
+    const lazyPaths = opts.onlyAutoRetryable
+      ? []
+      : (this.lodGroupRegistry?.getFailedLazyChildPaths() ?? []);
+    const failedPaths = Array.from(new Set([...loaderPaths, ...lazyPaths]));
 
     if (failedPaths.length === 0) {
       log.info(Modules.SCENE_LOADER, 'No failed loaders to retry');
@@ -1954,12 +1976,22 @@ export class SceneLoader {
         // attempt. Ordinary update sweeps and manual retries also record
         // failures, but must not consume this budget — otherwise a scene that
         // failed a few slices offline would be past the cap before `online` fires.
-        for (const path of failedPaths) this.registry.markAutoRetryAttempt(path);
+        for (const path of loaderPaths) this.registry.markAutoRetryAttempt(path);
       }
-      const { succeeded, failed } = await retryAllFailedLoadersUnlocked(
-        failedPaths,
-        this.makeRetryCtx()
-      );
+      const succeeded: string[] = [];
+      const failed: string[] = [];
+      if (lazyPaths.length > 0) {
+        this._archiveFault = null;
+        for (const path of lazyPaths) {
+          if (this.lodGroupRegistry?.retryLazyChildByNodePath(path)) succeeded.push(path);
+          else failed.push(path);
+        }
+      }
+      if (loaderPaths.length > 0) {
+        const loaderResult = await retryAllFailedLoadersUnlocked(loaderPaths, this.makeRetryCtx());
+        succeeded.push(...loaderResult.succeeded);
+        failed.push(...loaderResult.failed);
+      }
       log.info(
         Modules.SCENE_LOADER,
         `Retry complete: ${succeeded.length} succeeded, ${failed.length} still failing`

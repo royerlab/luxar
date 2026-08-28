@@ -30,6 +30,11 @@ import { getPointTexture } from '../../../rendering/point-geometry';
 import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import * as zarr from 'zarrita';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
+import {
+  LODGroupRegistry,
+  type LODGroupChild,
+  type LODGroupEntry,
+} from '../../../scene/lod-group-registry';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1393,6 +1398,57 @@ describe('SceneLoader', () => {
       internals.registry.recordFailure('/points/a', undefined as unknown as Error);
 
       expect(internals.makeLoadSceneCtx().getFailedLoaderReasons()).toEqual(['Unexpected']);
+    });
+
+    it('surfaces and retries a latched anonymous deferred LOD branch', async () => {
+      const camera = new THREE.Camera();
+      const registry = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        hasArchiveFault: () => sceneLoader.archiveFault !== null,
+      });
+      const ensureLoaded = vi.fn();
+      const eager: LODGroupChild = {
+        object: new THREE.Group(),
+        coverageFraction: 0,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      };
+      const deferred: LODGroupChild = {
+        object: new THREE.Group(),
+        nodePath: '/lod/nested',
+        coverageFraction: 0.5,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+        ready: false,
+        failed: true,
+        permanentlyFailed: true,
+        ensureLoaded,
+      };
+      const entry: LODGroupEntry = {
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [eager, deferred],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      };
+      registry.register(entry);
+      (sceneLoader as any).lodGroupRegistry = registry;
+      const archiveFault = new ArchiveFaultError('archive expired', '/scene.zip');
+      (sceneLoader as any)._archiveFault = archiveFault;
+
+      const provider = sceneLoader.getFailedLoadsProvider();
+      expect(provider.getFailedPaths()).toEqual(['/lod/nested']);
+      expect(provider.getFailedReason?.('/lod/nested')).toBe('archive expired');
+
+      await expect(provider.retryAll()).resolves.toEqual({
+        succeeded: ['/lod/nested'],
+        failed: [],
+      });
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(ensureLoaded).toHaveBeenCalledOnce();
+      expect(deferred.loading).toBe(true);
+      expect(provider.getFailedPaths()).toEqual([]);
     });
   });
 

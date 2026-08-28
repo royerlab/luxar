@@ -969,10 +969,38 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(reportArchiveFault).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['an archive fault', new ArchiveFaultError('archive open failed', '/scene.zip')],
-    ['an ordinary error', new Error('nested subtree failed')],
-  ])('keeps an anonymous deferred GROUP recoverable after %s', async (_label, failure) => {
+  it('latches and reports an archive fault from an anonymous deferred GROUP', async () => {
+    attachStubChildren();
+    const archiveFault = new ArchiveFaultError('archive open failed', '/scene.zip');
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      if (child.path === '/lod/child_1') throw archiveFault;
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+    });
+    const reg = makeReg();
+    const reportArchiveFault = vi.fn();
+    const ctx = makeCtx(reg, { reportArchiveFault });
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.failed).toBe(true));
+
+    expect(deferred.object.name).toBe('');
+    expect(deferred.nodePath).toBe('/lod/child_1');
+    expect(deferred.permanentlyFailed).toBe(true);
+    expect(reportArchiveFault).toHaveBeenCalledOnce();
+    expect(reportArchiveFault).toHaveBeenCalledWith(archiveFault);
+    expect(reg.getFailedLazyChildPaths()).toEqual(['/lod/child_1']);
+  });
+
+  it('keeps an anonymous deferred GROUP recoverable after an ordinary error', async () => {
+    const failure = new Error('nested subtree failed');
     attachStubChildren();
     loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
       if (child.path === '/lod/child_1') throw failure;
@@ -999,8 +1027,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(deferred.release).toBeUndefined();
       expect(deferred.loading).toBe(false);
       expect(deferred.permanentlyFailed).not.toBe(true);
-      expect(reg.retryLazyChildByLeafPath('')).toBe(false);
-      expect(reg.retryLazyChildByLeafPath('/lod/child_1')).toBe(false);
+      expect(reg.retryLazyChildByNodePath('')).toBe(false);
 
       reg.setSelectorMode('/lod', { lockLevel: 1 });
       reg.evaluatePerFrame();
