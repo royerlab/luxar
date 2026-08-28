@@ -76,6 +76,7 @@ import {
   activeSortedIndexSlot,
   cancelAllSortedIndexOrderingApplies,
   cancelSortedIndexOrderingApply,
+  getActiveSortedIndexAttribute,
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
   setSortedIndexApplyBackPressureBypassed,
@@ -303,6 +304,7 @@ let initRetryWakeTimer: ReturnType<typeof setTimeout> | null = null;
 let captureSuppressDepth = 0;
 let requestRenderBeforeCapture: (() => void) | null = null;
 const nodeStates = new Map<string, NodeSortState>();
+let syncSortElementsRemaining = config.depthSort.syncSortMaxElements;
 
 /**
  * Wire the camera accessor + frame-request + reprocess callbacks. Called
@@ -1324,7 +1326,9 @@ function trySynchronousFirstSort(
   count: number
 ): Float32Array | undefined {
   const limit = config.depthSort.syncSortMaxElements;
-  if (limit <= 0 || count > limit) return undefined;
+  if (limit <= 0 || count > limit || count > syncSortElementsRemaining) return undefined;
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  if (!getActiveSortedIndexAttribute(geometry)) return undefined;
   const camera = getCamera?.();
   if (!camera) return undefined;
 
@@ -1344,8 +1348,8 @@ function trySynchronousFirstSort(
   const modelView = computeModelView(mesh, camera);
   const ordering = new Uint32Array(count);
   sort_splats_by_depth(buffer, new Float32Array(modelView.elements), ordering, count);
-  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
   if (writeSortedIndexOrderingLive(geometry, ordering, count) !== count) return undefined;
+  syncSortElementsRemaining -= count;
   requestRender?.();
   return buffer;
 }
@@ -1756,6 +1760,7 @@ function pumpChunkedOrderingApplies(): void {
  * work that touches the SortWorker stays below that gate.
  */
 export function evaluateDepthSortPerFrame(): void {
+  syncSortElementsRemaining = Math.max(0, config.depthSort.syncSortMaxElements);
   // Drop the previous frame's render-order state FIRST — before any
   // early-return — so a disposed/dataset-switched frame can't leave the
   // module-scoped rank memo holding stale partition-wrapper subtrees alive.

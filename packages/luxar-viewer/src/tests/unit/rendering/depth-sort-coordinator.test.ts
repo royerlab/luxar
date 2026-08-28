@@ -4956,6 +4956,39 @@ describe('depth-sort coordinator — synchronous first sort', () => {
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
   });
 
+  it('does not resolve an indexed mesh provider for a synchronous sort it cannot apply', async () => {
+    const coord = await loadCoordinator(250_000);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeIndexedMesh(3, 'normal');
+    const provider = vi.fn(() => CENTERS.slice());
+
+    coord.noteDepthSortCommit(mesh, provider, 3, sourceTriples(3));
+    await flush();
+
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+  });
+
+  it('spends at most one configured element budget per frame', async () => {
+    const coord = await loadCoordinator(3);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const first = makeGSplatsMesh(3, 'normal');
+    const second = makeGSplatsMesh(3, 'normal');
+    seedSentinel(first);
+    seedSentinel(second);
+
+    coord.evaluateDepthSortPerFrame();
+    coord.noteDepthSortCommit(first, CENTERS.slice(), 3);
+    coord.noteDepthSortCommit(second, CENTERS.slice(), 3);
+
+    expect(activeOrdering(first, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
+    expect(activeOrdering(second, 3)).toEqual(SENTINEL);
+
+    coord.evaluateDepthSortPerFrame();
+    coord.noteDepthSortCommit(second, CENTERS.slice(), 3);
+    expect(activeOrdering(second, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
+  });
+
   it('declines without throwing when the centers provider throws', async () => {
     // Must land where it always did: the async path's outer catch, which owns
     // the once-per-episode report.
