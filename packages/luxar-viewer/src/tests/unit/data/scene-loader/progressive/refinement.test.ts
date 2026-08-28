@@ -170,13 +170,15 @@ describe('runProgressiveRefinement', () => {
 
     let active = true;
     let processed = 0;
+    const isActive = vi.fn(() => active);
     await runProgressiveRefinement<FakeLoader>({
       loaders,
       viewStateQueue: makeQueue([]) as never,
       getLoaderProgress: getFakeLoaderProgress,
-      isActive: () => active,
-      processLoader: async () => {
+      isActive,
+      processLoader: async (_path, currentLoader) => {
         processed++;
+        currentLoader.loadedLevels++;
         active = false; // owner disposed after the first pass
         return true;
       },
@@ -188,6 +190,7 @@ describe('runProgressiveRefinement', () => {
     });
 
     expect(processed).toBe(1); // aborted before a second pass
+    expect(isActive).toHaveBeenCalledTimes(2);
     expect(retrigger).not.toHaveBeenCalled();
   });
 

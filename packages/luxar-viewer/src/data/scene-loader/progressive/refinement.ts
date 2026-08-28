@@ -79,6 +79,7 @@ export class RefinementFailureTracker {
   }
 }
 
+/** One eligible loader's loaded/total rung snapshot for a refinement pass. */
 export interface ProgressiveRefinementProgress {
   path: string;
   loaded: number;

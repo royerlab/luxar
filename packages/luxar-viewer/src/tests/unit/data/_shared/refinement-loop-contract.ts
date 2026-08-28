@@ -1,8 +1,9 @@
 /**
  * Shared contract for the per-geometry progressive LOD refinement loops
- * (`runGSplatsRefinement` / `runPointsRefinement` / `runLinesRefinement`).
+ * (`runGSplatsRefinement` / `runPointsRefinement` / `runLinesRefinement` /
+ * `runMeshRefinement`).
  *
- * All three wrap the same generic `runProgressiveRefinement` loop (tested in
+ * All four wrap the same generic `runProgressiveRefinement` loop (tested in
  * isolation in `scene-loader/progressive/refinement.test.ts`), so the loop
  * *semantics* — completion, lock release, cancellation hand-off, error
  * isolation, and skip-path handling — are identical. This helper defines those
@@ -23,7 +24,7 @@ const baseViewState: ViewState = {
 
 /** Wiring passed to a type-specific runX adapter for one contract case.
  *
- * Field types match the shared shape of all three `*RefinementCtx` interfaces
+ * Field types match the shared shape of all four `*RefinementCtx` interfaces
  * so they assign directly; the adapter only casts the loader-map value type,
  * `deriveNodeViewState`'s return, and the `processSpy` return (which differ per
  * geometry). */
@@ -143,12 +144,15 @@ export function defineRefinementLoopContract(
     });
 
     it('catches per-loader errors so other loaders continue refining', async () => {
+      let attempted = false;
       const loaderA: { updateView: ReturnType<typeof vi.fn>; hasMoreLODs?: boolean } = {
-        updateView: vi.fn().mockRejectedValue(new Error('synthetic')),
+        updateView: vi.fn().mockImplementation(async () => {
+          attempted = true;
+          throw new Error('synthetic');
+        }),
       };
-      // hasMoreLODs true on entry (enter try block), false afterwards (loop exits).
       Object.defineProperty(loaderA, 'hasMoreLODs', {
-        get: vi.fn().mockReturnValueOnce(true).mockReturnValue(false),
+        get: () => !attempted,
       });
 
       await expect(
@@ -162,6 +166,7 @@ export function defineRefinementLoopContract(
           processSpy: vi.fn(),
         })
       ).resolves.not.toThrow();
+      expect(loaderA.updateView).toHaveBeenCalledTimes(1);
     });
 
     it('treats an AbortError as cancellation — signal threaded, no failure backoff, clean hand-off', async () => {
