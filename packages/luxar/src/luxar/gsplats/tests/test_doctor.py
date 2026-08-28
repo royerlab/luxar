@@ -517,8 +517,10 @@ class TestGsplatReadabilityCheck:
             assert "missing required array 'centers'" in finding.detail
             assert not finding.fixable
 
-    def test_diagnosis_does_not_decode_leaf_arrays(self, monkeypatch) -> None:
+    def test_all_tree_layouts_are_checked_without_decoding(self, monkeypatch) -> None:
         from luxar.encoding import ArrayDecoder
+        from luxar.gsplats.doctor.checks import check_gsplat_readable
+        from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
         calls = 0
         original = ArrayDecoder.decode
@@ -530,9 +532,29 @@ class TestGsplatReadabilityCheck:
 
         monkeypatch.setattr(ArrayDecoder, "decode", counted_decode)
         with tempfile.TemporaryDirectory() as tmp:
-            report = diagnose_store(_flat_store(Path(tmp)))
+            flat_path = _flat_store(Path(tmp))
+            flat = GSplatData.load(flat_path).tree
+            assert isinstance(flat, GSplatLeaf)
+            sublod = flat.additive_sublods[0]
+            nodes = {
+                "additive": GSplatLeaf([sublod, sublod]),
+                "lod": GSplatLodGroup([GSplatLeaf([sublod]), GSplatLeaf([sublod])]),
+                "partition": GSplatPartition(
+                    [GSplatLeaf([sublod]), GSplatLeaf([sublod])]
+                ),
+            }
+            paths = [flat_path]
+            for name, node in nodes.items():
+                path = Path(tmp) / f"{name}.gsplats.zarr"
+                write_gsplats_tree(path, node, ordering="none")
+                paths.append(path)
 
-        assert report.findings == []
+            calls = 0
+            reports = [
+                diagnose_store(path, checks=[check_gsplat_readable]) for path in paths
+            ]
+
+        assert all(report.findings == [] for report in reports)
         assert calls == 0
 
     def test_mismatched_leaf_array_lengths_are_diagnosed(self) -> None:
