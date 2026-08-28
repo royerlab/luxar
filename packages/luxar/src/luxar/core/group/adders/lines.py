@@ -386,9 +386,10 @@ def add_lines_impl(
         ):
             from ..lod.lines import resolve_additive_axis_lines
 
-            # The multi-LOD writer cannot preserve these inputs. Refuse the
-            # ladder and fall through to the single-leaf write below, which
-            # preserves them. This branch only fires for an EXPLICIT
+            # The multi-LOD writer has no image_labels channel, so laddering
+            # would silently drop them. Refuse the ladder, not the labels: fall
+            # through to the single-leaf write below (which forwards
+            # image_labels). This branch only fires for an EXPLICIT
             # ``additive_lod`` (the guard excludes ``None``/``False``), so warn
             # — the caller asked for something that cannot be honoured. Mirrors
             # the substitutive path's suppress_reason guard in

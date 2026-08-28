@@ -459,6 +459,7 @@ def make_additive_lod_lines(
             extent (which excludes a *constant* time/channel column, but not a
             *stacked* one — see
             :func:`~luxar.core.group.lod.reveal.radial_element_score`).
+
     Returns:
         List of LOD-level entries. Each entry is a list of per-polyline
         vertex-index arrays.

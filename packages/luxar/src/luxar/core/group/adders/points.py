@@ -822,7 +822,7 @@ def add_points_substitutive_lod_wrapper_impl(
         resolve_lod_ladder,
     )
     from ..lod.points import resolve_additive_axis_points
-    from ..lod.reveal import preflight_reveal_centre
+    from ..lod.reveal import is_reveal_additive_method, preflight_reveal_centre
 
     # The coarse gsplat children never carry image_labels, so only the original
     # Points child must refuse its additive ladder when image_labels is present.
@@ -834,8 +834,6 @@ def add_points_substitutive_lod_wrapper_impl(
         resolve=resolve_additive_axis_points,
         name=name,
     )
-    from ..lod.reveal import is_reveal_additive_method
-
     reveal_note = (
         " Coarse levels use self_energy ordering, so reveal_centre is not applied."
         if coarse_additive is not None

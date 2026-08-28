@@ -836,6 +836,25 @@ class TestComposeAdditiveUnderSubstitutive:
             )
         assert result is None
 
+    def test_quiet_suppression_uses_custom_outcome(self, capsys):
+        result = compose_additive_under_substitutive(
+            None,
+            resolve=self._resolve,
+            name="node",
+            suppress_reason="image_labels is set",
+            suppression_outcome=(
+                "the finest level will load all-at-once; coarse levels keep their "
+                "ladder where one applies."
+            ),
+        )
+
+        assert result is None
+        assert (
+            "'node': streaming ladder skipped (image_labels is set); "
+            "the finest level will load all-at-once; coarse levels keep their "
+            "ladder where one applies."
+        ) in capsys.readouterr().out
+
     def test_explicit_true_suppression_warns(self):
         with pytest.warns(UserWarning, match="cannot be honoured"):
             compose_additive_under_substitutive(

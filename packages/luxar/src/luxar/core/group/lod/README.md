@@ -240,8 +240,9 @@ coarse levels, default 3.0; `None` disables)).
 
 Composes with `additive_lod`: substitutive chooses WHICH level renders at the
 current zoom, additive describes HOW each level streams in. Every level is given
-a `stream:` ladder by default (`additive_lod=False` opts out), so the finest
-level paints progressively instead of committing all-at-once — see "Composed
+a `stream:` ladder by default (`additive_lod=False` opts out), except that
+`image_labels` suppresses only the original finest Points child's ladder so its
+labels are preserved; synthesized coarse levels still stream — see "Composed
 axes" in `group.py`.
 The lift is strictly isotropic (brightness stays view-independent). Scalar +
 colormap points are supported by **baking** `scalars`→RGB through the colormap

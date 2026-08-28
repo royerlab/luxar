@@ -448,7 +448,7 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
     ) -> None:
         out = tmp_path / "t.luxar.zarr"
         verts, indices = self._indexed_verts_and_edges()
-        with pytest.warns(UserWarning, match="reveal_centre is not applied"):
+        with pytest.warns(UserWarning) as caught:
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_lines(
@@ -462,6 +462,14 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
                     ),
                     additive_lod={"method": "radial", "counts": "stream:50"},
                 )
+
+        assert [str(warning.message) for warning in caught] == [
+            "'curves': the requested streaming ladder cannot be honoured "
+            "(line_type='indexed' edges are not preserved by the ladder); the "
+            "finest level will load all-at-once; coarse levels keep their ladder "
+            "where one applies. Coarse levels use self_energy ordering, so "
+            "reveal_centre is not applied."
+        ]
 
         grp = zarr.open(str(out), mode="r")["curves"]
         assert grp.attrs["kind"] == "lod"
