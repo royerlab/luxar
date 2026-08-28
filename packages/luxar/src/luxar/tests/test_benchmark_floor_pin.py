@@ -5,7 +5,8 @@ intensity basis. The shipped default ``floor="auto"`` estimates and subtracts a
 background pedestal, so its output amplitudes are background-relative;
 original-referenced metrics then penalise the fit for correctly dropping
 non-signal, and move silently whenever the floor estimator changes (#1184, and
-the 2026-07-12 ``--floor`` decision in ``TODO.md``).
+the 2026-07-12 ``--floor`` decision in
+``docs/guides/developer/BENCHMARK_FLOOR_DECISION.md``).
 
 So: **every call to a module-level gsplat fitting function in any ``*.py`` under
 ``scripts/`` must declare its floor at the call site** — normally as an explicit
