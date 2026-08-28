@@ -8,6 +8,7 @@ a ``kind=lod`` Group whose finest child is the original Lines node.
 from __future__ import annotations
 
 import warnings
+from collections import Counter
 
 import numpy as np
 import pytest
@@ -588,6 +589,47 @@ def test_plain_indexed_additive_refuses_to_rebuild_edges(tmp_path) -> None:
     assert coordinate_edges(written_vertices, written_segments) == coordinate_edges(
         verts, expected_segments
     )
+
+
+def test_plain_indexed_additive_refuses_to_drop_duplicate_edges(tmp_path) -> None:
+    out = tmp_path / "t.luxar.zarr"
+    verts = np.zeros((18, 3), dtype=np.float32)
+    indices = []
+    for component in range(3):
+        start = component * 6
+        verts[start : start + 6, 0] = component
+        verts[start : start + 6, 1] = np.arange(6)
+        indices.extend((vertex, vertex + 1) for vertex in range(start, start + 5))
+        indices.append((start + 1, start))
+
+    expected_segments = np.asarray(indices, dtype=np.uint32)
+    with pytest.warns(UserWarning, match="edges are not preserved by the ladder"):
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "chains",
+                verts,
+                0.8,
+                line_type="indexed",
+                indices=expected_segments,
+                additive_lod={"counts": [1, 2]},
+            )
+
+    node = zarr.open(str(out), mode="r")["chains"]
+    assert int(node.attrs.get("n_additive_sublods", 1)) == 1
+    decoder = ArrayDecoder()
+    written_vertices = decoder.decode(node["vertices"], node)
+    written_segments = decoder.decode(node["segments"], node).reshape(-1, 2)
+    assert written_segments.shape == expected_segments.shape
+
+    def coordinate_edge_multiset(vertices, segments):
+        return Counter(
+            tuple(sorted((tuple(vertices[a]), tuple(vertices[b])))) for a, b in segments
+        )
+
+    assert coordinate_edge_multiset(
+        written_vertices, written_segments
+    ) == coordinate_edge_multiset(verts, expected_segments)
 
 
 class TestAdditiveLevelStatsPairingLines:

@@ -12,7 +12,7 @@ Polyline-identification per ``line_type``:
 * ``indexed``  — connected-components walk over the explicit segments;
   one component = one polyline. The additive writer rebuilds each component
   as a chain in ascending vertex order, so callers must refuse the ladder when
-  that chain would change the deduplicated undirected edge set.
+  that chain would change the undirected edge multiset.
 * ``polyline`` / ``loop`` — ONE polyline encompassing all vertices. A
   multi-LOD ladder over a single polyline is a no-op (would require
   vertex-subsampling, which breaks the "polyline-level, no topology
@@ -229,10 +229,7 @@ def indexed_ladder_preserves_edges(
             return np.empty((0, 2), dtype=np.intp)
         canonical = np.sort(edges, axis=1)
         order = np.lexsort((canonical[:, 1], canonical[:, 0]))
-        canonical = canonical[order]
-        keep = np.ones(canonical.shape[0], dtype=bool)
-        keep[1:] = np.any(canonical[1:] != canonical[:-1], axis=1)
-        return canonical[keep]
+        return canonical[order]
 
     return np.array_equal(canonical_edges(authored), canonical_edges(rebuilt))
 
