@@ -1,8 +1,8 @@
 /**
  * Generic progressive-LOD refinement loop.
  *
- * Factored from `data/gsplats/lod-refinement.ts` so all three leaf
- * types (Points, Lines, GSplats) can drive the same
+ * Factored from `data/gsplats/lod-refinement.ts` so all four geometry
+ * types (Points, Lines, GSplats, Mesh) can drive the same
  * `requestAnimationFrame()` yield + cancellable-via-queue contract
  * with their own typed loader / processor / commit closures.
  *
@@ -14,8 +14,10 @@
  *      closure — which derives view-state, fetches the next LOD,
  *      processes, and commits.
  *   4. Call `updateVisibleCountsInMonitor` once per pass.
- *   5. If any loader still has more LODs to load, repeat. Otherwise
- *      release the SceneLoader lock and exit.
+ *   5. If loaders still have more LODs and every one of them succeeded
+ *      but none advanced, report the stalled rung(s), release the
+ *      SceneLoader lock, and exit.
+ *   6. Otherwise repeat until every loader finishes its ladder.
  *
  * @module data/scene-loader/progressive/refinement
  */
@@ -35,8 +37,8 @@ import { scheduleFrame } from '../../../utils/schedule-frame';
 export const MAX_CONSECUTIVE_REFINEMENT_FAILURES = 3;
 
 /**
- * Per-run failure bookkeeping shared by the three per-geometry refinement
- * wrappers (Points / Lines / GSplats — three-geometry symmetry). Each
+ * Per-run failure bookkeeping shared by the four per-geometry refinement
+ * wrappers (Points / Lines / GSplats / Mesh). Each
  * wrapper instantiates one tracker per run and:
  *
  *   - skips loaders whose path {@link isExhausted},
@@ -78,6 +80,13 @@ export class RefinementFailureTracker {
   }
 }
 
+/** One eligible loader's loaded/total rung snapshot for a refinement pass. */
+export interface ProgressiveRefinementProgress {
+  path: string;
+  loaded: number;
+  total: number;
+}
+
 /**
  * Context object the generic loop needs from the per-type caller.
  *
@@ -95,15 +104,26 @@ export interface ProgressiveRefinementCtx<TLoader> {
    * Per-iteration processor. Handles ONE loader: derive query state,
    * fetch the next LOD via the loader's `updateView`, process, commit.
    * If the loader has no more LODs (or query state says skip), this
-   * is a no-op. Exceptions are caught + logged by the caller's
-   * closure so the loop continues on per-loader failure.
+   * returns false without work. A successful attempt returns true;
+   * failures and cancellations return false so their existing retry
+   * policies take precedence over the no-progress guard.
    */
-  processLoader(path: string, loader: TLoader): Promise<void>;
+  processLoader(path: string, loader: TLoader): Promise<boolean>;
+  /**
+   * Snapshot a loader that is still eligible for refinement. Return `null`
+   * for completed, non-progressive, or failure-exhausted loaders.
+   */
+  getLoaderProgress(
+    path: string,
+    loader: TLoader
+  ): Omit<ProgressiveRefinementProgress, 'path'> | null;
   /**
    * After each pass, the loop asks whether ANY loader still has more
    * LODs to refine. Once all return false, the loop exits.
    */
   anyHasMoreLODs(): boolean;
+  /** Report loaders that remained pending without advancing during a pass. */
+  onNoProgress?(stalled: ProgressiveRefinementProgress[]): void;
   /** Aggregate visible counts into the monitor after each pass. */
   updateVisibleCountsInMonitor(): void;
   /**
@@ -178,8 +198,10 @@ export async function runProgressiveRefinement<TLoader>(
       // rather than escaping as an unhandled promise rejection — the loop is
       // kicked fire-and-forget.
       try {
+        const progressBefore = collectProgress(ctx);
+        const successfulPaths = new Set<string>();
         for (const [path, loader] of ctx.loaders) {
-          await ctx.processLoader(path, loader);
+          if (await ctx.processLoader(path, loader)) successfulPaths.add(path);
         }
 
         // Aggregate counts once per pass.
@@ -187,6 +209,20 @@ export async function runProgressiveRefinement<TLoader>(
 
         // Exit when all loaders have finished their ladders.
         if (!ctx.anyHasMoreLODs()) break;
+
+        const progressAfter = collectProgress(ctx);
+        const madeProgress =
+          [...progressBefore].some(([path, before]) => {
+            const after = progressAfter.get(path);
+            return after === undefined || after.loaded > before.loaded;
+          }) || [...progressAfter.keys()].some((path) => !progressBefore.has(path));
+        const everyStalledLoaderSucceeded = [...progressAfter.keys()].every((path) =>
+          successfulPaths.has(path)
+        );
+        if (!madeProgress && progressAfter.size > 0 && everyStalledLoaderSucceeded) {
+          ctx.onNoProgress?.([...progressAfter.values()]);
+          break;
+        }
       } catch (error) {
         ctx.onError?.(error);
         break;
@@ -197,4 +233,17 @@ export async function runProgressiveRefinement<TLoader>(
       ctx.releaseLock();
     }
   }
+}
+
+function collectProgress<TLoader>(
+  ctx: ProgressiveRefinementCtx<TLoader>
+): Map<string, ProgressiveRefinementProgress> {
+  const progress = new Map<string, ProgressiveRefinementProgress>();
+  for (const [path, loader] of ctx.loaders) {
+    const loaderProgress = ctx.getLoaderProgress(path, loader);
+    if (loaderProgress !== null) {
+      progress.set(path, { path, ...loaderProgress });
+    }
+  }
+  return progress;
 }

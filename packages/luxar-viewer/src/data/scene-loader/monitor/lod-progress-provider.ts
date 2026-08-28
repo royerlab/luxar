@@ -59,7 +59,7 @@ export function createLODProgressProvider(deps: LODProgressProviderDeps): LODPro
     getLODStates(): Map<string, LODProgressState> {
       const out = new Map<string, LODProgressState>();
 
-      // Additive progressive loaders: one per node across all three maps.
+      // Additive progressive loaders: one per node across all four maps.
       for (const map of deps.loaderMaps) {
         for (const [path, loader] of map) {
           const p = loader as ProgressiveLike;

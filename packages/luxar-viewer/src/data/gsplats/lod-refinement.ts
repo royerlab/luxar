@@ -109,8 +109,8 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
     viewStateQueue: ctx.viewStateQueue,
     isActive: ctx.isActive,
     processLoader: async (path, loader) => {
-      if (loader.hasMoreLODs !== true) return;
-      if (failures.isExhausted(path)) return;
+      if (loader.hasMoreLODs !== true) return false;
+      if (failures.isExhausted(path)) return false;
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
@@ -142,11 +142,12 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
           pass?.end();
         }
         failures.recordSuccess(path);
+        return true;
       } catch (error) {
         // Superseded, not failed: a newer view-state (or dispose) aborted the
         // in-flight read on purpose. Don't count it toward the failure backoff
         // or log an error — the loop's next-pass pending check hands off.
-        if (isAbortError(error)) return;
+        if (isAbortError(error)) return false;
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
@@ -165,12 +166,32 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
             `GSplats refinement failed for ${path}: ${(error as Error).message}`
           );
         }
+        return false;
       }
+    },
+    getLoaderProgress: (path, loader) => {
+      const progressiveLoader = loader as GSplatsDataLoader & {
+        loadedLODCount: number;
+        totalLODCount: number;
+      };
+      if (failures.isExhausted(path) || progressiveLoader.hasMoreLODs !== true) return null;
+      return {
+        loaded: progressiveLoader.loadedLODCount,
+        total: progressiveLoader.totalLODCount,
+      };
     },
     anyHasMoreLODs: () =>
       [...ctx.gsplatLoaders.entries()].some(
         ([path, l]) => !failures.isExhausted(path) && l.hasMoreLODs === true
       ),
+    onNoProgress: (stalled) => {
+      for (const { path, loaded, total } of stalled) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `GSplats refinement stopped for ${path}: no progress at LOD ${loaded}/${total}`
+        );
+      }
+    },
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
