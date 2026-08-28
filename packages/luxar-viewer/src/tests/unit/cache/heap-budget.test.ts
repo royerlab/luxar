@@ -25,9 +25,13 @@ describe('readHeapLimitBytes', () => {
 });
 
 describe('computeWorkingSetBudgetBytes', () => {
-  it('uses the non-cache share of the configured heap target', () => {
+  it('uses half of the non-cache share of the configured heap target', () => {
     const heap = 512 * MB;
-    expect(computeWorkingSetBudgetBytes(heap)).toBe(Math.floor(heap * target * 0.4));
+    expect(computeWorkingSetBudgetBytes(heap)).toBe(Math.floor(heap * target * 0.4 * 0.5));
+  });
+
+  it('caps the eager working set on a large measured heap', () => {
+    expect(computeWorkingSetBudgetBytes(8 * 1024 * MB)).toBe(512 * MB);
   });
 
   it('returns undefined when the heap is unmeasurable', () => {
