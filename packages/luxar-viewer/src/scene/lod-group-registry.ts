@@ -320,7 +320,7 @@ export const SCREEN_FILL_DIAGONAL_RATIO = 2;
  * transient (network blip) failure self-heals once the camera revisits
  * the level. See ``LODGroupRegistry.maybeKickLoad``.
  */
-const FAILED_RETRY_FRAMES = 120;
+export const FAILED_RETRY_FRAMES = 120;
 
 /** One LOD-group child as tracked by the registry. */
 export interface LODGroupChild {
@@ -387,6 +387,13 @@ export interface LODGroupChild {
    * connectivity retry, clears the latch.
    */
   permanentlyFailed?: boolean;
+  /**
+   * Archive-fault-only bound for anonymous placeholders' automatic cooldown
+   * retries. A successful load clears it; zero suppresses further automatic
+   * kicks until ``resetAutomaticRetryBudgets`` explicitly reopens the child.
+   * ``undefined`` preserves the normal unlimited transient-recovery policy.
+   */
+  automaticRetriesRemaining?: number;
   /**
    * Registry tick when ``failed`` was first observed. Drives the
    * transient-failure retry cooldown (``FAILED_RETRY_FRAMES``): once it
@@ -991,6 +998,27 @@ export class LODGroupRegistry {
       }
     }
     return false;
+  }
+
+  /**
+   * Reopen anonymous lazy children whose archive-fault retry budget was
+   * exhausted. Connectivity restoration and Retry-all both reach this blanket
+   * reset because unnamed placeholders cannot use the leaf-path retry surface.
+   * Clear their cooldown state and wake the render loop so the next frame can
+   * retry immediately. A repeated archive fault seeds a fresh bounded budget.
+   */
+  resetAutomaticRetryBudgets(): void {
+    let resetAny = false;
+    for (const entry of this.entries.values()) {
+      for (const child of entry.children) {
+        if (child.automaticRetriesRemaining === undefined) continue;
+        child.automaticRetriesRemaining = undefined;
+        child.failed = false;
+        child.failedTick = undefined;
+        resetAny = true;
+      }
+    }
+    if (resetAny) this.deps.requestRender?.();
   }
 
   /**
@@ -1885,10 +1913,18 @@ export class LODGroupRegistry {
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
    * ``permanentlyFailed`` children never enter that cooldown — they stay
-   * latched until an explicit or connectivity retry clears the flag.
+   * latched until an explicit or connectivity retry clears the flag. An
+   * anonymous placeholder with an exhausted archive-fault retry budget likewise
+   * stops before another kick; a successful load clears that episode's budget.
    */
   private kickDeferredLoad(child: LODGroupChild): void {
-    if (!child.ensureLoaded || child.loading || child.permanentlyFailed) return;
+    if (
+      !child.ensureLoaded ||
+      child.loading ||
+      child.permanentlyFailed ||
+      child.automaticRetriesRemaining === 0
+    )
+      return;
     if (child.failed) {
       if (child.failedTick == null) {
         // First frame we observe the failure — start the cooldown clock.
@@ -1899,6 +1935,9 @@ export class LODGroupRegistry {
       // Cooldown elapsed — clear the failure and fall through to retry.
       child.failed = false;
       child.failedTick = undefined;
+      if (child.automaticRetriesRemaining !== undefined) {
+        child.automaticRetriesRemaining -= 1;
+      }
     }
     child.loading = true;
     child.ensureLoaded();

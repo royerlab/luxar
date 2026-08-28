@@ -394,7 +394,20 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    (`applyVisibility` → `requestRender`) resumes loading on the next
    frame. An explicit user retry
    (`retryLazyChildByLeafPath`) deliberately bypasses it.
-8. **Never-downgrade display gate**: a lazy level flips `ready` after
+8. **Failure recovery** has three tiers. A named lazy leaf that hits an
+   archive-container fault latches its level and escalates the container
+   fault to the scene loader. The loader clears its failure records and
+   stops further updates, so recovery requires reloading or switching the
+   dataset rather than `retryLazyChildByLeafPath`. An anonymous deferred-group
+   placeholder deliberately does not escalate that fault today; with no
+   path-based retry entry point, archive faults instead receive a bounded
+   cooldown budget. Connectivity restoration resets those budgets
+   unconditionally; the monitor's Retry-all does so when a recorded loader
+   failure exposes that control. Reconciling the two archive-fault paths and
+   surfacing an otherwise silent exhausted branch are tracked in #2291.
+   Ordinary subtree failures keep retrying after each cooldown without a
+   fixed attempt cap.
+9. **Never-downgrade display gate**: a lazy level flips `ready` after
    its _first_ additive chunk commits, so an ungated swap to a
    fresh-but-still-streaming aspiration would pop displayed quality
    down to chunk-1 (on zoom in, zoom out, or after a scrub settles)
