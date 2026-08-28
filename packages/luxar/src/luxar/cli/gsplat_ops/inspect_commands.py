@@ -1257,11 +1257,20 @@ def _resolve_doctor_store_kind(path: Path) -> "StoreKind":
 
 
 def _print_doctor_info(
-    path: Path, store_kind: "StoreKind", *, histograms: bool
+    path: Path,
+    store_kind: "StoreKind",
+    *,
+    histograms: bool,
+    full_provenance: bool,
 ) -> None:
     """Print the optional report appropriate for a doctor input."""
     if store_kind == "gsplats":
-        info_dataset(path, show_histograms=histograms, bins=40)
+        info_dataset(
+            path,
+            show_histograms=histograms,
+            bins=40,
+            full_provenance=full_provenance,
+        )
     elif store_kind == "scene":
         aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
     else:
@@ -1294,6 +1303,12 @@ def doctor(
         "--histograms/--no-histograms",
         help="Include the info report's ASCII histograms (implies --info).",
     ),
+    full_provenance: bool = typer.Option(
+        False,
+        "--full-provenance",
+        help="Print the complete nested fitting/part_provenance record in the "
+        "info report (implies --info).",
+    ),
     json_out: Optional[Path] = typer.Option(
         None, "--json", help="Write the findings to a JSON file as well."
     ),
@@ -1321,17 +1336,23 @@ def doctor(
         luxar gsplat doctor data.gsplats.zarr
         luxar gsplat doctor scene.luxar.zarr --no-info
         luxar gsplat doctor data.gsplats.zarr --fix
+        luxar gsplat doctor data.gsplats.zarr --full-provenance
         luxar gsplat doctor data.gsplats.zarr --no-info --json report.json
     """
     import json as _json
 
     from luxar.gsplats.doctor import diagnose_store
 
-    if histograms:
+    if histograms or full_provenance:
         info = True
     store_kind = _resolve_doctor_store_kind(path)
     if info:
-        _print_doctor_info(path, store_kind, histograms=histograms)
+        _print_doctor_info(
+            path,
+            store_kind,
+            histograms=histograms,
+            full_provenance=full_provenance,
+        )
 
     with asection(f"Diagnosing: {path.name}"):
         try:

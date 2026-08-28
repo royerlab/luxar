@@ -99,7 +99,7 @@ export interface WebGLContextRecoveryDeps {
  * Pure with respect to the scene — does NOT mutate the graph itself,
  * only the attribute / material flags.
  */
-export function markSceneResourcesDirtyForContextRestore(scene: THREE.Scene): void {
+export function markSceneResourcesDirtyForContextRestore(scene: THREE.Object3D): void {
   scene.traverse((obj) => {
     if (obj instanceof THREE.Mesh || obj instanceof THREE.InstancedMesh) {
       const geometry = obj.geometry;

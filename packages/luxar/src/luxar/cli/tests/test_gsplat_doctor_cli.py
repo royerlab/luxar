@@ -8,6 +8,7 @@ the exit code (so it can gate a pipeline), and the JSON report.
 
 from __future__ import annotations
 
+import inspect
 import json
 import shutil
 import struct
@@ -17,11 +18,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from typer.models import ParameterInfo
 from typer.testing import CliRunner
 
 from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.cli import app
+from luxar.cli.gsplat_ops import inspect_commands
+from luxar.cli.tests._testing import normalized_cli_output
 
 
 def _partition_without_split_planes(tmp: Path) -> Path:
@@ -47,6 +51,27 @@ def _partition_without_split_planes(tmp: Path) -> Path:
     # re-consolidation (see `_zarr_compat.open_group`).
     root = zc_open_group(str(path), mode="r+")
     del root.attrs["bsp_tree"]
+    zc_consolidate(root)
+    return path
+
+
+def _partition_with_nested_provenance(tmp: Path) -> Path:
+    path = _partition_without_split_planes(tmp)
+    root = zc_open_group(str(path), mode="r+")
+    root.require_group("fitting").attrs["part_provenance"] = [
+        {
+            "fitting": {
+                "part_provenance": [{"coordinate": 0.0, "fitting": {"psnr_db": 40.0}}]
+            },
+            "coordinate": 0.0,
+        },
+        {
+            "fitting": {
+                "part_provenance": [{"coordinate": 1.0, "fitting": {"psnr_db": 41.0}}]
+            },
+            "coordinate": 1.0,
+        },
+    ]
     zc_consolidate(root)
     return path
 
@@ -178,6 +203,72 @@ def test_doctor_prints_info_before_diagnosing_a_gsplat_store() -> None:
             "Diagnosing:"
         )
         assert "no split planes" in result.stdout
+
+
+def test_doctor_summarizes_nested_provenance_unless_full_is_requested() -> None:
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_with_nested_provenance(Path(tmp))
+
+        summary = runner.invoke(app, ["gsplat", "doctor", str(path)])
+        assert summary.exit_code == 1, summary.stdout
+        assert (
+            "part_provenance: 2 parts, nested component records (2 levels)"
+            in summary.stdout
+        )
+        assert "{'fitting':" not in summary.stdout
+        assert "psnr_db" not in summary.stdout
+
+        full = runner.invoke(app, ["gsplat", "doctor", str(path), "--full-provenance"])
+        assert full.exit_code == 1, full.stdout
+        assert "{'fitting':" in full.stdout
+        assert "psnr_db" in full.stdout
+        assert (
+            "part_provenance: 2 parts, nested component records (2 levels)"
+            not in full.stdout
+        )
+
+        implied = runner.invoke(
+            app,
+            ["gsplat", "doctor", str(path), "--full-provenance", "--no-info"],
+        )
+        assert implied.exit_code == 1, implied.stdout
+        assert "psnr_db" in implied.stdout
+
+    help_result = runner.invoke(app, ["gsplat", "doctor", "--help"])
+    assert help_result.exit_code == 0, help_result.stdout
+    help_output = normalized_cli_output(help_result)
+    assert "--full-provenance" in help_output
+    assert "implies --info" in help_output
+
+
+def test_doctor_passes_concrete_values_for_every_info_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signature = inspect.signature(inspect_commands.info_dataset)
+    calls: list[inspect.BoundArguments] = []
+
+    def capture_info_call(*args: object, **kwargs: object) -> None:
+        calls.append(signature.bind(*args, **kwargs))
+
+    monkeypatch.setattr(inspect_commands, "info_dataset", capture_info_call)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_without_split_planes(Path(tmp))
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+
+    assert result.exit_code == 1, result.stdout
+    assert len(calls) == 1
+    bound = calls[0]
+    missing = [
+        name
+        for name, parameter in signature.parameters.items()
+        if isinstance(parameter.default, ParameterInfo) and name not in bound.arguments
+    ]
+    assert missing == []
+    assert not any(
+        isinstance(value, ParameterInfo) for value in bound.arguments.values()
+    )
 
 
 def test_doctor_writes_a_json_report() -> None:
