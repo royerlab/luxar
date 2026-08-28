@@ -391,6 +391,31 @@ describe('LuxarLayer', () => {
       expect(disposeGeometry).toHaveBeenCalledTimes(1);
     });
 
+    it('detaches the new root when its first slice fails', async () => {
+      const options = makeOptions();
+      const first = new THREE.Group();
+      const second = new THREE.Group();
+      const newMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      const disposeGeometry = vi.spyOn(newMesh.geometry, 'dispose');
+      second.add(newMesh);
+      loadSceneMock.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+      updateSceneForDimensionsMock
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('slice unavailable'));
+
+      const layer = new LuxarLayer(options);
+      await layer.load('http://example.test/a.zarr');
+      await expect(layer.load('http://example.test/b.zarr')).rejects.toThrow('slice unavailable');
+
+      expect(options.scene.children).not.toContain(first);
+      expect(options.scene.children).not.toContain(second);
+      expect(layer.root).toBeNull();
+      expect(layer.getBounds()).toBeNull();
+      expect(releaseDepthSortNode).toHaveBeenCalledWith(newMesh);
+      expect(disposeGeometry).toHaveBeenCalledTimes(1);
+      expect(warmSceneBlendModePrograms).not.toHaveBeenCalledWith(second);
+    });
+
     it('refuses a concurrent load rather than racing two loaders', async () => {
       // The second load's createLoaderAsync disposes the first's loader
       // mid-flight, and whichever resolves LAST wins the root slot — so the
