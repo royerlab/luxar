@@ -104,6 +104,13 @@ def test_temporal_spiral_sphere_stays_within_preflight_budget(
 ):
     """The 4D navigation example must remain practical for ``run-examples``."""
     module = _load_example("temporal_spiral_sphere_4d_example")
+
+    assert module.N_POINTS_PER_FRAME >= 1_000
+    assert module.N_FRAMES >= 32
+    # 524,288 records measured at about 300 MiB RSS and 5-8 seconds; keep
+    # enough headroom for a useful animation without returning to a stress fixture.
+    assert module.N_POINTS_PER_FRAME * module.N_FRAMES <= 1_000_000
+
     module.main()
 
     output_path = (
@@ -112,11 +119,7 @@ def test_temporal_spiral_sphere_stays_within_preflight_budget(
     points = LuxarScene.load(output_path).get_points("temporal_spiral_sphere")
     point_records = points.positions.shape[0]
 
-    assert module.N_POINTS_PER_FRAME >= 1_000
-    assert module.N_FRAMES >= 32
     assert point_records == module.N_POINTS_PER_FRAME * module.N_FRAMES
-    # 524,288 records measured at about 300 MiB RSS and 5-8 seconds; keep
-    # enough headroom for a useful animation without returning to a stress fixture.
     assert point_records <= 1_000_000
 
 
