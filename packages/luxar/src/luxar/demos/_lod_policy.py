@@ -76,6 +76,42 @@ and become load-bearing. The compiler also warns on the node total rather than
 the resident slice, so that warning is expected for a sliced nD node that
 satisfies the runtime limit.
 
+THE CAP IS PER GEOMETRY TYPE, AND RESIDENT IS EASY TO MISMEASURE
+-----------------------------------------------------------------
+
+Two mistakes cost real time on the 2026-08-28 Points/Lines pass, and both look
+like a clean answer rather than an error.
+
+**There is no single element ceiling.** ``typing_utils.constants`` derives one per
+geometry from the element-texture layout: **2,793,472** segments for Lines,
+**5,591,040** points for Points, 4,194,304 splats for GSplats. Comparing a Points
+node against the gsplat number over-flags it by 1.33x; ``desi_galaxies``'
+``SCENE_MAX_POINTS_PER_NODE = 4_000_000`` is a deliberate safety MARGIN under
+5,591,040, not the cap.
+
+**Measuring the resident slice of a PARTITIONED node has two traps.** Measure one
+``part_N`` and you under-report by the part count — that read
+``nuclear_pore_complex`` as 164,633 when it is 4,937,064, a 30x error that turned
+a load-bearing partition into an apparently obvious removal. Sum each part's
+LARGEST slice instead and you over-report, because different parts can peak on
+different hidden coordinates (5,708,398 for the same node, which crosses the cap
+and would have argued the opposite way). The resident set is, for ONE hidden
+coordinate, the sum over every part: group globally by hidden coordinate FIRST,
+then take the max. Likewise a leaf's own array plus its ``additive_<i>`` rungs
+are one level's UNION — and its total is ``max(level count, sum of rungs)``,
+never the sum of both, which double-counts to exactly 2x.
+
+The practical upshot for Points demos: an embedding cloud stacked over 6 colouring
+views at 6,248,730 total is 1,041,455 resident, five times under its cap. Its
+substitutive levels are ~17-20% of the store serving a framing the screen-area
+selector never picks, because the finest level is anchored at half-screen
+occupancy and these demos open auto-fitted. Those go to :func:`stream_ladder`.
+What stays: a node genuinely over its cap (``desi_galaxies``, 9,751,955 with no
+hidden axis), and a partition that is load-bearing for a second reason —
+``nuclear_pore_complex``'s subunits are concave and interpenetrate, so its
+``bsp_tree`` split planes are the only valid draw order, camera inside the
+channel included.
+
 Measured cost of the alternatives, same flat fit, same knobs:
 
     cryoem_virus   1.01M splats   levels 16 nodes 16.03 MB -> stream 4 nodes 11.50 MB  (-28%)
@@ -165,6 +201,68 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
         "levels": 2,
     },
 }
+
+
+def stream_ladder(n: int) -> dict[str, Any]:
+    """The additive ladder a Points/Lines leaf shown whole should carry.
+
+    The Points/Lines counterpart of choosing ``stream`` above. Those adders take
+    a ladder spec directly rather than going through a recipe, and — unlike the
+    substitutive path, where a ladder is composed in by default — an additive
+    ladder on a PLAIN leaf is strictly opt-in. So dropping ``substitutive_lod=``
+    from a demo silently drops its ladder too unless this is passed; that is the
+    single easiest mistake to make in this rework, and
+    ``scripts/check_demo_ladders.py`` is the backstop (it fails an un-laddered
+    leaf above 200,000).
+
+    Two numbers, and both are chosen rather than inherited:
+
+    **First rung = the ~200 ms download budget** (39,062 elements at 25 Mbps and
+    16 B/element), matching ``default_composed_additive_lod``. Not desi's 2,000:
+    that is sized to land in a single zarr chunk because its EAGER COARSEST
+    SUBSTITUTIVE LEVEL is what paints first. An additive-only leaf has no coarse
+    level, so its first rung IS first paint, and a 2,000-point opening frame buys
+    latency nobody asked for while costing rungs. Measured group counts (wrapper
+    + rungs) for the six embedding demos: at 2,000 they are 12/12/14/15/17/18
+    against 13/13/18/17/17/18 today — no reduction at all. At the budget chunk
+    they are **7/7/9/11/13/13**, because every rung saved is a node saved, and
+    hosted first paint costs roughly one request per node.
+
+    **Capped increments**, via :func:`~luxar.utils.lod_breakpoints.
+    capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``
+    and would block the main thread on these leaves.
+
+    Args:
+        n: Element count of the leaf, in its own currency (points or vertices).
+
+    Returns:
+        A spec for ``additive_lod=`` on :meth:`Group.add_points` /
+        :meth:`Group.add_lines`.
+    """
+    from luxar.core.group.lod.group import (
+        DEFAULT_LADDER_BYTES_PER_ELEMENT,
+        DEFAULT_LADDER_TARGET_MS,
+    )
+    from luxar.utils.lod_breakpoints import (
+        DEFAULT_BANDWIDTH_MBPS,
+        capped_stream_cuts,
+        streaming_chunk_splats,
+    )
+
+    first_chunk = streaming_chunk_splats(
+        DEFAULT_LADDER_TARGET_MS,
+        DEFAULT_BANDWIDTH_MBPS,
+        DEFAULT_LADDER_BYTES_PER_ELEMENT,
+    )
+    return {
+        "counts": capped_stream_cuts(int(n), first_chunk),
+        # `random` is the house default and the right reveal for a density cloud:
+        # a random prefix reads as a sparser version of the whole. The
+        # spatial-uniform sampler walks a doubling grid over the BOUNDING BOX,
+        # which is measurably worse on a shell (see the ocean-currents notes).
+        "method": "random",
+        "seed": 0,
+    }
 
 
 def save_with_lod(

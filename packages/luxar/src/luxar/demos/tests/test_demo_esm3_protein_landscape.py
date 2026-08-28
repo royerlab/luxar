@@ -458,8 +458,14 @@ class TestCompleteCacheRunsWithoutLodDeps:
     imports ``luxar.gsplats.lod``, which needs torch (coarsening kernels) and
     scipy (``additive.py`` imports ``scipy.sparse`` at module level) — neither is
     a core dependency — so scene generation died with a ModuleNotFoundError even
-    when every expensive cache was supplied. The fix gates LOD on both and falls
-    back to flat Points, so the whole demo runs with either one blocked.
+    when every expensive cache was supplied.
+
+    The first fix gated LOD on both and DEGRADED to flat, ladderless Points. The
+    scene now carries an additive ladder rather than substitutive levels, and the
+    additive write path imports neither module, so the contract holds with the
+    ladder intact and there is no degraded mode left to announce. These tests
+    assert that stronger property: the structure is IDENTICAL with either module
+    blocked.
     """
 
     @pytest.mark.parametrize("blocked", ["torch", "scipy"])
@@ -482,30 +488,34 @@ class TestCompleteCacheRunsWithoutLodDeps:
         assert got == n
         assert out_path.exists(), f"scene was not written with {blocked} blocked"
 
-        # The fallback must ANNOUNCE the degradation (arbol aprint → stdout, which
-        # capsys captures — the same channel the quarantine-notice tests assert on).
+        # Nothing degrades any more, so nothing should be announced.
         out = capsys.readouterr().out
-        assert "skipping Points LOD" in out, (
-            "fallback did not print its degradation notice"
+        assert "skipping Points LOD" not in out, (
+            "a degradation notice was printed, but the additive ladder needs "
+            f"neither torch nor scipy — so {blocked} being blocked is a no-op"
         )
-        assert blocked in out, f"degradation notice did not name {blocked}"
 
-        # Structural proof of the FALLBACK, independent of import ordering. A
-        # None entry in sys.modules only blocks a *fresh* import; in a warm suite
-        # where a module already imported the real package, its namespace keeps
-        # the binding, so the old (unconditional-LOD) code would build a
-        # substitutive-LOD group and NOT crash. Assert the on-disk shape instead:
-        # a flat Points leaf writes `proteins/positions` and has no `kind: lod`,
-        # whereas a substitutive-LOD group has `kind == "lod"` and child_0..N
-        # (with no top-level positions) — so this fails against the old code in
-        # both cold and warm orderings.
+        # Structural assertion, independent of import ordering. A None entry in
+        # sys.modules only blocks a *fresh* import; in a warm suite where some
+        # module already imported the real package, its namespace keeps the
+        # binding — so asserting on stdout alone would not catch a regression to
+        # the substitutive path. Assert the on-disk shape: a laddered Points leaf
+        # writes `proteins/positions` and has no `kind: lod`, whereas a
+        # substitutive group has `kind == "lod"` and child_0..N with no top-level
+        # positions.
         proteins = out_path / "proteins"
         assert (proteins / "positions").exists(), (
-            "flat Points leaf missing positions — LOD group written instead"
+            "Points leaf missing positions — a substitutive LOD group was "
+            "written instead"
         )
         attrs = read_node_attrs(proteins) or {}
         assert attrs.get("kind") != "lod", (
-            f"expected a flat Points leaf, got a substitutive-LOD group: {attrs.get('kind')!r}"
+            f"expected a laddered Points leaf, got a substitutive-LOD group: "
+            f"{attrs.get('kind')!r}"
+        )
+        assert not (proteins / "child_0").exists(), (
+            "substitutive levels were written; this scene should carry only an "
+            "additive ladder"
         )
 
     def test_legacy_cache_writes_protein_name_search_keys(
@@ -538,16 +548,14 @@ class TestCompleteCacheRunsWithoutLodDeps:
         assert all(label.endswith(")") for label in labels)
         assert "using protein-name search" in capsys.readouterr().out
 
-    def test_full_cache_path_builds_lod_when_deps_present(
-        self, tmp_path, capsys
-    ) -> None:
-        """Positive branch: with torch and scipy installed, the LOD ladder IS built.
+    def test_deps_present_path_builds_the_same_ladder(self, tmp_path, capsys) -> None:
+        """Deps-PRESENT branch, which must now be INDISTINGUISHABLE from blocked.
 
-        Pins the deps-PRESENT path so a mutant that drops LOD entirely — or a
-        typo like ``is_installed("torchvision")`` — cannot pass silently by only
-        satisfying the fallback test above. Substitutive-LOD writes a
-        ``kind == "lod"`` group with ``child_0..N`` and NO top-level positions,
-        and the degradation notice must stay quiet.
+        The point of the change is that torch/scipy no longer influence this
+        scene's structure at all. Asserting "same shape either way" is what
+        catches a regression to a dependency-conditional build — including the
+        subtle one the old pairing was written against, a typo like
+        ``is_installed("torchvision")`` that satisfies only one branch.
         """
         pytest.importorskip("torch")
         pytest.importorskip("scipy")
@@ -561,18 +569,15 @@ class TestCompleteCacheRunsWithoutLodDeps:
         )
 
         assert got == n
-        assert "skipping Points LOD" not in capsys.readouterr().out, (
-            "degradation notice printed even though torch and scipy are installed"
-        )
+        assert "skipping Points LOD" not in capsys.readouterr().out
         proteins = out_path / "proteins"
         attrs = read_node_attrs(proteins) or {}
-        assert attrs.get("kind") == "lod", (
-            f"expected a substitutive-LOD group with the deps present: {attrs.get('kind')!r}"
+        assert attrs.get("kind") != "lod", (
+            f"expected a laddered Points leaf, not a substitutive group: "
+            f"{attrs.get('kind')!r}"
         )
-        assert (proteins / "child_0").exists(), "LOD group missing child_0"
-        assert not (proteins / "positions").exists(), (
-            "LOD group must not write top-level positions"
-        )
+        assert (proteins / "positions").exists()
+        assert not (proteins / "child_0").exists()
 
 
 class TestCitationNamesTheModelThatRan:
