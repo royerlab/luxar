@@ -1811,6 +1811,17 @@ export class SceneLoader {
     notifier.clearError();
   }
 
+  private resumeViewAfterRetry(hadArchiveFault: boolean): void {
+    if (this.viewStateQueue.drain((state) => this.updateView(state))) return;
+    if (!hadArchiveFault || this._archiveFault) return;
+    void this.updateView(this.viewState).catch((error) => {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Current view reload after archive retry failed: ${(error as Error).message}`
+      );
+    });
+  }
+
   /**
    * Check if there are any failed loaders
    */
@@ -2024,7 +2035,7 @@ export class SceneLoader {
       return { succeeded, failed };
     } finally {
       this._updateInProgress = false;
-      this.viewStateQueue.drain((state) => this.updateView(state));
+      this.resumeViewAfterRetry(hasArchiveFault);
     }
   }
 

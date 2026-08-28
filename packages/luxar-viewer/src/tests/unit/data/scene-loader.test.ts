@@ -1423,16 +1423,20 @@ describe('SceneLoader', () => {
 
     it('surfaces and retries an archive fault with no recorded node failure', async () => {
       const archiveFault = new ArchiveFaultError('archive unavailable', '/scene.zip');
-      const pending = { displayDims: [0, 1, 2], slicePosition: [3], tolerance: [0] };
-      const updateViewSpy = vi
-        .spyOn(sceneLoader, 'updateView')
-        .mockResolvedValue(undefined as never);
+      const current = { displayDims: [0, 1, 2], slicePosition: [3], tolerance: [0] };
+      const blocked = { displayDims: [0, 1, 2], slicePosition: [4], tolerance: [0] };
       const internals = sceneLoader as unknown as {
-        _archiveFault: ArchiveFaultError | null;
-        viewStateQueue: { setPending(state: unknown): void; hasPending(): boolean };
+        viewState: { displayDims: number[]; slicePosition: number[]; tolerance: number[] };
+        viewStateQueue: { hasPending(): boolean };
+        reportArchiveFault(fault: ArchiveFaultError): void;
       };
-      internals._archiveFault = archiveFault;
-      internals.viewStateQueue.setPending(pending);
+      await sceneLoader.updateView(current);
+      internals.reportArchiveFault(archiveFault);
+      await sceneLoader.updateView(blocked);
+      expect(internals.viewState).toMatchObject(current);
+      expect(internals.viewStateQueue.hasPending()).toBe(false);
+
+      const updateViewSpy = vi.spyOn(sceneLoader, 'updateView');
 
       const provider = sceneLoader.getFailedLoadsProvider();
       expect(provider.getFailedPaths()).toEqual(['/scene.zip']);
@@ -1446,7 +1450,7 @@ describe('SceneLoader', () => {
       expect(sceneLoader.archiveFault).toBeNull();
       expect(notifierMocks.clearError).toHaveBeenCalledOnce();
       expect(internals.viewStateQueue.hasPending()).toBe(false);
-      expect(updateViewSpy).toHaveBeenCalledWith(pending);
+      expect(updateViewSpy).toHaveBeenCalledWith(internals.viewState);
     });
 
     it('auto-retries an archive fault with no recorded node failure', async () => {
