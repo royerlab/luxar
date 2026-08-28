@@ -12,6 +12,7 @@ from typing import Any, Callable, Mapping, Sequence, cast
 import ci_queue_scan
 
 WORKFLOW = "ci-queue-redispatch.yml"
+REQUIRED_OBSIDIAN_JOBS = {"python-tests (3.12)", "typescript-tests"}
 
 
 @dataclass(frozen=True)
@@ -25,8 +26,11 @@ def select_candidate(result: ci_queue_scan.ScanResult) -> Candidate | None:
     if result.error is not None or result.truncated or not result.running:
         return None
     for run in result.runs:
-        if run.queued and not run.running:
-            return Candidate(run.run_id, tuple(run.queued))
+        required_queued = [
+            name for name in run.queued if name in REQUIRED_OBSIDIAN_JOBS
+        ]
+        if required_queued and not run.running:
+            return Candidate(run.run_id, tuple(required_queued))
     return None
 
 

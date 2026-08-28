@@ -44,6 +44,10 @@ def test_select_candidate_requires_complete_saturation_evidence() -> None:
             running=["same run"],
             runs=[ci_queue_scan.RunScan(10, queued=["queued"], running=["same run"])],
         ),
+        ci_queue_scan.ScanResult(
+            running=["other run"],
+            runs=[ci_queue_scan.RunScan(10, queued=["python-tests (3.14)"])],
+        ),
     ]
     assert all(
         ci_queue_redispatch.select_candidate(result) is None
