@@ -1366,6 +1366,8 @@ def doctor(
 
     Currently diagnosed:
 
+    - Unsupported standalone gsplat format versions. These stores cannot be
+      opened by the current reader and must be converted with `migrate-format`.
     - Partition split planes (bsp_tree): missing, or stale after a transform.
       Without them the viewer orders parts by centroid, which is not a valid
       painter's order — it pops at the seams under `normal`/`volumetric`

@@ -1,13 +1,15 @@
 # `luxar.gsplats.doctor`
 
-Diagnoses — and on request repairs — partition metadata in an existing
-`.gsplats.zarr` dataset or `.luxar.zarr` scene.
+Diagnoses gsplat format compatibility and — on request — repairs partition
+metadata in an existing `.gsplats.zarr` dataset or `.luxar.zarr` scene.
 
 The problems this exists for are the ones you cannot see. A dataset written by
 an older Luxar loads fine and renders fine; it is just missing something a later
 version learned to record, or is carrying metadata that went stale under an
 edit. Nothing errors, so nothing tells you. Doctor is where that class of
 condition gets named, costed, and fixed in place — no re-fitting.
+Standalone gsplat stores whose format version the current reader rejects are
+also reported as errors, with `gsplat migrate-format` as the remedy.
 
 ## Using it
 
@@ -43,6 +45,7 @@ if not report.healthy:
 
 | check | condition | repair |
 |---|---|---|
+| `format-version` | a standalone gsplat store uses a format version the current reader cannot open | none; convert it with `luxar gsplat migrate-format` |
 | `split-planes` | a `kind=partition` records no `bsp_tree` | recover the planes from the part boxes, when those are disjoint |
 | `split-planes` | the stored `bsp_tree` does not separate the parts it names (stale after a transform, or written against a different part set) | rebuild from the part boxes, or remove the tree so ordering falls back honestly |
 | `split-planes` | overlapping parts carry planes outside their measured overlap bands and per-axis tolerance floor | recover the band-bounded cuts; report a coordinate-frame scale only when repeated planes support the same factors |
