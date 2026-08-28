@@ -96,6 +96,7 @@ FIXTURE_NAMES: list[str] = [
     "test_integer_colors.luxar.zarr",
     "test_labelled_partitioned_points.luxar.zarr",
     "test_labelled_points.luxar.zarr",
+    "test_layer_4d_gsplats.luxar.zarr",
     "test_line_joins.luxar.zarr",
     "test_lines.luxar.zarr",
     "test_lines_blending_modes.luxar.zarr",
@@ -107,7 +108,6 @@ FIXTURE_NAMES: list[str] = [
     "test_lod_group_volumetric.luxar.zarr",
     "test_log_scalar.luxar.zarr",
     "test_lift_parity.luxar.zarr",
-    "test_layer_4d_gsplats.luxar.zarr",
     "test_lut.luxar.zarr",
     "test_lut_u16.luxar.zarr",
     "test_mesh.luxar.zarr",
@@ -1152,6 +1152,8 @@ def generate_layer_4d_gsplats_test() -> None:
 
         positions_4d = np.vstack(positions)
         colors_4d = np.vstack(colors)
+        # Radius 0.18 lifts to sigma 0.12 on every axis, leaving the two
+        # timepoints about 8 sigma apart so tolerance slicing cannot mix them.
         lifted = lift_points_to_gsplats(
             positions_4d,
             np.full(len(positions_4d), 0.18, dtype=np.float32),

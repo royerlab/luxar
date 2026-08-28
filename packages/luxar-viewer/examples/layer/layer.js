@@ -108,12 +108,19 @@ async function setDimensionValue(index, value) {
   frameRequested = true;
 }
 
-window.__luxarLayerExample = { getState, setCameraDistance, setDimensionValue };
+async function dispose() {
+  await layer.dispose();
+  loaded = false;
+  frameRequested = true;
+}
+
+window.__luxarLayerExample = { dispose, getState, setCameraDistance, setDimensionValue };
 
 controls.addEventListener('change', () => {
   frameRequested = true;
 });
 window.addEventListener('resize', resize);
+window.addEventListener('pagehide', () => void dispose(), { once: true });
 canvas.addEventListener('webglcontextlost', (event) => {
   event.preventDefault();
   layer.handleContextLost();

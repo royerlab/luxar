@@ -6,6 +6,7 @@ const EXAMPLE_URL = '/examples/layer/';
 const DATA_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
 const LOD_FIXTURE = `${DATA_BASE}/test_lod_group.luxar.zarr`;
 const DIMENSION_FIXTURE = `${DATA_BASE}/test_layer_4d_gsplats.luxar.zarr`;
+const CLEAR_COLOR_SUM = 0x05 + 0x08 + 0x12;
 
 interface LayerExampleState {
   loaded: boolean;
@@ -15,6 +16,7 @@ interface LayerExampleState {
 }
 
 interface LayerExampleApi {
+  dispose(): Promise<void>;
   getState(): LayerExampleState;
   setCameraDistance(distance: number): void;
   setDimensionValue(index: number, value: number): Promise<void>;
@@ -48,9 +50,11 @@ test.describe('LuxarLayer host example', () => {
     const frame = await captureCanvasRGBA(page, '#layer-canvas');
     let litPixels = 0;
     for (let index = 0; index < frame.rgba.length; index += 4) {
-      if (frame.rgba[index] + frame.rgba[index + 1] + frame.rgba[index + 2] > 24) litPixels++;
+      if (frame.rgba[index] + frame.rgba[index + 1] + frame.rgba[index + 2] > CLEAR_COLOR_SUM + 8) {
+        litPixels++;
+      }
     }
-    expect(litPixels).toBeGreaterThan(frame.width * frame.height * 0.001);
+    expect(litPixels).toBeGreaterThan(frame.width * frame.height * 0.01);
   });
 
   test('camera dolly changes the selected LOD geometry', async ({ page }) => {
@@ -58,25 +62,54 @@ test.describe('LuxarLayer host example', () => {
     const initial = await getExampleState(page);
     expect(initial.visibleLodLevels.length).toBeGreaterThan(0);
 
-    let changed: LayerExampleState | null = null;
-    for (const distance of [2, 4, 8, 16, 32, 64, 128]) {
-      await page.evaluate((nextDistance) => {
-        const api = (
-          window as Window & typeof globalThis & { __luxarLayerExample?: LayerExampleApi }
-        ).__luxarLayerExample;
-        if (!api) throw new Error('LuxarLayer example API is unavailable');
-        api.setCameraDistance(nextDistance);
-      }, distance);
-      await page.waitForTimeout(150);
-      const state = await getExampleState(page);
-      if (state.visibleSplatCount !== initial.visibleSplatCount) {
-        changed = state;
-        break;
-      }
-    }
+    const distances = [2, 4, 8, 16, 32, 64, 128];
+    let distanceIndex = 0;
+    await expect
+      .poll(
+        async () => {
+          const state = await getExampleState(page);
+          if (state.visibleSplatCount !== initial.visibleSplatCount) {
+            return state.visibleSplatCount;
+          }
+          const distance = distances[Math.min(distanceIndex, distances.length - 1)];
+          distanceIndex++;
+          await page.evaluate((nextDistance) => {
+            const api = (
+              window as Window & typeof globalThis & { __luxarLayerExample?: LayerExampleApi }
+            ).__luxarLayerExample;
+            if (!api) throw new Error('LuxarLayer example API is unavailable');
+            api.setCameraDistance(nextDistance);
+          }, distance);
+          return initial.visibleSplatCount;
+        },
+        {
+          message: 'camera distance sweep should cross an LOD threshold',
+          timeout: 5000,
+          intervals: [0, 150, 150, 150, 150, 150, 150, 250, 500],
+        }
+      )
+      .not.toBe(initial.visibleSplatCount);
 
-    expect(changed, 'camera distance sweep should cross an LOD threshold').not.toBeNull();
-    expect(changed!.visibleLodLevels).not.toEqual(initial.visibleLodLevels);
+    const changed = await getExampleState(page);
+    expect(changed.visibleLodLevels).not.toEqual(initial.visibleLodLevels);
+  });
+
+  test('dispose removes the layer geometry', async ({ page }) => {
+    await openLayerExample(page, LOD_FIXTURE);
+    await page.evaluate(async () => {
+      const api = (window as Window & typeof globalThis & { __luxarLayerExample?: LayerExampleApi })
+        .__luxarLayerExample;
+      if (!api) throw new Error('LuxarLayer example API is unavailable');
+      await api.dispose();
+    });
+
+    await expect
+      .poll(() => getExampleState(page))
+      .toMatchObject({
+        loaded: false,
+        visibleSplatCount: 0,
+        visibleLodLevels: [],
+      });
   });
 
   test('setDimensionValue commits a different splat count', async ({ page }) => {

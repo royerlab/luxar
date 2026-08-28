@@ -99,7 +99,8 @@ export default defineConfig(({ command }) => ({
         target: 'http://localhost:8000',
         changeOrigin: true,
         bypass(req) {
-          if (req.url?.startsWith('/examples/layer/')) return req.url;
+          // Dataset URLs are proxied to `luxar serve examples/`; this host page stays on Vite.
+          if (req.url?.match(/^\/examples\/layer(?:[/?]|$)/)) return req.url;
         },
       },
     },
