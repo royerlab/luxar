@@ -1496,9 +1496,9 @@ demo:  ## Generate the Lorenz demo dataset (datasets/demos/lorenz.luxar.zarr, 10
 	@echo "✅ Demo dataset created at datasets/demos/lorenz.luxar.zarr"
 
 run-examples:  ## Run all examples to generate zarr files (output to datasets/examples/)
-	@# The runner fingerprints both the example builders and Luxar's production
-	@# Python writer code. E2E entrypoints can therefore depend on this target
-	@# without rebuilding fixtures whose producer contract has not changed.
+	@# The runner fingerprints each example builder and its statically imported
+	@# Python modules. E2E entrypoints can therefore depend on this target without
+	@# rebuilding fixtures whose individual producer contract has not changed.
 	$(HATCH) run python scripts/run_examples.py
 	@echo ""
 	@echo "📁 Generated zarr files in datasets/examples/:"

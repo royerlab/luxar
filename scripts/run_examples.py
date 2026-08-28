@@ -192,7 +192,8 @@ def _marker_examples(marker: dict[str, Any] | None) -> dict[str, dict[str, Any]]
     recorded_outputs: set[str] = set()
     for producer, stamp in examples.items():
         if not isinstance(producer, str) or not isinstance(stamp, dict):
-            return {}
+            print(f"⚠️ Ignoring invalid fixture stamp: {producer!r}", file=sys.stderr)
+            continue
         fingerprint = stamp.get("fingerprint")
         sources = stamp.get("sources")
         outputs = stamp.get("outputs")
@@ -201,14 +202,15 @@ def _marker_examples(marker: dict[str, Any] | None) -> dict[str, dict[str, Any]]
             or not isinstance(sources, list)
             or not isinstance(outputs, list)
         ):
-            return {}
+            print(f"⚠️ Ignoring invalid fixture stamp: {producer}", file=sys.stderr)
+            continue
         if (
             not sources
             or not all(isinstance(name, str) for name in sources)
-            or not outputs
             or not all(isinstance(name, str) for name in outputs)
         ):
-            return {}
+            print(f"⚠️ Ignoring invalid fixture stamp: {producer}", file=sys.stderr)
+            continue
         source_paths = [Path(name) for name in sources]
         output_paths = [Path(name) for name in outputs]
         if (
@@ -218,7 +220,8 @@ def _marker_examples(marker: dict[str, Any] | None) -> dict[str, dict[str, Any]]
             or any(path.name != name for path, name in zip(output_paths, outputs))
             or recorded_outputs.intersection(outputs)
         ):
-            return {}
+            print(f"⚠️ Ignoring invalid fixture stamp: {producer}", file=sys.stderr)
+            continue
         recorded_outputs.update(outputs)
         stamps[producer] = {
             "fingerprint": fingerprint,
@@ -384,9 +387,12 @@ def _output_signatures(output_dir: Path) -> dict[str, tuple[tuple[str, int, int]
 
 
 def _run_example(
-    script: Path, repo_root: Path, output_dir: Path, python: str
-) -> list[str] | None:
-    before_signatures = _output_signatures(output_dir)
+    script: Path,
+    repo_root: Path,
+    output_dir: Path,
+    python: str,
+    before_signatures: Mapping[str, tuple[tuple[str, int, int], ...]],
+) -> tuple[int, list[str], dict[str, tuple[tuple[str, int, int], ...]]]:
     result = subprocess.run([python, str(script)], cwd=repo_root, check=False)
     after_signatures = _output_signatures(output_dir)
     generated_outputs = sorted(
@@ -394,7 +400,7 @@ def _run_example(
         for name, signature in after_signatures.items()
         if before_signatures.get(name) != signature
     )
-    return generated_outputs if result.returncode == 0 and generated_outputs else None
+    return result.returncode, generated_outputs, after_signatures
 
 
 def _remove_outputs(output_dir: Path, outputs: set[str]) -> None:
@@ -464,6 +470,7 @@ def generate_examples(
         for script in scripts_to_run
     }
     failures: list[str] = []
+    output_signatures = _output_signatures(output_dir)
     print(
         f"🚀 Rebuilding {len(scripts_to_run)} stale example dataset producer(s)...",
         flush=True,
@@ -476,20 +483,24 @@ def generate_examples(
             flush=True,
         )
         print("─" * 48, flush=True)
-        generated_outputs = _run_example(script, repo_root, output_dir, python)
-        if generated_outputs is None:
+        returncode, generated_outputs, output_signatures = _run_example(
+            script, repo_root, output_dir, python, output_signatures
+        )
+        if returncode != 0:
             failures.append(script.name)
             stamps.pop(script.name, None)
             print(f"❌ Failed: {script.name}", flush=True)
             continue
         previous_outputs = set(previous_stamps.get(script.name, {}).get("outputs", []))
-        removed_outputs.update(previous_outputs - set(generated_outputs))
+        outputs = generated_outputs or sorted(previous_outputs)
+        if generated_outputs:
+            removed_outputs.update(previous_outputs - set(generated_outputs))
         stamps[script.name] = {
             "fingerprint": fingerprints[script.name],
             "sources": [
                 path.relative_to(repo_root).as_posix() for path in sources[script.name]
             ],
-            "outputs": generated_outputs,
+            "outputs": outputs,
         }
         _checkpoint_marker(repo_root, output_dir, environment, stamps)
         print(f"✅ Success: {script.name}", flush=True)
@@ -530,13 +541,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.check:
-        if fixtures_are_current(REPO_ROOT, OUTPUT_DIR):
-            print("✅ Example datasets are current.")
-            return 0
-        stale = stale_examples(REPO_ROOT, OUTPUT_DIR)
-        detail = ", ".join(stale) if stale else "fixture marker or producer inventory"
+        scripts = _example_scripts(REPO_ROOT)
+        marker = _read_marker(OUTPUT_DIR)
+        environment = build_environment()
+        if not scripts:
+            detail = "no example producers found"
+        elif marker is None or marker.get("version") != MARKER_VERSION:
+            detail = "no compatible fixture marker"
+        elif marker.get("environment") != environment:
+            detail = "writer environment changed"
+        else:
+            stale = _stale_producers(scripts, marker, REPO_ROOT, OUTPUT_DIR)
+            if not stale:
+                print("✅ Example datasets are current.")
+                return 0
+            detail = "stale example producers: " + ", ".join(stale)
         print(
-            "❌ Stale example producers: "
+            "❌ Example fixtures are stale: "
             + detail
             + '; run "make run-examples" to rebuild them.',
             file=sys.stderr,

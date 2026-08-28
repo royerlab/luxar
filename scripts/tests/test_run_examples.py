@@ -445,11 +445,77 @@ def test_successful_rebuild_without_outputs_preserves_previous_fixtures(
         run_examples.generate_examples(
             repo, output_dir, python=sys.executable, force=True
         )
-        == 1
+        == 0
     )
 
     assert sentinel.read_text() == "old"
-    assert not (output_dir / run_examples.MARKER_NAME).exists()
+    marker = json.loads((output_dir / run_examples.MARKER_NAME).read_text())
+    assert marker["examples"]["one_example.py"]["outputs"] == [previous.name]
+    assert run_examples.fixtures_are_current(repo, output_dir)
+
+
+def test_successful_producer_without_outputs_is_stamped_current(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    _write_example(repo, "one", "print('no output')\n")
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+
+    marker = json.loads((output_dir / run_examples.MARKER_NAME).read_text())
+    assert marker["examples"]["one_example.py"]["outputs"] == []
+    assert run_examples.fixtures_are_current(repo, output_dir)
+
+
+def test_generation_reuses_output_snapshot_between_producers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    _generating_example(repo, "one", repo / "one-ran")
+    _generating_example(repo, "two", repo / "two-ran")
+    original = run_examples._output_signatures
+    calls = 0
+
+    def count_calls(path: Path) -> dict[str, tuple[tuple[str, int, int], ...]]:
+        nonlocal calls
+        calls += 1
+        return original(path)
+
+    monkeypatch.setattr(run_examples, "_output_signatures", count_calls)
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    assert calls == 3
+
+
+def test_invalid_marker_entry_does_not_discard_valid_stamps(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    valid = _generating_example(repo, "one", repo / "ran")
+    output = output_dir / "one_example.luxar.zarr"
+    output.mkdir(parents=True)
+    (output / "zarr.json").write_text("fresh")
+    marker = {
+        "version": run_examples.MARKER_VERSION,
+        "environment": run_examples.build_environment(),
+        "examples": {
+            "one_example.py": {
+                "fingerprint": run_examples.example_fingerprint(repo, valid),
+                "sources": ["packages/luxar/examples/one_example.py"],
+                "outputs": [output.name],
+            },
+            "bad_example.py": {
+                "fingerprint": "bad",
+                "sources": [],
+                "outputs": [],
+            },
+        },
+    }
+    (output_dir / run_examples.MARKER_NAME).write_text(json.dumps(marker))
+
+    assert run_examples.fixtures_are_current(repo, output_dir)
+    assert "Ignoring invalid fixture stamp: bad_example.py" in capsys.readouterr().err
 
 
 def test_marker_uses_prebuild_fingerprint(tmp_path: Path) -> None:
@@ -508,7 +574,7 @@ def test_force_rebuilds_current_fixtures(tmp_path: Path) -> None:
     assert sentinel.exists()
 
 
-def test_check_mode_names_stale_producers_without_writing(
+def test_check_mode_reports_missing_compatible_marker_without_writing(
     tmp_path: Path, monkeypatch: object, capsys: object
 ) -> None:
     repo = _repo(tmp_path)
@@ -523,8 +589,25 @@ def test_check_mode_names_stale_producers_without_writing(
 
     assert run_examples.main(["--check"]) == run_examples.STALE_EXIT_CODE
     captured = capsys.readouterr()  # type: ignore[attr-defined]
-    assert "one_example.py" in captured.err
+    assert "no compatible fixture marker" in captured.err
+    assert "one_example.py" not in captured.err
     assert list(output_dir.iterdir()) == []
+
+
+def test_check_mode_names_genuinely_stale_producers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    script = _generating_example(repo, "one", repo / "ran")
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    script.write_text(script.read_text() + "# stale\n")
+    monkeypatch.setattr(run_examples, "REPO_ROOT", repo)
+    monkeypatch.setattr(run_examples, "OUTPUT_DIR", output_dir)
+    monkeypatch.setattr(run_examples, "luxar_is_from_repo", lambda _repo_root: True)
+
+    assert run_examples.main(["--check"]) == run_examples.STALE_EXIT_CODE
+    assert "stale example producers: one_example.py" in capsys.readouterr().err
 
 
 def test_main_rejects_luxar_imported_from_another_checkout(
