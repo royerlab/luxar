@@ -407,6 +407,12 @@ describe('LuxarLayer', () => {
       expect(listener).toHaveBeenCalledTimes(2);
       expect(listener).toHaveBeenLastCalledWith(secondFault);
       expect(layer.getDatasetFault()).toBe(secondFault);
+
+      loadSceneMock.mockRejectedValueOnce(new Error('dataset unavailable'));
+      await expect(layer.load('http://example.test/c.zarr')).rejects.toThrow('dataset unavailable');
+      secondLoader.emitArchiveFault(new Error('stale second archive unavailable'));
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(layer.getDatasetFault()).toBeNull();
     });
 
     it('isolates a throwing dataset fault listener during replay', async () => {
@@ -1220,6 +1226,28 @@ describe('LuxarLayer', () => {
 
       expect(layer.getDatasetFault()).toBeNull();
       expect(listener).toHaveBeenCalledOnce();
+    });
+
+    it('does not install or replay a fault subscription after disposal begins mid-load', async () => {
+      const fault = new Error('archive unavailable');
+      sceneLoaderStub.emitArchiveFault(fault);
+      let releaseWarmup!: () => void;
+      warmSceneBlendModePrograms.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseWarmup = resolve))
+      );
+      const listener = vi.fn();
+      const layer = new LuxarLayer(makeOptions());
+      layer.onDatasetFault(listener);
+
+      const loading = layer.load('http://example.test/scene.zarr');
+      await vi.waitFor(() => expect(warmSceneBlendModePrograms).toHaveBeenCalled());
+      const disposing = layer.dispose();
+      releaseWarmup();
+      await Promise.all([loading, disposing]);
+
+      expect(sceneLoaderStub.onArchiveFault).not.toHaveBeenCalled();
+      expect(listener).not.toHaveBeenCalled();
+      expect(layer.getDatasetFault()).toBeNull();
     });
 
     it('detaches the root and tears down the process singletons', async () => {

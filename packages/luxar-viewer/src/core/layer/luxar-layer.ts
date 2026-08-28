@@ -370,6 +370,7 @@ export class LuxarLayer {
     this.applyRenderOrder();
     this.configureBlendWarmup();
     await warmSceneBlendModePrograms(root);
+    if (this.disposed) return root;
 
     const sceneLoader = getSceneLoader(LOADER_ID);
     this.datasetFaultLoader = sceneLoader;
