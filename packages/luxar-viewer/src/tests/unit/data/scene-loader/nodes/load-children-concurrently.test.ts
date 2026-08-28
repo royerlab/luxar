@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import {
+  createLineWorkingSetGate,
   EAGER_CHILD_LOAD_CONCURRENCY,
   loadChildrenConcurrently,
   type LoadSceneChildren,
@@ -154,7 +155,38 @@ describe('loadChildrenConcurrently', () => {
       children,
       new THREE.Group(),
       makeStubLoc(),
-      makeTestNodeBuildCtx(),
+      // Gate constructed AFTER the heap stub, so it snapshots the small heap.
+      makeTestNodeBuildCtx({
+        lineWorkingSetGate: createLineWorkingSetGate(undefined, undefined),
+      }),
+      async (child) => {
+        started.push(child.path);
+        await new Promise<void>((resolve) => releases.push(resolve));
+      }
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    releases.shift()?.();
+    await loadPromise;
+  });
+
+  it('sizes the session gate from an explicit cache-pool override', async () => {
+    // A 384 MiB pool resolves to a 128 MiB eager budget, which cannot seat two
+    // ~92 MiB line siblings at once. With no `performance.memory` here, an
+    // ignored override would leave the 256 MiB fixed fallback — enough for both
+    // — so this serialization is what pins the override being honored.
+    const children = makeLineChildren(2, 300_000);
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx({
+        lineWorkingSetGate: createLineWorkingSetGate(384 * 1024 * 1024, undefined),
+      }),
       async (child) => {
         started.push(child.path);
         await new Promise<void>((resolve) => releases.push(resolve));

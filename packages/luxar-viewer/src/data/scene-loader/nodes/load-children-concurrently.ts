@@ -16,7 +16,6 @@ import type { LineWorkingSetGate, LineWorkingSetNode, NodeBuildCtx } from './bui
 // stays below the global 64-request fetch gate while collapsing waterfalls.
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
-const EAGER_CHILD_LOAD_MEMORY_FALLBACK_BYTES = 256 * 1024 * 1024;
 const ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES = 220;
 
 interface WorkingSetWaiter {
@@ -102,10 +101,21 @@ function estimateWorkingSetBytes(node: LineWorkingSetNode): number {
   return vertexCount * vertexBytes + segmentCount * ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES;
 }
 
-/** Create a session gate that snapshots its heap-derived budget when constructed. */
-export function createLineWorkingSetGate(): LineWorkingSetGate {
+/**
+ * Create a session gate that snapshots its resolved budget when constructed.
+ *
+ * @param poolOverrideBytes - Explicit total cache pool in bytes (`?cacheBudgetMB=`
+ *   / the native launcher). Takes precedence over the measured heap, so a WebKit
+ *   session with an override is not pinned to the fixed fallback.
+ * @param fallbackPoolBytes - Device-class total cache pool in bytes, used only
+ *   when there is neither an explicit pool nor a measurable heap.
+ */
+export function createLineWorkingSetGate(
+  poolOverrideBytes: number | undefined,
+  fallbackPoolBytes: number | undefined
+): LineWorkingSetGate {
   return new WorkingSetGate(
-    computeWorkingSetBudgetBytes() ?? EAGER_CHILD_LOAD_MEMORY_FALLBACK_BYTES
+    computeWorkingSetBudgetBytes(undefined, poolOverrideBytes, fallbackPoolBytes)
   );
 }
 
