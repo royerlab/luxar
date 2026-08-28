@@ -396,6 +396,12 @@ def generate_examples(
         else set(_stale_producers(scripts, marker, repo_root, output_dir))
         & current_names
     )
+    for producer in stale_names:
+        stamps.pop(producer, None)
+    if stamps:
+        write_marker(repo_root, output_dir, environment=environment, examples=stamps)
+    else:
+        _marker_path(output_dir).unlink(missing_ok=True)
     scripts_to_run = [script for script in scripts if script.name in stale_names]
     import_cache: dict[Path, set[str]] = {}
     module_cache: dict[str, Path | None] = {}
@@ -450,6 +456,7 @@ def generate_examples(
             ],
             "outputs": generated_outputs,
         }
+        write_marker(repo_root, output_dir, environment=environment, examples=stamps)
         print(f"✅ Success: {script.name}", flush=True)
 
     print("\n" + "━" * 48, flush=True)

@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from luxar.conftest import viewer_source
 
 _MOD_PATH = Path(__file__).resolve().parents[1] / "run_examples.py"
@@ -383,6 +385,28 @@ def test_failed_rebuild_stamps_successes_for_selective_retry(
 
     assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
     assert not reached.exists()
+
+
+def test_stale_stamp_is_removed_before_producer_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    script = _generating_example(repo, "one", repo / "ran")
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    script.write_text(script.read_text() + "# stale\n")
+
+    def interrupt(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        assert not (output_dir / run_examples.MARKER_NAME).exists()
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run_examples.subprocess, "run", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        run_examples.generate_examples(repo, output_dir, python=sys.executable)
+
+    assert not (output_dir / run_examples.MARKER_NAME).exists()
 
 
 def test_successful_rebuild_without_outputs_preserves_previous_fixtures(
