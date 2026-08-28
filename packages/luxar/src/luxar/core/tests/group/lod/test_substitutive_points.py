@@ -1060,6 +1060,52 @@ class TestSubstitutiveLodGuards:
         assert finest.attrs["type"] == "points"
         assert finest.attrs.get("has_image_labels") is True
 
+    def test_image_labels_only_flatten_finest_additive_ladder(self, tmp_path) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.default_rng(0)
+        pos = rng.uniform(0, 40, (600, 3)).astype(np.float32)
+        with pytest.warns(UserWarning, match="reveal_centre is not applied"):
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points(
+                    "cloud",
+                    pos,
+                    radii=1.0,
+                    image_labels=[b"x"] * len(pos),
+                    substitutive_lod=dict(
+                        compression_factor=2, levels=1, device="cpu", seed=0
+                    ),
+                    additive_lod={"method": "radial", "counts": "stream:50"},
+                )
+
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        children = sorted(k for k in grp.keys() if k.startswith("child_"))
+        assert int(grp[children[0]].attrs.get("n_additive_sublods", 1)) > 1
+        assert grp[children[-1]].attrs.get("has_image_labels") is True
+        assert "n_additive_sublods" not in grp[children[-1]].attrs
+
+    def test_image_labels_degenerate_fallback_uses_finest_policy(
+        self, tmp_path
+    ) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        pos = np.random.default_rng(0).uniform(0, 1, (300, 3)).astype(np.float32)
+        with pytest.warns(UserWarning, match="where one applies"):
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points(
+                    "cloud",
+                    pos,
+                    radii=0.0,
+                    image_labels=[b"x"] * len(pos),
+                    substitutive_lod=dict(levels=2, device="cpu", seed=0),
+                    additive_lod={"counts": "stream:50"},
+                )
+
+        node = zarr.open(str(out), mode="r")["cloud"]
+        assert node.attrs["type"] == "points"
+        assert node.attrs.get("has_image_labels") is True
+        assert "n_additive_sublods" not in node.attrs
+
     def test_empty_cloud_falls_through_to_canonical_path(self, tmp_path) -> None:
         # N=0 must route through the canonical path (the n_points>0 guard), which
         # rejects empty input with its normal "empty points" error — NOT a
