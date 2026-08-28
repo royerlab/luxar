@@ -34,10 +34,18 @@ describe('computeWorkingSetBudgetBytes', () => {
     expect(computeWorkingSetBudgetBytes(8 * 1024 * MB)).toBe(512 * MB);
   });
 
-  it('returns undefined when the heap is unmeasurable', () => {
-    expect(computeWorkingSetBudgetBytes()).toBeUndefined();
-    expect(computeWorkingSetBudgetBytes(0)).toBeUndefined();
-    expect(computeWorkingSetBudgetBytes(Number.NaN)).toBeUndefined();
+  it('uses an explicit cache-pool override before a measured heap', () => {
+    expect(computeWorkingSetBudgetBytes(512 * MB, 768 * MB)).toBe(256 * MB);
+  });
+
+  it('derives a WebKit budget from the device-class cache pool when no override exists', () => {
+    expect(computeWorkingSetBudgetBytes(undefined, undefined, 384 * MB)).toBe(128 * MB);
+  });
+
+  it('uses the fixed fallback when no pool or heap signal is available', () => {
+    expect(computeWorkingSetBudgetBytes()).toBe(256 * MB);
+    expect(computeWorkingSetBudgetBytes(0)).toBe(256 * MB);
+    expect(computeWorkingSetBudgetBytes(Number.NaN)).toBe(256 * MB);
   });
 });
 

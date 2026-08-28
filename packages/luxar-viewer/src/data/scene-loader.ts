@@ -108,7 +108,11 @@ import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
 import { SliceCache } from '../cache/slice-cache';
-import type { CacheBudgets } from '../cache/heap-budget';
+import {
+  computeWorkingSetBudgetBytes,
+  deviceClassPoolBytes,
+  type CacheBudgets,
+} from '../cache/heap-budget';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
 import type {
@@ -1559,8 +1563,17 @@ export class SceneLoader {
     // this dataset can detect (via identity + aborted flag) that its
     // dataset is no longer live and skip committing into a stale scene.
     const ctrl = this._datasetAbortController;
+    const poolOverrideBytes =
+      this.config.cacheBudgetMB != null && this.config.cacheBudgetMB > 0
+        ? this.config.cacheBudgetMB * 1024 * 1024
+        : undefined;
     return {
       registry: this.registry,
+      lineWorkingSetBudgetBytes: computeWorkingSetBudgetBytes(
+        undefined,
+        poolOverrideBytes,
+        deviceClassPoolBytes()
+      ),
       lodGroupRegistry: this.lodGroupRegistry ?? undefined,
       nodeFactory: this.nodeFactory,
       viewState: this.viewState,

@@ -5,7 +5,6 @@
  */
 
 import * as THREE from 'three';
-import { computeWorkingSetBudgetBytes } from '../../../cache/heap-budget';
 import { log, Modules } from '../../../utils/log';
 import * as zarr from '../../zarr';
 import type { SceneNode } from '../../data-loader-types';
@@ -16,7 +15,6 @@ import type { NodeBuildCtx } from './build-ctx';
 // stays below the global 64-request fetch gate while collapsing waterfalls.
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
-const EAGER_CHILD_LOAD_MEMORY_FALLBACK_BYTES = 256 * 1024 * 1024;
 const ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES = 220;
 
 interface WorkingSetWaiter {
@@ -75,9 +73,7 @@ const workingSetGates = new WeakMap<NodeBuildCtx, WorkingSetGate>();
 function workingSetGateFor(ctx: NodeBuildCtx): WorkingSetGate {
   let gate = workingSetGates.get(ctx);
   if (!gate) {
-    gate = new WorkingSetGate(
-      computeWorkingSetBudgetBytes() ?? EAGER_CHILD_LOAD_MEMORY_FALLBACK_BYTES
-    );
+    gate = new WorkingSetGate(ctx.lineWorkingSetBudgetBytes ?? 256 * 1024 * 1024);
     workingSetGates.set(ctx, gate);
   }
   return gate;

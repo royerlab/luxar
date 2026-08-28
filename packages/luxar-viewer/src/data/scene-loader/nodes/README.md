@@ -45,9 +45,9 @@ construction, slice updates, and retry-after-failure.
   identical to the serial walk and preserving lifecycle-based renderer tracking.
 - **Memory-aware eager admission.** The eight-wide slot pool remains the latency
   bound for small siblings. Line leaves additionally reserve a conservative
-  working-set estimate from half of the measured heap's shared non-cache
-  remainder, capped at 512 MiB and falling back to 256 MiB where the heap is
-  unavailable. The gate is shared by `NodeBuildCtx` for one scene-loading walk,
+  working-set estimate resolved from the explicit cache-pool override, measured
+  heap, device class, or fixed fallback in that order, capped at 512 MiB. The
+  gate is shared by `NodeBuildCtx` for one scene-loading walk,
   so nested parent pools cannot multiply several million-vertex decode,
   projection, staging, and texture allocations. A small waiter may pass a large
   one that does not fit yet, while an oversized head still progresses when the

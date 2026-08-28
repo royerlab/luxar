@@ -1716,6 +1716,18 @@ describe('SceneLoader', () => {
       expect((loader as any).config).toEqual(config);
       loader.dispose();
     });
+
+    it('passes an explicit cache-pool override to line working-set admission', () => {
+      const loader = new SceneLoader({ cacheBudgetMB: 2048 });
+      const ctx = (
+        loader as unknown as {
+          makeNodeBuildCtx(): { lineWorkingSetBudgetBytes?: number };
+        }
+      ).makeNodeBuildCtx();
+
+      expect(ctx.lineWorkingSetBudgetBytes).toBe(512 * 1024 * 1024);
+      loader.dispose();
+    });
   });
 
   describe('transform validation', () => {

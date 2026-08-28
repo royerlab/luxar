@@ -39,6 +39,7 @@ const CACHE_SHARE_OF_TARGET = 0.6;
 const NON_CACHE_SHARE_OF_TARGET = 1 - CACHE_SHARE_OF_TARGET;
 const EAGER_WORKING_SET_SHARE_OF_REMAINDER = 0.5;
 const EAGER_WORKING_SET_CAP_BYTES = 512 * MB;
+const EAGER_WORKING_SET_FIXED_FALLBACK_BYTES = 256 * MB;
 
 /** Hard ceiling on the S-cache so a huge heap can't pin an absurd budget. */
 const SLICE_CAP_BYTES = 2048 * MB;
@@ -157,21 +158,43 @@ export function readHeapLimitBytes(): number | undefined {
  * The eager child loader's share of the heap headroom left outside the cache
  * pool. Half of that shared remainder stays available for render, WASM,
  * prefetch, and unrelated scene-graph work, while the absolute cap prevents a
- * large V8 heap limit from recreating an eight-wide allocation spike. Returns
- * `undefined` when the browser does not expose a measurable heap so the caller
- * can retain its existing fallback.
+ * large V8 heap limit from recreating an eight-wide allocation spike.
+ *
+ * Resolution matches the cache pool: explicit pool override → measured heap →
+ * device-class pool → fixed fallback. Pool-based inputs are converted back to
+ * their corresponding non-cache share so a WebKit session uses one coherent
+ * memory model for caches and eager line loading.
  */
 export function computeWorkingSetBudgetBytes(
-  heapLimitBytes: number | undefined = readHeapLimitBytes()
-): number | undefined {
-  if (heapLimitBytes === undefined || !Number.isFinite(heapLimitBytes) || heapLimitBytes <= 0) {
-    return undefined;
+  heapLimitBytes?: number,
+  poolOverrideBytes?: number,
+  fallbackPoolBytes?: number
+): number {
+  const positive = (value: number | undefined): value is number =>
+    value != null && Number.isFinite(value) && value > 0;
+  const budgetFromCachePool = (poolBytes: number): number =>
+    poolBytes *
+    (NON_CACHE_SHARE_OF_TARGET / CACHE_SHARE_OF_TARGET) *
+    EAGER_WORKING_SET_SHARE_OF_REMAINDER;
+
+  let budgetBytes: number;
+  if (positive(poolOverrideBytes)) {
+    budgetBytes = budgetFromCachePool(poolOverrideBytes);
+  } else {
+    const heap = positive(heapLimitBytes) ? heapLimitBytes : readHeapLimitBytes();
+    if (positive(heap)) {
+      budgetBytes =
+        heap *
+        config.dataLoading.memory.targetHeapUsage *
+        NON_CACHE_SHARE_OF_TARGET *
+        EAGER_WORKING_SET_SHARE_OF_REMAINDER;
+    } else if (positive(fallbackPoolBytes)) {
+      budgetBytes = budgetFromCachePool(fallbackPoolBytes);
+    } else {
+      return EAGER_WORKING_SET_FIXED_FALLBACK_BYTES;
+    }
   }
-  const nonCacheRemainder =
-    heapLimitBytes * config.dataLoading.memory.targetHeapUsage * NON_CACHE_SHARE_OF_TARGET;
-  return Math.floor(
-    Math.min(nonCacheRemainder * EAGER_WORKING_SET_SHARE_OF_REMAINDER, EAGER_WORKING_SET_CAP_BYTES)
-  );
+  return Math.floor(Math.min(budgetBytes, EAGER_WORKING_SET_CAP_BYTES));
 }
 
 /**
