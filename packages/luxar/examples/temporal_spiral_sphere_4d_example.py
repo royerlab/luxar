@@ -302,7 +302,7 @@ def main():
             scene,
             title="Temporal Spiral Sphere",
             body=(
-                "A dense Fibonacci-spiral sphere animated over a discrete "
+                "A Fibonacci-spiral sphere animated over a discrete "
                 "<code>t</code> dimension, with per-frame undulating colors, "
                 "pulsating <code>radii</code>, and dynamic <code>sharpness</code>. "
                 "Press <code>1</code> then <code>[</code>/<code>]</code> to step "

@@ -7,7 +7,8 @@ its ``main()``, and assert that an output zarr exists.
 
 Heavy examples are explicitly excluded:
 
-- ``dense_cubic_gradient_example`` — 1.5M points; same rationale.
+- ``dense_cubic_gradient_example`` — 1.5M points; intended as a stress
+  fixture, not a smoke target.
 - ``rainbow_sphere_spiral_example`` — 200K points; slow on CI.
 - ``performance_benchmark_example`` — runs 100 nodes × 1K points;
   intentionally a benchmark, not a smoke target.
@@ -32,6 +33,7 @@ import numpy as np
 import pytest
 
 import luxar.utils.paths as luxar_paths
+from luxar import LuxarScene
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent
 
@@ -97,14 +99,24 @@ def _parametrize_stems(stems: Iterable[str]) -> list[pytest.param]:
     return params
 
 
-def test_temporal_spiral_sphere_stays_within_preflight_budget():
+def test_temporal_spiral_sphere_stays_within_preflight_budget(
+    redirected_examples_dir,
+):
     """The 4D navigation example must remain practical for ``run-examples``."""
     module = _load_example("temporal_spiral_sphere_4d_example")
+    module.main()
 
-    point_records = module.N_POINTS_PER_FRAME * module.N_FRAMES
+    output_path = (
+        redirected_examples_dir / "temporal_spiral_sphere_4d_example.luxar.zarr"
+    )
+    points = LuxarScene.load(output_path).get_points("temporal_spiral_sphere")
+    point_records = points.positions.shape[0]
 
     assert module.N_POINTS_PER_FRAME >= 1_000
     assert module.N_FRAMES >= 32
+    assert point_records == module.N_POINTS_PER_FRAME * module.N_FRAMES
+    # 524,288 records measured at about 300 MiB RSS and 5-8 seconds; keep
+    # enough headroom for a useful animation without returning to a stress fixture.
     assert point_records <= 1_000_000
 
 
