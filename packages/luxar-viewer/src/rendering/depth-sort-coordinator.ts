@@ -306,7 +306,11 @@ let requestRenderBeforeCapture: (() => void) | null = null;
 const nodeStates = new Map<string, NodeSortState>();
 // Shared across every commit between frame evaluations: the configured ceiling
 // bounds the whole main-thread batch, not each node independently.
-let syncSortElementsRemaining = config.depthSort.syncSortMaxElements;
+let syncSortElementsRemaining = 0;
+
+function syncSortElementLimit(): number {
+  return config?.depthSort?.syncSortMaxElements ?? 0;
+}
 
 /**
  * Wire the camera accessor + frame-request + reprocess callbacks. Called
@@ -361,6 +365,7 @@ export function configureDepthSort(options: {
   // stream the instant the mesh is drawn again (issue #715 resume gap —
   // the pump never requests a render on a stall).
   setSortedIndexApplyRequestRender(options.requestRender);
+  syncSortElementsRemaining = syncSortElementLimit();
 }
 
 /**
@@ -1329,7 +1334,7 @@ function trySynchronousFirstSort(
   centers3: Float32Array | (() => Float32Array),
   count: number
 ): Float32Array | undefined {
-  const limit = config.depthSort.syncSortMaxElements;
+  const limit = syncSortElementLimit();
   if (limit <= 0 || count > limit || count > syncSortElementsRemaining) return undefined;
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
   if (!getActiveSortedIndexAttribute(geometry)) return undefined;
@@ -1764,7 +1769,7 @@ function pumpChunkedOrderingApplies(): void {
  * work that touches the SortWorker stays below that gate.
  */
 export function evaluateDepthSortPerFrame(): void {
-  syncSortElementsRemaining = Math.max(0, config.depthSort.syncSortMaxElements);
+  syncSortElementsRemaining = Math.max(0, syncSortElementLimit());
   // Drop the previous frame's render-order state FIRST — before any
   // early-return — so a disposed/dataset-switched frame can't leave the
   // module-scoped rank memo holding stale partition-wrapper subtrees alive.
@@ -2162,7 +2167,7 @@ export function disposeDepthSort(): void {
   isLoadInProgress = null;
   getProfiler = null;
   depthSortEnabled = true;
-  syncSortElementsRemaining = config.depthSort.syncSortMaxElements;
+  syncSortElementsRemaining = syncSortElementLimit();
   warnedWorkerUnavailable = false;
   // Init-failure bookkeeping is module state too: an embedder that disposes
   // and re-inits in one page must start with a full retry budget and a
