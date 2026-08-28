@@ -30,6 +30,9 @@ import { getPointTexture } from '../../../rendering/point-geometry';
 import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import * as zarr from 'zarrita';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
+import { LODGroupRegistry } from '../../../scene/lod-group-registry';
+import { EventGroup } from '../../../utils/cross-layer/event-group';
+import { installOnlineRetry } from '../../../core/app/lifecycle/online-retry';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1376,6 +1379,58 @@ describe('SceneLoader', () => {
       // Empty batch (no failures): resolves immediately without the flag.
       const result = await sceneLoader.retryAllFailedLoaders();
       expect(result.deferred).toBeUndefined();
+    });
+
+    it('online recovery resets deferred-group budgets when no loader record survives', async () => {
+      let registry!: LODGroupRegistry;
+      let frameScheduled = false;
+      const requestRender = vi.fn(() => {
+        if (frameScheduled) return;
+        frameScheduled = true;
+        queueMicrotask(() => registry.evaluatePerFrame());
+      });
+      registry = new LODGroupRegistry({
+        getCamera: () => new THREE.Camera(),
+        getViewportSize: () => ({ width: 100, height: 100 }),
+        getDisplayDims: () => [0, 1, 2],
+        requestRender,
+      });
+      const child = {
+        object: new THREE.Group(),
+        coverageFraction: 0.5,
+        positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
+        ready: false,
+        failed: true,
+        failedTick: 42,
+        automaticRetriesRemaining: 0,
+        ensureLoaded: vi.fn(),
+      };
+      registry.register({
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [child],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      });
+      const loader = new SceneLoader(undefined, undefined, undefined, undefined, () => registry);
+      const events = new EventGroup();
+      const toast = vi.fn();
+
+      try {
+        installOnlineRetry({ events, getLoader: () => loader, toast });
+        window.dispatchEvent(new Event('online'));
+        await vi.waitFor(() => expect(child.ensureLoaded).toHaveBeenCalledTimes(1));
+
+        expect(child.automaticRetriesRemaining).toBeUndefined();
+        expect(child.failed).toBe(false);
+        expect(child.failedTick).toBeUndefined();
+        expect(requestRender).toHaveBeenCalled();
+        expect(toast).not.toHaveBeenCalled();
+      } finally {
+        events.dispose();
+        loader.dispose();
+      }
     });
   });
 

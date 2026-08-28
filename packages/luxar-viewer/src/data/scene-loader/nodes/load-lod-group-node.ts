@@ -55,6 +55,7 @@ import { loadGSplatsNodeCheap, loadGSplatsNodeExpensive } from './load-gsplats-n
 import { loadPointsNodeCheap, loadPointsNodeExpensive } from './load-points-node';
 import { loadLinesNodeCheap, loadLinesNodeExpensive } from './load-lines-node';
 import { loadMeshNodeCheap, loadMeshNodeExpensive } from './load-mesh-node';
+import { MAX_AUTO_RETRY_ATTEMPTS } from '../loaders/loader-registry';
 import { timeLodStageSync } from '../lod-load-stats';
 import type { SceneNode } from '../../data-loader-types';
 import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-registry';
@@ -82,8 +83,9 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
  * and mesh defer paths so the ready/failed/loading state machine and the
  * abort-discard error handling live in exactly one place. Container-wide
  * archive faults additionally latch retry-addressable leaf children as
- * permanently failed so the per-frame registry cannot retry a dataset already
- * known to be unreadable.
+ * permanently failed. Anonymous deferred-group placeholders cannot be reached
+ * by the explicit retry path, so archive faults receive a bounded cooldown
+ * retry budget that a successful load clears; ordinary failures stay unlimited.
  *
  * **Lazy LEAF levels never join the per-slice update sweep.** ``runExpensive``
  * commits independently and the registry — not the sweep — drives their reload
@@ -135,16 +137,22 @@ function attachLazyChild(
         // NOTE: the level is deliberately NOT registered into the per-slice
         // update sweep (see the function doc). It commits independently here;
         // the registry reloads it on a settled slice change.
+        entryChild.automaticRetriesRemaining = undefined;
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;
-        // Anonymous group placeholders cannot be reached by retryLazyChildByLeafPath.
-        const archiveFault = entryChild.object.name ? archiveFaultFrom(error) : undefined;
-        if (archiveFault) {
-          entryChild.permanentlyFailed = true;
-          entryChild.failedTick = undefined;
-          // A container fault makes the whole archive unreadable, not just this lazy level.
-          if (ctx.isDatasetLive()) ctx.reportArchiveFault(archiveFault);
+        const archiveFault = archiveFaultFrom(error);
+        if (archiveFault !== undefined) {
+          if (entryChild.object.name) {
+            entryChild.permanentlyFailed = true;
+            entryChild.failedTick = undefined;
+            // A container fault makes the whole archive unreadable, not just this lazy level.
+            if (ctx.isDatasetLive()) ctx.reportArchiveFault(archiveFault);
+          } else {
+            // Anonymous group placeholders cannot be reached by
+            // retryLazyChildByLeafPath, so permit only bounded cooldown retries.
+            entryChild.automaticRetriesRemaining ??= MAX_AUTO_RETRY_ATTEMPTS;
+          }
         }
         log.warning(
           Modules.SCENE_LOADER,
