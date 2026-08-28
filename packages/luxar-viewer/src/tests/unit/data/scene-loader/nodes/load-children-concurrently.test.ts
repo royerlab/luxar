@@ -37,6 +37,16 @@ function makeLineChildren(
   }));
 }
 
+function makeGSplatChildren(count: number, nSplats: number): SceneNode[] {
+  return Array.from({ length: count }, (_, index) => ({
+    path: `/group/gsplats_${index}`,
+    type: 'gsplats',
+    attrs: { n_splats: nSplats },
+    hasSpatialIndex: true,
+    children: [],
+  }));
+}
+
 function makeStubLoc() {
   return { resolve: vi.fn(() => makeStubLoc()) } as never;
 }
@@ -181,6 +191,30 @@ describe('loadChildrenConcurrently', () => {
     expect(started).toEqual(children.map((child) => child.path));
   });
 
+  it('keeps large gsplat siblings at the existing eight-wide concurrency', async () => {
+    const children = makeGSplatChildren(EAGER_CHILD_LOAD_CONCURRENCY + 1, 10_000_000);
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async (child) => {
+        started.push(child.path);
+        await gate;
+      }
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(EAGER_CHILD_LOAD_CONCURRENCY));
+    release();
+    await loadPromise;
+    expect(started).toEqual(children.map((child) => child.path));
+  });
+
   it('admits a small line sibling past a large waiter that does not fit yet', async () => {
     const children = [
       ...makeLineChildren(2, 500_000),
@@ -268,6 +302,48 @@ describe('loadChildrenConcurrently', () => {
       reloaded.push(node.path);
     });
     expect(reloaded).toEqual([child.path]);
+  });
+
+  it('does not start a memory-blocked sibling after an earlier load fails', async () => {
+    const children = makeLineChildren(2, 1_000_000);
+    const ctx = makeTestNodeBuildCtx();
+    const error = new Error('broken first line load');
+    const started: string[] = [];
+    let rejectFirst!: () => void;
+    const failureGate = new Promise<void>((resolve) => {
+      rejectFirst = resolve;
+    });
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      async (child) => {
+        started.push(child.path);
+        if (child === children[0]) {
+          await failureGate;
+          throw error;
+        }
+      }
+    );
+    const rejection = expect(loadPromise).rejects.toBe(error);
+
+    await vi.waitFor(() => expect(started).toEqual([children[0].path]));
+    rejectFirst();
+    await rejection;
+    expect(started).toEqual([children[0].path]);
+
+    const reloaded: string[] = [];
+    await loadChildrenConcurrently(
+      [children[1]],
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      async (child) => {
+        reloaded.push(child.path);
+      }
+    );
+    expect(reloaded).toEqual([children[1].path]);
   });
 
   it('shares the working-set budget across nested parent pools', async () => {
