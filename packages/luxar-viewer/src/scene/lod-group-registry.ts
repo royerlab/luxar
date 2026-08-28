@@ -856,6 +856,14 @@ export class LODGroupRegistry {
    * deliberately rejected: a capture visits the whole scene, so peak residency
    * would be the entire dataset.
    *
+   * - **A latched archive fault skips all work that could start or wait for new
+   *   loads, but still waits for loads already in flight to finish committing.**
+   *   The latch prevents any further automatic kick, so every other unmet
+   *   condition would be permanently false until an explicit or connectivity
+   *   retry clears it. An already-started load still clears ``loading`` in its
+   *   ``finally`` block and may commit geometry, so releasing the capture frame
+   *   before that transition would allow a one-frame pop.
+   *
    * Per entry, in order:
    *
    * - **Off-screen entries are skipped entirely.** ``offScreen`` means the
@@ -930,7 +938,7 @@ export class LODGroupRegistry {
    * object per entry. That cost is genuinely irrelevant here.
    */
   isCaptureQuiescent(): boolean {
-    if (this.deps.hasArchiveFault?.()) return true;
+    if (this.deps.hasArchiveFault?.()) return !this.anyChildLoading();
     const version = this.deps.getViewVersion?.();
     for (const entry of this.entries.values()) {
       // Deliberately excluded: an off-screen group is held coarse on purpose
@@ -981,6 +989,15 @@ export class LODGroupRegistry {
       }
     }
     return true;
+  }
+
+  private anyChildLoading(): boolean {
+    for (const entry of this.entries.values()) {
+      for (const child of entry.children) {
+        if (child.loading) return true;
+      }
+    }
+    return false;
   }
 
   /**

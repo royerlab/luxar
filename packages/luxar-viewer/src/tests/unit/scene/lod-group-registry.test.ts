@@ -3865,6 +3865,10 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     expect(children[1].loading).toBeFalsy();
     expect(reg.isCaptureQuiescent()).toBe(true);
 
+    children[1].loading = true;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    children[1].loading = false;
     hasArchiveFault = false;
     expect(reg.isCaptureQuiescent()).toBe(false);
   });
