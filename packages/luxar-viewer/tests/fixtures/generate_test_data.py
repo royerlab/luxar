@@ -7,9 +7,10 @@ that the TypeScript ArrayDecoder can correctly read Python-encoded data.
 IMPORTANT: Uses NO compression (compressor=None) to avoid blosc/numcodecs
 WASM binding issues in Node.js test environment.
 
-Editing this file or Luxar's production Python sources makes every existing
-fixture store stale. Vitest regenerates stale fixtures automatically; Playwright
-fails fast with the regeneration command rather than serving old writer output.
+Editing this file or a local Python source reachable from its imports makes
+every existing fixture store stale. Vitest regenerates stale fixtures
+automatically; Playwright fails fast with the regeneration command rather than
+serving old writer output.
 
 These direct commands run only the generators; record the input stamps afterward
 from ``packages/luxar-viewer/`` with
