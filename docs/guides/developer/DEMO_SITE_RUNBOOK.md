@@ -852,21 +852,21 @@ prefix `2026-08-27b`; `arrays` excludes zero-shaped `array_ref` placeholders,
 `chunks` is the root `chunk_layout.chunks_after` value, and the eager columns apply
 the viewer's `default_level` deferral rule in
 `packages/luxar-viewer/src/data/scene-loader/nodes/load-lod-group-node.ts`. They
-count every array under that default-level subtree, including all additive rungs:
+count every array under that default-level subtree, including all additive rungs;
+the first-rung columns keep only `additive_0` inside each ladder:
 
-| store | groups | arrays | chunks | eager arrays | eager chunks | whole chunks:arrays |
-|---|---:|---:|---:|---:|---:|---:|
-| `gsplats_2d_codex_pancreas` | 2767 | 10320 | 10320 | 3440 | 3440 | **1.00** |
-| `desi_galaxies` | 87 | 320 | 389 | 80 | 80 | 1.22 |
-| `biodiversity_planetary_scale` | 29 | 108 | 187 | 108 | 187 | 1.73 |
-| `cosmicflows_laniakea_full` | 15 | 79 | 224 | 79 | 224 | 2.84 |
-| `gsplats_2d_cmu1_pathology` | 18 | 60 | 508 | 60 | 508 | **8.47** |
+| store | groups | arrays | chunks | eager arrays | eager chunks | first-rung arrays | first-rung chunks | whole chunks:arrays |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `gsplats_2d_codex_pancreas` | 2767 | 10320 | 10320 | 3440 | 3440 | 860 | 860 | **1.00** |
+| `desi_galaxies` | 87 | 320 | 389 | 80 | 80 | 10 | 10 | 1.22 |
+| `biodiversity_planetary_scale` | 29 | 108 | 187 | 108 | 187 | 48 | 75 | 1.73 |
+| `cosmicflows_laniakea_full` | 15 | 79 | 224 | 79 | 224 | 79 | 224 | 2.84 |
+| `gsplats_2d_cmu1_pathology` | 18 | 60 | 508 | 60 | 508 | 15 | 127 | **8.47** |
 
 Use the eager columns for the converged default-level load and the whole-store
-ratio for the cost to reach full detail. For a first-paint claim, count only the
-first rung inside the eager subtree: 860 arrays/chunks for `codex_pancreas` and 10
-for `desi_galaxies` (3.15). The totals differ only where substitutive levels defer
-non-default children.
+ratio for the cost to reach full detail. Use the first-rung columns for a
+first-paint claim (3.15). `laniakea` is the only store in this table with no
+additive ladder, so it alone has identical eager and first-rung totals.
 
 Two regimes, and the ratio tells you which one you are in:
 
@@ -879,8 +879,9 @@ Two regimes, and the ratio tells you which one you are in:
   `packages/luxar/src/luxar/demos/_lod_policy.py` is not a reusable sublinear
   node-to-request law: it compares a byte-bound leaf with a node-bound partition.
 - **Byte-bound (ratio >> 1).** Arrays span many chunks, so request count tracks
-  total bytes and is nearly indifferent to node count. `cmu1` fetches 508 chunks
-  from 60 arrays; halving its node count would barely move that.
+  total bytes and is nearly indifferent to node count. `cmu1`'s converged load
+  fetches 508 chunks from 60 arrays, while its first rung fetches 127 from 15;
+  both have ratio 8.47, so halving its node count would barely move either.
 
 **The ratio is a property of a pipeline STAGE, not of a store.** `optimise` is
 what moves these stores toward the node-bound regime. The same published roots
