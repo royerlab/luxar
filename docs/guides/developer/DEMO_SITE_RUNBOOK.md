@@ -847,48 +847,60 @@ Section 2's rule — hosted cost is **requests**, not bytes — is right, but "o
 request per node" is an *upper bound*, not a measurement. After
 `optimise --profile archive` (1 MB target) a big array spans many chunks while a
 small one spans exactly one, so cutting node count only cuts fetches in one of two
-regimes. Measured across live stores:
+regimes. The following counts come from the consolidated metadata at published
+prefix `2026-08-27b`; `arrays` excludes zero-shaped `array_ref` placeholders,
+`chunks` is the root `chunk_layout.chunks_after` value, and the eager columns apply
+the viewer's `default_level` deferral rule in
+`packages/luxar-viewer/src/data/scene-loader/nodes/load-lod-group-node.ts`:
 
-| store | groups | arrays | chunks | arrays:chunks |
-|---|---:|---:|---:|---:|
-| `gsplats_2d_codex_pancreas` | 2767 | 10320 | 10320 | **1.00** |
-| `desi_galaxies` | 87 | 376 | 445 | 1.18 |
-| `biodiversity_planetary_scale` | 29 | 109 | 188 | 1.72 |
-| `cosmicflows_laniakea_full` | 15 | 79 | 224 | 2.84 |
-| `gsplats_2d_cmu1_pathology` | 18 | 60 | 508 | **8.47** |
+| store | groups | arrays | chunks | eager arrays | eager chunks | chunks:arrays |
+|---|---:|---:|---:|---:|---:|---:|
+| `gsplats_2d_codex_pancreas` | 2767 | 10320 | 10320 | 3440 | 3440 | **1.00** |
+| `desi_galaxies` | 87 | 320 | 389 | 80 | 80 | 1.22 |
+| `biodiversity_planetary_scale` | 29 | 108 | 187 | 108 | 187 | 1.73 |
+| `cosmicflows_laniakea_full` | 15 | 79 | 224 | 79 | 224 | 2.84 |
+| `gsplats_2d_cmu1_pathology` | 18 | 60 | 508 | 60 | 508 | **8.47** |
 
 Two regimes, and the ratio tells you which one you are in:
 
-- **Node-bound (ratio ≈ 1).** Every array is a single chunk, so
-  requests ≈ arrays ∝ groups. `codex_pancreas` is exactly 1.00 — 10,320 arrays,
-  10,320 chunks — at 3.73 arrays per group. Cutting it from 2,767 groups to ~700
-  is therefore a real **~4x request reduction**, not a bookkeeping change.
+- **Node-bound (ratio ≈ 1).** Every eager array is a single chunk, so removing an
+  eagerly loaded array removes approximately one first-paint fetch.
+  `codex_pancreas` is exactly 1.00 both store-wide and for its eager subset; the
+  viewer initially fetches 3,440 arrays/chunks, not all 10,320. The 63-request
+  stacked-leaf versus 689-request partition measurement in
+  `packages/luxar/src/luxar/demos/_lod_policy.py` is not a reusable sublinear
+  node-to-request law: it compares a byte-bound leaf with a node-bound partition.
 - **Byte-bound (ratio >> 1).** Arrays span many chunks, so request count tracks
   total bytes and is nearly indifferent to node count. `cmu1` fetches 508 chunks
   from 60 arrays; halving its node count would barely move that.
 
 **The ratio is a property of a pipeline STAGE, not of a store.** `optimise` is
-what creates the node-bound regime. The same eight demos measured **as-built**,
-before optimise, are all heavily byte-bound:
+what moves these stores toward the node-bound regime. The same published roots
+record both pipeline stages in `chunk_layout`, so this comparison is reproducible
+from their `zarr.json` files without a separate local build:
 
-    nuclear_pore_complex   ratio  9.25      cellxgene_census_umap    52.10
-    laniakea              12.16      mouse_multiome_peak_umap  51.68
-    biodiversity          24.54      esm3_protein_landscape    84.62
-    zebrahub_..._peak_umap 128.11    human_multiome_peak_umap 160.98
+| store | arrays | chunks before | before ratio | chunks after | after ratio |
+|---|---:|---:|---:|---:|---:|
+| `gsplats_2d_codex_pancreas` | 10320 | 19888 | 1.93 | 10320 | **1.00** |
+| `desi_galaxies` | 320 | 8600 | 26.88 | 389 | 1.22 |
+| `biodiversity_planetary_scale` | 108 | 2081 | 19.27 | 187 | 1.73 |
+| `cosmicflows_laniakea_full` | 79 | 5004 | 63.34 | 224 | 2.84 |
+| `gsplats_2d_cmu1_pathology` | 60 | 7580 | 126.33 | 508 | 8.47 |
 
-`biodiversity_planetary_scale` reads **24.54 as-built against 1.72 published** —
-same demo, same data, a factor of 14 apart, because optimise re-chunks to a 1 MB
-target and collapses the chunk count. Consistent with 3.17's measurement in the
-other direction (173 requests as-built, 2 after optimise).
+`biodiversity_planetary_scale` therefore reads **19.27 before optimise against
+1.73 after it** — same generation and structure, but a factor of 11 fewer chunks
+per physical array because optimise re-chunks to a 1 MB target. This is consistent
+with 3.17's measurement in the other direction (173 requests as-built, 2 after
+optimise).
 
-So a node reduction's payoff is **contingent on the publish step**: these stores
-only enter the node-bound regime after `optimise --profile archive`. "18 groups →
-9" is a real request win on the published artefact and close to meaningless on the
-as-built one. The win belongs to the combination, not to the authoring change
-alone.
+So a node reduction's payoff is **contingent on the publish step**: optimisation
+can move a small-array store into the node-bound regime, but it does not guarantee
+that outcome. Halving eager arrays is a direct request win on a node-bound
+published artefact and close to meaningless on a byte-bound as-built one. The win
+belongs to the combination, not to the authoring change alone.
 
 Practical consequence: **before claiming a node reduction buys a faster load, check
-the arrays:chunks ratio of the artefact you will actually serve** — post-optimise,
+the chunks:arrays ratio of the artefact you will actually serve** — post-optimise,
 and of the generation you are publishing, not whichever one happens to be live. A
 store with many small nodes gains directly; a store with few large ones gains
 almost nothing and its lever is total bytes instead (3.17).
@@ -900,16 +912,19 @@ has opposite cost depending on chunk layout.
 
 #### Worked example: is a per-part ladder worth its nodes?
 
-`nuclear_pore_complex` (9,874,128 elements, 32-part BSP), both versions taken
-through `optimise --profile archive` so the comparison is like-for-like:
+This was an ad hoc local full-data experiment on 2026-08-28, based on
+`demo_nuclear_pore_complex.py`; neither the probe nor its output was checked in.
+It is not the published `2026-08-27b` preview, which has 41,288 points in one
+unpartitioned node. The local experiment used 9,874,128 elements and a 32-part
+BSP, with both variants taken through `optimise --profile archive`:
 
     version        groups  arrays  chunks   first commit
     un-laddered        36     160     224    9,874,128 elements
     4 rungs/part      161     640     672    ~1,250,000 elements
 
-Post-optimise arrays:chunks is **1.05**, so this store *is* node-bound and the 128
-rung groups cost real fetches: **+448 requests** to reach full detail, 3x the
-un-laddered total.
+Post-optimise chunks:arrays is **1.40** un-laddered and **1.05** laddered, so both
+variants are node-bound and the 128 rung groups cost real fetches: **+448
+requests** to reach full detail, 3x the un-laddered total.
 
 But that is the wrong total to compare. First paint needs only the **first rung**
 of each part — roughly a quarter of the arrays, ~128-160 chunks — against **all
