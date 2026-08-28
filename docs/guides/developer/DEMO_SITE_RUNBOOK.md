@@ -133,10 +133,59 @@ python compare_snapshot.py before.json     # report only genuine changes
 
 A store that failed to rebuild (missing optional dependency, no GPU, no
 credentials) still has its old hash on disk and will report IDENTICAL. That is
-indistinguishable from a successful no-op rebuild unless you also check mtime.
-This caught `cell_tracking_challenge` reporting IDENTICAL at 64 hours old.
+indistinguishable from a successful no-op rebuild unless you also check
+freshness. This caught `cell_tracking_challenge` reporting IDENTICAL at 64 hours
+old.
 
-Always assert freshness alongside the hash.
+**Check freshness on FILES, not on the store directory.** A directory's mtime
+updates only when its direct children change, so `stat` on
+`<store>.luxar.zarr` can report a fresh timestamp over a tree nothing rewrote.
+Not hypothetical: `desi_galaxies` passed a directory-mtime check while all
+9,064 of its files were four days old.
+
+Walk the tree and count how many files predate the run:
+
+```python
+mtimes = [p.stat().st_mtime for p in store.rglob("*") if p.is_file()]
+stale = sum(1 for m in mtimes if m < run_started)
+# a real rebuild leaves ~0 stale; a skipped one leaves ~all
+```
+
+### 2.4 A demo may reuse a cached scene and still exit 0
+
+Some demos short-circuit when their output already exists. `desi_galaxies`
+prints `Using cached scene: …`, emits its own warning that the cached scene is
+stale, then finishes with `Dataset generated at …` and exit status 0. A wave
+driver reading exit codes learns nothing.
+
+The staleness it warned about was real and had shipped: both LOD ladders held a
+finest-level node of 9,751,955 points against a 4,000,000-point demo ceiling,
+which "can silently lose their tail on a 4096-class GPU". The published tile
+carried that for six days.
+
+Two remedies, both printed by the demo itself:
+
+```bash
+luxar demo run <key> -- --recompute       # recompute from source
+rm -rf datasets/demos/<key>.luxar.zarr    # or drop it and let the demo unpack
+                                          # the current shipped Git-LFS asset
+```
+
+Grep build logs for `Using cached scene` after any sweep. One gallery tile in
+the 86-entry manifest took that path — few enough to miss, and the one that had
+a real defect behind it.
+
+### 2.5 Rebuild against the commit you think you are on
+
+A sweep is only valid for the code it ran against, and `dev` moves under a long
+one. A full pass over the 86 gallery tiles takes roughly ninety minutes here,
+during which several PRs can land. Record the HEAD the sweep started from, and
+re-check it at the end; if a store-affecting commit landed mid-sweep, the
+results are stale for every demo it touches.
+
+Discarding a partial sweep and restarting at current `dev` is usually cheaper
+than finishing one you know is stale and then reasoning about which subset to
+redo — that subset calculation is where scoping errors happen.
 
 ---
 
@@ -222,6 +271,73 @@ read. In practice the edge caches 404s too, so with a cache rule in place R2
 sees one per URL per PoP per TTL and the cost collapses. The real cost of a
 404 storm is **first-paint latency**, not the bill.
 
+### 3.7 ffmpeg: every encoder option must precede the output filename
+
+With ffmpeg 6.1.1, put `-passlogfile` after the pass-2 output filename:
+
+```bash
+ffmpeg -y -i in.webm -c:v libvpx-vp9 -b:v 480k -pass 2 -an -row-mt 1 out.webm -passlogfile P
+```
+
+warns that the option is trailing:
+
+```
+Trailing option(s) found in the command: may be ignored.
+```
+
+Options placed after an output filename apply to the *next* output, so ffmpeg
+ignores the custom prefix and looks for the default `ffmpeg2pass-0.log` instead
+of the `P-0.log` that a correctly ordered pass 1 wrote. Pass 2 exits 251:
+
+```
+Error opening file ffmpeg2pass-0.log.
+[vost#0:0/libvpx-vp9] Error reading log file 'ffmpeg2pass-0.log' for pass-2 encoding
+Error opening output file out.webm.
+```
+
+The reverse mismatch is equally broken: a trailing pass-1 option writes its
+statistics to `ffmpeg2pass-0.log`, then a correctly ordered pass 2 looks for
+`P-0.log`. If both passes trail the option, they both use the default filename
+and can appear to work despite the broken ordering.
+
+What makes this worth a numbered hazard rather than a footnote is the *false
+explanation waiting next to it*. WebM/Matroska output can carry no stream
+timestamps — including the gallery masters that ffmpeg assembles from explicit
+per-angle screenshots — so `ffprobe` reports `duration_ts=N/A` and
+`nb_frames=N/A`. "The input is undecodable" is therefore plausible and wrong.
+Confirm decodability before blaming the input:
+
+```bash
+ffmpeg -v error -stats -i in.webm -f null -      # reports frame=120 -- it decodes fine
+```
+
+Correct ordering:
+
+```bash
+ffmpeg -y -i in.webm -c:v libvpx-vp9 -b:v 480k -pass 1 -passlogfile P -an -f null /dev/null
+ffmpeg -y -i in.webm -c:v libvpx-vp9 -b:v 480k -pass 2 -passlogfile P -an -row-mt 1 out.webm
+```
+
+The gallery harness normally encodes VP9 by quality (`-crf 24 -b:v 0`); a
+target-bitrate two-pass re-encode is a last resort after the recapture controls
+in §4.2.
+
+### 3.8 Judge a re-encode on frames, never on byte count
+
+Hitting a size target says nothing about whether the tile still depicts its
+subject. `hilbert_curve_3d` re-encoded from 10 MB to 295 KB hit a 300 KB target
+exactly and lost the fine wire detail that *is* the subject — the cube's outline
+survived, so every automated check passed. Extract matched frames from source
+and output and look at them.
+
+Measured knee for that scene: 295 KB visibly degraded, 587 KB resolved
+throughout, 1174 KB indistinguishable from source. Dense point clouds and
+high-motion synthetic scenes need roughly double what a smooth microscopy
+volume does.
+
+For the normal size-control workflow, use the sanctioned `WEBM_CRF` or
+`WEBP_QUALITY` knobs in §4.2, recapture, and compare representative frames.
+
 ---
 
 ## 4. Cloudflare configuration
@@ -253,7 +369,8 @@ written. It warns at 20 MiB, fails at the 25 MiB boundary, and prints the total
 plus the five largest files at the end of the run. Treat a warning as a prompt
 to choose a deliberate encoding adjustment with `WEBM_CRF` or `WEBP_QUALITY`
 in `generate-gallery.spec.ts`, then recapture and inspect the affected demos;
-do not silently trade quality for size with an automatic re-encode loop.
+do not silently trade quality for size with an automatic re-encode loop. Judge
+the result on matched frames rather than bytes alone (§3.8).
 
 ### 4.3 CORS on the R2 bucket
 
@@ -348,3 +465,7 @@ Gallery framing lives in `scripts/gallery/manifest.json`; see
   63%. `border-lit` is the better signal, but it too is inflated by legitimately
   bright limbs (a luminous cloud shell gains rim luminance seen edge-on). Look
   at the image.
+- **Worst-orbit-pose border-lit does not answer whether the still is framed
+  correctly.** An elongated subject projects wider as it rotates. Tribolium's
+  correct poster frame still measures 48.4% because the embryo reaches the edge
+  at `rock +15°`; shrinking it to satisfy that warning would underfill the tile.

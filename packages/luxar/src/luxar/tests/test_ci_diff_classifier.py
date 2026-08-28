@@ -164,6 +164,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "scripts/check_version_consistency.py pins it to the Python version",
     ),
     (
+        "CITATION.cff",
+        "py",
+        "scripts/check_version_consistency.py pins it to the Python version",
+    ),
+    (
         "packages/luxar-viewer/src/config/sections/camera/data.ts",
         "py",
         "test_viewer_config.py and test_demos_cinematic_mode.py parse its FOV "

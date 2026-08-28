@@ -102,6 +102,7 @@ import {
   createProgressiveGSplatsLoader,
   createProgressivePointsLoader,
   createProgressiveLinesLoader,
+  createMeshLoader,
   createProgressiveMeshLoader,
   type LoaderFactoryDeps,
 } from '../../../../../data/scene-loader/loaders/loader-factory';
@@ -160,6 +161,20 @@ describe('createPointsLoader', () => {
     //   (loc, node, registry, store, l0?, prefetcher?)
     expect(pointsCtorArgs[0][2]).toBe(deps.arrayRefRegistry);
     expect(pointsCtorArgs[0][3]).toBe(deps.zarrStore);
+  });
+});
+
+describe('createMeshLoader', () => {
+  it('forwards the renderer-owned KTX2 decoder to the whole-node loader', () => {
+    const decodeKTX2 = Object.assign(vi.fn(), { dispose: vi.fn() });
+
+    createMeshLoader(makeNode('/mesh', 'mesh'), {} as never, {
+      ...makeDeps(),
+      decodeKTX2,
+    });
+
+    expect(meshCtorArgs).toHaveLength(1);
+    expect(meshCtorArgs[0][3]).toMatchObject({ decodeKTX2 });
   });
 });
 
@@ -692,7 +707,16 @@ describe('createProgressiveMeshLoader', () => {
   }
 
   it('builds one whole-node loader per additive subgroup', async () => {
-    await createProgressiveMeshLoader(meshLadderNode({}), 3, {}, makeDeps());
+    const decodeKTX2 = Object.assign(vi.fn(), { dispose: vi.fn() });
+    await createProgressiveMeshLoader(
+      meshLadderNode({}),
+      3,
+      {},
+      {
+        ...makeDeps(),
+        decodeKTX2,
+      }
+    );
 
     expect(meshCtorArgs).toHaveLength(3);
     expect(meshCtorArgs.map((args) => args[0])).toEqual([
@@ -703,6 +727,9 @@ describe('createProgressiveMeshLoader', () => {
     expect(meshProgressiveCtorArgs).toHaveLength(1);
     expect(meshProgressiveCtorArgs[0][1]).toBe(3);
     expect(meshProgressiveCtorArgs[0][2]).toBe('/surf');
+    for (const args of meshCtorArgs) {
+      expect(args[3]).toMatchObject({ decodeKTX2 });
+    }
   });
 
   it('clears the label flags on every sub-LOD', async () => {

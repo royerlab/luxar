@@ -226,7 +226,7 @@ function makeLodGroupNode(
   };
 }
 
-function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
+function makeCtx(registry?: LODGroupRegistry, overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx {
   // `applyTransform` is the only nodeFactory member loadLodGroupNode reaches —
   // placeholder construction happens in the mocked loadSceneNodes recursion.
   const nodeFactory = {
@@ -247,6 +247,7 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     lodGroupRegistry: registry,
     nodeFactory,
     viewState: { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] },
+    ...overrides,
   });
 }
 
@@ -924,7 +925,8 @@ describe('loadLodGroupNode — lazy level loading', () => {
       })
     );
     const reg = makeReg();
-    const ctx = makeCtx(reg);
+    const reportArchiveFault = vi.fn();
+    const ctx = makeCtx(reg, { reportArchiveFault });
 
     const node = makeLodGroupNode(
       [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
@@ -945,6 +947,29 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(deferred.ready).toBe(false);
     expect(deferred.failed).toBe(true);
     expect(deferred.permanentlyFailed).toBe(true);
+    expect(reportArchiveFault).toHaveBeenCalledOnce();
+    expect(reportArchiveFault).toHaveBeenCalledWith(archiveFault);
+  });
+
+  it('does not report a lazy-level archive fault after its dataset is replaced', async () => {
+    attachStubChildren();
+    const archiveFault = new ArchiveFaultError('archive is no longer readable', '/scene.zip');
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(archiveFault);
+    const reg = makeReg();
+    const reportArchiveFault = vi.fn();
+    const ctx = makeCtx(reg, { isDatasetLive: () => false, reportArchiveFault });
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.permanentlyFailed).toBe(true));
+
+    expect(reportArchiveFault).not.toHaveBeenCalled();
   });
 
   it('bounds retries for an anonymous deferred GROUP after an archive fault', async () => {

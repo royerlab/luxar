@@ -13,6 +13,7 @@ import type {
   LuxarEmbedderEventMap,
   EmbedderDimensions,
   ScreenshotOptions,
+  DatasetFaultPayload,
 } from './app/embedder/events';
 import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
@@ -65,6 +66,7 @@ import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
 import { getSceneLoader } from '../data/scene-loader-manager';
+import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
 
@@ -137,6 +139,9 @@ export class LuxarApp {
    * multi-instance-ready.
    */
   private embedderEvents = createEventBus<LuxarEmbedderEventMap>();
+  private datasetFaultUnsubscribe?: Unsubscribe;
+  private datasetFaultLoader?: SceneLoader;
+  private currentDatasetSrc?: string;
 
   /**
    * Observes the canvas box so the viewer re-fits when the host container
@@ -335,6 +340,10 @@ export class LuxarApp {
    * Load a dataset and initialize UI
    */
   private async loadDataset(src: string): Promise<void> {
+    this.datasetFaultUnsubscribe?.();
+    this.datasetFaultUnsubscribe = undefined;
+    this.datasetFaultLoader = undefined;
+    this.currentDatasetSrc = undefined;
     try {
       await loadDatasetImpl(src, {
         inputHandler: this.inputHandler,
@@ -353,9 +362,18 @@ export class LuxarApp {
         applyViewerConfigState: (config) => this.applyViewerConfigState(config),
         openCacheStatsView: () => this.openCacheStatsView(),
       });
-      // Public embedder event — fires for the initial load, the built-in
-      // dataset browser, and switchDataset() (all route through here).
+      this.currentDatasetSrc = src;
+      const sceneLoader = getSceneLoader();
+      this.datasetFaultLoader = sceneLoader ?? undefined;
+      // A replayed terminal fault is post-load state, so preserve the public
+      // ordering: the dataset becomes available before its fault is reported.
       this.embedderEvents.emit('dataset-loaded', { src });
+      if (sceneLoader) {
+        this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
+          (error) => this.embedderEvents.emit('dataset-fault', { src, error }),
+          { replayCurrent: true }
+        );
+      }
     } catch (error) {
       this.embedderEvents.emit('dataset-error', {
         src,
@@ -755,7 +773,7 @@ export class LuxarApp {
   /**
    * Subscribe to a public embedder event. Returns an unsubscribe function.
    *
-   * Events: `dataset-loaded`, `dataset-error`, `dimensions-changed`,
+   * Events: `dataset-loaded`, `dataset-error`, `dataset-fault`, `dimensions-changed`,
    * `selection` (see {@link LuxarEmbedderEventMap}). Safe to call before
    * `init()`; the per-app emitter outlives individual init/dispose cycles.
    *
@@ -855,6 +873,13 @@ export class LuxarApp {
       })),
       ranges: ranges.map((r) => [r[0], r[1]] as [number, number]),
     };
+  }
+
+  /** Current terminal fault, or null when no dataset is loaded or no fault has occurred. */
+  getDatasetFault(): DatasetFaultPayload | null {
+    const error = this.datasetFaultLoader?.archiveFault;
+    if (!error || !this.currentDatasetSrc) return null;
+    return { src: this.currentDatasetSrc, error };
   }
 
   /**
@@ -974,6 +999,11 @@ export class LuxarApp {
     // scene that no longer exists. Restored BEFORE the teardown pipeline so a
     // step that throws partway can't strand it.
     setDocumentTitle(null);
+
+    this.datasetFaultUnsubscribe?.();
+    this.datasetFaultUnsubscribe = undefined;
+    this.datasetFaultLoader = undefined;
+    this.currentDatasetSrc = undefined;
 
     runDisposePipeline({
       events: this.events,

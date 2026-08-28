@@ -27,7 +27,8 @@ const DIST = join(import.meta.dirname, '..', 'dist');
 const ASSETS = join(DIST, 'assets');
 
 /** Chunk-name stems that must never be reachable eagerly from the entry. */
-const LAZY_ONLY = ['three-webgpu'];
+const LAZY_ONLY = ['three-webgpu', 'three-ktx2'];
+const KTX2_ZSTD_DECODER_MARKER = 'emscripten_notify_memory_growth';
 
 const failures = [];
 const notes = [];
@@ -88,6 +89,12 @@ if (!entryHref) {
 
 const assetFiles = readdirSync(ASSETS);
 
+for (const suffix of ['.js', '.wasm']) {
+  if (!assetFiles.some((file) => file.startsWith('basis_transcoder-') && file.endsWith(suffix))) {
+    fail(`No Basis transcoder ${suffix} asset was emitted into dist/assets.`);
+  }
+}
+
 /**
  * Static (not dynamic) import specifiers of a built ESM chunk.
  *
@@ -137,6 +144,12 @@ if (entryHref) {
     } catch {
       continue; // not an emitted asset (e.g. an external specifier)
     }
+    if (source.includes(KTX2_ZSTD_DECODER_MARKER)) {
+      fail(
+        `Chunk '${name}' contains Three's KTX2 zstd decoder and is reachable from the entry ` +
+          `chunk. Keep zstddec.module.js in the lazy 'three-ktx2' chunk.`
+      );
+    }
     for (const spec of staticImportsOf(source)) {
       const dep = spec.split('/').pop();
       // Reported before the relative-path filter below: an absolute or bare
@@ -147,8 +160,9 @@ if (entryHref) {
           fail(
             `Chunk '${name}' statically imports '${dep}', and '${name}' is reachable ` +
               `from the entry chunk. The whole '${stem}' chunk is therefore eager. ` +
-              `If this is 'three' → 'three-webgpu', the shared three.core.js needs its ` +
-              `own codeSplitting group in vite.config.ts (see #1679).`
+              `Keep '${stem}' dynamically imported. For 'three' → 'three-webgpu', ` +
+              `the shared three.core.js needs its own codeSplitting group in ` +
+              `vite.config.ts (see #1679).`
           );
         }
       }
@@ -160,12 +174,12 @@ if (entryHref) {
 }
 
 // ── 4. The lazy chunk must still EXIST ────────────────────────────────────
-// Guards the degenerate "fix": dropping WebGPU support would also make every
+// Guards the degenerate "fix": dropping a lazy feature would also make every
 // assertion above pass.
 for (const stem of LAZY_ONLY) {
   if (!assetFiles.some((f) => f.includes(stem) && f.endsWith('.js'))) {
     fail(
-      `No '${stem}' chunk was emitted at all. The WebGPU path must still be built ` +
+      `No '${stem}' chunk was emitted at all. The '${stem}' path must still be built ` +
         `— it is only supposed to be LAZY, not absent.`
     );
   }
@@ -177,4 +191,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`✅ three-webgpu is lazy (${notes.join('; ')})`);
+console.log(`✅ lazy-only chunks remain deferred (${notes.join('; ')})`);

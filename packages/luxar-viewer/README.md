@@ -2,6 +2,8 @@
 
 A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific datasets stored in Zarr format. Delivers maximum visualization performance limited only by your graphics hardware, display resolution, and network bandwidth—not by software constraints. Features advanced HDR rendering, real-time effects, and intuitive navigation controls.
 
+**[▶ Try it in your browser](https://demos.luxarviewer.dev)** — 85 live demos as interactive scenes, no install. To open your own compiled archive, the viewer is deployed on its own at [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
+
 ## ✨ Features
 
 - **🎨 Advanced HDR Rendering**: 16-bit floating-point precision with ACES filmic tone mapping
@@ -92,11 +94,13 @@ group table.
 
 Beyond `init()`/`dispose()`, `LuxarApp` exposes flat methods so a host page can
 drive the viewer without the built-in UI. All throw if called before `init()`,
-except `shortcutForAction()`, which returns `undefined` until input is available.
+except `shortcutForAction()` and `getDatasetFault()`. The former returns
+`undefined` until input is available; the latter returns `null` until a dataset is loaded.
 
 ```ts
 // Dataset
 await app.switchDataset('https://example.com/other.zarr'); // reload in place
+const fault = app.getDatasetFault(); // terminal post-load fault, or null
 
 // nD dimensions
 const dims = app.getDimensions(); // { ndim, displayed, currentStep, metadata, ranges } (cloned)
@@ -142,6 +146,7 @@ const helpKey = app.shortcutForAction('help.toggle');
 ```ts
 const off = app.on('dataset-loaded', ({ src }) => console.log('loaded', src));
 app.on('dataset-error', ({ src, error }) => console.error(src, error));
+app.on('dataset-fault', ({ src, error }) => console.error(src, error));
 app.on('dimensions-changed', (dims) => updateMyUI(dims));
 app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex, hitNodeName } | null
 app.on('element-click', (event) => console.log(event));

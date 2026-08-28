@@ -141,6 +141,7 @@ Features
    guides/developer/DEBUG_INTERFACE_GUIDE
    guides/developer/INTENSITY_GAMMA_DESIGN
    guides/developer/DEMO_SITE_RUNBOOK
+   guides/developer/BENCHMARK_FLOOR_DECISION
 
 .. toctree::
    :maxdepth: 3

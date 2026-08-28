@@ -26,6 +26,7 @@ import {
   evaluateDepthSortPerFrame,
 } from '../../../rendering/depth-sort-coordinator';
 import { materialManager } from '../../../rendering';
+import { createKTX2TextureDecoder } from '../../../rendering/ktx2-texture-decoder';
 import { resolveFactories, type AppFactories } from '../factories';
 import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
@@ -271,6 +272,9 @@ export async function runInitPipeline(
   // idempotent (early-out while animating + idle-timer re-arm), so
   // per-node calls inside an atomic sweep are harmless.
   SceneLoaderManager.getInstance().setRequestRender(() => animationController.startAnimation());
+  SceneLoaderManager.getInstance().setKTX2TextureDecoder(
+    createKTX2TextureDecoder(sceneManager.renderer)
+  );
   // Depth-sort coordinator (Phases 2-3): the gsplats commit path has no
   // camera (SceneLoader deliberately owns no camera state), so the
   // coordinator gets the live camera + render wake-up here — the same

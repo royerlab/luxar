@@ -96,6 +96,7 @@ export function makeTestNodeBuildCtx(overrides: Partial<NodeBuildCtx> = {}): Nod
     deriveNodeViewState: vi.fn(() => ({ skip: false as const, viewState })),
     connectLoaderToMonitor: vi.fn(),
     kickRefinementIfIdle: vi.fn(),
+    reportArchiveFault: vi.fn(),
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),

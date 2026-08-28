@@ -22,6 +22,7 @@
  * @module types/mesh
  */
 
+import type * as THREE from 'three';
 import type { BlendingMode } from './blending';
 import type { ViewState } from '../data/data-loader-types';
 import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
@@ -60,15 +61,16 @@ export type MeshShading = 'smooth' | 'flat' | 'none';
  *
  * `'raw'` is an `(H, W, C)` numeric array the decoder materializes directly —
  * the only arm that can carry HDR, since no browser-native image codec stores
- * floats. The other three are a 1-D `uint8` array of codec bytes, decoded with
+ * floats. PNG, WebP, and JPEG are 1-D `uint8` codec bytes decoded with
  * `createImageBitmap`, exactly as `image_label_bytes` already does for hover
- * thumbnails.
+ * thumbnails. KTX2 is also opaque bytes, but delegates to THREE's Basis
+ * transcoder and stays GPU-compressed after upload.
  *
  * A closed vocabulary on purpose: an unrecognised value must be a rejection and
  * not a fall-through to "probably an image", because the decode path and the
- * byte budget differ between the two arms.
+ * byte budget differ between the raw, bitmap-codec, and GPU-compressed arms.
  */
-export type MeshTextureEncoding = 'raw' | 'png' | 'webp' | 'jpeg';
+export type MeshTextureEncoding = 'raw' | 'png' | 'webp' | 'jpeg' | 'ktx2';
 
 /**
  * Colour space the texture's values are in.
@@ -316,10 +318,9 @@ export type MeshColorArray = Float32Array | Uint8Array | Uint16Array;
  * A decoded texture, in whichever form its encoding produced.
  *
  * A discriminated union rather than one struct with optional fields, because the
- * two arms upload through genuinely different THREE.js classes (`DataTexture` vs
- * `Texture` over an `ImageBitmap`) and an exhaustive `switch` on `kind` is the
- * only way a future third arm becomes a compile error instead of a silently
- * untextured mesh.
+ * three arms upload through genuinely different THREE.js classes (`DataTexture`,
+ * `Texture` over an `ImageBitmap`, or `CompressedTexture`) and an exhaustive
+ * branch on `kind` prevents a future arm from becoming a silently untextured mesh.
  *
  * `width`/`height`/`channels` are the *verified* dimensions, not the declared
  * ones: the loader compares what it decoded against
@@ -355,7 +356,20 @@ export type MeshTextureData =
       width: number;
       height: number;
       channels: number;
+    }
+  | {
+      kind: 'compressed';
+      texture: THREE.CompressedTexture;
+      width: number;
+      height: number;
+      channels: 3 | 4;
     };
+
+/** Renderer-owned KTX2 transcode seam injected into the data loader. */
+export type KTX2TextureDecoder = ((
+  path: string,
+  bytes: Uint8Array
+) => Promise<THREE.CompressedTexture>) & { dispose: () => void };
 
 /**
  * A whole decoded mesh, before display-space projection.

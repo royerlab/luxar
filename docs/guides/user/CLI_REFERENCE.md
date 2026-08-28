@@ -245,6 +245,8 @@ The run says so with a `⚠️` and exits non-zero; republish under a new URL pr
 
 Browse, run, and manage the bundled demos.
 
+Most of these are also published as live, interactive scenes at [demos.luxarviewer.dev](https://demos.luxarviewer.dev), so you can see what a demo looks like before spending the time to build it — several need a GPU or a large download.
+
 ```bash
 luxar demo list          # List all demos (key, needs, status)
 luxar demo info          # Full details for one demo

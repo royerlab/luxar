@@ -335,7 +335,9 @@
       "category": "structural",
       "script": "demo_nuclear_pore_complex.py",
       "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr",
-      "citation": "Mosalaganti et al. 2022"
+      "citation": "Mosalaganti et al. 2022",
+      "fillTarget": 0.75,
+      "note": "fillTarget 0.75 reframes the whole 25-nucleoporin, two-dilation-state complex introduced by #2262; the inherited 0.95 cropped the ring at all four edges. Border-lit fell from 62.5% to 11.9%, restoring the 8-fold symmetry, central channel and per-nucleoporin colouring."
     },
     {
       "id": "fractals_4d",
@@ -481,7 +483,8 @@
       "script": "demo_gsplats_3d_tribolium_embryo.py",
       "dataset": "datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr",
       "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Ma\u0161ka et al. 2023)",
-      "note": "the old volumetric white-out was fixed by coupling strong absorption (kappa 3.13) with low opacity (0.06); the scene bakes exposure=1.97 and a 0-1.085 display window, so auto-exposure recalibrates. The faint bg rectangle is gone as of the floor fix: the fit now subtracts the specimen's ~675-count haze, not just the ~205-count detector offset, removing ~84% of the scene's emitted mass while leaving nuclei brightness ~unchanged"
+      "note": "the old volumetric white-out was fixed by coupling strong absorption (kappa 3.13) with low opacity (0.06); the scene bakes exposure=1.97 and a 0-1.085 display window, so auto-exposure recalibrates. The faint bg rectangle is gone as of the floor fix: the fit now subtracts the specimen's ~675-count haze, not just the ~205-count detector offset, removing ~84% of the scene's emitted mass while leaving nuclei brightness ~unchanged. fillTarget 0.7 gives the elongated embryo a correctly filled poster frame; border-lit only falls from 54.9% to 48.4% because the subject projects wider at rock +15deg. The harness's suggested 0.6 would shrink the still to optimize the worst orbit pose instead.",
+      "fillTarget": 0.7
     },
     {
       "id": "gsplats_4d_zebrafish_timelapse",
@@ -634,7 +637,9 @@
       "category": "embeddings",
       "script": "demo_zebrahub_multiome.py",
       "dataset": "datasets/demos/zebrahub_multiome.luxar.zarr",
-      "citation": "Kim et al. 2024"
+      "citation": "Kim et al. 2024",
+      "fillTarget": 0.75,
+      "note": "fillTarget 0.75 reduced border-lit from 45.0% to 2.4% and keeps the whole UMAP embedding visible; at 0.95 clusters were cut at three edges, changing the structure shown by the tile."
     },
     {
       "id": "gsplats_3d_tng_cosmic_web",

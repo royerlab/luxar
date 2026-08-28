@@ -19,6 +19,7 @@
  *
  * const canvas = document.querySelector('canvas#viewer') as HTMLCanvasElement;
  * const app = new LuxarApp();
+ * app.on('dataset-fault', ({ error }) => showHostError(error.message));
  * await app.init({
  *   canvas,
  *   src: 'https://example.com/cells.zarr',
@@ -56,6 +57,7 @@ export type {
 export type {
   LuxarEmbedderEventMap,
   EmbedderDimensions,
+  DatasetFaultPayload,
   ScreenshotOptions,
   SelectionPayload,
   ElementPointerPayload,

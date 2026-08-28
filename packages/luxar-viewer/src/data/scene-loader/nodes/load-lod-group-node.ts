@@ -141,10 +141,13 @@ function attachLazyChild(
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;
-        if (archiveFaultFrom(error) !== undefined) {
+        const archiveFault = archiveFaultFrom(error);
+        if (archiveFault !== undefined) {
           if (entryChild.object.name) {
             entryChild.permanentlyFailed = true;
             entryChild.failedTick = undefined;
+            // A container fault makes the whole archive unreadable, not just this lazy level.
+            if (ctx.isDatasetLive()) ctx.reportArchiveFault(archiveFault);
           } else {
             // Anonymous group placeholders cannot be reached by
             // retryLazyChildByLeafPath, so permit only bounded cooldown retries.

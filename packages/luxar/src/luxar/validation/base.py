@@ -1220,6 +1220,7 @@ TEXTURE_ENCODINGS: dict = {
     "png": "uint8 or uint16",
     "webp": "uint8",
     "jpeg": "uint8",
+    "ktx2": "uint8 RGB/RGBA (encoded by optional toktx tooling)",
 }
 
 #: Channel counts a texture may carry: grey, RGB, RGBA.
@@ -1304,14 +1305,21 @@ def validate_uvs_for_writing(uvs: Any, n_vertices: int, context: str = "uvs") ->
         )
 
 
-def _resolve_raw_texture_dims(arr: Any, context: str) -> Tuple[int, int, int]:
+def _resolve_raw_texture_dims(
+    arr: Any, encoding: str, context: str
+) -> Tuple[int, int, int]:
     """Read and dtype-check an ``(H, W, C)`` raw texture payload."""
     if arr.ndim != 3:
+        suggestion = (
+            "Pass uint8 (H, W, 3|4) pixels, not a pre-built KTX2 container"
+            if encoding == "ktx2"
+            else "Reshape to (height, width, channels); a greyscale texture is "
+            "(H, W, 1), not (H, W)"
+        )
         raise ValidationError(
-            f"{context}: Encoding 'raw' expects an (H, W, C) array, got shape "
+            f"{context}: Encoding {encoding!r} expects an (H, W, C) array, got shape "
             f"{arr.shape}",
-            "Reshape to (height, width, channels); a greyscale texture is "
-            "(H, W, 1), not (H, W)",
+            suggestion,
         )
     # Same rule as element colours: float of any width is writable because it
     # quantizes; an integer array must already be uint8 or uint16.
@@ -1361,6 +1369,47 @@ def _resolve_encoded_texture_dims(
     return int(height), int(width), int(channels)
 
 
+def _validate_texture_codec_options(
+    encoding: str,
+    ktx2_mode: str,
+    ktx2_quality: Optional[int],
+    context: str,
+) -> None:
+    if encoding != "ktx2" and (ktx2_mode != "uastc" or ktx2_quality is not None):
+        raise ValidationError(
+            f"{context}: texture_ktx2_mode/texture_ktx2_quality require "
+            "texture_encoding='ktx2'",
+            "Remove the KTX2-only options or select texture_encoding='ktx2'",
+        )
+
+
+def _validate_ktx2_texture_array(
+    arr: NDArray[Any], encoding: str, channels: int, context: str
+) -> None:
+    if encoding != "ktx2":
+        return
+    if arr.dtype != np.dtype(np.uint8):
+        raise ValidationError(
+            f"{context}: texture_encoding='ktx2' accepts only uint8 LDR input, "
+            f"got {arr.dtype}",
+            "Use uint8 RGB/RGBA input, or texture_encoding='raw' for HDR/float data",
+        )
+    if channels == 1:
+        raise ValidationError(
+            f"{context}: texture_encoding='ktx2' supports only RGB or RGBA, got 1 channel",
+            "Use texture_encoding='raw' for a single-channel texture",
+        )
+
+
+def _texture_decoded_bytes(
+    encoding: str, width: int, height: int, channels: int
+) -> int:
+    if encoding == "ktx2":
+        # Mirror viewer preflight.ts and mesh-whole-node-loader.ts.
+        return (width * height * 4 + 2) // 3
+    return width * height * (4 if encoding != "raw" else max(channels, 1) * 4)
+
+
 def validate_texture_for_writing(
     texture: Any,
     encoding: str,
@@ -1369,15 +1418,18 @@ def validate_texture_for_writing(
     channels: Optional[int] = None,
     color_space: str = "srgb",
     context: str = "texture",
+    ktx2_mode: str = "uastc",
+    ktx2_quality: Optional[int] = None,
 ) -> Tuple[int, int, int]:
     """Validate a mesh texture payload and resolve its declared dimensions.
 
-    Two payload shapes, split into :func:`_resolve_raw_texture_dims` and
+    Two physical payload shapes, split into :func:`_resolve_raw_texture_dims` and
     :func:`_resolve_encoded_texture_dims`, because the *declared* dimensions
     matter identically to both and are what the viewer's admission gate spends:
 
-    * ``raw`` — an ``(H, W, C)`` array. Dimensions come off the shape, so a
-      caller-supplied ``width``/``height``/``channels`` must agree with it.
+    * ``raw`` and authoring-time ``ktx2`` — an ``(H, W, C)`` array.
+      Dimensions come off the shape, so caller-supplied
+      ``width``/``height``/``channels`` must agree with it.
     * ``png`` / ``webp`` / ``jpeg`` — a 1-D ``uint8`` array of encoded bytes, the
       same shape ``image_label_bytes`` already uses. Dimensions cannot be read
       from the payload without decoding it, so they are **required**.
@@ -1398,6 +1450,8 @@ def validate_texture_for_writing(
         channels: Declared channel count. Required for encoded payloads.
         color_space: ``srgb`` or ``linear``. HDR raw values require ``linear``.
         context: Context for error messages.
+        ktx2_mode: Basis encoding mode for KTX2 authoring.
+        ktx2_quality: Optional mode-specific KTX2 quality.
 
     Returns:
         ``(height, width, channels)``, resolved.
@@ -1415,17 +1469,21 @@ def validate_texture_for_writing(
             f"{context}: Unknown texture_encoding {encoding!r}. Valid: "
             f"{', '.join(sorted(TEXTURE_ENCODINGS))}",
             "Use 'raw' for an (H, W, C) array (the only encoding that carries "
-            "HDR), or 'png'/'webp'/'jpeg' for encoded bytes",
+            "HDR), 'ktx2' for uint8 RGB/RGBA input, or 'png'/'webp'/'jpeg' for "
+            "encoded bytes",
         )
+    _validate_texture_codec_options(encoding, ktx2_mode, ktx2_quality, context)
 
     arr = np.asarray(texture)
     res_h, res_w, res_c = (
-        _resolve_raw_texture_dims(arr, context)
-        if encoding == "raw"
+        _resolve_raw_texture_dims(arr, encoding, context)
+        if encoding in {"raw", "ktx2"}
         else _resolve_encoded_texture_dims(
             arr, encoding, width, height, channels, context
         )
     )
+
+    _validate_ktx2_texture_array(arr, encoding, res_c, context)
 
     if (
         encoding == "raw"
@@ -1459,11 +1517,13 @@ def validate_texture_for_writing(
             "with its own texture (a partition cannot carry one: a part "
             "re-indexes vertices, but the image is node-level)",
         )
-    # A texture can sit inside the per-axis limit and still be unloadable. An
-    # encoded payload decodes to a 4-channel bitmap regardless of what it stored,
-    # so the charge is w * h * 4; a raw one decodes to its own value count at
-    # 4 bytes each.
-    decoded_bytes = res_w * res_h * (4 if encoding != "raw" else max(res_c, 1) * 4)
+    # A texture can sit inside the per-axis limit and still be unloadable. Browser
+    # bitmap codecs decode to a 4-channel surface regardless of what they
+    # stored, so their charge is w * h * 4; a raw texture decodes to its own value
+    # count at 4 bytes each. KTX2 remains GPU-compressed and carries a full mip
+    # chain, so keep its 4/3 formula aligned with viewer preflight and the mesh
+    # writer's aggregate-budget calculation.
+    decoded_bytes = _texture_decoded_bytes(encoding, res_w, res_h, res_c)
     if decoded_bytes > MESH_TEXTURE_DECODE_BUDGET_BYTES:
         budget_mib = MESH_TEXTURE_DECODE_BUDGET_BYTES // (1024 * 1024)
         raise ValidationError(
@@ -1471,9 +1531,9 @@ def validate_texture_for_writing(
             f"{decoded_bytes / (1024 * 1024):.0f} MiB, over the {budget_mib} MiB "
             "per-node budget every viewer admits a mesh under",
             "Resample the texture, or split the surface across several mesh "
-            "nodes — each node gets its own budget. Note an ENCODED texture is "
-            "charged at 4 bytes per pixel whatever it stored, because a decoded "
-            "bitmap is always 4-channel",
+            "nodes — each node gets its own budget. Bitmap codecs are charged at "
+            "4 bytes per pixel after decode; KTX2 is charged for a compressed "
+            "4/3-size mip chain",
         )
     # A disagreement is refused rather than silently preferring one source: the
     # viewer spends the DECLARED numbers, so a mismatch is exactly the case where

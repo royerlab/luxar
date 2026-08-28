@@ -392,6 +392,13 @@ describe('SceneLoader', () => {
         'The archive URL has expired. Refresh the page with a new URL.',
         'https://example.test/scene.zip'
       );
+      const onArchiveFault = vi.fn();
+      sceneLoader.onArchiveFault(onArchiveFault);
+      sceneLoader.onArchiveFault(() => {
+        throw new Error('consumer failure');
+      });
+      const removedListener = vi.fn();
+      sceneLoader.onArchiveFault(removedListener)();
       const failingLoader = {
         updateView: vi.fn().mockRejectedValue(new Error('loader wrapper', { cause: fault })),
         dispose: vi.fn(),
@@ -428,6 +435,10 @@ describe('SceneLoader', () => {
 
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledWith(fault.message, { persistent: true });
+      expect(sceneLoader.archiveFault).toBe(fault);
+      expect(onArchiveFault).toHaveBeenCalledOnce();
+      expect(onArchiveFault).toHaveBeenCalledWith(fault);
+      expect(removedListener).not.toHaveBeenCalled();
       expect(sceneLoader.hasFailures()).toBe(false);
       expect(commitSpy).not.toHaveBeenCalled();
       expect(releaseShadows).toHaveBeenCalledOnce();
@@ -439,8 +450,91 @@ describe('SceneLoader', () => {
       expect(successfulLoader.updateView).toHaveBeenCalledOnce();
       expect(ordinaryFailureLoader.updateView).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect(onArchiveFault).toHaveBeenCalledOnce();
       expect(prefetch).not.toHaveBeenCalled();
       expect((sceneLoader as any)._updateInProgress).toBe(false);
+    });
+
+    it('can replay the latched archive fault to a late subscriber', () => {
+      const fault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+      (sceneLoader as any)._archiveFault = fault;
+      const listener = vi.fn();
+      const throwingListener = vi.fn(() => {
+        throw new Error('listener boom');
+      });
+      let unsubscribeThrowingListener: (() => void) | undefined;
+
+      const unsubscribe = sceneLoader.onArchiveFault(listener, { replayCurrent: true });
+      expect(() => {
+        unsubscribeThrowingListener = sceneLoader.onArchiveFault(throwingListener, {
+          replayCurrent: true,
+        });
+      }).not.toThrow();
+
+      expect(listener).toHaveBeenCalledOnce();
+      expect(listener).toHaveBeenCalledWith(fault);
+      expect(throwingListener).toHaveBeenCalledOnce();
+
+      unsubscribe();
+      unsubscribeThrowingListener!();
+      (sceneLoader as any).notifyArchiveFault(fault);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(throwingListener).toHaveBeenCalledOnce();
+    });
+
+    it('does not notify listeners added during archive-fault delivery twice', () => {
+      const fault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+      const lateListener = vi.fn();
+      sceneLoader.onArchiveFault(() => {
+        sceneLoader.onArchiveFault(lateListener, { replayCurrent: true });
+      });
+      (sceneLoader as any)._archiveFault = fault;
+
+      (sceneLoader as any).notifyArchiveFault(fault);
+
+      expect(lateListener).toHaveBeenCalledOnce();
+      expect(lateListener).toHaveBeenCalledWith(fault);
+    });
+
+    it('reports archive faults from node-build contexts exactly once', () => {
+      const firstFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+      const secondFault = new ArchiveFaultError('archive still unavailable', 'scene.zip');
+      const releaseShadows = vi.fn();
+      (sceneLoader as any)._slicePrefetcher = {
+        prefetch: vi.fn(),
+        releaseShadows,
+        dispose: vi.fn(),
+      };
+      const internals = sceneLoader as unknown as {
+        registry: { recordFailure(path: string, error: Error): void };
+      };
+      internals.registry.recordFailure('/lazy-failure', new Error('archive request failed'));
+      expect(sceneLoader.hasFailures()).toBe(true);
+      let failuresAtNotification: boolean | undefined;
+      let releaseCallsAtNotification: number | undefined;
+      const listener = vi.fn(() => {
+        failuresAtNotification = sceneLoader.hasFailures();
+        releaseCallsAtNotification = releaseShadows.mock.calls.length;
+      });
+      sceneLoader.onArchiveFault(listener);
+      const ctx = (
+        sceneLoader as unknown as { makeNodeBuildCtx(): Record<string, unknown> }
+      ).makeNodeBuildCtx();
+      const reportArchiveFault = ctx.reportArchiveFault as
+        ((fault: ArchiveFaultError) => void) | undefined;
+
+      reportArchiveFault!(firstFault);
+      reportArchiveFault!(secondFault);
+
+      expect(sceneLoader.archiveFault).toBe(firstFault);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(listener).toHaveBeenCalledWith(firstFault);
+      expect(failuresAtNotification).toBe(false);
+      expect(releaseCallsAtNotification).toBe(1);
+      expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect(notifierMocks.error).toHaveBeenCalledWith(firstFault.message, { persistent: true });
+      expect(sceneLoader.hasFailures()).toBe(false);
+      expect(releaseShadows).toHaveBeenCalledOnce();
     });
 
     it('drains a superseded waiter when an archive fault stops the active pass', async () => {
