@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { checkExampleFixtureFreshness } from '../../../../tools/example-fixture-freshness';
+import {
+  checkExampleFixtureFreshness,
+  reportExampleFixtureFreshness,
+} from '../../../../tools/example-fixture-freshness';
 
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
 
@@ -45,5 +48,48 @@ describe('checkExampleFixtureFreshness', () => {
     });
 
     expect(checkExampleFixtureFreshness('/checkout')).toEqual({ status: 'unavailable' });
+  });
+});
+
+describe('reportExampleFixtureFreshness', () => {
+  it('warns without throwing when example datasets are stale', () => {
+    const reporter = { log: vi.fn(), warn: vi.fn() };
+
+    expect(reportExampleFixtureFreshness({ status: 'stale' }, reporter)).toBe(true);
+    expect(reporter.log).not.toHaveBeenCalled();
+    expect(reporter.warn).toHaveBeenCalledWith('⚠️  Example datasets are stale.');
+    expect(reporter.warn).toHaveBeenCalledWith(
+      '   Run "make run-examples" from the repository root to refresh them.'
+    );
+    expect(reporter.warn).toHaveBeenCalledWith(
+      '   Continuing so specs that do not read example datasets can still run.\n'
+    );
+  });
+
+  it('reports current datasets without a warning', () => {
+    const reporter = { log: vi.fn(), warn: vi.fn() };
+
+    expect(reportExampleFixtureFreshness({ status: 'current' }, reporter)).toBe(false);
+    expect(reporter.log).toHaveBeenCalledWith(
+      '✅ Example datasets match the current fixture producer'
+    );
+    expect(reporter.warn).not.toHaveBeenCalled();
+  });
+
+  it('preserves checker diagnostics when freshness is unavailable', () => {
+    const reporter = { log: vi.fn(), warn: vi.fn() };
+
+    expect(
+      reportExampleFixtureFreshness(
+        { status: 'unavailable', detail: 'ModuleNotFoundError: numcodecs' },
+        reporter
+      )
+    ).toBe(true);
+    expect(reporter.log).not.toHaveBeenCalled();
+    expect(reporter.warn).toHaveBeenCalledWith(
+      '⚠️  Could not run the example fixture freshness checker.'
+    );
+    expect(reporter.warn).toHaveBeenCalledWith('   ModuleNotFoundError: numcodecs');
+    expect(reporter.warn).toHaveBeenCalledWith('   Continuing with presence checks only.\n');
   });
 });

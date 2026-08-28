@@ -405,11 +405,14 @@ then runs five preflight checks:
    rejected by checking the marker body here.
 2. **Examples directory** — `datasets/examples/` in the identified
    checkout is verified to exist and, when present, its producer stamp is
-   checked through `scripts/run_examples.py --check`. A stale stamp aborts
-   with instructions to run `make run-examples`; an unavailable checker or
-   missing directory warns and continues because some specs
+   checked through `scripts/run_examples.py --check`. A stale stamp, an
+   unavailable checker, or a missing directory warns and continues because
+   many specs do not read example datasets. Specs that do read them still
+   exercise their normal dataset-specific assertions, and the warning gives
+   instructions to run `make run-examples` before relying on those results.
+   Example-independent specs
    (basic-rendering, viewer-initialization, test-fixtures, geometry-types)
-   don't need the examples.
+   remain runnable while one example producer is stale or unavailable.
 3. **Required datasets** — checks for the eight required `*.zarr`
    directories and then issues an HTTP `HEAD` request for each one
    found locally. A fixture that exists on disk but is not reachable

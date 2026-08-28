@@ -8,6 +8,11 @@ export interface ExampleFixtureFreshness {
   detail?: string;
 }
 
+export interface ExampleFixtureFreshnessReporter {
+  log(message: string): void;
+  warn(message: string): void;
+}
+
 function runFreshnessChecker(projectRoot: string): void {
   execFileSync('hatch', ['run', 'python', 'scripts/run_examples.py', '--check'], {
     cwd: projectRoot,
@@ -36,4 +41,26 @@ export function checkExampleFixtureFreshness(projectRoot: string): ExampleFixtur
     }
     return { status: 'unavailable' };
   }
+}
+
+export function reportExampleFixtureFreshness(
+  freshness: ExampleFixtureFreshness,
+  reporter: ExampleFixtureFreshnessReporter = console
+): boolean {
+  if (freshness.status === 'current') {
+    reporter.log('✅ Example datasets match the current fixture producer');
+    return false;
+  }
+
+  if (freshness.status === 'stale') {
+    reporter.warn('⚠️  Example datasets are stale.');
+    reporter.warn('   Run "make run-examples" from the repository root to refresh them.');
+    reporter.warn('   Continuing so specs that do not read example datasets can still run.\n');
+    return true;
+  }
+
+  reporter.warn('⚠️  Could not run the example fixture freshness checker.');
+  if (freshness.detail) reporter.warn(`   ${freshness.detail}`);
+  reporter.warn('   Continuing with presence checks only.\n');
+  return true;
 }
