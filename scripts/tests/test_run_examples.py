@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +24,8 @@ def _repo(tmp_path: Path) -> Path:
     production = repo / "packages/luxar/src/luxar/io"
     examples.mkdir(parents=True)
     production.mkdir(parents=True)
+    (production.parent / "__init__.py").write_text("")
+    (production / "__init__.py").write_text("")
     (repo / "pyproject.toml").write_text("[project]\nname = 'luxar'\n")
     (production / "writer.py").write_text("FORMAT = 2\n")
     return repo
@@ -34,31 +37,105 @@ def _write_example(repo: Path, name: str, body: str) -> Path:
     return script
 
 
-def test_fingerprint_covers_builders_and_production_writer_code(tmp_path: Path) -> None:
+def _write_marker(
+    repo: Path,
+    output_dir: Path,
+    outputs_by_producer: dict[str, list[str]] | None = None,
+) -> None:
+    scripts = {
+        script.name: script
+        for script in (repo / "packages/luxar/examples").glob("*_example.py")
+    }
+    if outputs_by_producer is None:
+        assert len(scripts) == 1
+        outputs_by_producer = {
+            next(iter(scripts)): sorted(
+                path.name for path in output_dir.glob("*.zarr") if path.is_dir()
+            )
+        }
+    run_examples.write_marker(
+        repo,
+        output_dir,
+        examples={
+            producer: {
+                "fingerprint": run_examples.example_fingerprint(
+                    repo, scripts[producer]
+                ),
+                "sources": [
+                    path.relative_to(repo).as_posix()
+                    for path in run_examples.example_source_files(
+                        repo, scripts[producer]
+                    )
+                ],
+                "outputs": outputs,
+            }
+            for producer, outputs in outputs_by_producer.items()
+        },
+    )
+
+
+def _generating_example(repo: Path, name: str, sentinel: Path) -> Path:
+    output = repo / "datasets/examples" / f"{name}_example.luxar.zarr"
+    return _write_example(
+        repo,
+        name,
+        "from pathlib import Path\n"
+        f"Path({str(sentinel)!r}).touch()\n"
+        f"output = Path({str(output)!r})\n"
+        "output.mkdir(parents=True, exist_ok=True)\n"
+        "(output / 'zarr.json').write_text('fresh')\n",
+    )
+
+
+def test_example_fingerprint_covers_only_imported_production_code(
+    tmp_path: Path,
+) -> None:
     repo = _repo(tmp_path)
-    example = _write_example(repo, "one", "print('one')\n")
+    example = _write_example(repo, "one", "from luxar.io import writer\n")
     writer = repo / "packages/luxar/src/luxar/io/writer.py"
+    unrelated = repo / "packages/luxar/src/luxar/io/unrelated.py"
+    unrelated.write_text("VALUE = 1\n")
 
-    initial = run_examples.source_fingerprint(repo)
+    initial = run_examples.example_fingerprint(repo, example)
+    unrelated.write_text("VALUE = 2\n")
+    after_unrelated_change = run_examples.example_fingerprint(repo, example)
+    (repo / "pyproject.toml").write_text("[tool.ruff]\nline-length = 100\n")
+    after_project_change = run_examples.example_fingerprint(repo, example)
     example.write_text("print('changed')\n")
-    after_builder_change = run_examples.source_fingerprint(repo)
+    after_builder_change = run_examples.example_fingerprint(repo, example)
+    example.write_text("from luxar.io import writer\n")
     writer.write_text("FORMAT = 3\n")
-    after_writer_change = run_examples.source_fingerprint(repo)
+    after_writer_change = run_examples.example_fingerprint(repo, example)
 
+    assert after_unrelated_change == initial
+    assert after_project_change == initial
     assert after_builder_change != initial
-    assert after_writer_change != after_builder_change
+    assert after_writer_change != initial
 
 
-def test_fingerprint_covers_writer_when_checkout_path_contains_tests(
+def test_example_fingerprint_covers_writer_when_checkout_path_contains_tests(
     tmp_path: Path,
 ) -> None:
     repo = _repo(tmp_path / "tests")
+    example = _write_example(repo, "one", "from luxar.io import writer\n")
     writer = repo / "packages/luxar/src/luxar/io/writer.py"
 
-    initial = run_examples.source_fingerprint(repo)
+    initial = run_examples.example_fingerprint(repo, example)
     writer.write_text("FORMAT = 3\n")
 
-    assert run_examples.source_fingerprint(repo) != initial
+    assert run_examples.example_fingerprint(repo, example) != initial
+
+
+def test_example_fingerprint_covers_imported_example_helper(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    helper = repo / "packages/luxar/examples/_helper.py"
+    helper.write_text("VALUE = 1\n")
+    example = _write_example(repo, "one", "from _helper import VALUE\n")
+
+    initial = run_examples.example_fingerprint(repo, example)
+    helper.write_text("VALUE = 2\n")
+
+    assert run_examples.example_fingerprint(repo, example) != initial
 
 
 def test_current_marker_requires_every_recorded_output(tmp_path: Path) -> None:
@@ -72,9 +149,19 @@ def test_current_marker_requires_every_recorded_output(tmp_path: Path) -> None:
         json.dumps(
             {
                 "version": run_examples.MARKER_VERSION,
-                "fingerprint": run_examples.source_fingerprint(repo),
                 "environment": run_examples.build_environment(),
-                "outputs": [output.name],
+                "examples": {
+                    "one_example.py": {
+                        "fingerprint": run_examples.example_fingerprint(
+                            repo,
+                            repo / "packages/luxar/examples/one_example.py",
+                        ),
+                        "sources": [
+                            "packages/luxar/examples/one_example.py",
+                        ],
+                        "outputs": [output.name],
+                    }
+                },
             }
         )
     )
@@ -89,7 +176,7 @@ def test_current_marker_ignores_an_unrecorded_extra_output(tmp_path: Path) -> No
     _write_example(repo, "one", "print('one')\n")
     output_dir = repo / "datasets/examples"
     (output_dir / "one_example.luxar.zarr").mkdir(parents=True)
-    run_examples.write_marker(repo, output_dir)
+    _write_marker(repo, output_dir)
 
     (output_dir / "removed_example.luxar.zarr").mkdir()
     assert run_examples.fixtures_are_current(repo, output_dir)
@@ -103,7 +190,7 @@ def test_current_marker_rejects_environment_changes(
     output_dir = repo / "datasets/examples"
     (output_dir / "one_example.luxar.zarr").mkdir(parents=True)
     monkeypatch.delenv("LUXAR_ZARR_FORMAT", raising=False)  # type: ignore[attr-defined]
-    run_examples.write_marker(repo, output_dir)
+    _write_marker(repo, output_dir)
 
     monkeypatch.setenv("LUXAR_ZARR_FORMAT", "2")  # type: ignore[attr-defined]
     assert not run_examples.fixtures_are_current(repo, output_dir)
@@ -118,20 +205,76 @@ def test_current_fixtures_skip_example_execution(tmp_path: Path) -> None:
     output_dir = repo / "datasets/examples"
     output = output_dir / "one_example.luxar.zarr"
     output.mkdir(parents=True)
-    run_examples.write_marker(repo, output_dir)
+    _write_marker(repo, output_dir)
 
     assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
     assert not sentinel.exists()
 
 
-def test_stale_fixtures_rebuild_all_examples_and_stamp_outputs(tmp_path: Path) -> None:
+def test_builder_change_rebuilds_only_its_example(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    first_ran = repo / "first-ran"
+    second_ran = repo / "second-ran"
+    first = _generating_example(repo, "one", first_ran)
+    _generating_example(repo, "two", second_ran)
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    first_ran.unlink()
+    second_ran.unlink()
+
+    first.write_text(first.read_text() + "# changed\n")
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+
+    assert first_ran.exists()
+    assert not second_ran.exists()
+
+
+def test_missing_output_rebuilds_only_its_producer(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    first_ran = repo / "first-ran"
+    second_ran = repo / "second-ran"
+    _generating_example(repo, "one", first_ran)
+    _generating_example(repo, "two", second_ran)
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    first_ran.unlink()
+    second_ran.unlink()
+    shutil.rmtree(output_dir / "one_example.luxar.zarr")
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+
+    assert first_ran.exists()
+    assert not second_ran.exists()
+
+
+def test_removed_producer_prunes_its_output_without_rebuilding_others(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    first_ran = repo / "first-ran"
+    second_ran = repo / "second-ran"
+    _generating_example(repo, "one", first_ran)
+    second = _generating_example(repo, "two", second_ran)
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    first_ran.unlink()
+    second_ran.unlink()
+    second.unlink()
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+
+    assert not first_ran.exists()
+    assert not second_ran.exists()
+    assert not (output_dir / "two_example.luxar.zarr").exists()
+
+
+def test_legacy_marker_rebuilds_all_examples_and_stamps_outputs(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     output_dir = repo / "datasets/examples"
     stale = output_dir / "removed_example.luxar.zarr"
     stale.mkdir(parents=True)
     unknown = output_dir / "handmade.luxar.zarr"
     unknown.mkdir()
-    run_examples.write_marker(repo, output_dir, outputs=[stale.name])
     for name in ("one", "two"):
         output = output_dir / f"{name}_example.luxar.zarr"
         _write_example(
@@ -142,6 +285,16 @@ def test_stale_fixtures_rebuild_all_examples_and_stamp_outputs(tmp_path: Path) -
             "output.mkdir(parents=True, exist_ok=True)\n"
             "(output / 'zarr.json').write_text('fresh')\n",
         )
+    (output_dir / run_examples.MARKER_NAME).write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "fingerprint": "legacy",
+                "environment": run_examples.build_environment(),
+                "outputs": [stale.name],
+            }
+        )
+    )
 
     assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
 
@@ -155,10 +308,7 @@ def test_stale_fixtures_rebuild_all_examples_and_stamp_outputs(tmp_path: Path) -
     ]
     assert run_examples.fixtures_are_current(repo, output_dir)
     marker = json.loads((output_dir / run_examples.MARKER_NAME).read_text())
-    assert marker["outputs"] == [
-        "one_example.luxar.zarr",
-        "two_example.luxar.zarr",
-    ]
+    assert sorted(marker["examples"]) == ["one_example.py", "two_example.py"]
 
 
 def test_rebuild_progress_precedes_child_output_when_piped(tmp_path: Path) -> None:
@@ -197,27 +347,42 @@ def test_rebuild_progress_precedes_child_output_when_piped(tmp_path: Path) -> No
     ) < result.stdout.index("CHILD OUTPUT")
 
 
-def test_failed_rebuild_attempts_every_example_and_leaves_no_marker(
+def test_failed_rebuild_stamps_successes_for_selective_retry(
     tmp_path: Path,
 ) -> None:
     repo = _repo(tmp_path)
     output_dir = repo / "datasets/examples"
-    previous = output_dir / "previous_example.luxar.zarr"
-    previous.mkdir(parents=True)
-    (previous / "zarr.json").write_text("old")
-    run_examples.write_marker(repo, output_dir)
     reached = repo / "second-ran"
     _write_example(repo, "one", "raise RuntimeError('broken')\n")
+    second_output = output_dir / "two_example.luxar.zarr"
     _write_example(
-        repo, "two", f"from pathlib import Path\nPath({str(reached)!r}).touch()\n"
+        repo,
+        "two",
+        "from pathlib import Path\n"
+        f"Path({str(reached)!r}).touch()\n"
+        f"output = Path({str(second_output)!r})\n"
+        "output.mkdir(parents=True, exist_ok=True)\n"
+        "(output / 'zarr.json').write_text('fresh')\n",
     )
 
     assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 1
 
     assert reached.exists()
-    assert previous.exists()
-    assert (previous / "zarr.json").read_text() == "old"
-    assert not (output_dir / run_examples.MARKER_NAME).exists()
+    marker = json.loads((output_dir / run_examples.MARKER_NAME).read_text())
+    assert list(marker["examples"]) == ["two_example.py"]
+    reached.unlink()
+    first_output = output_dir / "one_example.luxar.zarr"
+    _write_example(
+        repo,
+        "one",
+        "from pathlib import Path\n"
+        f"output = Path({str(first_output)!r})\n"
+        "output.mkdir(parents=True, exist_ok=True)\n"
+        "(output / 'zarr.json').write_text('fresh')\n",
+    )
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    assert not reached.exists()
 
 
 def test_successful_rebuild_without_outputs_preserves_previous_fixtures(
@@ -230,7 +395,7 @@ def test_successful_rebuild_without_outputs_preserves_previous_fixtures(
     sentinel = previous / "zarr.json"
     sentinel.write_text("old")
     _write_example(repo, "one", "print('no output')\n")
-    run_examples.write_marker(repo, output_dir, outputs=[previous.name])
+    _write_marker(repo, output_dir, {"one_example.py": [previous.name]})
 
     assert (
         run_examples.generate_examples(
@@ -252,17 +417,19 @@ def test_marker_uses_prebuild_fingerprint(tmp_path: Path) -> None:
         repo,
         "one",
         "from pathlib import Path\n"
+        "from luxar.io import writer\n"
         f"output = Path({str(output)!r})\n"
         "output.mkdir(parents=True)\n"
         "(output / 'zarr.json').write_text('fresh')\n"
         f"Path({str(writer)!r}).write_text('FORMAT = 3\\n')\n",
     )
-    prebuild_fingerprint = run_examples.source_fingerprint(repo)
+    script = repo / "packages/luxar/examples/one_example.py"
+    prebuild_fingerprint = run_examples.example_fingerprint(repo, script)
 
     assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
 
     marker = json.loads((output_dir / run_examples.MARKER_NAME).read_text())
-    assert marker["fingerprint"] == prebuild_fingerprint
+    assert marker["examples"][script.name]["fingerprint"] == prebuild_fingerprint
     assert not run_examples.fixtures_are_current(repo, output_dir)
 
 
@@ -282,7 +449,7 @@ def test_force_rebuilds_current_fixtures(tmp_path: Path) -> None:
     )
     output.mkdir(parents=True)
     (output / "zarr.json").write_text("old")
-    run_examples.write_marker(repo, output_dir)
+    _write_marker(repo, output_dir)
 
     assert (
         run_examples.generate_examples(
@@ -293,8 +460,8 @@ def test_force_rebuilds_current_fixtures(tmp_path: Path) -> None:
     assert sentinel.exists()
 
 
-def test_check_mode_reports_stale_without_writing(
-    tmp_path: Path, monkeypatch: object
+def test_check_mode_names_stale_producers_without_writing(
+    tmp_path: Path, monkeypatch: object, capsys: object
 ) -> None:
     repo = _repo(tmp_path)
     output_dir = repo / "datasets/examples"
@@ -307,6 +474,8 @@ def test_check_mode_reports_stale_without_writing(
     )
 
     assert run_examples.main(["--check"]) == run_examples.STALE_EXIT_CODE
+    captured = capsys.readouterr()  # type: ignore[attr-defined]
+    assert "one_example.py" in captured.err
     assert list(output_dir.iterdir()) == []
 
 
