@@ -388,8 +388,10 @@ export interface LODGroupChild {
    */
   permanentlyFailed?: boolean;
   /**
-   * Optional bound on automatic cooldown retries. ``undefined`` preserves the
-   * normal unlimited transient-recovery policy; zero suppresses further kicks.
+   * Archive-fault-only bound for anonymous placeholders' automatic cooldown
+   * retries. A successful load clears it; zero terminally suppresses further
+   * kicks because these children have no explicit retry surface. ``undefined``
+   * preserves the normal unlimited transient-recovery policy.
    */
   automaticRetriesRemaining?: number;
   /**
@@ -1890,9 +1892,9 @@ export class LODGroupRegistry {
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
    * ``permanentlyFailed`` children never enter that cooldown — they stay
-   * latched until an explicit or connectivity retry clears the flag. A child
-   * with an exhausted ``automaticRetriesRemaining`` budget likewise stops
-   * before another kick.
+   * latched until an explicit or connectivity retry clears the flag. An
+   * anonymous placeholder with an exhausted archive-fault retry budget likewise
+   * stops before another kick; a successful load clears that episode's budget.
    */
   private kickDeferredLoad(child: LODGroupChild): void {
     if (

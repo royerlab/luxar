@@ -1045,6 +1045,77 @@ describe('loadLodGroupNode — lazy level loading', () => {
       warningSpy.mockRestore();
     }
   });
+
+  it('restores unlimited ordinary retries after an archive fault recovers', async () => {
+    attachStubChildren();
+    let viewVersion = 1;
+    let ordinaryAttempts = 0;
+    let failure: Error | undefined = new ArchiveFaultError('archive open failed', '/scene.zip');
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      if (child.path !== '/lod/child_1') {
+        const mesh = new THREE.Mesh();
+        mesh.name = child.path;
+        parent.add(mesh);
+        return;
+      }
+      if (failure) {
+        if (!(failure instanceof ArchiveFaultError)) ordinaryAttempts += 1;
+        throw failure;
+      }
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      mesh.userData = {
+        nodeType: 'gsplats',
+        visibleSplatCount: 1,
+        loadedViewVersion: viewVersion,
+      };
+      parent.add(mesh);
+    });
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    try {
+      const reg = new LODGroupRegistry({
+        getCamera: () => new THREE.Camera(),
+        getViewportSize: () => ({ width: 100, height: 100 }),
+        getDisplayDims: () => [0, 1, 2],
+        getViewVersion: () => viewVersion,
+      });
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const deferred = reg.get('/lod')!.children[1];
+      deferred.ensureLoaded!();
+      await vi.waitFor(() => expect(deferred.failed).toBe(true));
+      expect(deferred.automaticRetriesRemaining).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+
+      failure = undefined;
+      reg.setSelectorMode('/lod', { lockLevel: 1 });
+      for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+      await vi.waitFor(() => expect(deferred.ready).toBe(true));
+      expect(deferred.automaticRetriesRemaining).toBeUndefined();
+
+      failure = new Error('nested subtree failed');
+      viewVersion = 2;
+      for (let frame = 0; frame < 9; frame++) reg.evaluatePerFrame();
+      await vi.waitFor(() => expect(deferred.failed).toBe(true));
+      expect(ordinaryAttempts).toBe(1);
+
+      for (let retry = 1; retry <= MAX_AUTO_RETRY_ATTEMPTS + 1; retry++) {
+        for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+        await vi.waitFor(() => expect(deferred.failed).toBe(true));
+        expect(ordinaryAttempts).toBe(retry + 1);
+      }
+
+      expect(deferred.automaticRetriesRemaining).toBeUndefined();
+      expect(deferred.loading).toBe(false);
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────

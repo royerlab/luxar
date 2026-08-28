@@ -84,8 +84,8 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
  * abort-discard error handling live in exactly one place. Container-wide
  * archive faults additionally latch retry-addressable leaf children as
  * permanently failed. Anonymous deferred-group placeholders cannot be reached
- * by the explicit retry path, so they retain the cooldown but receive the same
- * bounded automatic-retry budget as loader-registry failures.
+ * by the explicit retry path, so archive faults receive a bounded cooldown
+ * retry budget that a successful load clears; ordinary failures stay unlimited.
  *
  * **Lazy LEAF levels never join the per-slice update sweep.** ``runExpensive``
  * commits independently and the registry — not the sweep — drives their reload
@@ -137,6 +137,7 @@ function attachLazyChild(
         // NOTE: the level is deliberately NOT registered into the per-slice
         // update sweep (see the function doc). It commits independently here;
         // the registry reloads it on a settled slice change.
+        entryChild.automaticRetriesRemaining = undefined;
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;

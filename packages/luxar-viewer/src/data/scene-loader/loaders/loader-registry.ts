@@ -91,7 +91,10 @@ export interface FailedLoaderInfo {
  * not bound it. `autoRetryCount` starts at 0 and is charged only by
  * `markAutoRetryAttempt` on each connectivity-triggered attempt, so this allows
  * exactly this many automatic attempts regardless of how many times ordinary
- * update sweeps or manual retries recorded the same failure.
+ * update sweeps or manual retries recorded the same failure. Anonymous deferred
+ * LOD groups also use this count for archive-fault cooldown retries; unlike
+ * loader failures, they have no manual retry surface, so success resets their
+ * per-episode budget.
  */
 export const MAX_AUTO_RETRY_ATTEMPTS = 3;
 
