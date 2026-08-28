@@ -510,12 +510,11 @@ def create_luxar_scene(
     ``add_gsplats_from_file`` is the entry point that grafts one whole.
 
     Grafting is deliberately shape-agnostic, because the two paths do not agree
-    yet: the hosted archives were written before the recipe was chosen and are
-    still flat leaves, and they stay that way until they are refitted and
-    reuploaded (the manifest pins their checksums). ``add_gsplats_from_file``
-    routes a matrix-shaped file down the ordinary data path and a partition
-    through the graft, so the default path renders either one — it just does not
-    get spatial tiles until the published bytes catch up.
+    yet: the in-repo archives are still flat leaves and win while they remain in
+    the tree, even though the record already serves the ``adaptive`` partition.
+    ``add_gsplats_from_file`` routes a matrix-shaped file down the ordinary data
+    path and a partition through the graft, so the default path renders either
+    one — it just does not get spatial tiles from the in-repo generation.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel
