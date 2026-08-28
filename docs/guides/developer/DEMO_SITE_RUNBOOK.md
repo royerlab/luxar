@@ -733,8 +733,9 @@ it is **half an operation**. The recipe is three steps, in this order:
 
     flatten  ->  lod --recipe stream  ->  optimise --profile archive
 
-Measured on the Drosophila 500-timepoint archive, requests per timepoint step
-fell from **173 to 2** after `optimise --profile archive`
+The ordering cost is independently measured on the Drosophila 500-timepoint
+archive: requests per timepoint step fell from **173 to 2** after
+`optimise --profile archive`
 (`demo_gsplats_4d_drosophila_embryogenesis.py:163-165`).
 
 The reason is not inherited source chunking: `flatten` and `lod` rewrite every
@@ -744,7 +745,7 @@ slice again spans many small chunks. **Additive-only and re-chunking are a
 package**, and `optimise` must run *last* so every rewritten array gets the 1 MB
 layout.
 
-Two further traps from the same rebuild:
+The `h2afva_51tp` rebuild exposed two further traps:
 
 - **Don't stop at `flatten`.** A bare flat leaf loses the ladder entirely; the
   target is a leaf *plus* rungs (`lod --recipe stream`), which is what
