@@ -560,6 +560,11 @@ splats; the in-repo `sha256` generation flattens to 6,896,619 / 7,093,383 /
 cap, so the overflow shows as a Hilbert-contiguous clean-edged hole that reads
 as missing data. There, parts stop being optional and become load-bearing.
 
+Do not try to confirm that by opening the tile: it renders **whole** on a
+developer Mac, because a Metal `maxTextureSize=16384` path caps at 16,777,216
+rather than 4,194,304. A clean render on your own hardware carries no information
+about the floor — see 3.16.
+
 So the check before flattening is arithmetic, not a run: a `kind=lod` group
 contributes only its finest child, a `kind=partition` sums its parts,
 `additive_N` rungs are deltas that re-partition the level's own content, so never
@@ -622,85 +627,100 @@ is another node, so the ladder costs requests without buying a faster first
 paint — the same accounting trap as counting nodes instead of bytes, one level
 down.
 
-### 3.16 Before accepting a numeric match as a mechanism, ask what else produces that number
+### 3.16 State the window before you read the number, and check it is longer than the phenomenon
 
-This is the lesson from the most expensive wrong turn in this campaign, and it
-supersedes the narrower versions in 3.10.
+The most expensive error in this campaign was not a wrong mechanism. It was a
+**phenomenon that did not exist**, and two mechanisms invented across three
+sessions to explain it.
 
-`gsplats_2d_cmu1_pathology`'s live tile commits **10,295,708** of its store's
-**20,591,415** elements — exactly 50.0% — with `isLoading` stuck true, no console
-warning, and half the data unreachable on a tile that renders plausibly.
+#### The false observation
 
-A per-node-element-cap explanation predicted that figure **to the unit**, with
-every channel independently at 50%:
+`gsplats_2d_cmu1_pathology`'s live tile appeared to commit **10,295,708** of its
+store's **20,591,415** elements — exactly 50.0%, per channel — with `isLoading`
+stuck true, no console error, and half the data apparently unreachable. It was
+called unpublishable, held from a wave, filed as an open problem, and handed to a
+second session as evidence for an unbounded-loop hazard.
 
-    channel        rung size    committed    leaf total    share
-    gsplats_red    1,724,155    3,448,310     6,896,619    50.0%
-    gsplats_green  1,773,346    3,546,692     7,093,383    50.0%
-    gsplats_blue   1,650,353    3,300,706     6,601,413    50.0%
-                                10,295,708   20,591,415    50.0%
+#### What is actually true
 
-Three different leaf totals, three different archive sizes, one exact total. That
-looked over-determined. **It was one constraint counted three times.** Every
-channel has 4 rungs, so *any* rule that stops after level 1 yields 50.0% in all
-three and reproduces the total. The only free parameter is the stopping level
-index, and it is 2 under every candidate.
+    Progressive: 4/4 LODs loaded (7093383 splats) — complete   @ 63,442ms
+    Progressive: 4/4 LODs loaded (6601413 splats) — complete   @ 64,183ms
+    Progressive: 4/4 LODs loaded (6896619 splats) — complete   @ 67,864ms
 
-**The real mechanism is the streaming policy**, verified in
-`data/loaders/progressive/streaming-policy.ts`:
+    totalElements  20,591,415      isLoading  false
+    progress lines 12 total, 0.18/s
 
-```ts
-export function shouldStopAfterLevel(kind, level, startLevel, allResident, elapsedMs) {
-  if (kind !== 'refine') return false;
-  return level > startLevel && (!allResident || elapsedMs > CACHE_HIT_THRESHOLD_MS);
-}
-```
+Every channel reaches 4/4. The three sum to 20,591,415 — the whole store. It
+completes in about 68 seconds. Nothing is truncated, nothing stalls, and at
+0.18 lines/s nothing spins.
 
-`CACHE_HIT_THRESHOLD_MS = 15`. Its docstring: *"at the first cold (cache-miss) or
-slow level past the ≥1-level first-paint floor — so the frame renders and a later
-pass continues."* On a cold load a `refine` pass takes level 0 (the floor), takes
-level 1, and stops because level 1 missed or took over 15 ms. Two of four. **The
-element cap appears nowhere in that path.**
+#### Why the number looked real
 
-So the symptom is a *refinement-resumption* problem — "a later pass continues"
-never happening on a static scene with no camera interaction — not a capacity
-problem. Which means it can affect **any laddered node on a cold cache**, not just
-this demo, and matters more than a cmu1 quirk.
+The gap between the last level-1 line (41,750 ms) and the first completion
+(63,442 ms) is **21.7 seconds of silence**. The probe declared the total "settled"
+after three identical samples at 5 s intervals — **15 seconds**.
 
-Three practical rules out of it:
+**15 < 21.7.** The measurement stopped inside a quiet period mid-load and reported
+a snapshot as a terminal state. `isLoading: true` was not a symptom; it was the
+literal truth.
 
-- **Ask what else produces the number.** A one-parameter alternative reproduced
-  this one exactly, and nobody looked for one until after the conclusion was
-  written.
-- **Repeated agreement across items is not independent evidence** when the items
-  share the structure that generates the number. Four rungs each means one degree
-  of freedom, not three.
-- **Let the code state its own reason.** Re-probed with a grep aimed at the
-  loader instead of at the hypothesis, the live tile says it outright:
+#### Why it survived so long
 
-        LOD 0/3: 1724155 splats  (5347.0ms, miss)
-        LOD 1/3: 1724155 splats (43392.6ms, miss)
-        Progressive: 2/4 LODs loaded (3448310 splats) - refining
+- **The artifact was stable and reproducible.** Two independent probe runs agreed
+  to the unit, because both shared the 15 s settle rule. Reproducibility measured
+  the rule, not the system.
+- **It was quantitatively beautiful.** 50.0% in every channel, across three
+  different leaf totals, matching a cap prediction exactly. That is what bought it
+  credibility — and the exactness came from all three channels having 4 rungs, so
+  any stop after level 1 yields 50% everywhere. Three "independent" confirmations
+  were one constraint counted three times.
+- **The search terms encoded the hypothesis.** The first grep set was
+  `clamp|truncat|exceed|capacity|MAX_SPLATS`. The answer was in
+  `Progressive: 4/4 … — complete`, which that set structurally could not match. A
+  filter built from a theory can only ever confirm it.
 
-  `, miss` appears iff `allResident` was false, and every level is 5-43 SECONDS
-  against a 15 ms threshold, so both stop conditions fire. The original grep set
-  (`clamp|truncat|exceed|capacity|MAX_SPLATS`) was built from the hypothesis and
-  so structurally could not match the answer - it could only ever confirm.
+#### The rules
 
-#### What still holds
+1. **Fix the observation window before looking at the result, and justify it
+   against the expected duration of the thing being measured.** Twelve rungs at
+   the 10–26 s per level actually observed is minutes; a 15 s settle rule and even
+   a 180 s cap are both inside that range.
+2. **"Stopped changing" is not "finished."** Prefer a terminal signal the system
+   emits (`— complete`, `isLoading: false`) over inferring one from a stationary
+   number.
+3. **A stable artifact is not a real effect.** If two runs agree, check they do not
+   share a stopping rule, a cache, or a filter.
+4. **Grep for what the code says, not for what you suspect.** Loaders, policies and
+   compilers usually log their own reason; find that string first.
 
-- **An additive ladder does not bound the committed set.** A prefix converges to
-  100% of the leaf, so laddering is never a remedy for an over-cap node — only a
-  partition, or a hidden axis to slice on, reduces what is resident.
-- **The authoring guard sees the wrong quantity.**
-  `warn_if_over_element_cap` fires per written group, so for a laddered leaf it is
-  handed each rung's ~1.7M `n_splats` and stays correctly quiet while the
-  accumulated leaf is 1.6x over; the graft path has no call at all. The call is
-  right, the quantity is wrong. Sum a ladder before comparing to the cap.
-- **cmu1's archives are genuinely over cap**: flat 2D leaves of 6,896,619 /
-  7,093,383 / 6,601,413 against 4,194,304, with no hidden axis. If the ladder ever
-  did complete, the node would exceed it — so they still want partitioning,
-  just not for the reason first given and not urgently.
+#### What genuinely survived
+
+- **The load is slow for an ordinary reason**: the store is 20,591,415 splats,
+  roughly **113 MB**, delivered in ~68 s — about **13 Mbps**. That is a large
+  download, not a defect. A request-count explanation was considered and
+  **measured false**: the published store has **508 chunks at ~1024 KB** (the
+  `archive` profile's 1 MB target), against **50,316 chunks at 1.0–2.7 KB** in the
+  upstream `.gsplats.zarr` archives. `optimise --profile archive` does re-chunk
+  grafted subtrees, so the archives' fragmentation never reaches a published tile.
+  It does still hit whoever downloads those archives directly — a demo build pays
+  38 MB in 16,852 pieces — which is an authoring-side fix worth making upstream.
+- **The cap risk is real, and a clean render does not test it.** Each channel is
+  6.6M–7.1M splats with no hidden axis. It renders whole on this Mac — but the
+  probe launches `--use-angle=metal`, where `maxTextureSize` is 16384, giving a
+  gsplats cap of `4096 x 16384 / 4 = 16,777,216`. 6.9M is comfortably under *that*.
+  `constants.py` is explicit: *"maxTextureSize is a GPU property (16384 on modern
+  desktop, 4096 on the conservative floor), so the only bound an AUTHOR can rely on
+  is the 4096-class one."* So **a clean render on developer hardware is the
+  expected observation and carries no information about the floor** — on a
+  4096-class GPU the same node clamps and loses a Hilbert-contiguous wedge
+  (#1957 erased the North Atlantic by clamping 2.3% of a Lines node). Never
+  validate a cap question on one GPU class.
+- **The authoring guard sees the wrong quantity.** `warn_if_over_element_cap` is
+  handed each rung's ~1.7M `n_splats` while the accumulated leaf is 1.6x over the
+  floor, and the graft path has no call at all.
+- **An additive ladder still never bounds the committed set** — a prefix converges
+  to 100% of the leaf. Only a partition, or a hidden axis to slice on, reduces
+  what is resident.
 
 ## 4. Cloudflare configuration
 
