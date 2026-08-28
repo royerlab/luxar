@@ -329,6 +329,27 @@ def add_lines_impl(
             # dtype and bounds and then reshapes to pairs, so a malformed edge
             # list is silently reinterpreted there (or dies on a raw reshape).
             validate_line_indices_before_split(indices, n_vertices, line_type)
+            if (
+                additive_lod is not None
+                and additive_lod is not False
+                and line_type == "indexed"
+                and indices is not None
+            ):
+                from ..lod.lines import indexed_components_are_chains
+
+                if not indexed_components_are_chains(
+                    n_vertices,
+                    np.asarray(indices, dtype=np.intp).reshape(-1, 2),
+                ):
+                    raise ValueError(
+                        f"'{name}': line_type='indexed' cannot take an additive "
+                        "ladder unless every connected component is a simple path "
+                        "in ascending vertex order — the streaming writer rebuilds "
+                        "edges by chaining each component in that order, so a "
+                        "branching, cyclic or out-of-order component would gain "
+                        "invented edges and lose real ones. Pass additive_lod=False "
+                        "to write this node without a ladder."
+                    )
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
@@ -1089,20 +1110,6 @@ def add_lines_substitutive_lod_wrapper_impl(
     )
     from ..lod.lines import indexed_components_are_chains, resolve_additive_axis_lines
 
-    # Indexed lines carry an explicit edge list the additive multi-LOD writer
-    # discards (see lod/lines.py::_indexed_connected_components) — it rebuilds
-    # one by chaining each component in ascending vertex order. That is faithful
-    # exactly when every component already IS an ascending simple path, so TEST
-    # the data rather than refusing the whole line_type: real tractography and
-    # streamline sets qualify, and used to lose their ladder for nothing.
-    indexed_ladder_unsafe = line_type == "indexed" and not (
-        indices is not None
-        and indexed_components_are_chains(
-            int(vert_arr.shape[0]),
-            np.asarray(indices, dtype=np.intp).reshape(-1, 2),
-        )
-    )
-
     # Resolve the streaming ladder ONCE for the whole group; each level is
     # specialized from it below. Default ON — a substitutive level is by
     # construction the largest node in the scene and the last one loaded.
@@ -1124,7 +1131,15 @@ def add_lines_substitutive_lod_wrapper_impl(
                 f"line_type={line_type!r} has a component that is not a simple "
                 "path in ascending vertex order, so the ladder would invent edges"
             )
-            if indexed_ladder_unsafe
+            if additive_lod is not False
+            and line_type == "indexed"
+            and not (
+                indices is not None
+                and indexed_components_are_chains(
+                    int(vert_arr.shape[0]),
+                    np.asarray(indices, dtype=np.intp).reshape(-1, 2),
+                )
+            )
             else None
         ),
     )

@@ -283,10 +283,9 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
     So for ``geometry="lines"`` this returns the STRING form, which is the one
     whose unit matches the ``n`` a caller naturally has. The cost is that the
     string form is a plain doubling ladder — its last increment approaches ``n/2``
-    rather than being capped. That is fine up to a few million vertices (at
-    1.8M it is under the 900,000 ceiling) and both Lines demos using this are far
-    below that; a much larger Lines leaf would want capped cuts expressed in
-    polylines instead.
+    rather than being capped. The largest increment first exceeds the 900,000
+    ceiling at 2,149,985 vertices, and both Lines demos using this are far below
+    that; a larger Lines leaf needs capped cuts expressed in polylines instead.
 
     Args:
         n: Element count of the leaf — points for ``"points"``, VERTICES for
@@ -299,7 +298,8 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
         :meth:`Group.add_lines`.
 
     Raises:
-        ValueError: ``geometry`` is neither ``"points"`` nor ``"lines"``.
+        ValueError: ``geometry`` is neither ``"points"`` nor ``"lines"``, or a
+            Lines leaf is too large for the uncapped vertex-count string form.
     """
     if geometry not in ("points", "lines"):
         raise ValueError(
@@ -321,6 +321,12 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
         DEFAULT_BANDWIDTH_MBPS,
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
     )
+    if geometry == "lines" and n >= 2_149_985:
+        raise ValueError(
+            "Lines streaming ladders exceed the 900,000-vertex commit ceiling "
+            f"at n >= 2,149,985; got {n:,}. Supply capped polyline-count cuts "
+            "for this leaf instead."
+        )
     counts: Any = (
         f"stream:{first_chunk}"
         if geometry == "lines"

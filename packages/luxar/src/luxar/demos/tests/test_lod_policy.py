@@ -799,6 +799,12 @@ class TestStreamLadder:
         assert spec["counts"] == "stream:39062"
         assert isinstance(spec["counts"], str)
 
+    def test_lines_refuse_the_first_size_whose_increment_breaks_the_cap(self) -> None:
+        with pytest.raises(ValueError, match="n >= 2,149,985"):
+            stream_ladder(2_149_985, geometry="lines")
+
+        assert stream_ladder(2_149_984, geometry="lines")["counts"] == "stream:39062"
+
     def test_points_and_lines_do_not_return_the_same_shape(self) -> None:
         assert isinstance(stream_ladder(500_000)["counts"], list)
         assert isinstance(stream_ladder(500_000, geometry="lines")["counts"], str)

@@ -192,12 +192,15 @@ def capped_stream_cuts(
         Strictly increasing cumulative cuts ending at ``n``.
 
     Raises:
-        ValueError: ``chunk`` or ``max_commit`` is not positive.
+        ValueError: ``n``, ``chunk``, or ``max_commit`` is not positive.
     """
+    if n < 1:
+        raise ValueError(f"n must be >= 1; got {n}")
     if chunk < 1:
         raise ValueError(f"chunk must be >= 1; got {chunk}")
     if max_commit < 1:
         raise ValueError(f"max_commit must be >= 1; got {max_commit}")
+    chunk = min(chunk, max_commit)
     if n <= chunk:
         return [n]
     cuts: List[int] = []

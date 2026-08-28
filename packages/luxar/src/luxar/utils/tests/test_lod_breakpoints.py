@@ -125,7 +125,17 @@ class TestCappedStreamCuts:
     def test_n_at_or_below_chunk_is_a_single_level(self) -> None:
         assert capped_stream_cuts(2_000) == [2_000]
         assert capped_stream_cuts(5) == [5]
-        assert capped_stream_cuts(0) == [0]
+
+    def test_first_chunk_is_clamped_to_the_commit_ceiling(self) -> None:
+        cuts = capped_stream_cuts(10_000_000, chunk=1_500_000, max_commit=900_000)
+        increments = [b - a for a, b in zip([0, *cuts], cuts)]
+        assert cuts[0] == 900_000
+        assert max(increments) <= 900_000
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_non_positive_n_raises(self, bad: int) -> None:
+        with pytest.raises(ValueError, match="n must be >= 1"):
+            capped_stream_cuts(bad)
 
     def test_a_small_max_commit_degenerates_to_equal_steps(self) -> None:
         # No geometric head survives when the cap is below the first chunk;

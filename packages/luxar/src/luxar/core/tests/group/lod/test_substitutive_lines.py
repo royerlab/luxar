@@ -557,7 +557,23 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
 
     def test_direct_additive_path_ladders_chain_shaped_data(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"
-        verts, indices = self._indexed_verts_and_edges()
+        n_paths, n_steps = 40, 8
+        verts = (
+            np.random.RandomState(0)
+            .normal(0, 20, (n_paths * n_steps, 3))
+            .astype(np.float32)
+        )
+        indices = np.concatenate(
+            [
+                np.column_stack(
+                    [
+                        np.arange(start, start + n_steps - 1),
+                        np.arange(start + 1, start + n_steps),
+                    ]
+                ).reshape(-1)
+                for start in range(0, len(verts), n_steps)
+            ]
+        )
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_lines(
@@ -566,11 +582,63 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
                 0.8,
                 line_type="indexed",
                 indices=indices,
-                additive_lod=dict(counts=[100, 300], method="random", seed=0),
+                additive_lod=dict(counts=[10, 30], method="random", seed=0),
             )
 
         grp = zarr.open(str(out), mode="r")["curves"]
         assert any(k.startswith("additive_") for k in grp.keys())
+        recovered = sum(
+            int(grp[key].attrs["n_segments"])
+            for key in grp.keys()
+            if key.startswith("additive_")
+        )
+        assert recovered == n_paths * (n_steps - 1)
+
+    def test_explicit_false_skips_the_indexed_topology_scan(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from luxar.core.group.lod import lines as lod_lines
+
+        def fail_if_called(*_args, **_kwargs):
+            raise AssertionError("indexed topology scan should have short-circuited")
+
+        monkeypatch.setattr(lod_lines, "indexed_components_are_chains", fail_if_called)
+        out = tmp_path / "t.luxar.zarr"
+        verts, indices = self._indexed_verts_and_edges(n_seg=30)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                verts,
+                0.8,
+                line_type="indexed",
+                indices=indices,
+                substitutive_lod=dict(
+                    compression_factor=2, levels=1, device="cpu", seed=0
+                ),
+                additive_lod=False,
+            )
+
+    def test_partitioned_additive_non_chain_fails_before_writing_parts(
+        self, tmp_path
+    ) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        verts, indices = self._forked_verts_and_edges(n_seg=40)
+        with pytest.raises(ValueError, match="'curves': line_type='indexed'"):
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_lines(
+                    "curves",
+                    verts,
+                    0.8,
+                    line_type="indexed",
+                    indices=indices,
+                    partition=dict(max_elements=20),
+                    additive_lod=dict(counts=[5, 10], method="random", seed=0),
+                )
+
+        root = zarr.open(str(out), mode="r")
+        assert "curves" not in root
 
     def test_real_tractography_index_layout_qualifies(self) -> None:
         # The third arm: the layout the demos actually build, straight from the
