@@ -208,8 +208,10 @@ nD navigation coalesces, so a host can drive it from a slider at frame rate:
 
 ```ts
 const t = layer.findDimension('time');
-layer.prefetchDimensionValue(t!, frame + 1); // warm the next slice
-void layer.setDimensionValue(t!, frame); // don't await during playback
+if (t !== null) {
+  layer.prefetchDimensionValue(t, frame + 1); // warm the next slice
+  void layer.setDimensionValue(t, frame); // don't await during playback
+}
 ```
 
 `alignTo(matrix)` places the data in the host's world space (for a host that

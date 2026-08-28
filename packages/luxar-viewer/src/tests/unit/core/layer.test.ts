@@ -355,6 +355,23 @@ describe('LuxarLayer', () => {
       expect(layer.root).toBe(second);
     });
 
+    it('detaches the previous root when a dataset switch fails', async () => {
+      // The failed switch has already disposed the previous SceneLoader, so
+      // retaining its root would expose geometry backed by dead resources.
+      const options = makeOptions();
+      const first = new THREE.Group();
+      loadSceneMock.mockImplementationOnce(async () => first);
+      loadSceneMock.mockRejectedValueOnce(new Error('dataset unavailable'));
+
+      const layer = new LuxarLayer(options);
+      await layer.load('http://example.test/a.zarr');
+      await expect(layer.load('http://example.test/b.zarr')).rejects.toThrow('dataset unavailable');
+
+      expect(options.scene.children).not.toContain(first);
+      expect(layer.root).toBeNull();
+      expect(layer.getBounds()).toBeNull();
+    });
+
     it('refuses a concurrent load rather than racing two loaders', async () => {
       // The second load's createLoaderAsync disposes the first's loader
       // mid-flight, and whichever resolves LAST wins the root slot — so the

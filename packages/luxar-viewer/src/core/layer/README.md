@@ -173,8 +173,10 @@ authored it, and the host's is a different one.
   resolves.
 - **A second `load()` is a dataset switch, and overlapping loads throw.** The
   previous root is detached, because `loadScene` has already disposed its loader
-  and leaving it attached would draw over disposed backing stores. Two
-  _concurrent_ loads cannot be resolved that way — the second's
+  and leaving it attached would draw over disposed backing stores. A failed
+  switch also detaches the previous root for the same reason, leaving the layer
+  empty until a later load succeeds. Two _concurrent_ loads cannot be resolved
+  that way — the second's
   `createLoaderAsync` disposes the first's loader mid-flight, and whichever
   resolves last wins the root slot — so `load()` refuses to start while another
   is in flight rather than silently producing dead geometry.

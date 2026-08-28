@@ -290,7 +290,18 @@ export class LuxarLayer {
   }
 
   private async loadInner(src: string): Promise<THREE.Group> {
-    const root = await loadScene(src, this.options.loaderConfig, LOADER_ID);
+    let root: THREE.Group;
+    try {
+      root = await loadScene(src, this.options.loaderConfig, LOADER_ID);
+    } catch (error) {
+      // A dataset switch destroys the previous loader before fetching the new
+      // scene. If that fetch fails, its old root is backed by dead resources.
+      if (this.rootGroup) {
+        this.options.scene.remove(this.rootGroup);
+        this.rootGroup = null;
+      }
+      throw error;
+    }
     // A dispose() that lands mid-load must not leave either the group or the
     // loader alive. dispose() waits for this cleanup before dropping globals.
     if (this.disposed) {
