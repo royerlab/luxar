@@ -173,8 +173,7 @@ def scan_repository(
         try:
             runs_payload = read_api(endpoint)
             runs = _object_list(runs_payload, "workflow_runs")
-            if len(runs) == 100:
-                result.truncated = True
+            result.truncated = result.truncated or len(runs) == 100
         except (ApiError, ValueError) as error:
             result.error = {"scope": "runs", "detail": str(error)}
             return result
