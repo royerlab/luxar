@@ -25,6 +25,7 @@ from luxar.demos._lod_policy import (
     TREE_RECIPES,
     DemoRecipe,
     save_with_lod,
+    stream_ladder,
 )
 
 #: How a demo may read a cached artifact back. ``GSplatData.load`` flattens and
@@ -757,3 +758,64 @@ def test_the_pre_lod_return_detector_catches_the_shape_it_is_meant_to() -> None:
         assert _returns_the_prelod_fit(source, f"bad {shape}.py") == ["result"]
     assert _returns_the_prelod_fit(good, "good.py") == []
     assert _returns_the_prelod_fit(shadowed, "shadowed.py") == []
+
+
+# ─────────────────────────────────────────────────────────────────────
+# stream_ladder — the Points/Lines half of the policy
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestStreamLadder:
+    """The ladder spec a Points/Lines leaf shown whole carries.
+
+    Two properties are load-bearing and neither is self-evident from the call
+    site, which is why they are pinned here rather than left to the demos.
+    """
+
+    def test_the_first_rung_is_the_download_budget_not_a_zarr_chunk(self) -> None:
+        # 39,062 = 200 ms at 25 Mbps and 16 B/element. NOT desi's 2,000, which is
+        # sized to land an eager coarsest SUBSTITUTIVE level in one zarr chunk; an
+        # additive-only leaf has no coarse level, so its first rung IS first
+        # paint, and at 2,000 the demos' group counts do not fall at all.
+        counts = stream_ladder(6_248_730)["counts"]
+        assert counts[0] == 39_062
+
+    def test_increments_stay_capped_for_points(self) -> None:
+        from luxar.utils.lod_breakpoints import DEFAULT_MAX_ADDITIVE_COMMIT
+
+        for n in (1_153_506, 3_000_000, 6_248_730, 9_874_128):
+            counts = stream_ladder(n)["counts"]
+            increments = [b - a for a, b in zip([0, *counts], counts)]
+            assert max(increments) <= DEFAULT_MAX_ADDITIVE_COMMIT, n
+            assert counts[-1] == n
+
+    def test_lines_get_the_string_form_because_the_units_differ(self) -> None:
+        # THE TRAP: on add_lines an explicit `counts` LIST is in POLYLINES while
+        # "stream:<c>" is in VERTICES. A vertex-sized list therefore clamps to the
+        # polyline count and writes NO rungs — silently. Measured: 4,000 polylines
+        # x 27 vertices with counts=[39062, 78124, 108000] produced 0 rungs, while
+        # "stream:39062" produced 3. So the Lines spelling must be the string.
+        spec = stream_ladder(318_078, geometry="lines")
+        assert spec["counts"] == "stream:39062"
+        assert isinstance(spec["counts"], str)
+
+    def test_points_and_lines_do_not_return_the_same_shape(self) -> None:
+        assert isinstance(stream_ladder(500_000)["counts"], list)
+        assert isinstance(stream_ladder(500_000, geometry="lines")["counts"], str)
+
+    def test_method_and_seed_are_pinned_so_a_rebuild_reproduces(self) -> None:
+        for spec in (stream_ladder(500_000), stream_ladder(500_000, geometry="lines")):
+            assert spec["method"] == "random"
+            assert spec["seed"] == 0
+
+    def test_an_unknown_geometry_raises_rather_than_guessing(self) -> None:
+        # Guessing would silently pick the wrong UNIT, which is the failure this
+        # parameter exists to prevent.
+        with pytest.raises(ValueError, match="must be 'points' or 'lines'"):
+            stream_ladder(1000, geometry="gsplats")
+
+    def test_a_leaf_below_the_first_rung_collapses_to_one_level(self) -> None:
+        # Not a defect: a node smaller than one first-paint chunk has nothing to
+        # stream. NPC relies on this, since `_validate_counts` clamps the shared
+        # spec to each part's own count.
+        assert stream_ladder(1_000)["counts"] == [1_000]

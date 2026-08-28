@@ -203,7 +203,7 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 
-def stream_ladder(n: int) -> dict[str, Any]:
+def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
     """The additive ladder a Points/Lines leaf shown whole should carry.
 
     The Points/Lines counterpart of choosing ``stream`` above. Those adders take
@@ -232,13 +232,49 @@ def stream_ladder(n: int) -> dict[str, Any]:
     capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``
     and would block the main thread on these leaves.
 
+    LINES SPELL THIS DIFFERENTLY, AND THE UNITS DISAGREE
+    ----------------------------------------------------
+
+    On ``add_lines`` an explicit ``counts`` list is in **POLYLINES**, while
+    ``"stream:<c>"`` is in **VERTICES** (the writer converts each vertex target
+    to the first whole-polyline boundary that reaches it, because a ladder can
+    only cut on polyline boundaries without breaking segment topology).
+
+    That asymmetry fails SILENTLY in the direction you would hit by accident.
+    Measured on 4,000 polylines x 27 vertices = 108,000 vertices: a vertex-sized
+    list ``[39062, 78124, 108000]`` exceeds the 4,000 polylines, so
+    ``_validate_counts`` clamps every entry to 4,000, collapses the ladder to one
+    level, and writes **no rungs at all** — no error, no warning. The same node
+    with ``"stream:39062"`` gets three rungs of 39,069 / 39,069 / 29,862
+    vertices. (``scripts/check_demo_ladders.py`` is the only thing that catches
+    the silent case, and only above 200,000.)
+
+    So for ``geometry="lines"`` this returns the STRING form, which is the one
+    whose unit matches the ``n`` a caller naturally has. The cost is that the
+    string form is a plain doubling ladder — its last increment approaches ``n/2``
+    rather than being capped. That is fine up to a few million vertices (at
+    1.8M it is under the 900,000 ceiling) and both Lines demos using this are far
+    below that; a much larger Lines leaf would want capped cuts expressed in
+    polylines instead.
+
     Args:
-        n: Element count of the leaf, in its own currency (points or vertices).
+        n: Element count of the leaf — points for ``"points"``, VERTICES for
+            ``"lines"``.
+        geometry: ``"points"`` or ``"lines"``. Selects the spelling, because the
+            two are not interchangeable (above).
 
     Returns:
         A spec for ``additive_lod=`` on :meth:`Group.add_points` /
         :meth:`Group.add_lines`.
+
+    Raises:
+        ValueError: ``geometry`` is neither ``"points"`` nor ``"lines"``.
     """
+    if geometry not in ("points", "lines"):
+        raise ValueError(
+            f"geometry must be 'points' or 'lines'; got {geometry!r} "
+            "(the two spell their ladder in different units)"
+        )
     from luxar.core.group.lod.group import (
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
         DEFAULT_LADDER_TARGET_MS,
@@ -254,8 +290,13 @@ def stream_ladder(n: int) -> dict[str, Any]:
         DEFAULT_BANDWIDTH_MBPS,
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
     )
+    counts: Any = (
+        f"stream:{first_chunk}"
+        if geometry == "lines"
+        else capped_stream_cuts(int(n), first_chunk)
+    )
     return {
-        "counts": capped_stream_cuts(int(n), first_chunk),
+        "counts": counts,
         # `random` is the house default and the right reveal for a density cloud:
         # a random prefix reads as a sparser version of the whole. The
         # spatial-uniform sampler walks a doubling grid over the BOUNDING BOX,
