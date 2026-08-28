@@ -497,6 +497,16 @@ describe('SceneLoader', () => {
       const firstFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
       const secondFault = new ArchiveFaultError('archive still unavailable', 'scene.zip');
       const listener = vi.fn();
+      const releaseShadows = vi.fn();
+      (sceneLoader as any)._slicePrefetcher = {
+        prefetch: vi.fn(),
+        releaseShadows,
+        dispose: vi.fn(),
+      };
+      const internals = sceneLoader as unknown as {
+        registry: { recordFailure(path: string, error: Error): void };
+      };
+      internals.registry.recordFailure('/lazy-failure', new Error('archive request failed'));
       sceneLoader.onArchiveFault(listener);
       const ctx = (
         sceneLoader as unknown as { makeNodeBuildCtx(): Record<string, unknown> }
@@ -512,6 +522,8 @@ describe('SceneLoader', () => {
       expect(listener).toHaveBeenCalledWith(firstFault);
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledWith(firstFault.message, { persistent: true });
+      expect(sceneLoader.hasFailures()).toBe(false);
+      expect(releaseShadows).toHaveBeenCalledOnce();
     });
 
     it('drains a superseded waiter when an archive fault stops the active pass', async () => {

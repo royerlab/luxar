@@ -489,6 +489,8 @@ export class SceneLoader {
   private reportArchiveFault(fault: ArchiveFaultError): void {
     if (this._archiveFault) return;
     this._archiveFault = fault;
+    this.releasePrefetchResources();
+    this.registry.clearAllFailures();
     log.error(Modules.SCENE_LOADER, `Archive fault: ${fault.message}`);
     notifier.error(fault.message, { persistent: true });
     this.notifyArchiveFault(fault);
@@ -1064,8 +1066,6 @@ export class SceneLoader {
       ]);
 
       if (sweepArchiveFault) {
-        this.releasePrefetchResources();
-        this.registry.clearAllFailures();
         this.reportArchiveFault(sweepArchiveFault);
       }
 
