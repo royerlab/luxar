@@ -27,8 +27,8 @@ importers:
         specifier: ^0.8.3
         version: 0.8.3
       mediabunny:
-        specifier: ^1.55.1
-        version: 1.55.1
+        specifier: ^1.55.2
+        version: 1.55.2
       three:
         specifier: ~0.185.1
         version: 0.185.1
@@ -1423,8 +1423,8 @@ packages:
   mdurl@2.0.0:
     resolution: {integrity: sha512-Lf+9+2r+Tdp5wXDXC4PcIBjTDtq4UKjCPMQhKIuzpJNW0b96kVqSwW0bT7FhRSfmAiFYgP+SCRvdrDozfh0U5w==}
 
-  mediabunny@1.55.1:
-    resolution: {integrity: sha512-JDdTEUOw9g6Ey8eWc2Ei63GmRGtGTJoE56SE7CHikwzS8i9xpsWcve4bEiUw47d4j49L3r7MXDFsH/5oZIhjBw==}
+  mediabunny@1.55.2:
+    resolution: {integrity: sha512-EEx4O6qYddAdCyWPMZNDwI7uc5hewNHrPAf9jLcVhIbXoPsiqNQ+D9i1pfadmGkjN2V318jSrZljkpoziYm6Lg==}
 
   meshoptimizer@1.1.1:
     resolution: {integrity: sha512-oRFNWJRDA/WTrVj7NWvqa5HqE1t9MYDj2VaWirQCzCCrAd2GHrqR/sQezCxiWATPNlKTcRaPRHPJwIRoPBAp5g==}
@@ -3039,7 +3039,7 @@ snapshots:
 
   mdurl@2.0.0: {}
 
-  mediabunny@1.55.1:
+  mediabunny@1.55.2:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13
