@@ -4,11 +4,12 @@
  * `loadGSplatsNode`); for each group node create a `THREE.Group`,
  * apply its transform if present, and recurse into its children.
  *
- * Each leaf call is wrapped in `loadLeafNode` so a single failing node
- * doesn't sink the whole scene — its siblings still render. The
- * placeholder pattern (each leaf attaches an empty placeholder to
- * parentThree *before* fetching data) makes the failure recoverable
- * through `retryFailedLoader`.
+ * Each leaf call is wrapped in `loadLeafNode` so a single failing node doesn't
+ * sink the whole scene — its siblings still render. Archive container faults
+ * remain fatal because no sibling backed by the same store can recover. The
+ * placeholder pattern (each leaf attaches an empty placeholder to parentThree
+ * *before* fetching data) makes leaf-local failures recoverable through
+ * `retryFailedLoader`.
  */
 
 import * as THREE from 'three';

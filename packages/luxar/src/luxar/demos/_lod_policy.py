@@ -30,6 +30,67 @@ rather than data.
 A recipe costlier than ``stream`` is only worth choosing if the demo's SCENE can
 carry it, and that depends on which adder the demo builds with — see
 :data:`TOPOLOGY_PRESERVING_ADDERS`.
+
+CHOOSING: one object, viewed whole, under the cap -> ``stream``
+---------------------------------------------------------------
+
+The default should be ``stream``, and the burden of proof is on anything
+costlier. All three qualifiers below are load-bearing; drop any one and the
+answer can flip.
+
+**one object** — nothing to frustum-cull. Parts exist so the viewer can skip
+geometry that is off-screen. A compact specimen that is always fully in frame
+has none, so a partition buys nothing and costs a request per node to bootstrap.
+Measured (2026-08-26): first paint was **63 requests** for a single stacked leaf
+(8 nodes) against **689** for a ``kind=partition`` of 44 parts x 4 levels x 4
+rungs (704 nodes) — ~15-18x, like-for-like on chunking. Note the scaling is
+SUBLINEAR (88x the nodes, ~16x the requests), so halving a node count does not
+halve the cost.
+
+**viewed whole** — the LOD selector is screen-occupancy based, so at a full-frame
+view the FINEST substitutive level is what shows. Coarse levels are then bytes
+nobody fetches. They earn their keep only where the object is genuinely small on
+screen. Two live exceptions in this repo, and they are different from each other:
+
+* the two 2D pathology slides keep ``adaptive`` because they are panned and
+  zoomed, so most tiles are off-screen most of the time — which is what PARTS
+  are for;
+* ``milky_way_dust`` keeps ``levels`` because the galaxy is orbited at range as
+  well as inspected close up, so a coarse level really is selected and really is
+  fetched — which is what LEVELS are for. It pays +39% (7.88 -> 10.97 MB) on
+  purpose.
+
+``cryoem_virus`` is the counter-example: a single compact particle, always
+full-frame, so its coarse levels were never selected and it moved to ``stream``
+for a 28% saving when regenerated. Publishing that regenerated archive remains
+tracked in #1879.
+
+**under the cap** — ``MAX_SPLATS_PER_GSPLATS_NODE`` is 4,194,304 resident on a
+4096-class GPU (8.38M at 8192). Above it the viewer reports the clamp at load
+time and drops the tail; because storage is Hilbert-ordered that tail is one
+contiguous lobe: a clean-edged hole rather than noise. **Only the RESIDENT slice
+counts**, so an nD node sliced on a hidden axis is measured per-slice — a
+500-timepoint node at ~165k splats/frame is 25x under the cap despite holding
+82M in total. For a STATIC object above the cap, parts stop being a distraction
+and become load-bearing. The compiler also warns on the node total rather than
+the resident slice, so that warning is expected for a sliced nD node that
+satisfies the runtime limit.
+
+Measured cost of the alternatives, same flat fit, same knobs:
+
+    cryoem_virus   1.01M splats   levels 16 nodes 16.03 MB -> stream 4 nodes 11.50 MB  (-28%)
+    milkyway_dust  0.67M splats   levels 16 nodes 10.97 MB -> stream 4 nodes  7.88 MB  (-28%)
+    droso 4D leaf  (3-frame proto)  +49% for levels, +9% for a partition-per-timepoint
+
+The partition figure is the sharpest: on a time-stacked node it bought
+*nothing*, because the writer already lexsorts by the time barrier and so gives
+per-timepoint chunk locality with no partition at all.
+
+ONE CAVEAT that comes with ``stream``: a flat store needs re-chunking or
+scrubbing gets WORSE, not better. Measured on a 4D leaf, per timepoint step:
+**173 requests as-built, 2 after ``luxar optimise --profile archive``** — the
+as-built figure is worse than a partitioned store's re-chunked 12. Additive-only
+and re-chunking are a package.
 """
 
 from __future__ import annotations

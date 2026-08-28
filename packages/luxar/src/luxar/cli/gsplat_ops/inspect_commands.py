@@ -56,7 +56,36 @@ _IMPORTANT_FITTING_KEYS = (
 )
 
 
-def _print_fitting_value(key: str, value: Any) -> None:
+def _part_provenance_depth(records: list[Any]) -> int:
+    depth = 1
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        fitting = record.get("fitting")
+        nested = fitting.get("part_provenance") if isinstance(fitting, dict) else None
+        if isinstance(nested, list):
+            depth = max(depth, 1 + _part_provenance_depth(nested))
+    return depth
+
+
+def _print_fitting_value(
+    key: str, value: Any, *, show_full_provenance: bool = False
+) -> None:
+    if (
+        key == "part_provenance"
+        and isinstance(value, list)
+        and not show_full_provenance
+    ):
+        depth = _part_provenance_depth(value)
+        if depth == 3:
+            suffix = ", nested channels × timepoints"
+        elif depth > 1:
+            suffix = f", nested component records ({depth} levels)"
+        else:
+            suffix = ""
+        part_word = "part" if len(value) == 1 else "parts"
+        aprint(f"  {key}: {len(value)} {part_word}{suffix}")
+        return
     if isinstance(value, float):
         aprint(f"  {key}: {value:.6f}")
     else:
@@ -152,6 +181,63 @@ def _print_statistics_table(data: "np.ndarray", label: str) -> None:
             aprint(f"  {key:<10s}: {value:>12.6f}")
 
 
+def _normalized_amplitude_cdf(amplitudes: "np.ndarray") -> "Optional[np.ndarray]":
+    """Return the descending amplitude CDF with a non-saturating accumulator."""
+    import numpy as np
+
+    sorted_amplitudes = np.sort(amplitudes)[::-1]
+    cumulative = np.cumsum(sorted_amplitudes, dtype=np.float64)
+    total = cumulative[-1]
+    if total <= 0:
+        return None
+    cumulative /= total
+    return cumulative
+
+
+def _print_dataset_metadata(
+    stats: dict[str, Any],
+    source_grid_keys: tuple[str, ...],
+    *,
+    show_full_provenance: bool,
+) -> None:
+    """Print metadata, excluding stats already reported by the source-grid block."""
+    aprint("\n" + "─" * 70)
+    aprint("METADATA")
+    aprint("─" * 70)
+
+    displayed_keys = set()
+    for key in _IMPORTANT_FITTING_KEYS:
+        if key in stats:
+            _print_fitting_value(
+                key,
+                stats[key],
+                show_full_provenance=show_full_provenance,
+            )
+            displayed_keys.add(key)
+
+    # The source-volume block already reported its own keys (and RECOMPUTED
+    # voxels/splat from the stored splats), so re-dumping them here would quote
+    # one quantity twice with two different numbers. Only the keys it actually
+    # reported are suppressed: when that block bailed out (no `source_shape`)
+    # it returns nothing and the stamps still surface here.
+    remaining = set(stats) - displayed_keys - set(source_grid_keys)
+    if remaining:
+        aprint("\nAdditional Metadata:")
+        for key in sorted(remaining):
+            if key not in ["movie_frames", "movie_shape", "config", "provenance"]:
+                value = stats[key]
+                if key == "part_provenance":
+                    _print_fitting_value(
+                        key,
+                        value,
+                        show_full_provenance=show_full_provenance,
+                    )
+                elif isinstance(value, (dict, list)):
+                    aprint(f"  {key}: {type(value).__name__} with {len(value)} items")
+                else:
+                    aprint(f"  {key}: {value}")
+
+
 def info_dataset(
     path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
@@ -161,6 +247,11 @@ def info_dataset(
     ),
     bins: int = typer.Option(
         40, "--bins", "-b", help="Number of bins for histograms", min=10, max=100
+    ),
+    full_provenance: bool = typer.Option(
+        False,
+        "--full-provenance",
+        help="Print the complete nested fitting/part_provenance record",
     ),
 ) -> None:
     """Show detailed information about a Gaussian splat dataset.
@@ -184,15 +275,20 @@ def info_dataset(
         # More detailed histograms
         luxar gsplat info dataset.gsplats.zarr.zip --bins 60
 
+        # Print the complete nested per-part fitting record
+        luxar gsplat info dataset.gsplats.zarr.zip --full-provenance
+
     Args:
         path: Path to .gsplats.zarr or compressed archive
         show_histograms: Whether to display ASCII histograms
         bins: Number of bins for histogram plots
+        full_provenance: Whether to print the complete nested component record
     """
     try:
         import numpy as np
 
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.utils.alpha import effective_amplitudes
 
         with asection(f"Loading dataset: {path.name}"):
             try:
@@ -213,7 +309,7 @@ def info_dataset(
                     aprint(f"❌ {load_exc}")
                     raise typer.Exit(1) from None
                 # Valid v3.0 partition/nested tree → report its shape.
-                _print_gsplat_tree_summary(path)
+                _print_gsplat_tree_summary(path, show_full_provenance=full_provenance)
                 return
             n_splats = len(data.amplitudes)
             ndim = data.centers.shape[1]
@@ -269,17 +365,17 @@ def info_dataset(
         aprint(f"\nTotal Amplitude: {total_amp:.4e}")
 
         # Top contributors
-        sorted_amps = np.sort(data.amplitudes)[::-1]
-        cumsum = np.cumsum(sorted_amps)
-        cumsum_norm = cumsum / cumsum[-1]
+        cumsum_norm = _normalized_amplitude_cdf(effective_amplitudes(data))
 
         # Find how many splats contribute to 50%, 90%, 95%, 99%
-        for threshold in [0.50, 0.90, 0.95, 0.99]:
-            n_contrib = np.searchsorted(cumsum_norm, threshold) + 1
-            pct = (n_contrib / n_splats) * 100
-            aprint(
-                f"  Top {n_contrib:,} splats ({pct:.1f}%) contribute {threshold * 100:.0f}% of total amplitude"
-            )
+        if cumsum_norm is not None:
+            for threshold in [0.50, 0.90, 0.95, 0.99]:
+                n_contrib = np.searchsorted(cumsum_norm, threshold) + 1
+                pct = (n_contrib / n_splats) * 100
+                aprint(
+                    f"  Top {n_contrib:,} splats ({pct:.1f}%) contribute "
+                    f"{threshold * 100:.0f}% of total rendered amplitude (A·α)"
+                )
 
         if show_histograms:
             aprint(
@@ -331,40 +427,11 @@ def info_dataset(
         # Metadata
         # ================================================================
         if data.stats:
-            aprint("\n" + "─" * 70)
-            aprint("METADATA")
-            aprint("─" * 70)
-
-            # Display important metadata
-            displayed_keys = set()
-            for key in _IMPORTANT_FITTING_KEYS:
-                if key in data.stats:
-                    _print_fitting_value(key, data.stats[key])
-                    displayed_keys.add(key)
-
-            # Display remaining metadata. The source-volume block above already
-            # reported its own keys (and RECOMPUTED voxels/splat from the stored
-            # splats), so re-dumping them here would quote one quantity twice with
-            # two different numbers. Only the keys it actually reported are
-            # suppressed: when that block bailed out (no `source_shape`) it
-            # returns nothing and the stamps still surface here.
-            remaining = set(data.stats.keys()) - displayed_keys - set(source_grid_keys)
-            if remaining:
-                aprint("\nAdditional Metadata:")
-                for key in sorted(remaining):
-                    if key not in [
-                        "movie_frames",
-                        "movie_shape",
-                        "config",
-                        "provenance",
-                    ]:
-                        value = data.stats[key]
-                        if isinstance(value, (dict, list)):
-                            aprint(
-                                f"  {key}: {type(value).__name__} with {len(value)} items"
-                            )
-                        else:
-                            aprint(f"  {key}: {value}")
+            _print_dataset_metadata(
+                data.stats,
+                source_grid_keys,
+                show_full_provenance=full_provenance,
+            )
 
         # ================================================================
         # Summary
@@ -379,7 +446,11 @@ def info_dataset(
         aprint(f"✓ Mean splat volume ({truncate:g}σ): {np.mean(volumes):.4e}")
 
         # Pruning recommendation
-        n_for_95pct = np.searchsorted(cumsum_norm, 0.95) + 1
+        n_for_95pct = (
+            np.searchsorted(cumsum_norm, 0.95) + 1
+            if cumsum_norm is not None
+            else n_splats
+        )
         if n_for_95pct < n_splats * 0.5:  # If less than 50% needed for 95%
             removable = n_splats - n_for_95pct
             pct_removable = (removable / n_splats) * 100
@@ -962,7 +1033,9 @@ def _print_normalization_block(root: Any) -> None:
         aprint(f"  {key}: {value}")
 
 
-def _print_gsplat_tree_summary(path: Path) -> None:
+def _print_gsplat_tree_summary(
+    path: Path, *, show_full_provenance: bool = False
+) -> None:
     """Report the node-tree shape of a partition / nested .gsplats.zarr.
 
     These have no flat ``GSplatData`` (``gsplat info``'s normal path), so we
@@ -1025,10 +1098,18 @@ def _print_gsplat_tree_summary(path: Path) -> None:
             displayed_keys = set()
             for key in _IMPORTANT_FITTING_KEYS:
                 if key in fitting:
-                    _print_fitting_value(key, fitting[key])
+                    _print_fitting_value(
+                        key,
+                        fitting[key],
+                        show_full_provenance=show_full_provenance,
+                    )
                     displayed_keys.add(key)
             for key in sorted(set(fitting) - displayed_keys):
-                _print_fitting_value(key, fitting[key])
+                _print_fitting_value(
+                    key,
+                    fitting[key],
+                    show_full_provenance=show_full_provenance,
+                )
         _print_normalization_block(root)
     finally:
         if tmp is not None and tmp.exists():
