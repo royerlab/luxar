@@ -7,6 +7,8 @@ it loads data from Zarr stores served over HTTP.
 
 ![Luxar viewer interface overview](../../images/docs/viewer-ui-overview.png)
 
+To follow along without installing anything, open a scene on the live demo gallery at [demos.luxarviewer.dev](https://demos.luxarviewer.dev). Every panel and shortcut described below is available there apart from the Dataset Browser, which requires a data server that can list directories. The same viewer is deployed standalone at [luxarviewer.dev](https://luxarviewer.dev), which takes any reachable archive as `?src=<url>`.
+
 ## Launching the Viewer
 
 There are three common ways to open the viewer:
