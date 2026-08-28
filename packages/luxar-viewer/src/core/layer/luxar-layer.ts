@@ -112,6 +112,7 @@ import {
   setDepthSortEnabled,
   evaluateDepthSortPerFrame,
   warmUpDepthSortWorker,
+  releaseDepthSortNode,
   disposeDepthSort,
 } from '../../rendering/depth-sort-coordinator';
 import { disposeWorkerPool } from '../../workers/worker-pool';
@@ -297,7 +298,7 @@ export class LuxarLayer {
       // A dataset switch destroys the previous loader before fetching the new
       // scene. If that fetch fails, its old root is backed by dead resources.
       if (this.rootGroup) {
-        this.options.scene.remove(this.rootGroup);
+        this.detachRoot(this.rootGroup);
         this.rootGroup = null;
       }
       throw error;
@@ -313,7 +314,7 @@ export class LuxarLayer {
     // previous SceneLoader, so leaving the old group attached would keep the
     // host drawing geometry over disposed backing stores.
     if (this.rootGroup && this.rootGroup !== root) {
-      this.options.scene.remove(this.rootGroup);
+      this.detachRoot(this.rootGroup);
     }
 
     this.options.scene.add(root);
@@ -683,6 +684,15 @@ export class LuxarLayer {
     this.options.requestRender?.();
   }
 
+  private detachRoot(root: THREE.Group): void {
+    root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      releaseDepthSortNode(object);
+      object.geometry.dispose();
+    });
+    this.options.scene.remove(root);
+  }
+
   private configureBlendWarmup(): void {
     const renderer = isWebGLRenderer(this.options.renderer) ? this.options.renderer : null;
     configureBlendModeProgramWarmup({
@@ -753,7 +763,7 @@ export class LuxarLayer {
     if (this.inFlightDimUpdate) await this.inFlightDimUpdate;
 
     if (this.rootGroup) {
-      this.options.scene.remove(this.rootGroup);
+      this.detachRoot(this.rootGroup);
       this.rootGroup = null;
     }
     this.pendingMatrix = null;

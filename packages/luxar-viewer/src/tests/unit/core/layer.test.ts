@@ -137,12 +137,14 @@ const configureDepthSort = vi.fn();
 const setDepthSortEnabled = vi.fn();
 const evaluateDepthSortPerFrame = vi.fn();
 const warmUpDepthSortWorker = vi.fn();
+const releaseDepthSortNode = vi.fn();
 const disposeDepthSort = vi.fn();
 vi.mock('../../../rendering/depth-sort-coordinator', () => ({
   configureDepthSort: (...a: unknown[]) => configureDepthSort(...a),
   setDepthSortEnabled: (...a: unknown[]) => setDepthSortEnabled(...a),
   evaluateDepthSortPerFrame: () => evaluateDepthSortPerFrame(),
   warmUpDepthSortWorker: () => warmUpDepthSortWorker(),
+  releaseDepthSortNode: (mesh: THREE.Mesh) => releaseDepthSortNode(mesh),
   disposeDepthSort: () => disposeDepthSort(),
 }));
 
@@ -342,7 +344,15 @@ describe('LuxarLayer', () => {
       // attached keeps the host drawing over disposed backing stores.
       const options = makeOptions();
       const first = new THREE.Group();
+      const nested = new THREE.Group();
+      const oldMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      const disposeGeometry = vi.spyOn(oldMesh.geometry, 'dispose');
+      const disposeMaterial = vi.spyOn(oldMesh.material, 'dispose');
+      nested.add(oldMesh);
+      first.add(nested);
       const second = new THREE.Group();
+      const liveMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      second.add(liveMesh);
       loadSceneMock.mockImplementationOnce(async () => first);
       loadSceneMock.mockImplementationOnce(async () => second);
 
@@ -353,6 +363,10 @@ describe('LuxarLayer', () => {
       expect(options.scene.children).toContain(second);
       expect(options.scene.children).not.toContain(first);
       expect(layer.root).toBe(second);
+      expect(releaseDepthSortNode).toHaveBeenCalledWith(oldMesh);
+      expect(releaseDepthSortNode).not.toHaveBeenCalledWith(liveMesh);
+      expect(disposeGeometry).toHaveBeenCalledTimes(1);
+      expect(disposeMaterial).not.toHaveBeenCalled();
     });
 
     it('detaches the previous root when a dataset switch fails', async () => {
@@ -360,6 +374,9 @@ describe('LuxarLayer', () => {
       // retaining its root would expose geometry backed by dead resources.
       const options = makeOptions();
       const first = new THREE.Group();
+      const oldMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      const disposeGeometry = vi.spyOn(oldMesh.geometry, 'dispose');
+      first.add(oldMesh);
       loadSceneMock.mockImplementationOnce(async () => first);
       loadSceneMock.mockRejectedValueOnce(new Error('dataset unavailable'));
 
@@ -370,6 +387,8 @@ describe('LuxarLayer', () => {
       expect(options.scene.children).not.toContain(first);
       expect(layer.root).toBeNull();
       expect(layer.getBounds()).toBeNull();
+      expect(releaseDepthSortNode).toHaveBeenCalledWith(oldMesh);
+      expect(disposeGeometry).toHaveBeenCalledTimes(1);
     });
 
     it('refuses a concurrent load rather than racing two loaders', async () => {
@@ -1029,6 +1048,13 @@ describe('LuxarLayer', () => {
   describe('dispose', () => {
     it('detaches the root and tears down the process singletons', async () => {
       const options = makeOptions();
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      const disposeGeometry = vi.spyOn(mesh.geometry, 'dispose');
+      loadSceneMock.mockImplementationOnce(async () => {
+        const root = new THREE.Group();
+        root.add(mesh);
+        return root;
+      });
       const layer = new LuxarLayer(options);
       await layer.load('http://example.test/scene.zarr');
 
@@ -1042,6 +1068,8 @@ describe('LuxarLayer', () => {
       expect(disposeMaterials).toHaveBeenCalled();
       expect(disposeWorkerPool).toHaveBeenCalled();
       expect(disposeDepthSort).toHaveBeenCalled();
+      expect(releaseDepthSortNode).toHaveBeenCalledWith(mesh);
+      expect(disposeGeometry).toHaveBeenCalledTimes(1);
     });
 
     it('releases the host pipeline from blend warm-up on teardown', async () => {
