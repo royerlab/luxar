@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import zarr
 
 from luxar.demos.demo_cosmicflows_laniakea import (
@@ -51,6 +52,8 @@ def test_galaxy_keys_stay_aligned_with_basin_labels(tmp_path) -> None:
 
 
 def test_basin_streamlines_have_substitutive_lod(tmp_path) -> None:
+    pytest.importorskip("torch")
+    pytest.importorskip("scipy")
     galaxies = GalaxyData(
         positions=np.array([[0, 0, 0]], dtype=np.float32),
         basin_ids=np.array([1], dtype=np.int16),
@@ -83,9 +86,10 @@ def test_basin_streamlines_have_substitutive_lod(tmp_path) -> None:
     assert ladder.attrs["kind"] == "lod"
     assert ladder.attrs["display_type"] == "lines"
     assert ladder.attrs["default_level"] == 0
+    assert len(list(ladder.group_keys())) == 3
     coarsest = ladder["child_0"]
     assert coarsest.attrs["type"] == "gsplats"
-    finest = ladder[f"child_{len(list(ladder.group_keys())) - 1}"]
+    finest = ladder["child_2"]
     assert finest.attrs["type"] == "lines"
     assert finest.attrs["n_segments"] == 64
     assert coarsest.attrs["n_splats"] < finest.attrs["n_segments"]
