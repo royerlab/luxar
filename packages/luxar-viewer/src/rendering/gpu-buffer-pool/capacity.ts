@@ -71,9 +71,9 @@ const MAX_CAPACITY_HEADROOM = 262_144;
 /**
  * Choose the capacity to allocate for a buffer that needs to hold
  * `requested` instances. Grows by 1.5× to leave headroom for the next update
- * without a fresh grow — capped at {@link MAX_CAPACITY_HEADROOM} elements of
- * slack, so the factor does not scale into hundreds of wasted MiB on a very
- * large node — but never goes below `currentMinInstanceCapacity` (see
+ * without a fresh grow — capped at `MAX_CAPACITY_HEADROOM` elements of slack,
+ * so the factor does not scale into hundreds of wasted MiB on a very large
+ * node — but never goes below `currentMinInstanceCapacity` (see
  * `DEFAULT_MIN_INSTANCE_CAPACITY`).
  */
 export function chooseCapacity(requested: number): number {
