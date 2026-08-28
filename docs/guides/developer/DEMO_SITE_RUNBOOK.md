@@ -422,20 +422,27 @@ Three things follow for this site:
   housekeeping, touches no code, and changes no reviewable line. That is what
   makes this worth a runbook entry rather than a comment.
 
-**But 3.11's rule narrows the exposure sharply.** A refreshed archive can only
-restructure a scene where the demo *grafts* it. Eleven of the fourteen diverged
-datasets are loaded into `GSplatData` and re-added as flat arrays: their bytes
-and splat content can change, but the archive topology never reaches the scene.
-Three graft:
+**But 3.11's rule narrows the exposure by authoring path.** Four of the fourteen
+diverged datasets are loaded into `GSplatData` and re-added as raw arrays, so
+their bytes and splat content can change but their archive topology is
+discarded. Seven pass the `GSplatData` object to `add_gsplats_from_data`, which
+preserves additive rungs and lowers multiple substitutive levels into a
+`kind=lod` scene group. Three graft the artifact directly:
 
-| dataset | evidence |
+| authoring path | datasets |
 |---|---|
-| `gsplats_flylight_mcfo_63x` | `add_gsplats_from_file` grafts the laddered artifact |
-| `gsplats_cmu1_pathology` | grafts verbatim — its scene's 20,591,415 elements are exactly the sum of its three in-repo archives |
-| `desi_galaxies` | `extract_shipped_scene` installs the fully built scene |
+| re-add raw arrays | `gsplats_kidney`, `gsplats_cells3d`, `gsplats_ct_totalsegmentator`, `gsplats_visible_human_head` |
+| pass through `add_gsplats_from_data` | `gsplats_cryoem_virus`, `gsplats_milkyway_dust`, `gsplats_celegans`, `gsplats_dapi`, `gsplats_multichannel`, `gsplats_nexrad_supercell`, `gsplats_opencell_map4` |
+| graft artifact | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology`, `desi_galaxies` |
 
-So the armed set is **three**, not fourteen. Check the scene-build call
-before treating a divergence as a structural risk.
+Digest-confirmed copies show structural divergence for five pass-through
+datasets: `cryoem_virus` and `milkyway_dust` change from flat to four
+substitutive levels with additive rungs, while `dapi`, `multichannel`, and
+`opencell_map4` change from flat to additive ladders. Together with the three
+grafted datasets, the confirmed armed set is therefore **eight**. The hosted
+topology of `celegans` and `nexrad_supercell` remains unclassified; inspect a
+digest-confirmed copy before counting either one. Check the scene-build call as
+well as the archive before treating a divergence as a structural risk.
 
 #### Scope: this is not a cmu1 quirk
 
@@ -489,13 +496,14 @@ substitutive levels, children of `kind=partition` are parts) rather than from
 node-name patterns. And note that **no `kind` attr anywhere means flat, not
 unreadable** — the in-repo cmu1 generation is well-formed with zero kinds.
 
-### 3.11 Flattening an archive only cuts requests if the demo grafts it
+### 3.11 Flattening only cuts requests when archive topology reaches the scene
 
-Three authoring paths have different outcomes from the same archive change:
+Four authoring paths have different outcomes from the same archive change:
 
 | authoring call | effect of flattening the archive |
 |---|---|
 | load into `GSplatData`, then `scene.add_gsplats(...)` | archive topology is discarded; bytes and splat content can still change |
+| load into `GSplatData`, then `scene.add_gsplats_from_data(...)` | additive rungs and substitutive levels are lowered into the scene, so scene node count changes with the artifact |
 | `add_gsplats_from_file` or `extract_shipped_scene` | grafted scene node count changes with the artifact |
 | `save_with_lod(recipe=...)`, then graft that output | structure is authored locally by the recipe |
 
@@ -511,10 +519,13 @@ Applied to the current demo code:
   in cache (3.10): flat from the in-repo copy, partitioned + laddered from the
   hosted one. Flattening the hosted archives is a real win *and* collapses that
   divergence — but measure the generation before claiming either.
+- **`cryoem_virus`**, **`milkyway_dust`**, **`dapi`**, **`multichannel`**, and
+  **`opencell_map4`** pass `GSplatData` through, so their digest-confirmed hosted
+  ladders and levels become scene nodes rather than being flattened by the demo.
 
 So **split the claim per demo** before promising a load win. "Fewer nodes" and
-"fewer bytes" are different wins, only the grafting demos get the first, and
-some demos are already correct.
+"fewer bytes" are different wins; only paths that preserve archive topology get
+the first, and some demos are already correct.
 
 ## 4. Cloudflare configuration
 
