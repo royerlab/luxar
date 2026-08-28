@@ -408,6 +408,13 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
     real tractography and streamline sets qualify and used to lose their ladder
     for nothing.
 
+    When a component does NOT qualify, only the FINEST Lines child loses its
+    ladder; the synthesized coarse gsplat children still stream. An EXPLICITLY
+    requested ladder then raises a ``UserWarning``
+    (``test_explicit_additive_on_non_chain_warns_and_suppresses`` proves both
+    halves end-to-end); a default (omitted) one is skipped quietly, with no
+    warning.
+
     Both arms are driven end-to-end through a real indexed geometry node, so this
     proves the branch in ``adders/lines.py`` actually fires; the
     ``test_lod_group.py`` tests only hand-feed a reason string into
@@ -496,9 +503,15 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
     def test_explicit_additive_on_non_chain_warns_and_suppresses(
         self, tmp_path
     ) -> None:
+        # The negative arm: a fork cannot be chained faithfully, so the ladder is
+        # refused — but only on the FINEST Lines child. The exact message pins the
+        # topology reason together with the scoped outcome (coarse levels keep
+        # their ladder), and the store is checked to agree.
         out = tmp_path / "t.luxar.zarr"
         verts, indices = self._forked_verts_and_edges()
-        with pytest.warns(UserWarning, match="not a simple path in ascending"):
+        with pytest.warns(
+            UserWarning, match="not a simple path in ascending"
+        ) as caught:
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_lines(
@@ -510,8 +523,17 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
                     substitutive_lod=dict(
                         compression_factor=2, levels=1, device="cpu", seed=0
                     ),
-                    additive_lod={"counts": "stream:50"},
+                    additive_lod={"method": "radial", "counts": "stream:50"},
                 )
+
+        assert [str(warning.message) for warning in caught] == [
+            "'curves': the requested streaming ladder cannot be honoured "
+            "(line_type='indexed' has a component that is not a simple path in "
+            "ascending vertex order, so the ladder would invent edges); the "
+            "finest level will load all-at-once; coarse levels keep their ladder "
+            "where one applies. Coarse levels use self_energy ordering, so "
+            "reveal_centre is not applied."
+        ]
 
         grp = zarr.open(str(out), mode="r")["curves"]
         assert grp.attrs["kind"] == "lod"
@@ -524,6 +546,12 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
         # With additive_lod omitted, an unsafe node's ladder is skipped QUIETLY
         # (an aprint info line, NOT a UserWarning). The load-bearing assertion
         # here is the ABSENCE of a UserWarning (enforced by simplefilter below).
+        # At this vertex count (600 << the composed stream:39062-vertex default)
+        # BOTH the coarse and the finest ladders collapse to flat leaves, so
+        # `_assert_no_additive_ladder` is a build-sanity check and does not by
+        # itself prove suppression; the explicit sibling above
+        # (test_explicit_additive_on_non_chain_warns_and_suppresses) is what
+        # proves the coarse/finest policy split.
         out = tmp_path / "t.luxar.zarr"
         verts, indices = self._forked_verts_and_edges()
         with warnings.catch_warnings():

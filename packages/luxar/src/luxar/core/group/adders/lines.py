@@ -1160,8 +1160,12 @@ def add_lines_substitutive_lod_wrapper_impl(
         # ladder here is a no-op the builder would only warn about.
         else f"line_type={line_type!r} is a single polyline"
         if line_type in ("polyline", "loop")
-        # The additive writer rebuilds each indexed component as an ascending
-        # chain. Suppress only topologies for which that would change the edges.
+        # Indexed lines carry an explicit edge list the additive multi-LOD writer
+        # discards — it re-derives one by chaining each connected component in
+        # ascending vertex order (see lod/lines.py::_indexed_connected_components),
+        # which is faithful exactly when every component already IS an ascending
+        # simple path. So TEST the edge set rather than refusing every indexed
+        # node: only the components that would actually be corrupted are refused.
         else (
             f"line_type={line_type!r} has a component that is not a simple "
             "path in ascending vertex order, so the ladder would invent edges"
