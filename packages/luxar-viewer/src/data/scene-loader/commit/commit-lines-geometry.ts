@@ -119,11 +119,29 @@ export function commitLinesGeometry(
       // [0,count) is a strictly-no-worse prior than storage order for
       // the ≥1 frame until the re-sort dispatched by noteDepthSortCommit
       // below lands. Guards mirror the points/gsplats twins.
-      const preserveOrdering =
-        hadCommittedData &&
-        !attributesRebuilt &&
-        geometry === prevGeometry &&
-        prevCount === segmentCount;
+      // The same-buffer prior splits in two on the count.
+      //
+      // Equal count: keep the permutation verbatim (`preserveOrdering`).
+      //
+      // CHANGED count: hand the adapter the previous count so it can REBUILD
+      // the permutation over the new population (`repairSortedIndexForCount`)
+      // instead of falling back to storage order. This is the branch a
+      // timelapse actually takes — an nD re-slice changes the resident count
+      // at almost every step, so the equal-count guard alone never fired and
+      // every timepoint drew at least one unsorted frame. Under an
+      // order-dependent blending mode that reads as a flash per timepoint
+      // (#2290). Measured on the `cloud` demo at a frozen camera pose, as the
+      // fraction of sampled element pairs composited in correct back-to-front
+      // order: storage order 0.617, repaired 0.858, a real sort 1.000.
+      //
+      // The other three conjuncts are what make the buffer's contents
+      // meaningful at all, and are unchanged.
+      const sameBuffers = hadCommittedData && !attributesRebuilt && geometry === prevGeometry;
+      const preserveOrdering = sameBuffers && prevCount === segmentCount;
+      const repairFromCount =
+        sameBuffers && prevCount !== undefined && prevCount !== segmentCount
+          ? prevCount
+          : undefined;
       // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
       // merely EXTENDS the segment prefix already on the GPU, write & upload
       // only the new `[prevCount, segmentCount)` suffix. Clipping is an
@@ -172,6 +190,7 @@ export function commitLinesGeometry(
       try {
         gpuBufferPool.updateLinesGeometry(geometry, processed, segmentCount, {
           preserveOrdering,
+          repairFromCount,
           fromInstance: canAppend ? (prevCount ?? 0) : 0,
         });
       } catch (err) {

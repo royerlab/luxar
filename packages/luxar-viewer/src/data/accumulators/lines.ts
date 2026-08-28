@@ -3,7 +3,8 @@
  *
  * Implements persistent flat TypedArray buffers (NOT nested) matching
  * the `types/lines.ts` data shape. Widths are PER-VERTEX, not per-segment.
- * Grows by 1.5x; Uint8/Uint16/Float32 colors handled natively.
+ * Grows by 1.5x, never past the count needed (`./growth.ts`);
+ * Uint8/Uint16/Float32 colors handled natively.
  *
  * The loader's deep-integration LOADING path writes directly to these
  * buffers and returns zero-copy subarrays from `getData()`.
@@ -12,6 +13,7 @@
 import type { LoadedLinesData } from '../../types/lines';
 import { log, Modules } from '../../utils/log';
 import type { DataAccumulator, AccumulatorStats } from './types';
+import { nextCapacity } from './growth';
 
 export type { AccumulatorStats } from './types';
 
@@ -256,10 +258,9 @@ export class LinesDataAccumulator implements DataAccumulator<
 
     // Grow vertices if needed (widths grow with vertices!)
     if (neededVertices > this.vertexCapacity) {
-      let newVertexCap = this.vertexCapacity;
-      while (newVertexCap < neededVertices) {
-        newVertexCap = Math.ceil(newVertexCap * 1.5);
-      }
+      // 1.5x amortised growth, clamped to the count actually needed — see
+      // `nextCapacity` for why the repeated-multiply loop overshot.
+      const newVertexCap = nextCapacity(this.vertexCapacity, neededVertices);
 
       log.info(
         Modules.DATA_ACCUMULATOR,
@@ -319,10 +320,7 @@ export class LinesDataAccumulator implements DataAccumulator<
 
     // Grow segments if needed (only segment indices, not widths!)
     if (neededSegments > this.segmentCapacity) {
-      let newSegmentCap = this.segmentCapacity;
-      while (newSegmentCap < neededSegments) {
-        newSegmentCap = Math.ceil(newSegmentCap * 1.5);
-      }
+      const newSegmentCap = nextCapacity(this.segmentCapacity, neededSegments);
 
       // Copy only the live prefix of segment-index pairs.
       const liveSegments = Math.min(this.usedSegmentCount, this.segmentCapacity);

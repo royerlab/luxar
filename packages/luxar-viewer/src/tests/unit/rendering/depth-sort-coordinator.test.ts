@@ -62,7 +62,16 @@ function makeMockApi(): MockApi {
 /** When true the mocked worker CONSTRUCTOR throws (CSP-blocked script). */
 let workerConstructThrows = false;
 
-async function loadCoordinator() {
+/**
+ * @param syncSortMaxElements - `config.depthSort.syncSortMaxElements` for this
+ *   coordinator instance. Defaults to **0** (synchronous first sort OFF)
+ *   because everything in this file was written to exercise the ASYNC worker
+ *   pipeline: a synchronous sort answers before the worker is even asked, so
+ *   it would pre-fill the ordering buffer that these tests read back as the
+ *   worker's output. The dedicated `synchronous first sort` block below turns
+ *   it on.
+ */
+async function loadCoordinator(syncSortMaxElements = 0) {
   vi.resetModules();
   terminatedWorkers.length = 0;
   transferCalls = [];
@@ -100,7 +109,12 @@ async function loadCoordinator() {
     },
   }));
 
-  return await import('../../../rendering/depth-sort-coordinator');
+  const coordinator = await import('../../../rendering/depth-sort-coordinator');
+  // `vi.resetModules()` above means this is the SAME fresh config instance the
+  // coordinator just imported, so mutating it here reaches it.
+  const { config } = await import('../../../config');
+  config.depthSort.syncSortMaxElements = syncSortMaxElements;
+  return coordinator;
 }
 
 /**
@@ -4817,5 +4831,228 @@ describe('depth-sort coordinator — starved init retry (issue #1694)', () => {
     expect(additive.userData.committedData).toBeDefined();
     expect(additive.userData.loadedViewVersion).toBe(11);
     expect(requestReprocess).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The synchronous first sort (#2290's flash).
+ *
+ * Every commit of an order-dependent node used to write a fallback ordering and
+ * then wait for the SortWorker — a Comlink round trip, so at least one frame
+ * rendered unsorted. Invisible on a one-off load; continuous during nD
+ * playback, where a commit lands at EVERY timepoint. On the `cloud` demo (4D
+ * Points, `volumetric` blending) that reached ~14 unsorted frames a second, and
+ * the fallback composited only 61.7% of sampled element pairs in correct
+ * back-to-front order against 100% for a real sort.
+ */
+describe('depth-sort coordinator — synchronous first sort', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** Farthest-first is the contract: ordering[0] is the most-negative view z. */
+  const CENTERS = new Float32Array([
+    0,
+    0,
+    -1, // element 0: nearest
+    0,
+    0,
+    -9, // element 1: farthest
+    0,
+    0,
+    -5, // element 2: middle
+  ]);
+  const EXPECTED_BACK_TO_FRONT = [1, 2, 0];
+
+  function activeOrdering(mesh: THREE.Mesh, count: number): number[] {
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    const slot = (geometry.userData.sortedIndexSlot as number | undefined) ?? 0;
+    const attr = geometry.getAttribute(slot === 0 ? 'aSortedIndex' : 'aSortedIndexB');
+    return Array.from((attr.array as Uint32Array).subarray(0, count));
+  }
+
+  /**
+   * Seed the ordering buffer with a value no permutation can produce, so
+   * "declined" is distinguishable from "wrote something that happens to look
+   * like the initial state". These coordinator unit tests call
+   * `noteDepthSortCommit` directly, bypassing the commit path — so a decline
+   * leaves the buffer UNTOUCHED rather than storage-ordered (writing storage
+   * order is the adapter's job, covered in `sorted-index-repair.test.ts`).
+   */
+  const SENTINEL = [77, 77, 77];
+  function seedSentinel(mesh: THREE.Mesh): void {
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    for (const name of ['aSortedIndex', 'aSortedIndexB']) {
+      (geometry.getAttribute(name).array as Uint32Array).set(SENTINEL, 0);
+    }
+  }
+
+  it('orders the buffer BEFORE the worker is asked — no unsorted frame', async () => {
+    const coord = await loadCoordinator(250_000);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(3, 'normal');
+    seedSentinel(mesh);
+
+    coord.noteDepthSortCommit(mesh, CENTERS.slice(), 3);
+
+    // No `await flush()`: this is the state of the buffer in the very frame the
+    // commit returns, which is the frame that used to flash.
+    expect(mockApi.sort).not.toHaveBeenCalled();
+    expect(activeOrdering(mesh, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
+  });
+
+  it('writes NOTHING with the synchronous path off (mutation guard)', async () => {
+    // The pre-fix behaviour: the commit leaves the ordering to the adapter's
+    // storage-order fallback and the worker, so this frame is unsorted. If this
+    // ever starts matching EXPECTED_BACK_TO_FRONT, the ceiling stopped gating.
+    const coord = await loadCoordinator(0);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(3, 'normal');
+    seedSentinel(mesh);
+
+    coord.noteDepthSortCommit(mesh, CENTERS.slice(), 3);
+
+    expect(activeOrdering(mesh, 3)).toEqual(SENTINEL);
+  });
+
+  it('declines above the configured element ceiling', async () => {
+    const coord = await loadCoordinator(2); // ceiling below the node's count
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(3, 'normal');
+    seedSentinel(mesh);
+
+    coord.noteDepthSortCommit(mesh, CENTERS.slice(), 3);
+
+    expect(activeOrdering(mesh, 3)).toEqual(SENTINEL);
+  });
+
+  it('still registers and still dispatches the async sort', async () => {
+    // The synchronous sort makes the FIRST frame correct; keeping the ordering
+    // current as the camera moves is still the pipeline's job, so its dispatch
+    // contract is deliberately unchanged.
+    const coord = await loadCoordinator(250_000);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(3, 'normal');
+
+    coord.noteDepthSortCommit(mesh, CENTERS.slice(), 3);
+    await flush();
+
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves a lazy centers provider exactly ONCE across both paths', async () => {
+    // The sort needs the centers, and so does the worker registration. Paying
+    // the O(N) copy twice per commit would be a real cost on a scrub.
+    const coord = await loadCoordinator(250_000);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(3, 'normal');
+    const provider = vi.fn(() => CENTERS.slice());
+
+    coord.noteDepthSortCommit(mesh, provider, 3);
+    await flush();
+
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not resolve an indexed mesh provider for a synchronous sort it cannot apply', async () => {
+    const coord = await loadCoordinator(250_000);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeIndexedMesh(3, 'normal');
+    const provider = vi.fn(() => CENTERS.slice());
+
+    coord.noteDepthSortCommit(mesh, provider, 3, sourceTriples(3));
+    await flush();
+
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+  });
+
+  it('spends at most one configured element budget per frame', async () => {
+    const coord = await loadCoordinator(3);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const first = makeGSplatsMesh(3, 'normal');
+    const second = makeGSplatsMesh(3, 'normal');
+    seedSentinel(first);
+    seedSentinel(second);
+
+    coord.evaluateDepthSortPerFrame();
+    coord.noteDepthSortCommit(first, CENTERS.slice(), 3);
+    coord.noteDepthSortCommit(second, CENTERS.slice(), 3);
+
+    expect(activeOrdering(first, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
+    expect(activeOrdering(second, 3)).toEqual(SENTINEL);
+
+    coord.evaluateDepthSortPerFrame();
+    coord.noteDepthSortCommit(second, CENTERS.slice(), 3);
+    expect(activeOrdering(second, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
+  });
+
+  it('restores the synchronous budget when the coordinator is disposed and reconfigured', async () => {
+    const coord = await loadCoordinator(3);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const first = makeGSplatsMesh(3, 'normal');
+    coord.evaluateDepthSortPerFrame();
+    coord.noteDepthSortCommit(first, CENTERS.slice(), 3);
+    expect(activeOrdering(first, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
+
+    coord.disposeDepthSort();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const afterReinit = makeGSplatsMesh(3, 'normal');
+    seedSentinel(afterReinit);
+    coord.noteDepthSortCommit(afterReinit, CENTERS.slice(), 3);
+
+    expect(activeOrdering(afterReinit, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
+  });
+
+  it('declines without throwing when the centers provider throws', async () => {
+    // Must land where it always did: the async path's outer catch, which owns
+    // the once-per-episode report.
+    const coord = await loadCoordinator(250_000);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(3, 'normal');
+    const provider = vi.fn(() => {
+      throw new Error('projection gone');
+    });
+
+    seedSentinel(mesh);
+    expect(() => coord.noteDepthSortCommit(mesh, provider, 3)).not.toThrow();
+    await flush();
+    expect(activeOrdering(mesh, 3)).toEqual(SENTINEL);
+  });
+
+  it('declines when no camera is configured yet', async () => {
+    const coord = await loadCoordinator(250_000);
+    coord.configureDepthSort({ getCamera: () => null, requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(3, 'normal');
+
+    seedSentinel(mesh);
+    expect(() => coord.noteDepthSortCommit(mesh, CENTERS.slice(), 3)).not.toThrow();
+    expect(activeOrdering(mesh, 3)).toEqual(SENTINEL);
+  });
+
+  it('does not sort an order-INDEPENDENT node', async () => {
+    const coord = await loadCoordinator(250_000);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(3, 'additive');
+
+    seedSentinel(mesh);
+    coord.noteDepthSortCommit(mesh, CENTERS.slice(), 3);
+
+    expect(activeOrdering(mesh, 3)).toEqual(SENTINEL);
+    expect(mockApi.registerNode).not.toHaveBeenCalled();
+  });
+
+  it('declines a provider that under-delivers rather than sorting garbage', async () => {
+    const coord = await loadCoordinator(250_000);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = makeGSplatsMesh(3, 'normal');
+
+    seedSentinel(mesh);
+    // Two elements' worth of centers for a three-element count.
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 0, 0, -9]), 3);
+
+    expect(activeOrdering(mesh, 3)).toEqual(SENTINEL);
   });
 });

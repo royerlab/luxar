@@ -3,7 +3,8 @@
  *
  * Persistent typed-array buffers for splat centers, amplitudes, packed
  * Cholesky factors (camelCase `choleskyFactors`), and RGB color. Grows
- * by 1.5×; Uint8/Uint16/Float32 colors handled natively.
+ * by 1.5×, never past the count needed (`./growth.ts`);
+ * Uint8/Uint16/Float32 colors handled natively.
  *
  * The loader's deep-integration LOADING path writes directly to these
  * buffers and returns zero-copy subarrays from `getData()`.
@@ -12,6 +13,7 @@
 import type { LoadedGSplatsData } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
 import type { DataAccumulator, AccumulatorStats } from './types';
+import { nextCapacity } from './growth';
 
 export type { AccumulatorStats } from './types';
 
@@ -151,10 +153,9 @@ export class GSplatsDataAccumulator implements DataAccumulator<
     this.assertNotDisposed('ensureCapacity');
     if (needed <= this.capacity) return false;
 
-    let newCapacity = this.capacity;
-    while (newCapacity < needed) {
-      newCapacity = Math.ceil(newCapacity * 1.5);
-    }
+    // 1.5x amortised growth, clamped to the count actually needed — see
+    // `nextCapacity` for why the repeated-multiply loop overshot.
+    const newCapacity = nextCapacity(this.capacity, needed);
 
     log.info(
       Modules.DATA_ACCUMULATOR,

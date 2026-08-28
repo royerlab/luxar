@@ -233,7 +233,7 @@ export class GPUBufferPool {
     geometry: THREE.InstancedBufferGeometry,
     data: LoadedPointsData,
     count: number,
-    options?: { preserveOrdering?: boolean; fromInstance?: number }
+    options?: { preserveOrdering?: boolean; repairFromCount?: number; fromInstance?: number }
   ): void {
     this.points.updateGeometry(geometry, data, count, options);
   }
@@ -269,7 +269,7 @@ export class GPUBufferPool {
     geometry: THREE.InstancedBufferGeometry,
     data: ProcessedLinesData,
     count: number,
-    options?: { preserveOrdering?: boolean; fromInstance?: number }
+    options?: { preserveOrdering?: boolean; repairFromCount?: number; fromInstance?: number }
   ): void {
     this.lines.updateGeometry(geometry, data, count, options);
   }
@@ -306,7 +306,7 @@ export class GPUBufferPool {
     data: PackedGSplatsData,
     count: number,
     truncationRadius: number = GSPLAT_DEFAULT_TRUNCATION_RADIUS,
-    options?: { preserveOrdering?: boolean; fromInstance?: number }
+    options?: { preserveOrdering?: boolean; repairFromCount?: number; fromInstance?: number }
   ): void {
     this.gsplats.updateGeometry(geometry, data, count, truncationRadius, options);
   }

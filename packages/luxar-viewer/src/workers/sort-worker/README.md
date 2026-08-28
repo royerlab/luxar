@@ -8,7 +8,7 @@ The SortWorker is a single **persistent** Comlink worker (NOT part of the round-
 
 **Why persistent?** Node registrations and their transferred center buffers must live in exactly one worker. The main thread transfers each order-dependent node's projected 3D centers to this worker on commit, and camera-driven re-sorts (Phase 3, main-thread `depth-sort-coordinator.ts`) keep requesting orderings from the SAME centers — no re-copy from the main thread.
 
-**Why dedicated?** Sorting lives exclusively here: never inside projection (the plain-3D projection fast path doesn't run in a worker at all) and never on the main thread.
+**Why dedicated?** Ongoing and camera-driven sorting lives exclusively here, never inside projection (the plain-3D projection fast path doesn't run in a worker at all). The first ordering after an eligible instanced commit may also be computed on the main thread within the shared `syncSortMaxElements` frame budget; indexed Mesh is excluded, and async registration plus all subsequent sorting remain in the worker.
 
 ## File Map
 
