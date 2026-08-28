@@ -25,6 +25,7 @@ from luxar.typing_utils.constants import (
 )
 from luxar.validation import ValidationError
 from luxar.validation.base import (
+    MAX_MESH_TEXTURE_SIZE,
     MESH_TEXTURE_DECODE_BUDGET_BYTES,
     validate_faces_for_writing,
     validate_mesh_decode_budget,
@@ -763,6 +764,27 @@ def test_decode_budget_accepts_the_largest_mesh_that_fits() -> None:
 
 def test_texture_budget_uses_the_shared_mesh_ceiling() -> None:
     assert MESH_TEXTURE_DECODE_BUDGET_BYTES == MESH_DECODE_BUDGET_BYTES
+
+
+def test_texture_budget_charges_ktx2_as_a_compressed_mip_chain() -> None:
+    largest = np.broadcast_to(
+        np.zeros((1, 1, 3), dtype=np.uint8),
+        (MAX_MESH_TEXTURE_SIZE, MAX_MESH_TEXTURE_SIZE, 3),
+    )
+
+    assert validate_texture_for_writing(largest, "ktx2") == (
+        MAX_MESH_TEXTURE_SIZE,
+        MAX_MESH_TEXTURE_SIZE,
+        3,
+    )
+    with pytest.raises(ValidationError, match="decodes to 1024 MiB"):
+        validate_texture_for_writing(
+            np.zeros(1, dtype=np.uint8),
+            "webp",
+            MAX_MESH_TEXTURE_SIZE,
+            MAX_MESH_TEXTURE_SIZE,
+            3,
+        )
 
 
 def test_decode_budget_charges_uvs_and_texture_together() -> None:
