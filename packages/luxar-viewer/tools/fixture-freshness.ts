@@ -2,8 +2,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   FIXTURES_REPO_RELATIVE_PATH,
@@ -17,30 +17,119 @@ const PROJECT_ROOT = resolve(VIEWER_ROOT, '../..');
 type FixtureGenerator = (scriptPath: string) => void;
 
 /**
- * Every Python file whose content can change what the generator writes.
+ * Wall-clock budget shared by import resolution and one generator run.
  *
- * The wide production set is deliberate: compiler behavior also depends on
- * root-level compatibility code and `core/`, not only `encoding/` and `io/`.
- * Test trees, `__pycache__`, and `conftest.py` cannot change a fixture byte and
- * are excluded so test-only edits do not trigger a costly regeneration.
+ * Measured: `generate_test_data.py` takes ~215 s on an M-series laptop, so the
+ * previous 120 s could not finish it — every regeneration was SIGTERM'd
+ * mid-write, leaving incomplete stores that hit the same wall on the next run
+ * because stamps are written only after success. The failure reads as
+ * `spawnSync ETIMEDOUT`, which looks like a hung shell rather than an
+ * unsurvivable budget.
+ *
+ * Import resolution and the first generator run may also create the separate
+ * ~1.2 GB `fixtures` Hatch environment. The 1,200 s default preserves the
+ * previous 600 s generation budget plus the same allowance for that one-time
+ * download/install. `LUXAR_FIXTURE_GEN_TIMEOUT_MS` overrides it without a
+ * source edit on a slower machine.
  */
+export const FIXTURE_GENERATOR_TIMEOUT_MS =
+  Number(process.env.LUXAR_FIXTURE_GEN_TIMEOUT_MS) || 1_200_000;
+
+// Hatch expands braces in command arguments; keep this program free of brace syntax.
+const IMPORT_CLOSURE_PROGRAM = `
+import json
+import sys
+from pathlib import Path
+
+from luxar.utils.source_fingerprints import imported_source_files
+
+project_root = Path(sys.argv[1]).resolve()
+generators = [Path(path) for path in sys.argv[2:4]]
+import_roots = tuple(Path(path) for path in sys.argv[4:])
+import_cache = dict()
+module_cache = dict()
+closures = [imported_source_files(generator, import_roots, within=project_root, import_cache=import_cache, module_cache=module_cache) for generator in generators]
+print(json.dumps([[path.relative_to(project_root).as_posix() for path in sources] for sources in closures]))
+`;
+
+interface FixtureImportClosures {
+  expectations: string[];
+  fixtures: string[];
+}
+
+const fixtureImportClosures = new Map<string, FixtureImportClosures>();
+
+/**
+ * Resolve fixture producer imports through Python so fixtures, demos, and
+ * examples share one staleness model instead of reimplementing it in TS.
+ * Static resolution cannot see string-built imports or non-Python inputs.
+ * `PROJECT_ROOT` owns the Hatch environment; `projectRoot` is the tree being
+ * fingerprinted and may be a temporary or symlinked checkout.
+ */
+function resolveFixtureImportClosures(
+  projectRoot: string = PROJECT_ROOT,
+  fixturesDir: string = resolve(projectRoot, FIXTURES_REPO_RELATIVE_PATH)
+): FixtureImportClosures {
+  const cacheKey = `${projectRoot}\0${fixturesDir}`;
+  const cached = fixtureImportClosures.get(cacheKey);
+  if (cached) return cached;
+
+  let output: string;
+  try {
+    output = execFileSync(
+      'hatch',
+      [
+        'run',
+        'fixtures:python',
+        '-c',
+        IMPORT_CLOSURE_PROGRAM,
+        projectRoot,
+        resolve(fixturesDir, 'generate_test_data.py'),
+        resolve(fixturesDir, 'generate_expectations.py'),
+        resolve(projectRoot, 'packages/luxar/src'),
+        fixturesDir,
+      ],
+      { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: FIXTURE_GENERATOR_TIMEOUT_MS }
+    );
+  } catch (error: unknown) {
+    if (error && typeof error === 'object' && (error as { code?: string }).code === 'ETIMEDOUT') {
+      throw new Error(
+        `Fixture import resolution exceeded the ${FIXTURE_GENERATOR_TIMEOUT_MS} ms budget. ` +
+          'Raise it with LUXAR_FIXTURE_GEN_TIMEOUT_MS if this machine is slower.',
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+
+  const encodedPaths = output.trim().split(/\r?\n/).at(-1);
+  const closures: unknown = JSON.parse(encodedPaths ?? '[]');
+  if (
+    !Array.isArray(closures) ||
+    closures.length !== 2 ||
+    closures.some(
+      (paths) => !Array.isArray(paths) || paths.some((path) => typeof path !== 'string')
+    )
+  ) {
+    throw new Error('Fixture import resolver returned an invalid source list');
+  }
+  const [fixturePaths, expectationPaths] = closures as string[][];
+  const resolved = {
+    fixtures: fixturePaths.map((path) => resolve(projectRoot, path)).sort(),
+    expectations: [...new Set([...fixturePaths, ...expectationPaths])]
+      .map((path) => resolve(projectRoot, path))
+      .sort(),
+  };
+  fixtureImportClosures.set(cacheKey, resolved);
+  return resolved;
+}
+
+/** Every local Python source reachable from the fixture generator's imports. */
 export function fixtureInputFiles(
   projectRoot: string = PROJECT_ROOT,
   fixturesDir: string = resolve(projectRoot, FIXTURES_REPO_RELATIVE_PATH)
 ): string[] {
-  const generatorPath = resolve(fixturesDir, 'generate_test_data.py');
-  const files = [generatorPath];
-  const sourceRoot = resolve(projectRoot, 'packages/luxar/src/luxar');
-  if (!existsSync(sourceRoot)) return files;
-  for (const entry of readdirSync(sourceRoot, { recursive: true }) as string[]) {
-    if (!entry.endsWith('.py')) continue;
-    const parts = entry.split(/[\\/]/);
-    if (parts.includes('tests') || parts.includes('__pycache__')) continue;
-    if (parts[parts.length - 1] === 'conftest.py') continue;
-    const full = join(sourceRoot, entry);
-    if (existsSync(full)) files.push(full);
-  }
-  return files.sort();
+  return [...resolveFixtureImportClosures(projectRoot, fixturesDir).fixtures];
 }
 
 /** Content digest of paths, including project-relative names so renames count. */
@@ -90,10 +179,10 @@ export function expectationsInputsFingerprint(
   projectRoot: string = PROJECT_ROOT,
   fixturesDir: string = resolve(projectRoot, FIXTURES_REPO_RELATIVE_PATH)
 ): string {
-  return hashFiles(projectRoot, [
-    ...fixtureInputFiles(projectRoot, fixturesDir),
-    resolve(fixturesDir, 'generate_expectations.py'),
-  ]);
+  return hashFiles(
+    projectRoot,
+    resolveFixtureImportClosures(projectRoot, fixturesDir).expectations
+  );
 }
 
 /**

@@ -71,8 +71,8 @@ const REQUIRED_DATASETS = [
  *     run, or a generator killed mid-write. Both are reported by name and both are fixed by
  *     rerunning the generator, so they are one check; `isGeneratedFixtureComplete` is what
  *     keeps an interrupted run's stump directory from passing as a fixture.
- *  2. **Generated but stale** — production Python or generator sources changed after the
- *     fixtures were written. Regenerating refreshes both the stores and their input stamp.
+ *  2. **Generated but stale** — a generator or local Python source reachable from its imports
+ *     changed after the fixtures were written. Regenerating refreshes the stores and stamp.
  *  3. **Generated but unreachable** — the data server is rooted somewhere other than the
  *     repository, so the specs' `/packages/luxar-viewer/tests/fixtures/...` URLs 404 even
  *     though the files exist. One HTTP probe settles this; probing all ~47 would add 47

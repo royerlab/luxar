@@ -26,7 +26,6 @@ from luxar.demos._support.runtime.provenance import (
 )
 from luxar.utils.source_fingerprints import (
     imported_source_files,
-    production_source_fingerprint,
 )
 
 
@@ -205,46 +204,6 @@ def test_real_demo_source_graph_includes_shared_scene_writers(
     source_names = {path.relative_to(package_root).as_posix() for path in sources}
 
     assert dependencies <= source_names
-
-
-def test_production_fingerprint_is_cached_across_demos(tmp_path: Path) -> None:
-    package_root = tmp_path / "luxar"
-    writer = package_root / "encoding/writer.py"
-    writer.parent.mkdir(parents=True)
-    writer.write_text("ENCODING_VERSION = 1\n")
-
-    production_source_fingerprint.cache_clear()
-    first = production_source_fingerprint(package_root)
-    second = production_source_fingerprint(package_root)
-
-    assert second == first
-    assert production_source_fingerprint.cache_info().hits == 1
-    assert production_source_fingerprint.cache_info().misses == 1
-
-
-def test_production_fingerprint_excludes_test_only_sources(tmp_path: Path) -> None:
-    package_root = tmp_path / "luxar"
-    writer = package_root / "encoding/writer.py"
-    test = package_root / "encoding/tests/test_writer.py"
-    conftest = package_root / "conftest.py"
-    writer.parent.mkdir(parents=True)
-    test.parent.mkdir(parents=True)
-    writer.write_text("ENCODING_VERSION = 1\n")
-    test.write_text("def test_writer(): pass\n")
-    conftest.write_text("PYTEST_ONLY = 1\n")
-
-    production_source_fingerprint.cache_clear()
-    before = production_source_fingerprint(package_root)
-    test.write_text("def test_writer(): assert False\n")
-    conftest.write_text("PYTEST_ONLY = 2\n")
-    production_source_fingerprint.cache_clear()
-
-    assert production_source_fingerprint(package_root) == before
-
-
-def test_missing_production_tree_has_no_fingerprint(tmp_path: Path) -> None:
-    production_source_fingerprint.cache_clear()
-    assert production_source_fingerprint(tmp_path / "missing") == ""
 
 
 def test_fingerprint_changes_with_zarr_format_environment(
