@@ -309,7 +309,9 @@ export class LuxarLayer {
     const pending = this.loadInner(src);
     this.inFlightLoad = pending;
     try {
-      return await pending;
+      const root = await pending;
+      this.installDatasetFaultLoader();
+      return root;
     } finally {
       if (this.inFlightLoad === pending) this.inFlightLoad = null;
     }
@@ -370,16 +372,6 @@ export class LuxarLayer {
     this.applyRenderOrder();
     this.configureBlendWarmup();
     await warmSceneBlendModePrograms(root);
-    if (this.disposed) return root;
-
-    const sceneLoader = getSceneLoader(LOADER_ID);
-    this.datasetFaultLoader = sceneLoader;
-    if (sceneLoader) {
-      this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
-        (error) => this.notifyDatasetFault(error),
-        { replayCurrent: true }
-      );
-    }
 
     log.info(Modules.LUXAR, `Layer loaded: ${src}`);
     return root;
@@ -889,6 +881,18 @@ export class LuxarLayer {
     this.datasetFaultUnsubscribe?.();
     this.datasetFaultUnsubscribe = null;
     this.datasetFaultLoader = null;
+  }
+
+  private installDatasetFaultLoader(): void {
+    if (this.disposed) return;
+    const sceneLoader = getSceneLoader(LOADER_ID);
+    this.datasetFaultLoader = sceneLoader;
+    if (sceneLoader) {
+      this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
+        (error) => this.notifyDatasetFault(error),
+        { replayCurrent: true }
+      );
+    }
   }
 
   private notifyDatasetFault(error: Error): void {
