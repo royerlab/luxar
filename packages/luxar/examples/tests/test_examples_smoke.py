@@ -36,6 +36,7 @@ import luxar.utils.paths as luxar_paths
 from luxar import LuxarScene
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent
+PREFLIGHT_RECORD_CEILING = 1_000_000
 
 HEAVY_EXAMPLES = frozenset(
     {
@@ -109,7 +110,7 @@ def test_temporal_spiral_sphere_stays_within_preflight_budget(
     assert module.N_FRAMES >= 32
     # 524,288 records measured at about 300 MiB RSS and 5-8 seconds; keep
     # enough headroom for a useful animation without returning to a stress fixture.
-    assert module.N_POINTS_PER_FRAME * module.N_FRAMES <= 1_000_000
+    assert module.N_POINTS_PER_FRAME * module.N_FRAMES <= PREFLIGHT_RECORD_CEILING
 
     module.main()
 
@@ -120,7 +121,7 @@ def test_temporal_spiral_sphere_stays_within_preflight_budget(
     point_records = points.positions.shape[0]
 
     assert point_records == module.N_POINTS_PER_FRAME * module.N_FRAMES
-    assert point_records <= 1_000_000
+    assert point_records <= PREFLIGHT_RECORD_CEILING
 
 
 @pytest.mark.parametrize("n_clusters", [8, 19, 20, 40])
@@ -240,6 +241,8 @@ def test_example_runs_and_writes_zarr(stem, redirected_examples_dir, monkeypatch
     module = _load_example(stem)
     if not hasattr(module, "main"):
         pytest.fail(f"{stem}.py has no top-level main() function")
+    if hasattr(module, "N_POINTS_PER_FRAME") and hasattr(module, "N_FRAMES"):
+        assert module.N_POINTS_PER_FRAME * module.N_FRAMES <= PREFLIGHT_RECORD_CEILING
 
     module.main()
 
