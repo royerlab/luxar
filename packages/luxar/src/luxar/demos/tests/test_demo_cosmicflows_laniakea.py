@@ -82,7 +82,10 @@ def test_basin_streamlines_have_substitutive_lod(tmp_path) -> None:
     ladder = root["Basin 1 streamlines"]
     assert ladder.attrs["kind"] == "lod"
     assert ladder.attrs["display_type"] == "lines"
-    assert ladder["child_0"].attrs["type"] == "gsplats"
+    assert ladder.attrs["default_level"] == 0
+    coarsest = ladder["child_0"]
+    assert coarsest.attrs["type"] == "gsplats"
     finest = ladder[f"child_{len(list(ladder.group_keys())) - 1}"]
     assert finest.attrs["type"] == "lines"
     assert finest.attrs["n_segments"] == 64
+    assert coarsest.attrs["n_splats"] < finest.attrs["n_segments"]
