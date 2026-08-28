@@ -352,6 +352,65 @@ For the normal size-control workflow, use the sanctioned `WEBM_CRF` or
 
 ---
 
+### 3.9 Every quality figure on a hosted archive predates its own fix
+
+`#1914` (2026-08-23) fixed five call sites that scored a fit against the **raw**
+volume, when a fit reconstructs `V - image_min`. Every currently hosted archive
+was stamped *before* that date, so **every hosted PSNR/SSIM figure is invalid**,
+in a direction that depends on each volume's pedestal and so cannot be corrected
+by arithmetic. Only a rebuilt archive carries a correct figure.
+
+Consequences for this site:
+
+- **Never read a quality figure off a hosted archive** to build a page, a note,
+  or a comparison. Re-measure with current code, against one materialised
+  reference volume.
+- **A figure is only comparable to another measured on the same side of
+  2026-08-23.** Comparing a pinned figure to a fresh one measures the scoring
+  change, not the data.
+- The public page is unaffected: no rendered field carries a quality figure
+  (`gen_landing.py` never reads `note`). The exposure is in the manifest `note`
+  fields, which are internal.
+
+**And the noise floor is larger than it looks.** Three identical rebuilds of one
+archive spread 0.08–0.35 dB with counts within ±0.3%. Treat anything under
+~0.4 dB as noise; a difference only means something above that.
+
+### 3.10 A docstring's claim about a remote artifact is not evidence
+
+`demo_gsplats_2d_cmu1_pathology.py` states its hosted archives "are still flat
+leaves". Measured, each channel archive carries **4,867 groups, 66 partition
+parts and 192 substitutive levels** — the most structured archives in the
+corpus. The docstring described an intent that the upload never matched, and
+stayed wrong because nothing re-checks it.
+
+The trap is that the sentence sits right next to the code that consumes the
+artifact, so it reads as authoritative. It describes a *remote* object; only the
+remote object is evidence. Derive topology from each group's declared `kind`
+(children of `kind=lod` are substitutive levels, children of `kind=partition`
+are parts) — **never from node-name patterns**, which disagree with the store's
+own declaration.
+
+### 3.11 Flattening an archive only cuts requests if the demo grafts it
+
+Two authoring paths, opposite outcomes from the same archive change:
+
+| authoring call | effect of flattening the archive |
+|---|---|
+| `add_gsplats_from_file` with **no** recipe — grafts archive shape | scene node count drops with the archive |
+| a declared `recipe=` — rebuilds structure locally | **download bytes only**; the scene re-creates its own structure |
+
+Measured on this corpus: `h2afva_timelapse` and `h2afva_stack` graft (so
+flattening is a real request win — 704→176 element nodes for the timelapse,
+41 parts→1 for the stack), while `cmu1_pathology` declares `recipe="adaptive"`
+and rebuilds, so its scene store is *already* flat (12 element nodes, 0 parts,
+0 substitutive levels, 12 additive rungs) while its archive ships 192
+substitutive levels. That combination is the worst case: the download pays for
+coarse copies that authoring immediately discards.
+
+So **split the claim per demo** before promising a load win. "Fewer nodes" and
+"fewer bytes" are different wins, and only the grafting demos get the first.
+
 ## 4. Cloudflare configuration
 
 ### 4.1 Cache rule on the data subdomain
