@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   EAGER_CHILD_LOAD_CONCURRENCY,
   loadChildrenConcurrently,
+  type LoadSceneChildren,
 } from '../../../../../data/scene-loader/nodes/load-children-concurrently';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
@@ -131,6 +132,24 @@ describe('loadChildrenConcurrently', () => {
     expect(started).toEqual(children.map((child) => child.path));
   });
 
+  it('releases a large child reservation when its load rejects', async () => {
+    const child = makeLineChildren(1, 1_000_000)[0];
+    const ctx = makeTestNodeBuildCtx();
+    const error = new Error('broken line load');
+
+    await expect(
+      loadChildrenConcurrently([child], new THREE.Group(), makeStubLoc(), ctx, async () => {
+        throw error;
+      })
+    ).rejects.toBe(error);
+
+    const reloaded: string[] = [];
+    await loadChildrenConcurrently([child], new THREE.Group(), makeStubLoc(), ctx, async (node) => {
+      reloaded.push(node.path);
+    });
+    expect(reloaded).toEqual([child.path]);
+  });
+
   it('shares the working-set budget across nested parent pools', async () => {
     const rootChildren = makeChildren(2);
     rootChildren[0].children = makeLineChildren(1, 1_000_000);
@@ -141,13 +160,9 @@ describe('loadChildrenConcurrently', () => {
     const ctx = makeTestNodeBuildCtx();
     const started: string[] = [];
     const releases: Array<() => void> = [];
-    const loadNode = async (
-      node: SceneNode,
-      parent: THREE.Object3D,
-      loc: ReturnType<typeof makeStubLoc>
-    ): Promise<void> => {
+    const loadNode: LoadSceneChildren = async (node, parent, loc): Promise<void> => {
       if (node.type === 'group') {
-        await loadChildrenConcurrently(node.children ?? [], parent, loc, ctx, loadNode as never);
+        await loadChildrenConcurrently(node.children ?? [], parent, loc, ctx, loadNode);
         return;
       }
       started.push(node.path);
@@ -159,7 +174,7 @@ describe('loadChildrenConcurrently', () => {
       new THREE.Group(),
       makeStubLoc(),
       ctx,
-      loadNode as never
+      loadNode
     );
 
     await vi.waitFor(() => expect(started).toHaveLength(1));
