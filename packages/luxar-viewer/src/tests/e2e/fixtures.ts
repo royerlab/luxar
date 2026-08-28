@@ -7,9 +7,9 @@
  * surface where console errors are the first symptom of regression.
  * This fixture moves that check into the harness, taken from Playwright's
  * own `console` / `pageerror` page events, so it runs whether the spec
- * author remembered or not. (67 specs today; 59 import `test` from here,
+ * author remembered or not. (71 specs today; 63 import `test` from here,
  * the other 8 import `@playwright/test` directly and get no teardown at
- * all. 42 of those 59 still make no explicit call of their own.)
+ * all. 45 of those 63 still make no explicit call of their own.)
  *
  * Specs that genuinely tolerate certain errors annotate the test:
  *
@@ -55,6 +55,7 @@
  */
 
 import { test as base } from '@playwright/test';
+import { EXAMPLE_DATASETS_STALE_ENV } from '../../../tools/example-fixture-freshness';
 
 /** Annotation type that opts a spec out of the auto console-error check. */
 export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
@@ -73,7 +74,7 @@ export interface CapturedConsoleError {
  * Console error patterns the auto-fixture treats as environmental
  * flakiness rather than test failures.
  *
- * The 59 of the 67 E2E specs that import `test` from here use this
+ * The 63 of the 71 E2E specs that import `test` from here use this
  * fixture; the other 8 import `@playwright/test` directly.
  * Specs that also make their own
  * explicit `assertNoConsoleErrors(page)` call keep
@@ -142,6 +143,14 @@ export function unexpectedConsoleErrors(
   return captured.filter((entry) => !allowed.some((pattern) => pattern.test(entry.text)));
 }
 
+export function staleExampleDatasetFailureWarning(
+  status: string | undefined,
+  examplesAreStale: boolean
+): string | undefined {
+  if (!examplesAreStale || (status !== 'failed' && status !== 'timedOut')) return undefined;
+  return 'Example datasets are stale. If this spec reads datasets/examples, run "make run-examples" from the repository root.';
+}
+
 /**
  * Extended `test` fixture: drop-in replacement for `@playwright/test`'s
  * `test`. Specs that import from this module get auto console-error
@@ -179,6 +188,12 @@ export const test = base.extend({
 
     try {
       await use(page);
+
+      const staleExamplesWarning = staleExampleDatasetFailureWarning(
+        testInfo.status,
+        process.env[EXAMPLE_DATASETS_STALE_ENV] === '1'
+      );
+      if (staleExamplesWarning) console.warn(`\n⚠️  ${staleExamplesWarning}\n`);
 
       // Skip the assertion if the spec opted out via annotation.
       const annotated = testInfo.annotations.some((a) => a.type === ALLOW_CONSOLE_ERRORS);
