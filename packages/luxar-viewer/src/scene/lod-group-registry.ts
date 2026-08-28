@@ -1002,19 +1002,23 @@ export class LODGroupRegistry {
 
   /**
    * Reopen anonymous lazy children whose archive-fault retry budget was
-   * exhausted. Retry-all is the only recovery surface that can address these
-   * unnamed placeholders, so clear their cooldown state as well to permit an
-   * immediate attempt. A repeated archive fault seeds a fresh bounded budget.
+   * exhausted. Connectivity restoration and Retry-all both reach this blanket
+   * reset because unnamed placeholders cannot use the leaf-path retry surface.
+   * Clear their cooldown state and wake the render loop so the next frame can
+   * retry immediately. A repeated archive fault seeds a fresh bounded budget.
    */
   resetAutomaticRetryBudgets(): void {
+    let resetAny = false;
     for (const entry of this.entries.values()) {
       for (const child of entry.children) {
         if (child.automaticRetriesRemaining === undefined) continue;
         child.automaticRetriesRemaining = undefined;
         child.failed = false;
         child.failedTick = undefined;
+        resetAny = true;
       }
     }
+    if (resetAny) this.deps.requestRender?.();
   }
 
   /**

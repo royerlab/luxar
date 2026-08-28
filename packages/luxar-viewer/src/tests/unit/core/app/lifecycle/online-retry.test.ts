@@ -112,7 +112,7 @@ describe('installOnlineRetry', () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it('ignores online bursts while a retry batch is in flight', async () => {
+  it('deduplicates retry batches but resets deferred budgets for every online transition', async () => {
     let resolveBatch!: (r: { succeeded: string[]; failed: string[] }) => void;
     const loader: RetryCapableLoader & { retryAllFailedLoaders: ReturnType<typeof vi.fn> } = {
       hasFailures: () => true,
@@ -131,6 +131,7 @@ describe('installOnlineRetry', () => {
     window.dispatchEvent(new Event('online')); // burst while batch 1 is in flight
     window.dispatchEvent(new Event('online'));
     expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(1);
+    expect(loader.resetDeferredRetryBudgets).toHaveBeenCalledTimes(3);
 
     resolveBatch({ succeeded: ['/a'], failed: [] });
     await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(2));

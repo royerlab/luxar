@@ -1271,11 +1271,19 @@ describe('SceneLoader', () => {
       expect(result.deferred).toBeUndefined();
     });
 
-    it('online recovery resets deferred-group budgets when no loader record survives', () => {
-      const registry = new LODGroupRegistry({
+    it('online recovery resets deferred-group budgets when no loader record survives', async () => {
+      let registry!: LODGroupRegistry;
+      let frameScheduled = false;
+      const requestRender = vi.fn(() => {
+        if (frameScheduled) return;
+        frameScheduled = true;
+        queueMicrotask(() => registry.evaluatePerFrame());
+      });
+      registry = new LODGroupRegistry({
         getCamera: () => new THREE.Camera(),
         getViewportSize: () => ({ width: 100, height: 100 }),
         getDisplayDims: () => [0, 1, 2],
+        requestRender,
       });
       const child = {
         object: new THREE.Group(),
@@ -1302,10 +1310,12 @@ describe('SceneLoader', () => {
       try {
         installOnlineRetry({ events, getLoader: () => loader, toast });
         window.dispatchEvent(new Event('online'));
+        await vi.waitFor(() => expect(child.ensureLoaded).toHaveBeenCalledTimes(1));
 
         expect(child.automaticRetriesRemaining).toBeUndefined();
         expect(child.failed).toBe(false);
         expect(child.failedTick).toBeUndefined();
+        expect(requestRender).toHaveBeenCalled();
         expect(toast).not.toHaveBeenCalled();
       } finally {
         events.dispose();

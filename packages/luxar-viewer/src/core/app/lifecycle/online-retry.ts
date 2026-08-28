@@ -144,9 +144,9 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
   };
 
   ports.events.on(window, 'online', () => {
-    if (retryInFlight) return;
     const loader = ports.getLoader();
     loader?.resetDeferredRetryBudgets();
+    if (retryInFlight) return;
     // Deliberately NOT `hasFailures()`: a scene whose only failures are
     // deterministic gets no retry and no "Connection restored" toast, since
     // reconnecting cannot help it.
