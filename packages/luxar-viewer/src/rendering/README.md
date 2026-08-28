@@ -98,7 +98,7 @@ rendering/
 ├── gpu-buffer-pool/                    # Per-type adapters + eviction
 │   ├── {points,lines,gsplats}-adapter.ts
 │   ├── eviction-policy.ts / pool-stats.ts
-│   ├── capacity.ts                     # chooseCapacity (1.5× growth, min-instance floor)
+│   ├── capacity.ts                     # chooseCapacity (1.5× growth capped at 262,144 elements of headroom, min-instance floor)
 │   ├── geometry-bytes.ts               # estimateGeometryBytes + cached size invalidation
 │   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement
 │
