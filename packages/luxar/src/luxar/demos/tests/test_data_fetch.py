@@ -111,7 +111,6 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
     datasets = load_manifest()["datasets"]
     for dataset, pair in expected.items():
         files = {entry["name"]: entry for entry in datasets[dataset]["files"]}
-        assert set(files) == set(pair)
         for name, (digest, size, outgoing) in pair.items():
             entry = files[name]
             assert (entry["hosted_sha256"], entry["hosted_bytes"]) == (

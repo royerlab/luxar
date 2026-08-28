@@ -32,13 +32,13 @@ _DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
 # them against MATERIALIZED git-LFS bytes, so they can only ever describe the
 # in-repo copy.
 #
-# The cc-by deposition holds a different, also self-consistent pair — the refit
-# (29,378,476 B, 1,908,888 rows) with its own resampled sidecar — and the
-# manifest now records that separately as `hosted_sha256`/`hosted_bytes`. Do not
-# "fix" these constants to the hosted digests: the deep check cannot verify bytes
-# that are not on disk, and the two pairs must never be mixed. Pinning one file
-# from each pair is the #1670 mis-ordering all over again, so each pair moves
-# together or not at all.
+# The cc-by deposition holds a different, also self-consistent pair — the
+# restructured refit (19,184,850 B, 1,908,888 rows) with its own resampled
+# sidecar — and the manifest records that separately as
+# `hosted_sha256`/`hosted_bytes`. Do not "fix" these constants to the hosted
+# digests: the deep check cannot verify bytes that are not on disk, and the two
+# pairs must never be mixed. Pinning one file from each pair is the #1670
+# mis-ordering all over again, so each pair moves together or not at all.
 _SHIPPED_FIT_SHA256 = "c6ebbab8c2d1bdff0d5fd35f7032c6a375724b5fe5e6d33e8ca4e6af6ab139f6"
 _SHIPPED_COLORS_SHA256 = (
     "63bce184e56d6d3b5f8f6817100c66310984c45da65fd94cdbc0a42ac05abb44"
