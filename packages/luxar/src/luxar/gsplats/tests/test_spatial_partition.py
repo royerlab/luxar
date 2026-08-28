@@ -552,7 +552,7 @@ def test_grafted_multiscale_stamps_coverage_fraction_on_partition_child():
 
 def test_gsplat_info_legacy_file_shows_migrate_hint_not_traceback():
     """`gsplat info` on a legacy (non-v3.0) file must surface the migrate-format
-    hint and exit cleanly — NOT route into the tree summary and crash (review
+    hint and return failure — NOT route into the tree summary and crash (review
     finding #5: the v3.0 rejection message contains 'node-tree', so the old
     substring dispatch mis-routed legacy files)."""
     from luxar.cli.gsplat_ops.inspect_commands import _info_report

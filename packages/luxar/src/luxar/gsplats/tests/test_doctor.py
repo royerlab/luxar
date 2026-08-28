@@ -42,6 +42,15 @@ def _partition_store(tmp: Path, n: int = 400, parts_cap: int = 80) -> Path:
     return path
 
 
+def _legacy_gsplat_store(tmp: Path, version: object) -> Path:
+    path = tmp / "legacy.gsplats.zarr"
+    root = zc_open_group(path, mode="w")
+    root.attrs["format_type"] = "gsplats_zarr"
+    if version is not None:
+        root.attrs["format_version"] = version
+    return path
+
+
 def _partition_scene(
     tmp: Path, geometry: str = "points", *, drop_tree: bool = True
 ) -> tuple[Path, str]:
@@ -542,6 +551,24 @@ class TestSplitPlanesCheck:
             assert report.findings == []
             assert report.healthy
             assert report.checks_run  # says what it looked at
+
+    @pytest.mark.parametrize("version", ["2.0", None])
+    def test_unsupported_or_missing_format_version_is_diagnosed(
+        self, version: object
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _legacy_gsplat_store(Path(tmp), version)
+
+            report = diagnose_store(path)
+
+            assert not report.healthy
+            (finding,) = report.findings
+            assert finding.check == "format-version"
+            assert finding.severity == "error"
+            assert finding.path == ""
+            assert repr(version) in finding.summary
+            assert not finding.fixable
+            assert "migrate-format" in finding.remedy
 
     def test_missing_planes_are_diagnosed_and_recovered(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

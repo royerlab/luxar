@@ -219,10 +219,12 @@ def test_doctor_continues_when_info_rejects_a_legacy_store() -> None:
 
         result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
 
-        assert result.exit_code == 0, result.stdout
+        assert result.exit_code == 1, result.stdout
         assert "migrate-format" in result.stdout
+        assert "Info report failed; continuing to the diagnosis" in result.stdout
         assert "Diagnosing:" in result.stdout
-        assert "No problems found" in result.stdout
+        assert "unsupported gsplat format version '2.0'" in result.stdout
+        assert "1 problem(s) outstanding" in result.stdout
 
 
 def test_info_command_exits_when_report_rejects_a_legacy_store() -> None:
@@ -284,11 +286,13 @@ def test_doctor_accepts_custom_info_histogram_bins() -> None:
         )
 
     assert result.exit_code == 1, result.stdout
-    assert "No such option" not in result.stdout
+    assert "No such option" not in result.stderr
 
     help_result = runner.invoke(app, ["gsplat", "doctor", "--help"])
     assert help_result.exit_code == 0, help_result.stdout
-    assert "--bins" in normalized_cli_output(help_result)
+    help_output = normalized_cli_output(help_result)
+    assert "--bins" in help_output
+    assert "only applies with --histograms" in help_output
 
 
 def test_doctor_passes_every_info_report_option(

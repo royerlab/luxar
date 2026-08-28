@@ -1293,10 +1293,10 @@ def _print_doctor_info(
     histograms: bool,
     bins: int,
     full_provenance: bool,
-) -> None:
+) -> bool:
     """Print the optional report appropriate for a doctor input."""
     if store_kind == "gsplats":
-        _info_report(
+        return _info_report(
             path,
             show_histograms=histograms,
             bins=bins,
@@ -1309,6 +1309,7 @@ def _print_doctor_info(
             "ℹ️ Could not classify this store from its metadata; "
             "skipping the optional info report."
         )
+    return True
 
 
 def doctor(
@@ -1338,7 +1339,8 @@ def doctor(
         40,
         "--bins",
         "-b",
-        help="Number of bins for info-report histograms.",
+        help="Number of bins for the info report's histograms; only applies "
+        "with --histograms.",
         min=10,
         max=100,
     ),
@@ -1387,13 +1389,15 @@ def doctor(
         info = True
     store_kind = _resolve_doctor_store_kind(path)
     if info:
-        _print_doctor_info(
+        report_succeeded = _print_doctor_info(
             path,
             store_kind,
             histograms=histograms,
             bins=bins,
             full_provenance=full_provenance,
         )
+        if not report_succeeded:
+            aprint("ℹ️ Info report failed; continuing to the diagnosis.")
 
     with asection(f"Diagnosing: {path.name}"):
         try:

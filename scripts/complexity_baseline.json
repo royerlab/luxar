@@ -43,9 +43,6 @@
     "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::compare_quality": [
       13
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::info_dataset": [
-      20
-    ],
     "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::quick_view": [
       11
     ],

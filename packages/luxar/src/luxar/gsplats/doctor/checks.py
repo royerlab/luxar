@@ -29,7 +29,7 @@ from .model import Check, Finding
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import zarr
 
-__all__ = ["ALL_CHECKS", "check_partition_split_planes"]
+__all__ = ["ALL_CHECKS", "check_format_version", "check_partition_split_planes"]
 
 
 def _iter_groups(group: "zarr.Group", path: str = "") -> "List[Tuple[str, Any]]":
@@ -38,6 +38,34 @@ def _iter_groups(group: "zarr.Group", path: str = "") -> "List[Tuple[str, Any]]"
     for name in sorted(group.group_keys()):
         out.extend(_iter_groups(group[name], f"{path}/{name}" if path else name))
     return out
+
+
+def check_format_version(root: "zarr.Group") -> List[Finding]:
+    """A standalone gsplat store must use a format the current reader accepts."""
+    if root.attrs.get("format_type") != "gsplats_zarr":
+        return []
+
+    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
+
+    version = root.attrs.get("format_version")
+    if version in SUPPORTED_FORMAT_VERSIONS:
+        return []
+    return [
+        Finding(
+            check="format-version",
+            severity="error",
+            path="",
+            summary=f"unsupported gsplat format version {version!r}",
+            detail=(
+                "The current Luxar reader cannot open this store; supported "
+                f"versions are {SUPPORTED_FORMAT_VERSIONS}."
+            ),
+            remedy=(
+                "Convert it with `luxar gsplat migrate-format <input> "
+                "<output.gsplats.zarr>`."
+            ),
+        )
+    ]
 
 
 def _part_boxes(
@@ -552,4 +580,4 @@ def _stale_finding(
 
 
 #: Every check, in the order the doctor runs them.
-ALL_CHECKS: "List[Check]" = [check_partition_split_planes]
+ALL_CHECKS: "List[Check]" = [check_format_version, check_partition_split_planes]
