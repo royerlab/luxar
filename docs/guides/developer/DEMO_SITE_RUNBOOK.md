@@ -563,9 +563,11 @@ as missing data. There, parts stop being optional and become load-bearing.
 So the check before flattening is arithmetic, not a run: a `kind=lod` group
 contributes only its finest child, a `kind=partition` sums its parts,
 `additive_N` rungs are deltas that re-partition the level's own content, so never
-add them on top of it — then divide by the hidden-axis extent if there is one.
-Only if the **resident** figure exceeds the cap does the demo need
-`partition=dict(max_elements=…)` landing in the same change as the flatten.
+add them on top of it — and equally, a ladder never *reduces* the leaf below its
+own total, so it is not a remedy for an over-cap node (3.16) — then divide by the
+hidden-axis extent if there is one. Only if the **resident** figure exceeds the
+cap does the demo need `partition=dict(max_elements=…)` landing in the same
+change as the flatten.
 
 ### 3.13 A ladder's `counts` are in different UNITS per geometry, and the wrong one writes zero rungs
 
@@ -619,6 +621,86 @@ substitutive to additive:
 is another node, so the ladder costs requests without buying a faster first
 paint — the same accounting trap as counting nodes instead of bytes, one level
 down.
+
+### 3.16 Before accepting a numeric match as a mechanism, ask what else produces that number
+
+This is the lesson from the most expensive wrong turn in this campaign, and it
+supersedes the narrower versions in 3.10.
+
+`gsplats_2d_cmu1_pathology`'s live tile commits **10,295,708** of its store's
+**20,591,415** elements — exactly 50.0% — with `isLoading` stuck true, no console
+warning, and half the data unreachable on a tile that renders plausibly.
+
+A per-node-element-cap explanation predicted that figure **to the unit**, with
+every channel independently at 50%:
+
+    channel        rung size    committed    leaf total    share
+    gsplats_red    1,724,155    3,448,310     6,896,619    50.0%
+    gsplats_green  1,773,346    3,546,692     7,093,383    50.0%
+    gsplats_blue   1,650,353    3,300,706     6,601,413    50.0%
+                                10,295,708   20,591,415    50.0%
+
+Three different leaf totals, three different archive sizes, one exact total. That
+looked over-determined. **It was one constraint counted three times.** Every
+channel has 4 rungs, so *any* rule that stops after level 1 yields 50.0% in all
+three and reproduces the total. The only free parameter is the stopping level
+index, and it is 2 under every candidate.
+
+**The real mechanism is the streaming policy**, verified in
+`data/loaders/progressive/streaming-policy.ts`:
+
+```ts
+export function shouldStopAfterLevel(kind, level, startLevel, allResident, elapsedMs) {
+  if (kind !== 'refine') return false;
+  return level > startLevel && (!allResident || elapsedMs > CACHE_HIT_THRESHOLD_MS);
+}
+```
+
+`CACHE_HIT_THRESHOLD_MS = 15`. Its docstring: *"at the first cold (cache-miss) or
+slow level past the ≥1-level first-paint floor — so the frame renders and a later
+pass continues."* On a cold load a `refine` pass takes level 0 (the floor), takes
+level 1, and stops because level 1 missed or took over 15 ms. Two of four. **The
+element cap appears nowhere in that path.**
+
+So the symptom is a *refinement-resumption* problem — "a later pass continues"
+never happening on a static scene with no camera interaction — not a capacity
+problem. Which means it can affect **any laddered node on a cold cache**, not just
+this demo, and matters more than a cmu1 quirk.
+
+Three practical rules out of it:
+
+- **Ask what else produces the number.** A one-parameter alternative reproduced
+  this one exactly, and nobody looked for one until after the conclusion was
+  written.
+- **Repeated agreement across items is not independent evidence** when the items
+  share the structure that generates the number. Four rungs each means one degree
+  of freedom, not three.
+- **Let the code state its own reason.** Re-probed with a grep aimed at the
+  loader instead of at the hypothesis, the live tile says it outright:
+
+        LOD 0/3: 1724155 splats  (5347.0ms, miss)
+        LOD 1/3: 1724155 splats (43392.6ms, miss)
+        Progressive: 2/4 LODs loaded (3448310 splats) - refining
+
+  `, miss` appears iff `allResident` was false, and every level is 5-43 SECONDS
+  against a 15 ms threshold, so both stop conditions fire. The original grep set
+  (`clamp|truncat|exceed|capacity|MAX_SPLATS`) was built from the hypothesis and
+  so structurally could not match the answer - it could only ever confirm.
+
+#### What still holds
+
+- **An additive ladder does not bound the committed set.** A prefix converges to
+  100% of the leaf, so laddering is never a remedy for an over-cap node — only a
+  partition, or a hidden axis to slice on, reduces what is resident.
+- **The authoring guard sees the wrong quantity.**
+  `warn_if_over_element_cap` fires per written group, so for a laddered leaf it is
+  handed each rung's ~1.7M `n_splats` and stays correctly quiet while the
+  accumulated leaf is 1.6x over; the graft path has no call at all. The call is
+  right, the quantity is wrong. Sum a ladder before comparing to the cap.
+- **cmu1's archives are genuinely over cap**: flat 2D leaves of 6,896,619 /
+  7,093,383 / 6,601,413 against 4,194,304, with no hidden axis. If the ladder ever
+  did complete, the node would exceed it — so they still want partitioning,
+  just not for the reason first given and not urgently.
 
 ## 4. Cloudflare configuration
 
