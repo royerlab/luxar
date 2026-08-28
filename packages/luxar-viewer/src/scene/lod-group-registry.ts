@@ -389,6 +389,8 @@ export interface LODGroupChild {
    * connectivity retry, clears the latch.
    */
   permanentlyFailed?: boolean;
+  /** Human-readable reason retained for monitor rows after the loader latch clears. */
+  failureReason?: string;
   /**
    * Registry tick when ``failed`` was first observed. Drives the
    * transient-failure retry cooldown (``FAILED_RETRY_FRAMES``): once it
@@ -827,6 +829,15 @@ export class LODGroupRegistry {
     return paths;
   }
 
+  /** Failure reason for a latched lazy level, if that path is still failed. */
+  getFailedLazyChildReason(path: string): string | undefined {
+    for (const entry of this.entries.values()) {
+      const child = entry.children.find((candidate) => candidate.nodePath === path);
+      if (child?.permanentlyFailed) return child.failureReason;
+    }
+    return undefined;
+  }
+
   /**
    * Whether every lod_group that contributes pixels to the CURRENT view is
    * already showing its own selected level at final quality — i.e. one more
@@ -998,11 +1009,17 @@ export class LODGroupRegistry {
         child.failed = false;
         child.failedTick = undefined;
         child.permanentlyFailed = false;
+        child.failureReason = undefined;
         this.kickDeferredLoad(child);
         return true;
       }
     }
     return false;
+  }
+
+  /** @deprecated Use ``retryLazyChildByNodePath``; retained for API compatibility. */
+  retryLazyChildByLeafPath(path: string): boolean {
+    return this.retryLazyChildByNodePath(path);
   }
 
   /**

@@ -1787,10 +1787,7 @@ export class SceneLoader {
       getFailedReason: (path) => {
         const info = this.failedLoaders.get(path);
         if (info) return info.error?.message || info.kind || undefined;
-        if (this.lodGroupRegistry?.getFailedLazyChildPaths().includes(path)) {
-          return this._archiveFault?.message;
-        }
-        return undefined;
+        return this.lodGroupRegistry?.getFailedLazyChildReason(path);
       },
     };
   }
@@ -1802,6 +1799,12 @@ export class SceneLoader {
         ...(this.lodGroupRegistry?.getFailedLazyChildPaths() ?? []),
       ])
     );
+  }
+
+  private clearArchiveFaultForRetry(): void {
+    if (!this._archiveFault) return;
+    this._archiveFault = null;
+    notifier.clearError();
   }
 
   /**
@@ -1878,7 +1881,7 @@ export class SceneLoader {
     this._updateInProgress = true;
     try {
       if (lazyFailure) {
-        this._archiveFault = null;
+        this.clearArchiveFaultForRetry();
         return this.lodGroupRegistry?.retryLazyChildByNodePath(path) ?? false;
       }
       return await retryFailedLoaderUnlocked(path, this.makeRetryCtx());
@@ -1981,7 +1984,7 @@ export class SceneLoader {
       const succeeded: string[] = [];
       const failed: string[] = [];
       if (lazyPaths.length > 0) {
-        this._archiveFault = null;
+        this.clearArchiveFaultForRetry();
         for (const path of lazyPaths) {
           if (this.lodGroupRegistry?.retryLazyChildByNodePath(path)) succeeded.push(path);
           else failed.push(path);

@@ -105,6 +105,7 @@ vi.mock('../../../rendering/depth-sort-coordinator', async (importOriginal) => {
 const notifierMocks = vi.hoisted(() => ({
   toast: vi.fn(),
   error: vi.fn(),
+  clearError: vi.fn(),
 }));
 vi.mock('../../../utils/cross-layer/notifier', () => ({
   notifier: {
@@ -114,7 +115,7 @@ vi.mock('../../../utils/cross-layer/notifier', () => ({
     hideHelp: vi.fn(),
     showLoading: vi.fn(),
     hideLoading: vi.fn(),
-    clearError: vi.fn(),
+    clearError: notifierMocks.clearError,
     showSceneIdentityBanner: vi.fn(),
     hideSceneIdentityBanner: vi.fn(),
   },
@@ -1422,12 +1423,25 @@ describe('SceneLoader', () => {
         ready: false,
         failed: true,
         permanentlyFailed: true,
+        failureReason: 'archive expired',
         ensureLoaded,
+      };
+      const ensureOtherLoaded = vi.fn();
+      const otherDeferred: LODGroupChild = {
+        object: new THREE.Group(),
+        nodePath: '/lod/other',
+        coverageFraction: 0.75,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+        ready: false,
+        failed: true,
+        permanentlyFailed: true,
+        failureReason: 'archive expired',
+        ensureLoaded: ensureOtherLoaded,
       };
       const entry: LODGroupEntry = {
         path: '/lod',
         groupObject: new THREE.Group(),
-        children: [eager, deferred],
+        children: [eager, deferred, otherDeferred],
         selectorMode: 'auto',
         defaultLevel: 0,
         activeChildIndex: 0,
@@ -1438,16 +1452,23 @@ describe('SceneLoader', () => {
       (sceneLoader as any)._archiveFault = archiveFault;
 
       const provider = sceneLoader.getFailedLoadsProvider();
-      expect(provider.getFailedPaths()).toEqual(['/lod/nested']);
+      expect(provider.getFailedPaths()).toEqual(['/lod/nested', '/lod/other']);
       expect(provider.getFailedReason?.('/lod/nested')).toBe('archive expired');
 
+      await expect(sceneLoader.retryFailedLoader('/lod/nested')).resolves.toBe(true);
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(notifierMocks.clearError).toHaveBeenCalledOnce();
+      expect(ensureLoaded).toHaveBeenCalledOnce();
+      expect(ensureOtherLoaded).not.toHaveBeenCalled();
+      expect(provider.getFailedPaths()).toEqual(['/lod/other']);
+      expect(provider.getFailedReason?.('/lod/other')).toBe('archive expired');
+
       await expect(provider.retryAll()).resolves.toEqual({
-        succeeded: ['/lod/nested'],
+        succeeded: ['/lod/other'],
         failed: [],
       });
-      expect(sceneLoader.archiveFault).toBeNull();
-      expect(ensureLoaded).toHaveBeenCalledOnce();
-      expect(deferred.loading).toBe(true);
+      expect(ensureOtherLoaded).toHaveBeenCalledOnce();
+      expect(otherDeferred.loading).toBe(true);
       expect(provider.getFailedPaths()).toEqual([]);
     });
   });
