@@ -384,9 +384,10 @@ export interface LODGroupChild {
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
-   * Set when automatic cooldown retries must remain suppressed, such as after
-   * an unreadable archive-container fault. An explicit retry, or a bounded
-   * connectivity retry, clears the latch.
+   * Marks the lazy branch that observed a terminal archive fault, so monitor
+   * rows and explicit Retry can target it even when its THREE placeholder is
+   * anonymous. The owning loader's archive latch is the shared dataset-fault
+   * oracle; this branch marker is cleared by an explicit retry.
    */
   permanentlyFailed?: boolean;
   /** Human-readable reason retained for monitor rows after the loader latch clears. */
@@ -995,7 +996,8 @@ export class LODGroupRegistry {
    * Returns ``true`` when a retry was kicked OR one is already in flight
    * (``loading``), ``false`` when no retryable lazy child with that path
    * exists. The owning ``SceneLoader`` clears its archive-fault latch before
-   * calling this entry point; that latch is the single automatic-stop oracle.
+   * calling this entry point; the per-child marker keeps concurrent failed
+   * branches independently targetable.
    * Fire-and-forget semantics: ``true`` means "retry started", not "retry
    * succeeded" — the thunk owns the ready/failed outcome, and a repeat
    * failure re-enters the normal cooldown cycle.
