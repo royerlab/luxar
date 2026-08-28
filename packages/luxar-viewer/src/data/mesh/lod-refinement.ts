@@ -84,8 +84,8 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
       // `MeshWholeNodeLoader` does not, so it skips on absence. That is also what
       // keeps this loop free for the overwhelmingly common single-level mesh.
       const progressiveLoader = loader as MeshDataLoader & { hasMoreLODs?: boolean };
-      if (progressiveLoader.hasMoreLODs !== true) return;
-      if (failures.isExhausted(path)) return;
+      if (progressiveLoader.hasMoreLODs !== true) return false;
+      if (failures.isExhausted(path)) return false;
       try {
         const object = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = object?.userData?.attrs as MeshMetadata | undefined;
@@ -122,11 +122,12 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
           pass?.end();
         }
         failures.recordSuccess(path);
+        return true;
       } catch (error) {
         // Superseded, not failed: a newer view-state (or dispose) aborted the
         // in-flight read on purpose. Don't count it toward the failure backoff or
         // log an error — the loop's next-pass pending check hands off.
-        if (isAbortError(error)) return;
+        if (isAbortError(error)) return false;
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
@@ -144,13 +145,34 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
             `Mesh refinement failed for ${path}: ${(error as Error).message}`
           );
         }
+        return false;
       }
+    },
+    getLoaderProgress: (path, loader) => {
+      const progressiveLoader = loader as MeshDataLoader & {
+        hasMoreLODs?: boolean;
+        loadedLODCount: number;
+        totalLODCount: number;
+      };
+      if (failures.isExhausted(path) || progressiveLoader.hasMoreLODs !== true) return null;
+      return {
+        loaded: progressiveLoader.loadedLODCount,
+        total: progressiveLoader.totalLODCount,
+      };
     },
     anyHasMoreLODs: () =>
       [...ctx.meshLoaders.entries()].some(([path, l]) => {
         const ml = l as MeshDataLoader & { hasMoreLODs?: boolean };
         return !failures.isExhausted(path) && ml.hasMoreLODs === true;
       }),
+    onNoProgress: (stalled) => {
+      for (const { path, loaded, total } of stalled) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Mesh refinement stopped for ${path}: no progress at LOD ${loaded}/${total}`
+        );
+      }
+    },
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),

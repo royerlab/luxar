@@ -2,7 +2,7 @@
  * Progressive Points LOD refinement — thin wrapper over the generic
  * helper at `data/scene-loader/progressive/refinement.ts`.
  *
- * Mirrors `data/gsplats/lod-refinement.ts` shape so the three leaf
+ * Mirrors `data/gsplats/lod-refinement.ts` shape so the four geometry
  * types stay symmetric.
  *
  * @module data/points/lod-refinement
@@ -79,8 +79,8 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
       const progressiveLoader = loader as PointsDataLoader & {
         hasMoreLODs?: boolean;
       };
-      if (progressiveLoader.hasMoreLODs !== true) return;
-      if (failures.isExhausted(path)) return;
+      if (progressiveLoader.hasMoreLODs !== true) return false;
+      if (failures.isExhausted(path)) return false;
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as PointsMetadata | undefined;
@@ -111,11 +111,12 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
           pass?.end();
         }
         failures.recordSuccess(path);
+        return true;
       } catch (error) {
         // Superseded, not failed: a newer view-state (or dispose) aborted the
         // in-flight read on purpose. Don't count it toward the failure backoff
         // or log an error — the loop's next-pass pending check hands off.
-        if (isAbortError(error)) return;
+        if (isAbortError(error)) return false;
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
@@ -134,13 +135,34 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
             `Points refinement failed for ${path}: ${(error as Error).message}`
           );
         }
+        return false;
       }
+    },
+    getLoaderProgress: (path, loader) => {
+      const progressiveLoader = loader as PointsDataLoader & {
+        hasMoreLODs?: boolean;
+        loadedLODCount: number;
+        totalLODCount: number;
+      };
+      if (failures.isExhausted(path) || progressiveLoader.hasMoreLODs !== true) return null;
+      return {
+        loaded: progressiveLoader.loadedLODCount,
+        total: progressiveLoader.totalLODCount,
+      };
     },
     anyHasMoreLODs: () =>
       [...ctx.pointsLoaders.entries()].some(([path, l]) => {
         const pl = l as PointsDataLoader & { hasMoreLODs?: boolean };
         return !failures.isExhausted(path) && pl.hasMoreLODs === true;
       }),
+    onNoProgress: (stalled) => {
+      for (const { path, loaded, total } of stalled) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Points refinement stopped for ${path}: no progress at LOD ${loaded}/${total}`
+        );
+      }
+    },
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),

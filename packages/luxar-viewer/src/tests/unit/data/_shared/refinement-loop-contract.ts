@@ -1,8 +1,9 @@
 /**
  * Shared contract for the per-geometry progressive LOD refinement loops
- * (`runGSplatsRefinement` / `runPointsRefinement` / `runLinesRefinement`).
+ * (`runGSplatsRefinement` / `runPointsRefinement` / `runLinesRefinement` /
+ * `runMeshRefinement`).
  *
- * All three wrap the same generic `runProgressiveRefinement` loop (tested in
+ * All four wrap the same generic `runProgressiveRefinement` loop (tested in
  * isolation in `scene-loader/progressive/refinement.test.ts`), so the loop
  * *semantics* — completion, lock release, cancellation hand-off, error
  * isolation, and skip-path handling — are identical. This helper defines those
@@ -14,6 +15,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import type { ViewState } from '../../../../data/data-loader-types';
+import { log, Modules } from '../../../../utils/log';
 
 const baseViewState: ViewState = {
   displayDims: [0, 1, 2],
@@ -23,7 +25,7 @@ const baseViewState: ViewState = {
 
 /** Wiring passed to a type-specific runX adapter for one contract case.
  *
- * Field types match the shared shape of all three `*RefinementCtx` interfaces
+ * Field types match the shared shape of all four `*RefinementCtx` interfaces
  * so they assign directly; the adapter only casts the loader-map value type,
  * `deriveNodeViewState`'s return, and the `processSpy` return (which differ per
  * geometry). */
@@ -52,6 +54,12 @@ function makeStagedLoader(stages: Array<{ hasMoreLODs: boolean }>) {
     get hasMoreLODs() {
       return stages[Math.min(i, stages.length - 1)].hasMoreLODs;
     },
+    get loadedLODCount() {
+      return i;
+    },
+    get totalLODCount() {
+      return stages.length;
+    },
     updateView: vi.fn().mockImplementation(async () => {
       i++;
       return null;
@@ -63,11 +71,13 @@ function makeStagedLoader(stages: Array<{ hasMoreLODs: boolean }>) {
  * Register the shared loop-contract tests for one refinement entry point.
  *
  * @param name  Display name (e.g. `'runGSplatsRefinement'`).
+ * @param label Geometry label used by the no-progress warning.
  * @param run   Adapter that invokes the type-specific runX with the given
  *              wiring and returns its promise.
  */
 export function defineRefinementLoopContract(
   name: string,
+  label: 'Points' | 'Lines' | 'GSplats' | 'Mesh',
   run: (wiring: RefinementRunWiring) => Promise<void>
 ): void {
   describe(`${name} — shared loop contract`, () => {
@@ -89,6 +99,35 @@ export function defineRefinementLoopContract(
       expect(releaseLock).toHaveBeenCalledTimes(1);
       expect(updateVisibleCountsInMonitor).toHaveBeenCalledTimes(1);
       expect(loader.updateView).not.toHaveBeenCalled();
+    });
+
+    it('stops after one successful pass that does not advance the pending loader', async () => {
+      const loader = {
+        hasMoreLODs: true,
+        loadedLODCount: 2,
+        totalLODCount: 4,
+        updateView: vi.fn().mockResolvedValue(null),
+      };
+      const releaseLock: () => void = vi.fn();
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(1);
+      expect(releaseLock).toHaveBeenCalledTimes(1);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.SCENE_LOADER,
+        `${label} refinement stopped for /n: no progress at LOD 2/4`
+      );
+      warning.mockRestore();
     });
 
     it('hands off lock to retriggerUpdate when pending view-state is observed', async () => {
@@ -114,12 +153,15 @@ export function defineRefinementLoopContract(
     });
 
     it('catches per-loader errors so other loaders continue refining', async () => {
+      let attempted = false;
       const loaderA: { updateView: ReturnType<typeof vi.fn>; hasMoreLODs?: boolean } = {
-        updateView: vi.fn().mockRejectedValue(new Error('synthetic')),
+        updateView: vi.fn().mockImplementation(async () => {
+          attempted = true;
+          throw new Error('synthetic');
+        }),
       };
-      // hasMoreLODs true on entry (enter try block), false afterwards (loop exits).
       Object.defineProperty(loaderA, 'hasMoreLODs', {
-        get: vi.fn().mockReturnValueOnce(true).mockReturnValue(false),
+        get: () => !attempted,
       });
 
       await expect(
@@ -133,6 +175,7 @@ export function defineRefinementLoopContract(
           processSpy: vi.fn(),
         })
       ).resolves.not.toThrow();
+      expect(loaderA.updateView).toHaveBeenCalledTimes(1);
     });
 
     it('treats an AbortError as cancellation — signal threaded, no failure backoff, clean hand-off', async () => {
