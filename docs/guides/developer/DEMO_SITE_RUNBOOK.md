@@ -164,8 +164,8 @@ ceiling, which "can silently lose their tail on a 4096-class GPU". The published
 tile carried that for six days.
 
 That 4,000,000 is **not** a universal cap — it is a safety margin local to that
-demo (`SCENE_MAX_POINTS_PER_NODE`, and its comment says so). The real per-node
-caps are per geometry type, in `typing_utils/constants.py`:
+demo (`SCENE_MAX_POINTS_PER_NODE`, and its comment says so). The conservative
+4096-class per-node caps are per geometry type, in `typing_utils/constants.py`:
 
 | geometry | cap |
 |---|---:|
@@ -352,19 +352,19 @@ For the normal size-control workflow, use the sanctioned `WEBM_CRF` or
 
 ---
 
-### 3.9 Every quality figure on a hosted archive predates its own fix
+### 3.9 Quality figures from before 2026-08-23 use the wrong basis
 
 `#1914` (2026-08-23) fixed five call sites that scored a fit against the **raw**
-volume, when a fit reconstructs `V - image_min`. Every currently hosted archive
-was stamped *before* that date, so **every hosted PSNR/SSIM figure is invalid**,
-in a direction that depends on each volume's pedestal and so cannot be corrected
-by arithmetic. Only a rebuilt archive carries a correct figure.
+volume, when a fit reconstructs `V - image_min`. A figure stamped before that
+date is invalid in a direction that depends on the volume's pedestal and cannot
+be corrected by arithmetic. Archives rebuilt afterward can carry correct
+figures.
 
 Consequences for this site:
 
-- **Never read a quality figure off a hosted archive** to build a page, a note,
-  or a comparison. Re-measure with current code, against one materialised
-  reference volume.
+- **Check the archive root `timestamp` and the sidecar `quality_note` date**
+  before using a figure in a page, note, or comparison. Re-measure pre-fix or
+  unstamped figures with current code against one materialised reference volume.
 - **A figure is only comparable to another measured on the same side of
   2026-08-23.** Comparing a pinned figure to a fresh one measures the scoring
   change, not the data.
@@ -372,26 +372,21 @@ Consequences for this site:
   (`gen_landing.py` never reads `note`). The exposure is in the manifest `note`
   fields, which are internal.
 
-**And the noise floor is larger than it looks.** Three identical rebuilds of one
-archive spread 0.08–0.35 dB with counts within ±0.3%. Treat anything under
-~0.4 dB as noise; a difference only means something above that.
-
 ### 3.10 One path, two generations: hash before asserting
 
 `demo_gsplats_2d_cmu1_pathology.py` says its hosted archives "are still flat
-leaves". Two sessions measured `cmu1_ch0.gsplats.zarr.zip` and got answers that
-could not both be true — flat laddered leaf with **no `kind` attr anywhere**, and
-`{'partition': 1, 'lod': 64}` with 4,867 metadata docs.
+leaves". Two caches yielded answers that could not both be true for
+`cmu1_ch0.gsplats.zarr.zip` — flat laddered leaf with **no `kind` attr anywhere**,
+and `{'partition': 1, 'lod': 64}` with 4,867 metadata docs.
 
 **Both were right.** The manifest pins two generations of the same filename:
 
     cmu1_ch0   sha256         cd22645f...   bytes          38,201,205   <- in-repo copy
                hosted_sha256  29faffc1...   hosted_bytes   84,492,218   <- what the record serves
 
-This Mac's cache holds the in-repo generation (all three channels hash to
-`sha256` exactly). obsidian's cache holds the hosted generation (all three hash
-to `hosted_sha256` exactly). Same path string, same demo, 2.2-2.75x apart in
-bytes and structurally unrelated.
+A cache holding the in-repo generation has all three channels matching `sha256`;
+a cache holding the hosted generation has all three matching `hosted_sha256`.
+Same path string, same demo, 2.2-2.75x apart in bytes and structurally unrelated.
 
 `_support/datasets/data_fetch.py` documents why: the two contracts were one field
 until a refit replaced the hosted artifact without touching the in-repo copy, and
@@ -400,8 +395,8 @@ demo-data PR.
 
 **The discriminator, and the only reliable one:** hash the file and match it
 against `sha256` vs `hosted_sha256`. That names the generation in one command.
-Byte size alone is suggestive; a digest is decisive. Neither session did this
-before asserting, and each had numbers to show.
+Byte size alone is suggestive; a digest is decisive. Neither measurement was
+matched to a digest before its structural claim was made.
 
 #### The consequence worth knowing
 
@@ -411,14 +406,15 @@ object keeps serving the older generation (loudly)."*
 
 So **the same demo builds a structurally different scene depending on which
 generation the building machine has in cache.** cmu1 grafts its archives
-verbatim, so on this Mac it produces a flat scene (12 element nodes, 20,591,415
-elements — exactly the sum of the three in-repo archives) and on a machine with
-the hosted copy it would produce a partitioned, laddered one.
+verbatim: the in-repo generation produces a flat scene (12 element nodes,
+20,591,415 elements — exactly the sum of the three archives), while the hosted
+generation produces a partitioned, laddered one.
 
 Three things follow for this site:
 
-- **A tile's structure is a property of the build host, not just the recipe.**
-  Record which host built a tile when its demo grafts pinned archives.
+- **A tile's structure is a property of the artifact generation, not just the
+  recipe.** Record the digest used to build a tile when its demo grafts pinned
+  archives.
 - **A tile can be accidentally correct.** cmu1's live tile is flat because the
   publishing machine held the stale in-repo generation — not because anything
   chose that.
@@ -427,17 +423,18 @@ Three things follow for this site:
   makes this worth a runbook entry rather than a comment.
 
 **But 3.11's rule narrows the exposure sharply.** A refreshed archive can only
-restructure a scene where the demo *grafts* it; a demo that declares a recipe
-rebuilds locally and never sees the archive's topology. Of the fourteen diverged
-datasets, twelve are consumed by demos declaring `recipe="stream"` or
-`recipe="levels"`, so they are exposed on **bytes only**. Two graft:
+restructure a scene where the demo *grafts* it. Eleven of the fourteen diverged
+datasets are loaded into `GSplatData` and re-added as flat arrays: their bytes
+and splat content can change, but the archive topology never reaches the scene.
+Three graft:
 
 | dataset | evidence |
 |---|---|
-| `gsplats_flylight_mcfo_63x` | `add_gsplats_from_file`, no recipe anywhere |
+| `gsplats_flylight_mcfo_63x` | `add_gsplats_from_file` grafts the laddered artifact |
 | `gsplats_cmu1_pathology` | grafts verbatim — its scene's 20,591,415 elements are exactly the sum of its three in-repo archives |
+| `desi_galaxies` | `extract_shipped_scene` installs the fully built scene |
 
-So the armed set is **two**, not fourteen. Check membership with the graft test
+So the armed set is **three**, not fourteen. Check the scene-build call
 before treating a divergence as a structural risk.
 
 #### Scope: this is not a cmu1 quirk
@@ -452,8 +449,8 @@ datasets are affected:
 | `gsplats_cells3d` | 2 | 0.6 | 1.3 | 2.25x |
 | `gsplats_cryoem_virus` | 1 | 11.1 | 16.0 | 1.44x |
 | `gsplats_ct_totalsegmentator` | 2 | 7.2 | 10.2 | 1.42x |
-| `gsplats_visible_human_head` | 2 | 25.6 | 34.5 | 1.35x |
 | `gsplats_milkyway_dust` | 1 | 7.8 | 10.6 | 1.36x |
+| `gsplats_visible_human_head` | 2 | 25.6 | 34.5 | 1.35x |
 | `gsplats_nexrad_supercell` | 1 | 10.1 | 12.9 | 1.28x |
 | `gsplats_dapi` | 1 | 0.1 | 0.1 | 1.22x |
 | `gsplats_celegans` | 1 | 72.0 | 80.8 | 1.12x |
@@ -471,21 +468,21 @@ here to size the download, not the risk:
 
 - `cells3d` at **2.25x** is flat -> flat. Only the splat count moved (20,323 vs
   41,975); both sides are 2 element nodes.
-- `cryoem_virus` at **1.44x** is flat -> `kind=lod` with 6 substitutive levels.
+- `cryoem_virus` at **1.44x** is flat -> `kind=lod` with 4 substitutive levels.
 - `cmu1` at **2.44x** is flat leaf -> partition + 64 lod groups.
 
 Ratios below 1.0 are refits that shrank, and they are not exempt either. Only a
 kind-based read of a **digest-confirmed hosted copy** settles topology.
 
 Practical consequence: for any of these fourteen, a local measurement describes
-the in-repo generation only. Reproduce on the host that published, or hash first.
+whichever generation that host cached. Hash it before attaching the result to a
+generation.
 
 #### And the docstring
 
 It is describing the *hosted* archives, which do carry a partition and 64 lod
-groups per channel. So it is **wrong**, as the first instinct had it — but not for
-the reason v1 of this section gave, and the correction cannot be made from an
-in-repo measurement alone.
+groups per channel. The statement is **wrong**, and the correction cannot be
+made from an in-repo measurement alone.
 
 Derive topology from each group's declared `kind` (children of `kind=lod` are
 substitutive levels, children of `kind=partition` are parts) rather than from
@@ -494,21 +491,21 @@ unreadable** — the in-repo cmu1 generation is well-formed with zero kinds.
 
 ### 3.11 Flattening an archive only cuts requests if the demo grafts it
 
-Two authoring paths, opposite outcomes from the same archive change:
+Three authoring paths have different outcomes from the same archive change:
 
 | authoring call | effect of flattening the archive |
 |---|---|
-| `add_gsplats_from_file` with **no** recipe — grafts archive shape | scene node count drops with the archive |
-| a declared `recipe=` — rebuilds structure locally | **download bytes only**; the scene re-creates its own structure |
+| load into `GSplatData`, then `scene.add_gsplats(...)` | archive topology is discarded; bytes and splat content can still change |
+| `add_gsplats_from_file` or `extract_shipped_scene` | grafted scene node count changes with the artifact |
+| `save_with_lod(recipe=...)`, then graft that output | structure is authored locally by the recipe |
 
 Measured on this corpus:
 
-- **`h2afva_timelapse`** and **`h2afva_stack`** graft, so flattening is a real
-  request win — 704 → 176 element nodes for the timelapse, 41 parts → 1 for the
-  stack.
+- **`h2afva_timelapse`** and **`h2afva_stack`** graft, so flattening changes
+  their request topology as well as their archive bytes.
 - **`codex_pancreas`** fits locally through `save_with_lod(recipe="adaptive")`
-  and grafts its own output, so its 2,764 groups are authored, not inherited.
-  Changing the *archive* would not move them; changing the recipe's
+  and grafts its own output, so its groups are authored rather than inherited.
+  Changing an input archive would not move them; changing the recipe's
   `max_elements` would.
 - **`cmu1_pathology`** grafts verbatim, so it inherits whichever generation is
   in cache (3.10): flat from the in-repo copy, partitioned + laddered from the
@@ -678,12 +675,11 @@ total — `demos/_lod_policy.py` states this. `human_multiome_peak_umap` totals
 6,248,730 across six attribute views but is **1,041,455 resident**; measuring the
 total over-flags it against any cap.
 
-Two traps inside that, both found the hard way by the session doing the demo
-rework:
+Two traps inside that:
 
 - Measuring **one part** under-reports by the part count — a first pass read
-  `nuclear_pore_complex` at 164,633 when it is 4,937,064, a 30x error, because
-  the path measured was a single `part_N`.
+  `nuclear_pore_complex` at 164,633 when it is 4,937,064 resident per state, a
+  30x error, because the path measured was a single `part_N`.
 - Summing **each part's largest slice** over-reports, because different parts
   peak on different hidden coordinates. Group globally by hidden coordinate
   first, *then* take the max.
@@ -759,5 +755,5 @@ raise, not warn, when an explicit request cannot be honoured.
 Published and local copies of the same store can differ **structurally**, not
 just in freshness. `desi_galaxies` has no partition when published and a
 depth-2 BSP locally; `nuclear_pore_complex` is 41,288 elements published and
-9,874,128 locally after a demo change. Label the source of every number, and
-never put both in one table.
+9,874,128 across both local states after a demo change. Label the source of every
+number, and never put both in one table.
