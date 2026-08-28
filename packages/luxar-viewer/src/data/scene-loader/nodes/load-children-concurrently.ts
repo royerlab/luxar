@@ -111,8 +111,8 @@ function estimateWorkingSetBytes(node: LineWorkingSetNode): number {
  *   when there is neither an explicit pool nor a measurable heap.
  */
 export function createLineWorkingSetGate(
-  poolOverrideBytes?: number,
-  fallbackPoolBytes?: number
+  poolOverrideBytes: number | undefined,
+  fallbackPoolBytes: number | undefined
 ): LineWorkingSetGate {
   return new WorkingSetGate(
     computeWorkingSetBudgetBytes(undefined, poolOverrideBytes, fallbackPoolBytes)

@@ -156,7 +156,9 @@ describe('loadChildrenConcurrently', () => {
       new THREE.Group(),
       makeStubLoc(),
       // Gate constructed AFTER the heap stub, so it snapshots the small heap.
-      makeTestNodeBuildCtx({ lineWorkingSetGate: createLineWorkingSetGate() }),
+      makeTestNodeBuildCtx({
+        lineWorkingSetGate: createLineWorkingSetGate(undefined, undefined),
+      }),
       async (child) => {
         started.push(child.path);
         await new Promise<void>((resolve) => releases.push(resolve));
@@ -183,7 +185,7 @@ describe('loadChildrenConcurrently', () => {
       new THREE.Group(),
       makeStubLoc(),
       makeTestNodeBuildCtx({
-        lineWorkingSetGate: createLineWorkingSetGate(384 * 1024 * 1024),
+        lineWorkingSetGate: createLineWorkingSetGate(384 * 1024 * 1024, undefined),
       }),
       async (child) => {
         started.push(child.path);

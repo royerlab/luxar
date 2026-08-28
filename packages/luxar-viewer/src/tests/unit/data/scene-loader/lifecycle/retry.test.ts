@@ -104,7 +104,7 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
 
   const ctx: RetryCtx = {
     registry: new LoaderRegistry(),
-    lineWorkingSetGate: createLineWorkingSetGate(),
+    lineWorkingSetGate: createLineWorkingSetGate(undefined, undefined),
     rootGroup: null,
     deriveNodeViewState,
     processPointsData,

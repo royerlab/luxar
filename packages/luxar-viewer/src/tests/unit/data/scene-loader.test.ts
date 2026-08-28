@@ -1152,6 +1152,7 @@ describe('SceneLoader', () => {
       const secondBuild = internals.makeNodeBuildCtx();
       const retry = internals.makeRetryCtx();
 
+      expect(firstBuild.lineWorkingSetGate).toBeDefined();
       expect(secondBuild.lineWorkingSetGate).toBe(firstBuild.lineWorkingSetGate);
       expect(retry.lineWorkingSetGate).toBe(firstBuild.lineWorkingSetGate);
     });

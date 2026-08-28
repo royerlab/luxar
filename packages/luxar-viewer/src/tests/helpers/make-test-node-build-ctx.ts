@@ -88,7 +88,7 @@ export function makeTestNodeBuildCtx(overrides: Partial<NodeBuildCtx> = {}): Nod
 
   return {
     registry: new LoaderRegistry(),
-    lineWorkingSetGate: createLineWorkingSetGate(),
+    lineWorkingSetGate: createLineWorkingSetGate(undefined, undefined),
     nodeFactory,
     viewState,
     getViewVersion: () => 1,
