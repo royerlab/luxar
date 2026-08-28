@@ -15,7 +15,8 @@ import type { NodeBuildCtx } from './build-ctx';
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
 const EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024;
-const ESTIMATED_LINE_WORKING_SET_BYTES_PER_VERTEX = 320;
+const ESTIMATED_LINE_VERTEX_WORKING_SET_BYTES = 100;
+const ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES = 220;
 
 interface WorkingSetWaiter {
   bytes: number;
@@ -72,14 +73,21 @@ function workingSetGateFor(ctx: NodeBuildCtx): WorkingSetGate {
 
 function estimateWorkingSetBytes(node: SceneNode): number {
   if (node.type !== 'lines') return 0;
-  const nVertices = node.attrs.n_vertices;
-  if (typeof nVertices !== 'number' || !Number.isFinite(nVertices) || nVertices <= 0) return 0;
+  const readCount = (value: unknown): number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : 0;
+  const vertexCount = readCount(node.attrs.n_vertices);
+  const segmentCount = readCount(node.attrs.n_segments) || vertexCount;
 
-  // A loaded line vertex can coexist in the accumulator's old+grown buffers,
-  // worker projection outputs, main-thread staging, and texture-backed GPU
-  // geometry. 320 B/vertex is intentionally conservative: admission only
-  // controls transient overlap and never changes the stored or rendered data.
-  return Math.ceil(nVertices) * ESTIMATED_LINE_WORKING_SET_BYTES_PER_VERTEX;
+  // Accumulator growth can briefly retain old + new vertex/segment buffers;
+  // projection then emits endpoint attributes, and the committed geometry owns
+  // a 6-texel RGBA32F texture plus ordering storage per segment. The rounded
+  // 100 B/vertex + 220 B/segment estimate covers those overlapping allocations.
+  // Legacy nodes without n_segments use the accumulator's conservative 1:1
+  // fallback. Admission only changes overlap, never stored or rendered data.
+  return (
+    vertexCount * ESTIMATED_LINE_VERTEX_WORKING_SET_BYTES +
+    segmentCount * ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES
+  );
 }
 
 /**

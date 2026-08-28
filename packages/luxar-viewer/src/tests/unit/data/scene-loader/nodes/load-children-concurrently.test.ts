@@ -18,11 +18,11 @@ function makeChildren(count: number): SceneNode[] {
   }));
 }
 
-function makeLineChildren(count: number, nVertices: number): SceneNode[] {
+function makeLineChildren(count: number, nVertices: number, nSegments?: number): SceneNode[] {
   return Array.from({ length: count }, (_, index) => ({
     path: `/group/lines_${index}`,
     type: 'lines',
-    attrs: { n_vertices: nVertices },
+    attrs: { n_vertices: nVertices, ...(nSegments === undefined ? {} : { n_segments: nSegments }) },
     hasSpatialIndex: true,
     children: [],
   }));
@@ -130,6 +130,28 @@ describe('loadChildrenConcurrently', () => {
     release();
     await loadPromise;
     expect(started).toEqual(children.map((child) => child.path));
+  });
+
+  it('charges declared segment pressure independently of vertex count', async () => {
+    const children = makeLineChildren(2, 10_000, 1_500_000);
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async (child) => {
+        started.push(child.path);
+        await new Promise<void>((resolve) => releases.push(resolve));
+      }
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    releases.shift()?.();
+    await loadPromise;
   });
 
   it('releases a large child reservation when its load rejects', async () => {
