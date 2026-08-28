@@ -200,6 +200,37 @@ def _indexed_connected_components(
     return [chunk for chunk in np.split(order, starts[1:])]
 
 
+def _indexed_ladder_preserves_edges(
+    indices: NDArray,
+    polylines: List[NDArray[np.intp]],
+) -> bool:
+    """Return whether rebuilt component chains preserve the authored edges."""
+    authored = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+    if polylines:
+        lengths = np.fromiter(
+            (members.size for members in polylines),
+            dtype=np.intp,
+            count=len(polylines),
+        )
+        members = np.concatenate(polylines)
+        if members.size >= 2:
+            keep = np.ones(members.size - 1, dtype=bool)
+            keep[np.cumsum(lengths[:-1]) - 1] = False
+            rebuilt = np.column_stack((members[:-1][keep], members[1:][keep]))
+        else:
+            rebuilt = np.empty((0, 2), dtype=np.intp)
+    else:
+        rebuilt = np.empty((0, 2), dtype=np.intp)
+
+    def canonical_edges(edges: NDArray[np.intp]) -> NDArray[np.intp]:
+        if edges.size == 0:
+            return np.empty((0, 2), dtype=np.intp)
+        canonical = np.sort(edges, axis=1)
+        return canonical[np.lexsort((canonical[:, 1], canonical[:, 0]))]
+
+    return np.array_equal(canonical_edges(authored), canonical_edges(rebuilt))
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Per-polyline ordering
 # ─────────────────────────────────────────────────────────────────────
@@ -477,6 +508,15 @@ def make_additive_lod_lines(
     p = len(polylines)
     if p == 0:
         return []
+
+    if line_type == "indexed":
+        assert indices is not None
+        if not _indexed_ladder_preserves_edges(indices, polylines):
+            raise ValueError(
+                "line_type='indexed' additive LOD cannot preserve the explicit "
+                "edge list: every connected component must use consecutive vertex "
+                "pairs in ascending vertex order"
+            )
 
     if p == 1 and line_type in ("polyline", "loop") and n_lods > 1:
         warnings.warn(
