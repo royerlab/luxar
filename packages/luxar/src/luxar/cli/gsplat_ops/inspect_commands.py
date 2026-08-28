@@ -194,13 +194,13 @@ def _normalized_amplitude_cdf(amplitudes: "np.ndarray") -> "Optional[np.ndarray]
     return cumulative
 
 
-def _print_flat_metadata(
+def _print_dataset_metadata(
     stats: dict[str, Any],
     source_grid_keys: tuple[str, ...],
     *,
     show_full_provenance: bool,
 ) -> None:
-    """Print fitting metadata for a flat gsplat dataset."""
+    """Print metadata, excluding stats already reported by the source-grid block."""
     aprint("\n" + "─" * 70)
     aprint("METADATA")
     aprint("─" * 70)
@@ -224,12 +224,7 @@ def _print_flat_metadata(
     if remaining:
         aprint("\nAdditional Metadata:")
         for key in sorted(remaining):
-            if key not in [
-                "movie_frames",
-                "movie_shape",
-                "config",
-                "provenance",
-            ]:
+            if key not in ["movie_frames", "movie_shape", "config", "provenance"]:
                 value = stats[key]
                 if key == "part_provenance":
                     _print_fitting_value(
@@ -432,7 +427,7 @@ def info_dataset(
         # Metadata
         # ================================================================
         if data.stats:
-            _print_flat_metadata(
+            _print_dataset_metadata(
                 data.stats,
                 source_grid_keys,
                 show_full_provenance=full_provenance,
