@@ -330,14 +330,18 @@ the gsplat report does not apply. It then prints a diagnosis and exits non-zero
 while a problem is still standing — so it can gate a pipeline. Pass `--fix` to
 repair an uncompressed `.gsplats.zarr` or `.luxar.zarr` directory in place (unpack
 a `.zip` or `.tar.gz` first), `--full-provenance` to include the complete nested
-fitting record in the info report, or `--json` to write the findings out for a
-machine.
+fitting record in the info report, `--histograms --bins N` to include and re-bin
+the report's distributions, or `--json` to write the findings out for a machine.
 
-It currently diagnoses a `kind=partition` whose split planes (`bsp_tree`) are
-missing, or are present but disagree with where the parts actually sit. Without
-them the viewer orders parts by centroid, which is not a valid painter's order and
-pops at the seams under `normal`/`volumetric` blending; where the parts are
-disjoint the planes are recovered exactly from the part boxes. For overlapping
+It currently diagnoses a standalone gsplat store whose format version the
+current reader cannot open, with `gsplat migrate-format` as the remedy, and a
+supported-version store with an incomplete tree or inconsistent leaf-array
+metadata, which must be restored or regenerated. It also diagnoses a
+`kind=partition` whose split planes (`bsp_tree`) are missing, or are present but
+disagree with where the parts actually sit. Without them the viewer
+orders parts by centroid, which is not a valid painter's order and pops at the
+seams under `normal`/`volumetric` blending; where the parts are disjoint the
+planes are recovered exactly from the part boxes. For overlapping
 uniform-tiled parts and centroid-split lines/mesh partitions, doctor uses the
 largest measured interpenetration on each axis as an overlap-tolerance floor,
 but still catches planes outside those bands. Disjoint points and splats must

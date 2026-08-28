@@ -541,6 +541,9 @@ SUBSTITUTIVE_LOD: Final = dict(compression_factor=256, levels=2)
 # so that metadata and traversal cost buys little. Keeping the finest Lines
 # level single-shot also leaves its per-vertex hover-label CSR directly on the
 # substitutive child rather than moving it to an additive rung parent.
+# The opt-out also suppresses ladders on the synthesized coarse children. At
+# compression factor 256 their bead counts remain below the default 39,062-item
+# first chunk, so those children would still load in one commit.
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]

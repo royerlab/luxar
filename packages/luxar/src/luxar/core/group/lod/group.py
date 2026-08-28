@@ -1527,6 +1527,7 @@ def compose_additive_under_substitutive(
     resolve: Callable[[Any], Optional[Dict[str, Any]]],
     name: str,
     suppress_reason: Optional[str] = None,
+    suppression_outcome: str = "levels will load all-at-once.",
 ) -> Optional[Dict[str, Any]]:
     """Resolve the additive spec to use for the levels of a substitutive ladder.
 
@@ -1556,6 +1557,9 @@ def compose_additive_under_substitutive(
             ``None``) is skipped quietly; an *explicitly* requested one
             (``True`` / a ``dict``) raises a ``UserWarning``, since the caller
             asked for something that cannot be honoured.
+        suppression_outcome: The user-facing consequence of suppression. The
+            default describes group-wide suppression; wrappers that suppress
+            only their finest child provide the narrower outcome.
 
     Returns:
         A normalized spec dict, or ``None`` for "write flat levels".
@@ -1566,14 +1570,14 @@ def compose_additive_under_substitutive(
         if additive_lod is not None:
             warnings.warn(
                 f"'{name}': the requested streaming ladder cannot be honoured "
-                f"({suppress_reason}); levels will load all-at-once.",
+                f"({suppress_reason}); {suppression_outcome}",
                 UserWarning,
                 stacklevel=2,
             )
         else:
             aprint(
                 f"  ℹ️  '{name}': streaming ladder skipped ({suppress_reason}); "
-                "levels will load all-at-once."
+                f"{suppression_outcome}"
             )
         return None
     spec = additive_lod if additive_lod is not None else default_composed_additive_lod()

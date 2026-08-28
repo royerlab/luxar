@@ -326,10 +326,12 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
    `coverage_fractions=[...]` in the `substitutive_lod=` spec to override.
 
 Composes with `additive_lod` (laddered per level by default, as for Points);
-mutually exclusive with `partition`. A single-polyline `line_type`
-(`polyline`/`loop`) skips the ladder, since a polyline cannot be split without
-breaking its segment topology; `indexed` is laddered **when its topology permits
-it**, which `indexed_components_are_chains` decides. The additive multi-LOD
+mutually exclusive with `partition`. Suppression applies only to the finest
+Lines child; synthesized gsplat children keep their safe ladder. A
+single-polyline `line_type` (`polyline`/`loop`) skips the finest ladder, since a
+polyline cannot be split without breaking its segment topology; `indexed` is
+laddered **when its topology permits it**, which
+`indexed_components_are_chains` decides. The additive multi-LOD
 writer carries no edge list — it rebuilds one by chaining each connected
 component in ascending vertex order — so a chain is faithful exactly when every
 component's edge set already equals its consecutive-vertex pairs. Real
@@ -350,6 +352,7 @@ bead cannot re-present a per-element colour as a uniform row). All `line_type`s
 (segments/polyline/loop/indexed) are supported for the substitutive pyramid
 itself; `segments` always receives a composed additive ladder, and `indexed` does
 whenever its components verify as ascending chains.
+Pass `additive_lod=False` to opt out explicitly for all children.
 Degenerate-width segments are dropped; bead allocation is bounded both
 per-segment (`lift.MAX_BEADS_PER_SEGMENT`) and in aggregate
 (`lift.MAX_TOTAL_BEADS`, spacing widened to fit with a `UserWarning`), so a

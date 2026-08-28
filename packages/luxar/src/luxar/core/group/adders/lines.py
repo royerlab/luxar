@@ -460,7 +460,7 @@ def add_lines_impl(
             resolve_additive_axis_lines(additive_lod)
             warnings.warn(
                 f"'{name}': the requested streaming ladder cannot be honoured "
-                "(image_labels is set); levels will load all-at-once.",
+                "(image_labels is set); writing a flat node.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -1140,37 +1140,60 @@ def add_lines_substitutive_lod_wrapper_impl(
     )
     from ..lod.lines import indexed_components_are_chains, resolve_additive_axis_lines
 
-    # Resolve the streaming ladder ONCE for the whole group; each level is
-    # specialized from it below. Default ON — a substitutive level is by
-    # construction the largest node in the scene and the last one loaded.
-    composed_additive = compose_additive_under_substitutive(
+    # Resolve the coarse and finest policies independently. The coarse children
+    # are gsplat clouds and can always stream; the suppression reasons below are
+    # properties of the original Lines child only.
+    # Keep the existing element-domain stream counts for composed coarse
+    # children. Retuning those counts for gsplat bytes-per-element is a separate
+    # cross-geometry policy change, not part of suppression scoping.
+    coarse_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_lines,
         name=name,
-        suppress_reason=(
-            # The multi-LOD writer has no image_labels channel, so laddering
-            # would silently drop them. Refuse the ladder, not the labels.
-            "image_labels is set"
-            if image_labels is not None
-            # One polyline cannot be split without breaking segment topology,
-            # so a ladder here is a no-op the builder would only warn about.
-            else f"line_type={line_type!r} is a single polyline"
-            if line_type in ("polyline", "loop")
-            # Only the components that would actually be corrupted are refused.
-            else (
-                f"line_type={line_type!r} has a component that is not a simple "
-                "path in ascending vertex order, so the ladder would invent edges"
+    )
+    finest_suppress_reason = (
+        # The multi-LOD writer has no image_labels channel, so laddering would
+        # silently drop them. Refuse the ladder, not the labels.
+        "image_labels is set"
+        if image_labels is not None
+        # One polyline cannot be split without breaking segment topology, so a
+        # ladder here is a no-op the builder would only warn about.
+        else f"line_type={line_type!r} is a single polyline"
+        if line_type in ("polyline", "loop")
+        # The additive writer rebuilds each indexed component as an ascending
+        # chain. Suppress only topologies for which that would change the edges.
+        else (
+            f"line_type={line_type!r} has a component that is not a simple "
+            "path in ascending vertex order, so the ladder would invent edges"
+        )
+        if additive_lod is not False
+        and line_type == "indexed"
+        and not (
+            indices is not None
+            and indexed_components_are_chains(
+                int(vert_arr.shape[0]),
+                np.asarray(indices, dtype=np.intp).reshape(-1, 2),
             )
-            if additive_lod is not False
-            and line_type == "indexed"
-            and not (
-                indices is not None
-                and indexed_components_are_chains(
-                    int(vert_arr.shape[0]),
-                    np.asarray(indices, dtype=np.intp).reshape(-1, 2),
-                )
-            )
-            else None
+        )
+        else None
+    )
+    from ..lod.reveal import is_reveal_additive_method
+
+    reveal_note = (
+        " Coarse levels use self_energy ordering, so reveal_centre is not applied."
+        if coarse_additive is not None
+        and is_reveal_additive_method(str(coarse_additive.get("method")))
+        else ""
+    )
+    finest_additive = compose_additive_under_substitutive(
+        additive_lod,
+        resolve=resolve_additive_axis_lines,
+        name=name,
+        suppress_reason=finest_suppress_reason,
+        suppression_outcome=(
+            "the finest level will load all-at-once; coarse levels keep their "
+            "ladder where one applies."
+            f"{reveal_note}"
         ),
     )
     # Same reason as the channel check above: the finest child is written LAST, so
@@ -1180,18 +1203,18 @@ def add_lines_substitutive_lod_wrapper_impl(
     # polyline bbox CENTRES, not the vertices.
     #
     # Guarded on `wants_reveal_centre_preflight` rather than on
-    # `composed_additive is not None`, because deriving those representatives is
+    # `finest_additive is not None`, because deriving those representatives is
     # NOT free: identify_polylines + polyline_bbox_centres loop in Python over
     # every polyline (~2.5 s for a 400k-vertex `segments` node), and the composed
     # ladder defaults to ON — so the unguarded form paid that on every
     # `add_lines(substitutive_lod=…)` call, reveal or not.
     from ..lod.reveal import preflight_reveal_centre, wants_reveal_centre_preflight
 
-    if wants_reveal_centre_preflight(composed_additive):
+    if wants_reveal_centre_preflight(finest_additive):
         from ..lod.lines import identify_polylines, polyline_bbox_centres
 
         preflight_reveal_centre(
-            composed_additive,
+            finest_additive,
             group._find_scene(),
             polyline_bbox_centres(
                 vert_arr,
@@ -1276,7 +1299,7 @@ def add_lines_substitutive_lod_wrapper_impl(
             partition=False,
             # Forward the ladder: too small to coarsen is not too small to
             # stream, and dropping it here silently lost the ladder.
-            additive_lod=composed_additive,
+            additive_lod=finest_additive,
             **attrs,
         )
 
@@ -1329,7 +1352,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         # Every level gets its own ladder (mirrors gsplats/lod/pyramid.py), with
         # the sibling-aware first chunk on all but the coarsest.
         lvl_spec = level_additive_lod(
-            composed_additive,
+            coarse_additive,
             level_n=int(lvl_data.n_splats),
             compression_factor=compression_factor,
             is_coarsest=(idx == 0),
@@ -1363,7 +1386,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         dim_order=None,
         fill=None,
         additive_lod=level_additive_lod(
-            composed_additive,
+            finest_additive,
             level_n=int(vert_arr.shape[0]),
             compression_factor=compression_factor,
             is_coarsest=False,
