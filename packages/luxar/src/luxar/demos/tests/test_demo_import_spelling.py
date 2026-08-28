@@ -106,6 +106,7 @@ DEEP_MODULES = SPLIT_DEMO_UTILITY_MODULES | {
     "luxar.demos._support.downloads.download",
     "luxar.demos._support.downloads.remote_zip",
     "luxar.demos._support.downloads.zip_safety",
+    "luxar.demos._support.runtime.cli",
     "luxar.demos._support.runtime.device",
     "luxar.demos._support.runtime.flags",
     "luxar.demos._support.runtime.provenance",
