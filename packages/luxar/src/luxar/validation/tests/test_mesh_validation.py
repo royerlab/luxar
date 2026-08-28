@@ -25,6 +25,7 @@ from luxar.typing_utils.constants import (
 )
 from luxar.validation import ValidationError
 from luxar.validation.base import (
+    MAX_MESH_TEXTURE_SIZE,
     MESH_TEXTURE_DECODE_BUDGET_BYTES,
     validate_faces_for_writing,
     validate_mesh_decode_budget,
@@ -567,6 +568,42 @@ def test_uv_acceptances(uvs, test_id) -> None:
             "raw_array_under_an_encoded_encoding",
         ),
         (
+            lambda: validate_texture_for_writing(np.zeros((2, 2, 1), np.uint8), "ktx2"),
+            "supports only RGB or RGBA",
+            "ktx2_single_channel_refused",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros((2, 2, 3), np.float32), "ktx2"
+            ),
+            "only uint8 LDR input",
+            "ktx2_hdr_refused",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros(16, np.uint8),
+                "webp",
+                2,
+                2,
+                3,
+                ktx2_mode="bogus",
+            ),
+            "KTX2-only options",
+            "ktx2_mode_rejected_for_webp",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros(16, np.uint8),
+                "jpeg",
+                2,
+                2,
+                3,
+                ktx2_quality=2,
+            ),
+            "KTX2-only options",
+            "ktx2_quality_rejected_for_jpeg",
+        ),
+        (
             lambda: validate_texture_for_writing(
                 np.zeros(0, np.uint8), "jpeg", 2, 2, 3
             ),
@@ -630,6 +667,18 @@ def test_texture_rejections(factory, error_pattern, test_id) -> None:
         factory()
 
 
+@pytest.mark.parametrize("texture", [np.zeros((4, 4), np.uint8), np.zeros(16, np.uint8)])
+def test_ktx2_shape_error_names_pixel_input_contract(texture) -> None:
+    """KTX2 authoring takes pixels, not the encoded-byte shape used by bitmap codecs."""
+    with pytest.raises(ValidationError) as exc_info:
+        validate_texture_for_writing(texture, "ktx2")
+
+    message = str(exc_info.value)
+    assert "Encoding 'ktx2'" in message
+    assert "uint8 (H, W, 3|4) pixels" in message
+    assert "pre-built KTX2 container" in message
+
+
 @pytest.mark.parametrize(
     "texture,encoding,dims,expected,test_id",
     [
@@ -642,6 +691,13 @@ def test_texture_rejections(factory, error_pattern, test_id) -> None:
             "rgba_u16",
         ),
         (np.zeros((2, 2, 1), np.uint8), "raw", (None, None, None), (2, 2, 1), "grey"),
+        (
+            np.zeros((2, 2, 4), np.uint8),
+            "ktx2",
+            (None, None, None),
+            (2, 2, 4),
+            "ktx2_rgba",
+        ),
         # HDR: float of any width is writable, exactly as for element colours.
         (
             np.full((2, 2, 3), 9.0, np.float32),
@@ -708,6 +764,27 @@ def test_decode_budget_accepts_the_largest_mesh_that_fits() -> None:
 
 def test_texture_budget_uses_the_shared_mesh_ceiling() -> None:
     assert MESH_TEXTURE_DECODE_BUDGET_BYTES == MESH_DECODE_BUDGET_BYTES
+
+
+def test_texture_budget_charges_ktx2_as_a_compressed_mip_chain() -> None:
+    largest = np.broadcast_to(
+        np.zeros((1, 1, 3), dtype=np.uint8),
+        (MAX_MESH_TEXTURE_SIZE, MAX_MESH_TEXTURE_SIZE, 3),
+    )
+
+    assert validate_texture_for_writing(largest, "ktx2") == (
+        MAX_MESH_TEXTURE_SIZE,
+        MAX_MESH_TEXTURE_SIZE,
+        3,
+    )
+    with pytest.raises(ValidationError, match="decodes to 1024 MiB"):
+        validate_texture_for_writing(
+            np.zeros(1, dtype=np.uint8),
+            "webp",
+            MAX_MESH_TEXTURE_SIZE,
+            MAX_MESH_TEXTURE_SIZE,
+            3,
+        )
 
 
 def test_decode_budget_charges_uvs_and_texture_together() -> None:

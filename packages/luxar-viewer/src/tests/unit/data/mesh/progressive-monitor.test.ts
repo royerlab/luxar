@@ -68,6 +68,55 @@ function meshData(vertexOffset = 0): LoadedMeshData {
   };
 }
 
+describe('meshPayloadBytes — texture arms', () => {
+  // The encoded arms must charge the same decoded surface `preflight.ts`
+  // budgets them at, or the panel and the admission gate disagree about what a
+  // texture expands to — a three-fold gap between the bitmap and KTX2 arms.
+  const W = 256;
+  const H = 128;
+
+  /** Bytes the payload attributes to the texture, isolated from the geometry. */
+  function textureCharge(texture: LoadedMeshData['texture']): number {
+    const bare = meshData();
+    return meshPayloadBytes({ ...bare, texture }) - meshPayloadBytes(bare);
+  }
+
+  it('charges a raw texture its materialized surface', () => {
+    const pixels = new Uint8Array(W * H * 3);
+    expect(textureCharge({ kind: 'raw', pixels, width: W, height: H, channels: 3 })).toBe(
+      pixels.byteLength
+    );
+  });
+
+  it('charges a bitmap 4 bytes per pixel regardless of source channels', () => {
+    // An ImageBitmap is always 4-channel 8-bit once decoded, so a 3-channel
+    // WebP still costs the full RGBA surface.
+    expect(
+      textureCharge({
+        kind: 'bitmap',
+        bitmap: {} as ImageBitmap,
+        width: W,
+        height: H,
+        channels: 3,
+      })
+    ).toBe(W * H * 4);
+  });
+
+  it('charges a compressed texture ~1 byte per texel plus its mip chain', () => {
+    const charge = textureCharge({
+      kind: 'compressed',
+      texture: {} as never,
+      width: W,
+      height: H,
+      channels: 4,
+    });
+    // MIRROR: the `decode === 'ktx2'` term in `preflight.ts`.
+    expect(charge).toBe(Math.ceil((W * H * 4) / 3));
+    // The point of KTX2: it must NOT be charged as if it expanded to RGBA8.
+    expect(charge).toBeLessThan(W * H * 4);
+  });
+});
+
 describe('MeshProgressiveLoader — monitor telemetry', () => {
   it('reports one aggregate keyed by the NODE path, not per level', () => {
     const loader = ladder([level('/surface/additive_0'), level('/surface/additive_1')]);
