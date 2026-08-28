@@ -81,6 +81,9 @@
  * One layer per page, and never alongside a `LuxarApp`. The scene-loader
  * manager, dimension manager, material manager, and worker pool are process
  * singletons; two owners would share and then corrupt each other's state.
+ * The layer has no notifier UI; terminal archive failures are exposed through
+ * {@link LuxarLayer.onDatasetFault} and {@link LuxarLayer.getDatasetFault} so
+ * the host can surface them.
  *
  * @module core/layer/luxar-layer
  */
@@ -226,6 +229,9 @@ export class LuxarLayer {
   private exposure = 1;
   private visible = true;
   private renderOrderDirty = false;
+  private datasetFaultLoader: NonNullable<ReturnType<typeof getSceneLoader>> | null = null;
+  private datasetFaultUnsubscribe: (() => void) | null = null;
+  private readonly datasetFaultListeners = new Set<(error: Error) => void>();
   private readonly authoredOpacity = new WeakMap<THREE.Material, number>();
   private readonly appliedExposure = new WeakMap<THREE.Material, number>();
   // nD update coalescing. A scrubbing host outruns the loader by ~30x, so
@@ -256,6 +262,24 @@ export class LuxarLayer {
   /** The loaded scene root, or null before {@link load} resolves. */
   get root(): THREE.Group | null {
     return this.rootGroup;
+  }
+
+  /** Current terminal archive fault, or null before one occurs or after replacement/disposal. */
+  getDatasetFault(): Error | null {
+    return this.datasetFaultLoader?.archiveFault ?? null;
+  }
+
+  /**
+   * Subscribe to the current dataset's one-shot terminal archive fault.
+   * A fault already latched by the loaded dataset is replayed immediately.
+   * Listener exceptions are logged and do not interrupt layer loading or other listeners.
+   */
+  onDatasetFault(listener: (error: Error) => void): () => void {
+    this.assertLive();
+    this.datasetFaultListeners.add(listener);
+    const fault = this.getDatasetFault();
+    if (fault) this.invokeDatasetFaultListener(listener, fault);
+    return () => this.datasetFaultListeners.delete(listener);
   }
 
   /**
@@ -292,6 +316,7 @@ export class LuxarLayer {
   }
 
   private async loadInner(src: string): Promise<THREE.Group> {
+    this.clearDatasetFaultLoader();
     let root: THREE.Group;
     try {
       root = await loadScene(src, this.options.loaderConfig, LOADER_ID);
@@ -345,6 +370,15 @@ export class LuxarLayer {
     this.applyRenderOrder();
     this.configureBlendWarmup();
     await warmSceneBlendModePrograms(root);
+
+    const sceneLoader = getSceneLoader(LOADER_ID);
+    this.datasetFaultLoader = sceneLoader;
+    if (sceneLoader) {
+      this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
+        (error) => this.notifyDatasetFault(error),
+        { replayCurrent: true }
+      );
+    }
 
     log.info(Modules.LUXAR, `Layer loaded: ${src}`);
     return root;
@@ -761,6 +795,8 @@ export class LuxarLayer {
 
   private async disposeInner(): Promise<void> {
     this.disposed = true;
+    this.clearDatasetFaultLoader();
+    this.datasetFaultListeners.clear();
 
     // Keep the process singletons alive until loadScene has either failed or
     // disposed the loader it just registered. React unmounts commonly land
@@ -846,6 +882,26 @@ export class LuxarLayer {
     SceneLoaderManager.getInstance().setKTX2TextureDecoder(
       createKTX2TextureDecoder(this.options.renderer)
     );
+  }
+
+  private clearDatasetFaultLoader(): void {
+    this.datasetFaultUnsubscribe?.();
+    this.datasetFaultUnsubscribe = null;
+    this.datasetFaultLoader = null;
+  }
+
+  private notifyDatasetFault(error: Error): void {
+    for (const listener of [...this.datasetFaultListeners]) {
+      this.invokeDatasetFaultListener(listener, error);
+    }
+  }
+
+  private invokeDatasetFaultListener(listener: (error: Error) => void, error: Error): void {
+    try {
+      listener(error);
+    } catch (listenerError) {
+      log.warning(Modules.LUXAR, 'LuxarLayer dataset fault listener threw:', listenerError);
+    }
   }
 
   private installDepthSort(): void {

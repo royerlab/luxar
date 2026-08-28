@@ -190,7 +190,9 @@ blending when exposure should produce smooth surface transparency.
   is in flight rather than silently producing dead geometry.
 - **No UI.** No panels, no picking UI, no monitor, no keyboard handling. The
   cross-layer `notifier` stays unregistered, so Luxar's toasts and error
-  overlays are silently dropped unless the host registers a backend.
+  overlays are silently dropped unless the host registers a backend. Terminal
+  archive failures are the exception: use `onDatasetFault()` to receive the
+  one-shot fault and `getDatasetFault()` to inspect it after the fact.
 - **Mesh textures use the host renderer.** The layer installs a renderer-owned
   KTX2 decoder for compressed mesh textures; raw and JPEG textures keep using
   the portable decode path.
