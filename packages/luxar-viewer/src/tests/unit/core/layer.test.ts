@@ -499,7 +499,14 @@ describe('LuxarLayer', () => {
       expect(destroyAllAsync).not.toHaveBeenCalled();
       expect(disposeMaterials).not.toHaveBeenCalled();
 
-      release(new THREE.Group());
+      const abandonedRoot = new THREE.Group();
+      const abandonedMesh = new THREE.Mesh(
+        new THREE.BufferGeometry(),
+        new THREE.MeshBasicMaterial()
+      );
+      const disposeGeometry = vi.spyOn(abandonedMesh.geometry, 'dispose');
+      abandonedRoot.add(abandonedMesh);
+      release(abandonedRoot);
       await Promise.resolve();
       await Promise.resolve();
       expect(destroyLoaderAsync).toHaveBeenCalledWith('default');
@@ -509,6 +516,8 @@ describe('LuxarLayer', () => {
       await Promise.all([pending, disposing]);
 
       expect(options.scene.children).toHaveLength(0);
+      expect(releaseDepthSortNode).toHaveBeenCalledWith(abandonedMesh);
+      expect(disposeGeometry).toHaveBeenCalledTimes(1);
       expect(destroyLoaderAsync.mock.invocationCallOrder[0]).toBeLessThan(
         disposeMaterials.mock.invocationCallOrder[0]
       );

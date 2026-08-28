@@ -306,6 +306,7 @@ export class LuxarLayer {
     // A dispose() that lands mid-load must not leave either the group or the
     // loader alive. dispose() waits for this cleanup before dropping globals.
     if (this.disposed) {
+      this.detachRoot(root);
       await SceneLoaderManager.getInstance().destroyLoaderAsync(LOADER_ID);
       return root;
     }
