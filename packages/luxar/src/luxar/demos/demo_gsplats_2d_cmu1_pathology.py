@@ -504,22 +504,24 @@ def create_luxar_scene(
 
     Each channel is handed over as a **path**, not loaded into a ``GSplatData``
     first, because a ``--recompute`` writes the ``adaptive`` topology — spatial
-    tiles of at most 250,000 splats, each picking its own detail level, which is
-    what a 46000x33000 slide that is panned and zoomed rather than orbited wants
-    — and that is a ``kind=partition`` tree with no flat matrix form, so
-    ``add_gsplats_from_file`` is the only entry point that takes one whole.
+    tiles under the recipe's shared per-tile cap, each picking its own detail
+    level, which is what a 46000x33000 slide that is panned and zoomed rather
+    than orbited wants — and that is a ``kind=partition`` tree with no flat
+    matrix form, so ``add_gsplats_from_file`` is the only entry point that takes
+    one whole.
 
-    That entry point is deliberately topology-agnostic, because the three
-    generations do not agree. The record's archives are a four-part spatial
-    partition with no per-tile levels (``scripts/demo_archive_characteristics.json``
-    records the topology, measured on the pinned ``hosted_sha256``), so a
-    ``--recompute`` differs from them in tile count as much as in per-tile
+    That entry point is deliberately topology-agnostic, which matters here
+    because the generations do not agree. The record's archives are four
+    top-level parts carrying no ``child_`` detail levels
+    (``scripts/demo_archive_characteristics.json`` records the topology,
+    measured on the pinned ``hosted_sha256``), so a ``--recompute`` differs from
+    them in tile count — four against roughly sixty — as much as in per-tile
     levels. The in-repo copies are a third shape again: one flat leaf with a
     four-rung progressive ladder and no spatial tiles at all. They come before
-    Zenodo in the fetch order below, so a checkout with its LFS payloads pulled
-    and nothing verifying in cache renders that flat leaf.
+    Zenodo in ``resolve_data``'s order, so a checkout with its LFS payloads
+    pulled and no cached copy matching the hosted pin renders that flat leaf.
     ``add_gsplats_from_file`` routes a matrix-shaped file down the ordinary data
-    path and a partition through the graft, so all three render.
+    path and a partition through the graft, so any of them renders.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel
@@ -640,7 +642,9 @@ Controls:
                         layer=True,
                         colormap=colormap,
                     )
-                    aprint(f"  Grafted {cache_path.name} with colormap='{colormap}'")
+                    # Not necessarily "grafted": a flat generation takes the
+                    # ordinary data path instead (see this function's docstring).
+                    aprint(f"  Added {cache_path.name} with colormap='{colormap}'")
 
             # --- Overlays ---
             # Title
