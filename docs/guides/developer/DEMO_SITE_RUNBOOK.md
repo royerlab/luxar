@@ -630,16 +630,16 @@ down.
 ### 3.16 State the window before you read the number, and check it is longer than the phenomenon
 
 The most expensive error in this campaign was not a wrong mechanism. It was a
-**phenomenon that did not exist**, and two mechanisms invented across three
-sessions to explain it.
+**phenomenon that did not exist**, and two mechanisms invented in later work to
+explain it.
 
 #### The false observation
 
 `gsplats_2d_cmu1_pathology`'s live tile appeared to commit **10,295,708** of its
 store's **20,591,415** elements — exactly 50.0%, per channel — with `isLoading`
 stuck true, no console error, and half the data apparently unreachable. It was
-called unpublishable, held from a wave, filed as an open problem, and handed to a
-second session as evidence for an unbounded-loop hazard.
+called unpublishable, held from a wave, filed as an open problem, and carried
+into later work as evidence for an unbounded-loop hazard.
 
 #### What is actually true
 
@@ -696,18 +696,20 @@ literal truth.
 #### What genuinely survived
 
 - **The load is slow for an ordinary reason**: the store is 20,591,415 splats,
-  roughly **113 MB**, delivered in ~68 s — about **13 Mbps**. That is a large
+  roughly **172 MB**, delivered in ~68 s — about **20 Mbps**. That is a large
   download, not a defect. A request-count explanation was considered and
-  **measured false**: the published store has **508 chunks at ~1024 KB** (the
-  `archive` profile's 1 MB target), against **50,316 chunks at 1.0–2.7 KB** in the
-  upstream `.gsplats.zarr` archives. `optimise --profile archive` does re-chunk
+  **measured false**: the published store has **508 chunks** with a nominal
+  **~1024 KB uncompressed chunk shape** (the `archive` profile's 1 MB target),
+  against **50,316 chunks at 1.0–2.7 KB** in the upstream `.gsplats.zarr`
+  archives. `optimise --profile archive` does re-chunk
   grafted subtrees, so the archives' fragmentation never reaches a published tile.
   It does still hit whoever downloads those archives directly — a demo build pays
   38 MB in 16,852 pieces — which is an authoring-side fix worth making upstream.
 - **The cap risk is real, and a clean render does not test it.** Each channel is
-  6.6M–7.1M splats with no hidden axis. It renders whole on this Mac — but the
-  probe launches `--use-angle=metal`, where `maxTextureSize` is 16384, giving a
-  gsplats cap of `4096 x 16384 / 4 = 16,777,216`. 6.9M is comfortably under *that*.
+  6.6M–7.1M splats with no hidden axis. It renders whole on a 16384-class
+  developer GPU — the probe launches `--use-angle=metal`, where `maxTextureSize`
+  is 16384, giving a gsplats cap of `4096 x 16384 / 4 = 16,777,216`. 6.9M is
+  comfortably under *that*.
   `constants.py` is explicit: *"maxTextureSize is a GPU property (16384 on modern
   desktop, 4096 on the conservative floor), so the only bound an AUTHOR can rely on
   is the 4096-class one."* So **a clean render on developer hardware is the
@@ -715,9 +717,11 @@ literal truth.
   4096-class GPU the same node clamps and loses a Hilbert-contiguous wedge
   (#1957 erased the North Atlantic by clamping 2.3% of a Lines node). Never
   validate a cap question on one GPU class.
-- **The authoring guard sees the wrong quantity.** `warn_if_over_element_cap` is
-  handed each rung's ~1.7M `n_splats` while the accumulated leaf is 1.6x over the
-  floor, and the graft path has no call at all.
+- **The authoring guard sees the accumulated quantity.**
+  `warn_if_over_element_cap` runs once at the parent with the ladder total; rung
+  checks are deliberately suppressed as redundant, and the graft path performs
+  the same aggregate check. The 6.6M–7.1M CMU-1 channels therefore warn against
+  the 4,194,304-splat conservative floor.
 - **An additive ladder still never bounds the committed set** — a prefix converges
   to 100% of the leaf. Only a partition, or a hidden axis to slice on, reduces
   what is resident.
