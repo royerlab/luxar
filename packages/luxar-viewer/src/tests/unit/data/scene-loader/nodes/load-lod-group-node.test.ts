@@ -1218,6 +1218,49 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     await loadPromise;
   });
 
+  it('releases eager line admission when a ladder load rejects', async () => {
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const makeOversizedLadder = (index: number) => {
+      const child = makeLinesChildNode(`/lod_${index}/child_0`, 0);
+      child.attrs.n_vertices = 1_630_000;
+      child.attrs.n_segments = 1_280_000;
+      child.attrs.ndim = 3;
+      const node = makeLodGroupNode([child], { default_level: 0, display_type: 'lines' });
+      node.path = `/lod_${index}`;
+      return node;
+    };
+
+    loadSceneNodesMock.mockRejectedValueOnce(new Error('line load failed'));
+    await expect(
+      loadLodGroupNode(
+        makeOversizedLadder(0),
+        new THREE.Group(),
+        makeStubLoc(),
+        ctx,
+        loadSceneNodesMock
+      )
+    ).rejects.toThrow('line load failed');
+
+    let secondStarted = false;
+    loadSceneNodesMock.mockImplementationOnce(async (child: SceneNode, parent: THREE.Object3D) => {
+      secondStarted = true;
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+    });
+    const secondLoad = loadLodGroupNode(
+      makeOversizedLadder(1),
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    await vi.waitFor(() => expect(secondStarted).toBe(true));
+    await secondLoad;
+  });
+
   it('defers a non-default lines child via the lines cheap split (not eager)', async () => {
     attachStubChildren();
     const reg = makeReg();
