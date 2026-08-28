@@ -26,6 +26,9 @@ const layer = new LuxarLayer({
   scene,
   getCamera: () => camera,
   getViewportSize: () => ({ width, height }),
+  requestRender: () => {
+    frameRequested = true;
+  },
 });
 
 await layer.load(src);
@@ -38,6 +41,32 @@ geometry backed by a disposed loader. Concurrent `load()` calls are rejected.
 The host must await `dispose()` before constructing another `LuxarLayer`. Disposal waits for an
 active load and dimension update, detaches layer geometry, and releases the process-wide loader,
 material, LOD, sorting, and worker resources.
+
+## Public surface
+
+The constructor also accepts loader and asset-path overrides plus `lodFade`, `lodEnergyComp`,
+`lodFinest`, and `depthSort` feature switches. `renderOrder` defaults to 10. `requestRender` is
+optional only for hosts that render continuously; an on-demand host must use it to schedule a
+future frame when progressive geometry, a lazy LOD level, or a retry commits asynchronously.
+
+| Member | Contract |
+| --- | --- |
+| `root` | Current layer root, or `null` before load and after disposal. |
+| `load(src)` | Load and attach a scene, replacing the previous successful load. |
+| `update()` | Run depth sorting and LOD selection before the host renders. |
+| `resize()` | Publish the current camera projection and drawing-buffer size. |
+| `getDimensions()` | Return cloned dimension state, or `null` when unavailable. |
+| `findDimension(name)` | Find a dimension case-insensitively, or return `null`. |
+| `getDimensionNames()` | Return names in center-column order. |
+| `setDimensionValue(index, value)` | Coalesce and commit a foreground slice update. |
+| `prefetchDimensionValue(index, value, budgetMs?)` | Warm a slice without committing it. |
+| `awaitDimensionUpdate()` | Resolve when no dimension update remains in flight. |
+| `setVisible(visible)` / `isVisible()` | Hide or show without discarding caches. |
+| `setExposure(multiplier)` / `getExposure()` | Scale opacity relative to authored values. |
+| `getBounds()` | Return world-space bounds for the current root, or `null`. |
+| `alignTo(matrix)` | Place the root in host world space before or after `load()`. |
+| `handleContextLost()` / `handleContextRestored()` | Re-arm Luxar-owned GPU resources around host context recovery. |
+| `dispose()` | Asynchronously release the layer and process-wide Luxar resources. |
 
 ## Per-frame ordering
 
@@ -53,6 +82,9 @@ cross-node render ranks; LOD evaluation can then change the visible level withou
 ranks stale for the frame. Calling only `renderer.render()` may leave lazy geometry, LOD, and
 depth-order state stale.
 
+`requestRender` does not replace `update()`. It wakes an on-demand host after asynchronous work;
+the requested frame must still call `update()` before `renderer.render()`.
+
 Call `resize()` after changing the viewport or camera projection. The layer reads the host camera
 and viewport but cannot observe those changes itself.
 
@@ -65,9 +97,9 @@ commits. Playback should issue foreground updates without awaiting each frame an
 
 ## Draw order and visibility
 
-The layer stamps its configured `renderOrder` onto every owned `THREE.Group`, including groups
-attached lazily. The host remains responsible for assigning compatible orders to its own
-transparent groups.
+The layer stamps its configured `renderOrder` (10 by default) onto every owned `THREE.Group`,
+including groups attached lazily. The host remains responsible for assigning compatible orders to
+its own transparent groups.
 
 `setVisible(false)` keeps caches and in-flight requests alive. Lazy LOD loads pause while hidden;
 resident hidden levels are preferred eviction candidates under GPU pressure.
@@ -111,3 +143,10 @@ and tear down each other's state.
   dimmer; use normal blending when smooth transparency is required.
 - KTX2 mesh textures decode through a renderer-owned decoder installed by the layer. Other host
   texture and renderer resources remain the host's responsibility.
+- The UI-layer `notifier` is not registered, so Luxar toasts and error overlays are silently
+  dropped. Hosts must provide their own user-facing status and error surface.
+
+## Coverage note
+
+The runnable example's LOD E2E fixture exercises the legacy `coverage` selector path. The current
+`screen-area` selector used by newly authored ladders requires separate fixture coverage.

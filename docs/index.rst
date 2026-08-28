@@ -110,7 +110,6 @@ Features
 
    guides/user/LUXAR_ZARR_FORMAT
    specs/GSPLATS_ZARR_FORMAT
-   specs/LUXAR_LAYER_SPEC
    specs/MESH_NODE_SPEC
    guides/user/FORMAT_AND_MIGRATION
 
@@ -124,6 +123,7 @@ Features
    guides/specs/VOLUMETRIC_BLENDING_SPEC
    guides/specs/SUBPIXEL_JITTER_TAA_SPEC
    specs/GSPLATS_DIMENSION_MAPPING
+   specs/LUXAR_LAYER_SPEC
 
 .. toctree::
    :maxdepth: 2

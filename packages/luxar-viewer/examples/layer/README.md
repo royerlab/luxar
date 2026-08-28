@@ -19,11 +19,13 @@ python3 packages/luxar-viewer/tools/range-http-server.py 9000 --bind 127.0.0.1
 ```
 
 Pass another scene with `?src=<absolute-url>`. In an installed application, replace the relative
-source-barrel import in `layer.js` with:
+source-barrel import in `layer.js` with the package import below. The example uses the source barrel
+only because Vite and Playwright run it directly without first building the library bundle.
 
 ```js
 import { LuxarLayer } from '@royerlab/luxar-viewer';
 ```
 
 The important ordering is visible in `animate()`: `layer.update()` runs before
-`renderer.render(scene, camera)` on every frame.
+`renderer.render(scene, camera)` on every frame. The page also awaits `dispose()` on explicit
+teardown and starts the same teardown on `pagehide`.

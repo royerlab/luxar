@@ -236,7 +236,8 @@ tone-maps in a post-processing pass the layer does not own, so a host wanting a
 filmic rolloff over additive geometry must set `renderer.toneMapping` itself.
 
 Same single-instance rule as `LuxarApp`, and the two are mutually exclusive. See
-[`src/core/layer/README.md`](src/core/layer/README.md) for the full contract.
+[`docs/specs/LUXAR_LAYER_SPEC.md`](../../docs/specs/LUXAR_LAYER_SPEC.md) for the normative public
+contract and [`src/core/layer/README.md`](src/core/layer/README.md) for implementation rationale.
 
 ### What's NOT supported in v1
 
@@ -245,7 +246,8 @@ Same single-instance rule as `LuxarApp`, and the two are mutually exclusive. See
 - **SSR / non-browser rendering.** `LuxarApp.init()` throws a friendly error if `window`/`document` are unavailable.
 
 A runnable example with a non-trivial host page lives in
-[`examples/embed/`](./examples/embed/).
+[`examples/embed/`](./examples/embed/). The host-owned renderer counterpart lives in
+[`examples/layer/`](./examples/layer/README.md).
 
 ## 🚀 Quick Start
 
