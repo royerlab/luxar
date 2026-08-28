@@ -307,9 +307,9 @@
     },
     "gsplats_ct_totalsegmentator/ct_atlas.gsplats.zarr.zip": {
       "n_splats": 647083,
-      "ndim": null,
+      "ndim": 3,
       "format_version": "3.4",
-      "topology": "4 coarse-to-fine levels, each progressively streamed",
+      "topology": "progressive ladder, 5 steps",
       "psnr_db": 42.967820256676305,
       "foreground_psnr_db": 30.585385424392157,
       "foreground_fraction": 0.029363671230055326,
@@ -321,8 +321,9 @@
       "source_dtype": "int16",
       "source_bytes": 83881610,
       "frames": null,
+      "quality_quotable": null,
       "measured_from": "staged",
-      "measured_sha256": "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399"
+      "measured_sha256": "b282c1ce1e25d095e8c3197724fb6f702330990fe39aeb5607b34165c4ff9ce8"
     },
     "gsplats_dapi/dapi.gsplats.zarr.zip": {
       "n_splats": 7740,
@@ -534,9 +535,9 @@
     },
     "gsplats_visible_human_head/vh_head.gsplats.zarr.zip": {
       "n_splats": 1908888,
-      "ndim": null,
+      "ndim": 3,
       "format_version": "3.4",
-      "topology": "4 coarse-to-fine levels, each progressively streamed",
+      "topology": "progressive ladder, 6 steps",
       "psnr_db": 38.2259461041381,
       "foreground_psnr_db": 32.59072160202537,
       "foreground_fraction": 0.15559520354338865,
@@ -549,8 +550,9 @@
       "source_dtype": "uint8",
       "source_bytes": 2816606208,
       "frames": null,
+      "quality_quotable": null,
       "measured_from": "staged",
-      "measured_sha256": "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065"
+      "measured_sha256": "c539b6c46389d6800062f0255df41736c0358234cf27a3554e6107dee7d63eaa"
     },
     "gsplats_zebrafish/zebrafish_4d.gsplats.zarr.zip": {
       "n_splats": 1270233,

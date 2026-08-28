@@ -73,6 +73,54 @@ def test_manifest_loads_and_has_expected_shape():
         assert key in m["records"], f"missing record group {key}"
 
 
+def test_positional_sidecar_hosted_pairs_move_atomically():
+    """The fit and its row-indexed payload must name one hosted generation.
+
+    A half-move recreates #1670 at download time: the demo receives a valid fit
+    and a valid sidecar whose rows describe a different ordering. Pin the four
+    exact uploaded contracts, including the immediately outgoing generation,
+    so changing either half alone fails in CI.
+    """
+    expected = {
+        "gsplats_visible_human_head": {
+            "vh_head.gsplats.zarr.zip": (
+                "c539b6c46389d6800062f0255df41736c0358234cf27a3554e6107dee7d63eaa",
+                19_184_850,
+                "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065",
+            ),
+            "vh_head_colors.npz": (
+                "6bc6f6764dfce8f968637fe87fdd120fabf40cc28ca0fdba4e4fb5b6698d996d",
+                5_092_361,
+                "82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1",
+            ),
+        },
+        "gsplats_ct_totalsegmentator": {
+            "ct_atlas.gsplats.zarr.zip": (
+                "b282c1ce1e25d095e8c3197724fb6f702330990fe39aeb5607b34165c4ff9ce8",
+                6_627_936,
+                "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399",
+            ),
+            "ct_atlas_labels.npz": (
+                "d8da820921e94bc29331c1781ea62592b5fa89f1c05188bb2a12f6c7aa7d2437",
+                55_164,
+                "71a1315146272263c75c92d554dbf49f18e90222e7d7a5b5bef44a34a5efa11d",
+            ),
+        },
+    }
+
+    datasets = load_manifest()["datasets"]
+    for dataset, pair in expected.items():
+        files = {entry["name"]: entry for entry in datasets[dataset]["files"]}
+        assert set(files) == set(pair)
+        for name, (digest, size, outgoing) in pair.items():
+            entry = files[name]
+            assert (entry["hosted_sha256"], entry["hosted_bytes"]) == (
+                digest,
+                size,
+            )
+            assert entry["superseded_sha256"][-1] == outgoing
+
+
 def test_load_manifest_hands_out_an_independent_copy():
     """A caller must not be able to poison the cached parse.
 
