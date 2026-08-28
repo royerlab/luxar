@@ -416,6 +416,34 @@ def add_lines_impl(
                 # Topology first, and BEFORE make_additive_lod_lines — same
                 # reshape hazard as the partition branch above.
                 validate_line_indices_before_split(indices, n_vertices, line_type)
+                # An indexed edge list is NOT carried through the multi-LOD
+                # writer: it re-derives one by chaining each connected
+                # component's members in ascending vertex order
+                # (``add_lines_multi_lod_wrapper_impl`` below). That is faithful
+                # only when every component already IS an ascending simple path,
+                # so verify it instead of assuming a producer's convention.
+                # Raise rather than warn: reaching here means the caller passed
+                # an explicit ``additive_lod=``, and the alternative is a scene
+                # whose edges are quietly wrong — which is what happened before
+                # this check existed. The substitutive path applies the same test
+                # through ``compose_additive_under_substitutive``.
+                if line_type == "indexed" and indices is not None:
+                    from ..lod.lines import indexed_components_are_chains
+
+                    if not indexed_components_are_chains(
+                        n_vertices,
+                        np.asarray(indices, dtype=np.intp).reshape(-1, 2),
+                    ):
+                        raise ValueError(
+                            f"'{name}': line_type='indexed' cannot take an "
+                            "additive ladder unless every connected component is "
+                            "a simple path in ascending vertex order — the "
+                            "streaming writer rebuilds edges by chaining each "
+                            "component in that order, so a branching, cyclic or "
+                            "out-of-order component would gain invented edges "
+                            "and lose real ones. Pass additive_lod=False to "
+                            "write this node without a ladder."
+                        )
                 widths_arr = (
                     widths
                     if isinstance(widths, np.ndarray) and widths.shape == (n_vertices,)
@@ -1059,7 +1087,21 @@ def add_lines_substitutive_lod_wrapper_impl(
         level_additive_lod,
         resolve_lod_ladder,
     )
-    from ..lod.lines import resolve_additive_axis_lines
+    from ..lod.lines import indexed_components_are_chains, resolve_additive_axis_lines
+
+    # Indexed lines carry an explicit edge list the additive multi-LOD writer
+    # discards (see lod/lines.py::_indexed_connected_components) — it rebuilds
+    # one by chaining each component in ascending vertex order. That is faithful
+    # exactly when every component already IS an ascending simple path, so TEST
+    # the data rather than refusing the whole line_type: real tractography and
+    # streamline sets qualify, and used to lose their ladder for nothing.
+    indexed_ladder_unsafe = line_type == "indexed" and not (
+        indices is not None
+        and indexed_components_are_chains(
+            int(vert_arr.shape[0]),
+            np.asarray(indices, dtype=np.intp).reshape(-1, 2),
+        )
+    )
 
     # Resolve the streaming ladder ONCE for the whole group; each level is
     # specialized from it below. Default ON — a substitutive level is by
@@ -1077,13 +1119,12 @@ def add_lines_substitutive_lod_wrapper_impl(
             # so a ladder here is a no-op the builder would only warn about.
             else f"line_type={line_type!r} is a single polyline"
             if line_type in ("polyline", "loop")
-            # Indexed lines carry an explicit edge list the additive multi-LOD
-            # writer discards (see lod/lines.py::_indexed_connected_components) —
-            # it fabricates a per-component chain, inventing phantom edges and
-            # dropping real ones. Refuse the default ladder rather than corrupt
-            # the topology.
-            else f"line_type={line_type!r} edges are not preserved by the ladder"
-            if line_type == "indexed"
+            # Only the components that would actually be corrupted are refused.
+            else (
+                f"line_type={line_type!r} has a component that is not a simple "
+                "path in ascending vertex order, so the ladder would invent edges"
+            )
+            if indexed_ladder_unsafe
             else None
         ),
     )

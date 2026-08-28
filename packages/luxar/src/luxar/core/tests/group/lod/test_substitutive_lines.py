@@ -398,30 +398,51 @@ class TestSubstitutiveLinesComposedWithAdditive:
         assert int(finest.attrs.get("n_additive_sublods", 1)) == 1
 
 
-class TestSubstitutiveLinesIndexedSuppressesAdditive:
+class TestSubstitutiveLinesIndexedVerifiesAdditive:
     """The ``indexed``-lines branch of ``add_lines_substitutive_lod_wrapper_impl``.
 
-    An ``indexed`` node carries an explicit edge list the additive multi-LOD
-    writer cannot preserve (it would fabricate phantom chains), so the streaming
-    ladder is suppressed. An EXPLICITLY requested ladder raises a ``UserWarning``
-    (``test_explicit_additive_warns_and_ladder_suppressed`` proves that path
-    end-to-end); a default (omitted) one is skipped quietly, with no warning.
+    The additive multi-LOD writer does not carry an edge list: it rebuilds one by
+    chaining each connected component in ascending vertex order. That is faithful
+    exactly when every component already IS an ascending simple path, so the
+    branch TESTS the data rather than refusing ``line_type="indexed"`` outright —
+    real tractography and streamline sets qualify and used to lose their ladder
+    for nothing.
 
-    This drives a real indexed geometry node end-to-end, proving the
-    ``line_type == "indexed"`` branch in ``adders/lines.py`` actually fires —
-    the existing ``test_lod_group.py`` tests only hand-feed the reason string
-    into ``compose_additive_under_substitutive`` directly.
+    Both arms are driven end-to-end through a real indexed geometry node, so this
+    proves the branch in ``adders/lines.py`` actually fires; the
+    ``test_lod_group.py`` tests only hand-feed a reason string into
+    ``compose_additive_under_substitutive`` directly.
     """
 
     @staticmethod
     def _indexed_verts_and_edges(
         n_seg: int = 300, seed: int = 0
     ) -> tuple[np.ndarray, np.ndarray]:
+        """QUALIFYING data: disjoint 2-vertex components, each trivially a chain."""
         verts = _segments(n_seg, seed=seed)
         # One edge per vertex pair: [0, 1, 2, 3, …] — the same topology as
         # `segments`, expressed as an explicit integer edge list.
         indices = np.arange(verts.shape[0], dtype=np.int64)
         return verts, indices
+
+    @staticmethod
+    def _forked_verts_and_edges(
+        n_seg: int = 300, seed: int = 0
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """NON-QUALIFYING data: one component branches, so a chain would lie.
+
+        Note it takes TWO extra edges to build a fork here. Adding only ``(1, 4)``
+        to the disjoint pairs would join ``{0,1,4,5}`` into the path 0-1-4-5,
+        whose edges ARE its consecutive-vertex pairs — safe, and correctly
+        accepted. A fork needs a vertex of degree 3.
+        """
+        verts = _segments(n_seg, seed=seed)
+        pairs = np.arange(verts.shape[0], dtype=np.int64).reshape(-1, 2)
+        # Vertex 1 gains neighbours 2 AND 4 on top of 0, so its component
+        # {0..5} is a Y. Edge (1, 4) spans three positions in ascending order,
+        # which is exactly what the check rejects.
+        fork = np.asarray([[1, 2], [1, 4]], dtype=np.int64)
+        return verts, np.vstack([pairs, fork]).reshape(-1)
 
     @staticmethod
     def _assert_no_additive_ladder(grp) -> None:
@@ -432,10 +453,42 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
             assert int(child.attrs.get("n_additive_sublods", 1)) == 1, name
             assert not any(k.startswith("additive_") for k in child.keys()), name
 
-    def test_explicit_additive_warns_and_ladder_suppressed(self, tmp_path) -> None:
+    def test_chain_shaped_indexed_data_gets_its_ladder(self, tmp_path) -> None:
+        # The positive arm, and the behaviour change: this topology is safe, so
+        # the ladder is BUILT and no warning is emitted. Explicit `counts` are
+        # needed because the composed default (stream:39062 vertices) would
+        # collapse to one leaf at 600 vertices and prove nothing.
         out = tmp_path / "t.luxar.zarr"
         verts, indices = self._indexed_verts_and_edges()
-        with pytest.warns(UserWarning, match="edges are not preserved by the ladder"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_lines(
+                    "curves",
+                    verts,
+                    0.8,
+                    line_type="indexed",
+                    indices=indices,
+                    substitutive_lod=dict(
+                        compression_factor=2, levels=1, device="cpu", seed=0
+                    ),
+                    additive_lod=dict(counts=[100, 300], method="random", seed=0),
+                )
+
+        grp = zarr.open(str(out), mode="r")["curves"]
+        assert grp.attrs["kind"] == "lod"
+        assert grp.attrs["display_type"] == "lines"
+        finest = grp[sorted(k for k in grp.keys() if k.startswith("child_"))[-1]]
+        assert int(finest.attrs.get("n_additive_sublods", 1)) > 1
+        assert any(k.startswith("additive_") for k in finest.keys())
+
+    def test_explicit_additive_on_non_chain_warns_and_suppresses(
+        self, tmp_path
+    ) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        verts, indices = self._forked_verts_and_edges()
+        with pytest.warns(UserWarning, match="not a simple path in ascending"):
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_lines(
@@ -455,17 +508,14 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
         assert grp.attrs["display_type"] == "lines"
         self._assert_no_additive_ladder(grp)
 
-    def test_default_additive_indexed_is_suppressed_quietly(self, tmp_path) -> None:
-        # With additive_lod omitted, an indexed node's ladder is skipped QUIETLY
+    def test_default_additive_on_non_chain_is_suppressed_quietly(
+        self, tmp_path
+    ) -> None:
+        # With additive_lod omitted, an unsafe node's ladder is skipped QUIETLY
         # (an aprint info line, NOT a UserWarning). The load-bearing assertion
         # here is the ABSENCE of a UserWarning (enforced by simplefilter below).
-        # At this vertex count (600 << the composed stream:39062-vertex default)
-        # the ladder would collapse to a single flat leaf regardless of whether
-        # the indexed-suppression branch ran, so `_assert_no_additive_ladder` is
-        # only a plain build-sanity check — it does NOT by itself prove
-        # suppression (test_explicit_additive_warns_and_ladder_suppressed does).
         out = tmp_path / "t.luxar.zarr"
-        verts, indices = self._indexed_verts_and_edges()
+        verts, indices = self._forked_verts_and_edges()
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
             with LuxarZarrCompiler(out) as compiler:
@@ -485,6 +535,54 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "lines"
         self._assert_no_additive_ladder(grp)
+
+    def test_direct_additive_path_raises_on_non_chain(self, tmp_path) -> None:
+        # WITHOUT a substitutive wrapper there is no level to fall back to, and
+        # this path previously had no guard at all: it fabricated a chain per
+        # component and wrote a scene whose edges were quietly wrong. It must
+        # raise, not warn.
+        out = tmp_path / "t.luxar.zarr"
+        verts, indices = self._forked_verts_and_edges()
+        with pytest.raises(ValueError, match="simple path in ascending vertex order"):
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_lines(
+                    "curves",
+                    verts,
+                    0.8,
+                    line_type="indexed",
+                    indices=indices,
+                    additive_lod=dict(counts=[100, 300], method="random", seed=0),
+                )
+
+    def test_direct_additive_path_ladders_chain_shaped_data(self, tmp_path) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        verts, indices = self._indexed_verts_and_edges()
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                verts,
+                0.8,
+                line_type="indexed",
+                indices=indices,
+                additive_lod=dict(counts=[100, 300], method="random", seed=0),
+            )
+
+        grp = zarr.open(str(out), mode="r")["curves"]
+        assert any(k.startswith("additive_") for k in grp.keys())
+
+    def test_real_tractography_index_layout_qualifies(self) -> None:
+        # The third arm: the layout the demos actually build, straight from the
+        # demo's own index builder rather than a hand-written fixture.
+        from luxar.core.group.lod.lines import indexed_components_are_chains
+        from luxar.demos.demo_dmri_tractography import polyline_segment_indices
+
+        n_paths, n_steps = 40, 28
+        idx = polyline_segment_indices(n_paths, n_steps)
+        assert indexed_components_are_chains(
+            n_paths * n_steps, np.asarray(idx, dtype=np.intp).reshape(-1, 2)
+        )
 
 
 class TestAdditiveLevelStatsPairingLines:

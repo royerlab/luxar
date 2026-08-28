@@ -21,6 +21,7 @@ from luxar.core.group.lod.lines import (
     _indexed_connected_components,
     compute_additive_order_lines,
     identify_polylines,
+    indexed_components_are_chains,
     make_additive_lod_lines,
     resolve_additive_axis_lines,
 )
@@ -148,6 +149,83 @@ class TestIdentifyPolylines:
     def test_invalid_line_type_raises(self) -> None:
         with pytest.raises(ValueError, match="line_type must be"):
             identify_polylines(4, "bogus")
+
+
+# ────────────────────────────────────────────────────────────────────────
+# indexed_components_are_chains
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _edges(*pairs: tuple[int, int]) -> np.ndarray:
+    return np.asarray(pairs, dtype=np.intp).reshape(-1, 2)
+
+
+class TestIndexedComponentsAreChains:
+    """The precondition that makes an additive ladder safe for ``indexed`` lines.
+
+    The multi-LOD writer rebuilds edges by chaining each connected component in
+    ascending vertex order, so the check must accept exactly those edge sets a
+    chain reproduces — no more (silent corruption) and no fewer (a ladder lost
+    for nothing, which is what the old blanket refusal did).
+    """
+
+    @pytest.mark.parametrize(
+        "label, n, edges",
+        [
+            ("one ascending chain", 4, _edges((0, 1), (1, 2), (2, 3))),
+            ("two streamlines", 6, _edges((0, 1), (1, 2), (3, 4), (4, 5))),
+            ("edges written high→low", 3, _edges((1, 0), (2, 1))),
+            ("disjoint vertex pairs", 6, _edges((0, 1), (2, 3), (4, 5))),
+            ("a duplicated edge", 3, _edges((0, 1), (1, 2), (1, 2))),
+            # Joining one run's last vertex to the next run's first yields a
+            # LONGER valid chain, because the numbering is contiguous. This is
+            # the case that looks like corruption and is not.
+            ("runs joined end-to-start", 4, _edges((0, 1), (1, 2), (2, 3))),
+            # A gap in the numbering splits into two components, each a chain,
+            # and the writer chains each separately — so no edge is invented
+            # across the gap. The hazard there is only apparent.
+            ("interior gap in numbering", 5, _edges((0, 1), (3, 4))),
+        ],
+    )
+    def test_accepts_chain_shaped_edge_sets(
+        self, label: str, n: int, edges: np.ndarray
+    ) -> None:
+        assert indexed_components_are_chains(n, edges), label
+
+    @pytest.mark.parametrize(
+        "label, n, edges",
+        [
+            ("a fork (degree-3 vertex)", 4, _edges((0, 1), (1, 2), (1, 3))),
+            ("a cycle", 3, _edges((0, 1), (1, 2), (2, 0))),
+            ("a path not in ascending order", 3, _edges((0, 2), (2, 1))),
+            ("a self-loop", 3, _edges((0, 1), (1, 2), (2, 2))),
+            ("a chord across a chain", 4, _edges((0, 1), (1, 2), (2, 3), (0, 3))),
+        ],
+    )
+    def test_rejects_edge_sets_a_chain_would_misrepresent(
+        self, label: str, n: int, edges: np.ndarray
+    ) -> None:
+        assert not indexed_components_are_chains(n, edges), label
+
+    def test_degenerate_inputs_are_safe(self) -> None:
+        empty = np.empty((0, 2), dtype=np.intp)
+        # No vertices, and no edges at all (every vertex its own component):
+        # nothing a ladder can misrepresent.
+        assert indexed_components_are_chains(0, empty)
+        assert indexed_components_are_chains(5, empty)
+
+    def test_the_polyline_grid_layout_the_demos_build(self) -> None:
+        # Consecutive pairs within each row, never across — the layout both
+        # dmri_tractography and cosmicflows_laniakea produce.
+        n_paths, n_steps = 200, 28
+        idx = np.arange(n_paths * n_steps, dtype=np.intp).reshape(n_paths, n_steps)
+        pairs = np.stack([idx[:, :-1], idx[:, 1:]], axis=-1).reshape(-1, 2)
+        assert indexed_components_are_chains(n_paths * n_steps, pairs)
+
+        # One fork anywhere in that grid must flip the verdict, or the check
+        # would be vacuous on exactly the data it is meant to guard.
+        forked = np.vstack([pairs, _edges((5, 3 * n_steps + 4))])
+        assert not indexed_components_are_chains(n_paths * n_steps, forked)
 
 
 # ────────────────────────────────────────────────────────────────────────

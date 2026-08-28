@@ -328,11 +328,19 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
 Composes with `additive_lod` (laddered per level by default, as for Points);
 mutually exclusive with `partition`. A single-polyline `line_type`
 (`polyline`/`loop`) skips the ladder, since a polyline cannot be split without
-breaking its segment topology; `indexed` is NOT laddered in the composed additive
-path at all — neither by default nor with an explicit `additive_lod=dict(...)` —
-because the additive multi-LOD writer discards the explicit edge list and would
-fabricate phantom edges, so its topology cannot be preserved either way. Only
-`segments` gets a composed additive ladder. `scalars`+`colormap` are
+breaking its segment topology; `indexed` is laddered **when its topology permits
+it**, which `indexed_components_are_chains` decides. The additive multi-LOD
+writer carries no edge list — it rebuilds one by chaining each connected
+component in ascending vertex order — so a chain is faithful exactly when every
+component's edge set already equals its consecutive-vertex pairs. Real
+tractography and streamline sets satisfy that and are laddered; a branching,
+cyclic or out-of-ascending-order component is refused (a `UserWarning` when the
+ladder was explicit, an info line when it was the default). Note a gap in a
+producer's vertex numbering is NOT a problem: two index-contiguous but
+unconnected runs are two components, chained separately, so no edge is invented
+across the gap. On the DIRECT `add_lines(additive_lod=…)` path — no substitutive
+wrapper, so no level to fall back to — a non-qualifying set raises instead;
+before that check the writer fabricated edges silently. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
 Points, and the same uniform-vs-per-element RGBA rule: a uniform colour is
@@ -340,7 +348,8 @@ broadcast to the beads with its alpha, a per-element `(N, 4)` is refused —
 uniformity is judged once, per VERTEX, so a line set that collapses to a single
 bead cannot re-present a per-element colour as a uniform row). All `line_type`s
 (segments/polyline/loop/indexed) are supported for the substitutive pyramid
-itself; only `segments` also receives a composed additive ladder.
+itself; `segments` always receives a composed additive ladder, and `indexed` does
+whenever its components verify as ascending chains.
 Degenerate-width segments are dropped; bead allocation is bounded both
 per-segment (`lift.MAX_BEADS_PER_SEGMENT`) and in aggregate
 (`lift.MAX_TOTAL_BEADS`, spacing widened to fit with a `UserWarning`), so a

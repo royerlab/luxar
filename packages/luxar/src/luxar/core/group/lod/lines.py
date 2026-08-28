@@ -200,6 +200,85 @@ def _indexed_connected_components(
     return [chunk for chunk in np.split(order, starts[1:])]
 
 
+def indexed_components_are_chains(
+    n_vertices: int,
+    segments: NDArray[np.intp],
+) -> bool:
+    """Whether every connected component is a simple path in ASCENDING vertex order.
+
+    This is the precondition that makes an additive ladder safe for
+    ``line_type="indexed"``. The multi-LOD writer does not carry an edge list: it
+    re-derives one by chaining each component's members in the order
+    :func:`_indexed_connected_components` returns them, which is ascending vertex
+    order. That chain reproduces the real topology **iff** each component's edge
+    set is exactly its consecutive-vertex pairs — so this checks precisely that,
+    rather than trusting a producer's convention.
+
+    What it rejects, and why each would corrupt the ladder:
+
+    * a **branching** component (a tract that forks) — the fabricated chain
+      invents an edge along the ascending order and drops the real fork;
+    * a component whose path order is not ascending (edges ``0-2, 2-1`` give
+      ascending ``[0, 1, 2]`` but the real path is ``0-2-1``) — every edge moves;
+    * a **cycle**, which has one more edge than a path of the same length;
+    * any duplicate or extra edge.
+
+    Note what it does NOT reject: an interior gap in a producer's vertex
+    numbering. Two index-contiguous but unconnected runs are two distinct
+    connected components, and the writer chains each separately, so no edge is
+    invented across the gap. The hazard there is only apparent.
+
+    Args:
+        n_vertices: Vertex count the indices address.
+        segments: ``(S, 2)`` edge list, the same array
+            :func:`identify_polylines` validates.
+
+    Returns:
+        ``True`` when a fabricated per-component chain is faithful. ``True`` for
+        an empty vertex set or an edge-free set (every vertex is its own
+        single-element component, which no ladder can misrepresent).
+    """
+    if n_vertices == 0 or segments.size == 0:
+        return True
+    components = _indexed_connected_components(n_vertices, segments)
+
+    # Position of each vertex within its own component, and which component it
+    # is in. Both are O(V) to build from the components themselves, so the
+    # check never re-derives connectivity.
+    comp_of = np.empty(n_vertices, dtype=np.intp)
+    pos_in_comp = np.empty(n_vertices, dtype=np.intp)
+    for cid, members in enumerate(components):
+        comp_of[members] = cid
+        pos_in_comp[members] = np.arange(members.shape[0], dtype=np.intp)
+
+    a = segments[:, 0]
+    b = segments[:, 1]
+    if np.any(a == b):
+        return False  # a self-loop is not a path edge
+
+    # Deduplicate as UNDIRECTED edges: (u, v) and (v, u) are one edge, and a
+    # repeated edge must not be counted twice against the expected total.
+    lo = np.minimum(a, b)
+    hi = np.maximum(a, b)
+    unique_edges = np.unique(np.column_stack((lo, hi)), axis=0)
+
+    # Every edge must join adjacent members of ONE component ...
+    same_comp = comp_of[unique_edges[:, 0]] == comp_of[unique_edges[:, 1]]
+    if not bool(np.all(same_comp)):
+        return False
+    step = np.abs(
+        pos_in_comp[unique_edges[:, 0]] - pos_in_comp[unique_edges[:, 1]]
+    )
+    if not bool(np.all(step == 1)):
+        return False
+
+    # ... and the consecutive pairs must be FULLY covered, or the component is
+    # not connected as a single path by these edges alone. A path over k members
+    # has exactly k-1 edges, so the totals settle it.
+    expected = n_vertices - len(components)
+    return int(unique_edges.shape[0]) == expected
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Per-polyline ordering
 # ─────────────────────────────────────────────────────────────────────
