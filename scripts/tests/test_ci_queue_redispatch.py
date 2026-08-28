@@ -178,6 +178,21 @@ def test_finish_refuses_run_that_completed_successfully() -> None:
     assert writes == []
 
 
+def test_finish_refuses_run_taken_over_by_another_repair() -> None:
+    writes: list[tuple[str, object]] = []
+
+    changed = ci_queue_redispatch.finish_redispatch(
+        "royerlab/luxar",
+        42,
+        read=lambda endpoint: {"status": "in_progress", "run_attempt": 2},
+        write=lambda endpoint, fields: writes.append((endpoint, fields)),
+        sleep=lambda seconds: None,
+    )
+
+    assert changed is False
+    assert writes == []
+
+
 def test_finish_returns_false_when_poll_budget_expires() -> None:
     now = 0.0
     writes: list[tuple[str, object]] = []

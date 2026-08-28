@@ -108,8 +108,10 @@ def finish_redispatch(
         except ci_queue_scan.ApiError:
             sleep(min(POLL_SECONDS, max(0.0, deadline - clock())))
             continue
+        if run.get("run_attempt") != 1:
+            return False
         if run.get("status") == "completed":
-            if run.get("conclusion") != "cancelled" or run.get("run_attempt") != 1:
+            if run.get("conclusion") != "cancelled":
                 return False
             while clock() < deadline:
                 try:
