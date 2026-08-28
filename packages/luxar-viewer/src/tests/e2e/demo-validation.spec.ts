@@ -51,6 +51,7 @@ const DEMO_SCRIPTS = [
   'simple_nd_example.py',
   'single_point_example.py',
   'spatial_index_demo_example.py',
+  'temporal_spiral_sphere_4d_example.py',
   'time_series_4d_example.py',
   'transform_example.py',
 ];
@@ -61,11 +62,7 @@ const SKIP_SCRIPTS: Record<string, string> = {
 };
 
 // Scripts that take too long for routine zarr output checks
-const SLOW_SCRIPTS = [
-  'temporal_spiral_sphere_4d_example.py',
-  'time_series_4d_example.py',
-  'performance_benchmark_example.py',
-];
+const SLOW_SCRIPTS = ['time_series_4d_example.py', 'performance_benchmark_example.py'];
 
 /**
  * Get the .zarr output name for a script
