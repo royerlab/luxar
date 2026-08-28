@@ -1476,9 +1476,7 @@ describe('SceneLoader', () => {
         reportArchiveFault(fault: ArchiveFaultError): void;
       };
       await sceneLoader.updateView(current);
-      internals.reportArchiveFault(
-        new ArchiveFaultError('archive unavailable', '/scene.zip')
-      );
+      internals.reportArchiveFault(new ArchiveFaultError('archive unavailable', '/scene.zip'));
       const updateViewSpy = vi.spyOn(sceneLoader, 'updateView');
 
       await expect(sceneLoader.retryFailedLoader('/scene.zip')).resolves.toBe(true);
