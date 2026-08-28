@@ -16,6 +16,22 @@ const PROJECT_ROOT = resolve(VIEWER_ROOT, '../..');
 
 type FixtureGenerator = (scriptPath: string) => void;
 
+/**
+ * Wall-clock budget shared by import resolution and one generator run.
+ *
+ * Measured: `generate_test_data.py` takes ~215 s on an M-series laptop, so the
+ * previous 120 s could not finish it — every regeneration was SIGTERM'd
+ * mid-write, leaving incomplete stores that hit the same wall on the next run
+ * because stamps are written only after success. The failure reads as
+ * `spawnSync ETIMEDOUT`, which looks like a hung shell rather than an
+ * unsurvivable budget.
+ *
+ * Import resolution and the first generator run may also create the separate
+ * ~1.2 GB `fixtures` Hatch environment. The 1,200 s default preserves the
+ * previous 600 s generation budget plus the same allowance for that one-time
+ * download/install. `LUXAR_FIXTURE_GEN_TIMEOUT_MS` overrides it without a
+ * source edit on a slower machine.
+ */
 export const FIXTURE_GENERATOR_TIMEOUT_MS =
   Number(process.env.LUXAR_FIXTURE_GEN_TIMEOUT_MS) || 1_200_000;
 
@@ -30,7 +46,9 @@ from luxar.utils.source_fingerprints import imported_source_files
 project_root = Path(sys.argv[1]).resolve()
 generators = [Path(path) for path in sys.argv[2:4]]
 import_roots = tuple(Path(path) for path in sys.argv[4:])
-closures = [imported_source_files(generator, import_roots, within=project_root) for generator in generators]
+import_cache = dict()
+module_cache = dict()
+closures = [imported_source_files(generator, import_roots, within=project_root, import_cache=import_cache, module_cache=module_cache) for generator in generators]
 print(json.dumps([[path.relative_to(project_root).as_posix() for path in sources] for sources in closures]))
 `;
 

@@ -34,21 +34,7 @@ const WASM_BIN_PATH = resolve(VIEWER_ROOT, 'public/wasm/luxar_wasm_bg.wasm');
 const GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_test_data.py');
 const EXPECTED_FIXTURES = parseGeneratedFixtureNames(GENERATOR_PATH);
 
-/**
- * Wall-clock budget for one generator run.
- *
- * Measured: `generate_test_data.py` takes ~215 s on an M-series laptop, so the
- * previous 120 s could not finish it — every regeneration was SIGTERM'd
- * mid-write, which leaves incomplete stores AND relands on the same wall the
- * next run, because the stamp is only written on success. The failure reads as
- * `spawnSync ETIMEDOUT`, which looks like a hung shell rather than a budget
- * that was never survivable.
- *
- * The first run also creates the separate ~1.2 GB `fixtures` Hatch environment.
- * The 1,200 s default preserves the previous 600 s generation budget plus the
- * same allowance for that one-time download/install. `LUXAR_FIXTURE_GEN_TIMEOUT_MS`
- * overrides it rather than requiring a source edit on a machine that needs more.
- */
+/** Run one generator within the shared fixture budget from `fixture-freshness.ts`. */
 function runPythonGenerator(command: string, label: string): void {
   try {
     execSync(command, {

@@ -44,4 +44,12 @@ describe('fixture import resolver', () => {
         'Raise it with LUXAR_FIXTURE_GEN_TIMEOUT_MS if this machine is slower.'
     );
   });
+
+  it('rejects malformed import-resolution payloads', () => {
+    mockedExecFileSync.mockReturnValue('[[]]');
+
+    expect(() => fixtureInputFiles('/checkout-invalid', '/checkout-invalid/fixtures')).toThrow(
+      'Fixture import resolver returned an invalid source list'
+    );
+  });
 });
