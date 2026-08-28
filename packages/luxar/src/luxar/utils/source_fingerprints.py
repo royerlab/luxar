@@ -18,20 +18,16 @@ ZARR_FORMAT_ENV_VAR = "LUXAR_ZARR_FORMAT"
 def fingerprint_source_files(
     root: Path,
     paths: Iterable[Path],
-    source_hash_cache: dict[Path, bytes] | None = None,
 ) -> str:
     """Hash source paths and contents in a stable, boundary-safe order."""
-    cache = {} if source_hash_cache is None else source_hash_cache
     digest = hashlib.sha256()
     for path in sorted(paths, key=lambda item: item.relative_to(root).as_posix()):
         relative = path.relative_to(root).as_posix().encode()
         digest.update(len(relative).to_bytes(4, "big"))
         digest.update(relative)
-        source_hash = cache.get(path)
-        if source_hash is None:
-            source_hash = hashlib.sha256(path.read_bytes()).digest()
-            cache[path] = source_hash
-        digest.update(source_hash)
+        payload = path.read_bytes()
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
     return digest.hexdigest()
 
 
@@ -74,9 +70,10 @@ def _imported_modules(path: Path, module: str, cache: dict[Path, set[str]]) -> s
     if path in cache:
         return cache[path]
     try:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_bytes())
     except (OSError, SyntaxError, UnicodeError):
-        return set()
+        cache[path] = set()
+        return cache[path]
     imported: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -110,16 +107,19 @@ def imported_source_files(
     module_file: Path,
     import_roots: Iterable[Path],
     *,
+    within: Path | None = None,
     import_cache: dict[Path, set[str]] | None = None,
     module_cache: dict[str, Path | None] | None = None,
 ) -> tuple[Path, ...]:
     """Return a module and local sources reachable through static imports.
 
-    Imports assembled dynamically from strings and non-Python inputs are outside
-    this source graph and must be invalidated by their caller's own provenance.
+    ``within`` restricts resolved dependencies to one source tree. Imports
+    assembled dynamically from strings and non-Python inputs are outside this
+    graph and must be invalidated by their caller's own provenance.
     """
     source = module_file.resolve()
     roots = tuple(Path(root).resolve() for root in import_roots)
+    boundary = None if within is None else Path(within).resolve()
     imports = {} if import_cache is None else import_cache
     modules = {} if module_cache is None else module_cache
     sources = {source}
@@ -133,7 +133,11 @@ def imported_source_files(
         parts = module.split(".")
         pending.extend(".".join(parts[:index]) for index in range(1, len(parts)))
         path = _module_path(module, roots, modules)
-        if path is None or path in sources:
+        if (
+            path is None
+            or path in sources
+            or (boundary is not None and not path.is_relative_to(boundary))
+        ):
             continue
         sources.add(path)
         pending.extend(_imported_modules(path, _module_name(path, roots), imports))
@@ -145,18 +149,19 @@ def fingerprint_imported_sources(
     module_file: Path,
     import_roots: Iterable[Path],
     *,
+    within: Path | None = None,
     import_cache: dict[Path, set[str]] | None = None,
     module_cache: dict[str, Path | None] | None = None,
-    source_hash_cache: dict[Path, bytes] | None = None,
 ) -> str:
     """Hash a module and the local Python sources reachable from its imports."""
     sources = imported_source_files(
         module_file,
         import_roots,
+        within=within,
         import_cache=import_cache,
         module_cache=module_cache,
     )
-    return fingerprint_source_files(root.resolve(), sources, source_hash_cache)
+    return fingerprint_source_files(root.resolve(), sources)
 
 
 def fingerprint_production_sources(package_root: Path | None = None) -> str:

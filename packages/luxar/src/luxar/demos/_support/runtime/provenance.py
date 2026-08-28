@@ -19,6 +19,14 @@ from ....utils.source_fingerprints import (
 #: Scene-root attr holding the fingerprint of the builder that wrote the scene.
 BUILDER_FINGERPRINT_ATTR: Final[str] = "builder_fingerprint"
 _DEMO_FINGERPRINT_VERSION: Final[int] = 2
+_DEMO_IMPORT_CACHE: dict[Path, set[str]] = {}
+_DEMO_MODULE_CACHES: dict[Path, dict[str, Path | None]] = {}
+
+
+def _clear_demo_source_fingerprint_caches() -> None:
+    """Clear process-local static import resolution caches."""
+    _DEMO_IMPORT_CACHE.clear()
+    _DEMO_MODULE_CACHES.clear()
 
 
 def demo_source_fingerprint(
@@ -46,12 +54,16 @@ def demo_source_fingerprint(
         else Path(package_root).resolve()
     )
     module_path = Path(module_file).resolve()
+    module_cache = _DEMO_MODULE_CACHES.setdefault(root.parent, {})
     try:
         fingerprint_root = Path(os.path.commonpath((root.parent, module_path)))
         sources = fingerprint_imported_sources(
             fingerprint_root,
             module_path,
             (root.parent,),
+            within=root if module_path.is_relative_to(root) else None,
+            import_cache=_DEMO_IMPORT_CACHE,
+            module_cache=module_cache,
         )
     except (OSError, ValueError):
         return ""

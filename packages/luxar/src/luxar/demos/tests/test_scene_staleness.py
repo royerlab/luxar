@@ -9,6 +9,7 @@ stale store on disk.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from luxar._zarr_compat import consolidate, open_group
 from luxar.demos._support.runtime.flags import parse_demo_flags
 from luxar.demos._support.runtime.provenance import (
     BUILDER_FINGERPRINT_ATTR,
+    _clear_demo_source_fingerprint_caches,
     demo_source_fingerprint,
     scene_is_current,
 )
@@ -35,6 +37,13 @@ def _write_scene(path: Path, fingerprint: str | None, *, finished: bool = True) 
     if finished:
         consolidate(group)
     return path
+
+
+@pytest.fixture(autouse=True)
+def _reset_demo_source_fingerprint_caches() -> Iterator[None]:
+    _clear_demo_source_fingerprint_caches()
+    yield
+    _clear_demo_source_fingerprint_caches()
 
 
 # ------------------------------------------------------------------ fingerprint
@@ -70,10 +79,8 @@ def test_fingerprint_changes_when_production_writer_changes(tmp_path: Path) -> N
     (writer.parent / "__init__.py").write_text("")
     writer.write_text("ENCODING_VERSION = 1\n")
 
-    production_source_fingerprint.cache_clear()
     before = demo_source_fingerprint(source, package_root=package_root)
     writer.write_text("ENCODING_VERSION = 2\n")
-    production_source_fingerprint.cache_clear()
 
     assert demo_source_fingerprint(source, package_root=package_root) != before
 
@@ -91,10 +98,8 @@ def test_fingerprint_ignores_unrelated_production_source(tmp_path: Path) -> None
     writer.write_text("ENCODING_VERSION = 1\n")
     unrelated.write_text("VALUE = 1\n")
 
-    production_source_fingerprint.cache_clear()
     before = demo_source_fingerprint(source, package_root=package_root)
     unrelated.write_text("VALUE = 2\n")
-    production_source_fingerprint.cache_clear()
 
     assert demo_source_fingerprint(source, package_root=package_root) == before
 
@@ -111,10 +116,8 @@ def test_fingerprint_follows_transitive_relative_demo_imports(tmp_path: Path) ->
     helper.write_text("from ._nested import VALUE\n")
     nested.write_text("VALUE = 1\n")
 
-    production_source_fingerprint.cache_clear()
     before = demo_source_fingerprint(source, package_root=package_root)
     nested.write_text("VALUE = 2\n")
-    production_source_fingerprint.cache_clear()
 
     assert demo_source_fingerprint(source, package_root=package_root) != before
 
