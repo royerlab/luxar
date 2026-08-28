@@ -8,6 +8,7 @@ the exit code (so it can gate a pipeline), and the JSON report.
 
 from __future__ import annotations
 
+import inspect
 import json
 import shutil
 import struct
@@ -17,11 +18,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from typer.models import OptionInfo
 from typer.testing import CliRunner
 
 from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.cli import app
+from luxar.cli.gsplat_ops import inspect_commands
+from luxar.cli.tests._testing import normalized_cli_output
 
 
 def _partition_without_split_planes(tmp: Path) -> Path:
@@ -213,14 +217,56 @@ def test_doctor_summarizes_nested_provenance_unless_full_is_requested() -> None:
             in summary.stdout
         )
         assert "{'fitting':" not in summary.stdout
+        assert "psnr_db" not in summary.stdout
 
         full = runner.invoke(app, ["gsplat", "doctor", str(path), "--full-provenance"])
         assert full.exit_code == 1, full.stdout
         assert "{'fitting':" in full.stdout
+        assert "psnr_db" in full.stdout
+        assert (
+            "part_provenance: 2 parts, nested component records (2 levels)"
+            not in full.stdout
+        )
+
+        implied = runner.invoke(
+            app,
+            ["gsplat", "doctor", str(path), "--full-provenance", "--no-info"],
+        )
+        assert implied.exit_code == 1, implied.stdout
+        assert "psnr_db" in implied.stdout
 
     help_result = runner.invoke(app, ["gsplat", "doctor", "--help"])
     assert help_result.exit_code == 0, help_result.stdout
-    assert "--full-provenance" in help_result.stdout
+    help_output = normalized_cli_output(help_result)
+    assert "--full-provenance" in help_output
+    assert "implies --info" in help_output
+
+
+def test_doctor_passes_concrete_values_for_every_info_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signature = inspect.signature(inspect_commands.info_dataset)
+    calls: list[inspect.BoundArguments] = []
+
+    def capture_info_call(*args: object, **kwargs: object) -> None:
+        calls.append(signature.bind(*args, **kwargs))
+
+    monkeypatch.setattr(inspect_commands, "info_dataset", capture_info_call)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_without_split_planes(Path(tmp))
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+
+    assert result.exit_code == 1, result.stdout
+    assert len(calls) == 1
+    bound = calls[0]
+    missing = [
+        name
+        for name, parameter in signature.parameters.items()
+        if isinstance(parameter.default, OptionInfo) and name not in bound.arguments
+    ]
+    assert missing == []
+    assert not any(isinstance(value, OptionInfo) for value in bound.arguments.values())
 
 
 def test_doctor_writes_a_json_report() -> None:

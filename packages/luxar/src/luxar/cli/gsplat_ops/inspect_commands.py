@@ -1307,7 +1307,7 @@ def doctor(
         False,
         "--full-provenance",
         help="Print the complete nested fitting/part_provenance record in the "
-        "info report.",
+        "info report (implies --info).",
     ),
     json_out: Optional[Path] = typer.Option(
         None, "--json", help="Write the findings to a JSON file as well."
@@ -1343,7 +1343,7 @@ def doctor(
 
     from luxar.gsplats.doctor import diagnose_store
 
-    if histograms:
+    if histograms or full_provenance:
         info = True
     store_kind = _resolve_doctor_store_kind(path)
     if info:
