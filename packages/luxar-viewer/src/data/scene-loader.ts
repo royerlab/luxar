@@ -1777,10 +1777,10 @@ export class SceneLoader {
    * consumer — the data-monitor's failure banner (wired in `monitor-wiring.ts`)
    * and the layers panel's per-row error badge (wired in
    * `core/app/dataset/load-dataset.ts`). Each call returns a NEW provider object
-   * (the monitor and the panel hold distinct instances), but all of them close
-   * over the SAME live `failedLoaders` map and the one `retryAllFailedLoaders`
-   * entry point, so they always agree. `getFailedReason` powers the
-   * layers-panel tooltip.
+   * (the monitor and the panel hold distinct instances), but all of them read
+   * the SAME live loader failures and latched lazy branches through the one
+   * `retryAllFailedLoaders` entry point, so they always agree.
+   * `getFailedReason` powers the layers-panel tooltip.
    */
   getFailedLoadsProvider(): FailedLoadsProviderPort {
     return {
@@ -1817,14 +1817,17 @@ export class SceneLoader {
   }
 
   /**
-   * Whether any failure is worth an AUTOMATIC retry — a transient cause still
-   * under the attempt cap (see `LoaderRegistry.autoRetryablePaths`). The
-   * connectivity-triggered retry gates on this so it neither re-fetches a
-   * deterministically-broken path forever nor announces "Connection restored,
-   * retrying" for a scene it cannot help.
+   * Whether any failure is worth an AUTOMATIC retry: either a transient loader
+   * cause still under the attempt cap (see `LoaderRegistry.autoRetryablePaths`)
+   * or a lazy branch latched by an archive fault. The connectivity-triggered
+   * retry gates on this so deterministic ordinary loader failures remain quiet
+   * while reconnecting can re-open deferred LOD work.
    */
   hasAutoRetryableFailures(): boolean {
-    return this.registry.hasAutoRetryableFailures();
+    return (
+      this.registry.hasAutoRetryableFailures() ||
+      (this.lodGroupRegistry?.getFailedLazyChildPaths().length ?? 0) > 0
+    );
   }
 
   /**
@@ -1947,9 +1950,7 @@ export class SceneLoader {
     const loaderPaths = opts.onlyAutoRetryable
       ? this.registry.autoRetryablePaths()
       : Array.from(this.failedLoaders.keys());
-    const lazyPaths = opts.onlyAutoRetryable
-      ? []
-      : (this.lodGroupRegistry?.getFailedLazyChildPaths() ?? []);
+    const lazyPaths = this.lodGroupRegistry?.getFailedLazyChildPaths() ?? [];
     const failedPaths = Array.from(new Set([...loaderPaths, ...lazyPaths]));
 
     if (failedPaths.length === 0) {

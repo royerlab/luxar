@@ -1544,6 +1544,57 @@ describe('SceneLoader', () => {
       expect(deferred.permanentlyFailed).toBe(false);
     });
 
+    it('auto-retries a lazy-only archive failure after connectivity returns', async () => {
+      const camera = new THREE.Camera();
+      const registry = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        hasArchiveFault: () => sceneLoader.archiveFault !== null,
+      });
+      const ensureLoaded = vi.fn();
+      const deferred: LODGroupChild = {
+        object: new THREE.Group(),
+        nodePath: '/lod/nested',
+        coverageFraction: 0.5,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+        ready: false,
+        failed: true,
+        permanentlyFailed: true,
+        failureReason: 'archive unavailable',
+        ensureLoaded,
+      };
+      registry.register({
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [
+          {
+            object: new THREE.Group(),
+            coverageFraction: 0,
+            positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+          },
+          deferred,
+        ],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      });
+      const internals = sceneLoader as unknown as {
+        lodGroupRegistry: LODGroupRegistry;
+        _archiveFault: ArchiveFaultError | null;
+      };
+      internals.lodGroupRegistry = registry;
+      internals._archiveFault = new ArchiveFaultError('archive unavailable', '/scene.zip');
+
+      expect(sceneLoader.hasAutoRetryableFailures()).toBe(true);
+      await expect(sceneLoader.retryAllFailedLoaders({ onlyAutoRetryable: true })).resolves.toEqual(
+        { succeeded: ['/lod/nested'], failed: [] }
+      );
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(ensureLoaded).toHaveBeenCalledOnce();
+      expect(deferred.permanentlyFailed).toBe(false);
+    });
+
     it('deduplicates a path present in both loader and lazy failure sets', async () => {
       const camera = new THREE.Camera();
       const registry = new LODGroupRegistry({

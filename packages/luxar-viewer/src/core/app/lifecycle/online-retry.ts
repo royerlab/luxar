@@ -9,10 +9,10 @@ import { log, Modules } from '../../../utils/log';
 export interface RetryCapableLoader {
   hasFailures(): boolean;
   /**
-   * Whether any failure is worth an automatic retry — a transient cause still
-   * under the attempt cap. Connectivity can only fix transient failures, so
-   * gating on this stops a deterministically-broken path (a decode error, a
-   * permanent 404 past the cap) from being re-fetched on every `online` event.
+   * Whether any failure is worth an automatic retry — a transient loader cause
+   * still under the attempt cap, or a deferred LOD branch latched on an archive
+   * fault. Gating on this keeps deterministic ordinary failures quiet while an
+   * `online` transition can re-open archive-backed lazy work.
    */
   hasAutoRetryableFailures(): boolean;
   /** `deferred: true` ⇒ a main update held the lock and NOTHING was retried. */
