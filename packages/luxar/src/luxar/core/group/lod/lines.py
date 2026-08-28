@@ -266,9 +266,7 @@ def indexed_components_are_chains(
     same_comp = comp_of[unique_edges[:, 0]] == comp_of[unique_edges[:, 1]]
     if not bool(np.all(same_comp)):
         return False
-    step = np.abs(
-        pos_in_comp[unique_edges[:, 0]] - pos_in_comp[unique_edges[:, 1]]
-    )
+    step = np.abs(pos_in_comp[unique_edges[:, 0]] - pos_in_comp[unique_edges[:, 1]])
     if not bool(np.all(step == 1)):
         return False
 

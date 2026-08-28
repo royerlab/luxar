@@ -223,9 +223,9 @@ def test_the_gate_fires_when_an_entry_is_missing(dropped: str) -> None:
     no longer matches would be silently unnecessary, and this fails on it.
     """
     thinned = {k: v for k, v in JUSTIFIED.items() if k != dropped}
-    assert unjustified_modules(thinned) == {
-        dropped: sorted(_corpus()[dropped])
-    }, f"removing {dropped} from JUSTIFIED did not trip the gate"
+    assert unjustified_modules(thinned) == {dropped: sorted(_corpus()[dropped])}, (
+        f"removing {dropped} from JUSTIFIED did not trip the gate"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -237,15 +237,27 @@ class TestGatedFeatureDetection:
     @pytest.mark.parametrize(
         "source, expected",
         [
-            ("scene.add_points('a', p, substitutive_lod=dict(levels=3))", {"substitutive_lod"}),
+            (
+                "scene.add_points('a', p, substitutive_lod=dict(levels=3))",
+                {"substitutive_lod"},
+            ),
             ("scene.add_points('a', p, partition=dict(max_elements=1))", {"partition"}),
-            ("scene.add_lines('a', v, 1.0, substitutive_lod=spec)", {"substitutive_lod"}),
+            (
+                "scene.add_lines('a', v, 1.0, substitutive_lod=spec)",
+                {"substitutive_lod"},
+            ),
             (
                 "scene.add_points('a', p, partition=P, substitutive_lod=S)",
                 {"partition", "substitutive_lod"},
             ),
-            ("w = scene.add_partition_group('a', max_elements=1)", {"add_partition_group"}),
-            ("g = w.add_lod_group('part_0', selector='screen-area')", {"add_lod_group"}),
+            (
+                "w = scene.add_partition_group('a', max_elements=1)",
+                {"add_partition_group"},
+            ),
+            (
+                "g = w.add_lod_group('part_0', selector='screen-area')",
+                {"add_lod_group"},
+            ),
             # Routed through a helper — still a request.
             (
                 "scene.add_points('a', p, substitutive_lod=substitutive_lod_or_flat(S))",

@@ -3,7 +3,7 @@
 
 A 3D UMAP of millions of human cells from the CZ CELLxGENE Census, embedded from
 their precomputed **scVI latent** (50-d) with cuML UMAP, rendered in Luxar with
-**substitutive Points LOD**. A categorical ``coloring`` dimension
+bounded additive Points streaming. A categorical ``coloring`` dimension
 switches the colour scheme (navigate with ``[`` / ``]``):
 
   0: Cell type        (hundreds of categories — hashed hue)
@@ -34,11 +34,11 @@ the coarse levels were bytes nobody fetched. See ``_lod_policy`` for the rule.
 Scales (measured): the build is a write rather than a compute now that nothing is
 coarsened — no torch/scipy, no CPU/GPU split, runs anywhere. Generating the 10M
 scVI-UMAP *coords* still needs a GPU (cuML; see scripts). This demo ships a
-**1M-cell cache** (Git LFS) and builds a 3M-element scene by default. NB: the
-full 30M scene builds fine, but the viewer eagerly streams the finest level, so
-~10M+ finest points can exhaust the browser — a viewer LOD-streaming ceiling, not
-a scene defect. Override with ``CENSUS_UMAP_CACHE`` / ``CENSUS_UMAP_MAX_CELLS``
-to build larger.
+**1M-cell cache** (Git LFS) and builds a 3M-element scene by default. The viewer
+eagerly converges an additive ladder to 100% of the selected coloring, so keep
+``CENSUS_UMAP_MAX_CELLS`` at or below the portable 5,591,040-Point node cap;
+larger values are silently clamped on a 4096-class GPU after one console
+warning. Point ``CENSUS_UMAP_CACHE`` at another cache to rebuild from it.
 """
 
 from __future__ import annotations
@@ -354,8 +354,8 @@ def main() -> None:
         return
     output_path = get_demos_output_dir() / "cellxgene_census_umap.luxar.zarr"
     # No CPU/GPU split any more: the build no longer coarsens, so it is a write,
-    # not a compute. CENSUS_UMAP_MAX_CELLS still bounds the cloud for the full
-    # ~10M showcase — see the module docstring.
+    # not a compute. CENSUS_UMAP_MAX_CELLS also keeps the selected coloring
+    # below the portable 5,591,040-Point node cap — see the module docstring.
     max_cells = int(os.environ.get("CENSUS_UMAP_MAX_CELLS", "1000000"))
     n = build_scene(cache, output_path, max_cells=max_cells)
     aprint(f"Built {n:,}-cell scene. To view: luxar serve --viewer {output_path}")

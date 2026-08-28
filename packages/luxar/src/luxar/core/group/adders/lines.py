@@ -304,6 +304,7 @@ def add_lines_impl(
         # at the polyline granularity.
         # A dataset with <2 spatial dims can't be split; drop the request
         # with a warning rather than in silence.
+        indexed_additive_verified = False
         if partition is not None:
             from ..partition import warn_if_partition_needs_more_dims
 
@@ -350,6 +351,7 @@ def add_lines_impl(
                         "invented edges and lose real ones. Pass additive_lod=False "
                         "to write this node without a ladder."
                     )
+                indexed_additive_verified = True
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
@@ -448,7 +450,11 @@ def add_lines_impl(
                 # whose edges are quietly wrong — which is what happened before
                 # this check existed. The substitutive path applies the same test
                 # through ``compose_additive_under_substitutive``.
-                if line_type == "indexed" and indices is not None:
+                if (
+                    line_type == "indexed"
+                    and indices is not None
+                    and not indexed_additive_verified
+                ):
                     from ..lod.lines import indexed_components_are_chains
 
                     if not indexed_components_are_chains(

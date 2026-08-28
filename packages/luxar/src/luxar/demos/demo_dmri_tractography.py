@@ -534,20 +534,13 @@ LINE_INTENSITY: Final = 1.0 / 74.976
 #: difference between a 2.1 GB scene and a ~200 MB one.
 SUBSTITUTIVE_LOD: Final = dict(compression_factor=256, levels=2)
 
-# NOTE — no `additive_lod` here, deliberately. An additive ladder composed
-# under a substitutive one is REFUSED for `line_type="indexed"`:
-#
-#   UserWarning: the requested streaming ladder cannot be honoured
-#   (line_type='indexed' edges are not preserved by the ladder);
-#   levels will load all-at-once.
-#
-# The ladder rebuilds each connected component as a plain chain over its
-# members, which for an arbitrary indexed edge list would invent edges that do
-# not exist and drop ones that do (see `adders/lines.py`). Passing it anyway
-# just warns on every build and changes nothing — every level still loads in
-# one commit. It costs us little: each node is under the 200K-vertex threshold
-# at which `check_demo_ladders.py` requires a ladder, and the 87 nodes already
-# stream independently of one another.
+# NOTE — `additive_lod=False` is deliberate. This indexed layout now qualifies
+# for a composed ladder, but the shipped sizing would add three rungs to each of
+# 87 already-small nodes (about 261 groups). Every bundle stays below the
+# 200K-vertex un-laddered-leaf gate and the nodes already stream independently,
+# so that metadata and traversal cost buys little. Keeping the finest Lines
+# level single-shot also leaves its per-vertex hover-label CSR directly on the
+# substitutive child rather than moving it to an additive rung parent.
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -1093,6 +1086,7 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                     opacity=LINE_OPACITY,
                     intensity=LINE_INTENSITY,
                     substitutive_lod=lod,
+                    additive_lod=False,
                     layer=True,
                 )
 

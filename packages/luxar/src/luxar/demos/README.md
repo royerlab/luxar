@@ -323,7 +323,7 @@ Six structural modules, every chain assigned by a curated table that the test su
 
 **Requires**: Internet access (~28 MB of mmCIF from RCSB).
 
-**Demonstrates**: mmCIF parsing and biological-assembly expansion from deposited `_pdbx_struct_oper_list` operators; a 9.87M-element Points scene as **one** BSP-partitioned node — the NPC's subunits are concave and interpenetrate, so splitting by protein has no valid draw order while splitting by space does, and the recorded `bsp_tree` gives the viewer an exact Fuchs-Kedem-Naylor back-to-front traversal even with the camera inside the channel (the partition is also what keeps every part under the 5,591,040-element per-node texture clamp); a hidden **categorical** `state` axis placed **last** so `displayDims == [0, 1, 2]` and the BSP split columns stay displayed; symmetry-averaged baked ambient occlusion (`luxar.shading`) as a burial cue; depth-sorted `normal` blending for surface-like atomic structure; `layer=True` for live control in the Layers panel (press **L**).
+**Demonstrates**: mmCIF parsing and biological-assembly expansion from deposited `_pdbx_struct_oper_list` operators; a 9.87M-element Points scene as **one** BSP-partitioned node — the NPC's subunits are concave and interpenetrate, so splitting by protein has no valid draw order while splitting by space does, and the recorded `bsp_tree` gives the viewer an exact Fuchs-Kedem-Naylor back-to-front traversal even with the camera inside the channel; a bounded streaming ladder inside every spatial part; a hidden **categorical** `state` axis placed **last** so `displayDims == [0, 1, 2]` and the BSP split columns stay displayed; symmetry-averaged baked ambient occlusion (`luxar.shading`) as a burial cue; depth-sorted `normal` blending for surface-like atomic structure; `layer=True` for live control in the Layers panel (press **L**).
 
 ---
 
@@ -472,9 +472,7 @@ Visualizes the **whole** `tomtum/openai-arxiv-embeddings` corpus — 3,286,365 p
 **Requires**: Internet access for the one-time ~30 GB embeddings download plus the ~1.8 GB
 Cornell arXiv metadata snapshot (budget ~39 GB of disk under `~/.cache/luxar/`,
 since the metadata ZIP is also extracted), and `scikit-learn` + `umap-learn`. No
-Kaggle credentials are needed. `luxar[gsplats]` (torch + scipy) is optional
-— without it the scene builds as a flat, fully viewable point cloud instead of the Points
-LOD ladder.
+Kaggle credentials are needed.
 
 The 3072D vectors are never held in RAM: `vectors.dat` is streamed in blocks and projected
 through a PCA basis down to 128D (fitted on a 300k-row uniform subsample), and only that
@@ -487,7 +485,7 @@ through `hatch run`, override its one-thread CPU defaults, for example with
 
 **Demonstrates**: Multi-million-element embedding visualization, streaming decode of a
 40 GB binary attached to a ZIP, PCA pre-reduction before UMAP, optional GPU (cuML) UMAP,
-self-calibrating point radii, Points substitutive LOD.
+self-calibrating point radii, and bounded additive Points streaming.
 
 ---
 
@@ -507,20 +505,20 @@ Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing
 
 **Run**: `luxar demo run esm3_protein_landscape [-- --no-serve] [-- --sample=100000] [-- --model=esmc-300m]`
 
-**Requires**: Internet access (downloads Swiss-Prot from UniProt), `esm>=3.0.0` (in the `demos` extra); a CUDA GPU to compute embeddings (first run computes ESM embeddings + UMAP, ~5h). Subsequent runs load cached results — and load them without `torch`, `esm` or `umap-learn` installed at all, because each is demanded only at the point where the corresponding uncached computation happens rather than as an entry-point preflight. `torch` and `scipy` are optional-with-degradation on the cached path: if either one is missing, the scene is built as flat Points instead of the substitutive Points LOD ladder (that path imports `luxar.gsplats.lod`, which needs both), so it stays fully viewable — `pip install 'luxar[gsplats]'` to rebuild with LOD. If an earlier run left a quarantined `*.corrupt` artifact in `~/.cache/luxar/esm3_swissprot/`, the demo reports its path and size up front — re-download the complete file or delete the quarantined copy, otherwise the run starts over from scratch.
+**Requires**: Internet access (downloads Swiss-Prot from UniProt), `esm>=3.0.0` (in the `demos` extra); a CUDA GPU to compute embeddings (first run computes ESM embeddings + UMAP, ~5h). Subsequent runs load cached results — and load them without `torch`, `esm` or `umap-learn` installed at all, because each is demanded only at the point where the corresponding uncached computation happens rather than as an entry-point preflight. If an earlier run left a quarantined `*.corrupt` artifact in `~/.cache/luxar/esm3_swissprot/`, the demo reports its path and size up front — re-download the complete file or delete the quarantined copy, otherwise the run starts over from scratch.
 
 **Demonstrates**: Protein language model embeddings (ESM-3 / ESM C), large-scale embedding visualization (~572k proteins), UMAP dimensionality reduction, taxonomic-kingdom coloring, hover labels.
 
 ---
 
 #### demo_cellxgene_census_umap.py - CZ CELLxGENE Census single-cell 3D UMAP (LOD stress test)
-A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedded from their **precomputed scVI latent** (50-d) with **cuML UMAP**, rendered with **substitutive Points LOD** + a categorical `coloring` dimension (cell type / tissue / disease). The shipped default builds a 3M-element scene from a 1M-cell cache; the pipeline scales to **10M cells (30M elements, a 7-level LOD ladder)** — the largest UMAP demo in the repo, built to exercise the LOD machinery.
+A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedded from their **precomputed scVI latent** (50-d) with **cuML UMAP**, rendered with bounded additive Points streaming + a categorical `coloring` dimension (cell type / tissue / disease). The shipped default builds a 3M-element scene from a 1M-cell cache; larger caches are supported up to the portable 5,591,040 resident-Point node cap.
 
 **Run**: `luxar demo run cellxgene_census_umap [-- --no-serve]`
 
-**Requires**: nothing extra for the default (ships a 1M-cell coords cache via Git LFS). Regenerating at scale needs a CUDA GPU with `cellxgene-census` + `cuml` (RAPIDS) — see `scripts/gen_census_umap.py` (≈96.6M primary human cells available; ~140s scVI fetch + ~14min cuML UMAP for 10M). Point the demo at a larger cache via `CENSUS_UMAP_CACHE` / `CENSUS_UMAP_MAX_CELLS` / `CENSUS_UMAP_DEVICE`. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
+**Requires**: nothing extra for the default (ships a 1M-cell coords cache via Git LFS). Regenerating the coordinates at scale needs a CUDA GPU with `cellxgene-census` + `cuml` (RAPIDS) — see `scripts/gen_census_umap.py` (≈96.6M primary human cells available; ~140s scVI fetch + ~14min cuML UMAP for 10M). Point the demo at another cache with `CENSUS_UMAP_CACHE` and bound the resident cloud with `CENSUS_UMAP_MAX_CELLS` (maximum portable value 5,591,040).
 
-**Demonstrates**: precomputed scVI single-cell embeddings, cuML UMAP at 10M scale, substitutive Points LOD (coarse levels as mass-preserving Gaussian splats), the `coarsen_dims` barrier (coarse splats stay pure per coloring), categorical-dimension colour switching, large-scale LOD streaming.
+**Demonstrates**: precomputed scVI single-cell embeddings, cuML UMAP at scale, categorical-dimension colour switching, and bounded additive Points streaming.
 
 ---
 
@@ -564,7 +562,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run human_multiome_peak_umap`
 
-**Requires**: Local parquet data file, `pandas` package. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
+**Requires**: Local parquet data file and the `pandas` package.
 
 **Demonstrates**: Large-scale single-cell visualization (~1M points), multiple categorical attributes (cell type, lineage, timepoint, peak type, chromosome), ATAC-seq chromatin accessibility data.
 
@@ -575,7 +573,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run mouse_multiome_peak_umap`
 
-**Requires**: Local parquet data file, `pandas` package. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
+**Requires**: Local parquet data file and the `pandas` package.
 
 **Demonstrates**: Single-cell ATAC-seq visualization, embryonic developmental timepoints, multiple categorical attribute navigation, lineage-based coloring.
 

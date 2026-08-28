@@ -600,16 +600,6 @@ MAX_POINTS_PER_NODE: Final = 5_000_000
 # Target finest-level size per spatial tile. 2M keeps each tile a comfortable
 # WebGL batch and puts the 15M default at 8 tiles, the 100M ceiling at 64.
 TARGET_TILE_POINTS: Final = 2_000_000
-MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
-#: The scrubbable track layer holds three slot-copies of every vertex (taxon
-#: marginal + period marginal + joint), which took it from 106k to 318k. An
-#: indexed-Lines node cannot carry an additive ladder -- rebuilding connected
-#: components as plain chains would invent or drop edges, so the composed ladder
-#: is refused -- and `check_demo_ladders` fails any un-laddered leaf above
-#: 200,000 ("will block the main thread on load"). Partitioning below that
-#: threshold is therefore the only lever, and it happens to be the natural one:
-#: the copies split cleanly into ~106k parts.
-MAX_TRACK_VERTICES_PER_NODE: Final = 150_000
 
 #: View-dependent LOD for the two big summary layers. A `stream:` ladder alone is
 #: NOT enough: it is *progressive*, so it converges to 100% of the layer no
@@ -2994,9 +2984,7 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # `counts` LIST is in POLYLINES while `stream:<c>` is in VERTICES,
                 # and a vertex-sized list here would clamp to the polyline count
                 # and write NO rungs, silently. See `stream_ladder`.
-                additive_lod=stream_ladder(
-                    int(track_pos.shape[0]), geometry="lines"
-                ),
+                additive_lod=stream_ladder(int(track_pos.shape[0]), geometry="lines"),
             )
 
             _add_overlays(scene, sample, tracks)

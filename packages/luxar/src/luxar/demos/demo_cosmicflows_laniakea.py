@@ -154,6 +154,7 @@ PRESETS: Final[dict[str, StreamlinePreset]] = {
     ),
 }
 
+
 @dataclass(frozen=True)
 class GalaxyData:
     """Galaxy positions, basin labels, and catalogue identity."""

@@ -112,9 +112,7 @@ def test_an_interior_gap_would_still_be_safe() -> None:
     positions = rng.normal(size=(n_lines, n_steps, 3)).astype(np.float32) * 100.0
     seed_basins = np.ones(n_lines, dtype=np.int16)
 
-    basins = build_basin_line_data(
-        positions, valid, seed_basins, valid.sum(axis=1)
-    )
+    basins = build_basin_line_data(positions, valid, seed_basins, valid.sum(axis=1))
     assert basins
     for basin in basins:
         assert indexed_components_are_chains(

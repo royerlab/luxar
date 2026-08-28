@@ -820,6 +820,11 @@ class TestStreamLadder:
         with pytest.raises(ValueError, match="must be 'points' or 'lines'"):
             stream_ladder(1000, geometry="gsplats")
 
+    @pytest.mark.parametrize("geometry", ["points", "lines"])
+    def test_non_positive_leaf_size_raises(self, geometry: str) -> None:
+        with pytest.raises(ValueError, match="n must be >= 1"):
+            stream_ladder(0, geometry=geometry)
+
     def test_a_leaf_below_the_first_rung_collapses_to_one_level(self) -> None:
         # Not a defect: a node smaller than one first-paint chunk has nothing to
         # stream. NPC relies on this, since `_validate_counts` clamps the shared

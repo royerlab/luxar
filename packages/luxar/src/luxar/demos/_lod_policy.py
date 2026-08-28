@@ -306,6 +306,8 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
             f"geometry must be 'points' or 'lines'; got {geometry!r} "
             "(the two spell their ladder in different units)"
         )
+    if n < 1:
+        raise ValueError(f"n must be >= 1; got {n}")
     from luxar.core.group.lod.group import (
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
         DEFAULT_LADDER_TARGET_MS,
