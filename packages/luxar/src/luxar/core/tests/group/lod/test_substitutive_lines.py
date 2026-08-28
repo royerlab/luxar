@@ -582,8 +582,7 @@ def test_plain_indexed_additive_refuses_to_rebuild_edges(tmp_path) -> None:
 
     def coordinate_edges(vertices, segments):
         return {
-            tuple(sorted((tuple(vertices[a]), tuple(vertices[b]))))
-            for a, b in segments
+            tuple(sorted((tuple(vertices[a]), tuple(vertices[b])))) for a, b in segments
         }
 
     assert coordinate_edges(written_vertices, written_segments) == coordinate_edges(
