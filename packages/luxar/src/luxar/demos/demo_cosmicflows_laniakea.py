@@ -735,12 +735,10 @@ def write_laniakea_scene(
                     opacity=0.36,
                     intensity=0.75,
                     blending_mode="additive",
-                    # Under a substitutive ladder the framework refuses an additive
-                    # ladder for indexed Lines nodes; a plain leaf is not guarded and
-                    # silently rebuilds chains. False makes that refusal explicit and
-                    # silences its notice; the substitutive ladder still preserves the
-                    # original indexed Lines leaf as its finest child.
-                    additive_lod=False,
+                    # The indexed Lines child stays flat to preserve its explicit
+                    # edges, while the synthesized gsplat children keep their safe
+                    # default streaming ladders. A plain indexed leaf with an
+                    # explicit additive_lod is refused for the same topology reason.
                     substitutive_lod=basin_lod,
                     layer=True,
                 )
