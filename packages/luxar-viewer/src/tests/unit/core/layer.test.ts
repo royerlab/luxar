@@ -266,11 +266,10 @@ describe('LuxarLayer', () => {
       expect(setDepthSortEnabled).toHaveBeenCalledWith(true);
     });
 
-    it('supplies every LOD-registry dep the eviction path needs', () => {
-      // A dep that is merely ABSENT degrades silently: `lod-eviction` bails on
-      // `!getResidentBytes`, so passing the budget without the measurement
-      // makes the budget decorative and nothing is ever evicted. Snapshotting
-      // the key set is the cheap way to catch a dep going missing.
+    it('supplies every LOD-registry dep', () => {
+      // A dep that is merely ABSENT degrades silently: eviction bails without
+      // resident-byte measurement, and archive-fault gating reads undefined as
+      // no fault. Snapshotting the key set catches either wiring regression.
       new LuxarLayer(makeOptions());
       const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
         deps: Record<string, unknown>;

@@ -1796,13 +1796,12 @@ export class SceneLoader {
   }
 
   private getMonitorFailedPaths(): string[] {
-    return Array.from(
-      new Set([
-        ...this.failedLoaders.keys(),
-        ...(this._archiveFault ? [this._archiveFault.url] : []),
-        ...(this.lodGroupRegistry?.getFailedLazyChildPaths() ?? []),
-      ])
-    );
+    const failedPaths = new Set([
+      ...this.failedLoaders.keys(),
+      ...(this.lodGroupRegistry?.getFailedLazyChildPaths() ?? []),
+    ]);
+    if (failedPaths.size === 0 && this._archiveFault) failedPaths.add(this._archiveFault.url);
+    return Array.from(failedPaths);
   }
 
   private clearArchiveFaultForRetry(): void {
@@ -1819,11 +1818,12 @@ export class SceneLoader {
   }
 
   /**
-   * Whether any failure is worth an AUTOMATIC retry: either a transient loader
-   * cause still under the attempt cap (see `LoaderRegistry.autoRetryablePaths`)
-   * or a lazy branch latched by an archive fault. The connectivity-triggered
-   * retry gates on this so deterministic ordinary loader failures remain quiet
-   * while reconnecting can re-open deferred LOD work.
+   * Whether any failure is worth an AUTOMATIC retry: a latched archive fault,
+   * a transient loader cause still under the attempt cap (see
+   * `LoaderRegistry.autoRetryablePaths`), or a lazy branch latched by an archive
+   * fault. The connectivity-triggered retry gates on this so deterministic
+   * ordinary loader failures remain quiet while reconnecting can re-open the
+   * loader and deferred LOD work.
    */
   hasAutoRetryableFailures(): boolean {
     return (
@@ -1939,9 +1939,10 @@ export class SceneLoader {
   async retryAllFailedLoaders(
     opts: {
       /**
-       * Retry only paths that pass the automatic-retry filter (transient cause,
-       * under the attempt cap). Set by the connectivity-triggered retry. A
-       * manual Retry omits it and forces every failed path.
+       * Retry only entries that pass the automatic-retry filter (a latched
+       * archive fault, or a transient cause under the attempt cap). Set by the
+       * connectivity-triggered retry. A manual Retry omits it and forces every
+       * failed path.
        */
       onlyAutoRetryable?: boolean;
     } = {}
@@ -1955,9 +1956,10 @@ export class SceneLoader {
       : Array.from(this.failedLoaders.keys());
     const lazyPaths = this.lodGroupRegistry?.getFailedLazyChildPaths() ?? [];
     const recordedPaths = new Set([...loaderPaths, ...lazyPaths]);
-    const archiveFaultPath = this._archiveFault?.url;
+    const hasArchiveFault = this._archiveFault !== null;
+    const archiveFaultPath = recordedPaths.size === 0 ? this._archiveFault?.url : undefined;
     const failedPaths = Array.from(
-      new Set([...recordedPaths, ...(archiveFaultPath ? [archiveFaultPath] : [])])
+      new Set([...recordedPaths, ...(archiveFaultPath !== undefined ? [archiveFaultPath] : [])])
     );
 
     if (failedPaths.length === 0) {
@@ -1994,9 +1996,9 @@ export class SceneLoader {
       }
       const succeeded: string[] = [];
       const failed: string[] = [];
-      if (archiveFaultPath) {
+      if (hasArchiveFault) {
         this.clearArchiveFaultForRetry();
-        if (!recordedPaths.has(archiveFaultPath)) succeeded.push(archiveFaultPath);
+        if (archiveFaultPath !== undefined) succeeded.push(archiveFaultPath);
       }
       if (lazyPaths.length > 0) {
         for (const path of lazyPaths) {

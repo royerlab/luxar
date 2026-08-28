@@ -1449,6 +1449,22 @@ describe('SceneLoader', () => {
       expect(updateViewSpy).toHaveBeenCalledWith(pending);
     });
 
+    it('auto-retries an archive fault with no recorded node failure', async () => {
+      const internals = sceneLoader as unknown as {
+        _archiveFault: ArchiveFaultError | null;
+      };
+      internals._archiveFault = new ArchiveFaultError('archive unavailable', '/scene.zip');
+
+      await expect(sceneLoader.retryAllFailedLoaders({ onlyAutoRetryable: true })).resolves.toEqual(
+        {
+          succeeded: ['/scene.zip'],
+          failed: [],
+        }
+      );
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(notifierMocks.clearError).toHaveBeenCalledOnce();
+    });
+
     it('surfaces and retries a latched anonymous deferred LOD branch', async () => {
       const camera = new THREE.Camera();
       const registry = new LODGroupRegistry({
