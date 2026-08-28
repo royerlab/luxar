@@ -841,6 +841,42 @@ a claim about timescale, and a 15 s settle rule (3.16) written by the session th
 had just relayed that lesson. Knowing the rule is not the control; emitting the
 diagnostic is.
 
+### 3.19 Node reduction cuts requests only when arrays fit in one chunk
+
+Section 2's rule — hosted cost is **requests**, not bytes — is right, but "one
+request per node" is an *upper bound*, not a measurement. After
+`optimise --profile archive` (1 MB target) a big array spans many chunks while a
+small one spans exactly one, so cutting node count only cuts fetches in one of two
+regimes. Measured across live stores:
+
+| store | groups | arrays | chunks | arrays:chunks |
+|---|---:|---:|---:|---:|
+| `gsplats_2d_codex_pancreas` | 2767 | 10320 | 10320 | **1.00** |
+| `desi_galaxies` | 87 | 376 | 445 | 1.18 |
+| `biodiversity_planetary_scale` | 29 | 109 | 188 | 1.72 |
+| `cosmicflows_laniakea_full` | 15 | 79 | 224 | 2.84 |
+| `gsplats_2d_cmu1_pathology` | 18 | 60 | 508 | **8.47** |
+
+Two regimes, and the ratio tells you which one you are in:
+
+- **Node-bound (ratio ≈ 1).** Every array is a single chunk, so
+  requests ≈ arrays ∝ groups. `codex_pancreas` is exactly 1.00 — 10,320 arrays,
+  10,320 chunks — at 3.73 arrays per group. Cutting it from 2,767 groups to ~700
+  is therefore a real **~4x request reduction**, not a bookkeeping change.
+- **Byte-bound (ratio >> 1).** Arrays span many chunks, so request count tracks
+  total bytes and is nearly indifferent to node count. `cmu1` fetches 508 chunks
+  from 60 arrays; halving its node count would barely move that.
+
+Practical consequence: **before claiming a node reduction buys a faster load,
+check the arrays:chunks ratio of the published store.** A store with many small
+nodes gains directly; a store with few large ones gains almost nothing and its
+lever is total bytes instead (3.17).
+
+Corollary for the other direction: adding nodes is only expensive in the
+node-bound regime. A per-part additive ladder that multiplies groups is cheap on a
+byte-bound store and costly on a node-bound one — so the same structural change
+has opposite cost depending on chunk layout.
+
 ## 4. Cloudflare configuration
 
 ### 4.1 Cache rule on the data subdomain
