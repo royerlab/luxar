@@ -45,10 +45,15 @@ construction, slice updates, and retry-after-failure.
   identical to the serial walk and preserving lifecycle-based renderer tracking.
 - **Memory-aware eager admission.** The eight-wide slot pool remains the latency
   bound for small siblings. Line leaves additionally reserve a conservative
-  working-set estimate from one scene-wide 256 MiB gate keyed by `NodeBuildCtx`,
-  so nested parent pools cannot multiply several million-vertex decode,
-  projection, staging, and texture allocations. Oversized leaves still make
-  progress alone; groups reserve no bytes, avoiding recursive double charging.
+  working-set estimate from the measured heap's non-cache share, falling back
+  to 256 MiB where the heap is unavailable. The gate is shared by `NodeBuildCtx`
+  for one scene-loading walk, so nested parent pools cannot multiply several
+  million-vertex decode, projection, staging, and texture allocations. A small
+  waiter may pass a large one that does not fit yet, while an oversized head
+  still progresses when the gate empties. Points, gsplats, mesh, and groups
+  reserve no bytes: their eager concurrency remains slot-only until equivalent
+  transient working-set models are validated, and resident geometry remains
+  governed by the renderer's GPU byte budget.
 - **Three-geometry symmetry.** `load-points-node.ts`,
   `load-lines-node.ts`, and `load-gsplats-node.ts` follow the same
   shape: `createXLoader` helper →
