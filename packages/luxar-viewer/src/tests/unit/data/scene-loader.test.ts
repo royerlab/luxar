@@ -1469,6 +1469,24 @@ describe('SceneLoader', () => {
       expect(notifierMocks.clearError).toHaveBeenCalledOnce();
     });
 
+    it('retries the surfaced archive fault path and reloads the current view', async () => {
+      const current = { displayDims: [0, 1, 2], slicePosition: [3], tolerance: [0] };
+      const internals = sceneLoader as unknown as {
+        viewState: { displayDims: number[]; slicePosition: number[]; tolerance: number[] };
+        reportArchiveFault(fault: ArchiveFaultError): void;
+      };
+      await sceneLoader.updateView(current);
+      internals.reportArchiveFault(
+        new ArchiveFaultError('archive unavailable', '/scene.zip')
+      );
+      const updateViewSpy = vi.spyOn(sceneLoader, 'updateView');
+
+      await expect(sceneLoader.retryFailedLoader('/scene.zip')).resolves.toBe(true);
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(notifierMocks.clearError).toHaveBeenCalledOnce();
+      expect(updateViewSpy).toHaveBeenCalledWith(internals.viewState);
+    });
+
     it('surfaces and retries a latched anonymous deferred LOD branch', async () => {
       const camera = new THREE.Camera();
       const registry = new LODGroupRegistry({

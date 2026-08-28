@@ -1878,7 +1878,9 @@ export class SceneLoader {
    */
   async retryFailedLoader(path: string): Promise<boolean> {
     const lazyFailure = this.lodGroupRegistry?.getFailedLazyChildPaths().includes(path) === true;
-    if (!this.failedLoaders.has(path) && !lazyFailure) {
+    const archiveFaultFailure = this._archiveFault?.url === path;
+    const hadArchiveFault = this._archiveFault !== null;
+    if (!this.failedLoaders.has(path) && !lazyFailure && !archiveFaultFailure) {
       log.warning(Modules.SCENE_LOADER, `Path "${path}" is not in failed loaders list`);
       return false;
     }
@@ -1904,10 +1906,14 @@ export class SceneLoader {
         this.clearArchiveFaultForRetry();
         return this.lodGroupRegistry?.retryLazyChildByNodePath(path) ?? false;
       }
+      if (archiveFaultFailure) {
+        this.clearArchiveFaultForRetry();
+        return true;
+      }
       return await retryFailedLoaderUnlocked(path, this.makeRetryCtx());
     } finally {
       this._updateInProgress = false;
-      this.viewStateQueue.drain((state) => this.updateView(state));
+      this.resumeViewAfterRetry(hadArchiveFault);
     }
   }
 
