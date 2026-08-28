@@ -949,9 +949,9 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
   it('bounds retries for an anonymous deferred GROUP after an archive fault', async () => {
     attachStubChildren();
-    const failure = new ArchiveFaultError('archive open failed', '/scene.zip');
+    let failure: Error | undefined = new ArchiveFaultError('archive open failed', '/scene.zip');
     loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
-      if (child.path === '/lod/child_1') throw failure;
+      if (child.path === '/lod/child_1' && failure) throw failure;
       const mesh = new THREE.Mesh();
       mesh.name = child.path;
       parent.add(mesh);
@@ -1000,6 +1000,19 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(deferred.failed).toBe(true);
       expect(deferred.loading).toBe(false);
       expect(deferred.automaticRetriesRemaining).toBe(0);
+
+      failure = undefined;
+      reg.resetAutomaticRetryBudgets();
+      reg.evaluatePerFrame();
+      await vi.waitFor(() => expect(deferred.ready).toBe(true));
+
+      const recoveredAttempts = loadSceneNodesMock.mock.calls.filter(
+        ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
+      );
+      expect(recoveredAttempts).toHaveLength(MAX_AUTO_RETRY_ATTEMPTS + 2);
+      expect(deferred.failed).toBe(false);
+      expect(deferred.loading).toBe(false);
+      expect(deferred.automaticRetriesRemaining).toBeUndefined();
     } finally {
       warningSpy.mockRestore();
     }
