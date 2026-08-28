@@ -369,13 +369,22 @@ describe('LuxarLayer', () => {
       sceneLoaderStub.emitArchiveFault(fault);
 
       expect(earlyListener).toHaveBeenCalledOnce();
-      expect(earlyListener).toHaveBeenCalledWith(fault);
-      expect(layer.getDatasetFault()).toBe(fault);
+      expect(earlyListener).toHaveBeenCalledWith({
+        src: 'http://example.test/scene.zarr',
+        error: fault,
+      });
+      expect(layer.getDatasetFault()).toEqual({
+        src: 'http://example.test/scene.zarr',
+        error: fault,
+      });
 
       const lateListener = vi.fn();
       layer.onDatasetFault(lateListener);
       expect(lateListener).toHaveBeenCalledOnce();
-      expect(lateListener).toHaveBeenCalledWith(fault);
+      expect(lateListener).toHaveBeenCalledWith({
+        src: 'http://example.test/scene.zarr',
+        error: fault,
+      });
     });
 
     it('replays a fault latched during load and replaces the loader subscription on switch', async () => {
@@ -393,8 +402,14 @@ describe('LuxarLayer', () => {
       layer.onDatasetFault(listener);
 
       await layer.load('http://example.test/a.zarr');
-      expect(listener).toHaveBeenCalledWith(firstFault);
-      expect(layer.getDatasetFault()).toBe(firstFault);
+      expect(listener).toHaveBeenCalledWith({
+        src: 'http://example.test/a.zarr',
+        error: firstFault,
+      });
+      expect(layer.getDatasetFault()).toEqual({
+        src: 'http://example.test/a.zarr',
+        error: firstFault,
+      });
 
       loadSceneMock.mockImplementationOnce(async () => {
         currentSceneLoaderStub = secondLoader;
@@ -405,14 +420,32 @@ describe('LuxarLayer', () => {
       secondLoader.emitArchiveFault(secondFault);
 
       expect(listener).toHaveBeenCalledTimes(2);
-      expect(listener).toHaveBeenLastCalledWith(secondFault);
-      expect(layer.getDatasetFault()).toBe(secondFault);
+      expect(listener).toHaveBeenLastCalledWith({
+        src: 'http://example.test/b.zarr',
+        error: secondFault,
+      });
+      expect(layer.getDatasetFault()).toEqual({
+        src: 'http://example.test/b.zarr',
+        error: secondFault,
+      });
 
       loadSceneMock.mockRejectedValueOnce(new Error('dataset unavailable'));
       await expect(layer.load('http://example.test/c.zarr')).rejects.toThrow('dataset unavailable');
       secondLoader.emitArchiveFault(new Error('stale second archive unavailable'));
       expect(listener).toHaveBeenCalledTimes(2);
       expect(layer.getDatasetFault()).toBeNull();
+
+      const thirdLoader = makeSceneLoaderStub();
+      currentSceneLoaderStub = thirdLoader;
+      await layer.load('http://example.test/d.zarr');
+      const thirdFault = new Error('third archive unavailable');
+      thirdLoader.emitArchiveFault(thirdFault);
+
+      expect(listener).toHaveBeenCalledTimes(3);
+      expect(listener).toHaveBeenLastCalledWith({
+        src: 'http://example.test/d.zarr',
+        error: thirdFault,
+      });
     });
 
     it('isolates a throwing dataset fault listener during replay', async () => {
@@ -431,7 +464,10 @@ describe('LuxarLayer', () => {
       await expect(layer.load('http://example.test/scene.zarr')).resolves.toBeInstanceOf(
         THREE.Group
       );
-      expect(healthyListener).toHaveBeenCalledWith(fault);
+      expect(healthyListener).toHaveBeenCalledWith({
+        src: 'http://example.test/scene.zarr',
+        error: fault,
+      });
     });
 
     it('attaches the root, then resolves dims, then requests the first slice', async () => {

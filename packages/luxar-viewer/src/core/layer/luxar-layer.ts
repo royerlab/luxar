@@ -95,6 +95,7 @@ import {
   updateSceneForDimensions,
   prefetchSceneForDimensions,
 } from '../../data/zarr-loader';
+import type { SceneLoader } from '../../data/scene-loader';
 import { SceneLoaderManager, getSceneLoader } from '../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { sceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
@@ -120,6 +121,7 @@ import {
   disposeDepthSort,
 } from '../../rendering/depth-sort-coordinator';
 import { disposeWorkerPool } from '../../workers/worker-pool';
+import type { DatasetFaultPayload } from '../app/embedder/events';
 import { applyModuleOverrides } from '../app/init/module-overrides';
 import {
   getCameraFovRadians,
@@ -229,9 +231,10 @@ export class LuxarLayer {
   private exposure = 1;
   private visible = true;
   private renderOrderDirty = false;
-  private datasetFaultLoader: NonNullable<ReturnType<typeof getSceneLoader>> | null = null;
+  private datasetFaultLoader: SceneLoader | null = null;
+  private datasetFaultSrc: string | null = null;
   private datasetFaultUnsubscribe: (() => void) | null = null;
-  private readonly datasetFaultListeners = new Set<(error: Error) => void>();
+  private readonly datasetFaultListeners = new Set<(payload: DatasetFaultPayload) => void>();
   private readonly authoredOpacity = new WeakMap<THREE.Material, number>();
   private readonly appliedExposure = new WeakMap<THREE.Material, number>();
   // nD update coalescing. A scrubbing host outruns the loader by ~30x, so
@@ -264,17 +267,19 @@ export class LuxarLayer {
     return this.rootGroup;
   }
 
-  /** Current terminal archive fault, or null before one occurs or after replacement/disposal. */
-  getDatasetFault(): Error | null {
-    return this.datasetFaultLoader?.archiveFault ?? null;
+  /** Current archive fault, or null before one occurs or after replacement/disposal. */
+  getDatasetFault(): DatasetFaultPayload | null {
+    const error = this.datasetFaultLoader?.archiveFault;
+    if (!error || !this.datasetFaultSrc) return null;
+    return { src: this.datasetFaultSrc, error };
   }
 
   /**
-   * Subscribe to the current dataset's one-shot terminal archive fault.
+   * Subscribe to archive faults from the current dataset.
    * A fault already latched by the loaded dataset is replayed immediately.
    * Listener exceptions are logged and do not interrupt layer loading or other listeners.
    */
-  onDatasetFault(listener: (error: Error) => void): () => void {
+  onDatasetFault(listener: (payload: DatasetFaultPayload) => void): () => void {
     this.assertLive();
     this.datasetFaultListeners.add(listener);
     const fault = this.getDatasetFault();
@@ -310,7 +315,7 @@ export class LuxarLayer {
     this.inFlightLoad = pending;
     try {
       const root = await pending;
-      this.installDatasetFaultLoader();
+      this.installDatasetFaultLoader(src);
       return root;
     } finally {
       if (this.inFlightLoad === pending) this.inFlightLoad = null;
@@ -881,12 +886,15 @@ export class LuxarLayer {
     this.datasetFaultUnsubscribe?.();
     this.datasetFaultUnsubscribe = null;
     this.datasetFaultLoader = null;
+    this.datasetFaultSrc = null;
   }
 
-  private installDatasetFaultLoader(): void {
+  private installDatasetFaultLoader(src: string): void {
+    this.clearDatasetFaultLoader();
     if (this.disposed) return;
     const sceneLoader = getSceneLoader(LOADER_ID);
     this.datasetFaultLoader = sceneLoader;
+    this.datasetFaultSrc = sceneLoader ? src : null;
     if (sceneLoader) {
       this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
         (error) => this.notifyDatasetFault(error),
@@ -896,14 +904,20 @@ export class LuxarLayer {
   }
 
   private notifyDatasetFault(error: Error): void {
+    const src = this.datasetFaultSrc;
+    if (!src) return;
+    const payload = { src, error };
     for (const listener of [...this.datasetFaultListeners]) {
-      this.invokeDatasetFaultListener(listener, error);
+      this.invokeDatasetFaultListener(listener, payload);
     }
   }
 
-  private invokeDatasetFaultListener(listener: (error: Error) => void, error: Error): void {
+  private invokeDatasetFaultListener(
+    listener: (payload: DatasetFaultPayload) => void,
+    payload: DatasetFaultPayload
+  ): void {
     try {
-      listener(error);
+      listener(payload);
     } catch (listenerError) {
       log.warning(Modules.LUXAR, 'LuxarLayer dataset fault listener threw:', listenerError);
     }
