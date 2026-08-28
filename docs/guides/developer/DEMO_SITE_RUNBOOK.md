@@ -376,20 +376,44 @@ Consequences for this site:
 archive spread 0.08–0.35 dB with counts within ±0.3%. Treat anything under
 ~0.4 dB as noise; a difference only means something above that.
 
-### 3.10 A docstring's claim about a remote artifact is not evidence
+### 3.10 A measurement is only evidence about the object it was pointed at
 
 `demo_gsplats_2d_cmu1_pathology.py` states its hosted archives "are still flat
-leaves". Measured, each channel archive carries **4,867 groups, 66 partition
-parts and 192 substitutive levels** — the most structured archives in the
-corpus. The docstring described an intent that the upload never matched, and
-stayed wrong because nothing re-checks it.
+leaves". A measurement came back contradicting it — 4,867 groups, 66 partition
+parts, 192 substitutive levels per channel — and this section originally recorded
+that as a docstring lying about its own artifact.
 
-The trap is that the sentence sits right next to the code that consumes the
-artifact, so it reads as authoritative. It describes a *remote* object; only the
-remote object is evidence. Derive topology from each group's declared `kind`
-(children of `kind=lod` are substitutive levels, children of `kind=partition`
-are parts) — **never from node-name patterns**, which disagree with the store's
-own declaration.
+**The docstring was correct.** Read from the pinned bytes
+(`~/.cache/luxar/gsplats_cmu1_pathology/cmu1_ch{0,1,2}.gsplats.zarr.zip`):
+
+    .zgroup docs 7   declared kinds: NONE ANYWHERE
+    part_* 0   child_* 0   additive_* 4   element arrays 4
+
+Flat laddered leaves, all three channels, zarr format 2. The structured numbers
+belong to **`codex_pancreas`**, which sits beside cmu1 in the cache: its
+`codex_ch00` declares `kinds={'partition': 1, 'lod': 16}`, and the cache holds
+12 channels — so 16 x 12 = the 192 that was reported "per channel" for a demo
+that has only 3.
+
+Two independent invariants would have caught it before it reached this file:
+
+- **Channel count.** 192 does not factor by 3. It factors by 12.
+- **Element totals.** cmu1's three archives sum to 6,896,619 + 7,093,383 +
+  6,601,413 = **20,591,415**, exactly the scene store's total, with largest node
+  1,773,346 in both. The scene is a verbatim graft — which is *also* the proof
+  the docstring was right.
+
+So the rule is not "distrust docstrings". It is: **before believing a
+measurement that contradicts a documented claim, confirm it was pointed at the
+right object** — with an invariant the object itself carries (a count, a total, a
+checksum), not by re-reading the same scan. Two sibling demos in one cache
+directory is all it takes, and the wrong answer arrives with numbers attached,
+which is what makes it persuasive.
+
+Derive topology from each group's declared `kind` (children of `kind=lod` are
+substitutive levels, children of `kind=partition` are parts) rather than from
+node-name patterns. But note that cmu1 carries **no `kind` attr at all** and is
+still perfectly well-formed, so "no kinds" means *flat*, not *unreadable*.
 
 ### 3.11 Flattening an archive only cuts requests if the demo grafts it
 
@@ -400,16 +424,22 @@ Two authoring paths, opposite outcomes from the same archive change:
 | `add_gsplats_from_file` with **no** recipe — grafts archive shape | scene node count drops with the archive |
 | a declared `recipe=` — rebuilds structure locally | **download bytes only**; the scene re-creates its own structure |
 
-Measured on this corpus: `h2afva_timelapse` and `h2afva_stack` graft (so
-flattening is a real request win — 704→176 element nodes for the timelapse,
-41 parts→1 for the stack), while `cmu1_pathology` declares `recipe="adaptive"`
-and rebuilds, so its scene store is *already* flat (12 element nodes, 0 parts,
-0 substitutive levels, 12 additive rungs) while its archive ships 192
-substitutive levels. That combination is the worst case: the download pays for
-coarse copies that authoring immediately discards.
+Measured on this corpus:
+
+- **`h2afva_timelapse`** and **`h2afva_stack`** graft, so flattening is a real
+  request win — 704 → 176 element nodes for the timelapse, 41 parts → 1 for the
+  stack.
+- **`codex_pancreas`** fits locally through `save_with_lod(recipe="adaptive")`
+  and grafts its own output, so its 2,764 groups are authored, not inherited.
+  Changing the *archive* would not move them; changing the recipe's
+  `max_elements` would.
+- **`cmu1_pathology`** is neither: it grafts three already-flat archives
+  verbatim, so it is already the target shape end to end and there is nothing to
+  win on either axis.
 
 So **split the claim per demo** before promising a load win. "Fewer nodes" and
-"fewer bytes" are different wins, and only the grafting demos get the first.
+"fewer bytes" are different wins, only the grafting demos get the first, and
+some demos are already correct.
 
 ## 4. Cloudflare configuration
 
