@@ -502,24 +502,24 @@ def create_luxar_scene(
 ) -> Path:
     """Create Luxar scene with per-channel 2D gsplats as separate layers.
 
-    Each channel is **grafted from its artifact** rather than loaded into a
-    ``GSplatData`` first. A ``--recompute`` writes the ``adaptive`` topology —
-    spatial tiles, each picking its own detail level, which is what a
-    46000x33000 slide that is panned and zoomed rather than orbited wants — and
-    that is a ``kind=partition`` tree with no flat matrix form, so
-    ``add_gsplats_from_file`` is the entry point that grafts one whole.
+    Each channel is handed over as a **path**, not loaded into a ``GSplatData``
+    first, because a ``--recompute`` writes the ``adaptive`` topology — spatial
+    tiles of at most 250,000 splats, each picking its own detail level, which is
+    what a 46000x33000 slide that is panned and zoomed rather than orbited wants
+    — and that is a ``kind=partition`` tree with no flat matrix form, so
+    ``add_gsplats_from_file`` is the only entry point that takes one whole.
 
-    Grafting is deliberately topology-agnostic, because the three paths do not
-    agree. The published archives graft as four-part spatial partitions, with a
-    four-step progressive ladder in each leaf; a ``--recompute`` instead writes
-    ``adaptive`` partitions whose tiles each choose among substitutive detail
-    levels, so the hosted-versus-recomputed difference is per-tile levels, not
-    spatial tiles. The in-repo copies are a third shape again — one flat leaf
-    carrying the same four-step ladder, no spatial tiles at all — and they win
-    while they remain in the tree, because ``ensure_dataset`` prefers an in-repo
-    payload over the hosted one, so that is what a default run renders today.
+    That entry point is deliberately topology-agnostic, because the three
+    generations do not agree. The record's archives are a four-part spatial
+    partition with no per-tile levels (``scripts/demo_archive_characteristics.json``
+    records the topology, measured on the pinned ``hosted_sha256``), so a
+    ``--recompute`` differs from them in tile count as much as in per-tile
+    levels. The in-repo copies are a third shape again: one flat leaf with a
+    four-rung progressive ladder and no spatial tiles at all. They come before
+    Zenodo in the fetch order below, so a checkout with its LFS payloads pulled
+    and nothing verifying in cache renders that flat leaf.
     ``add_gsplats_from_file`` routes a matrix-shaped file down the ordinary data
-    path and a partition through the graft, so any of the three renders.
+    path and a partition through the graft, so all three render.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel
@@ -783,8 +783,9 @@ def main():
         return
 
     # Manifest-driven fetch (checksum-verified cache -> in-repo -> Zenodo).
-    # PATHS, not GSplatData: the artifacts are `adaptive` partitions, which are
-    # grafted rather than loaded (see `create_luxar_scene`).
+    # PATHS, not GSplatData: which topology the artifacts carry depends on which
+    # generation resolves, and a partition has no flat form (see
+    # `create_luxar_scene`).
     images = None
     gsplats_list: list[GSplatData] = []
 
