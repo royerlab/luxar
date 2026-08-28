@@ -733,17 +733,16 @@ it is **half an operation**. The recipe is three steps, in this order:
 
     flatten  ->  lod --recipe stream  ->  optimise --profile archive
 
-Measured on `h2afva_51tp`, requests per timepoint step:
+Measured on the Drosophila 500-timepoint archive, requests per timepoint step
+fell from **173 to 2** after `optimise --profile archive`
+(`demo_gsplats_4d_drosophila_embryogenesis.py:163-165`).
 
-    as-built after flatten + stream        173
-    after `optimise --profile archive`       2
-    the PARTITIONED store it replaced       12   (already re-chunked)
-
-So an additive-only store that skips the re-chunk is **worse than what it
-replaced** — 173 against 12 — because flattening trades a few large arrays for
-many small ones and the rungs land at whatever chunking the source had.
-**Additive-only and re-chunking are a package**, and `optimise` must run *last* so
-the newly written rungs get the 1 MB layout too.
+The reason is not inherited source chunking: `flatten` and `lod` rewrite every
+array at the 64 KB authoring target, discarding even an existing 1 MB layout.
+Running `optimise` before either command is therefore undone, and a timepoint
+slice again spans many small chunks. **Additive-only and re-chunking are a
+package**, and `optimise` must run *last* so every rewritten array gets the 1 MB
+layout.
 
 Two further traps from the same rebuild:
 
@@ -755,9 +754,11 @@ Two further traps from the same rebuild:
   partition — adding one buys no request reduction there. (It still earns its place
   on a *static* node over the element cap, 3.12.)
 
-Result on that store: 1,873,559,527 → 1,115,714,088 bytes (**−40.5%**), 176
-substitutive levels → 0, 176 element nodes → 1, 125,751 chunks → 2,316, with all
-51 timepoints intact at uniform spacing and none blended.
+Result on an unpublished rebuild of `h2afva_51tp` (the manifest still pins the
+original partitioned generation): 1,873,559,527 → 1,115,714,088 bytes
+(**−40.5%**), 176 substitutive levels → 0, 704 element nodes → 8 (one leaf plus
+its rungs), 125,751 chunks → 2,316, with all 51 timepoints intact at uniform
+spacing and none blended.
 
 ## 4. Cloudflare configuration
 
