@@ -54,9 +54,11 @@ construction, slice updates, and retry-after-failure.
   gate empties. The conservative estimate uses authored whole-node totals, so it
   overstates spatial-index partial slices and progressive ladders, and includes
   resident line texture/index bytes as a total-heap proxy even though the
-  renderer's GPU budget also accounts for them. Points, gsplats, mesh, and
-  groups reserve no bytes: their eager concurrency remains slot-only until
-  equivalent working-set models are validated.
+  renderer's GPU budget also accounts for them. Admission covers eager pool
+  siblings, partition parts, and eager LOD rungs; deferred lazy LOD activation
+  remains outside this gate. Points, gsplats, mesh, and groups reserve no bytes:
+  their eager concurrency remains slot-only until equivalent working-set models
+  are validated.
 - **Three-geometry symmetry.** `load-points-node.ts`,
   `load-lines-node.ts`, and `load-gsplats-node.ts` follow the same
   shape: `createXLoader` helper →
