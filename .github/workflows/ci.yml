@@ -256,6 +256,7 @@ jobs:
         name: Keep fork code and forced-hosted runs off obsidian
         env:
           FORCE_HOSTED: ${{ vars.LUXAR_CI_FORCE_HOSTED }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
           # Empty on push events; the `|| github.repository` makes those read
           # as same-repo, which they are.
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
@@ -272,6 +273,11 @@ jobs:
           fi
           if [ "$FORCE_HOSTED" = "1" ]; then
             echo "LUXAR_CI_FORCE_HOSTED=1 -> routing to ubuntu-latest"
+            echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if echo "$RUN_ATTEMPT" | grep -qE '^[0-9]+$' && [ "$RUN_ATTEMPT" -gt 1 ]; then
+            echo "full workflow rerun attempt $RUN_ATTEMPT -> routing to ubuntu-latest"
             echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
             exit 0
           fi

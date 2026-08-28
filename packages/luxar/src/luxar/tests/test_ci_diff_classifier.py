@@ -1163,6 +1163,7 @@ def _run_pick_runner(
     head_repo: str = "royerlab/luxar",
     heartbeat: str = "0",
     force_hosted: str = "0",
+    run_attempt: str = "1",
     other_run_active: bool = False,
     active_job_label: str = "obsidian",
     first_run_queued_obsidian_jobs: int = 0,
@@ -1299,6 +1300,7 @@ exec "$REAL_PYTHON" "$@"
         "GITHUB_REPOSITORY": "royerlab/luxar",
         "HEAD_REPO": head_repo,
         "FORCE_HOSTED": force_hosted,
+        "RUN_ATTEMPT": run_attempt,
         "HEARTBEAT": heartbeat,
         "MAX_QUEUED_OBSIDIAN": max_queued_obsidian,
         "ROUTER_API_ERROR": api_error,
@@ -1586,6 +1588,22 @@ def test_pick_runner_hosted_overrides_bypass_heartbeat(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == "ubuntu-latest"
+
+
+def test_pick_runner_routes_full_workflow_reruns_hosted(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A queue-residency rerun must not return to the queue it escaped."""
+    result, label = _run_pick_runner(
+        workflow,
+        tmp_path,
+        heartbeat="950",
+        run_attempt="2",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == "ubuntu-latest"
+    assert not (tmp_path / "gh-calls").exists()
 
 
 def _run_queue_watchdog(
