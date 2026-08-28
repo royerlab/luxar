@@ -46,7 +46,7 @@ construction, slice updates, and retry-after-failure.
 - **Memory-aware eager admission.** The eight-wide slot pool remains the latency
   bound for small siblings. Line leaves additionally reserve a conservative
   working-set estimate resolved from the explicit cache-pool override, measured
-  heap, device class, or fixed fallback in that order, capped at 512 MiB. The
+  heap, device class, or fixed 256 MiB fallback in that order, capped at 512 MiB. The
   gate is shared by `NodeBuildCtx` for one scene-loading walk,
   so nested parent pools cannot multiply several million-vertex decode,
   projection, staging, and texture allocations. A small waiter may pass a large

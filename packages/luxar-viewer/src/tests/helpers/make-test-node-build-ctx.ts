@@ -38,6 +38,7 @@ import { vi } from 'vitest';
 import { LoaderRegistry } from '../../data/scene-loader/loaders/loader-registry';
 import type { NodeBuildCtx } from '../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode, ViewState } from '../../data/data-loader-types';
+import { computeWorkingSetBudgetBytes } from '../../cache/heap-budget';
 
 /** The ctx `viewState` a spec gets when it does not supply one. */
 function defaultViewState(): ViewState {
@@ -87,6 +88,7 @@ export function makeTestNodeBuildCtx(overrides: Partial<NodeBuildCtx> = {}): Nod
 
   return {
     registry: new LoaderRegistry(),
+    lineWorkingSetBudgetBytes: computeWorkingSetBudgetBytes(),
     nodeFactory,
     viewState,
     getViewVersion: () => 1,

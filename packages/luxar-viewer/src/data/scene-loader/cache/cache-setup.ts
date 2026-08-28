@@ -17,6 +17,7 @@ import { ChunkPrefetcher } from '../../../cache/chunk-prefetcher';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import { SliceCache } from '../../../cache/slice-cache';
 import {
+  cachePoolOverrideBytes,
   computeCacheBudgets,
   deviceClassPoolBytes,
   type CacheBudgets,
@@ -100,10 +101,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   // An explicit `cacheBudgetMB` (URL / native launcher) takes precedence — the
   // path that gives WKWebView/Safari (no `performance.memory`) a real budget
   // instead of the fixed fallback. L2 (OPFS/disk) is unaffected.
-  const poolOverrideBytes =
-    flags.cacheBudgetMB != null && flags.cacheBudgetMB > 0
-      ? flags.cacheBudgetMB * 1024 * 1024
-      : undefined;
+  const poolOverrideBytes = cachePoolOverrideBytes(flags.cacheBudgetMB);
   // Which tiers are actually active this session (single source of truth, reused
   // both to size the budgets and to gate construction below) — so a disabled
   // tier doesn't reserve pool it can't use.

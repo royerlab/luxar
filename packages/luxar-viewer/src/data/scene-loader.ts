@@ -109,6 +109,7 @@ import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
 import { SliceCache } from '../cache/slice-cache';
 import {
+  cachePoolOverrideBytes,
   computeWorkingSetBudgetBytes,
   deviceClassPoolBytes,
   type CacheBudgets,
@@ -1563,10 +1564,9 @@ export class SceneLoader {
     // this dataset can detect (via identity + aborted flag) that its
     // dataset is no longer live and skip committing into a stale scene.
     const ctrl = this._datasetAbortController;
-    const poolOverrideBytes =
-      this.config.cacheBudgetMB != null && this.config.cacheBudgetMB > 0
-        ? this.config.cacheBudgetMB * 1024 * 1024
-        : undefined;
+    // Resolve here, not in a field initializer: constructor config is available
+    // only after instance fields have initialized.
+    const poolOverrideBytes = cachePoolOverrideBytes(this.config.cacheBudgetMB);
     return {
       registry: this.registry,
       lineWorkingSetBudgetBytes: computeWorkingSetBudgetBytes(

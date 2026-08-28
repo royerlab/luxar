@@ -42,7 +42,7 @@ export interface NodeBuildCtx {
   /** Shared loader bookkeeping (registration + failure recording). */
   registry: LoaderRegistry;
   /** Resolved byte budget shared by eager line-loading admission in this walk. */
-  lineWorkingSetBudgetBytes?: number;
+  lineWorkingSetBudgetBytes: number;
   /**
    * Per-scene LOD-group registry. Optional — when absent, lod_group
    * nodes still load (default level renders) but the per-frame

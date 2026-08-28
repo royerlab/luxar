@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  cachePoolOverrideBytes,
   computeCacheBudgets,
   computeWorkingSetBudgetBytes,
   readHeapLimitBytes,
@@ -8,6 +9,17 @@ import {
 import { config } from '../../../config';
 
 const MB = 1024 * 1024;
+
+describe('cachePoolOverrideBytes', () => {
+  it('converts only positive MiB overrides', () => {
+    expect(cachePoolOverrideBytes(384)).toBe(384 * MB);
+    expect(cachePoolOverrideBytes(null)).toBeUndefined();
+    expect(cachePoolOverrideBytes(undefined)).toBeUndefined();
+    expect(cachePoolOverrideBytes(0)).toBeUndefined();
+    expect(cachePoolOverrideBytes(-1)).toBeUndefined();
+    expect(cachePoolOverrideBytes(Number.NaN)).toBeUndefined();
+  });
+});
 const l0Ceil = config.cache.l0MaxSizeMB * MB;
 const l1Ceil = config.cache.l1MaxSizeMB * MB;
 const sliceConfig = config.cache.sliceCacheMaxSizeMB * MB;

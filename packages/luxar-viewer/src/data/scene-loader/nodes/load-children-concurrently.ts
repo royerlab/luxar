@@ -5,7 +5,6 @@
  */
 
 import * as THREE from 'three';
-import { computeWorkingSetBudgetBytes } from '../../../cache/heap-budget';
 import { log, Modules } from '../../../utils/log';
 import * as zarr from '../../zarr';
 import type { SceneNode } from '../../data-loader-types';
@@ -74,7 +73,7 @@ const workingSetGates = new WeakMap<NodeBuildCtx, WorkingSetGate>();
 function workingSetGateFor(ctx: NodeBuildCtx): WorkingSetGate {
   let gate = workingSetGates.get(ctx);
   if (!gate) {
-    gate = new WorkingSetGate(ctx.lineWorkingSetBudgetBytes ?? computeWorkingSetBudgetBytes());
+    gate = new WorkingSetGate(ctx.lineWorkingSetBudgetBytes);
     workingSetGates.set(ctx, gate);
   }
   return gate;

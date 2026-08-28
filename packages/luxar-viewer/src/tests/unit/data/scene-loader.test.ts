@@ -33,6 +33,7 @@ import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { EventGroup } from '../../../utils/cross-layer/event-group';
 import { installOnlineRetry } from '../../../core/app/lifecycle/online-retry';
+import { computeWorkingSetBudgetBytes, deviceClassPoolBytes } from '../../../cache/heap-budget';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1718,14 +1719,28 @@ describe('SceneLoader', () => {
     });
 
     it('passes an explicit cache-pool override to line working-set admission', () => {
-      const loader = new SceneLoader({ cacheBudgetMB: 2048 });
+      const loader = new SceneLoader({ cacheBudgetMB: 384 });
       const ctx = (
         loader as unknown as {
-          makeNodeBuildCtx(): { lineWorkingSetBudgetBytes?: number };
+          makeNodeBuildCtx(): { lineWorkingSetBudgetBytes: number };
         }
       ).makeNodeBuildCtx();
 
-      expect(ctx.lineWorkingSetBudgetBytes).toBe(512 * 1024 * 1024);
+      expect(ctx.lineWorkingSetBudgetBytes).toBe(128 * 1024 * 1024);
+      loader.dispose();
+    });
+
+    it('passes the device-class fallback to line working-set admission', () => {
+      const loader = new SceneLoader({});
+      const ctx = (
+        loader as unknown as {
+          makeNodeBuildCtx(): { lineWorkingSetBudgetBytes: number };
+        }
+      ).makeNodeBuildCtx();
+
+      expect(ctx.lineWorkingSetBudgetBytes).toBe(
+        computeWorkingSetBudgetBytes(undefined, undefined, deviceClassPoolBytes())
+      );
       loader.dispose();
     });
   });
