@@ -267,7 +267,7 @@ export class LuxarLayer {
     return this.rootGroup;
   }
 
-  /** Current archive fault, or null before one occurs or after replacement/disposal. */
+  /** Current archive fault, or null before one occurs, once a new load() begins, or after disposal. */
   getDatasetFault(): DatasetFaultPayload | null {
     const error = this.datasetFaultLoader?.archiveFault;
     if (!error || !this.datasetFaultSrc) return null;
