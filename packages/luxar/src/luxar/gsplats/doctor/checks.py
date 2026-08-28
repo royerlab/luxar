@@ -48,7 +48,9 @@ def _iter_groups(group: "zarr.Group", path: str = "") -> "List[Tuple[str, Any]]"
     return out
 
 
-def _logical_array_shape(array: "zarr.Array") -> Tuple[int, ...]:
+def _logical_array_shape(
+    root: "zarr.Group", array: "zarr.Array", name: str, where: str
+) -> Tuple[int, ...]:
     """Decoded shape inferred from zarr and encoding metadata, without reading data."""
     shape = tuple(int(size) for size in array.shape)
     encoding = array.attrs.get("encoding")
@@ -59,6 +61,13 @@ def _logical_array_shape(array: "zarr.Array") -> Tuple[int, ...]:
             raise ValueError("broadcasted array has no leading dimension")
         return (int(encoding["n_elements"]), *shape[1:])
     if encoding.get("name") == "array_ref":
+        target = encoding.get("target")
+        try:
+            root[encoding["target"]]
+        except KeyError as exc:
+            raise ValueError(
+                f"array {name!r} at {where} references a missing target {target!r}"
+            ) from exc
         original_shape = encoding.get("original_shape")
         if not isinstance(original_shape, (list, tuple)) or not original_shape:
             raise ValueError("array_ref is missing a non-empty original_shape")
@@ -66,14 +75,18 @@ def _logical_array_shape(array: "zarr.Array") -> Tuple[int, ...]:
     return shape
 
 
-def _leaf_array_lengths(group: "zarr.Group", path: str) -> Dict[str, int]:
+def _leaf_array_lengths(
+    root: "zarr.Group", group: "zarr.Group", path: str
+) -> Dict[str, int]:
     """Required leaf-array lengths from metadata only."""
     where = path or "root"
     arrays = dict(group.arrays())
     names = ["centers", "amplitudes"]
     if "cholesky_factors_diag" in arrays:
         names.append("cholesky_factors_diag")
-        diag_shape = _logical_array_shape(arrays["cholesky_factors_diag"])
+        diag_shape = _logical_array_shape(
+            root, arrays["cholesky_factors_diag"], "cholesky_factors_diag", where
+        )
         if len(diag_shape) < 2:
             raise ValueError(
                 f"array 'cholesky_factors_diag' at {where} has invalid shape "
@@ -90,17 +103,17 @@ def _leaf_array_lengths(group: "zarr.Group", path: str) -> Dict[str, int]:
     for name in names:
         if name not in arrays:
             raise ValueError(f"missing required array {name!r} at {where}")
-        shape = _logical_array_shape(arrays[name])
+        shape = _logical_array_shape(root, arrays[name], name, where)
         if not shape:
             raise ValueError(f"array {name!r} at {where} has no leading dimension")
         lengths[name] = shape[0]
     return lengths
 
 
-def _validate_leaf_arrays(group: "zarr.Group", path: str) -> None:
+def _validate_leaf_arrays(root: "zarr.Group", group: "zarr.Group", path: str) -> None:
     """Require every leaf array to describe the same number of splats."""
     try:
-        lengths = _leaf_array_lengths(group, path)
+        lengths = _leaf_array_lengths(root, group, path)
     except Exception as exc:
         raise _GsplatStructureError(path, str(exc)) from exc
     if len(set(lengths.values())) == 1:
@@ -111,7 +124,9 @@ def _validate_leaf_arrays(group: "zarr.Group", path: str) -> None:
     )
 
 
-def _validate_gsplat_structure(group: "zarr.Group", path: str = "") -> None:
+def _validate_gsplat_structure(
+    root: "zarr.Group", group: "zarr.Group", path: str = ""
+) -> None:
     """Mirror ``read_gsplat_node`` using group and array metadata only."""
     kind = group.attrs.get("kind")
     if kind == "lod":
@@ -129,9 +144,11 @@ def _validate_gsplat_structure(group: "zarr.Group", path: str = "") -> None:
                         child_path,
                         f"missing required group {name!r} at {path or 'root'}",
                     )
-                _validate_leaf_arrays(group[name], f"{path}/{name}" if path else name)
+                _validate_leaf_arrays(
+                    root, group[name], f"{path}/{name}" if path else name
+                )
             return
-        _validate_leaf_arrays(group, path)
+        _validate_leaf_arrays(root, group, path)
         return
 
     names = [name for name in group.group_keys() if str(name).startswith(prefix)]
@@ -146,7 +163,9 @@ def _validate_gsplat_structure(group: "zarr.Group", path: str = "") -> None:
             raise _GsplatStructureError(
                 child_path, f"missing required group {name!r} at {path or 'root'}"
             )
-        _validate_gsplat_structure(group[name], f"{path}/{name}" if path else name)
+        _validate_gsplat_structure(
+            root, group[name], f"{path}/{name}" if path else name
+        )
 
 
 def check_gsplat_readable(root: "zarr.Group") -> List[Finding]:
@@ -176,7 +195,7 @@ def check_gsplat_readable(root: "zarr.Group") -> List[Finding]:
         ]
 
     try:
-        _validate_gsplat_structure(root)
+        _validate_gsplat_structure(root, root)
     except _GsplatStructureError as exc:
         path = exc.path
         error = str(exc)

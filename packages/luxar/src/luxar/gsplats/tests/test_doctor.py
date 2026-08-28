@@ -588,6 +588,42 @@ class TestGsplatReadabilityCheck:
         assert finding.path == missing_group
         assert f"missing required group '{missing_group}'" in finding.detail
 
+    def test_missing_array_reference_target_reports_referrer_path(self) -> None:
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
+        from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup
+
+        centers = np.arange(12, dtype=np.float32).reshape(4, 3)
+        amplitudes = np.ones(4, dtype=np.float32)
+        cholesky_factors = np.zeros((4, 6), dtype=np.float32)
+        cholesky_factors[:, [0, 2, 5]] = 1.0
+        colors = np.linspace(0.1, 0.9, 12, dtype=np.float32).reshape(4, 3)
+        sublod = AdditiveSubLOD(
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky_factors,
+            colors=colors,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "dangling-ref.gsplats.zarr"
+            write_gsplats_tree(
+                path,
+                GSplatLodGroup([GSplatLeaf([sublod]), GSplatLeaf([sublod])]),
+                ordering="none",
+            )
+            root = zc_open_group(path, mode="r+")
+            encoding = root["child_1/colors"].attrs["encoding"]
+            assert encoding["name"] == "array_ref"
+            assert encoding["target"] == "child_0/colors"
+            del root[encoding["target"]]
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+
+        assert not report.healthy
+        finding = next(item for item in report.findings if item.check == "readability")
+        assert finding.path == "child_1"
+        assert "references a missing target 'child_0/colors'" in finding.detail
+
     def test_mismatched_leaf_array_lengths_are_diagnosed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _flat_store(Path(tmp))
