@@ -89,7 +89,7 @@ export interface LODGroupRegistryOwner {
   readonly currentViewVersion: number;
   /** The owning loader's GPU buffer pool (null pre-setup / pooling off). */
   readonly gpuBufferPool: GPUBufferPool | null;
-  /** Terminal archive fault latched by the owning loader, if any. */
+  /** Current archive fault latched by the owning loader, if any. */
   readonly archiveFault: ArchiveFaultError | null;
 }
 

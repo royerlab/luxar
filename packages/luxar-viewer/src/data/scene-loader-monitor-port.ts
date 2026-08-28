@@ -84,7 +84,7 @@ export interface FailedLoadsProviderPort {
   /**
    * Human-readable failure reason for a single path, or undefined when the
    * path has no recorded failure. Derived from `FailedLoaderInfo` or the
-   * loader's terminal archive fault for a lazy branch. OPTIONAL so structural
+   * loader's latched archive fault for a lazy branch. OPTIONAL so structural
    * implementers that only surface the count/paths (e.g. `DataLoadingMonitor`)
    * keep compiling unchanged; the layers panel uses it for its per-row error
    * tooltip and falls back to a generic message when absent.

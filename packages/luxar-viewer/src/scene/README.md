@@ -394,7 +394,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    (`applyVisibility` → `requestRender`) resumes loading on the next
    frame. An explicit user retry
    (`retryLazyChildByNodePath`) deliberately bypasses it.
-   A terminal archive fault stops every deferred kick through the owning
+   A latched archive fault stops every automatic deferred kick through the owning
    `SceneLoader` latch. The branch that observed it retains its authored node
    path beside the anonymous placeholder, so the loading monitor can show the
    missing branch and Retry can re-kick that exact child without assigning a

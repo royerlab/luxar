@@ -384,7 +384,7 @@ export interface LODGroupChild {
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
-   * Marks the lazy branch that observed a terminal archive fault, so monitor
+   * Marks the lazy branch that observed a latched archive fault, so monitor
    * rows and explicit Retry can target it even when its THREE placeholder is
    * anonymous. The owning loader's archive latch is the shared dataset-fault
    * oracle; this branch marker is cleared by an explicit retry.
@@ -607,7 +607,7 @@ export interface LODGroupRegistryDeps {
   getViewportSize(): { width: number; height: number };
   /** Which dimensions of the data are being projected to screen. */
   getDisplayDims(): readonly number[];
-  /** Whether the owning loader has latched a terminal archive fault. */
+  /** Whether the owning loader has latched an archive fault. */
   hasArchiveFault?: () => boolean;
   /**
    * Resident-byte budget (the ceiling). The single, adaptive VRAM budget
