@@ -1075,6 +1075,9 @@ def add_lines_substitutive_lod_wrapper_impl(
         resolve=resolve_additive_axis_lines,
         name=name,
     )
+    # Keep the existing element-domain stream counts for composed coarse
+    # children. Retuning those counts for gsplat bytes-per-element is a separate
+    # cross-geometry policy change, not part of suppression scoping.
     finest_suppress_reason = (
         # The multi-LOD writer has no image_labels channel, so laddering would
         # silently drop them. Refuse the ladder, not the labels.

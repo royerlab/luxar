@@ -831,6 +831,9 @@ def add_points_substitutive_lod_wrapper_impl(
         resolve=resolve_additive_axis_points,
         name=name,
     )
+    # Keep the existing element-domain stream counts for composed coarse
+    # children. Retuning those counts for gsplat bytes-per-element is a separate
+    # cross-geometry policy change, not part of suppression scoping.
     reveal_note = (
         " Coarse levels use self_energy ordering, so reveal_centre is not applied."
         if coarse_additive is not None
