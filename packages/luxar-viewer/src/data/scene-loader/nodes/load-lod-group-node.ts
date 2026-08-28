@@ -139,9 +139,12 @@ function attachLazyChild(
       } catch (error) {
         entryChild.failed = true;
         // Anonymous group placeholders cannot be reached by retryLazyChildByLeafPath.
-        if (entryChild.object.name && archiveFaultFrom(error) !== undefined) {
+        const archiveFault = entryChild.object.name ? archiveFaultFrom(error) : undefined;
+        if (archiveFault) {
           entryChild.permanentlyFailed = true;
           entryChild.failedTick = undefined;
+          // A container fault makes the whole archive unreadable, not just this lazy level.
+          if (ctx.isDatasetLive()) ctx.reportArchiveFault(archiveFault);
         }
         log.warning(
           Modules.SCENE_LOADER,

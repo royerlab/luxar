@@ -36,6 +36,7 @@ import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
+import type { ArchiveFaultError } from '../../../cache/chunk-source';
 
 export interface NodeBuildCtx {
   /** Shared loader bookkeeping (registration + failure recording). */
@@ -92,6 +93,8 @@ export interface NodeBuildCtx {
    * ``SceneLoader.kickRefinementIfIdle``.
    */
   kickRefinementIfIdle(): void;
+  /** Latch and surface a terminal archive fault once for this scene loader. */
+  reportArchiveFault(fault: ArchiveFaultError): void;
   /**
    * True while the dataset that created this ctx is still the live one.
    * Returns false once that dataset has been aborted/disposed or

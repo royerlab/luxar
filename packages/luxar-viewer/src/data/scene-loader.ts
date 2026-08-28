@@ -260,9 +260,11 @@ export class SceneLoader {
   private _updateInProgress = false;
   // Terminal for this loader: loadScene is one-shot, and dataset switches create
   // a fresh SceneLoader through SceneLoaderManager.createLoaderAsync. Only
-  // bootstrapStandalone registers the notifier backend, so an embedded host gets
-  // just the log.error below and no visible message while updates stay stopped (#2280).
+  // bootstrapStandalone registers the notifier backend, so an embedded host sees no
+  // built-in message; hosts observe the fault through onArchiveFault (re-emitted by
+  // LuxarApp as dataset-fault) instead (#2280).
   private _archiveFault: ArchiveFaultError | null = null;
+  private archiveFaultListeners = new Set<(error: ArchiveFaultError) => void>();
   /**
    * True for the duration of a progressive-LOD refinement run
    * (`scheduleGSplatsRefinement`).
@@ -460,6 +462,55 @@ export class SceneLoader {
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
+  }
+
+  /** Terminal archive fault for this loader, or null while updates remain usable. */
+  get archiveFault(): ArchiveFaultError | null {
+    return this._archiveFault;
+  }
+
+  /**
+   * Subscribe to the loader's one-shot terminal archive fault.
+   * Listener exceptions are logged and do not propagate to the caller.
+   *
+   * @param options.replayCurrent Replay the current fault immediately when one is latched.
+   */
+  onArchiveFault(
+    listener: (error: ArchiveFaultError) => void,
+    options: { replayCurrent?: boolean } = {}
+  ): () => void {
+    this.archiveFaultListeners.add(listener);
+    if (options.replayCurrent && this._archiveFault) {
+      this.invokeArchiveFaultListener(listener, this._archiveFault);
+    }
+    return () => this.archiveFaultListeners.delete(listener);
+  }
+
+  private notifyArchiveFault(error: ArchiveFaultError): void {
+    for (const listener of [...this.archiveFaultListeners]) {
+      this.invokeArchiveFaultListener(listener, error);
+    }
+  }
+
+  private reportArchiveFault(fault: ArchiveFaultError): void {
+    if (this._archiveFault) return;
+    this._archiveFault = fault;
+    this.releasePrefetchResources();
+    this.registry.clearAllFailures();
+    log.error(Modules.SCENE_LOADER, `Archive fault: ${fault.message}`);
+    notifier.error(fault.message, { persistent: true });
+    this.notifyArchiveFault(fault);
+  }
+
+  private invokeArchiveFaultListener(
+    listener: (error: ArchiveFaultError) => void,
+    error: ArchiveFaultError
+  ): void {
+    try {
+      listener(error);
+    } catch (listenerError) {
+      log.warning(Modules.SCENE_LOADER, 'Archive-fault listener threw:', listenerError);
+    }
   }
 
   // ============================================================
@@ -1024,14 +1075,7 @@ export class SceneLoader {
       ]);
 
       if (sweepArchiveFault) {
-        this._archiveFault = sweepArchiveFault;
-        this.releasePrefetchResources();
-        this.registry.clearAllFailures();
-        log.error(
-          Modules.SCENE_LOADER,
-          `Archive fault during view update: ${sweepArchiveFault.message}`
-        );
-        notifier.error(sweepArchiveFault.message, { persistent: true });
+        this.reportArchiveFault(sweepArchiveFault);
       }
 
       // S6: predictive prefetch now lives inside each loader-task
@@ -1574,6 +1618,7 @@ export class SceneLoader {
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),
       kickRefinementIfIdle: () => this.kickRefinementIfIdle(),
+      reportArchiveFault: (fault) => this.reportArchiveFault(fault),
       // Live version accessor (not the snapshot) so a deferred / registry-driven
       // reload stamps for the CURRENT slice, not the one captured at ctx-build.
       getViewVersion: () => this._updateVersion,
@@ -1952,6 +1997,7 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+    this.archiveFaultListeners.clear();
     setSceneLineLoad(0);
 
     // Release the serialization lock explicitly — defence in depth. Only the
