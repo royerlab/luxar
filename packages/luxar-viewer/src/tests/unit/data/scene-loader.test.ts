@@ -496,7 +496,6 @@ describe('SceneLoader', () => {
     it('reports archive faults from node-build contexts exactly once', () => {
       const firstFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
       const secondFault = new ArchiveFaultError('archive still unavailable', 'scene.zip');
-      const listener = vi.fn();
       const releaseShadows = vi.fn();
       (sceneLoader as any)._slicePrefetcher = {
         prefetch: vi.fn(),
@@ -507,6 +506,13 @@ describe('SceneLoader', () => {
         registry: { recordFailure(path: string, error: Error): void };
       };
       internals.registry.recordFailure('/lazy-failure', new Error('archive request failed'));
+      expect(sceneLoader.hasFailures()).toBe(true);
+      let failuresAtNotification: boolean | undefined;
+      let releaseCallsAtNotification: number | undefined;
+      const listener = vi.fn(() => {
+        failuresAtNotification = sceneLoader.hasFailures();
+        releaseCallsAtNotification = releaseShadows.mock.calls.length;
+      });
       sceneLoader.onArchiveFault(listener);
       const ctx = (
         sceneLoader as unknown as { makeNodeBuildCtx(): Record<string, unknown> }
@@ -520,6 +526,8 @@ describe('SceneLoader', () => {
       expect(sceneLoader.archiveFault).toBe(firstFault);
       expect(listener).toHaveBeenCalledOnce();
       expect(listener).toHaveBeenCalledWith(firstFault);
+      expect(failuresAtNotification).toBe(false);
+      expect(releaseCallsAtNotification).toBe(1);
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledWith(firstFault.message, { persistent: true });
       expect(sceneLoader.hasFailures()).toBe(false);
