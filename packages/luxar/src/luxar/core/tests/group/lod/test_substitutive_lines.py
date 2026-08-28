@@ -625,12 +625,42 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
 
         grp = zarr.open(str(out), mode="r")["curves"]
         assert any(k.startswith("additive_") for k in grp.keys())
-        recovered = sum(
-            int(grp[key].attrs["n_segments"])
-            for key in grp.keys()
-            if key.startswith("additive_")
-        )
-        assert recovered == n_paths * (n_steps - 1)
+        from luxar.encoding import ArrayDecoder
+
+        authored = {
+            tuple(sorted((int(start), int(end))))
+            for start, end in indices.reshape(-1, 2)
+        }
+        recovered: set[tuple[int, int]] = set()
+        decoder = ArrayDecoder()
+        for key in grp.keys():
+            if not key.startswith("additive_"):
+                continue
+            level = grp[key]
+            stored_vertices = np.asarray(
+                decoder.decode(level["vertices"], grp), dtype=np.float64
+            )
+            stored_segments = np.asarray(decoder.decode(level["segments"], grp))
+            vertex_mapping = np.asarray(
+                [
+                    int(np.argmin(np.linalg.norm(verts - vertex, axis=1)))
+                    for vertex in stored_vertices
+                ],
+                dtype=np.intp,
+            )
+            for start, end in stored_segments.reshape(-1, 2):
+                recovered.add(
+                    tuple(
+                        sorted(
+                            (
+                                int(vertex_mapping[int(start)]),
+                                int(vertex_mapping[int(end)]),
+                            )
+                        )
+                    )
+                )
+
+        assert recovered == authored
 
     def test_explicit_false_skips_the_indexed_topology_scan(
         self, tmp_path, monkeypatch

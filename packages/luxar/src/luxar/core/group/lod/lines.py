@@ -221,7 +221,12 @@ def indexed_components_are_chains(
     * a component whose path order is not ascending (edges ``0-2, 2-1`` give
       ascending ``[0, 1, 2]`` but the real path is ``0-2-1``) — every edge moves;
     * a **cycle**, which has one more edge than a path of the same length;
-    * any duplicate or extra edge.
+    * an extra edge (a chord).
+
+    Duplicate edges, including reversed duplicates, are accepted because the
+    topology check deduplicates undirected pairs. The rebuilt chain emits each
+    pair once, so duplicate segment multiplicity — and therefore its additive
+    brightness contribution — is not preserved in a ladder.
 
     Note what it does NOT reject: an interior gap in a producer's vertex
     numbering. Two index-contiguous but unconnected runs are two distinct

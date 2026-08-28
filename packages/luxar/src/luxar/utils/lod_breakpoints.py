@@ -182,6 +182,11 @@ def capped_stream_cuts(
     already gives per-node adaptation, which is the only thing a string form
     would buy.
 
+    Unlike :func:`stream_cuts`, which returns ``[0]`` for an empty input so a
+    downstream builder always receives one cut, this public explicit-count
+    helper rejects ``n < 1`` because its result must be strictly increasing and
+    directly valid as ``counts=``.
+
     Args:
         n: Element count of the node the ladder is for, in its own payload
             currency (points, vertices, splats).
