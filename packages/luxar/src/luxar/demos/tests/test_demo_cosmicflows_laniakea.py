@@ -51,45 +51,74 @@ def test_galaxy_keys_stay_aligned_with_basin_labels(tmp_path) -> None:
     assert _decode_strings(node, "label") == ["Basin 1", "Basin 7"]
 
 
-def test_basin_streamlines_have_substitutive_lod(tmp_path) -> None:
-    pytest.importorskip("torch")
-    pytest.importorskip("scipy")
-    galaxies = GalaxyData(
-        positions=np.array([[0, 0, 0]], dtype=np.float32),
-        basin_ids=np.array([1], dtype=np.int16),
-        radii=np.ones(1, dtype=np.float32),
-        colors=np.ones((1, 3), dtype=np.float32),
-        pgc=np.array([4], dtype=np.int64),
-    )
-    vertices = np.column_stack(
-        [
-            np.arange(65, dtype=np.float32),
-            np.zeros(65, dtype=np.float32),
-            np.zeros(65, dtype=np.float32),
-        ]
-    )
-    segments = np.column_stack(
-        [np.arange(64, dtype=np.uint32), np.arange(1, 65, dtype=np.uint32)]
-    )
-    basin = BasinLineData(
-        basin_id=1,
-        vertices=vertices,
-        segments=segments,
-        streamline_count=1,
-    )
-    output = tmp_path / "cosmicflows_lod.luxar.zarr"
+def _integrator_valid_mask(
+    n_lines: int, n_steps: int, seed: int = 0
+) -> tuple[np.ndarray, np.ndarray]:
+    """The shape the integrator actually produces: a contiguous valid PREFIX.
 
-    write_laniakea_scene(output, galaxies, [basin], "preview", PRESETS["preview"])
+    ``valid[:, 0]`` is set for every seed and a streamline that fails a step is
+    retired permanently (``active[bad_idx] = False``), so the only gaps are
+    trailing. Returns ``(valid, valid_counts)``.
+    """
+    rng = np.random.default_rng(seed)
+    lengths = rng.integers(2, n_steps + 1, size=n_lines)
+    valid = np.arange(n_steps)[None, :] < lengths[:, None]
+    return valid, valid.sum(axis=1)
 
-    root = zarr.open_group(str(output), mode="r")
-    ladder = root["Basin 1 streamlines"]
-    assert ladder.attrs["kind"] == "lod"
-    assert ladder.attrs["display_type"] == "lines"
-    assert ladder.attrs["default_level"] == 0
-    assert len(list(ladder.group_keys())) == 3
-    coarsest = ladder["child_0"]
-    assert coarsest.attrs["type"] == "gsplats"
-    finest = ladder["child_2"]
-    assert finest.attrs["type"] == "lines"
-    assert finest.attrs["n_segments"] == 64
-    assert coarsest.attrs["n_splats"] < finest.attrs["n_segments"]
+
+def test_basin_indices_can_carry_a_streaming_ladder() -> None:
+    """The precondition the basin nodes' ``additive_lod=`` depends on.
+
+    ``add_lines`` RAISES for indexed lines whose components are not ascending
+    simple paths, because the multi-LOD writer rebuilds edges by chaining each
+    component in ascending vertex order. If the integrator or the index
+    construction ever changes shape, this fails here with a readable reason
+    instead of breaking the scene build.
+    """
+    from luxar.core.group.lod.lines import indexed_components_are_chains
+    from luxar.demos.demo_cosmicflows_laniakea import build_basin_line_data
+
+    n_lines, n_steps = 400, 60
+    valid, valid_counts = _integrator_valid_mask(n_lines, n_steps)
+    rng = np.random.default_rng(1)
+    positions = rng.normal(size=(n_lines, n_steps, 3)).astype(np.float32) * 100.0
+    seed_basins = rng.integers(1, 5, size=n_lines).astype(np.int16)
+
+    basins = build_basin_line_data(positions, valid, seed_basins, valid_counts)
+    assert basins, "no basins were built"
+    for basin in basins:
+        assert indexed_components_are_chains(
+            int(basin.vertices.shape[0]),
+            np.asarray(basin.segments, dtype=np.intp).reshape(-1, 2),
+        ), f"basin {basin.basin_id} would have its edges fabricated by the ladder"
+
+
+def test_an_interior_gap_would_still_be_safe() -> None:
+    """The caveat that looks like a hazard and is not.
+
+    An interior invalid timestep cannot occur (each row is a contiguous prefix),
+    but if one did, ``segment_mask = (start >= 0) & (end >= 0)`` drops the
+    crossing segment — so the two index-contiguous runs become two distinct
+    CONNECTED components and the writer chains each separately. No edge is
+    invented across the gap. Pinned because assuming otherwise would argue for
+    refusing a ladder these nodes can safely carry.
+    """
+    from luxar.core.group.lod.lines import indexed_components_are_chains
+    from luxar.demos.demo_cosmicflows_laniakea import build_basin_line_data
+
+    n_lines, n_steps = 50, 21
+    valid = np.ones((n_lines, n_steps), dtype=bool)
+    valid[:, 10] = False  # an interior hole in every row
+    rng = np.random.default_rng(2)
+    positions = rng.normal(size=(n_lines, n_steps, 3)).astype(np.float32) * 100.0
+    seed_basins = np.ones(n_lines, dtype=np.int16)
+
+    basins = build_basin_line_data(
+        positions, valid, seed_basins, valid.sum(axis=1)
+    )
+    assert basins
+    for basin in basins:
+        assert indexed_components_are_chains(
+            int(basin.vertices.shape[0]),
+            np.asarray(basin.segments, dtype=np.intp).reshape(-1, 2),
+        )
