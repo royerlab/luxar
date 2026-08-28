@@ -1,5 +1,9 @@
 # `core/layer` — Layer mode
 
+The normative public embedding contract is
+[`docs/specs/LUXAR_LAYER_SPEC.md`](../../../../../docs/specs/LUXAR_LAYER_SPEC.md).
+This package note explains the internal seam and implementation-specific rationale.
+
 > Render a Luxar scene inside a **host application's own** Three.js renderer,
 > camera, and scene graph.
 
