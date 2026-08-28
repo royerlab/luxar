@@ -164,11 +164,27 @@ export function commitPointsGeometry(
       // until the re-sort dispatched by noteDepthSortCommit below lands.
       // Guards mirror the gsplats twin (commit-gsplats-geometry.ts) — the
       // full rationale lives there.
-      const preserveOrdering =
-        hadCommittedData &&
-        !attributesRebuilt &&
-        geometry === prevGeometry &&
-        prevCount === pointCount;
+      // The same-buffer prior splits in two on the count.
+      //
+      // Equal count: keep the permutation verbatim (`preserveOrdering`).
+      //
+      // CHANGED count: hand the adapter the previous count so it can REBUILD
+      // the permutation over the new population (`repairSortedIndexForCount`)
+      // instead of falling back to storage order. This is the branch a
+      // timelapse actually takes — an nD re-slice changes the resident count
+      // at almost every step, so the equal-count guard alone never fired and
+      // every timepoint drew at least one unsorted frame. Under an
+      // order-dependent blending mode that reads as a flash per timepoint
+      // (#2290). Measured on the `cloud` demo at a frozen camera pose, as the
+      // fraction of sampled element pairs composited in correct back-to-front
+      // order: storage order 0.617, repaired 0.858, a real sort 1.000.
+      //
+      // The other three conjuncts are what make the buffer's contents
+      // meaningful at all, and are unchanged.
+      const sameBuffers = hadCommittedData && !attributesRebuilt && geometry === prevGeometry;
+      const preserveOrdering = sameBuffers && prevCount === pointCount;
+      const repairFromCount =
+        sameBuffers && prevCount !== undefined && prevCount !== pointCount ? prevCount : undefined;
       // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
       // merely EXTENDS the prefix already on the GPU, write & upload only the
       // new `[prevCount, pointCount)` suffix. Correctness rests on the
@@ -231,6 +247,7 @@ export function commitPointsGeometry(
       try {
         gpuBufferPool.updatePointsGeometry(geometry, data, pointCount, {
           preserveOrdering,
+          repairFromCount,
           fromInstance: canAppend ? (prevCount ?? 0) : 0,
         });
 

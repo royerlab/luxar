@@ -604,10 +604,20 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     root.add(mesh);
     const pool = makePool(new THREE.BufferGeometry());
     commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
-    // A permutation of [0,7) is not a permutation of [0,9). No lineage was
-    // stamped here, so this is a full rewrite (not an append) → fromInstance 0.
+    // A permutation of [0,7) is not a permutation of [0,9) — true, and the
+    // reason `preserveOrdering` stays false. But it is REBUILT over the new
+    // population rather than given up: `repairFromCount` carries the previous
+    // count so the adapter can compact/extend the existing permutation instead
+    // of falling back to storage order. This is the branch an nD re-slice
+    // actually takes at almost every step, and the unsorted frame it used to
+    // draw is #2290's per-timepoint flash. No lineage was stamped here, so this
+    // is a full rewrite (not an append) → fromInstance 0.
     commitGSplatsGeometry(makeStaged(9), root, pool as never, undefined, V);
-    expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
+    expect(lastPoolPreserve(pool)).toEqual({
+      preserveOrdering: false,
+      repairFromCount: 7,
+      fromInstance: 0,
+    });
   });
 
   it('pool path: recommit after committedData was cleared (LOD demotion) → false', () => {
@@ -655,7 +665,9 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     root.add(mesh);
     commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
     commitGSplatsGeometry(makeStaged(5), root, null, undefined, V);
-    expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false });
+    // Same split as the pool path: the count moved, so the permutation is
+    // rebuilt over the new population rather than reset to storage order.
+    expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false, repairFromCount: 11 });
   });
 
   it('non-pool path: recommit after committedData was cleared → false', () => {

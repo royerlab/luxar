@@ -36,4 +36,30 @@ export interface DepthSortConfig {
    *  forever, and every order-dependent commit parks another continuation on
    *  it — precisely the accumulation the deadline exists to prevent. */
   workerInitTimeoutMs: number;
+  /** Largest element count for which the FIRST ordering after a commit is
+   *  computed synchronously, on the main thread, inside the commit itself
+   *  (default: 250,000). `0` disables the synchronous path entirely.
+   *
+   *  Without it, every commit of an order-dependent node writes a storage-order
+   *  fallback and waits ~5 ms for the worker's answer, so at least one frame
+   *  renders unsorted. That is invisible on a one-off load and continuous
+   *  during nD playback, where a commit lands at EVERY timepoint: measured on
+   *  the `cloud` demo, the fallback composited only 61.7% of sampled element
+   *  pairs in correct back-to-front order against 100% for a real sort, once
+   *  per timepoint, which reads as a flash.
+   *
+   *  The kernel is a counting sort — two O(n) passes plus a 65,536-bucket
+   *  histogram — so the cost is bounded and measurable. Timed in-browser:
+   *
+   *  ```
+   *  34k    100k   250k   500k    1M      1.65M
+   *  0.8ms  1.1ms  2.5ms  8.0ms  16.2ms  31.7ms
+   *  ```
+   *
+   *  250k stays inside a 60 Hz frame with room to spare on a slow machine and
+   *  covers every animated demo node in the repo. Above it the async path is
+   *  the only sane answer and the storage-order frame is accepted — but see
+   *  `repairSortedIndexForCount`, which keeps that frame much closer to sorted
+   *  than storage order was. */
+  syncSortMaxElements: number;
 }

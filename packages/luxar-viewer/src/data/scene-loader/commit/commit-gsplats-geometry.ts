@@ -116,11 +116,30 @@ export function commitGSplatsGeometry(
       // ordering is identity anyway (never permuted), so skipping the
       // redundant rewrite is a no-op; under normal mode the sort corrects
       // draw order within ~a frame.
-      const preserveOrdering =
-        hadCommittedData &&
-        !attributesRebuilt &&
-        geometry === prevGeometry &&
-        prevCount === splatCount;
+      // The same-buffer prior splits in two on the count.
+      //
+      // Equal count: keep the permutation verbatim (`preserveOrdering`).
+      //
+      // CHANGED count: hand the adapter the previous count so it can REBUILD
+      // the permutation over the new population (`repairSortedIndexForCount`)
+      // instead of falling back to storage order. This closes exactly the gap
+      // the third bullet above names — "a permutation of [0,prevCount) is not a
+      // permutation of [0,count)" is true, and rebuilding it is cheaper than
+      // giving it up. It is also the branch a timelapse actually takes: an nD
+      // re-slice changes the resident count at almost every step, so the
+      // equal-count guard alone never fired and every timepoint drew at least
+      // one unsorted frame — a flash per timepoint under an order-dependent
+      // blending mode (#2290). Measured on the `cloud` demo at a frozen camera
+      // pose, as the fraction of sampled element pairs composited in correct
+      // back-to-front order: storage order 0.617, repaired 0.858, a real sort
+      // 1.000.
+      //
+      // The other three conjuncts are what make the buffer's contents
+      // meaningful at all, and are unchanged.
+      const sameBuffers = hadCommittedData && !attributesRebuilt && geometry === prevGeometry;
+      const preserveOrdering = sameBuffers && prevCount === splatCount;
+      const repairFromCount =
+        sameBuffers && prevCount !== undefined && prevCount !== splatCount ? prevCount : undefined;
       // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
       // merely EXTENDS the prefix already on the GPU, write & upload only the
       // new `[prevCount, splatCount)` suffix. Correctness rests on the
@@ -178,7 +197,7 @@ export function commitGSplatsGeometry(
           },
           splatCount,
           truncationRadius,
-          { preserveOrdering, fromInstance: canAppend ? (prevCount ?? 0) : 0 }
+          { preserveOrdering, repairFromCount, fromInstance: canAppend ? (prevCount ?? 0) : 0 }
         );
       } catch (err) {
         // Defense-in-depth: a throwing write leaves the buffer content
@@ -226,8 +245,13 @@ export function commitGSplatsGeometry(
       // updateInstancedGSplatsMesh, whose rebuild branch always writes
       // identity regardless of the flag — fresh geometries are
       // zero-filled), so geometry identity + count are the guards.
-      const preserveOrdering =
-        hadCommittedData && mesh.geometry === prevGeometry && prevCount === splatCount;
+      // Non-pool fallback: same split as the pooled branch above.
+      const sameMeshBuffers = hadCommittedData && mesh.geometry === prevGeometry;
+      const preserveOrdering = sameMeshBuffers && prevCount === splatCount;
+      const repairFromCount =
+        sameMeshBuffers && prevCount !== undefined && prevCount !== splatCount
+          ? prevCount
+          : undefined;
       const rebuilt = updateInstancedGSplatsMesh(
         mesh,
         {
@@ -239,7 +263,7 @@ export function commitGSplatsGeometry(
           splatCount,
           bounds: processed.bounds,
         },
-        { preserveOrdering }
+        { preserveOrdering, repairFromCount }
       );
       syncGSplatMaterialWithGeometry(mesh);
       if (rebuilt) invalidateRenderObjectFor(mesh);
