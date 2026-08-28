@@ -256,7 +256,7 @@ def test_doctor_rejects_a_supported_but_unreadable_store() -> None:
         assert "Info report failed; continuing to the diagnosis" in result.stdout
         assert "Diagnosing:" in result.stdout
         assert "[/] gsplat store cannot be read" in result.stdout
-        assert "KeyError('centers')" in result.stdout
+        assert "missing required array 'centers'" in result.stdout
         assert "1 problem(s) outstanding" in result.stdout
 
 

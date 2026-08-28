@@ -1368,6 +1368,8 @@ def doctor(
 
     - Unsupported standalone gsplat format versions. These stores cannot be
       opened by the current reader and must be converted with `migrate-format`.
+    - Supported-version standalone gsplat stores with an incomplete tree or
+      inconsistent leaf-array metadata. Restore or regenerate these stores.
     - Partition split planes (bsp_tree): missing, or stale after a transform.
       Without them the viewer orders parts by centroid, which is not a valid
       painter's order — it pops at the seams under `normal`/`volumetric`

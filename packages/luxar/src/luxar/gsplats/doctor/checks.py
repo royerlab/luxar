@@ -29,7 +29,7 @@ from .model import Check, Finding
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import zarr
 
-__all__ = ["ALL_CHECKS", "check_format_version", "check_partition_split_planes"]
+__all__ = ["ALL_CHECKS", "check_gsplat_readable", "check_partition_split_planes"]
 
 
 def _iter_groups(group: "zarr.Group", path: str = "") -> "List[Tuple[str, Any]]":
@@ -40,7 +40,95 @@ def _iter_groups(group: "zarr.Group", path: str = "") -> "List[Tuple[str, Any]]"
     return out
 
 
-def check_format_version(root: "zarr.Group") -> List[Finding]:
+def _logical_array_shape(array: "zarr.Array") -> Tuple[int, ...]:
+    """Decoded shape inferred from zarr and encoding metadata, without reading data."""
+    shape = tuple(int(size) for size in array.shape)
+    encoding = array.attrs.get("encoding")
+    if not isinstance(encoding, dict):
+        return shape
+    if encoding.get("name") == "broadcasted":
+        if not shape:
+            raise ValueError("broadcasted array has no leading dimension")
+        return (int(encoding["n_elements"]), *shape[1:])
+    if encoding.get("name") == "array_ref":
+        original_shape = encoding.get("original_shape")
+        if not isinstance(original_shape, (list, tuple)) or not original_shape:
+            raise ValueError("array_ref is missing a non-empty original_shape")
+        return tuple(int(size) for size in original_shape)
+    return shape
+
+
+def _leaf_array_lengths(group: "zarr.Group", path: str) -> Dict[str, int]:
+    """Required leaf-array lengths from metadata only."""
+    where = path or "root"
+    names = ["centers", "amplitudes"]
+    if "cholesky_factors_diag" in group:
+        names.append("cholesky_factors_diag")
+        diag_shape = _logical_array_shape(group["cholesky_factors_diag"])
+        if len(diag_shape) < 2:
+            raise ValueError(
+                f"array 'cholesky_factors_diag' at {where} has invalid shape "
+                f"{diag_shape}"
+            )
+        if diag_shape[1] > 1:
+            names.append("cholesky_factors_offdiag")
+    else:
+        names.append("cholesky_factors")
+    if "colors" in group:
+        names.append("colors")
+
+    lengths: Dict[str, int] = {}
+    for name in names:
+        if name not in group:
+            raise ValueError(f"missing required array {name!r} at {where}")
+        shape = _logical_array_shape(group[name])
+        if not shape:
+            raise ValueError(f"array {name!r} at {where} has no leading dimension")
+        lengths[name] = shape[0]
+    return lengths
+
+
+def _validate_leaf_arrays(group: "zarr.Group", path: str) -> None:
+    """Require every leaf array to describe the same number of splats."""
+    lengths = _leaf_array_lengths(group, path)
+    if len(set(lengths.values())) == 1:
+        return
+    joined = ", ".join(f"{name}={length}" for name, length in lengths.items())
+    raise ValueError(f"array lengths disagree at {path or 'root'}: {joined}")
+
+
+def _validate_gsplat_structure(group: "zarr.Group", path: str = "") -> None:
+    """Mirror ``read_gsplat_node`` using group and array metadata only."""
+    kind = group.attrs.get("kind")
+    if kind == "lod":
+        prefix = "child_"
+    elif kind == "partition":
+        prefix = "part_"
+    else:
+        n_additive = int(group.attrs.get("n_additive_sublods", 1))
+        if n_additive > 1:
+            for index in range(n_additive):
+                name = f"additive_{index}"
+                if name not in group:
+                    raise ValueError(
+                        f"missing required group {name!r} at {path or 'root'}"
+                    )
+                _validate_leaf_arrays(group[name], f"{path}/{name}" if path else name)
+            return
+        _validate_leaf_arrays(group, path)
+        return
+
+    names = [name for name in group.group_keys() if str(name).startswith(prefix)]
+    if not names:
+        raise ValueError(f"{kind} group at {path or 'root'} has no children")
+    for index in range(len(names)):
+        name = f"{prefix}{index}"
+        if name not in group:
+            raise ValueError(f"missing required group {name!r} at {path or 'root'}")
+        _validate_gsplat_structure(group[name], f"{path}/{name}" if path else name)
+
+
+def check_gsplat_readable(root: "zarr.Group") -> List[Finding]:
     """A standalone gsplat store must use a format the current reader accepts."""
     if root.attrs.get("format_type") != "gsplats_zarr":
         return []
@@ -66,10 +154,8 @@ def check_format_version(root: "zarr.Group") -> List[Finding]:
             )
         ]
 
-    from luxar.io._compiler.gsplat_tree import read_gsplat_node
-
     try:
-        read_gsplat_node(root, root)
+        _validate_gsplat_structure(root)
     except Exception as exc:
         return [
             Finding(
@@ -77,7 +163,11 @@ def check_format_version(root: "zarr.Group") -> List[Finding]:
                 severity="error",
                 path="",
                 summary="gsplat store cannot be read",
-                detail=f"The current Luxar reader rejected this store: {exc!r}.",
+                detail=(
+                    f"The store's tree or leaf-array metadata is incomplete: {exc}. "
+                    "This check does not read chunk payloads, so corruption inside "
+                    "stored chunks may only surface when the data is loaded."
+                ),
                 remedy="Restore the incomplete store or regenerate it from its source.",
             )
         ]
@@ -596,4 +686,4 @@ def _stale_finding(
 
 
 #: Every check, in the order the doctor runs them.
-ALL_CHECKS: "List[Check]" = [check_format_version, check_partition_split_planes]
+ALL_CHECKS: "List[Check]" = [check_gsplat_readable, check_partition_split_planes]

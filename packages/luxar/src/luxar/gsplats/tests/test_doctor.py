@@ -18,6 +18,7 @@ import pytest
 import zarr
 
 from luxar._zarr_compat import consolidate as zc_consolidate
+from luxar._zarr_compat import create_array as zc_create_array
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar._zarr_compat import read_consolidated_attrs, read_node_attrs
 from luxar.conftest import confine_temp_dirs
@@ -48,6 +49,20 @@ def _legacy_gsplat_store(tmp: Path, version: object) -> Path:
     root.attrs["format_type"] = "gsplats_zarr"
     if version is not None:
         root.attrs["format_version"] = version
+    return path
+
+
+def _flat_store(tmp: Path, n: int = 40) -> Path:
+    rng = np.random.default_rng(8)
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    path = tmp / "flat.gsplats.zarr"
+    data = GSplatData(
+        centers=rng.random((n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, size=n).astype(np.float32),
+        cholesky_factors=chol,
+    )
+    write_gsplats_tree(path, data.tree)
     return path
 
 
@@ -468,6 +483,81 @@ def _order_violations(tree: dict, boxes: list, poses: int = 60) -> int:
     return bad
 
 
+class TestGsplatReadabilityCheck:
+    @pytest.mark.parametrize("version", ["2.0", None])
+    def test_unsupported_or_missing_format_version_is_diagnosed(
+        self, version: object
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _legacy_gsplat_store(Path(tmp), version)
+
+            report = diagnose_store(path)
+
+            assert not report.healthy
+            (finding,) = report.findings
+            assert finding.check == "format-version"
+            assert finding.severity == "error"
+            assert finding.path == ""
+            assert repr(version) in finding.summary
+            assert not finding.fixable
+            assert "migrate-format" in finding.remedy
+
+    def test_supported_but_unreadable_store_is_diagnosed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _legacy_gsplat_store(Path(tmp), "3.4")
+
+            report = diagnose_store(path)
+
+            assert not report.healthy
+            (finding,) = report.findings
+            assert finding.check == "readability"
+            assert finding.severity == "error"
+            assert finding.path == ""
+            assert "cannot be read" in finding.summary
+            assert "missing required array 'centers'" in finding.detail
+            assert not finding.fixable
+
+    def test_diagnosis_does_not_decode_leaf_arrays(self, monkeypatch) -> None:
+        from luxar.encoding import ArrayDecoder
+
+        calls = 0
+        original = ArrayDecoder.decode
+
+        def counted_decode(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(ArrayDecoder, "decode", counted_decode)
+        with tempfile.TemporaryDirectory() as tmp:
+            report = diagnose_store(_flat_store(Path(tmp)))
+
+        assert report.findings == []
+        assert calls == 0
+
+    def test_mismatched_leaf_array_lengths_are_diagnosed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _flat_store(Path(tmp))
+            root = zc_open_group(path, mode="r+")
+            del root["amplitudes"]
+            zc_create_array(
+                root,
+                "amplitudes",
+                data=np.ones(39, dtype=np.float32),
+                compressor=None,
+            )
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+
+            assert not report.healthy
+            (finding,) = report.findings
+            assert finding.check == "readability"
+            assert "array lengths disagree" in finding.detail
+            assert "amplitudes=39" in finding.detail
+            assert "centers=40" in finding.detail
+
+
 class TestSplitPlanesCheck:
     def test_axis_three_partition_is_healthy_and_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -551,39 +641,6 @@ class TestSplitPlanesCheck:
             assert report.findings == []
             assert report.healthy
             assert report.checks_run  # says what it looked at
-
-    @pytest.mark.parametrize("version", ["2.0", None])
-    def test_unsupported_or_missing_format_version_is_diagnosed(
-        self, version: object
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = _legacy_gsplat_store(Path(tmp), version)
-
-            report = diagnose_store(path)
-
-            assert not report.healthy
-            (finding,) = report.findings
-            assert finding.check == "format-version"
-            assert finding.severity == "error"
-            assert finding.path == ""
-            assert repr(version) in finding.summary
-            assert not finding.fixable
-            assert "migrate-format" in finding.remedy
-
-    def test_supported_but_unreadable_store_is_diagnosed(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = _legacy_gsplat_store(Path(tmp), "3.4")
-
-            report = diagnose_store(path)
-
-            assert not report.healthy
-            (finding,) = report.findings
-            assert finding.check == "readability"
-            assert finding.severity == "error"
-            assert finding.path == ""
-            assert "cannot be read" in finding.summary
-            assert "KeyError('centers')" in finding.detail
-            assert not finding.fixable
 
     def test_missing_planes_are_diagnosed_and_recovered(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

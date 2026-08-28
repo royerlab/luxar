@@ -46,6 +46,7 @@ if not report.healthy:
 | check | condition | repair |
 |---|---|---|
 | `format-version` | a standalone gsplat store uses a format version the current reader cannot open | none; convert it with `luxar gsplat migrate-format` |
+| `readability` | a supported-version standalone gsplat store has an incomplete tree or inconsistent leaf-array metadata | none; restore the store or regenerate it from its source |
 | `split-planes` | a `kind=partition` records no `bsp_tree` | recover the planes from the part boxes, when those are disjoint |
 | `split-planes` | the stored `bsp_tree` does not separate the parts it names (stale after a transform, or written against a different part set) | rebuild from the part boxes, or remove the tree so ordering falls back honestly |
 | `split-planes` | overlapping parts carry planes outside their measured overlap bands and per-axis tolerance floor | recover the band-bounded cuts; report a coordinate-frame scale only when repeated planes support the same factors |

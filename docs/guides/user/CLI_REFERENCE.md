@@ -334,9 +334,11 @@ fitting record in the info report, `--histograms --bins N` to include and re-bin
 the report's distributions, or `--json` to write the findings out for a machine.
 
 It currently diagnoses a standalone gsplat store whose format version the
-current reader cannot open, with `gsplat migrate-format` as the remedy. It also
-diagnoses a `kind=partition` whose split planes (`bsp_tree`) are missing, or are
-present but disagree with where the parts actually sit. Without them the viewer
+current reader cannot open, with `gsplat migrate-format` as the remedy, and a
+supported-version store with an incomplete tree or inconsistent leaf-array
+metadata, which must be restored or regenerated. It also diagnoses a
+`kind=partition` whose split planes (`bsp_tree`) are missing, or are present but
+disagree with where the parts actually sit. Without them the viewer
 orders parts by centroid, which is not a valid painter's order and pops at the
 seams under `normal`/`volumetric` blending; where the parts are disjoint the
 planes are recovered exactly from the part boxes. For overlapping
