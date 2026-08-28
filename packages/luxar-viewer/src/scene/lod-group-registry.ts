@@ -388,6 +388,12 @@ export interface LODGroupChild {
    */
   permanentlyFailed?: boolean;
   /**
+   * Optional bound on automatic cooldown retries. ``undefined`` preserves the
+   * normal unlimited transient-recovery policy; zero suppresses further kicks.
+   * A successful load clears the bound.
+   */
+  automaticRetriesRemaining?: number;
+  /**
    * Registry tick when ``failed`` was first observed. Drives the
    * transient-failure retry cooldown (``FAILED_RETRY_FRAMES``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
@@ -1885,10 +1891,18 @@ export class LODGroupRegistry {
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
    * ``permanentlyFailed`` children never enter that cooldown — they stay
-   * latched until an explicit or connectivity retry clears the flag.
+   * latched until an explicit or connectivity retry clears the flag. A child
+   * with an exhausted ``automaticRetriesRemaining`` budget likewise stops
+   * before another kick.
    */
   private kickDeferredLoad(child: LODGroupChild): void {
-    if (!child.ensureLoaded || child.loading || child.permanentlyFailed) return;
+    if (
+      !child.ensureLoaded ||
+      child.loading ||
+      child.permanentlyFailed ||
+      child.automaticRetriesRemaining === 0
+    )
+      return;
     if (child.failed) {
       if (child.failedTick == null) {
         // First frame we observe the failure — start the cooldown clock.
@@ -1899,6 +1913,9 @@ export class LODGroupRegistry {
       // Cooldown elapsed — clear the failure and fall through to retry.
       child.failed = false;
       child.failedTick = undefined;
+      if (child.automaticRetriesRemaining !== undefined) {
+        child.automaticRetriesRemaining -= 1;
+      }
     }
     child.loading = true;
     child.ensureLoaded();
