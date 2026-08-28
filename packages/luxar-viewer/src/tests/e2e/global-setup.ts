@@ -32,6 +32,7 @@ import {
 } from '../../../tools/fixture-manifest';
 import {
   checkExampleFixtureFreshness,
+  exposeExampleFixtureFreshnessToWorkers,
   reportExampleFixtureFreshness,
 } from '../../../tools/example-fixture-freshness';
 import { e2eWorkerPlan, formatE2EParallelismStamp } from '../../../tools/e2e-workers';
@@ -163,11 +164,12 @@ export default async function globalSetup(config: FullConfig) {
 
   const projectRoot = serverMetadata.checkout.projectRoot;
   const examplesDir = path.join(projectRoot, 'datasets/examples');
-  let hasDatasetWarnings = false;
+  const datasetWarnings: string[] = [];
 
   // Check 1: Verify examples directory exists
   if (!fs.existsSync(examplesDir)) {
-    hasDatasetWarnings = true;
+    datasetWarnings.push('examples directory missing');
+    exposeExampleFixtureFreshnessToWorkers({ status: 'unavailable' });
     console.warn(`⚠️  Examples directory not found: ${examplesDir}`);
     console.warn('   Run "make run-examples" to generate test datasets');
     console.warn('   Tests requiring example datasets will fail.\n');
@@ -177,8 +179,12 @@ export default async function globalSetup(config: FullConfig) {
     console.log(`✅ Examples directory found: ${examplesDir}`);
 
     const freshness = checkExampleFixtureFreshness(projectRoot);
-    if (reportExampleFixtureFreshness(freshness)) {
-      hasDatasetWarnings = true;
+    exposeExampleFixtureFreshnessToWorkers(freshness);
+    const examplesWarned = reportExampleFixtureFreshness(freshness);
+    if (examplesWarned) {
+      datasetWarnings.push(
+        freshness.status === 'stale' ? 'example datasets stale' : 'example freshness unavailable'
+      );
     }
 
     // Check 2: Verify required datasets exist locally and through the HTTP server.
@@ -206,7 +212,7 @@ export default async function globalSetup(config: FullConfig) {
     console.log(`✅ ${foundDatasets.length} required datasets are reachable over HTTP`);
 
     if (missingDatasets.length > 0) {
-      hasDatasetWarnings = true;
+      datasetWarnings.push(`${missingDatasets.length} required example datasets missing`);
       console.warn('\n⚠️  Warning: Some datasets are missing:');
       for (const dataset of missingDatasets) {
         console.warn(`   - ${dataset}`);
@@ -247,8 +253,10 @@ export default async function globalSetup(config: FullConfig) {
     throw error;
   }
 
-  if (hasDatasetWarnings) {
-    console.warn('\n⚠️  Pre-flight checks completed with dataset warnings.\n');
+  if (datasetWarnings.length > 0) {
+    console.warn(
+      `\n⚠️  Pre-flight checks completed with dataset warnings: ${datasetWarnings.join('; ')}.\n`
+    );
   } else {
     console.log('\n✅ Pre-flight checks passed!\n');
   }

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 
 // Keep synchronized with scripts/run_examples.py; the Python test enforces this contract.
 const STALE_EXIT_CODE = 3;
+export const EXAMPLE_DATASETS_STALE_ENV = 'LUXAR_E2E_EXAMPLES_STALE';
 
 export interface ExampleFixtureFreshness {
   status: 'current' | 'stale' | 'unavailable';
@@ -40,6 +41,17 @@ export function checkExampleFixtureFreshness(projectRoot: string): ExampleFixtur
       return { status: 'unavailable', detail: checkerErrorDetail(error) };
     }
     return { status: 'unavailable' };
+  }
+}
+
+export function exposeExampleFixtureFreshnessToWorkers(
+  freshness: ExampleFixtureFreshness,
+  environment: Record<string, string | undefined> = process.env
+): void {
+  if (freshness.status === 'stale') {
+    environment[EXAMPLE_DATASETS_STALE_ENV] = '1';
+  } else {
+    delete environment[EXAMPLE_DATASETS_STALE_ENV];
   }
 }
 

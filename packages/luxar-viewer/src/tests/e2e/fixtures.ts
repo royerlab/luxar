@@ -55,6 +55,7 @@
  */
 
 import { test as base } from '@playwright/test';
+import { EXAMPLE_DATASETS_STALE_ENV } from '../../../tools/example-fixture-freshness';
 
 /** Annotation type that opts a spec out of the auto console-error check. */
 export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
@@ -142,6 +143,14 @@ export function unexpectedConsoleErrors(
   return captured.filter((entry) => !allowed.some((pattern) => pattern.test(entry.text)));
 }
 
+export function staleExampleDatasetFailureWarning(
+  status: string | undefined,
+  examplesAreStale: boolean
+): string | undefined {
+  if (!examplesAreStale || (status !== 'failed' && status !== 'timedOut')) return undefined;
+  return 'Example datasets are stale. If this spec reads datasets/examples, run "make run-examples" from the repository root.';
+}
+
 /**
  * Extended `test` fixture: drop-in replacement for `@playwright/test`'s
  * `test`. Specs that import from this module get auto console-error
@@ -179,6 +188,12 @@ export const test = base.extend({
 
     try {
       await use(page);
+
+      const staleExamplesWarning = staleExampleDatasetFailureWarning(
+        testInfo.status,
+        process.env[EXAMPLE_DATASETS_STALE_ENV] === '1'
+      );
+      if (staleExamplesWarning) console.warn(`\n⚠️  ${staleExamplesWarning}\n`);
 
       // Skip the assertion if the spec opted out via annotation.
       const annotated = testInfo.annotations.some((a) => a.type === ALLOW_CONSOLE_ERRORS);

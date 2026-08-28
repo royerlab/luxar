@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkExampleFixtureFreshness,
+  exposeExampleFixtureFreshnessToWorkers,
   reportExampleFixtureFreshness,
 } from '../../../../tools/example-fixture-freshness';
 
@@ -91,5 +93,33 @@ describe('reportExampleFixtureFreshness', () => {
     );
     expect(reporter.warn).toHaveBeenCalledWith('   ModuleNotFoundError: numcodecs');
     expect(reporter.warn).toHaveBeenCalledWith('   Continuing with presence checks only.\n');
+  });
+});
+
+describe('Playwright stale-example integration', () => {
+  it('exports only the stale verdict to Playwright workers', () => {
+    const environment: Record<string, string | undefined> = {};
+
+    exposeExampleFixtureFreshnessToWorkers({ status: 'stale' }, environment);
+    expect(environment.LUXAR_E2E_EXAMPLES_STALE).toBe('1');
+
+    exposeExampleFixtureFreshnessToWorkers({ status: 'current' }, environment);
+    expect(environment.LUXAR_E2E_EXAMPLES_STALE).toBeUndefined();
+  });
+
+  it('keeps global setup on the warning path without a stale-data throw', () => {
+    const globalSetup = readFileSync(new URL('../../e2e/global-setup.ts', import.meta.url), 'utf8');
+    const freshnessBlock = globalSetup.slice(
+      globalSetup.indexOf('const freshness = checkExampleFixtureFreshness'),
+      globalSetup.indexOf('// Check 2: Verify required datasets')
+    );
+
+    expect(freshnessBlock).toContain('exposeExampleFixtureFreshnessToWorkers(freshness)');
+    expect(freshnessBlock).toContain(
+      'const examplesWarned = reportExampleFixtureFreshness(freshness)'
+    );
+    expect(freshnessBlock).not.toContain('throw');
+    expect(globalSetup).toContain("'example datasets stale'");
+    expect(globalSetup).toContain("dataset warnings: ${datasetWarnings.join('; ')}");
   });
 });
