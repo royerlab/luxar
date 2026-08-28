@@ -741,6 +741,38 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
         root = zarr.open(str(out), mode="r")
         assert "curves" not in root
 
+    def test_partitioned_duplicate_edge_reports_the_multiset_contract(
+        self, tmp_path
+    ) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        n_paths, n_steps = 20, 8
+        verts = (
+            np.random.default_rng(5)
+            .uniform(0, 60, (n_paths * n_steps, 3))
+            .astype(np.float32)
+        )
+        grid = np.arange(n_paths * n_steps, dtype=np.intp).reshape(n_paths, n_steps)
+        indices = np.stack([grid[:, :-1], grid[:, 1:]], axis=-1).reshape(-1, 2)
+        indices = np.vstack([indices, [1, 0]])
+
+        with pytest.raises(ValueError) as exc_info:
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_lines(
+                    "curves",
+                    verts,
+                    0.8,
+                    line_type="indexed",
+                    indices=indices,
+                    partition=dict(max_elements=20),
+                    additive_lod=dict(counts=[5, 12], method="random", seed=0),
+                )
+
+        message = str(exc_info.value)
+        assert message.count("'curves'") == 1
+        assert "undirected edge multiset, including duplicate multiplicity" in message
+        assert "equals its consecutive vertex pairs" in message
+
     def test_real_tractography_index_layout_qualifies(self) -> None:
         # The third arm: the layout the demos actually build, straight from the
         # demo's own index builder rather than a hand-written fixture.

@@ -107,40 +107,30 @@ def _build_line_partition_tree(
 
 
 def _verified_indexed_additive(
-    name: str,
     *,
     additive_lod: Any,
     line_type: str,
     indices: Optional[np.ndarray],
     n_vertices: int,
-    already_verified: bool = False,
-) -> bool:
-    """Whether an EXPLICIT additive ladder is safe on this indexed edge list.
+) -> None:
+    """Fail before partition writes if an indexed additive ladder is unsafe.
 
-    Extracted from :func:`add_lines_impl` rather than inlined at its two call
-    sites: the conditions are the same at both, and holding them here keeps that
-    function under the C901 ratchet (`scripts/complexity_baseline.json`) instead
-    of adding five boolean sub-conditions to an already 24-branch function.
+    Kept outside :func:`add_lines_impl` to avoid adding boolean sub-conditions to
+    an already 24-branch function under the C901 ratchet.
 
     The multi-LOD writer carries no edge list — it rebuilds one by chaining each
-    connected component in ascending vertex order — so a chain is faithful only
-    when every component already IS an ascending simple path.
-
-    Returns ``True`` only when the check actually RAN and passed, so a second
-    call can be skipped via ``already_verified``; ``False`` means "not
-    applicable here" (no explicit ladder, or not ``indexed``), which is not the
-    same as "unsafe".
+    connected component in ascending vertex order — so every component's
+    undirected edge multiset, including duplicate multiplicity, must equal its
+    consecutive vertex pairs.
 
     Raises:
         ValueError: an explicit ladder was requested and the topology would be
             corrupted by it.
     """
-    if already_verified:
-        return True
     if additive_lod is None or additive_lod is False:
-        return False
+        return
     if line_type != "indexed" or indices is None:
-        return False
+        return
 
     from ..lod.lines import indexed_components_are_chains
 
@@ -148,14 +138,12 @@ def _verified_indexed_additive(
         n_vertices, np.asarray(indices, dtype=np.intp).reshape(-1, 2)
     ):
         raise ValueError(
-            f"'{name}': line_type='indexed' cannot take an additive ladder "
-            "unless every connected component is a simple path in ascending "
-            "vertex order — the streaming writer rebuilds edges by chaining each "
-            "component in that order, so a branching, cyclic or out-of-order "
-            "component would gain invented edges and lose real ones. Pass "
-            "additive_lod=False to write this node without a ladder."
+            "line_type='indexed' cannot take an additive ladder unless every "
+            "connected component's undirected edge multiset, including duplicate "
+            "multiplicity, equals its consecutive vertex pairs — the streaming "
+            "writer rebuilds edges by chaining each component in ascending vertex "
+            "order. Pass additive_lod=False to write this node without a ladder."
         )
-    return True
 
 
 def add_lines_impl(
@@ -356,7 +344,6 @@ def add_lines_impl(
         # at the polyline granularity.
         # A dataset with <2 spatial dims can't be split; drop the request
         # with a warning rather than in silence.
-        indexed_additive_verified = False
         if partition is not None:
             from ..partition import warn_if_partition_needs_more_dims
 
@@ -382,8 +369,7 @@ def add_lines_impl(
             # dtype and bounds and then reshapes to pairs, so a malformed edge
             # list is silently reinterpreted there (or dies on a raw reshape).
             validate_line_indices_before_split(indices, n_vertices, line_type)
-            indexed_additive_verified = _verified_indexed_additive(
-                name,
+            _verified_indexed_additive(
                 additive_lod=additive_lod,
                 line_type=line_type,
                 indices=indices,
@@ -510,19 +496,6 @@ def add_lines_impl(
                     ),
                 )
                 if len(polyline_levels) > 1:
-                    # An indexed edge list is NOT carried through the multi-LOD
-                    # writer: it re-derives one by chaining each connected
-                    # component's members in ascending vertex order. Verify only
-                    # once a real ladder will be written; a one-level result
-                    # falls through to the flat writer with the authored indices.
-                    _verified_indexed_additive(
-                        name,
-                        additive_lod=additive_lod,
-                        line_type=line_type,
-                        indices=indices,
-                        n_vertices=n_vertices,
-                        already_verified=indexed_additive_verified,
-                    )
                     return add_lines_multi_lod_wrapper_impl(
                         group,
                         name=name,
@@ -1155,9 +1128,9 @@ def add_lines_substitutive_lod_wrapper_impl(
         # Indexed lines carry an explicit edge list the additive multi-LOD writer
         # discards — it re-derives one by chaining each connected component in
         # ascending vertex order (see lod/lines.py::_indexed_connected_components),
-        # which is faithful exactly when every component already IS an ascending
-        # simple path. So TEST the edge set rather than refusing every indexed
-        # node: only the components that would actually be corrupted are refused.
+        # which is faithful exactly when every component's undirected edge
+        # multiset, including duplicate multiplicity, equals its consecutive
+        # vertex pairs. Test that contract rather than refusing every indexed node.
         else (
             f"line_type={line_type!r} has an explicit edge multiset that does not "
             "equal its consecutive vertex pairs, so the ladder would rewrite edges"

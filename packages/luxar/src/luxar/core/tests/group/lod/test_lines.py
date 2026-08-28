@@ -251,6 +251,10 @@ class TestIndexedComponentsAreChains:
         assert indexed_components_are_chains(0, empty)
         assert indexed_components_are_chains(5, empty)
 
+    def test_accepts_the_flat_edge_array_form(self) -> None:
+        edges = _edges((0, 1), (1, 2), (2, 3)).reshape(-1)
+        assert indexed_components_are_chains(4, edges)
+
     def test_the_polyline_grid_layout_the_demos_build(self) -> None:
         # Consecutive pairs within each row, never across — the layout both
         # dmri_tractography and cosmicflows_laniakea produce.

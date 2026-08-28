@@ -257,6 +257,7 @@ def indexed_components_are_chains(
     additive brightness. An interior numbering gap is safe because it creates
     separate connected components that are chained independently.
     """
+    segments = np.asarray(segments, dtype=np.intp).reshape(-1, 2)
     if n_vertices == 0 or segments.size == 0:
         return True
     components = _indexed_connected_components(n_vertices, segments)
