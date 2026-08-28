@@ -12,7 +12,10 @@ import pytest
 
 from luxar.utils.lod_breakpoints import (
     DEFAULT_BANDWIDTH_MBPS,
+    DEFAULT_CAPPED_FIRST_CHUNK,
+    DEFAULT_MAX_ADDITIVE_COMMIT,
     DEFAULT_STREAM_MAX_LEVELS,
+    capped_stream_cuts,
     parse_stream_chunk,
     sibling_aware_stream_breakpoints,
     stream_cuts,
@@ -55,6 +58,103 @@ class TestStreamCuts:
             cuts = stream_cuts(n, 40_000)
             assert cuts[-1] == n
             assert all(a < b for a, b in zip(cuts, cuts[1:]))
+
+
+class TestCappedStreamCuts:
+    """The whole point of this schedule is the LARGEST INCREMENT, so that is
+    what these assert — not the cut positions, which are incidental."""
+
+    def test_largest_increment_is_capped_at_any_n(self) -> None:
+        # The property `stream_cuts` cannot have: a pure doubling ladder's final
+        # increment is always n/2, whatever the first chunk is.
+        for n in (10_000, 1_153_506, 3_000_000, 6_248_730, 9_751_955, 82_000_000):
+            cuts = capped_stream_cuts(n)
+            increments = [b - a for a, b in zip([0, *cuts], cuts)]
+            assert max(increments) <= DEFAULT_MAX_ADDITIVE_COMMIT, (
+                f"n={n} largest increment {max(increments):,}"
+            )
+
+    def test_doubling_would_have_blown_the_cap(self) -> None:
+        # Guards the motivation with the MEASURED figure, not the n/2 upper
+        # bound: human_multiome's finest leaf commits 2,152,730 in one go under a
+        # pure doubling ladder, twice the 1,000,000 check_demo_ladders fails at.
+        n = 6_248_730
+        plain = stream_cuts(n, DEFAULT_CAPPED_FIRST_CHUNK)
+        plain_max = max(b - a for a, b in zip([0, *plain], plain))
+        assert plain_max == 2_152_730
+        capped = capped_stream_cuts(n)
+        capped_max = max(b - a for a, b in zip([0, *capped], capped))
+        assert capped_max <= DEFAULT_MAX_ADDITIVE_COMMIT
+        assert capped_max * 2 < plain_max
+
+    def test_doubling_tail_grows_with_n_but_capped_tail_does_not(self) -> None:
+        # Why this is size-driven rather than a bad first chunk: shrinking the
+        # chunk does not help the tail, but the cap bounds it at every n.
+        for chunk in (500, 2_000, 40_000):
+            assert (
+                max(
+                    b - a
+                    for a, b in zip(
+                        [0, *stream_cuts(20_000_000, chunk)],
+                        stream_cuts(20_000_000, chunk),
+                    )
+                )
+                > DEFAULT_MAX_ADDITIVE_COMMIT
+            )
+            capped = capped_stream_cuts(20_000_000, chunk=chunk)
+            assert (
+                max(b - a for a, b in zip([0, *capped], capped))
+                <= DEFAULT_MAX_ADDITIVE_COMMIT
+            )
+
+    def test_geometric_head_is_preserved(self) -> None:
+        # Cheap first paint is the other half of the contract: the early cuts
+        # must still double, or time-to-first-pixel regresses.
+        cuts = capped_stream_cuts(9_751_955)
+        assert cuts[0] == DEFAULT_CAPPED_FIRST_CHUNK
+        head = [c for c in cuts if c <= 1_024_000]
+        assert head == [DEFAULT_CAPPED_FIRST_CHUNK * 2**i for i in range(len(head))]
+        assert head[-1] == 1_024_000
+
+    def test_cuts_are_strictly_ascending_and_end_at_n(self) -> None:
+        for n in (1, 1_999, 2_000, 2_001, 500_000, 9_751_955):
+            cuts = capped_stream_cuts(n)
+            assert cuts[-1] == n
+            assert all(a < b for a, b in zip(cuts, cuts[1:]))
+
+    def test_n_at_or_below_chunk_is_a_single_level(self) -> None:
+        assert capped_stream_cuts(2_000) == [2_000]
+        assert capped_stream_cuts(5) == [5]
+        assert capped_stream_cuts(0) == [0]
+
+    def test_a_small_max_commit_degenerates_to_equal_steps(self) -> None:
+        # No geometric head survives when the cap is below the first chunk;
+        # the result must still be a valid ascending ladder, not empty.
+        cuts = capped_stream_cuts(10_000, chunk=100, max_commit=1_000)
+        increments = [b - a for a, b in zip([0, *cuts], cuts)]
+        assert max(increments) <= 1_000
+        assert cuts[-1] == 10_000
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_non_positive_knobs_raise(self, bad: int) -> None:
+        with pytest.raises(ValueError, match="chunk must be >= 1"):
+            capped_stream_cuts(1000, chunk=bad)
+        with pytest.raises(ValueError, match="max_commit must be >= 1"):
+            capped_stream_cuts(1000, max_commit=bad)
+
+    def test_matches_the_desi_schedule_it_was_extracted_from(self) -> None:
+        # The demo's wrapper must stay behaviour-identical, since its published
+        # archive was built with it.
+        from luxar.demos.demo_desi_galaxies import (
+            SCENE_FIRST_CHUNK,
+            SCENE_MAX_COMMIT,
+            streaming_breakpoints,
+        )
+
+        for n in (2_000, 152_262, 1_218_970, 9_751_955):
+            assert streaming_breakpoints(n) == capped_stream_cuts(
+                n, SCENE_FIRST_CHUNK, SCENE_MAX_COMMIT
+            )
 
 
 class TestParseStreamChunk:

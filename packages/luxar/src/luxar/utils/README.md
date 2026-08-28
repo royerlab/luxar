@@ -92,6 +92,7 @@ the network and payload, not the geometry type, so this is the one place both
 - `parse_stream_chunk(spec)`: Extract `c` from a `"stream:<c>"` spec (validated `>= 1`)
 - `validate_element_breakpoints(spec)`: Size-independent resolve-time validation of a Points/Lines `counts`/`breakpoints` value (string vocabulary, stream chunk, energy fractions, list non-emptiness) — fails before any group is written
 - `stream_cuts(n, chunk, max_levels=...)`: Cumulative geometric cuts `[c, 2c, 4c, …, n]` over `n` elements
+- `capped_stream_cuts(n, chunk, max_commit=...)`: Geometric head, then equal steps of a fixed ceiling — the schedule a multi-million-element leaf needs, because `stream_cuts`' final increment grows with `n` (2,152,730 on a 6.25M leaf at `chunk=2000`) however small the chunk is. Largest commit is `max_commit` at any `n`; pass the result as `counts=`, which `_validate_counts` clamps per level/part
 - `sibling_aware_stream_breakpoints(...)`: Raise a `stream:C` ladder's first chunk for a leaf that has a coarser sibling in its lod group
 
 ### `lod_methods.py`

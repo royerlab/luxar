@@ -102,6 +102,7 @@ from luxar.demos import (
     substitutive_lod_or_flat,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
+from luxar.utils.lod_breakpoints import capped_stream_cuts
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -237,20 +238,12 @@ def streaming_breakpoints(
     Reaching the coarser sibling's size — the point where swapping in this level
     is worth it — costs only the geometric head plus a step, ~20% of the
     finest level's payload, so the upgrade does not "wait until fully loaded".
+
+    The schedule itself now lives in :func:`luxar.utils.lod_breakpoints.
+    capped_stream_cuts`, shared with every other demo that ladders a
+    multi-million-element leaf; this wrapper only pins this scene's two numbers.
     """
-    if n <= first_chunk:
-        return [n]
-    cuts: list[int] = []
-    cum = first_chunk
-    while cum < n and cum <= 2 * max_commit:
-        cuts.append(cum)
-        cum *= 2
-    cum = cuts[-1] if cuts else 0
-    while cum + max_commit < n:
-        cum += max_commit
-        cuts.append(cum)
-    cuts.append(n)
-    return cuts
+    return capped_stream_cuts(n, first_chunk, max_commit)
 
 
 # The shipped scene must carry a real ladder on its finest level. Anyone whose

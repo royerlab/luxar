@@ -19,6 +19,13 @@ budget via :func:`streaming_chunk_splats`. Cumulative cuts then double —
 ``[c, 2c, 4c, …, N]`` — so first paint costs one chunk and each refinement
 doubles the resident set. Because the spec is resolved against *this* ``n``, the
 same string adapts to every level, part and leaf of a tree.
+
+Doubling has one failure mode, and it is size-driven rather than spec-driven: the
+FINAL increment of a pure doubling ladder is ``N`` minus the largest doubling
+below it, so it grows with ``N`` and approaches ``N/2`` in the worst case however
+small ``c`` is. Past a few million elements that last commit blocks the main
+thread, so a large leaf wants :func:`capped_stream_cuts` — the same geometric
+head, then equal steps of a fixed ceiling — instead of :func:`stream_cuts`.
 """
 
 from __future__ import annotations
@@ -34,6 +41,18 @@ BreakpointSpec = Union[str, Sequence[int], Sequence[float]]
 #: Assumed downlink for streaming-breakpoint sizing when the caller gives none —
 #: a conservative "typical broadband" figure that also covers good 4G.
 DEFAULT_BANDWIDTH_MBPS = 25.0
+
+#: First rung for :func:`capped_stream_cuts` when the caller gives none. Small
+#: enough to land in a single zarr chunk, so time-to-first-pixel on an eager
+#: coarsest level is one range request.
+DEFAULT_CAPPED_FIRST_CHUNK = 2_000
+
+#: Ceiling on ONE additive increment, for :func:`capped_stream_cuts`. This is
+#: the number that makes a multi-million-element leaf streamable: no single
+#: commit may block the main thread, whatever the level is worth in total. Set
+#: below the 1,000,000 that ``scripts/check_demo_ladders.py`` fails a level at
+#: (``DEFAULT_MAX_LEVEL_ELEMENTS``), with margin.
+DEFAULT_MAX_ADDITIVE_COMMIT = 900_000
 
 #: Hard cap on the number of levels a ``stream:<c>`` ladder may produce. The
 #: geometric doubling schedule gives ~log2(N/c) levels, so 16 covers c·2^15
@@ -130,6 +149,68 @@ def stream_cuts(
         cum *= 2
     if cuts and (n - cuts[-1]) < chunk / 2:
         cuts.pop()
+    cuts.append(n)
+    return cuts
+
+
+def capped_stream_cuts(
+    n: int,
+    chunk: int = DEFAULT_CAPPED_FIRST_CHUNK,
+    max_commit: int = DEFAULT_MAX_ADDITIVE_COMMIT,
+) -> List[int]:
+    """Cumulative cuts that double early, then step by a fixed cap.
+
+    :func:`stream_cuts` doubles all the way to ``n``, so its final increment is
+    ``n`` minus the largest doubling below it — a quantity that grows with ``n``
+    and approaches ``n/2`` at worst, **whatever the first chunk is**. Measured at
+    ``chunk=2_000``: a 6,248,730-element leaf commits 2,152,730 in one go, twice
+    the 1,000,000 at which ``scripts/check_demo_ladders.py`` fails a level. That
+    is the shape behind #1812, where a demo was diagnosed as needing a row cap
+    and lost 87% of its catalogue: capping ``n`` shrank the last commit without
+    changing its geometry.
+
+    This keeps the geometric ramp, which is what makes first paint cheap, but
+    stops before the next doubling would exceed ``max_commit`` and finishes in
+    equal steps of that size. The largest commit is therefore ``max_commit`` at
+    **any** ``n``; with the defaults the geometric head totals 1,024,000.
+
+    One list serves every level, part and leaf of a tree, because
+    ``_validate_counts`` clamps a cumulative list to the node's own ``n`` and
+    stops there — so a small coarse level simply takes the geometric head while
+    the finest takes the whole schedule. That is also why this returns a list
+    rather than adding a ``"capped-stream:<c>:<max>"`` spec string: the clamping
+    already gives per-node adaptation, which is the only thing a string form
+    would buy.
+
+    Args:
+        n: Element count of the node the ladder is for, in its own payload
+            currency (points, vertices, splats).
+        chunk: First rung, i.e. the time-to-first-pixel payload.
+        max_commit: Ceiling on any single increment.
+
+    Returns:
+        Strictly increasing cumulative cuts ending at ``n``.
+
+    Raises:
+        ValueError: ``chunk`` or ``max_commit`` is not positive.
+    """
+    if chunk < 1:
+        raise ValueError(f"chunk must be >= 1; got {chunk}")
+    if max_commit < 1:
+        raise ValueError(f"max_commit must be >= 1; got {max_commit}")
+    if n <= chunk:
+        return [n]
+    cuts: List[int] = []
+    cum = chunk
+    # Geometric head: double while the NEXT increment still fits the cap. The
+    # bound is 2*max_commit because the increment arriving at `cum` is cum/2.
+    while cum < n and cum <= 2 * max_commit:
+        cuts.append(cum)
+        cum *= 2
+    cum = cuts[-1] if cuts else 0
+    while cum + max_commit < n:
+        cum += max_commit
+        cuts.append(cum)
     cuts.append(n)
     return cuts
 
