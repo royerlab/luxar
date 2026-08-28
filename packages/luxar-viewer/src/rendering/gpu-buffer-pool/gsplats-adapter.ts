@@ -19,7 +19,11 @@ import {
   stampGSplatPresenceFlags,
   writeSplatTexels,
 } from '../gsplat-geometry';
-import { cancelSortedIndexOrderingApply, writeSortedIndexIdentity } from '../element-storage';
+import {
+  cancelSortedIndexOrderingApply,
+  repairSortedIndexForCount,
+  writeSortedIndexIdentity,
+} from '../element-storage';
 import { clampSplatCapacity } from '../element-texture-layout';
 import type { GSplatsProjectionBounds } from '../../types/gsplats';
 import type { PooledBuffer } from './pool-stats';
@@ -288,7 +292,7 @@ export class GSplatsBufferAdapter {
     data: PackedGSplatsData,
     count: number,
     truncationRadius: number = GSPLAT_DEFAULT_TRUNCATION_RADIUS,
-    options?: { preserveOrdering?: boolean; fromInstance?: number }
+    options?: { preserveOrdering?: boolean; repairFromCount?: number; fromInstance?: number }
   ): void {
     const texture = getSplatTexture(geometry);
     if (!texture) {
@@ -330,11 +334,25 @@ export class GSplatsBufferAdapter {
     // commit-gsplats-geometry.ts) keeps a same-count prior while its re-sort
     // lands. Skipping that write also correctly registers no new update range.
     if (fromSplat > 0 || !options?.preserveOrdering) {
-      writeSortedIndexIdentity(geometry, count);
-      // Full identity re-homes the geometry on slot 0. The commit path must
-      // therefore call noteDepthSortCommit after this update; its immediate
-      // syncSortedIndexSlot pushes the new slot to visual and pick materials
-      // before either can draw (the per-frame pump re-asserts it thereafter).
+      // On a count CHANGE (not an append — see above for why an append wants
+      // one coherent fallback) `repairFromCount` rebuilds the existing
+      // permutation over the new population rather than discarding it. An nD
+      // re-slice changes the resident count at almost every step, so this is
+      // the case a timelapse actually takes.
+      const repairFrom = fromSplat > 0 ? undefined : options?.repairFromCount;
+      if (repairFrom !== undefined && repairFrom > 0) {
+        // A repair deliberately leaves the slot where it is: its callers only
+        // fire when the tenant, geometry and buffers are all unchanged, so the
+        // slot/uniform pairing is already established. noteDepthSortCommit's
+        // syncSortedIndexSlot re-asserts whichever slot this is either way.
+        repairSortedIndexForCount(geometry, repairFrom, count);
+      } else {
+        writeSortedIndexIdentity(geometry, count);
+        // Full identity re-homes the geometry on slot 0. The commit path must
+        // therefore call noteDepthSortCommit after this update; its immediate
+        // syncSortedIndexSlot pushes the new slot to visual and pick materials
+        // before either can draw (the per-frame pump re-asserts it thereafter).
+      }
     }
 
     geometry.instanceCount = count;

@@ -89,6 +89,8 @@ export interface LODGroupRegistryOwner {
   readonly currentViewVersion: number;
   /** The owning loader's GPU buffer pool (null pre-setup / pooling off). */
   readonly gpuBufferPool: GPUBufferPool | null;
+  /** Current archive fault latched by the owning loader, if any. */
+  readonly archiveFault: ArchiveFaultError | null;
 }
 
 /**
@@ -264,11 +266,12 @@ export class SceneLoader {
   // Serialized update queue: prevents concurrent updateView calls from corrupting shared buffers
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
-  // Terminal for this loader: loadScene is one-shot, and dataset switches create
-  // a fresh SceneLoader through SceneLoaderManager.createLoaderAsync. Only
-  // bootstrapStandalone registers the notifier backend, so an embedded host sees no
-  // built-in message; hosts observe the fault through onArchiveFault (re-emitted by
-  // LuxarApp as dataset-fault) instead (#2280).
+  // Latched until an explicit retry: loadScene is one-shot, and dataset switches
+  // create a fresh SceneLoader through SceneLoaderManager.createLoaderAsync. A
+  // retry clears this dataset-wide gate so updates can resume; a recurring fault
+  // latches and notifies again. Only bootstrapStandalone registers the notifier
+  // backend, so embedded hosts observe onArchiveFault (re-emitted by LuxarApp as
+  // dataset-fault) instead (#2280).
   private _archiveFault: ArchiveFaultError | null = null;
   private archiveFaultListeners = new Set<(error: ArchiveFaultError) => void>();
   /**
@@ -470,13 +473,14 @@ export class SceneLoader {
     return this._sceneGraph;
   }
 
-  /** Terminal archive fault for this loader, or null while updates remain usable. */
+  /** Latched archive fault for this loader, or null while updates remain usable. */
   get archiveFault(): ArchiveFaultError | null {
     return this._archiveFault;
   }
 
   /**
-   * Subscribe to the loader's one-shot terminal archive fault.
+   * Subscribe to archive-fault episodes for this loader. An explicit retry
+   * clears the latch; if the archive fails again, listeners are notified again.
    * Listener exceptions are logged and do not propagate to the caller.
    *
    * @param options.replayCurrent Replay the current fault immediately when one is latched.
@@ -1785,21 +1789,49 @@ export class SceneLoader {
    * consumer — the data-monitor's failure banner (wired in `monitor-wiring.ts`)
    * and the layers panel's per-row error badge (wired in
    * `core/app/dataset/load-dataset.ts`). Each call returns a NEW provider object
-   * (the monitor and the panel hold distinct instances), but all of them close
-   * over the SAME live `failedLoaders` map and the one `retryAllFailedLoaders`
-   * entry point, so they always agree. `getFailedReason` powers the
-   * layers-panel tooltip.
+   * (the monitor and the panel hold distinct instances), but all of them read
+   * the SAME live loader failures, archive-fault latch, and latched lazy
+   * branches through the one `retryAllFailedLoaders` entry point, so they
+   * always agree.
+   * `getFailedReason` powers the layers-panel tooltip.
    */
   getFailedLoadsProvider(): FailedLoadsProviderPort {
     return {
-      getFailedPaths: () => Array.from(this.failedLoaders.keys()),
+      getFailedPaths: () => this.getMonitorFailedPaths(),
       retryAll: () => this.retryAllFailedLoaders(),
       getFailedReason: (path) => {
         const info = this.failedLoaders.get(path);
-        if (!info) return undefined;
-        return info.error?.message || info.kind || undefined;
+        if (info) return info.error?.message || info.kind || undefined;
+        if (this._archiveFault?.url === path) return this._archiveFault.message;
+        return this.lodGroupRegistry?.getFailedLazyChildReason(path);
       },
     };
+  }
+
+  private getMonitorFailedPaths(): string[] {
+    const failedPaths = new Set([
+      ...this.failedLoaders.keys(),
+      ...(this.lodGroupRegistry?.getFailedLazyChildPaths() ?? []),
+    ]);
+    if (failedPaths.size === 0 && this._archiveFault) failedPaths.add(this._archiveFault.url);
+    return Array.from(failedPaths);
+  }
+
+  private clearArchiveFaultForRetry(): void {
+    if (!this._archiveFault) return;
+    this._archiveFault = null;
+    notifier.clearError();
+  }
+
+  private resumeViewAfterRetry(hadArchiveFault: boolean): void {
+    if (this.viewStateQueue.drain((state) => this.updateView(state))) return;
+    if (!hadArchiveFault || this._archiveFault) return;
+    void this.updateView(this.viewState).catch((error) => {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Current view reload after archive retry failed: ${(error as Error).message}`
+      );
+    });
   }
 
   /**
@@ -1810,19 +1842,19 @@ export class SceneLoader {
   }
 
   /**
-   * Whether any failure is worth an AUTOMATIC retry — a transient cause still
-   * under the attempt cap (see `LoaderRegistry.autoRetryablePaths`). The
-   * connectivity-triggered retry gates on this so it neither re-fetches a
-   * deterministically-broken path forever nor announces "Connection restored,
-   * retrying" for a scene it cannot help.
+   * Whether any failure is worth an AUTOMATIC retry: a latched archive fault,
+   * a transient loader cause still under the attempt cap (see
+   * `LoaderRegistry.autoRetryablePaths`), or a lazy branch latched by an archive
+   * fault. The connectivity-triggered retry gates on this so deterministic
+   * ordinary loader failures remain quiet while reconnecting can re-open the
+   * loader and deferred LOD work.
    */
   hasAutoRetryableFailures(): boolean {
-    return this.registry.hasAutoRetryableFailures();
-  }
-
-  /** Re-open bounded retries for anonymous deferred groups after reconnecting. */
-  resetDeferredRetryBudgets(): void {
-    this.lodGroupRegistry?.resetAutomaticRetryBudgets();
+    return (
+      this._archiveFault !== null ||
+      this.registry.hasAutoRetryableFailures() ||
+      (this.lodGroupRegistry?.getFailedLazyChildPaths().length ?? 0) > 0
+    );
   }
 
   /**
@@ -1859,8 +1891,10 @@ export class SceneLoader {
    * ```
    */
   async retryFailedLoader(path: string): Promise<boolean> {
-    // Check if this path is actually in failed loaders
-    if (!this.failedLoaders.has(path)) {
+    const lazyFailure = this.lodGroupRegistry?.getFailedLazyChildPaths().includes(path) === true;
+    const archiveFaultFailure = this._archiveFault?.url === path;
+    const hadArchiveFault = this._archiveFault !== null;
+    if (!this.failedLoaders.has(path) && !lazyFailure && !archiveFaultFailure) {
       log.warning(Modules.SCENE_LOADER, `Path "${path}" is not in failed loaders list`);
       return false;
     }
@@ -1882,10 +1916,18 @@ export class SceneLoader {
 
     this._updateInProgress = true;
     try {
+      if (lazyFailure) {
+        this.clearArchiveFaultForRetry();
+        return this.lodGroupRegistry?.retryLazyChildByNodePath(path) ?? false;
+      }
+      if (archiveFaultFailure) {
+        this.clearArchiveFaultForRetry();
+        return true;
+      }
       return await retryFailedLoaderUnlocked(path, this.makeRetryCtx());
     } finally {
       this._updateInProgress = false;
-      this.viewStateQueue.drain((state) => this.updateView(state));
+      this.resumeViewAfterRetry(hadArchiveFault);
     }
   }
 
@@ -1895,6 +1937,7 @@ export class SceneLoader {
       registry: this.registry,
       lineWorkingSetGate: this.lineWorkingSetGate,
       lodGroupRegistry: this.lodGroupRegistry,
+      clearArchiveFault: () => this.clearArchiveFaultForRetry(),
       rootGroup: this.rootGroup,
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       processPointsData: (path, data) => this.processPointsData(path, data),
@@ -1929,9 +1972,10 @@ export class SceneLoader {
   async retryAllFailedLoaders(
     opts: {
       /**
-       * Retry only paths that pass the automatic-retry filter (transient cause,
-       * under the attempt cap). Set by the connectivity-triggered retry. A
-       * manual Retry omits it and forces every failed path.
+       * Retry only entries that pass the automatic-retry filter (a latched
+       * archive fault, or a transient cause under the attempt cap). Set by the
+       * connectivity-triggered retry. A manual Retry omits it and forces every
+       * failed path.
        */
       onlyAutoRetryable?: boolean;
     } = {}
@@ -1940,11 +1984,16 @@ export class SceneLoader {
     failed: string[];
     deferred?: boolean;
   }> {
-    this.resetDeferredRetryBudgets();
-
-    const failedPaths = opts.onlyAutoRetryable
+    const loaderPaths = opts.onlyAutoRetryable
       ? this.registry.autoRetryablePaths()
       : Array.from(this.failedLoaders.keys());
+    const lazyPaths = this.lodGroupRegistry?.getFailedLazyChildPaths() ?? [];
+    const recordedPaths = new Set([...loaderPaths, ...lazyPaths]);
+    const hasArchiveFault = this._archiveFault !== null;
+    const archiveFaultPath = recordedPaths.size === 0 ? this._archiveFault?.url : undefined;
+    const failedPaths = Array.from(
+      new Set([...recordedPaths, ...(archiveFaultPath !== undefined ? [archiveFaultPath] : [])])
+    );
 
     if (failedPaths.length === 0) {
       log.info(Modules.SCENE_LOADER, 'No failed loaders to retry');
@@ -1976,12 +2025,30 @@ export class SceneLoader {
         // attempt. Ordinary update sweeps and manual retries also record
         // failures, but must not consume this budget — otherwise a scene that
         // failed a few slices offline would be past the cap before `online` fires.
-        for (const path of failedPaths) this.registry.markAutoRetryAttempt(path);
+        for (const path of loaderPaths) this.registry.markAutoRetryAttempt(path);
       }
-      const { succeeded, failed } = await retryAllFailedLoadersUnlocked(
-        failedPaths,
-        this.makeRetryCtx()
-      );
+      const succeeded: string[] = [];
+      const failed: string[] = [];
+      if (hasArchiveFault) {
+        this.clearArchiveFaultForRetry();
+        if (archiveFaultPath !== undefined) succeeded.push(archiveFaultPath);
+      }
+      if (lazyPaths.length > 0) {
+        for (const path of lazyPaths) {
+          if (this.lodGroupRegistry?.retryLazyChildByNodePath(path)) succeeded.push(path);
+          else failed.push(path);
+        }
+      }
+      const lazyPathSet = new Set(lazyPaths);
+      const distinctLoaderPaths = loaderPaths.filter((path) => !lazyPathSet.has(path));
+      if (distinctLoaderPaths.length > 0) {
+        const loaderResult = await retryAllFailedLoadersUnlocked(
+          distinctLoaderPaths,
+          this.makeRetryCtx()
+        );
+        succeeded.push(...loaderResult.succeeded);
+        failed.push(...loaderResult.failed);
+      }
       log.info(
         Modules.SCENE_LOADER,
         `Retry complete: ${succeeded.length} succeeded, ${failed.length} still failing`
@@ -1989,7 +2056,7 @@ export class SceneLoader {
       return { succeeded, failed };
     } finally {
       this._updateInProgress = false;
-      this.viewStateQueue.drain((state) => this.updateView(state));
+      this.resumeViewAfterRetry(hasArchiveFault);
     }
   }
 

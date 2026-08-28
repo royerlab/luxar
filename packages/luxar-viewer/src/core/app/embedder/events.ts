@@ -47,11 +47,11 @@ export interface ScreenshotOptions {
   includeOverlays?: boolean;
 }
 
-/** A terminal fault that leaves the current dataset loaded but unable to update. */
+/** A latched fault that leaves the current dataset loaded but unable to update. */
 export interface DatasetFaultPayload {
   /** Dataset source passed to `init()` or `switchDataset()`. */
   src: string;
-  /** Terminal error reported by the active scene loader. */
+  /** Current error reported by the active scene loader. */
   error: Error;
 }
 
@@ -146,9 +146,10 @@ export interface ElementPointerPayload extends SelectionPayload {
  *
  * - `dataset-loaded` / `dataset-error` — fire around every dataset load
  *   (initial `init()`, the built-in browser, and `switchDataset()`).
- * - `dataset-fault` — fires when an already-loaded dataset becomes terminally
- *   unable to update, for example after an archive URL expires. The last complete
- *   frame remains visible; call `getDatasetFault()` to inspect the current state.
+ * - `dataset-fault` — fires when an already-loaded dataset becomes unable to
+ *   update, for example after an archive URL expires. The last complete frame
+ *   remains visible; an explicit retry clears the fault, and a recurring fault
+ *   fires the event again. Call `getDatasetFault()` to inspect the current state.
  * - `dimensions-changed` — fires whenever a slice position changes (slider,
  *   keyboard, or `setDimensionValue()`), carrying a fresh `EmbedderDimensions`.
  * - `selection` — fires on hover-pick changes (the element under the cursor,

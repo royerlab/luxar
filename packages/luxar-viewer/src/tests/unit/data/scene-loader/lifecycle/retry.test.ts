@@ -435,17 +435,20 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
   // Lazy substitutive levels never join the sweep maps but DO record
   // failures; previously the no-loader branch silently discarded them.
   it('kicks the lazy child via the LOD registry, keeps the record, returns true', async () => {
-    const retryLazyChildByLeafPath = vi.fn().mockReturnValue(true);
+    const retryLazyChildByNodePath = vi.fn().mockReturnValue(true);
+    const clearArchiveFault = vi.fn();
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
-      lodGroupRegistry: { retryLazyChildByLeafPath } as never,
+      lodGroupRegistry: { retryLazyChildByNodePath } as never,
+      clearArchiveFault,
     });
     ctx.registry.recordFailure(PATH, new Error('lazy load failed'));
 
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(true);
-    expect(retryLazyChildByLeafPath).toHaveBeenCalledWith(PATH);
+    expect(retryLazyChildByNodePath).toHaveBeenCalledWith(PATH);
+    expect(clearArchiveFault).toHaveBeenCalledOnce();
     // The record is KEPT across the kick — the fire-and-forget thunk owns the
     // outcome (success clears it; a repeat failure re-records). Deleting it
     // here reset autoRetryCount, so MAX_AUTO_RETRY_ATTEMPTS never bound a
@@ -454,10 +457,10 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
   });
 
   it('preserves autoRetryCount across a lazy kick so the auto-retry budget binds', async () => {
-    const retryLazyChildByLeafPath = vi.fn().mockReturnValue(true);
+    const retryLazyChildByNodePath = vi.fn().mockReturnValue(true);
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
-      lodGroupRegistry: { retryLazyChildByLeafPath } as never,
+      lodGroupRegistry: { retryLazyChildByNodePath } as never,
     });
     // A network failure that has already burned two automatic attempts.
     ctx.registry.recordFailure(PATH, new Error('lazy 404'), 'Network');
@@ -477,16 +480,19 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
   });
 
   it('falls through to the stale-entry cleanup when the registry has no lazy child', async () => {
-    const retryLazyChildByLeafPath = vi.fn().mockReturnValue(false);
+    const retryLazyChildByNodePath = vi.fn().mockReturnValue(false);
+    const clearArchiveFault = vi.fn();
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
-      lodGroupRegistry: { retryLazyChildByLeafPath } as never,
+      lodGroupRegistry: { retryLazyChildByNodePath } as never,
+      clearArchiveFault,
     });
     ctx.registry.recordFailure(PATH, new Error('orphaned failure'));
 
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(false);
+    expect(clearArchiveFault).not.toHaveBeenCalled();
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false); // stale entry cleaned
   });
 

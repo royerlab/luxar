@@ -123,6 +123,7 @@ Features
    guides/specs/VOLUMETRIC_BLENDING_SPEC
    guides/specs/SUBPIXEL_JITTER_TAA_SPEC
    specs/GSPLATS_DIMENSION_MAPPING
+   specs/LUXAR_LAYER_SPEC
 
 .. toctree::
    :maxdepth: 2

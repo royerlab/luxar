@@ -1385,7 +1385,7 @@ describe('LuxarApp', () => {
       expect(onError.mock.calls[0][0].error).toBeInstanceOf(Error);
     });
 
-    it('emits dataset-fault and exposes the current terminal archive fault', async () => {
+    it('emits dataset-fault and exposes the current latched archive fault', async () => {
       const fault = new Error('archive unavailable');
       const loader = SceneLoaderManager.getInstance().createLoader();
       const onFault = vi.fn();

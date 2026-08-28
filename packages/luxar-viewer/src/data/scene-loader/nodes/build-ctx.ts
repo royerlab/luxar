@@ -102,7 +102,7 @@ export interface NodeBuildCtx {
    * ``SceneLoader.kickRefinementIfIdle``.
    */
   kickRefinementIfIdle(): void;
-  /** Latch and surface a terminal archive fault once for this scene loader. */
+  /** Latch and surface an archive fault episode for this scene loader. */
   reportArchiveFault(fault: ArchiveFaultError): void;
   /**
    * True while the dataset that created this ctx is still the live one.

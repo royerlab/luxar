@@ -60,7 +60,12 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.demos import (
+    add_demo_caption,
+    cached_download,
+    launch_viewer,
+    substitutive_lod_or_flat,
+)
 from luxar.demos._cinematic_camera import pull_in
 from luxar.utils.paths import get_demos_output_dir
 
@@ -152,6 +157,19 @@ PRESETS: Final[dict[str, StreamlinePreset]] = {
         point_radius=1.45,
     ),
 }
+
+# The full scene has roughly one million indexed segments per basin. At the
+# authored opening pose, two substitutive levels settle at about 892k splats on
+# a 16:9 viewport while preserving the original indexed Lines nodes for close
+# inspection. The whole-object finest anchor stays fixed at 0.5: at 4:3 and 1:1,
+# wide outer basins still select roughly 2.1M and 3.2M fine segments. Adding
+# levels cannot move that anchor; explicit coverage_fractions would switch the
+# group back to the legacy diagonal-coverage selector.
+BASIN_SUBSTITUTIVE_LOD: Final = dict(
+    compression_factor=16,
+    levels=2,
+    seed=0,
+)
 
 
 @dataclass(frozen=True)
@@ -701,6 +719,9 @@ def write_laniakea_scene(
                 copy="{hover_key}",
             )
 
+            basin_lod = substitutive_lod_or_flat(
+                BASIN_SUBSTITUTIVE_LOD, geometry="Lines"
+            )
             for basin in basin_lines:
                 color = hex_to_rgb(BASIN_COLORS[basin.basin_id], intensity=1.55)
                 scene.add_lines(
@@ -714,6 +735,13 @@ def write_laniakea_scene(
                     opacity=0.36,
                     intensity=0.75,
                     blending_mode="additive",
+                    # Under a substitutive ladder the framework refuses an additive
+                    # ladder for indexed Lines nodes; a plain leaf is not guarded and
+                    # silently rebuilds chains. False makes that refusal explicit and
+                    # silences its notice; the substitutive ladder still preserves the
+                    # original indexed Lines leaf as its finest child.
+                    additive_lod=False,
+                    substitutive_lod=basin_lod,
                     layer=True,
                 )
 

@@ -73,6 +73,35 @@ describe('validateDepthSort', () => {
     );
   });
 
+  it('errors on a negative or non-integer synchronous-sort ceiling', () => {
+    for (const bad of [-1, 2.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const cfg = cloneConfig();
+      cfg.depthSort.syncSortMaxElements = bad;
+      const result = invokeValidator(validateDepthSort, cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('depthSort.syncSortMaxElements')
+      );
+    }
+  });
+
+  it('warns that a zero synchronous-sort ceiling reinstates the unsorted frame', () => {
+    const cfg = cloneConfig();
+    cfg.depthSort.syncSortMaxElements = 0;
+    const result = invokeValidator(validateDepthSort, cfg);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toContainEqual(expect.stringContaining('syncSortMaxElements'));
+  });
+
+  it("warns on a synchronous-sort ceiling past a frame's budget", () => {
+    // The counting sort was measured at 16.2 ms for 1M elements.
+    const cfg = cloneConfig();
+    cfg.depthSort.syncSortMaxElements = 4_000_000;
+    const result = invokeValidator(validateDepthSort, cfg);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toContainEqual(expect.stringContaining('syncSortMaxElements'));
+  });
+
   it('warns (but stays valid) on design-defeating coarse thresholds', () => {
     const cfg = cloneConfig();
     cfg.depthSort.angleThresholdDeg = 90;

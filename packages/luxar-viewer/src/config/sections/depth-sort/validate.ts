@@ -52,4 +52,24 @@ export function validateDepthSort(config: AppConfig, errors: string[], warnings:
         'instantiate; the first sort will be deferred to the post-load retry on most machines'
     );
   }
+
+  // 0 disables the synchronous first sort, so only a negative / non-integer
+  // value is an error.
+  if (!Number.isInteger(ds.syncSortMaxElements) || ds.syncSortMaxElements < 0) {
+    errors.push(
+      `depthSort.syncSortMaxElements must be a non-negative integer (got ${ds.syncSortMaxElements})`
+    );
+  } else if (ds.syncSortMaxElements === 0) {
+    warnings.push(
+      'depthSort.syncSortMaxElements is 0, which disables the synchronous first sort; every ' +
+        'commit of an order-dependent node will render at least one frame before the worker ' +
+        "answers, which during nD playback is one such frame per timepoint (issue #2290's flash)"
+    );
+  } else if (ds.syncSortMaxElements > 1_000_000) {
+    warnings.push(
+      `depthSort.syncSortMaxElements (${ds.syncSortMaxElements}) exceeds a frame's budget; the ` +
+        'counting sort was measured at 16.2 ms for 1M elements and 31.7 ms for 1.65M, so a ' +
+        'commit at that size will drop frames rather than save one'
+    );
+  }
 }
