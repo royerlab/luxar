@@ -2098,6 +2098,43 @@ describe('LODGroupRegistry — retryLazyChildByLeafPath', () => {
   });
 });
 
+describe('LODGroupRegistry — resetAutomaticRetryBudgets', () => {
+  it('immediately reopens an exhausted anonymous child for one more load attempt', () => {
+    const ensureLoaded = vi.fn();
+    const requestRender = vi.fn();
+    const child = makeLazyChild(0.5, ensureLoaded);
+    child.failed = true;
+    child.failedTick = 42;
+    child.automaticRetriesRemaining = 0;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, undefined, requestRender);
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    for (let frame = 0; frame < 300; frame++) reg.evaluatePerFrame();
+    expect(ensureLoaded).not.toHaveBeenCalled();
+
+    reg.resetAutomaticRetryBudgets();
+    expect(requestRender).toHaveBeenCalledTimes(1);
+    reg.evaluatePerFrame();
+
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+    expect(child.failed).toBe(false);
+    expect(child.failedTick).toBeUndefined();
+    expect(child.automaticRetriesRemaining).toBeUndefined();
+    expect(child.loading).toBe(true);
+  });
+
+  it('does not wake the render loop when no retry budget was reset', () => {
+    const requestRender = vi.fn();
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, undefined, requestRender);
+    reg.register(makeEntry([makeChild(0), makeLazyChild(0.5, vi.fn())], 0, '/g'));
+
+    reg.resetAutomaticRetryBudgets();
+
+    expect(requestRender).not.toHaveBeenCalled();
+  });
+});
+
 describe('LODGroupRegistry — fresh-but-empty display guard', () => {
   it('redirects display to the coarsest fresh NON-empty level when the chosen level is empty', () => {
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
