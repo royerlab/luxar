@@ -516,8 +516,9 @@ def create_luxar_scene(
       an exact match for the pin — is a **flat laddered leaf**: no ``kind`` attr
       anywhere, no ``part_`` groups, 4 additive rungs;
     * the file on the Zenodo draft — 45,697,890 bytes — is a **kind=partition**
-      with at least 4 ``part_`` groups (read from the zip central directory via
-      a ranged GET, so the count is a floor).
+      with exactly 4 ``part_`` groups, re-tiled deliberately against the splat
+      cap (largest part 2,707,768 = 0.65x of 4,194,304, parts within ~500 splats
+      of each other). That is the intended end state, not drift.
 
     ``data_fetch`` resolves the in-repo payload FIRST, so every machine today
     builds the FLAT scene; the tiled one only appears once the record publishes
@@ -526,12 +527,14 @@ def create_luxar_scene(
     hash the cached file and see which pin it matches — byte size is only
     suggestive.
 
-    That divergence is also **not yet pinnable**: ``hosted_bytes`` is 84,492,218
-    here (and in PR #1734, the manifest that ships), which matches neither copy.
-    The draft was re-uploaded after the 2026-08-23 pin audit and no branch pins
-    the new generation, so ``hosted_sha256`` would fail on publish. It is
-    invisible until the in-repo archives are ``git rm``-ed, which is exactly why
-    that teardown has to be atomic.
+    The pins caught up on 2026-08-28: every committed manifest, PR #1734 (the one
+    that ships) included, still carried ``hosted_bytes`` 84,492,218 for ch0 — a
+    generation no longer on the draft — so ``hosted_sha256`` would have failed on
+    publish, and invisibly, since ``data_fetch`` never consults it while the
+    in-repo payload resolves first. **PR #2333 repins all three channels (and
+    four more restructured archives) to the draft's values.** Land it before
+    publish; the failure would otherwise surface only at the ``git rm``, which is
+    why that teardown has to be atomic.
 
     ``add_gsplats_from_file`` must therefore keep routing a matrix-shaped file
     down the ordinary data path and a partition through the graft, because it
