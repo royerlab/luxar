@@ -30,6 +30,10 @@ function makeQueue(pendingSequence: (Partial<ViewState> | null)[]): {
   };
 }
 
+function getFakeLoaderProgress(_path: string, loader: FakeLoader) {
+  return loader.hasMoreLODs ? { loaded: loader.loadedLevels, total: 3 } : null;
+}
+
 beforeEach(() => {
   // No-op rAF stub for deterministic test timing.
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
@@ -51,8 +55,10 @@ describe('runProgressiveRefinement', () => {
     await runProgressiveRefinement<FakeLoader>({
       loaders,
       viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
       processLoader: async () => {
         processed++;
+        return true;
       },
       anyHasMoreLODs: () => false, // immediate exit
       updateVisibleCountsInMonitor: updateCounts,
@@ -77,10 +83,12 @@ describe('runProgressiveRefinement', () => {
     await runProgressiveRefinement<FakeLoader>({
       loaders,
       viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
       processLoader: async (_path, l) => {
         l.loadedLevels++;
         if (l.loadedLevels >= 3) l.hasMoreLODs = false;
         processed++;
+        return true;
       },
       anyHasMoreLODs: () => loader.hasMoreLODs,
       updateVisibleCountsInMonitor: vi.fn(),
@@ -94,6 +102,67 @@ describe('runProgressiveRefinement', () => {
     expect(retrigger).not.toHaveBeenCalled();
   });
 
+  it('stops after a pass that leaves every pending loader at the same LOD count', async () => {
+    const releaseLock = vi.fn();
+    const onNoProgress = vi.fn();
+    const loader: FakeLoader = { hasMoreLODs: true, loadedLevels: 2 };
+    const loaders = new Map([['/a', loader]]);
+
+    let processed = 0;
+    await runProgressiveRefinement<FakeLoader>({
+      loaders,
+      viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
+      isActive: () => processed < 5,
+      processLoader: async () => {
+        processed++;
+        return true;
+      },
+      anyHasMoreLODs: () => true,
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock,
+      retriggerUpdate: vi.fn(),
+      onNoProgress,
+    });
+
+    expect(processed).toBe(1);
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+    expect(onNoProgress).toHaveBeenCalledWith([{ path: '/a', loaded: 2, total: 3 }]);
+  });
+
+  it('continues when one loader advances, then reports only the stalled loader', async () => {
+    const stalled: FakeLoader = { hasMoreLODs: true, loadedLevels: 1 };
+    const progressing: FakeLoader = { hasMoreLODs: true, loadedLevels: 1 };
+    const loaders = new Map([
+      ['/stalled', stalled],
+      ['/progressing', progressing],
+    ]);
+    const onNoProgress = vi.fn();
+    let passes = 0;
+
+    await runProgressiveRefinement<FakeLoader>({
+      loaders,
+      viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
+      processLoader: async (path, loader) => {
+        if (path === '/stalled') passes++;
+        if (path === '/progressing' && loader.hasMoreLODs) {
+          loader.loadedLevels++;
+          loader.hasMoreLODs = false;
+        }
+        return true;
+      },
+      anyHasMoreLODs: () => [...loaders.values()].some((loader) => loader.hasMoreLODs),
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock: vi.fn(),
+      retriggerUpdate: vi.fn(),
+      onNoProgress,
+    });
+
+    expect(passes).toBe(2);
+    expect(onNoProgress).toHaveBeenCalledWith([{ path: '/stalled', loaded: 1, total: 3 }]);
+  });
+
   it('aborts when isActive() returns false (disposed mid-flight)', async () => {
     const retrigger = vi.fn();
     const loader: FakeLoader = { hasMoreLODs: true, loadedLevels: 0 };
@@ -104,10 +173,12 @@ describe('runProgressiveRefinement', () => {
     await runProgressiveRefinement<FakeLoader>({
       loaders,
       viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
       isActive: () => active,
       processLoader: async () => {
         processed++;
         active = false; // owner disposed after the first pass
+        return true;
       },
       // Would loop forever if the isActive abort did not fire.
       anyHasMoreLODs: () => true,
@@ -129,8 +200,10 @@ describe('runProgressiveRefinement', () => {
     await runProgressiveRefinement<FakeLoader>({
       loaders,
       viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
       processLoader: async () => {
         passes++;
+        return true;
       },
       // Would loop forever if the throw were not caught + broken on.
       anyHasMoreLODs: () => true,
@@ -161,8 +234,11 @@ describe('runProgressiveRefinement', () => {
     await runProgressiveRefinement<FakeLoader>({
       loaders,
       viewStateQueue: queue as never,
-      processLoader: async () => {
+      getLoaderProgress: getFakeLoaderProgress,
+      processLoader: async (_path, currentLoader) => {
         processed++;
+        currentLoader.loadedLevels++;
+        return true;
       },
       anyHasMoreLODs: () => true, // would loop forever
       updateVisibleCountsInMonitor: vi.fn(),
@@ -188,10 +264,12 @@ describe('runProgressiveRefinement', () => {
     await runProgressiveRefinement<FakeLoader>({
       loaders,
       viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: getFakeLoaderProgress,
       processLoader: async (path, l) => {
         visited.set(path, (visited.get(path) ?? 0) + 1);
         l.loadedLevels++;
         if (l.loadedLevels >= 2) l.hasMoreLODs = false;
+        return true;
       },
       anyHasMoreLODs: () => [...loaders.values()].some((l) => l.hasMoreLODs),
       updateVisibleCountsInMonitor: vi.fn(),

@@ -52,6 +52,12 @@ function makeStagedLoader(stages: Array<{ hasMoreLODs: boolean }>) {
     get hasMoreLODs() {
       return stages[Math.min(i, stages.length - 1)].hasMoreLODs;
     },
+    get loadedLODCount() {
+      return i;
+    },
+    get totalLODCount() {
+      return stages.length;
+    },
     updateView: vi.fn().mockImplementation(async () => {
       i++;
       return null;
@@ -89,6 +95,29 @@ export function defineRefinementLoopContract(
       expect(releaseLock).toHaveBeenCalledTimes(1);
       expect(updateVisibleCountsInMonitor).toHaveBeenCalledTimes(1);
       expect(loader.updateView).not.toHaveBeenCalled();
+    });
+
+    it('stops after one successful pass that does not advance the pending loader', async () => {
+      const loader = {
+        hasMoreLODs: true,
+        loadedLODCount: 2,
+        totalLODCount: 4,
+        updateView: vi.fn().mockResolvedValue(null),
+      };
+      const releaseLock: () => void = vi.fn();
+
+      await run({
+        loaders: new Map([['/n', loader]]),
+        viewStateQueue: new ViewStateQueue(),
+        deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+        updateVisibleCountsInMonitor: vi.fn(),
+        releaseLock,
+        retriggerUpdate: vi.fn(),
+        processSpy: vi.fn(),
+      });
+
+      expect(loader.updateView).toHaveBeenCalledTimes(1);
+      expect(releaseLock).toHaveBeenCalledTimes(1);
     });
 
     it('hands off lock to retriggerUpdate when pending view-state is observed', async () => {
