@@ -106,6 +106,58 @@ def _build_line_partition_tree(
     return tree, parts
 
 
+def _verified_indexed_additive(
+    name: str,
+    *,
+    additive_lod: Any,
+    line_type: str,
+    indices: Optional[np.ndarray],
+    n_vertices: int,
+    already_verified: bool = False,
+) -> bool:
+    """Whether an EXPLICIT additive ladder is safe on this indexed edge list.
+
+    Extracted from :func:`add_lines_impl` rather than inlined at its two call
+    sites: the conditions are the same at both, and holding them here keeps that
+    function under the C901 ratchet (`scripts/complexity_baseline.json`) instead
+    of adding five boolean sub-conditions to an already 24-branch function.
+
+    The multi-LOD writer carries no edge list — it rebuilds one by chaining each
+    connected component in ascending vertex order — so a chain is faithful only
+    when every component already IS an ascending simple path.
+
+    Returns ``True`` only when the check actually RAN and passed, so a second
+    call can be skipped via ``already_verified``; ``False`` means "not
+    applicable here" (no explicit ladder, or not ``indexed``), which is not the
+    same as "unsafe".
+
+    Raises:
+        ValueError: an explicit ladder was requested and the topology would be
+            corrupted by it.
+    """
+    if already_verified:
+        return True
+    if additive_lod is None or additive_lod is False:
+        return False
+    if line_type != "indexed" or indices is None:
+        return False
+
+    from ..lod.lines import indexed_components_are_chains
+
+    if not indexed_components_are_chains(
+        n_vertices, np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+    ):
+        raise ValueError(
+            f"'{name}': line_type='indexed' cannot take an additive ladder "
+            "unless every connected component is a simple path in ascending "
+            "vertex order — the streaming writer rebuilds edges by chaining each "
+            "component in that order, so a branching, cyclic or out-of-order "
+            "component would gain invented edges and lose real ones. Pass "
+            "additive_lod=False to write this node without a ladder."
+        )
+    return True
+
+
 def add_lines_impl(
     group: "Group",
     *,
@@ -330,28 +382,13 @@ def add_lines_impl(
             # dtype and bounds and then reshapes to pairs, so a malformed edge
             # list is silently reinterpreted there (or dies on a raw reshape).
             validate_line_indices_before_split(indices, n_vertices, line_type)
-            if (
-                additive_lod is not None
-                and additive_lod is not False
-                and line_type == "indexed"
-                and indices is not None
-            ):
-                from ..lod.lines import indexed_components_are_chains
-
-                if not indexed_components_are_chains(
-                    n_vertices,
-                    np.asarray(indices, dtype=np.intp).reshape(-1, 2),
-                ):
-                    raise ValueError(
-                        f"'{name}': line_type='indexed' cannot take an additive "
-                        "ladder unless every connected component is a simple path "
-                        "in ascending vertex order — the streaming writer rebuilds "
-                        "edges by chaining each component in that order, so a "
-                        "branching, cyclic or out-of-order component would gain "
-                        "invented edges and lose real ones. Pass additive_lod=False "
-                        "to write this node without a ladder."
-                    )
-                indexed_additive_verified = True
+            indexed_additive_verified = _verified_indexed_additive(
+                name,
+                additive_lod=additive_lod,
+                line_type=line_type,
+                indices=indices,
+                n_vertices=n_vertices,
+            )
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
@@ -450,27 +487,14 @@ def add_lines_impl(
                 # whose edges are quietly wrong — which is what happened before
                 # this check existed. The substitutive path applies the same test
                 # through ``compose_additive_under_substitutive``.
-                if (
-                    line_type == "indexed"
-                    and indices is not None
-                    and not indexed_additive_verified
-                ):
-                    from ..lod.lines import indexed_components_are_chains
-
-                    if not indexed_components_are_chains(
-                        n_vertices,
-                        np.asarray(indices, dtype=np.intp).reshape(-1, 2),
-                    ):
-                        raise ValueError(
-                            f"'{name}': line_type='indexed' cannot take an "
-                            "additive ladder unless every connected component is "
-                            "a simple path in ascending vertex order — the "
-                            "streaming writer rebuilds edges by chaining each "
-                            "component in that order, so a branching, cyclic or "
-                            "out-of-order component would gain invented edges "
-                            "and lose real ones. Pass additive_lod=False to "
-                            "write this node without a ladder."
-                        )
+                _verified_indexed_additive(
+                    name,
+                    additive_lod=additive_lod,
+                    line_type=line_type,
+                    indices=indices,
+                    n_vertices=n_vertices,
+                    already_verified=indexed_additive_verified,
+                )
                 widths_arr = (
                     widths
                     if isinstance(widths, np.ndarray) and widths.shape == (n_vertices,)
