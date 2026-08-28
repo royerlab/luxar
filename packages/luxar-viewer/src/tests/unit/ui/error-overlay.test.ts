@@ -5,10 +5,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { showError, clearError } from '../../../ui/error-overlay';
 
+let focusSpy: ReturnType<typeof vi.spyOn>;
+
 // Mock DOM environment
 beforeEach(() => {
   document.body.innerHTML = '';
   vi.useFakeTimers();
+  focusSpy = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -28,8 +31,38 @@ afterEach(() => {
   // Clear all pending timers before teardown (defensive — should be 0)
   vi.clearAllTimers();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 
   document.body.innerHTML = '';
+});
+
+describe('showError - auto-dismiss', () => {
+  it('auto-dismisses transient errors by default', () => {
+    showError('Transient error');
+
+    vi.advanceTimersByTime(60_000);
+    expect(document.getElementById('luxar-error-message')).toBeNull();
+  });
+
+  it('keeps non-auto-dismissing errors visible until explicitly cleared', () => {
+    showError('Fatal startup error', undefined, undefined, { autoDismiss: false });
+
+    vi.advanceTimersByTime(60_000);
+    expect(document.getElementById('luxar-error-message-text')?.textContent).toBe(
+      'Fatal startup error'
+    );
+  });
+});
+
+describe('showError - focus', () => {
+  it('focuses persistent dismiss controls without scrolling or scheduling trap focus', () => {
+    showError('Fatal startup error', undefined, undefined, { autoDismiss: false });
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    expect(focusSpy.mock.instances[0]).toBe(document.querySelector('.luxar-error-dialog__dismiss'));
+    expect(focusSpy.mock.calls[0]?.[0]).toEqual({ preventScroll: true });
+  });
 });
 
 describe('showError - ARIA Attributes', () => {
@@ -120,6 +153,51 @@ describe('showError - ARIA Attributes', () => {
 
     const messageText = document.getElementById('luxar-error-message-text');
     expect(messageText?.textContent).toBe('Second error');
+  });
+});
+
+describe('showError - dismissal', () => {
+  it('dismisses the dialog when Escape is pressed', () => {
+    showError('Test error', undefined, undefined, { autoDismiss: false });
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+    expect(document.getElementById('luxar-error-message')).toBeNull();
+  });
+
+  it('does not install a document Escape handler for transient errors', () => {
+    const addEventListener = vi.spyOn(document, 'addEventListener');
+
+    showError('Transient error');
+
+    expect(addEventListener).not.toHaveBeenCalledWith('keydown', expect.any(Function));
+  });
+
+  it('removes persistent Escape handlers on click, clear, and replacement', () => {
+    const addEventListener = vi.spyOn(document, 'addEventListener');
+    const removeEventListener = vi.spyOn(document, 'removeEventListener');
+
+    showError('Click dismissal', undefined, undefined, { autoDismiss: false });
+    const clickHandler = addEventListener.mock.calls
+      .filter(([type]) => type === 'keydown')
+      .at(-1)?.[1];
+    expect(clickHandler).toEqual(expect.any(Function));
+    document.getElementById('luxar-error-message')?.click();
+    expect(removeEventListener).toHaveBeenCalledWith('keydown', clickHandler);
+
+    showError('Programmatic dismissal', undefined, undefined, { autoDismiss: false });
+    const clearHandler = addEventListener.mock.calls
+      .filter(([type]) => type === 'keydown')
+      .at(-1)?.[1];
+    clearError();
+    expect(removeEventListener).toHaveBeenCalledWith('keydown', clearHandler);
+
+    showError('Replaced error', undefined, undefined, { autoDismiss: false });
+    const replacedHandler = addEventListener.mock.calls
+      .filter(([type]) => type === 'keydown')
+      .at(-1)?.[1];
+    showError('Replacement error', undefined, undefined, { autoDismiss: false });
+    expect(removeEventListener).toHaveBeenCalledWith('keydown', replacedHandler);
   });
 });
 

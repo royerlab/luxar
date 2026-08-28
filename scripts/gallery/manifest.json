@@ -335,7 +335,7 @@
       "category": "structural",
       "script": "demo_nuclear_pore_complex.py",
       "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr",
-      "citation": "Bui et al. 2013"
+      "citation": "Mosalaganti et al. 2022"
     },
     {
       "id": "fractals_4d",

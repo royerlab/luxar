@@ -20,6 +20,7 @@ import { LuxarApp, type LuxarAppOptions } from './app';
 import { KeyAction } from '../input';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
+import { archiveFaultFrom } from '../cache/chunk-source';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { initUserSettings } from '../config/user-settings';
@@ -170,11 +171,16 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // .showHelp etc. without importing the ui/ helper modules directly —
   // that's what keeps the dependency-cruiser layer order clean.
   setNotifierBackend({
-    showError: (message) =>
-      showError(message, shortcutForAction, {
-        datasetBrowser: KeyAction.toggleDatasetBrowser,
-        help: KeyAction.toggleHelp,
-      }),
+    showError: (message, options) =>
+      showError(
+        message,
+        shortcutForAction,
+        {
+          datasetBrowser: KeyAction.toggleDatasetBrowser,
+          help: KeyAction.toggleHelp,
+        },
+        options?.persistent ? { autoDismiss: false } : undefined
+      ),
     showToast,
     showHelpOverlay,
     hideHelpOverlay,
@@ -340,13 +346,17 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     await app.init(appOptions);
   } catch (error) {
     log.error(Modules.LUXAR, `Failed to start Luxar application: ${getErrorMessage(error)}`, error);
+    const archiveFault = archiveFaultFrom(error);
     showError(
-      'Failed to start the application. Please check the console for details.',
+      archiveFault
+        ? archiveFault.message
+        : 'Failed to start the application. Please check the console for details.',
       shortcutForAction,
       {
         datasetBrowser: KeyAction.toggleDatasetBrowser,
         help: KeyAction.toggleHelp,
-      }
+      },
+      { autoDismiss: false }
     );
     throw error;
   }

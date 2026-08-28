@@ -39,7 +39,7 @@ The bus and the notifier are deliberately distinct: the **notifier** has one bac
 ### notifier.ts — Single-Backend UI Facade
 
 - `NotifierBackend` — Interface a concrete backend implements (`showError`, `showToast`, `showHelpOverlay`, `hideHelpOverlay`, `showLoadingIndicator`, `hideLoadingIndicator`, `clearError`).
-- `notifier` — Stable call surface: `error`, `toast`, `showHelp`, `hideHelp`, `showLoading`, `hideLoading`, `clearError`. Pre-registration calls drop silently after a single one-time warn so unit tests and early-startup paths don't crash.
+- `notifier` — Stable call surface: `error`, `toast`, `showHelp`, `hideHelp`, `showLoading`, `hideLoading`, `clearError`. `error(message, { persistent: true })` asks the backend to suppress auto-dismissal. Pre-registration calls drop silently after a single one-time warn so unit tests and early-startup paths don't crash.
 - `setNotifierBackend(b)` — Called once by the UI bootstrap with concrete `ui/` helpers; later calls replace the backend (useful for tests).
 - `clearNotifierBackend()` — Tear down and reset the one-time missing-backend warning flag.
 

@@ -79,6 +79,17 @@ export class ArchiveFaultError extends Error {
   }
 }
 
+/** Find an authored archive fault through a short Error.cause chain. */
+export function archiveFaultFrom(error: unknown): ArchiveFaultError | undefined {
+  let current = error;
+  for (let depth = 0; depth < 8; depth++) {
+    if (current instanceof ArchiveFaultError) return current;
+    if (!(current instanceof Error)) return undefined;
+    current = current.cause;
+  }
+  return undefined;
+}
+
 /**
  * The minimum a byte-container has to offer for {@link ChunkSource} to read it.
  *

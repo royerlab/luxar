@@ -237,7 +237,13 @@ def fit_map(volume: np.ndarray, acquisition=None) -> GSplatData:
         save_with_lod(
             result,
             LOCAL_FIT,
-            recipe="levels",
+            # `stream`, not `levels`: one compact object, viewed whole, and
+            # 1.01M splats is well under the 4,194,304-per-node cap — so coarse
+            # substitutive levels are bytes the screen-area selector never picks at
+            # a full-frame view. Measured on this fit: levels 16 nodes / 16.03 MB
+            # vs stream 4 nodes / 11.50 MB, a 28% saving for no visible
+            # difference. See `_lod_policy` for the three qualifiers.
+            recipe="stream",
             encoding_mode=EncodingMode.MEMORY,
             include_fitting_info=True,
             compress="zip",
@@ -245,8 +251,8 @@ def fit_map(volume: np.ndarray, acquisition=None) -> GSplatData:
         )
         # Return what was STORED, not the in-memory fit: `result` is the FLAT
         # pre-LOD fit, so a `--recompute` run built a flat scene while the warm
-        # branch below — which loads LOCAL_FIT back — got the four substitutive
-        # levels the archive carries. Re-reading also picks up the lossy MEMORY
+        # branch below — which loads LOCAL_FIT back — got the four-rung additive
+        # ladder the archive carries. Re-reading also picks up the lossy MEMORY
         # encoding, so cold and warm runs agree on bytes as well as topology
         # (same reasoning as demo_gsplats_4d_nexrad_supercell).
         stored = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)

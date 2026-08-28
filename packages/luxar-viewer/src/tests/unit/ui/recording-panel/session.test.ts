@@ -462,16 +462,18 @@ describe('RecordingSession', () => {
       }
     );
 
-    // "Smooth (offline)" lives in the turntable control group and is
-    // hidden in Video mode (whose only format is WebM), and
-    // startVideoRecording ignores `frameByFrame` outside turntable mode
-    // — so naming it there prescribes a control the user cannot reach.
+    // The overlay warning is now EXR-only: the real-time WebM path
+    // composites overlays onto a mirror canvas (see
+    // `live-overlay-compositor.ts`), so warning about it there would be
+    // a lie that pushes the user off a mode that works.
     it.each([
-      ['turntable', true],
-      ['video', false],
+      ['webm', 'video', false],
+      ['webm', 'turntable', false],
+      ['mp4', 'turntable', false],
+      ['exr', 'turntable', true],
     ] as const)(
-      'the overlay warning only names Smooth (offline) in %s mode',
-      async (mode, expected) => {
+      '%s output in %s mode warns about dropped overlays: %s',
+      async (outputFormat, mode, expected) => {
         (panel as any).session.overlayManager = {
           getVisibleOverlays: () => [{}],
         };
@@ -479,20 +481,33 @@ describe('RecordingSession', () => {
           mode,
           options: {
             ...(panel as any).options,
-            outputFormat: 'webm',
+            outputFormat,
             includeOverlays: true,
             frameByFrame: false,
           },
         });
 
         const message = document.querySelector('#luxar-recording-confirm-message');
-        expect(message?.textContent).toContain('Overlays will NOT be included');
-        expect(message?.innerHTML.includes('Smooth (offline)')).toBe(expected);
+        expect(message?.textContent?.includes('Overlays will NOT be included')).toBe(expected);
 
         (document.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
         await promise;
       }
     );
+
+    it('does not warn about overlays when the scene has none', async () => {
+      (panel as any).session.overlayManager = { getVisibleOverlays: () => [] };
+      const promise = (panel as any).session.showConfirmationDialog({
+        mode: 'turntable',
+        options: { ...(panel as any).options, outputFormat: 'exr', includeOverlays: true },
+      });
+
+      const message = document.querySelector('#luxar-recording-confirm-message');
+      expect(message?.textContent).not.toContain('Overlays will NOT be included');
+
+      (document.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
+      await promise;
+    });
 
     it('resolves to false when panel disposes mid-dialog', async () => {
       const promise = (panel as any).session.showConfirmationDialog({

@@ -399,23 +399,17 @@ export class RecordingSession {
           : `<br>Output: <strong>${fmt.toUpperCase()} video</strong> (${options.videoCodec.toUpperCase()}).`;
       }
 
-      // Two capture paths cannot composite DOM overlays: the real-time
-      // recorder grabs the WebGL canvas alone, and the EXR driver writes
-      // the raw HDR buffer. Say so rather than letting "Include Overlays"
-      // quietly produce a file without them.
+      // One capture path still cannot composite DOM overlays: the EXR
+      // driver writes the raw pre-grade HDR buffer, and an overlay is a
+      // display-space object with no meaning there. Say so rather than
+      // letting "Include Overlays" quietly produce a file without them.
+      // (The real-time recorder USED to be the other one — it now captures
+      // a mirror canvas that `LiveOverlayCompositor` re-composites per
+      // rendered frame, so WebM carries overlays like every other format.)
       const hasOverlays = (this.overlayManager?.getVisibleOverlays().length ?? 0) > 0;
-      if (options.includeOverlays && hasOverlays && (realtimeWebm || fmt === 'exr')) {
-        // Only the turntable group has a "Smooth (offline)" toggle — it
-        // is hidden in Video mode, and `startVideoRecording` ignores
-        // `frameByFrame` outside a turntable — so pointing a Video-mode
-        // user at it prescribes a control they cannot reach. Video mode
-        // is WebM-only too, so there is no remedy to name from here.
-        const realtimeRemedy =
-          mode === 'turntable' ? ' Enable <em>Smooth (offline)</em> to composite them.' : '';
-        details += realtimeWebm
-          ? '<br><strong>Overlays will NOT be included</strong> — real-time WebM records the ' +
-            `canvas alone.${realtimeRemedy}`
-          : '<br><strong>Overlays will NOT be included</strong> — EXR frames are the raw HDR buffer.';
+      if (options.includeOverlays && hasOverlays && fmt === 'exr') {
+        details +=
+          '<br><strong>Overlays will NOT be included</strong> — EXR frames are the raw HDR buffer.';
       }
 
       overlay.innerHTML = `

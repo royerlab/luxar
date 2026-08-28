@@ -44,6 +44,14 @@ def _commit(repo: Path, message: str, day: int) -> None:
     _git(repo, "commit", "-m", message, day=day)
 
 
+def _lfs_pointer(size_bytes: int) -> str:
+    return (
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{'0' * 64}\n"
+        f"size {size_bytes}\n"
+    )
+
+
 def _write_manifest(repo: Path, title_b: str = "B", include_c: bool = False) -> None:
     demos = [
         {
@@ -142,6 +150,49 @@ def test_stale_inputs_require_a_strictly_newer_commit() -> None:
     inputs = {"older": _stamp(19), "same commit": _stamp(20), "newer": _stamp(21)}
 
     assert stale.stale_inputs(_stamp(20), inputs) == ["newer"]
+
+
+def test_media_flags_use_inclusive_warning_and_limit_boundaries() -> None:
+    path = Path("tile.webm")
+
+    assert (
+        stale._format_media_size(stale.GALLERY_MEDIA_WARNING_BYTES - 1) == "19.99 MiB"
+    )
+    assert (
+        stale._media_flag(
+            stale.GalleryMedia(path, stale.GALLERY_MEDIA_WARNING_BYTES - 1)
+        )
+        == ""
+    )
+    assert (
+        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_WARNING_BYTES))
+        == " [WARNING]"
+    )
+    assert (
+        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES - 1))
+        == " [WARNING]"
+    )
+    assert stale._format_media_size(stale.GALLERY_MEDIA_LIMIT_BYTES - 1) == "24.99 MiB"
+    assert (
+        stale._media_flag(stale.GalleryMedia(path, stale.GALLERY_MEDIA_LIMIT_BYTES))
+        == " [OVER LIMIT]"
+    )
+
+
+def test_missing_media_blob_is_reported_as_staleness_error(
+    tmp_path: Path, capsys
+) -> None:
+    repo = _repo(tmp_path)
+    media_path = Path("docs/images/readme/gallery/a.webm")
+    object_id = _git(repo, "rev-parse", f"HEAD:{media_path.as_posix()}")
+    (repo / ".git/objects" / object_id[:2] / object_id[2:]).unlink()
+
+    message = f"Git object is unavailable: {object_id} ({media_path})"
+    with pytest.raises(stale.StalenessError, match=re.escape(message)):
+        stale.GalleryHistory(repo).report()
+
+    assert stale.main(["--repo-root", str(repo)]) == 2
+    assert capsys.readouterr().err.strip() == f"ERROR: {message}"
 
 
 def test_manifest_line_ranges_isolate_each_demo_entry() -> None:
@@ -464,8 +515,45 @@ def test_stale_findings_are_report_only(tmp_path: Path, capsys) -> None:
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
     assert "STALE a" in output
+    assert "media: a.webm 0.00 MiB, a.webp 0.00 MiB" in output
     assert "STALE b" in output
     assert "2 stale, 0 current" in output
+
+
+def test_media_sizes_use_committed_lfs_metadata_and_remain_report_only(
+    tmp_path: Path, capsys
+) -> None:
+    repo = _repo(tmp_path)
+    warning_path = repo / "docs/images/readme/gallery/a.webm"
+    over_limit_path = repo / "docs/images/readme/gallery/b.webm"
+    regular_path = repo / "docs/images/readme/gallery/a.webp"
+    warning_path.write_text(_lfs_pointer(stale.GALLERY_MEDIA_WARNING_BYTES))
+    over_limit_path.write_text(_lfs_pointer(stale.GALLERY_MEDIA_LIMIT_BYTES))
+    regular_path.write_bytes(b"x" * 2048)
+    _commit(repo, "grow gallery media", 22)
+
+    warning_path.write_text(_lfs_pointer(1))
+
+    report = stale.GalleryHistory(repo).report()
+    sizes = {media.path.name: media.size_bytes for media in report.media}
+    assert sizes["a.webm"] == stale.GALLERY_MEDIA_WARNING_BYTES
+    assert sizes["a.webp"] == 2048
+    assert sizes["b.webm"] == stale.GALLERY_MEDIA_LIMIT_BYTES
+
+    assert stale.main(["--repo-root", str(repo)]) == 0
+    output = capsys.readouterr().out
+    assert "a.webm 20.00 MiB (20,971,520 bytes) [WARNING]" in output
+    assert "b.webm 25.00 MiB (26,214,400 bytes) [OVER LIMIT]" in output
+    assert "a.webp 0.00 MiB (2,048 bytes)" not in output
+    assert output.index(
+        "25.00 MiB (26,214,400 bytes)  b.webm [OVER LIMIT]"
+    ) < output.index("20.00 MiB (20,971,520 bytes)  a.webm")
+    assert "Gallery media: 45.00 MiB total across 4 files" in output
+    assert (
+        "Gallery media limits: 1 warning (20.00 MiB <= size < 25.00 MiB), "
+        "1 over-limit file (>= 25.00 MiB)" in output
+    )
+    assert "Report only" in output
 
 
 def test_bad_rows_are_reported_unknown_without_hiding_other_tiles(
@@ -478,7 +566,10 @@ def test_bad_rows_are_reported_unknown_without_hiding_other_tiles(
 
     assert stale.main(["--repo-root", str(repo)]) == 0
     output = capsys.readouterr().out
-    assert "UNKNOWN zzz: committed tile 'zzz' has no manifest entry" in output
+    assert (
+        "UNKNOWN zzz: committed tile 'zzz' has no manifest entry; "
+        "media: zzz.webm 0.00 MiB, zzz.webp 0.00 MiB" in output
+    )
     assert "CURRENT a" in output
     assert "CURRENT b" in output
     assert "0 stale, 2 current, 1 unknown" in output

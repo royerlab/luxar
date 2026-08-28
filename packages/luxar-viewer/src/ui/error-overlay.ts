@@ -1,9 +1,10 @@
 /**
- * Error dialog — user-friendly error overlay with guidance and auto-dismiss.
+ * Error dialog — user-friendly error overlay with guidance and optional auto-dismiss.
  *
  * Replaces any existing error dialog so a new failure doesn't stack on
- * top of an old one. Dismissible by click, Escape, or auto-timeout
- * (configured via `config.ui.timings.errorAutoDismissMs`). Traps focus
+ * top of an old one. Dismissible by click; persistent startup errors also own
+ * Escape directly, while initialized-app errors use the input router. Transient
+ * errors auto-dismiss after `config.ui.timings.errorAutoDismissMs`. Traps focus
  * inside the dialog while it is open (Tab/Shift+Tab can't escape).
  */
 
@@ -18,6 +19,11 @@ export type ShortcutForAction = (actionId: string) => string | undefined;
 export interface ErrorShortcutActions {
   datasetBrowser: string;
   help: string;
+}
+
+export interface ErrorDisplayOptions {
+  /** Whether to dismiss after the configured timeout. Defaults to true. */
+  autoDismiss?: boolean;
 }
 
 /**
@@ -40,6 +46,7 @@ const UI_CONFIG = config.ui;
 // at module scope so all teardown paths can clear them.
 let autoDismissTimerId: ReturnType<typeof setTimeout> | null = null;
 let activeReleaseTrap: (() => void) | null = null;
+let activeEscapeHandler: ((event: KeyboardEvent) => void) | null = null;
 
 function clearAutoDismissTimer(): void {
   if (autoDismissTimerId !== null) {
@@ -55,23 +62,33 @@ function releaseActiveTrap(): void {
   }
 }
 
+function removeActiveEscapeHandler(): void {
+  if (activeEscapeHandler !== null) {
+    document.removeEventListener('keydown', activeEscapeHandler);
+    activeEscapeHandler = null;
+  }
+}
+
 /**
  * Show a user-facing error dialog over the viewport with the given message.
  *
  * Any dialog from a previous call is torn down first (its auto-dismiss timer
  * cancelled and focus trap released) so failures never stack. The new dialog is
- * dismissible by click, Escape, or an auto-timeout of
+ * dismissible by click or Escape, optionally auto-dismisses after
  * `config.ui.timings.errorAutoDismissMs`, and traps keyboard focus while open.
  *
  * @param message Human-readable error text to display to the user.
  * @param shortcutForAction Optional live shortcut-label lookup.
  * @param shortcutActions Action ids to resolve. Authored labels are used when
  * input has not been initialized yet or an action is unbound.
+ * @param options Display behavior. Set `autoDismiss` to false for fatal errors
+ * that must remain visible until the user dismisses them.
  */
 export function showError(
   message: string,
   shortcutForAction?: ShortcutForAction,
-  shortcutActions?: ErrorShortcutActions
+  shortcutActions?: ErrorShortcutActions,
+  options: ErrorDisplayOptions = {}
 ) {
   // Remove any existing error messages first — and cancel the timer
   // + release the focus trap that the previous showError() scheduled
@@ -79,6 +96,7 @@ export function showError(
   // stay pending in test environments using fake timers).
   clearAutoDismissTimer();
   releaseActiveTrap();
+  removeActiveEscapeHandler();
   const existingError = document.getElementById('luxar-error-message');
   if (existingError) {
     existingError.remove();
@@ -177,6 +195,7 @@ export function showError(
   const dismissError = () => {
     clearAutoDismissTimer();
     releaseActiveTrap();
+    removeActiveEscapeHandler();
     errorDiv.remove();
   };
 
@@ -185,22 +204,34 @@ export function showError(
     dismissError();
   });
 
+  if (options.autoDismiss === false) {
+    activeEscapeHandler = (event) => {
+      if (event.key === 'Escape') {
+        dismissError();
+      }
+    };
+    document.addEventListener('keydown', activeEscapeHandler);
+  }
+
   // Auto-dismiss after configured timeout. Timer id is stored at module
   // scope so dismissError()/clearError()/a replacement showError() can
   // cancel it (audit G17 — was a real timer leak).
-  autoDismissTimerId = setTimeout(() => {
-    autoDismissTimerId = null;
-    if (errorDiv.parentNode) {
-      dismissError();
-    }
-  }, UI_CONFIG.timings.errorAutoDismissMs);
+  if (options.autoDismiss !== false) {
+    autoDismissTimerId = setTimeout(() => {
+      autoDismissTimerId = null;
+      if (errorDiv.parentNode) {
+        dismissError();
+      }
+    }, UI_CONFIG.timings.errorAutoDismissMs);
+  }
 
   getViewerContainer().appendChild(errorDiv);
 
   // Trap focus within the error dialog. Stored at module scope so the
   // clearError() teardown path can release it without going through
   // dismissError() (which is a closure scoped to this showError call).
-  activeReleaseTrap = trapFocus(errorDiv);
+  activeReleaseTrap = trapFocus(errorDiv, { autoFocusFirst: false });
+  dismissBtn.focus({ preventScroll: true });
 }
 
 /**
@@ -213,6 +244,7 @@ export function showError(
 export function clearError() {
   clearAutoDismissTimer();
   releaseActiveTrap();
+  removeActiveEscapeHandler();
   const errorDiv = document.getElementById('luxar-error-message');
   if (errorDiv) {
     errorDiv.remove();

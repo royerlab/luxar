@@ -82,12 +82,22 @@ import {
   type CropFraming,
 } from './crop-policy';
 import { resolveGalleryOnly } from './gallery-selection';
+import {
+  checkGalleryMediaSize,
+  collectGalleryMediaSizeIssues,
+  formatGalleryCaptureMetrics,
+  formatMediaSize,
+  galleryDroppedElementsWarning,
+  summarizeGalleryMedia,
+  type GalleryMediaFile,
+} from './gallery-media-reporting';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '../../../../..');
 const MANIFEST_PATH = path.join(REPO_ROOT, 'scripts/gallery/manifest.json');
 const README_PATH = path.join(REPO_ROOT, 'README.md');
 const OUTPUT_DIR = path.join(REPO_ROOT, 'docs/images/gallery');
+const capturedMedia: GalleryMediaFile[] = [];
 
 // Dedicated ports (not the default 5173/9876) so a concurrent agent's dev
 // server on the shared port can't poison the run (its file changes would
@@ -538,6 +548,19 @@ async function measureCoverageOrNull(
   } catch (error) {
     console.warn(`[${demoId}] coverage measurement skipped:`, error);
     return null;
+  }
+}
+
+/** Failure-tolerant final renderer-capacity diagnostic. */
+async function measureDroppedElementsOrZero(page: any, demoId: string): Promise<number> {
+  try {
+    return await page.evaluate(() => {
+      const value = (window as any).__luxarDebug?.getState?.()?.totalDroppedElements;
+      return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+    });
+  } catch (error) {
+    console.warn(`[${demoId}] dropped-elements measurement skipped:`, error);
+    return 0;
   }
 }
 
@@ -1242,6 +1265,30 @@ function convertFramesToWebp(framesDir: string, output: string): void {
   );
 }
 
+function statGalleryMedia(demoId: string, filePath: string): GalleryMediaFile | null {
+  const stats = fs.statSync(filePath, { throwIfNoEntry: false });
+  if (!stats) return null;
+  return {
+    demoId,
+    fileName: path.basename(filePath),
+    sizeBytes: stats.size,
+  };
+}
+
+function recordGalleryMedia(demoId: string, filePath: string): GalleryMediaFile {
+  const media = statGalleryMedia(demoId, filePath);
+  if (!media) throw new Error(`[${demoId}] encoded media is missing: ${filePath}`);
+  try {
+    const { warning } = checkGalleryMediaSize(media);
+    if (warning) console.warn(warning);
+  } catch (error) {
+    fs.rmSync(filePath, { force: true });
+    throw error;
+  }
+  capturedMedia.push(media);
+  return media;
+}
+
 const DEMOS = loadManifest();
 
 test.beforeAll(() => {
@@ -1343,7 +1390,10 @@ for (const demo of DEMOS) {
     // Keep the buffer as well as writing the file: the crop check measures this
     // very frame, so it costs no extra screenshot.
     const stillShot = await page.screenshot({ path: pngPath, type: 'png' });
-    console.log(`[${demo.id}] still → ${path.basename(pngPath)}`);
+    const pngMedia = recordGalleryMedia(demo.id, pngPath);
+    console.log(
+      `[${demo.id}] still → ${path.basename(pngPath)} (${formatMediaSize(pngMedia.sizeBytes)})`
+    );
 
     // Orbit: capture explicit per-angle frames (reliable in headless), then
     // assemble the WebM master + animated WebP.
@@ -1369,17 +1419,17 @@ for (const demo of DEMOS) {
     // Failure-tolerant for the same reason as the orbit samples.
     const coverageMeasurement = await measureCoverageOrNull(page, stillShot, demo.id);
     const stillSample = await measureBorderLitOrNull(page, stillShot, 'still', demo.id);
+    const totalDroppedElements = await measureDroppedElementsOrZero(page, demo.id);
     await page.close();
 
+    console.log(
+      `[${demo.id}] ${formatGalleryCaptureMetrics(coverageMeasurement, totalDroppedElements)}`
+    );
+    const droppedWarning = galleryDroppedElementsWarning(demo.id, totalDroppedElements);
+    if (droppedWarning) console.warn(droppedWarning);
     if (coverageMeasurement) {
-      console.log(
-        `[${demo.id}] final coverage=${(coverageMeasurement.coverage * 100).toFixed(1)}% ` +
-          `final lit=${(coverageMeasurement.litFraction * 100).toFixed(1)}%`
-      );
       const underfill = evaluateUnderfill({ demoId: demo.id, measurement: coverageMeasurement });
       if (underfill.underfilled) console.warn(underfill.message);
-    } else {
-      console.log(`[${demo.id}] final coverage=unmeasured final lit=unmeasured`);
     }
 
     // Crop check (before the orbit-failure return — the still sample alone is
@@ -1425,31 +1475,67 @@ for (const demo of DEMOS) {
     const webpPath = path.join(OUTPUT_DIR, `${demo.id}.webp`);
     const webmPathOut = path.join(OUTPUT_DIR, `${demo.id}.webm`);
     try {
-      convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
-      console.log(`[${demo.id}] webp → ${path.basename(webpPath)}`);
-    } catch (e) {
-      console.error(`[${demo.id}] webp failed:`, e);
+      let webpEncoded = false;
+      try {
+        convertFramesToWebp(framesDir, webpPath); // README inline (GitHub)
+        webpEncoded = true;
+      } catch (e) {
+        console.error(`[${demo.id}] webp failed:`, e);
+      }
+      if (webpEncoded) {
+        const webpMedia = recordGalleryMedia(demo.id, webpPath);
+        console.log(
+          `[${demo.id}] webp → ${path.basename(webpPath)} (${formatMediaSize(webpMedia.sizeBytes)})`
+        );
+      }
+      let webmEncoded = false;
+      try {
+        convertFramesToWebm(framesDir, webmPathOut); // full-quality master
+        webmEncoded = true;
+      } catch (e) {
+        console.error(`[${demo.id}] webm failed:`, e);
+      }
+      if (webmEncoded) {
+        const webmMedia = recordGalleryMedia(demo.id, webmPathOut);
+        console.log(
+          `[${demo.id}] webm → ${path.basename(webmPathOut)} (${formatMediaSize(webmMedia.sizeBytes)})`
+        );
+      }
+    } finally {
+      fs.rmSync(framesDir, { recursive: true, force: true }); // clean up frames
     }
-    try {
-      convertFramesToWebm(framesDir, webmPathOut); // full-quality master
-      console.log(`[${demo.id}] webm → ${path.basename(webmPathOut)}`);
-    } catch (e) {
-      console.error(`[${demo.id}] webm failed:`, e);
-    }
-    fs.rmSync(framesDir, { recursive: true, force: true }); // clean up frames
   });
 }
 
 test('Gallery summary', async () => {
   console.log('\n======== Gallery capture complete ========');
   console.log(`Output: ${OUTPUT_DIR}`);
+  const checkedMediaFiles = new Set(capturedMedia.map((media) => media.fileName));
+  const allMedia: GalleryMediaFile[] = [];
+  const uncheckedMedia: GalleryMediaFile[] = [];
   for (const demo of DEMOS) {
-    const png = fs.existsSync(path.join(OUTPUT_DIR, `${demo.id}.png`));
-    const webp = fs.existsSync(path.join(OUTPUT_DIR, `${demo.id}.webp`));
-    const webm = fs.existsSync(path.join(OUTPUT_DIR, `${demo.id}.webm`));
+    const png = statGalleryMedia(demo.id, path.join(OUTPUT_DIR, `${demo.id}.png`));
+    const webp = statGalleryMedia(demo.id, path.join(OUTPUT_DIR, `${demo.id}.webp`));
+    const webm = statGalleryMedia(demo.id, path.join(OUTPUT_DIR, `${demo.id}.webm`));
+    const demoMedia = [png, webp, webm].filter(
+      (media): media is GalleryMediaFile => media !== null
+    );
+    allMedia.push(...demoMedia);
+    for (const media of demoMedia) {
+      if (!checkedMediaFiles.has(media.fileName)) uncheckedMedia.push(media);
+    }
     console.log(
       `  ${png ? '[png]' : '[---]'} ${webp ? '[webp]' : '[----]'} ${webm ? '[webm]' : '[----]'} ${demo.id}`
     );
   }
+  const mediaIssues = collectGalleryMediaSizeIssues(uncheckedMedia);
+  for (const warning of mediaIssues.warnings) console.warn(warning);
+  const mediaSummary = summarizeGalleryMedia(allMedia);
+  console.log(mediaSummary.totalLine);
+  if (mediaSummary.largestLines.length > 0) {
+    console.log('Largest media:');
+    for (const line of mediaSummary.largestLines) console.log(line);
+  }
   console.log('');
+  if (mediaIssues.errors.length > 0) throw new Error(mediaIssues.errors.join('\n'));
 });
