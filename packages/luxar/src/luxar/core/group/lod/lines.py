@@ -208,16 +208,21 @@ def indexed_ladder_preserves_edges(
 ) -> bool:
     """Return whether the additive writer's rebuilt chains preserve ``indices``."""
     authored = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
-    rebuilt_parts = [
-        np.column_stack((members[:-1], members[1:]))
-        for members in polylines
-        if members.size >= 2
-    ]
-    rebuilt = (
-        np.concatenate(rebuilt_parts, axis=0)
-        if rebuilt_parts
-        else np.empty((0, 2), dtype=np.intp)
-    )
+    if polylines:
+        lengths = np.fromiter(
+            (members.size for members in polylines),
+            dtype=np.intp,
+            count=len(polylines),
+        )
+        members = np.concatenate(polylines)
+        if members.size >= 2:
+            keep = np.ones(members.size - 1, dtype=bool)
+            keep[np.cumsum(lengths[:-1]) - 1] = False
+            rebuilt = np.column_stack((members[:-1][keep], members[1:][keep]))
+        else:
+            rebuilt = np.empty((0, 2), dtype=np.intp)
+    else:
+        rebuilt = np.empty((0, 2), dtype=np.intp)
 
     def canonical_edges(edges: NDArray[np.intp]) -> NDArray[np.intp]:
         if edges.size == 0:
@@ -492,6 +497,9 @@ def make_additive_lod_lines(
             extent (which excludes a *constant* time/channel column, but not a
             *stacked* one — see
             :func:`~luxar.core.group.lod.reveal.radial_element_score`).
+        identified_polylines: Must equal
+            ``identify_polylines(len(vertices), line_type, indices)``; supplied
+            only to avoid recomputing it.
 
     Returns:
         List of LOD-level entries. Each entry is a list of per-polyline

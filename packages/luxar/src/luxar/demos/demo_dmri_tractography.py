@@ -544,10 +544,11 @@ SUBSTITUTIVE_LOD: Final = dict(compression_factor=256, levels=2)
 #
 # The ladder rebuilds each connected component as a plain chain over its
 # members, which for an arbitrary indexed edge list would invent edges that do
-# not exist and drop ones that do (see `adders/lines.py`). The synthesized
-# gsplat children have no edge list and safely keep their default streaming
-# ladders; only the finest Lines child loads in one commit. It costs us little:
-# each node is under the 200K-vertex threshold at which
+# not exist and drop ones that do (see `adders/lines.py`). The synthesized gsplat
+# children are no longer policy-suppressed, but at compression factor 256 their
+# bead counts stay below the default 39,062-element first chunk, so they still
+# load in one commit until the composed element-vs-splat byte budget is retuned.
+# It costs us little: each node is under the 200K-vertex threshold at which
 # `check_demo_ladders.py` requires a ladder, and the 87 nodes already stream
 # independently of one another.
 

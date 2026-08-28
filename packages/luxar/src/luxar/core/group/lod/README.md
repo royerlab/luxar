@@ -329,8 +329,9 @@ Composes with `additive_lod` (laddered per level by default, as for Points);
 mutually exclusive with `partition`. The synthesized coarse gsplat children
 keep their additive ladders for every `line_type`. The original finest Lines
 child skips its ladder for single-polyline types (`polyline`/`loop`) and for
-`indexed`, whose explicit edge list the additive writer cannot preserve in the
-composed path; only that finest child then loads all-at-once. On a plain
+`indexed`; the composed path keeps that blanket refusal conservatively, and
+narrowing it is a separate change. Only that finest child then loads
+all-at-once. On a plain
 `indexed` Lines leaf, an explicitly requested additive ladder is accepted when
 rebuilding each connected component as an ascending-vertex chain preserves the
 deduplicated undirected edge set, and is refused with a warning otherwise.
@@ -341,8 +342,9 @@ Points, and the same uniform-vs-per-element RGBA rule: a uniform colour is
 broadcast to the beads with its alpha, a per-element `(N, 4)` is refused —
 uniformity is judged once, per VERTEX, so a line set that collapses to a single
 bead cannot re-present a per-element colour as a uniform row). All `line_type`s
-(segments/polyline/loop/indexed) are supported for the substitutive pyramid
-itself; only `segments` also receives a composed additive ladder.
+(segments/polyline/loop/indexed) are supported for the substitutive pyramid and
+receive composed additive ladders on synthesized coarse children; the finest
+child follows the exceptions above.
 Degenerate-width segments are dropped; bead allocation is bounded both
 per-segment (`lift.MAX_BEADS_PER_SEGMENT`) and in aggregate
 (`lift.MAX_TOTAL_BEADS`, spacing widened to fit with a `UserWarning`), so a

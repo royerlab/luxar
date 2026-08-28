@@ -16,6 +16,7 @@ import zarr
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.group import PARTITION_FINEST_AREA, WHOLE_OBJECT_FINEST_ANCHOR
 from luxar.core.group.lod.lines import resolve_substitutive_axis_lines
+from luxar.encoding import ArrayDecoder
 from luxar.gsplats.lift import (
     coarse_substitutive_levels,
     lift_lines_to_gsplats,
@@ -573,6 +574,21 @@ def test_plain_indexed_additive_refuses_to_rebuild_edges(tmp_path) -> None:
     node = zarr.open(str(out), mode="r")["stars"]
     assert node.attrs["type"] == "lines"
     assert int(node.attrs.get("n_additive_sublods", 1)) == 1
+    decoder = ArrayDecoder()
+    written_vertices = decoder.decode(node["vertices"], node)
+    written_segments = decoder.decode(node["segments"], node).reshape(-1, 2)
+    expected_segments = np.asarray(indices, dtype=np.uint32)
+    assert written_segments.shape == expected_segments.shape
+
+    def coordinate_edges(vertices, segments):
+        return {
+            tuple(sorted((tuple(vertices[a]), tuple(vertices[b]))))
+            for a, b in segments
+        }
+
+    assert coordinate_edges(written_vertices, written_segments) == coordinate_edges(
+        verts, expected_segments
+    )
 
 
 class TestAdditiveLevelStatsPairingLines:
