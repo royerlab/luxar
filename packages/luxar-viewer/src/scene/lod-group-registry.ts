@@ -988,16 +988,16 @@ export class LODGroupRegistry {
    * GROUP placeholders remain addressable without duplicating scene identity
    * onto the THREE object.
    *
-   * Clears the failure cooldown (``failed``/``failedTick``) and routes
-   * through the shared ``kickDeferredLoad`` gate, which owns setting
-   * ``loading`` before firing ``ensureLoaded`` (the thunk itself never sets
-   * ``loading`` — only the registry does; keep that invariant here).
+   * Clears the failure cooldown (``failed``/``failedTick``) through the shared
+   * ``kickDeferredLoad`` gate, which owns setting ``loading`` before firing
+   * ``ensureLoaded`` (the thunk itself never sets ``loading`` — only the
+   * registry does; keep that invariant here).
    *
    * Returns ``true`` when a retry was kicked OR one is already in flight
    * (``loading``), ``false`` when no retryable lazy child with that path
-   * exists. The owning ``SceneLoader`` clears its archive-fault latch before
-   * calling this entry point; the per-child marker keeps concurrent failed
-   * branches independently targetable.
+   * exists. Explicit retries bypass the owning loader's automatic archive-fault
+   * gate; the per-child marker keeps concurrent failed branches independently
+   * targetable.
    * Fire-and-forget semantics: ``true`` means "retry started", not "retry
    * succeeded" — the thunk owns the ready/failed outcome, and a repeat
    * failure re-enters the normal cooldown cycle.
@@ -1008,20 +1008,10 @@ export class LODGroupRegistry {
       for (const child of entry.children) {
         if (child.nodePath !== path || !child.ensureLoaded) continue;
         if (child.loading) return true; // retry already in flight
-        child.failed = false;
-        child.failedTick = undefined;
-        child.permanentlyFailed = false;
-        child.failureReason = undefined;
-        this.kickDeferredLoad(child);
-        return true;
+        return this.kickDeferredLoad(child, true);
       }
     }
     return false;
-  }
-
-  /** @deprecated Use ``retryLazyChildByNodePath``; retained for API compatibility. */
-  retryLazyChildByLeafPath(path: string): boolean {
-    return this.retryLazyChildByNodePath(path);
   }
 
   /**
@@ -1903,7 +1893,7 @@ export class LODGroupRegistry {
    * visibility.
    */
   private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
-    if (!isEffectivelyVisible(entry.groupObject)) return;
+    if (this.deps.hasArchiveFault?.() || !isEffectivelyVisible(entry.groupObject)) return;
     this.kickDeferredLoad(child);
   }
 
@@ -1915,31 +1905,37 @@ export class LODGroupRegistry {
    * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag clears and the load
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
-   * A loader-level archive fault bypasses the cooldown entirely. The per-child
-   * latch keeps concurrent failed branches individually addressable by Retry;
-   * both signals are cleared together for the selected path.
+   * The automatic caller separately gates loader-level archive faults. The
+   * per-child latch keeps concurrent failed branches individually addressable
+   * by Retry; an explicit retry clears that selected branch as it starts.
    */
-  private kickDeferredLoad(child: LODGroupChild): void {
-    if (
-      !child.ensureLoaded ||
-      child.loading ||
-      child.permanentlyFailed ||
-      this.deps.hasArchiveFault?.()
-    )
-      return;
+  private kickDeferredLoad(child: LODGroupChild, explicitRetry = false): boolean {
+    if (!child.ensureLoaded || child.loading || (!explicitRetry && child.permanentlyFailed)) {
+      return false;
+    }
     if (child.failed) {
-      if (child.failedTick == null) {
-        // First frame we observe the failure — start the cooldown clock.
-        child.failedTick = this.tick;
-        return;
+      if (explicitRetry) {
+        child.failed = false;
+        child.failedTick = undefined;
+      } else {
+        if (child.failedTick == null) {
+          // First frame we observe the failure — start the cooldown clock.
+          child.failedTick = this.tick;
+          return false;
+        }
+        if (this.tick - child.failedTick < FAILED_RETRY_FRAMES) return false;
+        // Cooldown elapsed — clear the failure and fall through to retry.
+        child.failed = false;
+        child.failedTick = undefined;
       }
-      if (this.tick - child.failedTick < FAILED_RETRY_FRAMES) return;
-      // Cooldown elapsed — clear the failure and fall through to retry.
-      child.failed = false;
-      child.failedTick = undefined;
+    }
+    if (explicitRetry) {
+      child.permanentlyFailed = false;
+      child.failureReason = undefined;
     }
     child.loading = true;
     child.ensureLoaded();
+    return true;
   }
 
   /**

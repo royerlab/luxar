@@ -458,6 +458,26 @@ describe('SceneLoader', () => {
       expect((sceneLoader as any)._updateInProgress).toBe(false);
     });
 
+    it('notifies again when a cleared archive fault recurs', () => {
+      const listener = vi.fn();
+      const firstFault = new ArchiveFaultError('first expiry', 'scene.zip');
+      const secondFault = new ArchiveFaultError('second expiry', 'scene.zip');
+      const internals = sceneLoader as unknown as {
+        reportArchiveFault(fault: ArchiveFaultError): void;
+        clearArchiveFaultForRetry(): void;
+      };
+      sceneLoader.onArchiveFault(listener);
+
+      internals.reportArchiveFault(firstFault);
+      internals.clearArchiveFaultForRetry();
+      internals.reportArchiveFault(secondFault);
+
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(listener).toHaveBeenNthCalledWith(1, firstFault);
+      expect(listener).toHaveBeenNthCalledWith(2, secondFault);
+      expect(sceneLoader.archiveFault).toBe(secondFault);
+    });
+
     it('can replay the latched archive fault to a late subscriber', () => {
       const fault = new ArchiveFaultError('archive unavailable', 'scene.zip');
       (sceneLoader as any)._archiveFault = fault;
@@ -1470,6 +1490,107 @@ describe('SceneLoader', () => {
       expect(ensureOtherLoaded).toHaveBeenCalledOnce();
       expect(otherDeferred.loading).toBe(true);
       expect(provider.getFailedPaths()).toEqual([]);
+    });
+
+    it('auto-retries an overlapping lazy loader once and clears the archive latch', async () => {
+      const camera = new THREE.Camera();
+      const registry = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        hasArchiveFault: () => sceneLoader.archiveFault !== null,
+      });
+      const ensureLoaded = vi.fn();
+      const deferred: LODGroupChild = {
+        object: new THREE.Group(),
+        nodePath: '/lod/leaf_1',
+        coverageFraction: 0.5,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+        ready: false,
+        failed: true,
+        permanentlyFailed: true,
+        failureReason: 'archive expired',
+        ensureLoaded,
+      };
+      registry.register({
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [
+          {
+            object: new THREE.Group(),
+            coverageFraction: 0,
+            positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+          },
+          deferred,
+        ],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      });
+      const internals = sceneLoader as unknown as {
+        lodGroupRegistry: LODGroupRegistry;
+        registry: { recordFailure(path: string, error: Error, kind?: string): void };
+        _archiveFault: ArchiveFaultError | null;
+      };
+      internals.lodGroupRegistry = registry;
+      internals.registry.recordFailure('/lod/leaf_1', new Error('network down'), 'Network');
+      internals._archiveFault = new ArchiveFaultError('archive expired', '/scene.zip');
+
+      await expect(sceneLoader.retryAllFailedLoaders({ onlyAutoRetryable: true })).resolves.toEqual(
+        { succeeded: ['/lod/leaf_1'], failed: [] }
+      );
+      expect(ensureLoaded).toHaveBeenCalledOnce();
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(deferred.permanentlyFailed).toBe(false);
+    });
+
+    it('deduplicates a path present in both loader and lazy failure sets', async () => {
+      const camera = new THREE.Camera();
+      const registry = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        hasArchiveFault: () => sceneLoader.archiveFault !== null,
+      });
+      const ensureLoaded = vi.fn();
+      registry.register({
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [
+          {
+            object: new THREE.Group(),
+            coverageFraction: 0,
+            positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+          },
+          {
+            object: new THREE.Group(),
+            nodePath: '/lod/leaf_1',
+            coverageFraction: 0.5,
+            positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+            ready: false,
+            failed: true,
+            permanentlyFailed: true,
+            ensureLoaded,
+          },
+        ],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      });
+      const internals = sceneLoader as unknown as {
+        lodGroupRegistry: LODGroupRegistry;
+        registry: { recordFailure(path: string, error: Error, kind?: string): void };
+        _archiveFault: ArchiveFaultError | null;
+      };
+      internals.lodGroupRegistry = registry;
+      internals.registry.recordFailure('/lod/leaf_1', new Error('network down'), 'Network');
+      internals._archiveFault = new ArchiveFaultError('archive expired', '/scene.zip');
+
+      await expect(sceneLoader.retryAllFailedLoaders()).resolves.toEqual({
+        succeeded: ['/lod/leaf_1'],
+        failed: [],
+      });
+      expect(ensureLoaded).toHaveBeenCalledOnce();
     });
   });
 

@@ -359,9 +359,11 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
   // failures; previously the no-loader branch silently discarded them.
   it('kicks the lazy child via the LOD registry, keeps the record, returns true', async () => {
     const retryLazyChildByNodePath = vi.fn().mockReturnValue(true);
+    const clearArchiveFault = vi.fn();
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
       lodGroupRegistry: { retryLazyChildByNodePath } as never,
+      clearArchiveFault,
     });
     ctx.registry.recordFailure(PATH, new Error('lazy load failed'));
 
@@ -369,6 +371,7 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
 
     expect(ok).toBe(true);
     expect(retryLazyChildByNodePath).toHaveBeenCalledWith(PATH);
+    expect(clearArchiveFault).toHaveBeenCalledOnce();
     // The record is KEPT across the kick — the fire-and-forget thunk owns the
     // outcome (success clears it; a repeat failure re-records). Deleting it
     // here reset autoRetryCount, so MAX_AUTO_RETRY_ATTEMPTS never bound a
@@ -401,15 +404,18 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
 
   it('falls through to the stale-entry cleanup when the registry has no lazy child', async () => {
     const retryLazyChildByNodePath = vi.fn().mockReturnValue(false);
+    const clearArchiveFault = vi.fn();
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
       lodGroupRegistry: { retryLazyChildByNodePath } as never,
+      clearArchiveFault,
     });
     ctx.registry.recordFailure(PATH, new Error('orphaned failure'));
 
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(false);
+    expect(clearArchiveFault).not.toHaveBeenCalled();
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false); // stale entry cleaned
   });
 

@@ -81,9 +81,9 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
  * pool, and/or drop depth-sort state). Shared between the gsplats, points, lines
  * and mesh defer paths so the ready/failed/loading state machine and the
  * abort-discard error handling live in exactly one place. Container-wide
- * archive faults additionally latch retry-addressable leaf children as
- * permanently failed so the per-frame registry cannot retry a dataset already
- * known to be unreadable.
+ * archive faults latch every lazy child as permanently failed so each missing
+ * branch remains independently addressable after the owning loader stops
+ * automatic deferred kicks.
  *
  * **Lazy LEAF levels never join the per-slice update sweep.** ``runExpensive``
  * commits independently and the registry — not the sweep — drives their reload

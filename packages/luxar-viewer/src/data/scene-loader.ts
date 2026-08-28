@@ -260,11 +260,12 @@ export class SceneLoader {
   // Serialized update queue: prevents concurrent updateView calls from corrupting shared buffers
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
-  // Terminal for this loader: loadScene is one-shot, and dataset switches create
-  // a fresh SceneLoader through SceneLoaderManager.createLoaderAsync. Only
-  // bootstrapStandalone registers the notifier backend, so an embedded host sees no
-  // built-in message; hosts observe the fault through onArchiveFault (re-emitted by
-  // LuxarApp as dataset-fault) instead (#2280).
+  // Latched until an explicit retry: loadScene is one-shot, and dataset switches
+  // create a fresh SceneLoader through SceneLoaderManager.createLoaderAsync. A
+  // retry clears this dataset-wide gate so updates can resume; a recurring fault
+  // latches and notifies again. Only bootstrapStandalone registers the notifier
+  // backend, so embedded hosts observe onArchiveFault (re-emitted by LuxarApp as
+  // dataset-fault) instead (#2280).
   private _archiveFault: ArchiveFaultError | null = null;
   private archiveFaultListeners = new Set<(error: ArchiveFaultError) => void>();
   /**
@@ -466,13 +467,14 @@ export class SceneLoader {
     return this._sceneGraph;
   }
 
-  /** Terminal archive fault for this loader, or null while updates remain usable. */
+  /** Latched archive fault for this loader, or null while updates remain usable. */
   get archiveFault(): ArchiveFaultError | null {
     return this._archiveFault;
   }
 
   /**
-   * Subscribe to the loader's one-shot terminal archive fault.
+   * Subscribe to archive-fault episodes for this loader. An explicit retry
+   * clears the latch; if the archive fails again, listeners are notified again.
    * Listener exceptions are logged and do not propagate to the caller.
    *
    * @param options.replayCurrent Replay the current fault immediately when one is latched.
@@ -1896,6 +1898,7 @@ export class SceneLoader {
     return {
       registry: this.registry,
       lodGroupRegistry: this.lodGroupRegistry,
+      clearArchiveFault: () => this.clearArchiveFaultForRetry(),
       rootGroup: this.rootGroup,
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       processPointsData: (path, data) => this.processPointsData(path, data),
@@ -1990,8 +1993,13 @@ export class SceneLoader {
           else failed.push(path);
         }
       }
-      if (loaderPaths.length > 0) {
-        const loaderResult = await retryAllFailedLoadersUnlocked(loaderPaths, this.makeRetryCtx());
+      const lazyPathSet = new Set(lazyPaths);
+      const distinctLoaderPaths = loaderPaths.filter((path) => !lazyPathSet.has(path));
+      if (distinctLoaderPaths.length > 0) {
+        const loaderResult = await retryAllFailedLoadersUnlocked(
+          distinctLoaderPaths,
+          this.makeRetryCtx()
+        );
         succeeded.push(...loaderResult.succeeded);
         failed.push(...loaderResult.failed);
       }

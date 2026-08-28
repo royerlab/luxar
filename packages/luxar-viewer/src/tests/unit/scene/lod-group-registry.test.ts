@@ -1708,10 +1708,22 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(ensureLoaded).not.toHaveBeenCalled();
     expect(children[1].failed).toBe(true);
     expect(children[1].failedTick).toBeUndefined();
+  });
 
-    hasArchiveFault = false;
-    expect(reg.retryLazyChildByNodePath('/g/child_1')).toBe(true);
-    expect(ensureLoaded).toHaveBeenCalledOnce();
+  it('does not auto-retry a permanently failed child after the loader fault clears', () => {
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    children[1].failed = true;
+    children[1].permanentlyFailed = true;
+    const reg = makeRegistry();
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    for (let i = 0; i < 300; i++) reg.evaluatePerFrame();
+
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    expect(children[1].failed).toBe(true);
+    expect(children[1].failedTick).toBeUndefined();
   });
 
   it('clear() resets the monotonic tick', () => {
@@ -2078,7 +2090,15 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
   });
 
   it('clears a permanent failure latch for an explicit retry', () => {
-    const reg = makeRegistry();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => true
+    );
     const ensureLoaded = vi.fn();
     const child = makeLazyChild(0.5, ensureLoaded);
     child.nodePath = '/g/child_1';

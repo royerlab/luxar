@@ -51,6 +51,8 @@ export interface RetryCtx {
    * Optional so headless/test ctxs without a registry keep working.
    */
   lodGroupRegistry?: LODGroupRegistry | null;
+  /** Clear the owning SceneLoader's archive latch before a lazy retry. */
+  clearArchiveFault?: () => void;
   rootGroup: THREE.Group | null;
   deriveNodeViewState(
     path: string,
@@ -153,6 +155,7 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       // (load-{points,lines,gsplats}-node.ts); on a repeat failure
       // `recordFailure` preserves the accumulated counter.
       if (ctx.lodGroupRegistry?.retryLazyChildByNodePath(path)) {
+        ctx.clearArchiveFault?.();
         log.info(Modules.SCENE_LOADER, `Retry kicked for lazy LOD level: ${path}`);
         return true;
       }
