@@ -1407,6 +1407,12 @@ describe('LuxarApp', () => {
       (foreignLoader as any)._archiveFault = foreignFault;
 
       expect(app.getDatasetFault()).toEqual({ src: SRC, error: fault });
+
+      app.dispose();
+
+      expect(app.getDatasetFault()).toBeNull();
+      (loader as any).notifyArchiveFault(fault);
+      expect(onFault).toHaveBeenCalledOnce();
     });
 
     it('replays a fault latched before app wiring and replaces the listener on switch', async () => {
