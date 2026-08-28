@@ -46,8 +46,8 @@ def demo_source_fingerprint(
         else Path(package_root).resolve()
     )
     module_path = Path(module_file).resolve()
-    fingerprint_root = Path(os.path.commonpath((root.parent, module_path)))
     try:
+        fingerprint_root = Path(os.path.commonpath((root.parent, module_path)))
         sources = fingerprint_imported_sources(
             fingerprint_root,
             module_path,

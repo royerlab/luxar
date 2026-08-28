@@ -122,15 +122,21 @@ def test_fingerprint_follows_transitive_relative_demo_imports(tmp_path: Path) ->
 @pytest.mark.parametrize(
     ("demo", "dependencies"),
     [
-        ("demo_dmri_tractography.py", {"_cinematic_camera.py"}),
-        ("demo_ocean_currents_earth.py", {"_cinematic_camera.py", "_globe_common.py"}),
-        ("demo_global_rivers_earth.py", {"_globe_common.py"}),
+        ("demo_dmri_tractography.py", {"demos/_cinematic_camera.py"}),
+        (
+            "demo_ocean_currents_earth.py",
+            {"demos/_cinematic_camera.py", "demos/_globe_common.py"},
+        ),
+        ("demo_global_rivers_earth.py", {"demos/_globe_common.py"}),
         (
             "demo_biodiversity_planetary_scale.py",
-            {"_cinematic_camera.py", "_globe_common.py"},
+            {"demos/_cinematic_camera.py", "demos/_globe_common.py"},
         ),
-        ("demo_gsplats_3d_cryoem_virus.py", {"_lod_policy.py"}),
-        ("demo_particle_collision_animated.py", {"demo_particle_collision.py"}),
+        ("demo_gsplats_3d_cryoem_virus.py", {"demos/_lod_policy.py"}),
+        (
+            "demo_particle_collision_animated.py",
+            {"demos/demo_particle_collision.py"},
+        ),
     ],
 )
 def test_real_demo_source_graph_includes_shared_scene_writers(
@@ -140,7 +146,7 @@ def test_real_demo_source_graph_includes_shared_scene_writers(
     demos_root = package_root / "demos"
 
     sources = imported_source_files(demos_root / demo, (package_root.parent,))
-    source_names = {path.name for path in sources}
+    source_names = {path.relative_to(package_root).as_posix() for path in sources}
 
     assert dependencies <= source_names
 
