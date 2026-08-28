@@ -435,13 +435,13 @@ preserves additive rungs and lowers multiple substitutive levels into a
 | pass through `add_gsplats_from_data` | `gsplats_cryoem_virus`, `gsplats_milkyway_dust`, `gsplats_celegans`, `gsplats_dapi`, `gsplats_multichannel`, `gsplats_nexrad_supercell`, `gsplats_opencell_map4` |
 | graft artifact | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology`, `desi_galaxies` |
 
-Digest-confirmed copies show structural divergence for five pass-through
+Digest-confirmed copies show structural divergence for two pass-through
 datasets: `cryoem_virus` and `milkyway_dust` change from flat to four
-substitutive levels with additive rungs, while `dapi`, `multichannel`, and
-`opencell_map4` change from flat to additive ladders. Together with the three
-grafted datasets, the confirmed armed set is therefore **eight**. The hosted
-topology of `celegans` and `nexrad_supercell` remains unclassified; inspect a
-digest-confirmed copy before counting either one. Check the scene-build call as
+substitutive levels with additive rungs. Of the grafted datasets, only
+`cmu1_pathology` is digest-confirmed on both sides, so the confirmed armed set is
+**three**. The hosted topology of `flylight_mcfo_63x`, `desi_galaxies`,
+`celegans`, and `nexrad_supercell` remains unclassified; inspect a
+digest-confirmed copy before counting any of them. Check the scene-build call as
 well as the archive before treating a divergence as a structural risk.
 
 #### Scope: this is not a cmu1 quirk
@@ -474,7 +474,7 @@ currently no dataset carrying the field whose two generations agree.
 here to size the download, not the risk:
 
 - `cells3d` at **2.25x** is flat -> flat. Only the splat count moved (20,323 vs
-  41,975); both sides are 2 element nodes.
+  41,975); both scenes have 2 element nodes.
 - `cryoem_virus` at **1.44x** is flat -> `kind=lod` with 4 substitutive levels.
 - `cmu1` at **2.44x** is flat leaf -> partition + 64 lod groups.
 
