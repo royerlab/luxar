@@ -69,8 +69,10 @@ each entry is there to prevent a _silent_ wrong result rather than an error:
   nothing. Guessing wrong renders a transposed scene that still looks like a
   scene.
 - `setVisible()` / `isVisible()` toggle the root's `visible` rather than
-  detaching it, so hiding keeps the caches and any in-flight streaming and
-  re-showing costs no refetch.
+  detaching it, so caches and in-flight fetches survive. Lazy LOD loads pause
+  while hidden and resume on the next `update()` after re-showing; under
+  GPU-budget pressure, resident levels in a hidden layer are evicted before
+  visible ones.
 - `setExposure()` / `getExposure()` scale exposure relative to what the scene was
   authored with. A scene's authored exposure was tuned against whichever post
   chain authored it; a host's is a different one. It composes against the

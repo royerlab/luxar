@@ -554,10 +554,10 @@ export class LuxarLayer {
   /**
    * Show or hide the layer's geometry.
    *
-   * Toggles `visible` on the root rather than detaching it, so the scene, its
-   * caches, and any in-flight streaming survive — re-showing is instant and
-   * costs no refetch. A hidden root is skipped by the renderer, but `update()`
-   * keeps running, so LOD state stays current for whenever it comes back.
+   * Toggles `visible` on the root rather than detaching it, so caches and
+   * in-flight fetches survive. Lazy LOD loads pause while hidden and resume on
+   * the next `update()` after re-showing; under GPU-budget pressure, resident
+   * levels in a hidden layer are evicted before visible ones.
    */
   setVisible(visible: boolean): void {
     this.visible = visible;
