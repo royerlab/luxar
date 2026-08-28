@@ -173,6 +173,71 @@ pass `allowLinks: false` to observe or replace navigation without allowing it.
 > index it against `hitNodeName`, which equals `nodeName` when the node is not
 > partitioned.
 
+## 🧩 Layer mode (Luxar inside a host's own renderer)
+
+`LuxarApp` embeds _the viewer_. `LuxarLayer` is for the other case: the host
+already has a Three.js scene and wants Luxar's data as one more thing in it,
+sharing a single WebGL context, camera, and set of controls.
+
+```ts
+import { LuxarLayer } from '@royerlab/luxar-viewer';
+
+const layer = new LuxarLayer({
+  renderer, // host-owned
+  getCamera: () => camera, // live getter
+  getViewportSize: () => renderer.getSize(new THREE.Vector2()),
+  scene, // host-owned
+});
+await layer.load('https://example.com/imaging.luxar.zarr');
+
+function animate() {
+  requestAnimationFrame(animate);
+  layer.update(); // BEFORE the host renders
+  renderer.render(scene, camera);
+}
+
+await layer.dispose();
+```
+
+The layer owns no renderer, camera, controls, post-processing, or UI — it
+contributes a `THREE.Group` plus the per-frame LOD and depth-sort bookkeeping.
+The host must call `update()` each frame before rendering, `resize()` after a
+viewport or camera-projection change, and pass `requestRender` if it renders
+on demand rather than continuously. `renderOrder` defaults to 10 and is stamped
+onto every nested Luxar Group; host transparent groups should use explicit
+lower/higher values. On WebGL context loss, call `handleContextLost()` so Luxar
+backs off its GPU budget; after rebuilding the host renderer and post-processing,
+call `handleContextRestored()`.
+
+nD navigation coalesces, so a host can drive it from a slider at frame rate:
+
+```ts
+const t = layer.findDimension('time');
+if (t !== null) {
+  layer.prefetchDimensionValue(t, frame + 1); // warm the next slice
+  void layer.setDimensionValue(t, frame); // don't await during playback
+}
+```
+
+`alignTo(matrix)` places the data in the host's world space (for a host that
+normalizes its own coordinates); it may be called before or after `load()`.
+Read `getDimensionNames()` rather than assuming a centre-column order — producers
+disagree, and guessing renders a silently transposed scene. `setVisible()` hides
+without discarding caches or in-flight fetches; lazy LOD loads resume on the next
+update after re-showing, while hidden resident levels are preferred for eviction
+under GPU-budget pressure. `setExposure()` scales exposure relative to the scene's
+authored value, which a host needs because that value was tuned against a different
+post chain than its own. On a Mesh in the default `opaque` mode, this scales cutout
+coverage rather than brightness: values below `alphaCutoff` discard the surface,
+while `normal` blending provides smooth transparency.
+
+Note that a scene's `tone_mapping` does **not** apply in layer mode: Luxar
+tone-maps in a post-processing pass the layer does not own, so a host wanting a
+filmic rolloff over additive geometry must set `renderer.toneMapping` itself.
+
+Same single-instance rule as `LuxarApp`, and the two are mutually exclusive. See
+[`src/core/layer/README.md`](src/core/layer/README.md) for the full contract.
+
 ### What's NOT supported in v1
 
 - **Multiple viewers on the same page.** `ThemeManager`, the worker pool, and several UI components are still page-singletons. Mounting two `LuxarApp` instances at once will share state.
