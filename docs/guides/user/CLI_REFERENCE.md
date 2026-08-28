@@ -329,7 +329,9 @@ it prints the `info` report (suppress with `--no-info`); for a scene it notes th
 the gsplat report does not apply. It then prints a diagnosis and exits non-zero
 while a problem is still standing — so it can gate a pipeline. Pass `--fix` to
 repair an uncompressed `.gsplats.zarr` or `.luxar.zarr` directory in place (unpack
-a `.zip` or `.tar.gz` first), or `--json` to write the findings out for a machine.
+a `.zip` or `.tar.gz` first), `--full-provenance` to include the complete nested
+fitting record in the info report, or `--json` to write the findings out for a
+machine.
 
 It currently diagnoses a `kind=partition` whose split planes (`bsp_tree`) are
 missing, or are present but disagree with where the parts actually sit. Without
