@@ -499,14 +499,14 @@ Three authoring paths have different outcomes from the same archive change:
 | `add_gsplats_from_file` or `extract_shipped_scene` | grafted scene node count changes with the artifact |
 | `save_with_lod(recipe=...)`, then graft that output | structure is authored locally by the recipe |
 
-Measured on this corpus:
+Applied to the current demo code:
 
 - **`h2afva_timelapse`** and **`h2afva_stack`** graft, so flattening changes
   their request topology as well as their archive bytes.
 - **`codex_pancreas`** fits locally through `save_with_lod(recipe="adaptive")`
   and grafts its own output, so its groups are authored rather than inherited.
-  Changing an input archive would not move them; changing the recipe's
-  `max_elements` would.
+  Its structure changes through recipe settings such as `max_elements`, not by
+  flattening a separately supplied artifact.
 - **`cmu1_pathology`** grafts verbatim, so it inherits whichever generation is
   in cache (3.10): flat from the in-repo copy, partitioned + laddered from the
   hosted one. Flattening the hosted archives is a real win *and* collapses that
