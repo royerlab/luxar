@@ -65,8 +65,8 @@ future frame when progressive geometry, a lazy LOD level, or a retry commits asy
 | `setExposure(multiplier)` / `getExposure()` | Scale opacity relative to authored values. |
 | `getBounds()` | Return world-space bounds for the current root, or `null`. |
 | `alignTo(matrix)` | Place the root in host world space before or after `load()`. |
-| `onDatasetFault(listener)` | Subscribe to `{ src, error }` archive faults, replaying the current fault immediately; returns an unsubscribe function. |
-| `getDatasetFault()` | Return the current `{ src, error }` archive fault, or `null` before one occurs or after replacement or disposal. |
+| `onDatasetFault(listener)` | Subscribe to `DatasetFaultPayload` archive faults, replaying the current fault immediately; returns an unsubscribe function and throws after `dispose()`. |
+| `getDatasetFault()` | Return the current `DatasetFaultPayload`, or `null` before a fault occurs, once a new `load()` begins, and after disposal. No callback fires when a fault clears, so a host that renders recoverable state must poll this method rather than latch the callback result. |
 | `handleContextLost()` / `handleContextRestored()` | Re-arm Luxar-owned GPU resources around host context recovery. |
 | `dispose()` | Asynchronously release the layer and process-wide Luxar resources. |
 
