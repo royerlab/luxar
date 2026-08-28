@@ -43,6 +43,12 @@ construction, slice updates, and retry-after-failure.
   child is in flight. Completion relinks each slot's children into the same
   authored position without THREE add/remove events, leaving the final hierarchy
   identical to the serial walk and preserving lifecycle-based renderer tracking.
+- **Memory-aware eager admission.** The eight-wide slot pool remains the latency
+  bound for small siblings. Line leaves additionally reserve a conservative
+  working-set estimate from one scene-wide 256 MiB gate keyed by `NodeBuildCtx`,
+  so nested parent pools cannot multiply several million-vertex decode,
+  projection, staging, and texture allocations. Oversized leaves still make
+  progress alone; groups reserve no bytes, avoiding recursive double charging.
 - **Three-geometry symmetry.** `load-points-node.ts`,
   `load-lines-node.ts`, and `load-gsplats-node.ts` follow the same
   shape: `createXLoader` helper →

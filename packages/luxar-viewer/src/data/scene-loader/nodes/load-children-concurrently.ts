@@ -14,6 +14,74 @@ import type { NodeBuildCtx } from './build-ctx';
 // stays below the global 64-request fetch gate while collapsing waterfalls.
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
+const EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024;
+const ESTIMATED_LINE_WORKING_SET_BYTES_PER_VERTEX = 320;
+
+interface WorkingSetWaiter {
+  bytes: number;
+  resolve: (release: () => void) => void;
+}
+
+class WorkingSetGate {
+  private activeBytes = 0;
+  private readonly waiters: WorkingSetWaiter[] = [];
+
+  acquire(estimatedBytes: number): Promise<() => void> {
+    const bytes = Math.min(EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES, Math.max(0, estimatedBytes));
+    if (bytes === 0) return Promise.resolve(() => undefined);
+
+    return new Promise((resolve) => {
+      this.waiters.push({ bytes, resolve });
+      this.drain();
+    });
+  }
+
+  private drain(): void {
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters[0];
+      if (
+        this.activeBytes > 0 &&
+        this.activeBytes + waiter.bytes > EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES
+      ) {
+        return;
+      }
+
+      this.waiters.shift();
+      this.activeBytes += waiter.bytes;
+      let released = false;
+      waiter.resolve(() => {
+        if (released) return;
+        released = true;
+        this.activeBytes -= waiter.bytes;
+        this.drain();
+      });
+    }
+  }
+}
+
+const workingSetGates = new WeakMap<NodeBuildCtx, WorkingSetGate>();
+
+function workingSetGateFor(ctx: NodeBuildCtx): WorkingSetGate {
+  let gate = workingSetGates.get(ctx);
+  if (!gate) {
+    gate = new WorkingSetGate();
+    workingSetGates.set(ctx, gate);
+  }
+  return gate;
+}
+
+function estimateWorkingSetBytes(node: SceneNode): number {
+  if (node.type !== 'lines') return 0;
+  const nVertices = node.attrs.n_vertices;
+  if (typeof nVertices !== 'number' || !Number.isFinite(nVertices) || nVertices <= 0) return 0;
+
+  // A loaded line vertex can coexist in the accumulator's old+grown buffers,
+  // worker projection outputs, main-thread staging, and texture-backed GPU
+  // geometry. 320 B/vertex is intentionally conservative: admission only
+  // controls transient overlap and never changes the stored or rendered data.
+  return Math.ceil(nVertices) * ESTIMATED_LINE_WORKING_SET_BYTES_PER_VERTEX;
+}
+
 /**
  * Signature of the recursive scene-graph walker. Injected at the call site to
  * break the otherwise-cyclic import with `load-scene-nodes.ts`; a static
@@ -74,6 +142,7 @@ export async function loadChildrenConcurrently(
   let nextIndex = 0;
   let failed = false;
   let firstError: unknown;
+  const workingSetGate = workingSetGateFor(ctx);
 
   const worker = async (): Promise<void> => {
     while (!failed) {
@@ -81,6 +150,11 @@ export async function loadChildrenConcurrently(
       if (index >= sceneChildren.length) return;
       const child = sceneChildren[index];
       const slot = slots[index];
+      const releaseWorkingSet = await workingSetGate.acquire(estimateWorkingSetBytes(child));
+      if (failed) {
+        releaseWorkingSet();
+        return;
+      }
       try {
         const childLoc = parentLoc.resolve(child.path.slice(1));
         await loadChild(child, slot, childLoc, ctx);
@@ -88,6 +162,7 @@ export async function loadChildrenConcurrently(
         if (!failed) firstError = error;
         failed = true;
       } finally {
+        releaseWorkingSet();
         replaceSlot(parentThree, slot, (object) =>
           options.configureLoadedChild?.(object, child, index)
         );

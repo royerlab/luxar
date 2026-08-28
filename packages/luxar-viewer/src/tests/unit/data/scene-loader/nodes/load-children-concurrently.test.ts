@@ -17,6 +17,16 @@ function makeChildren(count: number): SceneNode[] {
   }));
 }
 
+function makeLineChildren(count: number, nVertices: number): SceneNode[] {
+  return Array.from({ length: count }, (_, index) => ({
+    path: `/group/lines_${index}`,
+    type: 'lines',
+    attrs: { n_vertices: nVertices },
+    hasSpatialIndex: true,
+    children: [],
+  }));
+}
+
 function makeStubLoc() {
   return { resolve: vi.fn(() => makeStubLoc()) } as never;
 }
@@ -71,6 +81,92 @@ describe('loadChildrenConcurrently', () => {
 
     expect(removed).not.toHaveBeenCalled();
     expect(parent.children[0].parent).toBe(parent);
+  });
+
+  it('serializes million-vertex line siblings to bound their combined working set', async () => {
+    const children = makeLineChildren(3, 1_000_000);
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async (child) => {
+        started.push(child.path);
+        await new Promise<void>((resolve) => releases.push(resolve));
+      }
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    releases.shift()?.();
+    await loadPromise;
+  });
+
+  it('keeps small line siblings at the existing eight-wide concurrency', async () => {
+    const children = makeLineChildren(EAGER_CHILD_LOAD_CONCURRENCY + 1, 10_000);
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async (child) => {
+        started.push(child.path);
+        await gate;
+      }
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(EAGER_CHILD_LOAD_CONCURRENCY));
+    release();
+    await loadPromise;
+    expect(started).toEqual(children.map((child) => child.path));
+  });
+
+  it('shares the working-set budget across nested parent pools', async () => {
+    const rootChildren = makeChildren(2);
+    rootChildren[0].children = makeLineChildren(1, 1_000_000);
+    rootChildren[1].children = makeLineChildren(1, 1_000_000).map((child) => ({
+      ...child,
+      path: '/group/lines_nested_1',
+    }));
+    const ctx = makeTestNodeBuildCtx();
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    const loadNode = async (
+      node: SceneNode,
+      parent: THREE.Object3D,
+      loc: ReturnType<typeof makeStubLoc>
+    ): Promise<void> => {
+      if (node.type === 'group') {
+        await loadChildrenConcurrently(node.children ?? [], parent, loc, ctx, loadNode as never);
+        return;
+      }
+      started.push(node.path);
+      await new Promise<void>((resolve) => releases.push(resolve));
+    };
+
+    const loadPromise = loadChildrenConcurrently(
+      rootChildren,
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadNode as never
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    releases.shift()?.();
+    await loadPromise;
   });
 
   it('stops queued work, settles active loads, and removes slots after an unexpected error', async () => {
