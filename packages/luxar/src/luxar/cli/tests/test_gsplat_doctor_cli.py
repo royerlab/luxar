@@ -51,6 +51,27 @@ def _partition_without_split_planes(tmp: Path) -> Path:
     return path
 
 
+def _partition_with_nested_provenance(tmp: Path) -> Path:
+    path = _partition_without_split_planes(tmp)
+    root = zc_open_group(str(path), mode="r+")
+    root.require_group("fitting").attrs["part_provenance"] = [
+        {
+            "fitting": {
+                "part_provenance": [{"coordinate": 0.0, "fitting": {"psnr_db": 40.0}}]
+            },
+            "coordinate": 0.0,
+        },
+        {
+            "fitting": {
+                "part_provenance": [{"coordinate": 1.0, "fitting": {"psnr_db": 41.0}}]
+            },
+            "coordinate": 1.0,
+        },
+    ]
+    zc_consolidate(root)
+    return path
+
+
 def _scene_without_split_planes(tmp: Path) -> Path:
     from luxar import Dimensions, LuxarZarrCompiler
 
@@ -178,6 +199,28 @@ def test_doctor_prints_info_before_diagnosing_a_gsplat_store() -> None:
             "Diagnosing:"
         )
         assert "no split planes" in result.stdout
+
+
+def test_doctor_summarizes_nested_provenance_unless_full_is_requested() -> None:
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_with_nested_provenance(Path(tmp))
+
+        summary = runner.invoke(app, ["gsplat", "doctor", str(path)])
+        assert summary.exit_code == 1, summary.stdout
+        assert (
+            "part_provenance: 2 parts, nested component records (2 levels)"
+            in summary.stdout
+        )
+        assert "{'fitting':" not in summary.stdout
+
+        full = runner.invoke(app, ["gsplat", "doctor", str(path), "--full-provenance"])
+        assert full.exit_code == 1, full.stdout
+        assert "{'fitting':" in full.stdout
+
+    help_result = runner.invoke(app, ["gsplat", "doctor", "--help"])
+    assert help_result.exit_code == 0, help_result.stdout
+    assert "--full-provenance" in help_result.stdout
 
 
 def test_doctor_writes_a_json_report() -> None:
