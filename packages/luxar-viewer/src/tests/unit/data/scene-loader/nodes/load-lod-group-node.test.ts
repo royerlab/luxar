@@ -1182,6 +1182,42 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     });
   }
 
+  it('shares eager line admission across sibling substitutive ladders', async () => {
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      started.push(child.path);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+    });
+
+    const nodes = Array.from({ length: 2 }, (_, index) => {
+      const child = makeLinesChildNode(`/lod_${index}/child_0`, 0);
+      child.attrs.n_vertices = 1_630_000;
+      child.attrs.n_segments = 1_280_000;
+      child.attrs.ndim = 3;
+      const node = makeLodGroupNode([child], { default_level: 0, display_type: 'lines' });
+      node.path = `/lod_${index}`;
+      return node;
+    });
+
+    const loadPromise = Promise.all(
+      nodes.map((node) =>
+        loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock)
+      )
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    releases.shift()?.();
+    await loadPromise;
+  });
+
   it('defers a non-default lines child via the lines cheap split (not eager)', async () => {
     attachStubChildren();
     const reg = makeReg();
