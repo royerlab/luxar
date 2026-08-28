@@ -98,6 +98,7 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
 
   log.info(Modules.SCENE_LOADER, `Retrying failed loader: ${path}`);
 
+  let releaseWorkingSet = (): void => undefined;
   try {
     // Look up the per-node attrs so retry applies the same
     // extend_to_all / nd_transform adjustments as the main update path.
@@ -105,7 +106,8 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
     // region for transformed or extended nodes.
     const obj = ctx.rootGroup?.getObjectByName(path) as
       THREE.Object3D | THREE.Mesh | THREE.Points | undefined;
-    const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
+    const attrs = obj?.userData?.attrs as
+      (LineWorkingSetNode['attrs'] & { extend_to_all?: string[] }) | undefined;
 
     // Defensive guard — only clear `failedLoaders` if the named object
     // still exists in the scene. The placeholder model should make
@@ -130,6 +132,13 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
 
     const kind = registry.getLoaderType(path);
     if (kind) {
+      if (kind === 'lines' && attrs) {
+        releaseWorkingSet = await ctx.lineWorkingSetGate.acquire({
+          path,
+          type: 'lines',
+          attrs,
+        });
+      }
       const descriptor = GEOMETRY_DESCRIPTORS[kind];
       const derived = ctx.deriveNodeViewState(path, attrs, {
         applyPartialExtendTolerance: descriptor.applyPartialExtendTolerance,
@@ -177,6 +186,8 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       `Retry failed for ${path} (attempt ${retryCount}): ${(error as Error).message}`
     );
     return false;
+  } finally {
+    releaseWorkingSet();
   }
 }
 
@@ -193,25 +204,14 @@ export async function retryAllFailedLoadersUnlocked(
   const succeeded: string[] = [];
   const failed: string[] = [];
 
-  const results: Array<{ path: string; success: boolean } | undefined> = new Array(
-    failedPaths.length
-  );
+  const results: Array<{ path: string; success: boolean }> = new Array(failedPaths.length);
   let nextIndex = 0;
   const worker = async (): Promise<void> => {
     while (true) {
       const index = nextIndex++;
       if (index >= failedPaths.length) return;
       const path = failedPaths[index];
-      const object = ctx.rootGroup?.getObjectByName(path);
-      const attrs = object?.userData?.attrs as LineWorkingSetNode['attrs'] | undefined;
-      const node: LineWorkingSetNode | null =
-        attrs && ctx.registry.linesLoaders.has(path) ? { path, type: 'lines', attrs } : null;
-      const releaseWorkingSet = node ? await ctx.lineWorkingSetGate.acquire(node) : () => undefined;
-      try {
-        results[index] = { path, success: await retryFailedLoaderUnlocked(path, ctx) };
-      } finally {
-        releaseWorkingSet();
-      }
+      results[index] = { path, success: await retryFailedLoaderUnlocked(path, ctx) };
     }
   };
 
@@ -219,7 +219,6 @@ export async function retryAllFailedLoadersUnlocked(
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   for (const result of results) {
-    if (!result) throw new Error('Retry worker exited without recording a result');
     const { path, success } = result;
     if (success) {
       succeeded.push(path);

@@ -58,9 +58,9 @@ construction, slice updates, and retry-after-failure.
   renderer's GPU budget also accounts for them. Admission covers eager pool
   siblings, partition parts, eager LOD rungs, and registered line retries;
   deferred lazy LOD activation remains outside this gate. Retry batches also
-  use the same eight-slot cap as eager sibling loads. Points, gsplats, mesh, and groups reserve no bytes:
-  their eager concurrency remains slot-only until equivalent working-set models
-  are validated.
+  use the same eight-slot cap as eager sibling loads. Points, gsplats, mesh, and
+  groups reserve no bytes: their eager concurrency remains slot-only until
+  equivalent working-set models are validated.
 - **Three-geometry symmetry.** `load-points-node.ts`,
   `load-lines-node.ts`, and `load-gsplats-node.ts` follow the same
   shape: `createXLoader` helper →

@@ -102,6 +102,7 @@ function estimateWorkingSetBytes(node: LineWorkingSetNode): number {
   return vertexCount * vertexBytes + segmentCount * ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES;
 }
 
+/** Create a session gate that snapshots its heap-derived budget when constructed. */
 export function createLineWorkingSetGate(): LineWorkingSetGate {
   return new WorkingSetGate(
     computeWorkingSetBudgetBytes() ?? EAGER_CHILD_LOAD_MEMORY_FALLBACK_BYTES

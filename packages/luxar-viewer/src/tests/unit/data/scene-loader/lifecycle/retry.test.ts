@@ -202,6 +202,13 @@ describe('retryFailedLoaderUnlocked — Points loader success path', () => {
 });
 
 describe('retryFailedLoaderUnlocked — Lines loader paths', () => {
+  const oversizedLineAttrs = {
+    type: 'lines',
+    n_vertices: 1_600_000,
+    n_segments: 1_600_000,
+    ndim: 3,
+  };
+
   it('runs process → commit on a successful fetch', async () => {
     const linesData = { segmentCount: 4 } as unknown as LoadedLinesData;
     const stagedFromProcess = { path: PATH } as never;
@@ -241,6 +248,71 @@ describe('retryFailedLoaderUnlocked — Lines loader paths', () => {
     expect(ctx.spies.processLinesData).toHaveBeenCalledTimes(1);
     expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
+  });
+
+  it('waits for shared line working-set admission before a single retry', async () => {
+    let settleRetry!: (data: LoadedLinesData) => void;
+    const updateView = vi.fn(
+      () =>
+        new Promise<LoadedLinesData>((resolve) => {
+          settleRetry = resolve;
+        })
+    );
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH, oversizedLineAttrs),
+    });
+    ctx.registry.registerLinesLoader(PATH, makeLinesLoader(updateView));
+    ctx.registry.recordFailure(PATH, new Error('allocation failed'));
+
+    const releaseEagerAdmission = await ctx.lineWorkingSetGate.acquire({
+      path: '/eager-line',
+      type: 'lines',
+      attrs: oversizedLineAttrs,
+    });
+    const retry = retryFailedLoaderUnlocked(PATH, ctx);
+
+    await Promise.resolve();
+    expect(updateView).not.toHaveBeenCalled();
+
+    releaseEagerAdmission();
+    await vi.waitFor(() => expect(updateView).toHaveBeenCalledTimes(1));
+    settleRetry({ segmentCount: 0 } as unknown as LoadedLinesData);
+    await expect(retry).resolves.toBe(true);
+  });
+
+  it('releases line working-set admission when a retry fails', async () => {
+    const failingPath = '/line-failing';
+    const nextPath = '/line-next';
+    const root = new THREE.Group();
+    for (const path of [failingPath, nextPath]) {
+      const mesh = new THREE.Mesh();
+      mesh.name = path;
+      mesh.userData.attrs = oversizedLineAttrs;
+      root.add(mesh);
+    }
+
+    let settleNext!: (data: LoadedLinesData) => void;
+    const nextUpdateView = vi.fn(
+      () =>
+        new Promise<LoadedLinesData>((resolve) => {
+          settleNext = resolve;
+        })
+    );
+    const ctx = makeRetryCtx({ rootGroup: root });
+    ctx.registry.registerLinesLoader(
+      failingPath,
+      makeLinesLoader(vi.fn().mockRejectedValue(new Error('still cannot allocate')))
+    );
+    ctx.registry.registerLinesLoader(nextPath, makeLinesLoader(nextUpdateView));
+    ctx.registry.recordFailure(failingPath, new Error('allocation failed'));
+    ctx.registry.recordFailure(nextPath, new Error('allocation failed'));
+
+    await expect(retryFailedLoaderUnlocked(failingPath, ctx)).resolves.toBe(false);
+    const nextRetry = retryFailedLoaderUnlocked(nextPath, ctx);
+
+    await vi.waitFor(() => expect(nextUpdateView).toHaveBeenCalledTimes(1));
+    settleNext({ segmentCount: 0 } as unknown as LoadedLinesData);
+    await expect(nextRetry).resolves.toBe(true);
   });
 });
 
