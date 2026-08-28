@@ -509,13 +509,33 @@ def create_luxar_scene(
     that is a ``kind=partition`` tree with no flat matrix form, so
     ``add_gsplats_from_file`` is the entry point that grafts one whole.
 
-    Grafting is deliberately shape-agnostic, because the two paths do not agree
-    yet: the hosted archives were written before the recipe was chosen and are
-    still flat leaves, and they stay that way until they are refitted and
-    reuploaded (the manifest pins their checksums). ``add_gsplats_from_file``
-    routes a matrix-shaped file down the ordinary data path and a partition
-    through the graft, so the default path renders either one — it just does not
-    get spatial tiles until the published bytes catch up.
+    Grafting is deliberately shape-agnostic, and it has to be, because **the
+    in-repo and hosted copies are different shapes** (measured 2026-08-28, ch0):
+
+    * the in-repo git-LFS payload — ``sha256`` ``cd22645f…``, 38,201,205 bytes,
+      an exact match for the pin — is a **flat laddered leaf**: no ``kind`` attr
+      anywhere, no ``part_`` groups, 4 additive rungs;
+    * the file on the Zenodo draft — 45,697,890 bytes — is a **kind=partition**
+      with at least 4 ``part_`` groups (read from the zip central directory via
+      a ranged GET, so the count is a floor).
+
+    ``data_fetch`` resolves the in-repo payload FIRST, so every machine today
+    builds the FLAT scene; the tiled one only appears once the record publishes
+    and the in-repo archives are removed. So a locally measured scene shape says
+    nothing about what a published build renders, and the discriminator is to
+    hash the cached file and see which pin it matches — byte size is only
+    suggestive.
+
+    That divergence is also **not yet pinnable**: ``hosted_bytes`` is 84,492,218
+    here (and in PR #1734, the manifest that ships), which matches neither copy.
+    The draft was re-uploaded after the 2026-08-23 pin audit and no branch pins
+    the new generation, so ``hosted_sha256`` would fail on publish. It is
+    invisible until the in-repo archives are ``git rm``-ed, which is exactly why
+    that teardown has to be atomic.
+
+    ``add_gsplats_from_file`` must therefore keep routing a matrix-shaped file
+    down the ordinary data path and a partition through the graft, because it
+    genuinely receives both.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel
