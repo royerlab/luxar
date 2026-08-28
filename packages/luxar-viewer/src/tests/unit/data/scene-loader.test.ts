@@ -493,6 +493,27 @@ describe('SceneLoader', () => {
       expect(lateListener).toHaveBeenCalledWith(fault);
     });
 
+    it('reports archive faults from node-build contexts exactly once', () => {
+      const firstFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+      const secondFault = new ArchiveFaultError('archive still unavailable', 'scene.zip');
+      const listener = vi.fn();
+      sceneLoader.onArchiveFault(listener);
+      const ctx = (
+        sceneLoader as unknown as { makeNodeBuildCtx(): Record<string, unknown> }
+      ).makeNodeBuildCtx();
+      const reportArchiveFault = ctx.reportArchiveFault as
+        ((fault: ArchiveFaultError) => void) | undefined;
+
+      reportArchiveFault!(firstFault);
+      reportArchiveFault!(secondFault);
+
+      expect(sceneLoader.archiveFault).toBe(firstFault);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(listener).toHaveBeenCalledWith(firstFault);
+      expect(notifierMocks.error).toHaveBeenCalledOnce();
+      expect(notifierMocks.error).toHaveBeenCalledWith(firstFault.message, { persistent: true });
+    });
+
     it('drains a superseded waiter when an archive fault stops the active pass', async () => {
       const fault = new ArchiveFaultError('archive unavailable', 'https://example.test/scene.zip');
       let rejectUpdate!: (error: Error) => void;

@@ -486,6 +486,14 @@ export class SceneLoader {
     }
   }
 
+  private reportArchiveFault(fault: ArchiveFaultError): void {
+    if (this._archiveFault) return;
+    this._archiveFault = fault;
+    log.error(Modules.SCENE_LOADER, `Archive fault: ${fault.message}`);
+    notifier.error(fault.message, { persistent: true });
+    this.notifyArchiveFault(fault);
+  }
+
   private invokeArchiveFaultListener(
     listener: (error: ArchiveFaultError) => void,
     error: ArchiveFaultError
@@ -1056,15 +1064,9 @@ export class SceneLoader {
       ]);
 
       if (sweepArchiveFault) {
-        this._archiveFault = sweepArchiveFault;
         this.releasePrefetchResources();
         this.registry.clearAllFailures();
-        log.error(
-          Modules.SCENE_LOADER,
-          `Archive fault during view update: ${sweepArchiveFault.message}`
-        );
-        notifier.error(sweepArchiveFault.message, { persistent: true });
-        this.notifyArchiveFault(sweepArchiveFault);
+        this.reportArchiveFault(sweepArchiveFault);
       }
 
       // S6: predictive prefetch now lives inside each loader-task
@@ -1607,6 +1609,7 @@ export class SceneLoader {
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),
       kickRefinementIfIdle: () => this.kickRefinementIfIdle(),
+      reportArchiveFault: (fault) => this.reportArchiveFault(fault),
       // Live version accessor (not the snapshot) so a deferred / registry-driven
       // reload stamps for the CURRENT slice, not the one captured at ctx-build.
       getViewVersion: () => this._updateVersion,
