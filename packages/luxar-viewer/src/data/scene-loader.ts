@@ -170,6 +170,7 @@ import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
+import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
 
 /**
  * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
@@ -212,6 +213,7 @@ export class SceneLoader {
   // Resolved per-tier cache budgets from setupCaches (Settings popover readout)
   private cacheBudgets: CacheBudgets | null = null;
   private registry = new LoaderRegistry();
+  private readonly lineWorkingSetGate = createLineWorkingSetGate();
 
   // Delegate registry-backed maps used by the loader orchestration methods.
   private get loaders() {
@@ -1561,6 +1563,7 @@ export class SceneLoader {
     const ctrl = this._datasetAbortController;
     return {
       registry: this.registry,
+      lineWorkingSetGate: this.lineWorkingSetGate,
       lodGroupRegistry: this.lodGroupRegistry ?? undefined,
       nodeFactory: this.nodeFactory,
       viewState: this.viewState,
@@ -1834,6 +1837,8 @@ export class SceneLoader {
    *          means the deferred reload was KICKED (fire-and-forget) — the lazy
    *          thunk owns the eventual ready/failed outcome, and a repeat failure
    *          re-records itself for another retry.
+   *          Registered lines paths first wait for the session working-set gate,
+   *          so this call can remain pending behind an eager scene walk.
    *
    * @example
    * ```typescript
@@ -1879,6 +1884,7 @@ export class SceneLoader {
   private makeRetryCtx(): RetryCtx {
     return {
       registry: this.registry,
+      lineWorkingSetGate: this.lineWorkingSetGate,
       lodGroupRegistry: this.lodGroupRegistry,
       rootGroup: this.rootGroup,
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
