@@ -511,7 +511,9 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
 def test_single_polyline_suppression_only_flattens_finest(tmp_path, line_type) -> None:
     out = tmp_path / "t.luxar.zarr"
     verts = np.random.default_rng(5).uniform(0, 60, (600, 3)).astype(np.float32)
-    with pytest.warns(UserWarning, match="finest level will load all-at-once"):
+    with pytest.warns(
+        UserWarning, match=r"line_type='(polyline|loop)' is a single polyline"
+    ):
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_lines(
@@ -534,7 +536,7 @@ def test_single_polyline_suppression_only_flattens_finest(tmp_path, line_type) -
 def test_image_labels_suppression_only_flattens_finest_lines(tmp_path) -> None:
     out = tmp_path / "t.luxar.zarr"
     verts = _segments(300)
-    with pytest.warns(UserWarning, match="finest level will load all-at-once"):
+    with pytest.warns(UserWarning, match="image_labels is set"):
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             scene.add_lines(

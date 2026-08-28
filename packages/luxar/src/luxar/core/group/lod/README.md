@@ -330,8 +330,9 @@ Composes with `additive_lod` (laddered per level by default, as for Points);
 mutually exclusive with `partition`. The synthesized coarse gsplat children
 keep their additive ladders for every `line_type`. The original finest Lines
 child skips its ladder for single-polyline types (`polyline`/`loop`) and for
-`indexed`; the composed path keeps that blanket refusal conservatively, and
-narrowing it is a separate change. Only that finest child then loads
+`indexed`, or whenever `image_labels` is set; the composed path keeps the
+`indexed` refusal conservatively, and narrowing it is a separate change. Only
+that finest child then loads
 all-at-once. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
