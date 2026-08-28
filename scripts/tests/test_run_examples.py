@@ -615,7 +615,10 @@ def test_invalid_marker_warning_is_printed_once_per_generation(
 
     assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
 
-    assert capsys.readouterr().err.count("Ignoring invalid fixture stamp: bad_example.py") == 1
+    assert (
+        capsys.readouterr().err.count("Ignoring invalid fixture stamp: bad_example.py")
+        == 1
+    )
 
 
 def test_all_failed_producers_report_the_failure_summary(

@@ -379,6 +379,24 @@ def _checkpoint_marker(
         _marker_path(output_dir).unlink(missing_ok=True)
 
 
+def _write_final_marker(
+    output_dir: Path,
+    environment: dict[str, str | None],
+    stamps: Mapping[str, Mapping[str, Any]],
+    failures: Sequence[str],
+) -> bool:
+    if failures and not stamps:
+        print(f"❌ Examples FAILED: {' '.join(failures)}", flush=True)
+        return False
+    try:
+        write_marker(output_dir, environment=environment, examples=stamps)
+    except RuntimeError as error:
+        _marker_path(output_dir).unlink(missing_ok=True)
+        print(f"❌ {error}", file=sys.stderr, flush=True)
+        return False
+    return True
+
+
 def _output_signatures(output_dir: Path) -> dict[str, tuple[tuple[str, int, int], ...]]:
     signatures: dict[str, tuple[tuple[str, int, int], ...]] = {}
     for output in output_dir.glob("*.zarr"):
@@ -521,14 +539,7 @@ def generate_examples(
         print(f"✅ Success: {script.name}", flush=True)
 
     print("\n" + "━" * 48, flush=True)
-    if failures and not stamps:
-        print(f"❌ Examples FAILED: {' '.join(failures)}", flush=True)
-        return 1
-    try:
-        write_marker(output_dir, environment=environment, examples=stamps)
-    except RuntimeError as error:
-        _marker_path(output_dir).unlink(missing_ok=True)
-        print(f"❌ {error}", file=sys.stderr, flush=True)
+    if not _write_final_marker(output_dir, environment, stamps, failures):
         return 1
     stamped_outputs = {
         output for stamp in stamps.values() for output in stamp["outputs"]
