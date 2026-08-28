@@ -290,6 +290,38 @@ def test_removed_producer_prunes_its_output_without_rebuilding_others(
     assert not (output_dir / "two_example.luxar.zarr").exists()
 
 
+def test_transferred_output_is_not_pruned_after_new_producer_stamps_it(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    shared = output_dir / "shared_example.luxar.zarr"
+    first = _write_example(
+        repo,
+        "one",
+        "from pathlib import Path\n"
+        f"output = Path({str(shared)!r})\n"
+        "output.mkdir(parents=True, exist_ok=True)\n"
+        "(output / 'zarr.json').write_text('one')\n",
+    )
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    first.unlink()
+    _write_example(
+        repo,
+        "two",
+        "from pathlib import Path\n"
+        f"output = Path({str(shared)!r})\n"
+        "output.mkdir(parents=True, exist_ok=True)\n"
+        "(output / 'zarr.json').write_text('two')\n",
+    )
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+
+    assert shared.is_dir()
+    assert (shared / "zarr.json").read_text() == "two"
+    assert run_examples.fixtures_are_current(repo, output_dir)
+
+
 def test_legacy_marker_rebuilds_all_examples_and_stamps_outputs(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     output_dir = repo / "datasets/examples"
@@ -517,6 +549,42 @@ def test_invalid_marker_entry_does_not_discard_valid_stamps(
 
     assert run_examples.stale_examples(repo, output_dir) == ["bad_example.py"]
     assert "Ignoring invalid fixture stamp: bad_example.py" in capsys.readouterr().err
+
+
+def test_empty_marker_output_cannot_remove_the_output_directory(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    valid = _write_example(repo, "one", "print('one')\n")
+    generated = output_dir / "one_example.luxar.zarr"
+    generated.mkdir(parents=True)
+    (generated / "zarr.json").write_text("fresh")
+    handmade = output_dir / "handmade.luxar.zarr"
+    handmade.mkdir()
+    marker = {
+        "version": run_examples.MARKER_VERSION,
+        "environment": run_examples.build_environment(),
+        "examples": {
+            "one_example.py": {
+                "fingerprint": run_examples.example_fingerprint(repo, valid),
+                "sources": ["packages/luxar/examples/one_example.py"],
+                "outputs": [generated.name],
+            },
+            "gone_example.py": {
+                "fingerprint": "gone",
+                "sources": ["packages/luxar/examples/gone_example.py"],
+                "outputs": [""],
+            },
+        },
+    }
+    (output_dir / run_examples.MARKER_NAME).write_text(json.dumps(marker))
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+
+    assert generated.is_dir()
+    assert handmade.is_dir()
+    assert run_examples.fixtures_are_current(repo, output_dir)
 
 
 def test_marker_uses_prebuild_fingerprint(tmp_path: Path) -> None:

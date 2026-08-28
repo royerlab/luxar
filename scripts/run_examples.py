@@ -217,7 +217,10 @@ def _marker_examples(marker: dict[str, Any] | None) -> dict[str, dict[str, Any]]
             Path(producer).name != producer
             or not producer.endswith("_example.py")
             or any(path.is_absolute() or ".." in path.parts for path in source_paths)
-            or any(path.name != name for path, name in zip(output_paths, outputs))
+            or any(
+                not name or path.name != name
+                for path, name in zip(output_paths, outputs)
+            )
             or recorded_outputs.intersection(outputs)
         ):
             print(f"⚠️ Ignoring invalid fixture stamp: {producer}", file=sys.stderr)
@@ -511,11 +514,12 @@ def generate_examples(
         _marker_path(output_dir).unlink(missing_ok=True)
         print(f"❌ {error}", file=sys.stderr, flush=True)
         return 1
+    stamped_outputs = {
+        output for stamp in stamps.values() for output in stamp["outputs"]
+    }
     if not failures:
-        stamped_outputs = {
-            output for stamp in stamps.values() for output in stamp["outputs"]
-        }
         removed_outputs.update(legacy_outputs - stamped_outputs)
+    removed_outputs -= stamped_outputs
     _remove_outputs(output_dir, removed_outputs)
     if failures:
         print(f"❌ Examples FAILED: {' '.join(failures)}", flush=True)
