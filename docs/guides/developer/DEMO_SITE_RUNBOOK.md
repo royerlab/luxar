@@ -424,6 +424,38 @@ Two things follow for this site:
   chose that. Refreshing the LFS payload to match hosted would change the live
   scene's structure with no code change and no manifest change visible in a diff.
 
+#### Scope: this is not a cmu1 quirk
+
+Measured across `data_manifest.json` — of 45 pinned file entries, 23 carry a
+`hosted_sha256`, and **all 23 differ from their repo `sha256`**. Fourteen
+datasets are affected:
+
+| dataset | files | repo MB | hosted MB | ratio |
+|---|---:|---:|---:|---:|
+| `gsplats_cmu1_pathology` | 3 | 113.8 | 278.0 | 2.44x |
+| `gsplats_cells3d` | 2 | 0.6 | 1.3 | 2.25x |
+| `gsplats_cryoem_virus` | 1 | 11.1 | 16.0 | 1.44x |
+| `gsplats_ct_totalsegmentator` | 2 | 7.2 | 10.2 | 1.42x |
+| `gsplats_visible_human_head` | 2 | 25.6 | 34.5 | 1.35x |
+| `gsplats_milkyway_dust` | 1 | 7.8 | 10.6 | 1.36x |
+| `gsplats_nexrad_supercell` | 1 | 10.1 | 12.9 | 1.28x |
+| `gsplats_dapi` | 1 | 0.1 | 0.1 | 1.22x |
+| `gsplats_celegans` | 1 | 72.0 | 80.8 | 1.12x |
+| `desi_galaxies` | 1 | 74.3 | 76.8 | 1.03x |
+| `gsplats_kidney` | 3 | 2.1 | 2.1 | 0.99x |
+| `gsplats_multichannel` | 2 | 0.4 | 0.4 | 0.95x |
+| `gsplats_flylight_mcfo_63x` | 1 | 8.2 | 7.7 | 0.94x |
+| `gsplats_opencell_map4` | 2 | 1.6 | 1.5 | 0.93x |
+
+So the presence of `hosted_sha256` **is** the divergence signal — there is
+currently no dataset carrying the field whose two generations agree. Ratios below
+1.0 are refits that shrank; a small ratio does not mean a small structural
+difference, and cmu1's 2.44x is flat-leaf vs partition + 64 lod groups.
+
+Practical consequence: for any of these fourteen, a local measurement describes
+the in-repo generation only, and the tile a fresh machine would build may differ.
+Reproduce on the host that published, or hash first.
+
 #### And the docstring
 
 It is describing the *hosted* archives, which do carry a partition and 64 lod
