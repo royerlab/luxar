@@ -76,13 +76,14 @@ def _write_marker(
     )
 
 
-def _generating_example(repo: Path, name: str, sentinel: Path) -> Path:
+def _generating_example(
+    repo: Path, name: str, sentinel: Path, imports: str = ""
+) -> Path:
     output = repo / "datasets/examples" / f"{name}_example.luxar.zarr"
     return _write_example(
         repo,
         name,
-        "from pathlib import Path\n"
-        f"Path({str(sentinel)!r}).touch()\n"
+        "from pathlib import Path\n" + imports + f"Path({str(sentinel)!r}).touch()\n"
         f"output = Path({str(output)!r})\n"
         "output.mkdir(parents=True, exist_ok=True)\n"
         "(output / 'zarr.json').write_text('fresh')\n",
@@ -225,6 +226,25 @@ def test_builder_change_rebuilds_only_its_example(tmp_path: Path) -> None:
     second_ran.unlink()
 
     first.write_text(first.read_text() + "# changed\n")
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+
+    assert first_ran.exists()
+    assert not second_ran.exists()
+
+
+def test_production_change_rebuilds_only_importing_examples(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    first_ran = repo / "first-ran"
+    second_ran = repo / "second-ran"
+    _generating_example(repo, "one", first_ran, imports="from luxar.io import writer\n")
+    _generating_example(repo, "two", second_ran)
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+    first_ran.unlink()
+    second_ran.unlink()
+
+    writer = repo / "packages/luxar/src/luxar/io/writer.py"
+    writer.write_text("FORMAT = 3\n")
     assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
 
     assert first_ran.exists()
@@ -454,6 +474,10 @@ def test_marker_uses_prebuild_fingerprint(tmp_path: Path) -> None:
 
     marker = json.loads((output_dir / run_examples.MARKER_NAME).read_text())
     assert marker["examples"][script.name]["fingerprint"] == prebuild_fingerprint
+    assert (
+        "packages/luxar/src/luxar/io/writer.py"
+        in marker["examples"][script.name]["sources"]
+    )
     assert not run_examples.fixtures_are_current(repo, output_dir)
 
 

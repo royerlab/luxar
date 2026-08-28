@@ -242,6 +242,29 @@ def _example_scripts(repo_root: Path) -> list[Path]:
     return sorted((repo_root / "packages/luxar/examples").glob("*_example.py"))
 
 
+def _current_stamps(
+    marker: dict[str, Any] | None, environment: Mapping[str, str | None]
+) -> dict[str, dict[str, Any]]:
+    if (
+        marker is None
+        or marker.get("version") != MARKER_VERSION
+        or marker.get("environment") != environment
+    ):
+        return {}
+    return _marker_examples(marker)
+
+
+def _removed_producer_outputs(
+    stamps: Mapping[str, Mapping[str, Any]], producers: set[str]
+) -> set[str]:
+    return {
+        output
+        for producer, stamp in stamps.items()
+        if producer not in producers
+        for output in stamp["outputs"]
+    }
+
+
 def _stale_producers(
     scripts: Sequence[Path],
     marker: dict[str, Any] | None,
@@ -333,6 +356,18 @@ def write_marker(
     temporary.replace(marker)
 
 
+def _checkpoint_marker(
+    repo_root: Path,
+    output_dir: Path,
+    environment: dict[str, str | None],
+    stamps: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if stamps:
+        write_marker(repo_root, output_dir, environment=environment, examples=stamps)
+    else:
+        _marker_path(output_dir).unlink(missing_ok=True)
+
+
 def _output_signatures(output_dir: Path) -> dict[str, tuple[tuple[str, int, int], ...]]:
     signatures: dict[str, tuple[tuple[str, int, int], ...]] = {}
     for output in output_dir.glob("*.zarr"):
@@ -346,6 +381,27 @@ def _output_signatures(output_dir: Path) -> dict[str, tuple[tuple[str, int, int]
             )
         signatures[output.name] = tuple(entries)
     return signatures
+
+
+def _run_example(
+    script: Path, repo_root: Path, output_dir: Path, python: str
+) -> list[str] | None:
+    before_signatures = _output_signatures(output_dir)
+    result = subprocess.run([python, str(script)], cwd=repo_root, check=False)
+    after_signatures = _output_signatures(output_dir)
+    generated_outputs = sorted(
+        name
+        for name, signature in after_signatures.items()
+        if before_signatures.get(name) != signature
+    )
+    return generated_outputs if result.returncode == 0 and generated_outputs else None
+
+
+def _remove_outputs(output_dir: Path, outputs: set[str]) -> None:
+    for name in outputs:
+        path = output_dir / name
+        if path.is_dir():
+            shutil.rmtree(path)
 
 
 def generate_examples(
@@ -368,26 +424,15 @@ def generate_examples(
     output_dir.mkdir(parents=True, exist_ok=True)
     marker = _read_marker(output_dir)
     previous_stamps = _marker_examples(marker)
-    stamps = dict(previous_stamps)
+    environment = build_environment()
+    stamps = _current_stamps(marker, environment)
     legacy_outputs = (
         set(_marker_outputs(marker))
         if marker is not None and marker.get("version") != MARKER_VERSION
         else set()
     )
-    environment = build_environment()
-    if (
-        marker is None
-        or marker.get("version") != MARKER_VERSION
-        or marker.get("environment") != environment
-    ):
-        stamps = {}
     current_names = {script.name for script in scripts}
-    removed_outputs = {
-        output
-        for producer, stamp in previous_stamps.items()
-        if producer not in current_names
-        for output in stamp["outputs"]
-    }
+    removed_outputs = _removed_producer_outputs(previous_stamps, current_names)
     for producer in set(stamps) - current_names:
         del stamps[producer]
     stale_names = (
@@ -398,10 +443,7 @@ def generate_examples(
     )
     for producer in stale_names:
         stamps.pop(producer, None)
-    if stamps:
-        write_marker(repo_root, output_dir, environment=environment, examples=stamps)
-    else:
-        _marker_path(output_dir).unlink(missing_ok=True)
+    _checkpoint_marker(repo_root, output_dir, environment, stamps)
     scripts_to_run = [script for script in scripts if script.name in stale_names]
     import_cache: dict[Path, set[str]] = {}
     module_cache: dict[str, Path | None] = {}
@@ -434,15 +476,8 @@ def generate_examples(
             flush=True,
         )
         print("─" * 48, flush=True)
-        before_signatures = _output_signatures(output_dir)
-        result = subprocess.run([python, str(script)], cwd=repo_root, check=False)
-        after_signatures = _output_signatures(output_dir)
-        generated_outputs = sorted(
-            name
-            for name, signature in after_signatures.items()
-            if before_signatures.get(name) != signature
-        )
-        if result.returncode != 0 or not generated_outputs:
+        generated_outputs = _run_example(script, repo_root, output_dir, python)
+        if generated_outputs is None:
             failures.append(script.name)
             stamps.pop(script.name, None)
             print(f"❌ Failed: {script.name}", flush=True)
@@ -456,7 +491,7 @@ def generate_examples(
             ],
             "outputs": generated_outputs,
         }
-        write_marker(repo_root, output_dir, environment=environment, examples=stamps)
+        _checkpoint_marker(repo_root, output_dir, environment, stamps)
         print(f"✅ Success: {script.name}", flush=True)
 
     print("\n" + "━" * 48, flush=True)
@@ -471,10 +506,7 @@ def generate_examples(
             output for stamp in stamps.values() for output in stamp["outputs"]
         }
         removed_outputs.update(legacy_outputs - stamped_outputs)
-    for name in removed_outputs:
-        path = output_dir / name
-        if path.is_dir():
-            shutil.rmtree(path)
+    _remove_outputs(output_dir, removed_outputs)
     if failures:
         print(f"❌ Examples FAILED: {' '.join(failures)}", flush=True)
         return 1
