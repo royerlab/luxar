@@ -222,7 +222,9 @@ without discarding caches or in-flight fetches; lazy LOD loads resume on the nex
 update after re-showing, while hidden resident levels are preferred for eviction
 under GPU-budget pressure. `setExposure()` scales exposure relative to the scene's
 authored value, which a host needs because that value was tuned against a different
-post chain than its own.
+post chain than its own. On a Mesh in the default `opaque` mode, this scales cutout
+coverage rather than brightness: values below `alphaCutoff` discard the surface,
+while `normal` blending provides smooth transparency.
 
 Note that a scene's `tone_mapping` does **not** apply in layer mode: Luxar
 tone-maps in a post-processing pass the layer does not own, so a host wanting a

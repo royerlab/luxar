@@ -1000,6 +1000,29 @@ describe('LuxarLayer', () => {
       expect(layer.getExposure()).toBe(2);
     });
 
+    it('applies exposure to an opaque mesh through its opacity uniform', async () => {
+      const mesh = splatMesh(1);
+      const material = mesh.material as unknown as {
+        getBlendingMode: () => string;
+        updateOpacity: (value: number) => void;
+      };
+      material.getBlendingMode = () => 'opaque';
+      const updateOpacity = vi.spyOn(material, 'updateOpacity');
+      loadSceneMock.mockImplementation(async () => {
+        const root = new THREE.Group();
+        root.add(mesh);
+        return root;
+      });
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+
+      layer.setExposure(0.4);
+
+      expect(updateOpacity).toHaveBeenCalledOnce();
+      expect(updateOpacity).toHaveBeenCalledWith(0.4);
+      expect(opacityOf(mesh)).toBeCloseTo(0.4);
+    });
+
     it('composes against the authored value rather than compounding', async () => {
       // A slider emits a stream of values; scaling the LIVE opacity each time
       // would make the result depend on the drag path, not the final position.

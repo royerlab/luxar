@@ -580,13 +580,18 @@ export class LuxarLayer {
    * Scale the layer's exposure by `multiplier`, relative to what the scene was
    * authored with. 1 restores the authored appearance.
    *
-   * Exposure, not alpha: for the emissive geometry types this multiplies the
-   * `opacity` uniform, which in additive blending is the amount each element
-   * contributes to the accumulation rather than a coverage fraction. A host
-   * needs this because a scene's authored exposure was tuned against *some*
-   * post-processing chain, and the host's is a different one — a value that
-   * reads well in Luxar's own viewer can land dim or blown out behind a host's
-   * bloom and tone mapping, with nothing wrong with the data.
+   * For the three emissive geometry types this multiplies the `opacity`
+   * uniform, which in additive blending is the amount each element contributes
+   * to the accumulation rather than a coverage fraction. For a Mesh in its
+   * default `opaque` mode, the same uniform is cutout coverage: a value below
+   * `alphaCutoff` (0.5 by default) discards the surface, while a value above it
+   * does not dim the surviving fragments. Author the mesh with `normal`
+   * blending when this control should produce smooth surface transparency.
+   *
+   * A host needs this because a scene's authored exposure was tuned against
+   * *some* post-processing chain, and the host's is a different one — a value
+   * that reads well in Luxar's own viewer can land dim or blown out behind a
+   * host's bloom and tone mapping, with nothing wrong with the data.
    *
    * Re-applied by {@link update} as geometry streams in, so nodes that arrive
    * later match the ones already on screen.

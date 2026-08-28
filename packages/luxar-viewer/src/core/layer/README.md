@@ -100,7 +100,7 @@ scene fetch, so requiring one order would make correctness a race.
 
 ```ts
 layer.setVisible(false); // hide without discarding caches or in-flight streams
-layer.setExposure(0.5); // half the scene's authored exposure; 1 = as authored
+layer.setExposure(0.75); // scale authored node opacity; 1 = as authored
 ```
 
 `setVisible` toggles `visible` on the root rather than detaching it, so
@@ -114,6 +114,12 @@ does not depend on how a slider was dragged, and it is re-applied as geometry
 streams in so late-arriving nodes match the ones already on screen. It exists
 because a scene's authored exposure was tuned against whatever post chain
 authored it, and the host's is a different one.
+
+For Points, Lines, and Gaussian Splats, that opacity controls the emissive
+contribution. For a Mesh in its default `opaque` mode, it is instead cutout
+coverage: values below `alphaCutoff` (0.5 by default) discard the surface, while
+values above it do not dim surviving fragments. Author the mesh with `normal`
+blending when exposure should produce smooth surface transparency.
 
 ### API summary
 

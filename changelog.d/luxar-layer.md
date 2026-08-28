@@ -78,7 +78,10 @@ each entry is there to prevent a _silent_ wrong result rather than an error:
   chain authored it; a host's is a different one. It composes against the
   authored value rather than the live one, so the result does not depend on how a
   slider was dragged, and it re-applies as geometry streams in so late-arriving
-  nodes match those already on screen.
+  nodes match those already on screen. On a Mesh in the default `opaque` mode,
+  this scales cutout coverage rather than brightness: values below `alphaCutoff`
+  (0.5 by default) discard the surface, while `normal` blending provides smooth
+  transparency.
 - `renderOrder` is stamped across nested scene / LOD / partition Groups (including
   groups that stream in later). WebGL context-loss/restoration hooks reduce the
   resident GPU budget, rebuild Luxar-owned resources, and re-arm blend-program
