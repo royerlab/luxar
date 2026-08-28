@@ -15,6 +15,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import type { ViewState } from '../../../../data/data-loader-types';
+import { log, Modules } from '../../../../utils/log';
 
 const baseViewState: ViewState = {
   displayDims: [0, 1, 2],
@@ -70,11 +71,13 @@ function makeStagedLoader(stages: Array<{ hasMoreLODs: boolean }>) {
  * Register the shared loop-contract tests for one refinement entry point.
  *
  * @param name  Display name (e.g. `'runGSplatsRefinement'`).
+ * @param label Geometry label used by the no-progress warning.
  * @param run   Adapter that invokes the type-specific runX with the given
  *              wiring and returns its promise.
  */
 export function defineRefinementLoopContract(
   name: string,
+  label: 'Points' | 'Lines' | 'GSplats' | 'Mesh',
   run: (wiring: RefinementRunWiring) => Promise<void>
 ): void {
   describe(`${name} — shared loop contract`, () => {
@@ -106,6 +109,7 @@ export function defineRefinementLoopContract(
         updateView: vi.fn().mockResolvedValue(null),
       };
       const releaseLock: () => void = vi.fn();
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
 
       await run({
         loaders: new Map([['/n', loader]]),
@@ -119,6 +123,11 @@ export function defineRefinementLoopContract(
 
       expect(loader.updateView).toHaveBeenCalledTimes(1);
       expect(releaseLock).toHaveBeenCalledTimes(1);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.SCENE_LOADER,
+        `${label} refinement stopped for /n: no progress at LOD 2/4`
+      );
+      warning.mockRestore();
     });
 
     it('hands off lock to retriggerUpdate when pending view-state is observed', async () => {

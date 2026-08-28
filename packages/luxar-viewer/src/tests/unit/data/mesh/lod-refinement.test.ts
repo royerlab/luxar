@@ -22,7 +22,7 @@ const viewState: ViewState = {
   tolerance: [0, 0, 0],
 };
 
-defineRefinementLoopContract('runMeshRefinement', (w) =>
+defineRefinementLoopContract('runMeshRefinement', 'Mesh', (w) =>
   runMeshRefinement({
     rootGroup: new THREE.Group(),
     viewStateQueue: w.viewStateQueue,
