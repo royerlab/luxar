@@ -61,8 +61,21 @@ def _dotted_name(node: ast.expr) -> str | None:
     return None
 
 
+def _import_from_module(path: Path, node: ast.ImportFrom) -> str | None:
+    if node.level == 0:
+        return node.module
+    module = _module_name(path)
+    package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+    parts = package.split(".")
+    keep = len(parts) - node.level + 1
+    if keep < 1:
+        return None
+    base = ".".join(parts[:keep])
+    return f"{base}.{node.module}" if node.module else base
+
+
 def _import_bindings(
-    tree: ast.AST, registered: dict[str, set[str]]
+    path: Path, tree: ast.AST, registered: dict[str, set[str]]
 ) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
     module_aliases: dict[str, str] = {}
     command_aliases: dict[str, tuple[str, str]] = {}
@@ -71,14 +84,17 @@ def _import_bindings(
             for alias in node.names:
                 local = alias.asname or alias.name.split(".")[0]
                 module_aliases[local] = alias.name if alias.asname else local
-        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+        elif isinstance(node, ast.ImportFrom):
+            imported_from = _import_from_module(path, node)
+            if imported_from is None:
+                continue
             for alias in node.names:
                 local = alias.asname or alias.name
-                imported = f"{node.module}.{alias.name}"
+                imported = f"{imported_from}.{alias.name}"
                 if imported in registered:
                     module_aliases[local] = imported
-                elif alias.name in registered.get(node.module, set()):
-                    command_aliases[local] = (node.module, alias.name)
+                elif alias.name in registered.get(imported_from, set()):
+                    command_aliases[local] = (imported_from, alias.name)
     return module_aliases, command_aliases
 
 
@@ -114,7 +130,7 @@ def _registered_command_calls(trees: dict[Path, ast.AST]) -> list[str]:
 
     for path, tree in trees.items():
         module = _module_name(path)
-        module_aliases, command_aliases = _import_bindings(tree, registered)
+        module_aliases, command_aliases = _import_bindings(path, tree, registered)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and _is_registered_call(
                 node,
@@ -136,8 +152,8 @@ def test_registered_command_calls_find_imported_forms_without_name_collisions() 
             "def info_dataset(): pass\napp.command('info')(info_dataset)"
         ),
         consumer: ast.parse(
-            "from luxar.cli import sample_commands\n"
-            "from luxar.cli.sample_commands import info_dataset as imported_info\n"
+            "from . import sample_commands\n"
+            "from .sample_commands import info_dataset as imported_info\n"
             "def info_dataset(): pass\n"
             "info_dataset()\n"
             "sample_commands.info_dataset()\n"
