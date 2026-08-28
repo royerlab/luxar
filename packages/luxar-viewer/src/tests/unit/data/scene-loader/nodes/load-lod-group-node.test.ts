@@ -985,7 +985,8 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
     try {
       const reg = makeReg();
-      const ctx = makeCtx(reg);
+      const reportArchiveFault = vi.fn();
+      const ctx = makeCtx(reg, { reportArchiveFault });
       const node = makeLodGroupNode(
         [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
         { default_level: 0 }
@@ -1001,6 +1002,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(deferred.loading).toBe(false);
       expect(deferred.permanentlyFailed).not.toBe(true);
       expect(deferred.automaticRetriesRemaining).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+      expect(reportArchiveFault).not.toHaveBeenCalled();
       expect(reg.retryLazyChildByLeafPath('')).toBe(false);
       expect(reg.retryLazyChildByLeafPath('/lod/child_1')).toBe(false);
 
