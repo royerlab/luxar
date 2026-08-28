@@ -2,7 +2,7 @@
  * Progressive Points LOD refinement — thin wrapper over the generic
  * helper at `data/scene-loader/progressive/refinement.ts`.
  *
- * Mirrors `data/gsplats/lod-refinement.ts` shape so the three leaf
+ * Mirrors `data/gsplats/lod-refinement.ts` shape so the four geometry
  * types stay symmetric.
  *
  * @module data/points/lod-refinement
