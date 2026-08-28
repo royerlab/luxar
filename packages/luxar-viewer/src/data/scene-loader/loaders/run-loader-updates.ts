@@ -5,7 +5,7 @@
  * work (deriveNodeViewState, call loader.updateView, post-process,
  * setMetadata, return staged) — the surrounding try/catch with
  * failedLoaders bookkeeping + retryCount tracking, profiler dispatch,
- * and Promise.all are identical and live here.
+ * archive-fault hoisting, and Promise.all are identical and live here.
  */
 
 import { log, Modules } from '../../../utils/log';
@@ -13,6 +13,7 @@ import type { UpdateProfiler, UpdateSession } from '../../../profiling/update-pr
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { LoaderRegistry } from './loader-registry';
 import { isAbortError } from '../../loaders/abort-error';
+import { archiveFaultFrom, type ArchiveFaultError } from '../../../cache/chunk-source';
 
 const NOOP_SESSION: UpdateSession = {
   begin: () => NOOP_SESSION,
@@ -24,7 +25,8 @@ const NOOP_SESSION: UpdateSession = {
 /**
  * Run a per-loader update task for every entry in `loaders`, recording
  * failures into `failedLoaders` and forgetting the predictive-prefetch
- * baseline for failed paths. Resolves once every task has settled.
+ * baseline for failed paths. Archive faults are excluded from that bookkeeping
+ * and reported once after every task has settled.
  */
 export async function runLoaderUpdates<TLoader, TStaged>(
   loaders: Map<string, TLoader>,
@@ -34,8 +36,11 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     profiler: UpdateProfiler | null;
     viewStateQueue: ViewStateQueue;
     registry: Pick<LoaderRegistry, 'failedLoaders' | 'recordFailure'>;
+    /** Called at most once per sweep, after Promise.all, with the first archive fault. */
+    onArchiveFault: (fault: ArchiveFaultError) => void;
   }
 ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
+  let archiveFault: ArchiveFaultError | undefined;
   const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
     // Open a top-level session per node and keep it alive across the
     // atomic commit stage so the per-node "Update Buffers" child entry
@@ -59,6 +64,12 @@ export async function runLoaderUpdates<TLoader, TStaged>(
         return { staged: null, session };
       }
 
+      const fault = archiveFaultFrom(error);
+      if (fault) {
+        archiveFault ??= fault;
+        return { staged: null, session };
+      }
+
       // Predictive prefetch is keyed by the previous successful
       // derived view-state for this path. If the demand update
       // fails, discard that baseline so the next success
@@ -78,5 +89,7 @@ export async function runLoaderUpdates<TLoader, TStaged>(
       return { staged: null, session };
     }
   });
-  return Promise.all(tasks);
+  const results = await Promise.all(tasks);
+  if (archiveFault) ctx.onArchiveFault(archiveFault);
+  return results;
 }

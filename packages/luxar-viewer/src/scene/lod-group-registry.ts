@@ -382,6 +382,12 @@ export interface LODGroupChild {
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
+   * Set when automatic cooldown retries must remain suppressed, such as after
+   * an unreadable archive-container fault. An explicit retry, or a bounded
+   * connectivity retry, clears the latch.
+   */
+  permanentlyFailed?: boolean;
+  /**
    * Registry tick when ``failed`` was first observed. Drives the
    * transient-failure retry cooldown (``FAILED_RETRY_FRAMES``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
@@ -392,7 +398,8 @@ export interface LODGroupChild {
   /**
    * Idempotent fire-and-forget loader for a lazy child. Kicks the
    * deferred geometry load; on success sets ``ready=true`` and clears
-   * ``loading``; on failure sets ``failed=true`` and clears ``loading``.
+   * ``loading``; on failure sets ``failed=true`` and clears ``loading``. A
+   * container fault may additionally set ``permanentlyFailed``.
    * Must not touch ``object.visible`` — the registry owns the swap.
    */
   ensureLoaded?: () => void;
@@ -962,7 +969,10 @@ export class LODGroupRegistry {
    * ``loading`` — only the registry does; keep that invariant here).
    *
    * Returns ``true`` when a retry was kicked OR one is already in flight
-   * (``loading``), ``false`` when no lazy child with that leaf path exists.
+   * (``loading``), ``false`` when no retryable lazy child with that leaf path
+   * exists. Explicit retries and bounded connectivity retries clear
+   * ``permanentlyFailed`` before re-kicking the child; automatic per-frame
+   * selection remains blocked while it is latched.
    * Fire-and-forget semantics: ``true`` means "retry started", not "retry
    * succeeded" — the thunk owns the ready/failed outcome, and a repeat
    * failure re-enters the normal cooldown cycle.
@@ -975,6 +985,7 @@ export class LODGroupRegistry {
         if (child.loading) return true; // retry already in flight
         child.failed = false;
         child.failedTick = undefined;
+        child.permanentlyFailed = false;
         this.kickDeferredLoad(child);
         return true;
       }
@@ -1857,7 +1868,8 @@ export class LODGroupRegistry {
    *
    * ``retryLazyChildByLeafPath`` (an explicit user retry of a FAILED level)
    * deliberately bypasses this and calls ``kickDeferredLoad`` directly: an
-   * explicit request is honoured whatever the layer's visibility.
+   * explicit request for a retryable child is honoured whatever the layer's
+   * visibility.
    */
   private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
     if (!isEffectivelyVisible(entry.groupObject)) return;
@@ -1872,9 +1884,11 @@ export class LODGroupRegistry {
    * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag clears and the load
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
+   * ``permanentlyFailed`` children never enter that cooldown — they stay
+   * latched until an explicit or connectivity retry clears the flag.
    */
   private kickDeferredLoad(child: LODGroupChild): void {
-    if (!child.ensureLoaded || child.loading) return;
+    if (!child.ensureLoaded || child.loading || child.permanentlyFailed) return;
     if (child.failed) {
       if (child.failedTick == null) {
         // First frame we observe the failure — start the cooldown clock.
