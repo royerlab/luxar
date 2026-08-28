@@ -7,13 +7,13 @@ This example demonstrates:
 - Undulating rainbow colors across temporal frames
 - Pulsating point sizes with spatial patterns
 - Dynamic sharpness variations
-- Pre-flight-sized animation (4,096 points per frame × 128 frames)
+- 4D animation over a discrete t dimension (4,096 points per frame × 128 frames)
 
 Educational value:
 - Learn to create temporal animations without requiring a stress-sized dataset
 - Understand time as a discrete navigation dimension
 - See how per-frame transformations create smooth animation
-- Keep the generated scene practical for the mandatory example pre-flight
+- See how modest per-frame density can still produce a coherent animated shell
 """
 
 import numpy as np
