@@ -43,16 +43,17 @@ def _cff_scalar(match: re.Match[str]) -> str:
     return value
 
 
-def main() -> int:
+def _read_python_version() -> str | None:
+    """Read and validate the package's zero-padded CalVer."""
     try:
         init_text = INIT.read_text()
     except OSError as exc:
         print(f"error: cannot read {INIT}: {exc}", file=sys.stderr)
-        return 2
+        return None
     m = CALVER_RE.search(init_text)
     if not m:
         print(f"error: no __version__ assignment in {INIT}", file=sys.stderr)
-        return 2
+        return None
     py_version = m.group(1)
     try:
         if not re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", py_version):
@@ -64,6 +65,13 @@ def main() -> int:
             "CalVer YYYY.MM.DD",
             file=sys.stderr,
         )
+        return None
+    return py_version
+
+
+def main() -> int:
+    py_version = _read_python_version()
+    if py_version is None:
         return 2
 
     try:
