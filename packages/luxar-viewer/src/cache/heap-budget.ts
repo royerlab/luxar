@@ -159,11 +159,7 @@ export function readHeapLimitBytes(): number | undefined {
 export function computeWorkingSetBudgetBytes(
   heapLimitBytes: number | undefined = readHeapLimitBytes()
 ): number | undefined {
-  if (
-    heapLimitBytes === undefined ||
-    !Number.isFinite(heapLimitBytes) ||
-    heapLimitBytes <= 0
-  ) {
+  if (heapLimitBytes === undefined || !Number.isFinite(heapLimitBytes) || heapLimitBytes <= 0) {
     return undefined;
   }
   return Math.floor(

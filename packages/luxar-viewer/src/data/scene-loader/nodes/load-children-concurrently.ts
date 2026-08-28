@@ -44,9 +44,7 @@ class WorkingSetGate {
       const waiterIndex =
         this.activeBytes === 0
           ? 0
-          : this.waiters.findIndex(
-              (waiter) => this.activeBytes + waiter.bytes <= this.budgetBytes
-            );
+          : this.waiters.findIndex((waiter) => this.activeBytes + waiter.bytes <= this.budgetBytes);
       if (waiterIndex < 0) return;
 
       const [waiter] = this.waiters.splice(waiterIndex, 1);
