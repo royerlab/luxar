@@ -560,21 +560,28 @@ a spatial tree, and is worth checking: the serialized `axis` is a **centre-colum
 index** the viewer maps through `displayDims`, so a split on a non-displayed
 dimension culls nothing.
 
-### 7.4 `indexed` lines cannot carry an additive ladder
+### 7.4 Plain additive LOD silently rewrites `indexed` edges
 
-`adders/lines.py` refuses it, because the additive writer discards the explicit
-edge list and rebuilds each connected component as a chain in **ascending vertex
-order** — inventing edges wherever a component is not already such a chain.
+`indexed` is the only line type that groups connected vertices into whole
+component units, via `lod/lines.py::_indexed_connected_components`; for chain
+inputs, those units are whole polylines. But the additive writer then discards
+the explicit edge list and rebuilds each component as a chain in **ascending
+vertex order**. Unless the original edge set already equals those consecutive
+pairs, the ladder invents edges and drops real ones.
 
-The refusal is a `UserWarning`, **not an error**, so requesting one produces a
-scene that looks laddered and loads all-at-once.
+A plain `add_lines(..., line_type="indexed", additive_lod=...)` writes real
+`additive_N` rungs and emits **no warning**. Do not use that path for indexed
+graphs or streamlines whose topology must be preserved.
 
-The apparent workaround does not work either. Of `segments` / `polyline` /
-`loop` / `indexed`, only `segments` permits a ladder — but `identify_polylines`
-returns `n // 2` arrays of shape `(2,)` for it, so the laddering unit is a single
-**segment**. A prefix is then scattered segments, i.e. fragmented polylines.
-Only `indexed` yields whole-polyline units, via
-`lod/lines.py::_indexed_connected_components`.
+Converting to `segments` avoids invented edges, but `identify_polylines` returns
+`n // 2` arrays of shape `(2,)`, so the laddering unit becomes a single segment.
+A prefix is then scattered segments, i.e. fragmented polylines rather than
+whole ones.
+
+Additive LOD composed under `substitutive_lod=` behaves differently: indexed
+levels are suppressed. An explicit additive request emits a `UserWarning` and
+the levels load all-at-once; the default composed ladder is skipped with an
+informational message.
 
 Making this work needs a **verified** opt-in: check that every component really
 is an ascending chain (its edge set equals its consecutive-vertex pairs) and
