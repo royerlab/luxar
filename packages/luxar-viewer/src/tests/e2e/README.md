@@ -407,12 +407,24 @@ then runs five preflight checks:
    checkout is verified to exist and, when present, its producer stamp is
    checked through `scripts/run_examples.py --check`. A stale stamp, an
    unavailable checker, or a missing directory warns and continues because
-   many specs do not read example datasets. Specs that do read them still
-   exercise their normal dataset-specific assertions, and the warning gives
-   instructions to run `make run-examples` before relying on those results.
-   Example-independent specs
-   (basic-rendering, viewer-initialization, test-fixtures, geometry-types)
-   remain runnable while one example producer is stale or unavailable.
+   31 of the 71 specs do not read example datasets. The other 40 still run
+   their normal dataset-specific assertions against the existing stores. If
+   one fails after a stale verdict, the shared page fixture repeats the
+   `make run-examples` guidance beside the failure. That reminder covers 37
+   of the 40 example-reading specs; three performance specs bypass the shared
+   fixture, as do eight specs in the full corpus, and receive only the global
+   warning. Example-independent specs (`basic-rendering`,
+   `viewer-initialization`, `test-fixtures-rendering`, `geometry-types`) remain
+   runnable while one example producer is stale or unavailable.
+
+   ```
+   This warning path is for package-level Playwright commands run directly,
+   including `pnpm test:e2e`. The repository `make test-e2e`,
+   `make test-e2e-smoke`, and `make test-perf-e2e` targets regenerate examples
+   first, and the CI E2E job also runs `make run-examples`, so CI coverage is
+   not weakened by the warning behavior.
+   ```
+
 3. **Required datasets** — checks for the eight required `*.zarr`
    directories and then issues an HTTP `HEAD` request for each one
    found locally. A fixture that exists on disk but is not reachable

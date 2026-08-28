@@ -7,9 +7,9 @@
  * surface where console errors are the first symptom of regression.
  * This fixture moves that check into the harness, taken from Playwright's
  * own `console` / `pageerror` page events, so it runs whether the spec
- * author remembered or not. (67 specs today; 59 import `test` from here,
+ * author remembered or not. (71 specs today; 63 import `test` from here,
  * the other 8 import `@playwright/test` directly and get no teardown at
- * all. 42 of those 59 still make no explicit call of their own.)
+ * all. 45 of those 63 still make no explicit call of their own.)
  *
  * Specs that genuinely tolerate certain errors annotate the test:
  *
@@ -74,7 +74,7 @@ export interface CapturedConsoleError {
  * Console error patterns the auto-fixture treats as environmental
  * flakiness rather than test failures.
  *
- * The 59 of the 67 E2E specs that import `test` from here use this
+ * The 63 of the 71 E2E specs that import `test` from here use this
  * fixture; the other 8 import `@playwright/test` directly.
  * Specs that also make their own
  * explicit `assertNoConsoleErrors(page)` call keep
