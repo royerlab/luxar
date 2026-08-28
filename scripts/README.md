@@ -24,8 +24,8 @@ scripts/
 | `check_open_issue_pr.py` | Report whether an open PR already claims an issue (advisory, run by hand); inventory unique/shared paths before closing a duplicate |
 | `ci_queue_scan.py` | Classify obsidian-labelled Actions jobs and perform bounded repository run scans for CI routing/watchdog policy |
 | `check_fixture_env.py` | Assert the viewer-fixture Hatch environment is CPU-only and free of default-env tooling |
-| `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
-| `set_version.py` | Update the Python and viewer release versions together |
+| `check_version_consistency.py` | Verify the Python, viewer, and citation metadata describe the same release |
+| `set_version.py` | Update the Python, viewer, and citation release versions together |
 | `release.sh` | Run release preflight checks, then create and push the release tag |
 | `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
 | `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
