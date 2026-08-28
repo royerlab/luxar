@@ -948,6 +948,27 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(reportArchiveFault).toHaveBeenCalledWith(archiveFault);
   });
 
+  it('does not report a lazy-level archive fault after its dataset is replaced', async () => {
+    attachStubChildren();
+    const archiveFault = new ArchiveFaultError('archive is no longer readable', '/scene.zip');
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(archiveFault);
+    const reg = makeReg();
+    const reportArchiveFault = vi.fn();
+    const ctx = makeCtx(reg, { isDatasetLive: () => false, reportArchiveFault });
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.permanentlyFailed).toBe(true));
+
+    expect(reportArchiveFault).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['an archive fault', new ArchiveFaultError('archive open failed', '/scene.zip')],
     ['an ordinary error', new Error('nested subtree failed')],

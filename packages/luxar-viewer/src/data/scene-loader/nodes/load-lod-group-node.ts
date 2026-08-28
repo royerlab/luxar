@@ -143,7 +143,7 @@ function attachLazyChild(
         if (archiveFault) {
           entryChild.permanentlyFailed = true;
           entryChild.failedTick = undefined;
-          ctx.reportArchiveFault(archiveFault);
+          if (ctx.isDatasetLive()) ctx.reportArchiveFault(archiveFault);
         }
         log.warning(
           Modules.SCENE_LOADER,
