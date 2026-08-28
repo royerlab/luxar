@@ -1682,6 +1682,22 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(children[1].failed).not.toBe(true);
   });
 
+  it('never retries a permanently-failed lazy level', () => {
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    children[1].failed = true;
+    children[1].permanentlyFailed = true;
+    const reg = makeRegistry();
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    for (let i = 0; i < 300; i++) reg.evaluatePerFrame();
+
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    expect(children[1].failed).toBe(true);
+    expect(children[1].failedTick).toBeUndefined();
+  });
+
   it('clear() resets the monotonic tick', () => {
     const reg = makeRegistry();
     reg.register(makeEntry([makeChild(0), makeChild(0.5)], 0, '/g'));
@@ -2043,6 +2059,24 @@ describe('LODGroupRegistry — retryLazyChildByLeafPath', () => {
 
     expect(reg.retryLazyChildByLeafPath('/g/child_1')).toBe(true);
     expect(ensureLoaded).not.toHaveBeenCalled();
+  });
+
+  it('clears a permanent failure latch for an explicit retry', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const child = makeLazyChild(0.5, ensureLoaded);
+    child.object.name = '/g/child_1';
+    child.failed = true;
+    child.failedTick = 42;
+    child.permanentlyFailed = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+
+    expect(reg.retryLazyChildByLeafPath('/g/child_1')).toBe(true);
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+    expect(child.failed).toBe(false);
+    expect(child.failedTick).toBeUndefined();
+    expect(child.permanentlyFailed).toBe(false);
+    expect(child.loading).toBe(true);
   });
 
   it('returns false for unknown paths and for anonymous deferred-group placeholders', () => {

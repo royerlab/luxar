@@ -93,6 +93,7 @@ make check-docs   # REQUIRED gate mirror: completeness + TypeDoc ratchets +
 make check-docs-external-links  # opt-in external HTTP link audit (not a gate)
 make check-demo-links  # opt-in demo click-through audit (reports only; not a gate)
 make check-zenodo-live          # opt-in live Zenodo manifest-pin audit (not a gate)
+make check-cold-fetch           # opt-in hosted demo cold-fetch gate before payload removal
 make check-external-references  # aggregate external audits (report-only, non-gating)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
 make check-gallery-staleness  # REPORT only; requires full Git history

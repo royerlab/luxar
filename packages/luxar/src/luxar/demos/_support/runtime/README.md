@@ -38,9 +38,12 @@ print(device, flags["recompute"])
   falls back to its default after warning on malformed values.
 - `parse_path_arg()` parses and expands path flags, returning `None` when the
   flag is absent or has no value.
+- `run_luxar_cli()` runs the shipped CLI in-process and turns a failing exit
+  into a `RuntimeError`.
 
-`device.py` probes CUDA, MPS, and CPU availability. `flags.py` implements the
-shared demo CLI contract. `provenance.py` fingerprints builders and decides when
-an existing scene is safe to reuse. `viewer.py` allocates stable ports and starts
-the server/viewer pair with package-root process helpers. Dataset acquisition and
-download integrity are intentionally separated into sibling support packages.
+`cli.py` bridges demos to the shipped CLI. `device.py` probes CUDA, MPS, and CPU
+availability. `flags.py` implements the shared demo CLI contract. `provenance.py`
+fingerprints builders and decides when an existing scene is safe to reuse.
+`viewer.py` allocates stable ports and starts the server/viewer pair with
+package-root process helpers. Dataset acquisition and download integrity are
+intentionally separated into sibling support packages.

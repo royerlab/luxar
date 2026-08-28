@@ -69,6 +69,7 @@ from ._support.downloads.download import (
     warn_if_quarantined,
 )
 from ._support.downloads.remote_zip import download_zip_member
+from ._support.runtime.cli import run_luxar_cli
 from ._support.runtime.device import detect_device, warn_if_no_cuda_gpu
 from ._support.runtime.flags import parse_demo_flags, parse_int_arg, parse_path_arg
 from ._support.runtime.provenance import (
@@ -131,6 +132,7 @@ __all__ = [
     "require_module",
     "rk4_step",
     "robust_download",
+    "run_luxar_cli",
     "scene_is_current",
     "stack_colorings",
     "substitutive_lod_or_flat",
