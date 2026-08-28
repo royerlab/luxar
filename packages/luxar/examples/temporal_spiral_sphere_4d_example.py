@@ -13,7 +13,7 @@ Educational value:
 - Learn to create temporal animations without requiring a stress-sized dataset
 - Understand time as a discrete navigation dimension
 - See how per-frame transformations create smooth animation
-- Good stress test for high-density temporal rendering
+- Keep the generated scene practical for the mandatory example pre-flight
 """
 
 import numpy as np
@@ -28,7 +28,7 @@ N_FRAMES = 128
 
 
 def create_spherical_spiral(
-    n_points: int = 200000, radius: float = 10.0, rotation: float = 0.0
+    n_points: int = N_POINTS_PER_FRAME, radius: float = 10.0, rotation: float = 0.0
 ) -> np.ndarray:
     """Create points distributed in a spherical spiral pattern with rotation.
 
