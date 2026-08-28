@@ -402,10 +402,11 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
     """The ``indexed``-lines branch of ``add_lines_substitutive_lod_wrapper_impl``.
 
     An ``indexed`` node carries an explicit edge list the additive multi-LOD
-    writer cannot preserve (it would fabricate phantom chains), so the streaming
-    ladder is suppressed. An EXPLICITLY requested ladder raises a ``UserWarning``
-    (``test_explicit_additive_warns_and_ladder_suppressed`` proves that path
-    end-to-end); a default (omitted) one is skipped quietly, with no warning.
+    writer cannot preserve (it would fabricate phantom chains), so the finest
+    Lines ladder is suppressed while the coarse gsplat children still stream.
+    An EXPLICITLY requested ladder raises a ``UserWarning``
+    (``test_explicit_additive_warns_and_only_finest_is_suppressed`` proves that
+    path end-to-end); a default (omitted) one is skipped quietly, with no warning.
 
     This drives a real indexed geometry node end-to-end, proving the
     ``line_type == "indexed"`` branch in ``adders/lines.py`` actually fires —
@@ -432,10 +433,22 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
             assert int(child.attrs.get("n_additive_sublods", 1)) == 1, name
             assert not any(k.startswith("additive_") for k in child.keys()), name
 
-    def test_explicit_additive_warns_and_ladder_suppressed(self, tmp_path) -> None:
+    @staticmethod
+    def _assert_only_coarse_child_ladders(grp) -> None:
+        children = sorted(k for k in grp.keys() if k.startswith("child_"))
+        assert len(children) == 2
+        coarse, finest = (grp[name] for name in children)
+        assert coarse.attrs["type"] == "gsplats"
+        assert int(coarse.attrs.get("n_additive_sublods", 1)) > 1
+        assert finest.attrs["type"] == "lines"
+        assert int(finest.attrs.get("n_additive_sublods", 1)) == 1
+
+    def test_explicit_additive_warns_and_only_finest_is_suppressed(
+        self, tmp_path
+    ) -> None:
         out = tmp_path / "t.luxar.zarr"
         verts, indices = self._indexed_verts_and_edges()
-        with pytest.warns(UserWarning, match="edges are not preserved by the ladder"):
+        with pytest.warns(UserWarning, match="finest level will load all-at-once"):
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_lines(
@@ -447,23 +460,22 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
                     substitutive_lod=dict(
                         compression_factor=2, levels=1, device="cpu", seed=0
                     ),
-                    additive_lod=True,
+                    additive_lod={"counts": "stream:50"},
                 )
 
         grp = zarr.open(str(out), mode="r")["curves"]
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "lines"
-        self._assert_no_additive_ladder(grp)
+        self._assert_only_coarse_child_ladders(grp)
 
     def test_default_additive_indexed_is_suppressed_quietly(self, tmp_path) -> None:
         # With additive_lod omitted, an indexed node's ladder is skipped QUIETLY
         # (an aprint info line, NOT a UserWarning). The load-bearing assertion
         # here is the ABSENCE of a UserWarning (enforced by simplefilter below).
-        # At this vertex count (600 << the composed stream:39062-vertex default)
-        # the ladder would collapse to a single flat leaf regardless of whether
-        # the indexed-suppression branch ran, so `_assert_no_additive_ladder` is
-        # only a plain build-sanity check — it does NOT by itself prove
-        # suppression (test_explicit_additive_warns_and_ladder_suppressed does).
+        # At this vertex count (600 << the composed stream:39062-element default)
+        # both coarse and finest ladders collapse to flat leaves. The absence of
+        # a warning is the load-bearing assertion; the explicit sibling above
+        # proves the coarse/finest policy split.
         out = tmp_path / "t.luxar.zarr"
         verts, indices = self._indexed_verts_and_edges()
         with warnings.catch_warnings():
@@ -485,6 +497,82 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "lines"
         self._assert_no_additive_ladder(grp)
+
+
+@pytest.mark.parametrize("line_type", ["polyline", "loop"])
+def test_single_polyline_suppression_only_flattens_finest(tmp_path, line_type) -> None:
+    out = tmp_path / "t.luxar.zarr"
+    verts = np.random.default_rng(5).uniform(0, 60, (600, 3)).astype(np.float32)
+    with pytest.warns(UserWarning, match="finest level will load all-at-once"):
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curve",
+                verts,
+                0.8,
+                line_type=line_type,
+                substitutive_lod=dict(
+                    compression_factor=2, levels=1, device="cpu", seed=0
+                ),
+                additive_lod={"counts": "stream:50"},
+            )
+
+    grp = zarr.open(str(out), mode="r")["curve"]
+    children = sorted(k for k in grp.keys() if k.startswith("child_"))
+    assert int(grp[children[0]].attrs.get("n_additive_sublods", 1)) > 1
+    assert int(grp[children[-1]].attrs.get("n_additive_sublods", 1)) == 1
+
+
+def test_image_labels_suppression_only_flattens_finest_lines(tmp_path) -> None:
+    out = tmp_path / "t.luxar.zarr"
+    verts = _segments(300)
+    with pytest.warns(UserWarning, match="finest level will load all-at-once"):
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                verts,
+                0.8,
+                line_type="segments",
+                image_labels=[b"x"] * len(verts),
+                substitutive_lod=dict(
+                    compression_factor=2, levels=1, device="cpu", seed=0
+                ),
+                additive_lod={"counts": "stream:50"},
+            )
+
+    grp = zarr.open(str(out), mode="r")["curves"]
+    children = sorted(k for k in grp.keys() if k.startswith("child_"))
+    assert int(grp[children[0]].attrs.get("n_additive_sublods", 1)) > 1
+    assert grp[children[-1]].attrs.get("has_image_labels") is True
+    assert int(grp[children[-1]].attrs.get("n_additive_sublods", 1)) == 1
+
+
+def test_plain_indexed_additive_refuses_to_rebuild_edges(tmp_path) -> None:
+    out = tmp_path / "t.luxar.zarr"
+    verts = np.zeros((24, 3), dtype=np.float32)
+    indices = []
+    for component in range(6):
+        start = component * 4
+        verts[start : start + 4, 0] = component
+        verts[start + 1 : start + 4, 1] = [1, 2, 3]
+        indices.extend([(start, start + 1), (start, start + 2), (start, start + 3)])
+
+    with pytest.warns(UserWarning, match="edges are not preserved by the ladder"):
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "stars",
+                verts,
+                0.8,
+                line_type="indexed",
+                indices=np.asarray(indices, dtype=np.uint32),
+                additive_lod={"counts": [2, 4]},
+            )
+
+    node = zarr.open(str(out), mode="r")["stars"]
+    assert node.attrs["type"] == "lines"
+    assert int(node.attrs.get("n_additive_sublods", 1)) == 1
 
 
 class TestAdditiveLevelStatsPairingLines:

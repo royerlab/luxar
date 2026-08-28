@@ -822,6 +822,19 @@ class TestComposeAdditiveUnderSubstitutive:
             )
         assert result is None
 
+    def test_suppression_outcome_can_describe_finest_only(self):
+        with pytest.warns(UserWarning, match="coarse levels still stream"):
+            result = compose_additive_under_substitutive(
+                {"method": "random"},
+                resolve=self._resolve,
+                name="node",
+                suppress_reason="image_labels is set",
+                suppression_outcome=(
+                    "the finest level will load all-at-once; coarse levels still stream."
+                ),
+            )
+        assert result is None
+
     def test_explicit_true_suppression_warns(self):
         with pytest.warns(UserWarning, match="cannot be honoured"):
             compose_additive_under_substitutive(

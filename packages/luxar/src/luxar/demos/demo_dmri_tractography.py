@@ -534,20 +534,21 @@ LINE_INTENSITY: Final = 1.0 / 74.976
 #: difference between a 2.1 GB scene and a ~200 MB one.
 SUBSTITUTIVE_LOD: Final = dict(compression_factor=256, levels=2)
 
-# NOTE — no `additive_lod` here, deliberately. An additive ladder composed
-# under a substitutive one is REFUSED for `line_type="indexed"`:
+# NOTE — no `additive_lod` here, deliberately. Under a substitutive ladder the
+# original `line_type="indexed"` child refuses its additive ladder:
 #
 #   UserWarning: the requested streaming ladder cannot be honoured
 #   (line_type='indexed' edges are not preserved by the ladder);
-#   levels will load all-at-once.
+#   the finest level will load all-at-once; coarse levels still stream.
 #
 # The ladder rebuilds each connected component as a plain chain over its
 # members, which for an arbitrary indexed edge list would invent edges that do
-# not exist and drop ones that do (see `adders/lines.py`). Passing it anyway
-# just warns on every build and changes nothing — every level still loads in
-# one commit. It costs us little: each node is under the 200K-vertex threshold
-# at which `check_demo_ladders.py` requires a ladder, and the 87 nodes already
-# stream independently of one another.
+# not exist and drop ones that do (see `adders/lines.py`). The synthesized
+# gsplat children have no edge list and safely keep their default streaming
+# ladders; only the finest Lines child loads in one commit. It costs us little:
+# each node is under the 200K-vertex threshold at which
+# `check_demo_ladders.py` requires a ladder, and the 87 nodes already stream
+# independently of one another.
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
