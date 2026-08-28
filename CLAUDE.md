@@ -315,6 +315,9 @@ luxar export scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 --n
 
 ### GSplat CLI (fitting, converting, rendering, merging)
 ```bash
+# Diagnose an existing store; --histograms enables the optional info histograms.
+luxar gsplat doctor splats.gsplats.zarr --histograms --bins 40
+
 # Fit Gaussian splats to a volume (presets: draft/standard/hifi/ultra)
 # Supported input formats: .zarr, .zarr.zip, .tiff, .npy, .npz
 luxar gsplat fit volume.tiff splats.gsplats.zarr --preset standard --seeds 8000
