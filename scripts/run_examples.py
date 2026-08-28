@@ -493,8 +493,7 @@ def generate_examples(
             continue
         previous_outputs = set(previous_stamps.get(script.name, {}).get("outputs", []))
         outputs = generated_outputs or sorted(previous_outputs)
-        if generated_outputs:
-            removed_outputs.update(previous_outputs - set(generated_outputs))
+        removed_outputs.update(previous_outputs - set(outputs))
         stamps[script.name] = {
             "fingerprint": fingerprints[script.name],
             "sources": [

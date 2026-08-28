@@ -493,6 +493,7 @@ def test_invalid_marker_entry_does_not_discard_valid_stamps(
     repo = _repo(tmp_path)
     output_dir = repo / "datasets/examples"
     valid = _generating_example(repo, "one", repo / "ran")
+    _write_example(repo, "bad", "print('bad')\n")
     output = output_dir / "one_example.luxar.zarr"
     output.mkdir(parents=True)
     (output / "zarr.json").write_text("fresh")
@@ -514,7 +515,7 @@ def test_invalid_marker_entry_does_not_discard_valid_stamps(
     }
     (output_dir / run_examples.MARKER_NAME).write_text(json.dumps(marker))
 
-    assert run_examples.fixtures_are_current(repo, output_dir)
+    assert run_examples.stale_examples(repo, output_dir) == ["bad_example.py"]
     assert "Ignoring invalid fixture stamp: bad_example.py" in capsys.readouterr().err
 
 
