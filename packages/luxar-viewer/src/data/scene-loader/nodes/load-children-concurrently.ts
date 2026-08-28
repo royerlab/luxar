@@ -15,7 +15,6 @@ import type { NodeBuildCtx } from './build-ctx';
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
 const EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024;
-const ESTIMATED_LINE_VERTEX_WORKING_SET_BYTES = 100;
 const ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES = 220;
 
 interface WorkingSetWaiter {
@@ -77,17 +76,19 @@ function estimateWorkingSetBytes(node: SceneNode): number {
     typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : 0;
   const vertexCount = readCount(node.attrs.n_vertices);
   const segmentCount = readCount(node.attrs.n_segments) || vertexCount;
+  const rawNdim = readCount(node.attrs.ndim);
+  const ndim = Math.min(16, rawNdim || 3);
+  const vertexBytes = 10 * ndim + 70;
 
   // Accumulator growth can briefly retain old + new vertex/segment buffers;
   // projection then emits endpoint attributes, and the committed geometry owns
-  // a 6-texel RGBA32F texture plus ordering storage per segment. The rounded
-  // 100 B/vertex + 220 B/segment estimate covers those overlapping allocations.
-  // Legacy nodes without n_segments use the accumulator's conservative 1:1
-  // fallback. Admission only changes overlap, never stored or rendered data.
-  return (
-    vertexCount * ESTIMATED_LINE_VERTEX_WORKING_SET_BYTES +
-    segmentCount * ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES
-  );
+  // a 6-texel RGBA32F texture plus ordering storage per segment. Vertex pressure
+  // is `2.5 × (4 × ndim + 28)` rounded to `10 × ndim + 70` bytes: the 1.5x
+  // accumulator grow can retain both old and new capacities. Segment pressure
+  // rounds the remaining overlap to 220 B/segment. Legacy nodes without
+  // n_segments use the accumulator's conservative 1:1 fallback. Admission only
+  // changes overlap, never stored or rendered data.
+  return vertexCount * vertexBytes + segmentCount * ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES;
 }
 
 /**

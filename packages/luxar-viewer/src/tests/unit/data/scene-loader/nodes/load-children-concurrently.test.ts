@@ -18,11 +18,20 @@ function makeChildren(count: number): SceneNode[] {
   }));
 }
 
-function makeLineChildren(count: number, nVertices: number, nSegments?: number): SceneNode[] {
+function makeLineChildren(
+  count: number,
+  nVertices: number,
+  nSegments?: number,
+  ndim?: number
+): SceneNode[] {
   return Array.from({ length: count }, (_, index) => ({
     path: `/group/lines_${index}`,
     type: 'lines',
-    attrs: { n_vertices: nVertices, ...(nSegments === undefined ? {} : { n_segments: nSegments }) },
+    attrs: {
+      n_vertices: nVertices,
+      ...(nSegments === undefined ? {} : { n_segments: nSegments }),
+      ...(ndim === undefined ? {} : { ndim }),
+    },
     hasSpatialIndex: true,
     children: [],
   }));
@@ -134,6 +143,28 @@ describe('loadChildrenConcurrently', () => {
 
   it('charges declared segment pressure independently of vertex count', async () => {
     const children = makeLineChildren(2, 10_000, 1_500_000);
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async (child) => {
+        started.push(child.path);
+        await new Promise<void>((resolve) => releases.push(resolve));
+      }
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    releases.shift()?.();
+    await loadPromise;
+  });
+
+  it('includes nD position growth in the line working-set estimate', async () => {
+    const children = makeLineChildren(2, 400_000, 400_000, 16);
     const started: string[] = [];
     const releases: Array<() => void> = [];
     const loadPromise = loadChildrenConcurrently(
