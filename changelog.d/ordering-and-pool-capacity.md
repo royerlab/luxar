@@ -14,7 +14,8 @@ budget before a single source array — and the byte evictor could not help, bec
 disposes only *pooled* buffers and an eager load holds all nine *active*. Capacity
 headroom is now capped at 262,144 elements: it exists to absorb a per-slice count
 wobble of a few thousand, not a fixed share of however large a node is. That returns
-333 MiB. The three data accumulators had the same shape of bug for a different reason —
+333 MiB. (Complementary to the eager-load admission gate, which bounds how many large
+siblings may allocate at once rather than how much each one over-reserves.) The three data accumulators had the same shape of bug for a different reason —
 their `while (cap < needed) cap *= 1.5` loop landed on a term of the growth *sequence*
 rather than on the count the loader already knew, so six of the nine nodes grew to the
 identical 1,594,323 vertices and 27.4% of the reserved slots were never used.
