@@ -2,13 +2,14 @@
  * Reporting for loader failures — the aggregate view, as distinct from the
  * per-node logging in `nodes/load-leaf-error-dispatch.ts`.
  *
- * Exists because `loadScene` structurally CANNOT throw on a failed load:
- * `loadLeafNode` catches every `LoaderError` and returns null so the rest of the
- * scene still builds. That is the right behavior, but it meant a scene whose
- * every node failed resolved normally and logged an unconditional
+ * Exists because `loadScene` structurally cannot throw on ordinary leaf-local
+ * failures: `loadLeafNode` catches their `LoaderError`s and returns null so the
+ * rest of the scene still builds. That is the right behavior, but it meant a
+ * scene whose every node failed resolved normally and logged an unconditional
  * "Scene loaded successfully" — a green log over an empty viewport, which is
  * what made a real data bug (a WASM trap in the gsplat projection kernel) look
- * like a mystery.
+ * like a mystery. Container-wide archive faults remain fatal and bypass this
+ * aggregate.
  *
  * @module data/scene-loader/loaders/failure-report
  */
@@ -63,10 +64,12 @@ export function warnFailedLoaders(failedPaths: readonly string[]): void {
  * @param registeredPaths Scene paths that registered a loader — the attempted
  *   set. A failed lazy LOD level may fail WITHOUT registering, so grade totality
  *   against this set, not a count.
+ * @param failureReasons Recorded failure messages in encounter order.
  */
 export function reportLoadOutcome(
   failedPaths: readonly string[],
-  registeredPaths: readonly string[]
+  registeredPaths: readonly string[],
+  failureReasons: readonly string[] = []
 ): LoadOutcome {
   if (failedPaths.length === 0) {
     log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
@@ -84,6 +87,7 @@ export function reportLoadOutcome(
   const allRegisteredFailed =
     registeredPaths.length > 0 && registeredPaths.every((p) => failedSet.has(p));
   if (allRegisteredFailed) {
+    const firstFailureReason = failureReasons.find((reason) => reason.trim().length > 0);
     // Count the FAILED set, not the registered one: an unregistered lazy-level
     // failure can ride along in `failedPaths`, and a count that disagrees with
     // the listed paths reads as a bug. In this branch every listed path failed
@@ -94,7 +98,9 @@ export function reportLoadOutcome(
     );
     notifier.toast(
       `Scene failed to load: all ${failedPaths.length} data node(s) failed. ` +
-        'See the console for details.',
+        (firstFailureReason
+          ? `First error: ${firstFailureReason}`
+          : 'See the console for details.'),
       TOTAL_FAILURE_TOAST_MS
     );
     return 'total';

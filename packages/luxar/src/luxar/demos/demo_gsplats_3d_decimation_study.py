@@ -72,7 +72,7 @@ REPRODUCING IT:
     # score against the source volume
     luxar gsplat compare quarter.gsplats.zarr orig_tp234.npy --device cuda
 
-  The shipped bytes were produced by this flatten + direct merge-decimation
+  The shipped counts were produced by this flatten + direct merge-decimation
   recipe. ``--recompute`` is the supported rebuild and reproduces their counts
   within 0.02%. ``compare`` reports GLOBAL PSNR; the foreground figures above
   come from the same render with the MSE restricted to Otsu-masked voxels.

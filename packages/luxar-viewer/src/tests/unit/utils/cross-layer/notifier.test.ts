@@ -23,8 +23,8 @@ function makeRecordingBackend(): RecordingBackend {
   const calls: RecordingBackend['calls'] = [];
   return {
     calls,
-    showError(message) {
-      calls.push({ method: 'showError', args: [message] });
+    showError(message, options) {
+      calls.push({ method: 'showError', args: [message, options] });
     },
     showToast(message, durationMs) {
       calls.push({ method: 'showToast', args: [message, durationMs] });
@@ -114,7 +114,14 @@ describe('notifier — with a backend registered', () => {
 
   it('forwards error()', () => {
     notifier.error('boom');
-    expect(backend.calls).toEqual([{ method: 'showError', args: ['boom'] }]);
+    expect(backend.calls).toEqual([{ method: 'showError', args: ['boom', undefined] }]);
+  });
+
+  it('forwards persistent error options', () => {
+    notifier.error('archive unavailable', { persistent: true });
+    expect(backend.calls).toEqual([
+      { method: 'showError', args: ['archive unavailable', { persistent: true }] },
+    ]);
   });
 
   it('forwards toast() with the default duration of 2000ms when not supplied', () => {

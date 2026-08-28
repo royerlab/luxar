@@ -851,7 +851,7 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
     parsed = yaml.safe_load(workflow)
     assert parsed["concurrency"]["group"] == (
         "${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-"
-        "${{ github.run_attempt }}"
+        "${{ github.run_attempt == 1 && 'fresh' || github.run_id }}"
     )
     assert parsed["concurrency"]["cancel-in-progress"] is True
 
@@ -869,14 +869,15 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
     assert "github.event_name=='schedule'" in condition
     assert "always()" in condition
     assert "!cancelled()" in condition
-    assert repair["permissions"] == {"actions": "write"}
+    assert repair["permissions"] == {"actions": "write", "contents": "read"}
     assert repair["steps"][0]["env"]["GH_TOKEN"] == "${{ github.token }}"
 
     script = repair["steps"][0]["run"]
     assert "actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest" in script
+    assert "compare/main...${GITHUB_SHA}" in script
     assert "event=push" in script
     assert "status=completed" in script
-    assert "head_sha=${GITHUB_SHA}" in script
+    assert "head_sha=${candidate_sha}" in script
     assert 'select(.name == "CI")' in script
     assert "max_by(.id).id // empty" in script
     assert "actions/runs/${push_run}/jobs?filter=latest" in script
@@ -902,6 +903,8 @@ def _run_cancelled_push_repair(
     push_typescript: str = "cancelled",
     push_release: str = "cancelled",
     rejected_endpoint: str = "",
+    failed_get_endpoint: str = "",
+    candidate_shas: tuple[str, ...] = ("deadbeef",),
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Execute the repair shell against deterministic workflow/job snapshots."""
     script = yaml.safe_load(workflow)["jobs"]["repair-cancelled-push-checks"]["steps"][
@@ -921,6 +924,8 @@ if "--method" in sys.argv:
         stream.write(endpoint + "\\n")
     if endpoint == os.environ["REJECTED_ENDPOINT"]:
         raise SystemExit(1)
+elif endpoint == os.environ["FAILED_GET_ENDPOINT"]:
+    raise SystemExit(1)
 elif f"/runs/{os.environ['GITHUB_RUN_ID']}/jobs?" in endpoint:
     print(json.dumps([{"jobs": [
         {"id": 10, "name": "python-tests (3.12)", "conclusion": "cancelled"},
@@ -931,8 +936,17 @@ elif f"/runs/{os.environ['GITHUB_RUN_ID']}/jobs?" in endpoint:
         {"id": 15, "name": "docs-quality", "conclusion": "success"},
         {"id": 16, "name": "python-tests (3.14)", "conclusion": "failure"},
     ]}]))
+elif "/compare/main..." in endpoint:
+    print(json.dumps([{"commits": [
+        {"sha": sha} for sha in os.environ["CANDIDATE_SHAS"].split(",") if sha
+    ]}]))
 elif "/actions/runs?" in endpoint:
-    print("900")
+    if "head_sha=deadbeef" in endpoint:
+        print("900")
+    elif "head_sha=older" in endpoint:
+        print("901")
+    elif "head_sha=oldest" in endpoint:
+        print("902")
 elif "/runs/900/jobs?" in endpoint:
     print(json.dumps([{"jobs": [
         {"id": 21, "name": "python-tests (3.12)", "conclusion": "cancelled"},
@@ -940,6 +954,22 @@ elif "/runs/900/jobs?" in endpoint:
         {"id": 23, "name": "release-readiness", "conclusion": os.environ["PUSH_RELEASE"]},
         {"id": 24, "name": "python-tests (3.14)", "conclusion": "cancelled"},
         {"id": 25, "name": "python-tests (3.12)", "conclusion": os.environ["PUSH_PYTHON_LATEST"]},
+    ]}]))
+elif "/runs/901/jobs?" in endpoint:
+    print(json.dumps([{"jobs": [
+        {"id": 31, "name": "docs-quality", "conclusion": "cancelled"},
+        {"id": 32, "name": "python-tests (3.12)", "conclusion": "success"},
+        {"id": 33, "name": "typescript-tests", "conclusion": "success"},
+        {"id": 34, "name": "release-readiness", "conclusion": "success"},
+        {"id": 35, "name": "wheel-viewer", "conclusion": "success"},
+    ]}]))
+elif "/runs/902/jobs?" in endpoint:
+    print(json.dumps([{"jobs": [
+        {"id": 41, "name": "wheel-viewer", "conclusion": "cancelled"},
+        {"id": 42, "name": "python-tests (3.12)", "conclusion": "success"},
+        {"id": 43, "name": "typescript-tests", "conclusion": "success"},
+        {"id": 44, "name": "release-readiness", "conclusion": "success"},
+        {"id": 45, "name": "docs-quality", "conclusion": "success"},
     ]}]))
 else:
     raise SystemExit(f"unexpected endpoint: {endpoint}")
@@ -965,6 +995,8 @@ else:
             "PUSH_TYPESCRIPT": push_typescript,
             "PUSH_RELEASE": push_release,
             "REJECTED_ENDPOINT": rejected_endpoint,
+            "FAILED_GET_ENDPOINT": failed_get_endpoint,
+            "CANDIDATE_SHAS": ",".join(candidate_shas),
         },
     )
     calls = calls_path.read_text().splitlines() if calls_path.exists() else []
@@ -980,6 +1012,24 @@ def test_green_schedule_reruns_all_latest_cancelled_required_push_jobs(
     assert calls == [
         "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs",
     ]
+
+
+def test_green_schedule_caps_repairs_at_two_newest_candidates(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        candidate_shas=("oldest", "older", "missing", "deadbeef"),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [
+        "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs",
+        "repos/royerlab/luxar/actions/jobs/31/rerun",
+    ]
+    assert "No completed push CI run found for missing" in result.stdout
+    assert "Repair cap reached; older candidates intentionally skipped" in result.stdout
 
 
 def test_green_schedule_ignores_older_cancelled_push_attempt(
@@ -1016,8 +1066,50 @@ def test_rejected_multi_job_rerun_is_reported(workflow: str, tmp_path: Path) -> 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == [endpoint]
     assert (
-        "rerun rejected for push run 900 (3 cancelled required jobs)" in result.stdout
+        "rerun rejected for push run 900 (deadbeef; 3 cancelled required jobs)"
+        in result.stdout
     )
+
+
+def test_rejected_rerun_does_not_consume_repair_cap(
+    workflow: str, tmp_path: Path
+) -> None:
+    endpoint = "repos/royerlab/luxar/actions/runs/900/rerun-failed-jobs"
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        rejected_endpoint=endpoint,
+        candidate_shas=("oldest", "older", "deadbeef"),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [
+        endpoint,
+        "repos/royerlab/luxar/actions/jobs/31/rerun",
+        "repos/royerlab/luxar/actions/jobs/41/rerun",
+    ]
+
+
+@pytest.mark.parametrize(
+    "failed_get_endpoint",
+    [
+        "repos/royerlab/luxar/actions/runs?head_sha=deadbeef&event=push&status=completed&per_page=100",
+        "repos/royerlab/luxar/actions/runs/900/jobs?filter=latest&per_page=100",
+    ],
+)
+def test_candidate_api_failure_does_not_abort_backlog_repair(
+    workflow: str, tmp_path: Path, failed_get_endpoint: str
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        failed_get_endpoint=failed_get_endpoint,
+        candidate_shas=("older", "deadbeef"),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/jobs/31/rerun"]
+    assert "API query failed for deadbeef; continuing backlog repair" in result.stdout
 
 
 def test_non_green_schedule_does_not_repair_push_jobs(

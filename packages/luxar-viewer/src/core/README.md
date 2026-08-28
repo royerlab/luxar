@@ -378,12 +378,18 @@ async init(options: LuxarAppOptions): Promise<void> {
 }
 ```
 
-The caller (in `main.ts`) catches and displays errors:
+`bootstrapStandalone()` catches and displays startup errors. Authored archive
+faults carry safe, actionable remedies; unrecognized failures keep the generic
+fallback. Fatal startup dialogs remain until the user dismisses them:
 
 ```typescript
 app.init({ canvas, src }).catch((error) => {
   console.error('Failed to start Luxar application:', error);
-  showError('Failed to start the application. Please check the console for details.');
+  const message =
+    error instanceof ArchiveFaultError
+      ? error.message
+      : 'Failed to start the application. Please check the console for details.';
+  showError(message, shortcutForAction, shortcutActions, { autoDismiss: false });
 });
 ```
 
@@ -393,7 +399,11 @@ app.init({ canvas, src }).catch((error) => {
 // Global error handler for unhandled initialization failures
 app.init({ canvas, src }).catch((error) => {
   console.error('Failed to start Luxar application:', error);
-  showError('Failed to start the application. Please check the console for details.');
+  const message =
+    error instanceof ArchiveFaultError
+      ? error.message
+      : 'Failed to start the application. Please check the console for details.';
+  showError(message, shortcutForAction, shortcutActions, { autoDismiss: false });
 });
 ```
 
@@ -586,7 +596,11 @@ async init(options: LuxarAppOptions): Promise<void> {
 
 // ✅ Good: Caller displays errors to user
 app.init({ canvas, src }).catch((error) => {
-  showError('Failed to start the application.');
+  const message =
+    error instanceof ArchiveFaultError
+      ? error.message
+      : 'Failed to start the application. Please check the console for details.';
+  showError(message, shortcutForAction, shortcutActions, { autoDismiss: false });
 });
 
 // ✅ Good: Provide fallbacks for optional values

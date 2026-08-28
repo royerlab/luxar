@@ -15,6 +15,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { runLoaderUpdates } from '../../../../../data/scene-loader/loaders/run-loader-updates';
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
+import { ArchiveFaultError } from '../../../../../cache/chunk-source';
 
 function makeCtx() {
   const viewStateQueue = new ViewStateQueue();
@@ -22,10 +23,12 @@ function makeCtx() {
   // A real registry rather than a bare Map: failure recording is now routed
   // through `recordFailure`, which also persists the classified error kind.
   const registry = new LoaderRegistry();
+  const onArchiveFault = vi.fn();
   return {
     profiler: null,
     viewStateQueue,
     registry,
+    onArchiveFault,
     forgetPath,
     failedLoaders: registry.failedLoaders,
   };
@@ -78,6 +81,33 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(ctx.failedLoaders.has('/scene/points')).toBe(true);
     expect(ctx.failedLoaders.get('/scene/points')?.retryCount).toBe(0);
     expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/points');
+  });
+
+  it('hoists wrapped archive faults once without recording per-node failures', async () => {
+    const ctx = makeCtx();
+    const loaders = new Map<string, object>([
+      ['/scene/points-a', {}],
+      ['/scene/points-b', {}],
+    ]);
+    const fault = new ArchiveFaultError(
+      'The archive URL has expired. Refresh the page with a new URL.',
+      'https://example.test/scene.zip'
+    );
+
+    const results = await runLoaderUpdates(
+      loaders,
+      'Points',
+      () => {
+        throw new Error('loader wrapper', { cause: fault });
+      },
+      ctx
+    );
+
+    expect(results.map(({ staged }) => staged)).toEqual([null, null]);
+    expect(ctx.onArchiveFault).toHaveBeenCalledOnce();
+    expect(ctx.onArchiveFault).toHaveBeenCalledWith(fault);
+    expect(ctx.failedLoaders.size).toBe(0);
+    expect(ctx.forgetPath).not.toHaveBeenCalled();
   });
 
   it('passes through staged results unchanged on success', async () => {

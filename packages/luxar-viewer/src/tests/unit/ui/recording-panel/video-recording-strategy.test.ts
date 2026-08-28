@@ -65,6 +65,7 @@ vi.mock('../../../../scene/scene-dims-manager', () => ({
 
 import { RecordingPanel } from '../../../../ui/recording-panel';
 import { showToast } from '../../../../ui/toast';
+import { eventBus } from '../../../../utils/cross-layer/event-bus';
 import { createMockSceneManager, createMockAnimationController } from './_helpers';
 
 describe('VideoRecordingStrategy', () => {
@@ -284,6 +285,135 @@ describe('VideoRecordingStrategy', () => {
       (panel as any).videoRecordingStrategy.captureStream = null;
       expect(() => (panel as any).videoRecordingStrategy.cleanupCaptureStream()).not.toThrow();
       expect((panel as any).videoRecordingStrategy.captureStream).toBeNull();
+    });
+  });
+
+  // The real-time path used to hand `captureStream()` the WebGL canvas,
+  // which carries no DOM overlays — so "Include Overlays" was silently a
+  // no-op for every Video-mode recording. These pin WHICH canvas the
+  // stream comes from, because that choice is the entire fix.
+  describe('overlay compositing (which canvas is captured)', () => {
+    let capturedFrom: HTMLCanvasElement[];
+    let origGetContext: typeof HTMLCanvasElement.prototype.getContext;
+
+    /** A 2D context stub rich enough for the real compositeOverlays(). */
+    function makeFakeCtx(): unknown {
+      return {
+        save: vi.fn(),
+        restore: vi.fn(),
+        clearRect: vi.fn(),
+        drawImage: vi.fn(),
+        globalAlpha: 1,
+        globalCompositeOperation: 'source-over',
+      };
+    }
+
+    function overlayManagerWith(count: number): any {
+      return {
+        getVisibleOverlays: vi.fn(() =>
+          Array.from({ length: count }, () => ({
+            // A bare `.luxar-overlay` matches none of the text/image/html
+            // branches, so compositeOverlays only does its save/restore
+            // envelope — enough to prove it ran without needing a real
+            // text-metrics implementation.
+            el: document.createElement('div'),
+            config: { position: [0.02, 0.02], opacity: 1 },
+          }))
+        ),
+      };
+    }
+
+    beforeEach(() => {
+      capturedFrom = [];
+      const record = function (this: HTMLCanvasElement) {
+        capturedFrom.push(this);
+        return { getTracks: () => [] };
+      };
+      (HTMLCanvasElement.prototype as any).captureStream = vi.fn(record);
+      (mockSceneManager.renderer.domElement as any).captureStream = vi.fn(record);
+      origGetContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = vi.fn(() =>
+        makeFakeCtx()
+      ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+    });
+
+    afterEach(() => {
+      HTMLCanvasElement.prototype.getContext = origGetContext;
+      delete (HTMLCanvasElement.prototype as any).captureStream;
+    });
+
+    /**
+     * Start a recording and let `run()` get as far as installing the real
+     * onstop closure.
+     *
+     * The in-flight promise is returned WRAPPED: an async function that
+     * returned it bare would adopt it, so the helper would not settle
+     * until the recording itself finished — a 15 s timeout, not a test.
+     */
+    async function startRecording(): Promise<{ done: Promise<void> }> {
+      const done = panel.startVideoRecording();
+      await new Promise((r) => setTimeout(r, 0));
+      return { done };
+    }
+
+    it('captures a mirror canvas — not the WebGL canvas — when overlays are visible', async () => {
+      panel.setOverlayManager(overlayManagerWith(3));
+      (panel as any).options.includeOverlays = true;
+
+      const { done } = await startRecording();
+      const gl = mockSceneManager.renderer.domElement;
+
+      expect(capturedFrom).toHaveLength(1);
+      expect(capturedFrom[0]).not.toBe(gl);
+      const compositor = (panel as any).videoRecordingStrategy.liveOverlayCompositor;
+      expect(compositor).not.toBeNull();
+      expect(capturedFrom[0]).toBe(compositor.canvas);
+
+      mockMediaRecorder.onstop();
+      await done;
+    });
+
+    it('captures the WebGL canvas directly when there is nothing to composite', async () => {
+      panel.setOverlayManager(overlayManagerWith(0));
+      (panel as any).options.includeOverlays = true;
+
+      const { done } = await startRecording();
+
+      expect(capturedFrom[0]).toBe(mockSceneManager.renderer.domElement);
+      expect((panel as any).videoRecordingStrategy.liveOverlayCompositor).toBeNull();
+
+      mockMediaRecorder.onstop();
+      await done;
+    });
+
+    it('captures the WebGL canvas directly when Include Overlays is off', async () => {
+      panel.setOverlayManager(overlayManagerWith(3));
+      (panel as any).options.includeOverlays = false;
+
+      const { done } = await startRecording();
+
+      expect(capturedFrom[0]).toBe(mockSceneManager.renderer.domElement);
+      expect((panel as any).videoRecordingStrategy.liveOverlayCompositor).toBeNull();
+
+      mockMediaRecorder.onstop();
+      await done;
+    });
+
+    it('detaches the per-frame compositor when the recording ends', async () => {
+      panel.setOverlayManager(overlayManagerWith(2));
+      (panel as any).options.includeOverlays = true;
+
+      const { done } = await startRecording();
+      expect((panel as any).videoRecordingStrategy.liveOverlayCompositor).not.toBeNull();
+
+      mockMediaRecorder.onstop();
+      await done;
+
+      // A `frame-end` listener that outlived its recording would blit into
+      // a dead mirror canvas on every frame for the rest of the session.
+      expect((panel as any).videoRecordingStrategy.liveOverlayCompositor).toBeNull();
+      expect(eventBus.hasListeners('frame-end')).toBe(false);
     });
   });
 

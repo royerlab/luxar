@@ -381,9 +381,11 @@ def _drop_part_provenance_fitting_keys(
         record = dict(entry)
         fitting = record.get("fitting")
         if isinstance(fitting, dict):
-            record["fitting"] = {
+            scrubbed_fitting = {
                 key: value for key, value in fitting.items() if key not in dropped_set
             }
+            _drop_part_provenance_fitting_keys(scrubbed_fitting, dropped)
+            record["fitting"] = scrubbed_fitting
         scrubbed.append(record)
     stats["part_provenance"] = scrubbed
 

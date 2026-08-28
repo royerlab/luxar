@@ -63,7 +63,9 @@
 
   /* Sizing */
   max-width: 520px;
+  max-height: calc(100vh - 2 * var(--luxar-spacing-12));
   width: 90%;
+  overflow-y: auto;
 
   /* Theming — error-tinted hairline derived from the theme's error token
      (keeps the red affordance while staying theme-aware); rail-consistent

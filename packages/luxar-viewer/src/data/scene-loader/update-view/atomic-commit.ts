@@ -41,6 +41,8 @@ export interface AtomicCommitCtx {
    * and must be closed exactly once regardless of commit). See Guards G5/G6.
    */
   signal?: AbortSignal;
+  /** Skip all geometry mutations while still ending every profiler session. */
+  discard?: boolean;
   /** Per-type commit callbacks routed through the orchestrator's delegates. */
   updatePointsGeometry(path: string, data: LoadedPointsData, session?: UpdateSession): void;
   commitLinesGeometry(staged: StagedLinesCommit, session?: UpdateSession): void;
@@ -75,10 +77,10 @@ export function runAtomicCommit(
   // the per-iteration end() calls that record accurate per-node timings
   // on the happy path. beginFrame() is inside the try so a future
   // throwing implementation can't leak the already-opened sessions.
-  // Superseded mid-flight: skip all geometry mutations, but the session-end
-  // sweep below MUST still run (G5/G6). `if (staged && !aborted)` keeps the
-  // skip all-or-nothing across the four geometry types.
-  const aborted = ctx.signal?.aborted ?? false;
+  // Superseded or explicitly discarded: skip all geometry mutations, but the
+  // session-end sweep below MUST still run (G5/G6). The shared predicate keeps
+  // the skip all-or-nothing across the four geometry types.
+  const discard = (ctx.signal?.aborted ?? false) || ctx.discard === true;
 
   // Per-node fault isolation: ONE malformed node's throwing commit must
   // not starve every sibling of this pass (the siblings' data is staged
@@ -92,13 +94,13 @@ export function runAtomicCommit(
   try {
     // Advance GPU buffer pool frame counter once per update cycle
     // (not per-acquire) so eviction timing reflects actual frames.
-    if (ctx.gpuBufferPool && !aborted) {
+    if (ctx.gpuBufferPool && !discard) {
       ctx.gpuBufferPool.beginFrame();
     }
 
     for (const { staged, session } of pointsStaged) {
       try {
-        if (staged && !aborted) ctx.updatePointsGeometry(staged.path, staged.data, session);
+        if (staged && !discard) ctx.updatePointsGeometry(staged.path, staged.data, session);
       } catch (err) {
         commitErrors.push(err);
       } finally {
@@ -107,7 +109,7 @@ export function runAtomicCommit(
     }
     for (const { staged, session } of linesStaged) {
       try {
-        if (staged && !aborted) ctx.commitLinesGeometry(staged, session);
+        if (staged && !discard) ctx.commitLinesGeometry(staged, session);
       } catch (err) {
         commitErrors.push(err);
       } finally {
@@ -116,7 +118,7 @@ export function runAtomicCommit(
     }
     for (const { staged, session } of gsplatsStaged) {
       try {
-        if (staged && !aborted) ctx.commitGSplatsGeometry(staged, session);
+        if (staged && !discard) ctx.commitGSplatsGeometry(staged, session);
       } catch (err) {
         commitErrors.push(err);
       } finally {
@@ -125,7 +127,7 @@ export function runAtomicCommit(
     }
     for (const { staged, session } of meshStaged) {
       try {
-        if (staged && !aborted) ctx.commitMeshGeometry(staged, session);
+        if (staged && !discard) ctx.commitMeshGeometry(staged, session);
       } catch (err) {
         commitErrors.push(err);
       } finally {
@@ -139,13 +141,13 @@ export function runAtomicCommit(
     for (const { session } of meshStaged) session.end();
   }
 
-  // Invalidate cached pick buffer after geometry changes (skip when aborted —
+  // Invalidate cached pick buffer after geometry changes (skip when discarded —
   // nothing was committed, so the pick buffer is still valid for the prior
   // frame). Runs BEFORE the error re-throw: the sibling commits that
   // succeeded did change geometry, so the pick cache must go stale even on
   // a partially-failing pass.
   if (
-    !aborted &&
+    !discard &&
     (pointsStaged.length > 0 ||
       linesStaged.length > 0 ||
       gsplatsStaged.length > 0 ||
