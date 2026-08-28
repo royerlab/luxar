@@ -66,11 +66,13 @@ import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lo
 import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
 import { MAX_AUTO_RETRY_ATTEMPTS } from '../../../../../data/scene-loader/loaders/loader-registry';
 import { ArchiveFaultError } from '../../../../../cache/chunk-source';
-import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
+import { FAILED_RETRY_FRAMES, LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
+
+const FAILED_RETRY_COOLDOWN_FRAMES = FAILED_RETRY_FRAMES + 1;
 
 beforeEach(() => {
   loadSceneNodesMock.mockReset();
@@ -979,7 +981,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
       reg.setSelectorMode('/lod', { lockLevel: 1 });
       for (let retry = 1; retry <= MAX_AUTO_RETRY_ATTEMPTS; retry++) {
-        for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+        for (let frame = 0; frame < FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
         await vi.waitFor(() => {
           const attempts = loadSceneNodesMock.mock.calls.filter(
             ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
@@ -989,7 +991,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
         });
       }
 
-      for (let frame = 0; frame < 2 * 121; frame++) reg.evaluatePerFrame();
+      for (let frame = 0; frame < 2 * FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
 
       const attempts = loadSceneNodesMock.mock.calls.filter(
         ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
@@ -1028,7 +1030,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
       reg.setSelectorMode('/lod', { lockLevel: 1 });
       for (let retry = 1; retry <= MAX_AUTO_RETRY_ATTEMPTS + 1; retry++) {
-        for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+        for (let frame = 0; frame < FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
         await vi.waitFor(() => {
           const attempts = loadSceneNodesMock.mock.calls.filter(
             ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
@@ -1094,7 +1096,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
       failure = undefined;
       reg.setSelectorMode('/lod', { lockLevel: 1 });
-      for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+      for (let frame = 0; frame < FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
       await vi.waitFor(() => expect(deferred.ready).toBe(true));
       expect(deferred.automaticRetriesRemaining).toBeUndefined();
 
@@ -1105,7 +1107,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(ordinaryAttempts).toBe(1);
 
       for (let retry = 1; retry <= MAX_AUTO_RETRY_ATTEMPTS + 1; retry++) {
-        for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+        for (let frame = 0; frame < FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
         await vi.waitFor(() => expect(deferred.failed).toBe(true));
         expect(ordinaryAttempts).toBe(retry + 1);
       }

@@ -320,7 +320,7 @@ export const SCREEN_FILL_DIAGONAL_RATIO = 2;
  * transient (network blip) failure self-heals once the camera revisits
  * the level. See ``LODGroupRegistry.maybeKickLoad``.
  */
-const FAILED_RETRY_FRAMES = 120;
+export const FAILED_RETRY_FRAMES = 120;
 
 /** One LOD-group child as tracked by the registry. */
 export interface LODGroupChild {
