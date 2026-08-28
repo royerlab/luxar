@@ -76,6 +76,14 @@ def _partition_with_nested_provenance(tmp: Path) -> Path:
     return path
 
 
+def _legacy_gsplat_store(tmp: Path) -> Path:
+    path = tmp / "legacy.gsplats.zarr"
+    root = zc_open_group(str(path), mode="w")
+    root.attrs["format_type"] = "gsplats_zarr"
+    root.attrs["format_version"] = "2.0"
+    return path
+
+
 def _scene_without_split_planes(tmp: Path) -> Path:
     from luxar import Dimensions, LuxarZarrCompiler
 
@@ -205,6 +213,18 @@ def test_doctor_prints_info_before_diagnosing_a_gsplat_store() -> None:
         assert "no split planes" in result.stdout
 
 
+def test_doctor_continues_when_info_rejects_a_legacy_store() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _legacy_gsplat_store(Path(tmp))
+
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+
+        assert result.exit_code == 0, result.stdout
+        assert "migrate-format" in result.stdout
+        assert "Diagnosing:" in result.stdout
+        assert "No problems found" in result.stdout
+
+
 def test_doctor_summarizes_nested_provenance_unless_full_is_requested() -> None:
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as tmp:
@@ -242,20 +262,42 @@ def test_doctor_summarizes_nested_provenance_unless_full_is_requested() -> None:
     assert "implies --info" in help_output
 
 
+def test_doctor_accepts_custom_info_histogram_bins() -> None:
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_without_split_planes(Path(tmp))
+
+        result = runner.invoke(
+            app,
+            ["gsplat", "doctor", str(path), "--histograms", "--bins", "17"],
+        )
+
+    assert result.exit_code == 1, result.stdout
+    assert "No such option" not in result.stdout
+
+    help_result = runner.invoke(app, ["gsplat", "doctor", "--help"])
+    assert help_result.exit_code == 0, help_result.stdout
+    assert "--bins" in normalized_cli_output(help_result)
+
+
 def test_doctor_passes_concrete_values_for_every_info_option(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    signature = inspect.signature(inspect_commands.info_dataset)
+    signature = inspect.signature(inspect_commands._info_report)
     calls: list[inspect.BoundArguments] = []
 
-    def capture_info_call(*args: object, **kwargs: object) -> None:
+    def capture_info_call(*args: object, **kwargs: object) -> bool:
         calls.append(signature.bind(*args, **kwargs))
+        return True
 
-    monkeypatch.setattr(inspect_commands, "info_dataset", capture_info_call)
+    monkeypatch.setattr(inspect_commands, "_info_report", capture_info_call)
 
     with tempfile.TemporaryDirectory() as tmp:
         path = _partition_without_split_planes(Path(tmp))
-        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+        result = CliRunner().invoke(
+            app,
+            ["gsplat", "doctor", str(path), "--histograms", "--bins", "17"],
+        )
 
     assert result.exit_code == 1, result.stdout
     assert len(calls) == 1
@@ -269,6 +311,9 @@ def test_doctor_passes_concrete_values_for_every_info_option(
     assert not any(
         isinstance(value, ParameterInfo) for value in bound.arguments.values()
     )
+    assert bound.arguments["show_histograms"] is True
+    assert bound.arguments["bins"] == 17
+    assert bound.arguments["full_provenance"] is False
 
 
 def test_doctor_writes_a_json_report() -> None:

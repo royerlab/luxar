@@ -14,6 +14,7 @@ condition gets named, costed, and fixed in place — no re-fitting.
 ```bash
 luxar gsplat doctor data.gsplats.zarr              # report (also prints `info`)
 luxar gsplat doctor data.gsplats.zarr --fix        # repair in place
+luxar gsplat doctor data.gsplats.zarr --histograms --bins 60
 luxar gsplat doctor data.gsplats.zarr --full-provenance
 luxar gsplat doctor scene.luxar.zarr --no-info     # every partition in a scene
 luxar gsplat doctor data.gsplats.zarr --no-info --json report.json

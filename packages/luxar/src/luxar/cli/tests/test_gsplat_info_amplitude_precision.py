@@ -7,8 +7,8 @@ import pytest
 
 from luxar.cli.gsplat_ops import inspect_commands
 from luxar.cli.gsplat_ops.inspect_commands import (
+    _info_report,
     _normalized_amplitude_cdf,
-    info_dataset,
 )
 from luxar.gsplats.gsplat_data import GSplatData
 
@@ -61,7 +61,7 @@ def test_info_contributor_count_matches_cumulative_cull_for_rgba(
         inspect_commands, "aprint", lambda value: lines.append(str(value))
     )
 
-    info_dataset(path, show_histograms=False, full_provenance=False)
+    _info_report(path, show_histograms=False, bins=40, full_provenance=False)
 
     output = "\n".join(lines)
     assert f"Top {expected:,} splats" in output
@@ -79,7 +79,7 @@ def test_info_skips_contributor_claims_for_zero_total(
         inspect_commands, "aprint", lambda value: lines.append(str(value))
     )
 
-    info_dataset(path, show_histograms=False, full_provenance=False)
+    _info_report(path, show_histograms=False, bins=40, full_provenance=False)
 
     output = "\n".join(lines)
     assert "contribute 95% of total rendered amplitude (A·α)" not in output
