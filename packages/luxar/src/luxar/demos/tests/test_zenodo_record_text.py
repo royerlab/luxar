@@ -93,6 +93,45 @@ def _write_bundle(path: Path, frames: list[dict[str, Any]], tmp_path: Path) -> N
             zf.write(member, member.name)
 
 
+@pytest.mark.parametrize("zarr_format", [2, 3])
+def test_a_flat_store_is_read_from_its_archive_root(
+    gen: Any, tmp_path: Path, zarr_format: int
+) -> None:
+    path = tmp_path / f"flat-v{zarr_format}.gsplats.zarr.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        child = {
+            "format_type": "gsplats_zarr",
+            "n_splats": 40,
+            "ndim": 2,
+            "n_additive_sublods": 2,
+        }
+        fitting = {"psnr_db": 40.0, "source_bytes": 1_000_000}
+        root = {
+            "format_type": "gsplats_zarr",
+            "n_splats": 100,
+            "ndim": 3,
+            "n_additive_sublods": 5,
+        }
+        if zarr_format == 2:
+            zf.writestr("additive_0/.zattrs", json.dumps(child))
+            zf.writestr("fitting/.zattrs", json.dumps(fitting))
+            zf.writestr(".zgroup", json.dumps({"zarr_format": 2}))
+            zf.writestr(".zattrs", json.dumps(root))
+        else:
+            zf.writestr("additive_0/zarr.json", json.dumps({"attributes": child}))
+            zf.writestr("fitting/zarr.json", json.dumps({"attributes": fitting}))
+            zf.writestr("zarr.json", json.dumps({"attributes": root}))
+
+    info = gen._read_archive(path)
+
+    assert info is not None
+    assert info["n_splats"] == 100
+    assert info["ndim"] == 3
+    assert info["topology"] == "progressive ladder, 5 steps"
+    assert info["psnr_db"] == 40.0
+    assert info["source_bytes"] == 1_000_000
+
+
 def test_every_record_renders(gen: Any, manifest: dict[str, Any]) -> None:
     for key in manifest["records"]:
         text = gen.render_record(key, manifest)
