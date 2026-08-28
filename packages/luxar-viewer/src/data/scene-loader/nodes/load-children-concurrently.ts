@@ -5,10 +5,11 @@
  */
 
 import * as THREE from 'three';
+import { computeWorkingSetBudgetBytes } from '../../../cache/heap-budget';
 import { log, Modules } from '../../../utils/log';
 import * as zarr from '../../zarr';
 import type { SceneNode } from '../../data-loader-types';
-import type { NodeBuildCtx } from './build-ctx';
+import type { LineWorkingSetGate, LineWorkingSetNode, NodeBuildCtx } from './build-ctx';
 
 // This is a per-parent bound: nested groups may multiply the total fan-out.
 // Eight siblings expose roughly 40 rung-array requests at one level, which
@@ -23,13 +24,15 @@ interface WorkingSetWaiter {
   resolve: (release: () => void) => void;
 }
 
-class WorkingSetGate {
+class WorkingSetGate implements LineWorkingSetGate {
   private activeBytes = 0;
   private readonly waiters: WorkingSetWaiter[] = [];
 
   constructor(private readonly budgetBytes: number) {}
 
-  acquire(estimatedBytes: number, path: string): Promise<() => void> {
+  acquire(node: LineWorkingSetNode): Promise<() => void> {
+    const estimatedBytes = estimateWorkingSetBytes(node);
+    const path = node.path;
     const bytes = Math.min(this.budgetBytes, Math.max(0, estimatedBytes));
     if (bytes === 0) return Promise.resolve(() => undefined);
 
@@ -41,7 +44,7 @@ class WorkingSetGate {
         const mib = (value: number): string => `${(value / (1024 * 1024)).toFixed(1)} MiB`;
         log.query(
           Modules.SCENE_LOADER,
-          `Eager load waiting for ${waiter.path}: charged ${mib(bytes)}, active ${mib(this.activeBytes)}, budget ${mib(this.budgetBytes)}`
+          `Line working-set admission waiting for ${waiter.path}: charged ${mib(bytes)}, active ${mib(this.activeBytes)}, budget ${mib(this.budgetBytes)}`
         );
       }
     });
@@ -68,18 +71,7 @@ class WorkingSetGate {
   }
 }
 
-const workingSetGates = new WeakMap<NodeBuildCtx, WorkingSetGate>();
-
-function workingSetGateFor(ctx: NodeBuildCtx): WorkingSetGate {
-  let gate = workingSetGates.get(ctx);
-  if (!gate) {
-    gate = new WorkingSetGate(ctx.lineWorkingSetBudgetBytes);
-    workingSetGates.set(ctx, gate);
-  }
-  return gate;
-}
-
-function estimateWorkingSetBytes(node: SceneNode): number {
+function estimateWorkingSetBytes(node: LineWorkingSetNode): number {
   if (node.type !== 'lines') return 0;
   const readCount = (value: unknown): number =>
     typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : 0;
@@ -109,8 +101,26 @@ function estimateWorkingSetBytes(node: SceneNode): number {
   return vertexCount * vertexBytes + segmentCount * ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES;
 }
 
+/**
+ * Create a session gate that snapshots its resolved budget when constructed.
+ *
+ * @param poolOverrideBytes - Explicit total cache pool in bytes (`?cacheBudgetMB=`
+ *   / the native launcher). Takes precedence over the measured heap, so a WebKit
+ *   session with an override is not pinned to the fixed fallback.
+ * @param fallbackPoolBytes - Device-class total cache pool in bytes, used only
+ *   when there is neither an explicit pool nor a measurable heap.
+ */
+export function createLineWorkingSetGate(
+  poolOverrideBytes?: number,
+  fallbackPoolBytes?: number
+): LineWorkingSetGate {
+  return new WorkingSetGate(
+    computeWorkingSetBudgetBytes(undefined, poolOverrideBytes, fallbackPoolBytes)
+  );
+}
+
 export function acquireEagerWorkingSet(node: SceneNode, ctx: NodeBuildCtx): Promise<() => void> {
-  return workingSetGateFor(ctx).acquire(estimateWorkingSetBytes(node), node.path);
+  return ctx.lineWorkingSetGate.acquire(node);
 }
 
 /**

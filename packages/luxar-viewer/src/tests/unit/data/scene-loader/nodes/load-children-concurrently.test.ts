@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import {
+  createLineWorkingSetGate,
   EAGER_CHILD_LOAD_CONCURRENCY,
   loadChildrenConcurrently,
   type LoadSceneChildren,
 } from '../../../../../data/scene-loader/nodes/load-children-concurrently';
 import type { SceneNode } from '../../../../../data/data-loader-types';
-import { computeWorkingSetBudgetBytes } from '../../../../../cache/heap-budget';
 import { log, Modules } from '../../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 
@@ -155,7 +155,8 @@ describe('loadChildrenConcurrently', () => {
       children,
       new THREE.Group(),
       makeStubLoc(),
-      makeTestNodeBuildCtx({ lineWorkingSetBudgetBytes: computeWorkingSetBudgetBytes() }),
+      // Gate constructed AFTER the heap stub, so it snapshots the small heap.
+      makeTestNodeBuildCtx({ lineWorkingSetGate: createLineWorkingSetGate() }),
       async (child) => {
         started.push(child.path);
         await new Promise<void>((resolve) => releases.push(resolve));
@@ -169,7 +170,11 @@ describe('loadChildrenConcurrently', () => {
     await loadPromise;
   });
 
-  it('uses the working-set budget injected by the scene loader', async () => {
+  it('sizes the session gate from an explicit cache-pool override', async () => {
+    // A 384 MiB pool resolves to a 128 MiB eager budget, which cannot seat two
+    // ~92 MiB line siblings at once. With no `performance.memory` here, an
+    // ignored override would leave the 256 MiB fixed fallback — enough for both
+    // — so this serialization is what pins the override being honored.
     const children = makeLineChildren(2, 300_000);
     const started: string[] = [];
     const releases: Array<() => void> = [];
@@ -177,7 +182,9 @@ describe('loadChildrenConcurrently', () => {
       children,
       new THREE.Group(),
       makeStubLoc(),
-      makeTestNodeBuildCtx({ lineWorkingSetBudgetBytes: 64 * 1024 * 1024 }),
+      makeTestNodeBuildCtx({
+        lineWorkingSetGate: createLineWorkingSetGate(384 * 1024 * 1024),
+      }),
       async (child) => {
         started.push(child.path);
         await new Promise<void>((resolve) => releases.push(resolve));

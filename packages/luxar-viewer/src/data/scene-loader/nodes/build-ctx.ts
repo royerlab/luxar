@@ -38,11 +38,18 @@ import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
 import type { ArchiveFaultError } from '../../../cache/chunk-source';
 
+export type LineWorkingSetNode = Pick<SceneNode, 'path' | 'type' | 'attrs'>;
+
+/** Session-scoped admission shared by eager loads and explicit retries. */
+export interface LineWorkingSetGate {
+  acquire(node: LineWorkingSetNode): Promise<() => void>;
+}
+
 export interface NodeBuildCtx {
   /** Shared loader bookkeeping (registration + failure recording). */
   registry: LoaderRegistry;
-  /** Resolved byte budget shared by eager line-loading admission in this walk. */
-  lineWorkingSetBudgetBytes: number;
+  /** Shared line working-set admission for this SceneLoader session. */
+  lineWorkingSetGate: LineWorkingSetGate;
   /**
    * Per-scene LOD-group registry. Optional — when absent, lod_group
    * nodes still load (default level renders) but the per-frame

@@ -27,6 +27,8 @@ import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
+import { EAGER_CHILD_LOAD_CONCURRENCY } from '../nodes/load-children-concurrently';
+import type { LineWorkingSetGate, LineWorkingSetNode } from '../nodes/build-ctx';
 
 /**
  * Result of `deriveNodeViewState` — always a `{ skip: false; viewState }`
@@ -42,6 +44,8 @@ type DerivedViewState = { skip: false; viewState: ViewState };
  */
 export interface RetryCtx {
   registry: LoaderRegistry;
+  /** Same session-scoped line admission used by the eager scene walk. */
+  lineWorkingSetGate: LineWorkingSetGate;
   /**
    * Optional LOD-group registry for the lazy-level fallback: lazy
    * substitutive levels never join the loader maps (they're registry-driven
@@ -86,7 +90,8 @@ export interface RetryCtx {
  * registry — except for a lazy LOD level, where true means "retry
  * kicked" and the record is kept until the thunk settles), false on
  * continued failure (registry updated with new retry count), or false
- * if the path is no longer in failed-loaders.
+ * if the path is no longer in failed-loaders. A registered lines path
+ * waits for the session working-set gate before loading.
  */
 export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Promise<boolean> {
   const { registry } = ctx;
@@ -94,6 +99,7 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
 
   log.info(Modules.SCENE_LOADER, `Retrying failed loader: ${path}`);
 
+  let releaseWorkingSet = (): void => undefined;
   try {
     // Look up the per-node attrs so retry applies the same
     // extend_to_all / nd_transform adjustments as the main update path.
@@ -101,7 +107,8 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
     // region for transformed or extended nodes.
     const obj = ctx.rootGroup?.getObjectByName(path) as
       THREE.Object3D | THREE.Mesh | THREE.Points | undefined;
-    const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
+    const attrs = obj?.userData?.attrs as
+      (LineWorkingSetNode['attrs'] & { extend_to_all?: string[] }) | undefined;
 
     // Defensive guard — only clear `failedLoaders` if the named object
     // still exists in the scene. The placeholder model should make
@@ -126,6 +133,13 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
 
     const kind = registry.getLoaderType(path);
     if (kind) {
+      if (kind === 'lines' && attrs) {
+        releaseWorkingSet = await ctx.lineWorkingSetGate.acquire({
+          path,
+          type: 'lines',
+          attrs,
+        });
+      }
       const descriptor = GEOMETRY_DESCRIPTORS[kind];
       const derived = ctx.deriveNodeViewState(path, attrs, {
         applyPartialExtendTolerance: descriptor.applyPartialExtendTolerance,
@@ -173,14 +187,17 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       `Retry failed for ${path} (attempt ${retryCount}): ${(error as Error).message}`
     );
     return false;
+  } finally {
+    releaseWorkingSet();
   }
 }
 
 /**
- * Retry the supplied set of failed paths in parallel without touching
- * the orchestrator's update lock. Caller is expected to hold the lock
- * (parity with the single-path helper above). Returns the path split
- * into succeeded / still-failing buckets.
+ * Retry the supplied set of failed paths with concurrency bounded at
+ * `EAGER_CHILD_LOAD_CONCURRENCY`, without touching the orchestrator's
+ * update lock. Caller is expected to hold the lock (parity with the
+ * single-path helper above). Returns the path split into succeeded /
+ * still-failing buckets.
  */
 export async function retryAllFailedLoadersUnlocked(
   failedPaths: string[],
@@ -189,14 +206,22 @@ export async function retryAllFailedLoadersUnlocked(
   const succeeded: string[] = [];
   const failed: string[] = [];
 
-  const results = await Promise.all(
-    failedPaths.map(async (path) => {
-      const success = await retryFailedLoaderUnlocked(path, ctx);
-      return { path, success };
-    })
-  );
+  const results: Array<{ path: string; success: boolean }> = new Array(failedPaths.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= failedPaths.length) return;
+      const path = failedPaths[index];
+      results[index] = { path, success: await retryFailedLoaderUnlocked(path, ctx) };
+    }
+  };
 
-  for (const { path, success } of results) {
+  const workerCount = Math.min(EAGER_CHILD_LOAD_CONCURRENCY, failedPaths.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  for (const result of results) {
+    const { path, success } = result;
     if (success) {
       succeeded.push(path);
     } else {

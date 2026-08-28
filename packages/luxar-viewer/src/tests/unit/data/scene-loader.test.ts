@@ -33,7 +33,7 @@ import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { EventGroup } from '../../../utils/cross-layer/event-group';
 import { installOnlineRetry } from '../../../core/app/lifecycle/online-retry';
-import { computeWorkingSetBudgetBytes, deviceClassPoolBytes } from '../../../cache/heap-budget';
+import type { NodeBuildCtx } from '../../../data/scene-loader/nodes/build-ctx';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1141,6 +1141,22 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('eager working-set admission', () => {
+    it('shares one gate across node-build and retry contexts', () => {
+      const internals = sceneLoader as unknown as {
+        makeNodeBuildCtx(): { lineWorkingSetGate: unknown };
+        makeRetryCtx(): { lineWorkingSetGate: unknown };
+      };
+
+      const firstBuild = internals.makeNodeBuildCtx();
+      const secondBuild = internals.makeNodeBuildCtx();
+      const retry = internals.makeRetryCtx();
+
+      expect(secondBuild.lineWorkingSetGate).toBe(firstBuild.lineWorkingSetGate);
+      expect(retry.lineWorkingSetGate).toBe(firstBuild.lineWorkingSetGate);
+    });
+  });
+
   describe('releaseLazyGSplats — depth-sort release on LOD demotion', () => {
     // B4 fix: demoting a lazy gsplats LOD level must ALSO release the node's
     // depth-sort coordinator state (worker-side transferred centers,
@@ -1718,29 +1734,59 @@ describe('SceneLoader', () => {
       loader.dispose();
     });
 
-    it('passes an explicit cache-pool override to line working-set admission', () => {
-      const loader = new SceneLoader({ cacheBudgetMB: 384 });
-      const ctx = (
-        loader as unknown as {
-          makeNodeBuildCtx(): { lineWorkingSetBudgetBytes: number };
-        }
-      ).makeNodeBuildCtx();
+    /**
+     * A lines node whose eager admission charge is ~92 MiB: 300k vertices at
+     * `10 × ndim + 70` bytes each, plus the 1:1 segment fallback at 220 B each
+     * (see `nodes/load-children-concurrently.ts`).
+     */
+    function makeLineAdmissionNode(index: number) {
+      return {
+        path: `/lines/node_${index}`,
+        type: 'lines' as const,
+        attrs: { n_vertices: 300_000, ndim: 3 },
+      };
+    }
 
-      expect(ctx.lineWorkingSetBudgetBytes).toBe(128 * 1024 * 1024);
+    /**
+     * How many of `count` ~92 MiB line nodes the loader's session gate admits
+     * at once. Read through the production `makeNodeBuildCtx()` so this also
+     * pins that the ctx still carries the session gate. Charges are never
+     * released — the loader is disposed right after.
+     */
+    async function concurrentLineAdmissions(loader: SceneLoader, count: number): Promise<number> {
+      const internals = loader as unknown as { makeNodeBuildCtx(): NodeBuildCtx };
+      const gate = internals.makeNodeBuildCtx().lineWorkingSetGate;
+      let admitted = 0;
+      for (let index = 0; index < count; index++) {
+        void gate.acquire(makeLineAdmissionNode(index)).then(() => {
+          admitted++;
+        });
+      }
+      // Admission is decided synchronously inside `acquire`, so one microtask
+      // turn is enough for every granted continuation to run.
+      await Promise.resolve();
+      await Promise.resolve();
+      return admitted;
+    }
+
+    it('sizes line working-set admission from an explicit cache-pool override', async () => {
+      // A 384 MiB pool resolves to a 128 MiB eager line budget, which seats one
+      // ~92 MiB node. Ignoring the override (#2307) leaves a >=256 MiB budget,
+      // which would admit both.
+      const loader = new SceneLoader({ cacheBudgetMB: 384 });
+
+      expect(await concurrentLineAdmissions(loader, 2)).toBe(1);
       loader.dispose();
     });
 
-    it('passes the device-class fallback to line working-set admission', () => {
+    it('sizes line admission from the device-class pool without an override', async () => {
+      // No override and no `performance.memory` under jsdom: the gate still
+      // takes the inferred device-class pool (>=1 GiB => >=341 MiB budget),
+      // which seats three ~92 MiB nodes (~275 MiB); the 256 MiB fixed fallback
+      // would seat only two.
       const loader = new SceneLoader({});
-      const ctx = (
-        loader as unknown as {
-          makeNodeBuildCtx(): { lineWorkingSetBudgetBytes: number };
-        }
-      ).makeNodeBuildCtx();
 
-      expect(ctx.lineWorkingSetBudgetBytes).toBe(
-        computeWorkingSetBudgetBytes(undefined, undefined, deviceClassPoolBytes())
-      );
+      expect(await concurrentLineAdmissions(loader, 3)).toBe(3);
       loader.dispose();
     });
   });
