@@ -1155,6 +1155,23 @@ def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None
     assert gen._stale_characteristics(manifest) == []
 
 
+def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:
+    key = "h2afva/51tp/h2afva_51tp.gsplats.zarr.zip"
+    info = gen.load_characteristics()[key]
+
+    assert (
+        info["n_splats"],
+        info["ndim"],
+        info["format_version"],
+        info["topology"],
+    ) == (121_163_285, 4, "3.4", "progressive ladder, 12 steps")
+    assert info["measured_sha256"] == (
+        "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae"
+    )
+    assert "one 4D leaf" in info["quality_note"]
+    assert "does not retain source_archive" in info["quality_note"]
+
+
 def test_flylight_recovered_figures_yield_to_a_pinned_archive_read(gen: Any) -> None:
     key = "gsplats_flylight_mcfo_63x/flylight_mcfo_63x.gsplats.zarr.zip"
     existing = {key: gen.load_characteristics()[key]}
