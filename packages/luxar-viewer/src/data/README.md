@@ -1184,8 +1184,8 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 | `showMonitor()`                                         | Show data loading monitor UI                                             |
 | `hideMonitor()`                                         | Hide data loading monitor UI                                             |
 | `toggleMonitor()`                                       | Toggle data loading monitor UI                                           |
-| `retryFailedLoader(path)`                               | Retry a failed loader (identified by zarr path).                         |
-| `retryAllFailedLoaders()`                               | Retry all failed loaders.                                                |
+| `retryFailedLoader(path)`                               | Retry a failed loader or lazy LOD branch (identified by zarr path).      |
+| `retryAllFailedLoaders()`                               | Retry all failed loaders and latched lazy LOD branches.                  |
 | `prefetchSlice(viewState, budgetMs)`                    | Fire-and-forget t+1 S-cache warm pass via shadow loaders (playback).     |
 | `releasePrefetchResources()`                            | Free the prefetcher's shadow loaders + accumulators (playback end).      |
 | `dispose()`                                             | Async — clean up all resources, drain caches, await teardown.            |

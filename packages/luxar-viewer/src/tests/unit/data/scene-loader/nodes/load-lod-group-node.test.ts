@@ -64,15 +64,12 @@ vi.mock('../../../../../data/scene-loader/nodes/load-mesh-node', () => ({
 
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
 import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
-import { MAX_AUTO_RETRY_ATTEMPTS } from '../../../../../data/scene-loader/loaders/loader-registry';
 import { ArchiveFaultError } from '../../../../../cache/chunk-source';
-import { FAILED_RETRY_FRAMES, LODGroupRegistry } from '../../../../../scene/lod-group-registry';
+import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
-
-const FAILED_RETRY_COOLDOWN_FRAMES = FAILED_RETRY_FRAMES + 1;
 
 beforeEach(() => {
   loadSceneNodesMock.mockReset();
@@ -972,11 +969,41 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(reportArchiveFault).not.toHaveBeenCalled();
   });
 
-  it('bounds retries for an anonymous deferred GROUP after an archive fault', async () => {
+  it('latches and reports an archive fault from an anonymous deferred GROUP', async () => {
     attachStubChildren();
-    let failure: Error | undefined = new ArchiveFaultError('archive open failed', '/scene.zip');
+    const archiveFault = new ArchiveFaultError('archive open failed', '/scene.zip');
     loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
-      if (child.path === '/lod/child_1' && failure) throw failure;
+      if (child.path === '/lod/child_1') throw archiveFault;
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+    });
+    const reg = makeReg();
+    const reportArchiveFault = vi.fn();
+    const ctx = makeCtx(reg, { reportArchiveFault });
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.failed).toBe(true));
+
+    expect(deferred.object.name).toBe('');
+    expect(deferred.nodePath).toBe('/lod/child_1');
+    expect(deferred.permanentlyFailed).toBe(true);
+    expect(reportArchiveFault).toHaveBeenCalledOnce();
+    expect(reportArchiveFault).toHaveBeenCalledWith(archiveFault);
+    expect(reg.getFailedLazyChildPaths()).toEqual(['/lod/child_1']);
+  });
+
+  it('keeps an anonymous deferred GROUP recoverable after an ordinary error', async () => {
+    const failure = new Error('nested subtree failed');
+    attachStubChildren();
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      if (child.path === '/lod/child_1') throw failure;
       const mesh = new THREE.Mesh();
       mesh.name = child.path;
       parent.add(mesh);
@@ -985,8 +1012,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
     try {
       const reg = makeReg();
-      const reportArchiveFault = vi.fn();
-      const ctx = makeCtx(reg, { reportArchiveFault });
+      const ctx = makeCtx(reg);
       const node = makeLodGroupNode(
         [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
         { default_level: 0 }
@@ -1001,159 +1027,18 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(deferred.release).toBeUndefined();
       expect(deferred.loading).toBe(false);
       expect(deferred.permanentlyFailed).not.toBe(true);
-      expect(deferred.automaticRetriesRemaining).toBe(MAX_AUTO_RETRY_ATTEMPTS);
-      expect(reportArchiveFault).not.toHaveBeenCalled();
-      expect(reg.retryLazyChildByLeafPath('')).toBe(false);
-      expect(reg.retryLazyChildByLeafPath('/lod/child_1')).toBe(false);
+      expect(reg.retryLazyChildByNodePath('')).toBe(false);
 
       reg.setSelectorMode('/lod', { lockLevel: 1 });
-      for (let retry = 1; retry <= MAX_AUTO_RETRY_ATTEMPTS; retry++) {
-        for (let frame = 0; frame < FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
-        await vi.waitFor(() => {
-          const attempts = loadSceneNodesMock.mock.calls.filter(
-            ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
-          );
-          expect(attempts).toHaveLength(retry + 1);
-          expect(deferred.failed).toBe(true);
-        });
-      }
-
-      for (let frame = 0; frame < 2 * FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
+      reg.evaluatePerFrame();
+      for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+      await vi.waitFor(() => expect(deferred.failed).toBe(true));
+      expect(deferred.loading).toBe(false);
 
       const attempts = loadSceneNodesMock.mock.calls.filter(
         ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
       );
-      expect(attempts).toHaveLength(MAX_AUTO_RETRY_ATTEMPTS + 1);
-      expect(deferred.failed).toBe(true);
-      expect(deferred.loading).toBe(false);
-      expect(deferred.automaticRetriesRemaining).toBe(0);
-
-      failure = undefined;
-      reg.resetAutomaticRetryBudgets();
-      reg.evaluatePerFrame();
-      await vi.waitFor(() => expect(deferred.ready).toBe(true));
-
-      const recoveredAttempts = loadSceneNodesMock.mock.calls.filter(
-        ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
-      );
-      expect(recoveredAttempts).toHaveLength(MAX_AUTO_RETRY_ATTEMPTS + 2);
-      expect(deferred.failed).toBe(false);
-      expect(deferred.loading).toBe(false);
-      expect(deferred.automaticRetriesRemaining).toBeUndefined();
-    } finally {
-      warningSpy.mockRestore();
-    }
-  });
-
-  it('keeps retrying an anonymous deferred GROUP after an ordinary failure', async () => {
-    attachStubChildren();
-    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
-      if (child.path === '/lod/child_1') throw new Error('nested subtree failed');
-      const mesh = new THREE.Mesh();
-      mesh.name = child.path;
-      parent.add(mesh);
-    });
-    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
-
-    try {
-      const reg = makeReg();
-      const ctx = makeCtx(reg);
-      const node = makeLodGroupNode(
-        [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
-        { default_level: 0 }
-      );
-      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
-
-      const deferred = reg.get('/lod')!.children[1];
-      deferred.ensureLoaded!();
-      await vi.waitFor(() => expect(deferred.failed).toBe(true));
-
-      reg.setSelectorMode('/lod', { lockLevel: 1 });
-      for (let retry = 1; retry <= MAX_AUTO_RETRY_ATTEMPTS + 1; retry++) {
-        for (let frame = 0; frame < FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
-        await vi.waitFor(() => {
-          const attempts = loadSceneNodesMock.mock.calls.filter(
-            ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
-          );
-          expect(attempts).toHaveLength(retry + 1);
-          expect(deferred.failed).toBe(true);
-        });
-      }
-
-      expect(deferred.permanentlyFailed).not.toBe(true);
-      expect(deferred.automaticRetriesRemaining).toBeUndefined();
-      expect(deferred.loading).toBe(false);
-    } finally {
-      warningSpy.mockRestore();
-    }
-  });
-
-  it('restores unlimited ordinary retries after an archive fault recovers', async () => {
-    attachStubChildren();
-    let viewVersion = 1;
-    let ordinaryAttempts = 0;
-    let failure: Error | undefined = new ArchiveFaultError('archive open failed', '/scene.zip');
-    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
-      if (child.path !== '/lod/child_1') {
-        const mesh = new THREE.Mesh();
-        mesh.name = child.path;
-        parent.add(mesh);
-        return;
-      }
-      if (failure) {
-        if (!(failure instanceof ArchiveFaultError)) ordinaryAttempts += 1;
-        throw failure;
-      }
-      const mesh = new THREE.Mesh();
-      mesh.name = child.path;
-      mesh.userData = {
-        nodeType: 'gsplats',
-        visibleSplatCount: 1,
-        loadedViewVersion: viewVersion,
-      };
-      parent.add(mesh);
-    });
-    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
-
-    try {
-      const reg = new LODGroupRegistry({
-        getCamera: () => new THREE.Camera(),
-        getViewportSize: () => ({ width: 100, height: 100 }),
-        getDisplayDims: () => [0, 1, 2],
-        getViewVersion: () => viewVersion,
-      });
-      const ctx = makeCtx(reg);
-      const node = makeLodGroupNode(
-        [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
-        { default_level: 0 }
-      );
-      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
-
-      const deferred = reg.get('/lod')!.children[1];
-      deferred.ensureLoaded!();
-      await vi.waitFor(() => expect(deferred.failed).toBe(true));
-      expect(deferred.automaticRetriesRemaining).toBe(MAX_AUTO_RETRY_ATTEMPTS);
-
-      failure = undefined;
-      reg.setSelectorMode('/lod', { lockLevel: 1 });
-      for (let frame = 0; frame < FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
-      await vi.waitFor(() => expect(deferred.ready).toBe(true));
-      expect(deferred.automaticRetriesRemaining).toBeUndefined();
-
-      failure = new Error('nested subtree failed');
-      viewVersion = 2;
-      for (let frame = 0; frame < 9; frame++) reg.evaluatePerFrame();
-      await vi.waitFor(() => expect(deferred.failed).toBe(true));
-      expect(ordinaryAttempts).toBe(1);
-
-      for (let retry = 1; retry <= MAX_AUTO_RETRY_ATTEMPTS + 1; retry++) {
-        for (let frame = 0; frame < FAILED_RETRY_COOLDOWN_FRAMES; frame++) reg.evaluatePerFrame();
-        await vi.waitFor(() => expect(deferred.failed).toBe(true));
-        expect(ordinaryAttempts).toBe(retry + 1);
-      }
-
-      expect(deferred.automaticRetriesRemaining).toBeUndefined();
-      expect(deferred.loading).toBe(false);
+      expect(attempts).toHaveLength(2);
     } finally {
       warningSpy.mockRestore();
     }

@@ -20,6 +20,7 @@ describe('renderFailedLoadsBanner', () => {
     expect(html).toContain('/gsplats/b');
     expect(html).not.toContain('disabled');
     expect(html).toContain('>Retry<');
+    expect(html).toContain('Retryable loader failures and latched LOD branches');
   });
 
   it('leads with the inline alert glyph rather than a platform-dependent emoji', () => {

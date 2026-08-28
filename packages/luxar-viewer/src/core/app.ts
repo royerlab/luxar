@@ -365,7 +365,7 @@ export class LuxarApp {
       this.currentDatasetSrc = src;
       const sceneLoader = getSceneLoader();
       this.datasetFaultLoader = sceneLoader ?? undefined;
-      // A replayed terminal fault is post-load state, so preserve the public
+      // A replayed latched fault is post-load state, so preserve the public
       // ordering: the dataset becomes available before its fault is reported.
       this.embedderEvents.emit('dataset-loaded', { src });
       if (sceneLoader) {
@@ -875,7 +875,7 @@ export class LuxarApp {
     };
   }
 
-  /** Current terminal fault, or null when no dataset is loaded or no fault has occurred. */
+  /** Current latched fault episode, or null when no dataset is loaded or the latch is clear. */
   getDatasetFault(): DatasetFaultPayload | null {
     const error = this.datasetFaultLoader?.archiveFault;
     if (!error || !this.currentDatasetSrc) return null;

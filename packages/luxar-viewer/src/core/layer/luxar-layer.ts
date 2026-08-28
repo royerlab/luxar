@@ -862,6 +862,7 @@ export class LuxarLayer {
           // the plausible-looking default projects a 2D scene onto a phantom Z.
           // Matches `core/app/init/pipeline.ts`.
           getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
+          hasArchiveFault: () => owner.archiveFault !== null,
           getResidentByteBudget: () => getGpuByteBudget(),
           // Both halves of the budget are required: `lod-eviction` bails on
           // `!getResidentBytes`, so supplying only the budget makes it
