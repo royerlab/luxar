@@ -252,14 +252,10 @@ def test_fingerprint_changes_with_zarr_format_environment(
 ) -> None:
     package_root = tmp_path / "luxar"
     source = package_root / "demos/demo_thing.py"
-    writer = package_root / "encoding/writer.py"
     source.parent.mkdir(parents=True)
-    writer.parent.mkdir(parents=True)
     source.write_text("LINE_OPACITY = 0.95\n")
-    writer.write_text("ENCODING_VERSION = 1\n")
 
     monkeypatch.delenv("LUXAR_ZARR_FORMAT", raising=False)
-    production_source_fingerprint.cache_clear()
     before = demo_source_fingerprint(source, package_root=package_root)
     monkeypatch.setenv("LUXAR_ZARR_FORMAT", "2")
 
