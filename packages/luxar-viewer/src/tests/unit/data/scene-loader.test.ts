@@ -30,9 +30,11 @@ import { getPointTexture } from '../../../rendering/point-geometry';
 import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import * as zarr from 'zarrita';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
-import { LODGroupRegistry } from '../../../scene/lod-group-registry';
-import { EventGroup } from '../../../utils/cross-layer/event-group';
-import { installOnlineRetry } from '../../../core/app/lifecycle/online-retry';
+import {
+  LODGroupRegistry,
+  type LODGroupChild,
+  type LODGroupEntry,
+} from '../../../scene/lod-group-registry';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -103,6 +105,7 @@ vi.mock('../../../rendering/depth-sort-coordinator', async (importOriginal) => {
 const notifierMocks = vi.hoisted(() => ({
   toast: vi.fn(),
   error: vi.fn(),
+  clearError: vi.fn(),
 }));
 vi.mock('../../../utils/cross-layer/notifier', () => ({
   notifier: {
@@ -112,7 +115,7 @@ vi.mock('../../../utils/cross-layer/notifier', () => ({
     hideHelp: vi.fn(),
     showLoading: vi.fn(),
     hideLoading: vi.fn(),
-    clearError: vi.fn(),
+    clearError: notifierMocks.clearError,
     showSceneIdentityBanner: vi.fn(),
     hideSceneIdentityBanner: vi.fn(),
   },
@@ -453,6 +456,26 @@ describe('SceneLoader', () => {
       expect(onArchiveFault).toHaveBeenCalledOnce();
       expect(prefetch).not.toHaveBeenCalled();
       expect((sceneLoader as any)._updateInProgress).toBe(false);
+    });
+
+    it('notifies again when a cleared archive fault recurs', () => {
+      const listener = vi.fn();
+      const firstFault = new ArchiveFaultError('first expiry', 'scene.zip');
+      const secondFault = new ArchiveFaultError('second expiry', 'scene.zip');
+      const internals = sceneLoader as unknown as {
+        reportArchiveFault(fault: ArchiveFaultError): void;
+        clearArchiveFaultForRetry(): void;
+      };
+      sceneLoader.onArchiveFault(listener);
+
+      internals.reportArchiveFault(firstFault);
+      internals.clearArchiveFaultForRetry();
+      internals.reportArchiveFault(secondFault);
+
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(listener).toHaveBeenNthCalledWith(1, firstFault);
+      expect(listener).toHaveBeenNthCalledWith(2, secondFault);
+      expect(sceneLoader.archiveFault).toBe(secondFault);
     });
 
     it('can replay the latched archive fault to a late subscriber', () => {
@@ -1380,58 +1403,6 @@ describe('SceneLoader', () => {
       const result = await sceneLoader.retryAllFailedLoaders();
       expect(result.deferred).toBeUndefined();
     });
-
-    it('online recovery resets deferred-group budgets when no loader record survives', async () => {
-      let registry!: LODGroupRegistry;
-      let frameScheduled = false;
-      const requestRender = vi.fn(() => {
-        if (frameScheduled) return;
-        frameScheduled = true;
-        queueMicrotask(() => registry.evaluatePerFrame());
-      });
-      registry = new LODGroupRegistry({
-        getCamera: () => new THREE.Camera(),
-        getViewportSize: () => ({ width: 100, height: 100 }),
-        getDisplayDims: () => [0, 1, 2],
-        requestRender,
-      });
-      const child = {
-        object: new THREE.Group(),
-        coverageFraction: 0.5,
-        positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
-        ready: false,
-        failed: true,
-        failedTick: 42,
-        automaticRetriesRemaining: 0,
-        ensureLoaded: vi.fn(),
-      };
-      registry.register({
-        path: '/lod',
-        groupObject: new THREE.Group(),
-        children: [child],
-        selectorMode: 'auto',
-        defaultLevel: 0,
-        activeChildIndex: 0,
-      });
-      const loader = new SceneLoader(undefined, undefined, undefined, undefined, () => registry);
-      const events = new EventGroup();
-      const toast = vi.fn();
-
-      try {
-        installOnlineRetry({ events, getLoader: () => loader, toast });
-        window.dispatchEvent(new Event('online'));
-        await vi.waitFor(() => expect(child.ensureLoaded).toHaveBeenCalledTimes(1));
-
-        expect(child.automaticRetriesRemaining).toBeUndefined();
-        expect(child.failed).toBe(false);
-        expect(child.failedTick).toBeUndefined();
-        expect(requestRender).toHaveBeenCalled();
-        expect(toast).not.toHaveBeenCalled();
-      } finally {
-        events.dispose();
-        loader.dispose();
-      }
-    });
   });
 
   describe('getFailedLoadsProvider — reason mapping', () => {
@@ -1464,6 +1435,293 @@ describe('SceneLoader', () => {
       internals.registry.recordFailure('/points/a', undefined as unknown as Error);
 
       expect(internals.makeLoadSceneCtx().getFailedLoaderReasons()).toEqual(['Unexpected']);
+    });
+
+    it('surfaces and retries an archive fault with no recorded node failure', async () => {
+      const archiveFault = new ArchiveFaultError('archive unavailable', '/scene.zip');
+      const current = { displayDims: [0, 1, 2], slicePosition: [3], tolerance: [0] };
+      const blocked = { displayDims: [0, 1, 2], slicePosition: [4], tolerance: [0] };
+      const internals = sceneLoader as unknown as {
+        viewState: { displayDims: number[]; slicePosition: number[]; tolerance: number[] };
+        viewStateQueue: { hasPending(): boolean };
+        reportArchiveFault(fault: ArchiveFaultError): void;
+      };
+      await sceneLoader.updateView(current);
+      internals.reportArchiveFault(archiveFault);
+      await sceneLoader.updateView(blocked);
+      expect(internals.viewState).toMatchObject(current);
+      expect(internals.viewStateQueue.hasPending()).toBe(false);
+
+      const updateViewSpy = vi.spyOn(sceneLoader, 'updateView');
+
+      const provider = sceneLoader.getFailedLoadsProvider();
+      expect(provider.getFailedPaths()).toEqual(['/scene.zip']);
+      expect(provider.getFailedReason?.('/scene.zip')).toBe('archive unavailable');
+      expect(sceneLoader.hasAutoRetryableFailures()).toBe(true);
+
+      await expect(provider.retryAll()).resolves.toEqual({
+        succeeded: ['/scene.zip'],
+        failed: [],
+      });
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(notifierMocks.clearError).toHaveBeenCalledOnce();
+      expect(internals.viewStateQueue.hasPending()).toBe(false);
+      expect(updateViewSpy).toHaveBeenCalledWith(internals.viewState);
+    });
+
+    it('auto-retries an archive fault with no recorded node failure', async () => {
+      const internals = sceneLoader as unknown as {
+        _archiveFault: ArchiveFaultError | null;
+      };
+      internals._archiveFault = new ArchiveFaultError('archive unavailable', '/scene.zip');
+
+      await expect(sceneLoader.retryAllFailedLoaders({ onlyAutoRetryable: true })).resolves.toEqual(
+        {
+          succeeded: ['/scene.zip'],
+          failed: [],
+        }
+      );
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(notifierMocks.clearError).toHaveBeenCalledOnce();
+    });
+
+    it('retries the surfaced archive fault path and reloads the current view', async () => {
+      const current = { displayDims: [0, 1, 2], slicePosition: [3], tolerance: [0] };
+      const internals = sceneLoader as unknown as {
+        viewState: { displayDims: number[]; slicePosition: number[]; tolerance: number[] };
+        reportArchiveFault(fault: ArchiveFaultError): void;
+      };
+      await sceneLoader.updateView(current);
+      internals.reportArchiveFault(new ArchiveFaultError('archive unavailable', '/scene.zip'));
+      const updateViewSpy = vi.spyOn(sceneLoader, 'updateView');
+
+      await expect(sceneLoader.retryFailedLoader('/scene.zip')).resolves.toBe(true);
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(notifierMocks.clearError).toHaveBeenCalledOnce();
+      expect(updateViewSpy).toHaveBeenCalledWith(internals.viewState);
+    });
+
+    it('surfaces and retries a latched anonymous deferred LOD branch', async () => {
+      const camera = new THREE.Camera();
+      const registry = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        hasArchiveFault: () => sceneLoader.archiveFault !== null,
+      });
+      const ensureLoaded = vi.fn();
+      const eager: LODGroupChild = {
+        object: new THREE.Group(),
+        coverageFraction: 0,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      };
+      const deferred: LODGroupChild = {
+        object: new THREE.Group(),
+        nodePath: '/lod/nested',
+        coverageFraction: 0.5,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+        ready: false,
+        failed: true,
+        permanentlyFailed: true,
+        failureReason: 'archive expired',
+        ensureLoaded,
+      };
+      const ensureOtherLoaded = vi.fn();
+      const otherDeferred: LODGroupChild = {
+        object: new THREE.Group(),
+        nodePath: '/lod/other',
+        coverageFraction: 0.75,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+        ready: false,
+        failed: true,
+        permanentlyFailed: true,
+        failureReason: 'archive expired',
+        ensureLoaded: ensureOtherLoaded,
+      };
+      const entry: LODGroupEntry = {
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [eager, deferred, otherDeferred],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      };
+      registry.register(entry);
+      (sceneLoader as any).lodGroupRegistry = registry;
+      const archiveFault = new ArchiveFaultError('archive expired', '/scene.zip');
+      (sceneLoader as any)._archiveFault = archiveFault;
+
+      const provider = sceneLoader.getFailedLoadsProvider();
+      expect(provider.getFailedPaths()).toEqual(['/lod/nested', '/lod/other']);
+      expect(provider.getFailedReason?.('/lod/nested')).toBe('archive expired');
+
+      await expect(sceneLoader.retryFailedLoader('/lod/nested')).resolves.toBe(true);
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(notifierMocks.clearError).toHaveBeenCalledOnce();
+      expect(ensureLoaded).toHaveBeenCalledOnce();
+      expect(ensureOtherLoaded).not.toHaveBeenCalled();
+      expect(provider.getFailedPaths()).toEqual(['/lod/other']);
+      expect(provider.getFailedReason?.('/lod/other')).toBe('archive expired');
+
+      await expect(provider.retryAll()).resolves.toEqual({
+        succeeded: ['/lod/other'],
+        failed: [],
+      });
+      expect(ensureOtherLoaded).toHaveBeenCalledOnce();
+      expect(otherDeferred.loading).toBe(true);
+      expect(provider.getFailedPaths()).toEqual([]);
+    });
+
+    it('auto-retries an overlapping lazy loader once and clears the archive latch', async () => {
+      const camera = new THREE.Camera();
+      const registry = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        hasArchiveFault: () => sceneLoader.archiveFault !== null,
+      });
+      const ensureLoaded = vi.fn();
+      const deferred: LODGroupChild = {
+        object: new THREE.Group(),
+        nodePath: '/lod/leaf_1',
+        coverageFraction: 0.5,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+        ready: false,
+        failed: true,
+        permanentlyFailed: true,
+        failureReason: 'archive expired',
+        ensureLoaded,
+      };
+      registry.register({
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [
+          {
+            object: new THREE.Group(),
+            coverageFraction: 0,
+            positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+          },
+          deferred,
+        ],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      });
+      const internals = sceneLoader as unknown as {
+        lodGroupRegistry: LODGroupRegistry;
+        registry: { recordFailure(path: string, error: Error, kind?: string): void };
+        _archiveFault: ArchiveFaultError | null;
+      };
+      internals.lodGroupRegistry = registry;
+      internals.registry.recordFailure('/lod/leaf_1', new Error('network down'), 'Network');
+      internals._archiveFault = new ArchiveFaultError('archive expired', '/scene.zip');
+
+      await expect(sceneLoader.retryAllFailedLoaders({ onlyAutoRetryable: true })).resolves.toEqual(
+        { succeeded: ['/lod/leaf_1'], failed: [] }
+      );
+      expect(ensureLoaded).toHaveBeenCalledOnce();
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(deferred.permanentlyFailed).toBe(false);
+    });
+
+    it('auto-retries a lazy-only archive failure after connectivity returns', async () => {
+      const camera = new THREE.Camera();
+      const registry = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        hasArchiveFault: () => sceneLoader.archiveFault !== null,
+      });
+      const ensureLoaded = vi.fn();
+      const deferred: LODGroupChild = {
+        object: new THREE.Group(),
+        nodePath: '/lod/nested',
+        coverageFraction: 0.5,
+        positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+        ready: false,
+        failed: true,
+        permanentlyFailed: true,
+        failureReason: 'archive unavailable',
+        ensureLoaded,
+      };
+      registry.register({
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [
+          {
+            object: new THREE.Group(),
+            coverageFraction: 0,
+            positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+          },
+          deferred,
+        ],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      });
+      const internals = sceneLoader as unknown as {
+        lodGroupRegistry: LODGroupRegistry;
+        _archiveFault: ArchiveFaultError | null;
+      };
+      internals.lodGroupRegistry = registry;
+      internals._archiveFault = new ArchiveFaultError('archive unavailable', '/scene.zip');
+
+      expect(sceneLoader.hasAutoRetryableFailures()).toBe(true);
+      await expect(sceneLoader.retryAllFailedLoaders({ onlyAutoRetryable: true })).resolves.toEqual(
+        { succeeded: ['/lod/nested'], failed: [] }
+      );
+      expect(sceneLoader.archiveFault).toBeNull();
+      expect(ensureLoaded).toHaveBeenCalledOnce();
+      expect(deferred.permanentlyFailed).toBe(false);
+    });
+
+    it('deduplicates a path present in both loader and lazy failure sets', async () => {
+      const camera = new THREE.Camera();
+      const registry = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        hasArchiveFault: () => sceneLoader.archiveFault !== null,
+      });
+      const ensureLoaded = vi.fn();
+      registry.register({
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [
+          {
+            object: new THREE.Group(),
+            coverageFraction: 0,
+            positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+          },
+          {
+            object: new THREE.Group(),
+            nodePath: '/lod/leaf_1',
+            coverageFraction: 0.5,
+            positionBounds: { min: [0, 0, 0], max: [1, 1, 1] },
+            ready: false,
+            failed: true,
+            permanentlyFailed: true,
+            ensureLoaded,
+          },
+        ],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      });
+      const internals = sceneLoader as unknown as {
+        lodGroupRegistry: LODGroupRegistry;
+        registry: { recordFailure(path: string, error: Error, kind?: string): void };
+        _archiveFault: ArchiveFaultError | null;
+      };
+      internals.lodGroupRegistry = registry;
+      internals.registry.recordFailure('/lod/leaf_1', new Error('network down'), 'Network');
+      internals._archiveFault = new ArchiveFaultError('archive expired', '/scene.zip');
+
+      await expect(sceneLoader.retryAllFailedLoaders()).resolves.toEqual({
+        succeeded: ['/lod/leaf_1'],
+        failed: [],
+      });
+      expect(ensureLoaded).toHaveBeenCalledOnce();
     });
   });
 

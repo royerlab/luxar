@@ -23,14 +23,10 @@ function makeLoader(
    * express "failures exist, but all deterministic / past the cap".
    */
   hasAutoRetryableFailures: boolean = hasFailures
-): RetryCapableLoader & {
-  resetDeferredRetryBudgets: ReturnType<typeof vi.fn<() => void>>;
-  retryAllFailedLoaders: ReturnType<typeof vi.fn>;
-} {
+): RetryCapableLoader & { retryAllFailedLoaders: ReturnType<typeof vi.fn> } {
   return {
     hasFailures: () => hasFailures,
     hasAutoRetryableFailures: () => hasAutoRetryableFailures,
-    resetDeferredRetryBudgets: vi.fn<() => void>(),
     retryAllFailedLoaders: vi.fn().mockResolvedValue(result),
   };
 }
@@ -68,14 +64,13 @@ describe('installOnlineRetry', () => {
     expect(String(toast.mock.calls[1][0])).toContain('1 recovered, 1 still failing');
   });
 
-  it('resets deferred retry budgets when no loader failure is recorded', async () => {
+  it('is a silent no-op when nothing has failed (the common case)', async () => {
     const loader = makeLoader(false);
     installOnlineRetry({ events, getLoader: () => loader, toast });
 
     window.dispatchEvent(new Event('online'));
     await Promise.resolve();
 
-    expect(loader.resetDeferredRetryBudgets).toHaveBeenCalledTimes(1);
     expect(loader.retryAllFailedLoaders).not.toHaveBeenCalled();
     expect(toast).not.toHaveBeenCalled();
   });
@@ -112,12 +107,11 @@ describe('installOnlineRetry', () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it('deduplicates retry batches but resets deferred budgets for every online transition', async () => {
+  it('ignores online bursts while a retry batch is in flight', async () => {
     let resolveBatch!: (r: { succeeded: string[]; failed: string[] }) => void;
     const loader: RetryCapableLoader & { retryAllFailedLoaders: ReturnType<typeof vi.fn> } = {
       hasFailures: () => true,
       hasAutoRetryableFailures: () => true,
-      resetDeferredRetryBudgets: vi.fn(),
       retryAllFailedLoaders: vi.fn().mockImplementation(
         () =>
           new Promise((res) => {
@@ -131,7 +125,6 @@ describe('installOnlineRetry', () => {
     window.dispatchEvent(new Event('online')); // burst while batch 1 is in flight
     window.dispatchEvent(new Event('online'));
     expect(loader.retryAllFailedLoaders).toHaveBeenCalledTimes(1);
-    expect(loader.resetDeferredRetryBudgets).toHaveBeenCalledTimes(3);
 
     resolveBatch({ succeeded: ['/a'], failed: [] });
     await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
@@ -153,7 +146,6 @@ describe('installOnlineRetry', () => {
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
         hasAutoRetryableFailures: () => true,
-        resetDeferredRetryBudgets: vi.fn(),
         retryAllFailedLoaders: vi.fn().mockImplementation(async () => {
           call += 1;
           if (call <= 2) return { succeeded: [], failed: ['/a', '/b'], deferred: true };
@@ -184,7 +176,6 @@ describe('installOnlineRetry', () => {
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
         hasAutoRetryableFailures: () => true,
-        resetDeferredRetryBudgets: vi.fn(),
         retryAllFailedLoaders: vi
           .fn()
           .mockResolvedValue({ succeeded: [], failed: ['/a'], deferred: true }),
@@ -215,7 +206,6 @@ describe('installOnlineRetry', () => {
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
         hasAutoRetryableFailures: () => true,
-        resetDeferredRetryBudgets: vi.fn(),
         retryAllFailedLoaders: vi
           .fn()
           .mockResolvedValue({ succeeded: [], failed: ['/a'], deferred: true }),
