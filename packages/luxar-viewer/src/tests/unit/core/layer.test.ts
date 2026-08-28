@@ -39,6 +39,7 @@ vi.mock('../../../data/zarr-loader', () => ({
 
 const setLODGroupRegistryFactory = vi.fn();
 const setRequestRender = vi.fn();
+const setKTX2TextureDecoder = vi.fn();
 const disposeInstance = vi.fn();
 const getProfiler = vi.fn();
 const sceneLoaderStub = {
@@ -56,6 +57,7 @@ vi.mock('../../../data/scene-loader-manager', () => ({
     getInstance: () => ({
       setLODGroupRegistryFactory,
       setRequestRender,
+      setKTX2TextureDecoder,
       getProfiler,
       destroyAllAsync: () => destroyAllAsync(),
       destroyLoaderAsync: (id: string) => destroyLoaderAsync(id),
@@ -213,6 +215,11 @@ describe('LuxarLayer', () => {
     it('warms the depth-sort worker while the page is still idle', () => {
       new LuxarLayer(makeOptions());
       expect(warmUpDepthSortWorker).toHaveBeenCalled();
+    });
+
+    it('installs the renderer-owned KTX2 decoder on the loader manager', () => {
+      new LuxarLayer(makeOptions());
+      expect(setKTX2TextureDecoder).toHaveBeenCalledWith(expect.any(Function));
     });
 
     it('configures blend-program warm-up against the host WebGL pipeline', async () => {

@@ -185,6 +185,9 @@ authored it, and the host's is a different one.
 - **No UI.** No panels, no picking UI, no monitor, no keyboard handling. The
   cross-layer `notifier` stays unregistered, so Luxar's toasts and error
   overlays are silently dropped unless the host registers a backend.
+- **Mesh textures use the host renderer.** The layer installs a renderer-owned
+  KTX2 decoder for compressed mesh textures; raw and JPEG textures keep using
+  the portable decode path.
 - **A scene's post-processing / camera / UI config is inert.** Everything under
   `viewer_config` that `ui/rendering-controls.ts` applies rather than the node
   path reaches nothing here: `tone_mapping`, `exposure`, `global_gamma`,

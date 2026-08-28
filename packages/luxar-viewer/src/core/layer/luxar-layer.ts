@@ -97,6 +97,7 @@ import { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { sceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
 import type { FadeableMaterial } from '../../scene/lod-fade';
 import { materialManager } from '../../rendering/material-manager';
+import { createKTX2TextureDecoder } from '../../rendering/ktx2-texture-decoder';
 import { createRendererCapabilities, isWebGLRenderer } from '../../rendering/renderer-capabilities';
 import {
   getGpuByteBudget,
@@ -837,6 +838,9 @@ export class LuxarLayer {
         })
     );
     SceneLoaderManager.getInstance().setRequestRender(() => this.handleGeometryCommit());
+    SceneLoaderManager.getInstance().setKTX2TextureDecoder(
+      createKTX2TextureDecoder(this.options.renderer)
+    );
   }
 
   private installDepthSort(): void {
