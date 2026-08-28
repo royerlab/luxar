@@ -1266,9 +1266,9 @@ export class SceneLoader {
     // path — early return, cancellation hand-off, disposal, throw — clears it.
     this._refining = true;
     try {
-      // Orchestrate progressive refinement across all three leaf types in
+      // Orchestrate progressive refinement across all four leaf types in
       // sequence: gsplats first (its progressive-loader was the original
-      // template), then points, then lines. Each phase holds the
+      // template), then points, lines, and mesh. Each phase holds the
       // serialization lock; on cancellation (user navigated during the
       // refinement) the cancelling phase hands the lock to
       // retriggerUpdate's rAF and the orchestrator exits early so the

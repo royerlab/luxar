@@ -21,7 +21,7 @@ import type { GSplatsDataLoader } from '../../../../types/gsplats';
 import type { ViewState } from '../../../../data/data-loader-types';
 import { defineRefinementLoopContract } from '../_shared/refinement-loop-contract';
 
-defineRefinementLoopContract('runGSplatsRefinement', (w) =>
+defineRefinementLoopContract('runGSplatsRefinement', 'GSplats', (w) =>
   runGSplatsRefinement({
     rootGroup: new THREE.Group(),
     viewStateQueue: w.viewStateQueue,

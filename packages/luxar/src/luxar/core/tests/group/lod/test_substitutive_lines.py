@@ -581,7 +581,7 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
         # raise, not warn.
         out = tmp_path / "t.luxar.zarr"
         verts, indices = self._forked_verts_and_edges()
-        with pytest.raises(ValueError, match="simple path in ascending vertex order"):
+        with pytest.raises(ValueError, match="cannot preserve the explicit edge list"):
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_lines(

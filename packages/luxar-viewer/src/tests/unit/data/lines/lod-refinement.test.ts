@@ -25,7 +25,7 @@ const baseViewState: ViewState = {
   tolerance: [0, 0, 0, 1],
 };
 
-defineRefinementLoopContract('runLinesRefinement', (w) =>
+defineRefinementLoopContract('runLinesRefinement', 'Lines', (w) =>
   runLinesRefinement({
     rootGroup: new THREE.Group(),
     viewStateQueue: w.viewStateQueue,

@@ -128,7 +128,7 @@
     "@vitest/coverage-v8": "~4.1.10",
     "@vitest/ui": "~4.1.10",
     "dependency-cruiser": "^18.2.0",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.1",
     "fast-check": "^4.9.0",
     "glob": "^13.0.6",
     "globals": "^17.11.0",
@@ -138,7 +138,7 @@
     "tsx": "^4.23.12",
     "typedoc": "^0.28.20",
     "typescript": "~5.9.3",
-    "vite": "~8.2.1",
+    "vite": "~8.2.2",
     "vitest": "~4.1.10"
   }
 }

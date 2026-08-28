@@ -287,7 +287,9 @@ during partial loads.
   bbox center.
 - `make_additive_lod_lines(...)` returns per-LOD-level lists of per-polyline
   index arrays for `_write_lines_multi_lod` to gather and rewrite with
-  subgroup-local segment indices.
+  subgroup-local segment indices. For `indexed` Lines, a multi-level ladder is
+  refused unless each component's authored undirected edge multiset is exactly its
+  consecutive-vertex chain; flat writes preserve the authored edge multiset.
 - `salience_kind='energy'` uses the tube-volume score
   `mean_luminance × Σ(seg_length × width²)`.
 - `resolve_additive_axis_lines(spec)` is the `add_lines(..., additive_lod=...)`
@@ -335,17 +337,20 @@ which cannot be split without breaking its segment topology), and for `indexed`
 **only when its topology does not permit one**, which
 `indexed_components_are_chains` decides. The additive multi-LOD writer carries no
 edge list — it rebuilds one by chaining each connected component in ascending
-vertex order — so a chain is faithful exactly when every component's edge set
-already equals its consecutive-vertex pairs. Real tractography and streamline
+vertex order — so a chain is faithful exactly when every component's undirected
+edge multiset, including duplicate multiplicity, equals its consecutive-vertex
+pairs. Real tractography and streamline
 sets satisfy that and are laddered; a branching, cyclic or
 out-of-ascending-order component is refused (a `UserWarning` when the ladder was
 explicit, an info line when it was the default), and only that finest child then
 loads all-at-once. Note a gap in a producer's vertex numbering is NOT a problem:
 two index-contiguous but unconnected runs are two components, chained
 separately, so no edge is invented across the gap. On the DIRECT
-`add_lines(additive_lod=…)` path — no substitutive wrapper, so no level to fall
-back to — a non-qualifying set raises instead; before that check the writer
-fabricated edges silently. `scalars`+`colormap` are
+`add_lines(additive_lod=…)` path, a non-qualifying set raises when the resolved
+ladder has multiple levels; a one-level result falls through to the flat writer
+and preserves the authored edges. Partition preflight remains deliberately eager
+so invalid indexed input fails before any part is written. Before these checks,
+the writer fabricated edges silently. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
 Points, and the same uniform-vs-per-element RGBA rule: a uniform colour is

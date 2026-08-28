@@ -78,8 +78,8 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
       const progressiveLoader = loader as LinesDataLoader & {
         hasMoreLODs?: boolean;
       };
-      if (progressiveLoader.hasMoreLODs !== true) return;
-      if (failures.isExhausted(path)) return;
+      if (progressiveLoader.hasMoreLODs !== true) return false;
+      if (failures.isExhausted(path)) return false;
       try {
         const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
         const nodeAttrs = mesh?.userData?.attrs as LinesMetadata | undefined;
@@ -113,11 +113,12 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
           pass?.end();
         }
         failures.recordSuccess(path);
+        return true;
       } catch (error) {
         // Superseded, not failed: a newer view-state (or dispose) aborted the
         // in-flight read on purpose. Don't count it toward the failure backoff
         // or log an error — the loop's next-pass pending check hands off.
-        if (isAbortError(error)) return;
+        if (isAbortError(error)) return false;
         if (failures.recordFailure(path)) {
           log.error(
             Modules.SCENE_LOADER,
@@ -136,13 +137,34 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
             `Lines refinement failed for ${path}: ${(error as Error).message}`
           );
         }
+        return false;
       }
+    },
+    getLoaderProgress: (path, loader) => {
+      const progressiveLoader = loader as LinesDataLoader & {
+        hasMoreLODs?: boolean;
+        loadedLODCount: number;
+        totalLODCount: number;
+      };
+      if (failures.isExhausted(path) || progressiveLoader.hasMoreLODs !== true) return null;
+      return {
+        loaded: progressiveLoader.loadedLODCount,
+        total: progressiveLoader.totalLODCount,
+      };
     },
     anyHasMoreLODs: () =>
       [...ctx.linesLoaders.entries()].some(([path, l]) => {
         const ll = l as LinesDataLoader & { hasMoreLODs?: boolean };
         return !failures.isExhausted(path) && ll.hasMoreLODs === true;
       }),
+    onNoProgress: (stalled) => {
+      for (const { path, loaded, total } of stalled) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Lines refinement stopped for ${path}: no progress at LOD ${loaded}/${total}`
+        );
+      }
+    },
     updateVisibleCountsInMonitor: () => ctx.updateVisibleCountsInMonitor(),
     releaseLock: () => ctx.releaseLock(),
     retriggerUpdate: (pending) => ctx.retriggerUpdate(pending),
