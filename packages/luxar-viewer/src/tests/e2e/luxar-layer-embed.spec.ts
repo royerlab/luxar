@@ -1,0 +1,104 @@
+import { expect, test } from './fixtures';
+import { captureCanvasRGBA } from './helpers';
+import type { Page } from '@playwright/test';
+
+const EXAMPLE_URL = '/examples/layer/';
+const DATA_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
+const LOD_FIXTURE = `${DATA_BASE}/test_lod_group.luxar.zarr`;
+const DIMENSION_FIXTURE = `${DATA_BASE}/test_layer_4d_gsplats.luxar.zarr`;
+
+interface LayerExampleState {
+  loaded: boolean;
+  visibleSplatCount: number;
+  visibleLodLevels: number[];
+  dimensions: { names: string[]; currentStep: number[] } | null;
+}
+
+interface LayerExampleApi {
+  getState(): LayerExampleState;
+  setCameraDistance(distance: number): void;
+  setDimensionValue(index: number, value: number): Promise<void>;
+}
+
+async function openLayerExample(page: Page, src: string) {
+  await page.goto(`${EXAMPLE_URL}?src=${encodeURIComponent(src)}`);
+  await page.waitForFunction(() => {
+    const api = (window as Window & typeof globalThis & { __luxarLayerExample?: LayerExampleApi })
+      .__luxarLayerExample;
+    return api?.getState().loaded === true;
+  });
+}
+
+async function getExampleState(page: Page): Promise<LayerExampleState> {
+  return page.evaluate(() => {
+    const api = (window as Window & typeof globalThis & { __luxarLayerExample?: LayerExampleApi })
+      .__luxarLayerExample;
+    if (!api) throw new Error('LuxarLayer example API is unavailable');
+    return api.getState();
+  });
+}
+
+test.describe('LuxarLayer host example', () => {
+  test('renders real layer geometry into the host framebuffer', async ({ page }) => {
+    await openLayerExample(page, LOD_FIXTURE);
+
+    const state = await getExampleState(page);
+    expect(state.visibleSplatCount).toBeGreaterThan(0);
+
+    const frame = await captureCanvasRGBA(page, '#layer-canvas');
+    let litPixels = 0;
+    for (let index = 0; index < frame.rgba.length; index += 4) {
+      if (frame.rgba[index] + frame.rgba[index + 1] + frame.rgba[index + 2] > 24) litPixels++;
+    }
+    expect(litPixels).toBeGreaterThan(frame.width * frame.height * 0.001);
+  });
+
+  test('camera dolly changes the selected LOD geometry', async ({ page }) => {
+    await openLayerExample(page, LOD_FIXTURE);
+    const initial = await getExampleState(page);
+    expect(initial.visibleLodLevels.length).toBeGreaterThan(0);
+
+    let changed: LayerExampleState | null = null;
+    for (const distance of [2, 4, 8, 16, 32, 64, 128]) {
+      await page.evaluate((nextDistance) => {
+        const api = (
+          window as Window & typeof globalThis & { __luxarLayerExample?: LayerExampleApi }
+        ).__luxarLayerExample;
+        if (!api) throw new Error('LuxarLayer example API is unavailable');
+        api.setCameraDistance(nextDistance);
+      }, distance);
+      await page.waitForTimeout(150);
+      const state = await getExampleState(page);
+      if (state.visibleSplatCount !== initial.visibleSplatCount) {
+        changed = state;
+        break;
+      }
+    }
+
+    expect(changed, 'camera distance sweep should cross an LOD threshold').not.toBeNull();
+    expect(changed!.visibleLodLevels).not.toEqual(initial.visibleLodLevels);
+  });
+
+  test('setDimensionValue commits a different splat count', async ({ page }) => {
+    await openLayerExample(page, DIMENSION_FIXTURE);
+    const before = await getExampleState(page);
+    const timeIndex = before.dimensions?.names.indexOf('time') ?? -1;
+    expect(timeIndex).toBeGreaterThanOrEqual(0);
+    expect(before.visibleSplatCount).toBe(24);
+
+    await page.evaluate(
+      async ({ index, value }) => {
+        const api = (
+          window as Window & typeof globalThis & { __luxarLayerExample?: LayerExampleApi }
+        ).__luxarLayerExample;
+        if (!api) throw new Error('LuxarLayer example API is unavailable');
+        await api.setDimensionValue(index, value);
+      },
+      { index: timeIndex, value: 1 }
+    );
+
+    await expect.poll(() => getExampleState(page)).toMatchObject({ visibleSplatCount: 72 });
+    const after = await getExampleState(page);
+    expect(after.dimensions?.currentStep[timeIndex]).toBe(1);
+  });
+});

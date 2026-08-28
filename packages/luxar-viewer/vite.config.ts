@@ -98,6 +98,9 @@ export default defineConfig(({ command }) => ({
         // Playwright auto-starts: hatch run luxar serve examples/
         target: 'http://localhost:8000',
         changeOrigin: true,
+        bypass(req) {
+          if (req.url?.startsWith('/examples/layer/')) return req.url;
+        },
       },
     },
   },
