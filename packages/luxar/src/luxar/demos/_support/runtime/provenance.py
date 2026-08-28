@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Final, Union
 
@@ -11,24 +12,24 @@ from arbol import aprint
 
 from ...._zarr_compat import is_consolidated, read_node_attrs
 from ....utils.source_fingerprints import (
-    production_source_fingerprint,
+    fingerprint_imported_sources,
     store_writer_environment,
 )
 
 #: Scene-root attr holding the fingerprint of the builder that wrote the scene.
 BUILDER_FINGERPRINT_ATTR: Final[str] = "builder_fingerprint"
+_DEMO_FINGERPRINT_VERSION: Final[int] = 2
 
 
 def demo_source_fingerprint(
     module_file: Union[str, Path], *, package_root: Path | None = None
 ) -> str:
-    """Short content hash of a demo and the production code that writes it.
+    """Short content hash of a demo and the local code that writes it.
 
     Call as ``demo_source_fingerprint(__file__)``. The hash covers that demo
-    module's source, every production Python source in the Luxar package, and
-    the Zarr writer environment, so edits or encoding-environment changes
-    invalidate the cached scene. The package-wide component is cached so
-    multiple demos hash it only once per process.
+    module's reachable local imports and the Zarr writer environment, so edits
+    to its producers or encoding-environment changes invalidate the cached
+    scene without unrelated Luxar modules doing so.
 
     Args:
         module_file: Path to the demo module (normally ``__file__``).
@@ -39,17 +40,24 @@ def demo_source_fingerprint(
         case :func:`scene_is_current` degrades to a plain existence check rather
         than rebuilding a large scene on every run).
     """
+    root = (
+        Path(__file__).resolve().parents[3]
+        if package_root is None
+        else Path(package_root).resolve()
+    )
+    module_path = Path(module_file).resolve()
+    fingerprint_root = Path(os.path.commonpath((root.parent, module_path)))
     try:
-        source = Path(module_file).read_bytes()
-    except OSError:
-        return ""
-    production = production_source_fingerprint(package_root)
-    if not production:
+        sources = fingerprint_imported_sources(
+            fingerprint_root,
+            module_path,
+            (root.parent,),
+        )
+    except (OSError, ValueError):
         return ""
     digest = hashlib.sha256()
-    digest.update(len(source).to_bytes(8, "big"))
-    digest.update(source)
-    digest.update(bytes.fromhex(production))
+    digest.update(_DEMO_FINGERPRINT_VERSION.to_bytes(4, "big"))
+    digest.update(bytes.fromhex(sources))
     digest.update(json.dumps(store_writer_environment(), sort_keys=True).encode())
     return digest.hexdigest()[:16]
 
@@ -70,9 +78,9 @@ def scene_is_current(
     never rebuilt the stale store on disk.
 
     So a scene is current only when its save finished AND it was written by
-    this exact builder, production Luxar source tree, and Zarr writer
-    environment. A scene from before fingerprinting carries no attr and is
-    treated as stale — one rebuild, then it stamps itself.
+    this exact builder dependency closure and Zarr writer environment. A scene
+    from before fingerprinting carries no attr and is treated as stale — one
+    rebuild, then it stamps itself.
 
     This gates SCENE ASSEMBLY only. Downloads, gsplat fits and precomputed
     bundles keep their own caches under ``~/.cache/luxar``, so a source edit

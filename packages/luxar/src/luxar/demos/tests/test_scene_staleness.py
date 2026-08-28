@@ -20,7 +20,10 @@ from luxar.demos._support.runtime.provenance import (
     demo_source_fingerprint,
     scene_is_current,
 )
-from luxar.utils.source_fingerprints import production_source_fingerprint
+from luxar.utils.source_fingerprints import (
+    imported_source_files,
+    production_source_fingerprint,
+)
 
 
 def _write_scene(path: Path, fingerprint: str | None, *, finished: bool = True) -> Path:
@@ -62,7 +65,9 @@ def test_fingerprint_changes_when_production_writer_changes(tmp_path: Path) -> N
     writer = package_root / "encoding/writer.py"
     source.parent.mkdir(parents=True)
     writer.parent.mkdir(parents=True)
-    source.write_text("LINE_OPACITY = 0.95\n")
+    source.write_text("from luxar.encoding import writer\nLINE_OPACITY = 0.95\n")
+    (package_root / "__init__.py").write_text("")
+    (writer.parent / "__init__.py").write_text("")
     writer.write_text("ENCODING_VERSION = 1\n")
 
     production_source_fingerprint.cache_clear()
@@ -71,6 +76,73 @@ def test_fingerprint_changes_when_production_writer_changes(tmp_path: Path) -> N
     production_source_fingerprint.cache_clear()
 
     assert demo_source_fingerprint(source, package_root=package_root) != before
+
+
+def test_fingerprint_ignores_unrelated_production_source(tmp_path: Path) -> None:
+    package_root = tmp_path / "luxar"
+    source = package_root / "demos/demo_thing.py"
+    writer = package_root / "encoding/writer.py"
+    unrelated = package_root / "unrelated.py"
+    source.parent.mkdir(parents=True)
+    writer.parent.mkdir(parents=True)
+    source.write_text("from luxar.encoding import writer\n")
+    (package_root / "__init__.py").write_text("")
+    (writer.parent / "__init__.py").write_text("")
+    writer.write_text("ENCODING_VERSION = 1\n")
+    unrelated.write_text("VALUE = 1\n")
+
+    production_source_fingerprint.cache_clear()
+    before = demo_source_fingerprint(source, package_root=package_root)
+    unrelated.write_text("VALUE = 2\n")
+    production_source_fingerprint.cache_clear()
+
+    assert demo_source_fingerprint(source, package_root=package_root) == before
+
+
+def test_fingerprint_follows_transitive_relative_demo_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "luxar"
+    source = package_root / "demos/demo_thing.py"
+    helper = package_root / "demos/_shared.py"
+    nested = package_root / "demos/_nested.py"
+    source.parent.mkdir(parents=True)
+    (package_root / "__init__.py").write_text("")
+    (source.parent / "__init__.py").write_text("")
+    source.write_text("from . import _shared\n")
+    helper.write_text("from ._nested import VALUE\n")
+    nested.write_text("VALUE = 1\n")
+
+    production_source_fingerprint.cache_clear()
+    before = demo_source_fingerprint(source, package_root=package_root)
+    nested.write_text("VALUE = 2\n")
+    production_source_fingerprint.cache_clear()
+
+    assert demo_source_fingerprint(source, package_root=package_root) != before
+
+
+@pytest.mark.parametrize(
+    ("demo", "dependencies"),
+    [
+        ("demo_dmri_tractography.py", {"_cinematic_camera.py"}),
+        ("demo_ocean_currents_earth.py", {"_cinematic_camera.py", "_globe_common.py"}),
+        ("demo_global_rivers_earth.py", {"_globe_common.py"}),
+        (
+            "demo_biodiversity_planetary_scale.py",
+            {"_cinematic_camera.py", "_globe_common.py"},
+        ),
+        ("demo_gsplats_3d_cryoem_virus.py", {"_lod_policy.py"}),
+        ("demo_particle_collision_animated.py", {"demo_particle_collision.py"}),
+    ],
+)
+def test_real_demo_source_graph_includes_shared_scene_writers(
+    demo: str, dependencies: set[str]
+) -> None:
+    package_root = Path(__file__).resolve().parents[2]
+    demos_root = package_root / "demos"
+
+    sources = imported_source_files(demos_root / demo, (package_root.parent,))
+    source_names = {path.name for path in sources}
+
+    assert dependencies <= source_names
 
 
 def test_production_fingerprint_is_cached_across_demos(tmp_path: Path) -> None:
