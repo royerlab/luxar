@@ -49,6 +49,16 @@ export type {
 } from './input';
 
 /**
+ * Layer mode — render a Luxar scene inside a host application's own Three.js
+ * renderer, camera, and scene graph. The headless sibling of {@link LuxarApp}:
+ * the host keeps its pipeline, the layer contributes a `THREE.Group` plus the
+ * per-frame LOD / depth-sort bookkeeping.
+ *
+ * Same single-instance rule as `LuxarApp`, and mutually exclusive with it.
+ */
+export { LuxarLayer, type LuxarLayerOptions, type ViewportSize } from './core/layer/luxar-layer';
+
+/**
  * Programmatic embedder API — value/event types for the LuxarApp methods
  * (switchDataset, getDimensions/setDimensionValue, camera, resize, screenshot)
  * and the `on(event, listener)` surface. `LuxarEmbedderEventMap` names the
