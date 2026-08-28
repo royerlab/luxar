@@ -36,6 +36,7 @@ const MB = 1024 * 1024;
  * accumulators (which are uncapped and transient).
  */
 const CACHE_SHARE_OF_TARGET = 0.6;
+const WORKING_SET_SHARE_OF_TARGET = 1 - CACHE_SHARE_OF_TARGET;
 
 /** Hard ceiling on the S-cache so a huge heap can't pin an absurd budget. */
 const SLICE_CAP_BYTES = 2048 * MB;
@@ -148,6 +149,26 @@ export function readHeapLimitBytes(): number | undefined {
     ?.memory;
   const limit = mem?.jsHeapSizeLimit;
   return typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? limit : undefined;
+}
+
+/**
+ * Heap headroom left outside the cache pool for transient decode, projection,
+ * scene-graph, render, and WASM work. Returns `undefined` when the browser does
+ * not expose a measurable heap so the caller can retain its existing fallback.
+ */
+export function computeWorkingSetBudgetBytes(
+  heapLimitBytes: number | undefined = readHeapLimitBytes()
+): number | undefined {
+  if (
+    heapLimitBytes === undefined ||
+    !Number.isFinite(heapLimitBytes) ||
+    heapLimitBytes <= 0
+  ) {
+    return undefined;
+  }
+  return Math.floor(
+    heapLimitBytes * config.dataLoading.memory.targetHeapUsage * WORKING_SET_SHARE_OF_TARGET
+  );
 }
 
 /**

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   EAGER_CHILD_LOAD_CONCURRENCY,
@@ -40,6 +40,23 @@ function makeLineChildren(
 function makeStubLoc() {
   return { resolve: vi.fn(() => makeStubLoc()) } as never;
 }
+
+const originalPerformanceMemory = Object.getOwnPropertyDescriptor(performance, 'memory');
+
+function setHeapLimitBytes(bytes: number): void {
+  Object.defineProperty(performance, 'memory', {
+    configurable: true,
+    value: { jsHeapSizeLimit: bytes },
+  });
+}
+
+afterEach(() => {
+  if (originalPerformanceMemory) {
+    Object.defineProperty(performance, 'memory', originalPerformanceMemory);
+  } else {
+    delete (performance as Performance & { memory?: unknown }).memory;
+  }
+});
 
 describe('loadChildrenConcurrently', () => {
   it('keeps placeholders reachable from the real scene while their loads are in flight', async () => {
@@ -113,6 +130,29 @@ describe('loadChildrenConcurrently', () => {
     await vi.waitFor(() => expect(started).toHaveLength(2));
     releases.shift()?.();
     await vi.waitFor(() => expect(started).toHaveLength(3));
+    releases.shift()?.();
+    await loadPromise;
+  });
+
+  it('scales the working-set budget down on a small measured heap', async () => {
+    setHeapLimitBytes(512 * 1024 * 1024);
+    const children = makeLineChildren(2, 300_000);
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async (child) => {
+        started.push(child.path);
+        await new Promise<void>((resolve) => releases.push(resolve));
+      }
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
     releases.shift()?.();
     await loadPromise;
   });

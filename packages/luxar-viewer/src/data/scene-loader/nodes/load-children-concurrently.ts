@@ -5,6 +5,7 @@
  */
 
 import * as THREE from 'three';
+import { computeWorkingSetBudgetBytes } from '../../../cache/heap-budget';
 import * as zarr from '../../zarr';
 import type { SceneNode } from '../../data-loader-types';
 import type { NodeBuildCtx } from './build-ctx';
@@ -14,7 +15,7 @@ import type { NodeBuildCtx } from './build-ctx';
 // stays below the global 64-request fetch gate while collapsing waterfalls.
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
 
-const EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024;
+const EAGER_CHILD_LOAD_MEMORY_FALLBACK_BYTES = 256 * 1024 * 1024;
 const ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES = 220;
 
 interface WorkingSetWaiter {
@@ -26,8 +27,10 @@ class WorkingSetGate {
   private activeBytes = 0;
   private readonly waiters: WorkingSetWaiter[] = [];
 
+  constructor(private readonly budgetBytes: number) {}
+
   acquire(estimatedBytes: number): Promise<() => void> {
-    const bytes = Math.min(EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES, Math.max(0, estimatedBytes));
+    const bytes = Math.min(this.budgetBytes, Math.max(0, estimatedBytes));
     if (bytes === 0) return Promise.resolve(() => undefined);
 
     return new Promise((resolve) => {
@@ -42,8 +45,7 @@ class WorkingSetGate {
         this.activeBytes === 0
           ? 0
           : this.waiters.findIndex(
-              (waiter) =>
-                this.activeBytes + waiter.bytes <= EAGER_CHILD_LOAD_MEMORY_BUDGET_BYTES
+              (waiter) => this.activeBytes + waiter.bytes <= this.budgetBytes
             );
       if (waiterIndex < 0) return;
 
@@ -65,7 +67,9 @@ const workingSetGates = new WeakMap<NodeBuildCtx, WorkingSetGate>();
 function workingSetGateFor(ctx: NodeBuildCtx): WorkingSetGate {
   let gate = workingSetGates.get(ctx);
   if (!gate) {
-    gate = new WorkingSetGate();
+    gate = new WorkingSetGate(
+      computeWorkingSetBudgetBytes() ?? EAGER_CHILD_LOAD_MEMORY_FALLBACK_BYTES
+    );
     workingSetGates.set(ctx, gate);
   }
   return gate;
