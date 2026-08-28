@@ -158,11 +158,13 @@ PRESETS: Final[dict[str, StreamlinePreset]] = {
     ),
 }
 
-# The full scene has roughly one million indexed segments per basin. Two
-# substitutive levels make the whole-universe view cheap while preserving the
-# original indexed Lines node for close inspection. K=16 keeps the nearest
-# coarse level comfortably below the fine segment count even for the long outer
-# basins, whose line lift produces several beads per segment.
+# The full scene has roughly one million indexed segments per basin. At the
+# authored opening pose, two substitutive levels settle at about 892k splats on
+# a 16:9 viewport while preserving the original indexed Lines nodes for close
+# inspection. The whole-object finest anchor stays fixed at 0.5: at 4:3 and 1:1,
+# wide outer basins still select roughly 2.1M and 3.2M fine segments. Adding
+# levels cannot move that anchor; explicit coverage_fractions would switch the
+# group back to the legacy diagonal-coverage selector.
 BASIN_SUBSTITUTIVE_LOD: Final = dict(
     compression_factor=16,
     levels=2,
@@ -733,10 +735,10 @@ def write_laniakea_scene(
                     opacity=0.36,
                     intensity=0.75,
                     blending_mode="additive",
-                    # Indexed edges cannot safely use the additive line ladder:
-                    # rebuilding connected components as chains would alter the
-                    # authored topology. The substitutive levels preserve the
-                    # indexed Lines leaf and replace it only at distant views.
+                    # The framework refuses an additive ladder for every indexed
+                    # Lines node. False makes that implicit refusal explicit and
+                    # silences its notice; the substitutive ladder still preserves
+                    # the original indexed Lines leaf as its finest child.
                     additive_lod=False,
                     substitutive_lod=basin_lod,
                     layer=True,
