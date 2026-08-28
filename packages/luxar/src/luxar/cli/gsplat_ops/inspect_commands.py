@@ -200,6 +200,7 @@ def _print_dataset_metadata(
     *,
     show_full_provenance: bool,
 ) -> None:
+    """Print metadata, excluding stats already reported by the source-grid block."""
     aprint("\n" + "─" * 70)
     aprint("METADATA")
     aprint("─" * 70)
