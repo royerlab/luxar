@@ -487,9 +487,11 @@ generation.
 
 #### And the docstring
 
-It is describing the *hosted* archives, which do carry a partition and 64 lod
-groups per channel. The statement is **wrong**, and the correction cannot be
-made from an in-repo measurement alone.
+`demo_gsplats_2d_cmu1_pathology.py:512-518` used to describe the *hosted*
+archives as flat, even though they carry a partition and 64 lod groups per
+channel. It now records that the in-repo flat generation wins while it remains
+in the tree, despite the record already serving the partitioned generation.
+Neither statement can be established from an in-repo measurement alone.
 
 Derive topology from each group's declared `kind` (children of `kind=lod` are
 substitutive levels, children of `kind=partition` are parts) rather than from
