@@ -37,8 +37,6 @@ const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 // cases with effective-radius filtering or WebGL buffer issues — tracked
 // for the post-decomposition points-spatial-index-loader work.
 const KNOWN_FLAKY_LARGE_DATASETS = {
-  'temporal_spiral_sphere_4d_example.luxar.zarr':
-    '102M points; effective-radius filtering edge case.',
   'time_series_4d_example.luxar.zarr': 'Large 4D dataset with occasional WebGL buffer failures.',
   // 196 MB on disk; the headless chromium worker pool exhausts
   // ERR_INSUFFICIENT_RESOURCES decoding it in parallel with the rest
@@ -183,8 +181,8 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       // the point-specific assertion, not the requirement that geometry loaded.
       expect(state.totalElements).toBeGreaterThan(0);
       // This is per COMMITTED SLICE, unlike Python's per-node-total authoring warning.
-      // temporal_spiral_sphere_4d_example legitimately authors 102.4M points in one node,
-      // but its non-displayed discrete t axis commits only 200K points per viewer slice.
+      // temporal_spiral_sphere_4d_example authors 524,288 points in one node, but its
+      // non-displayed discrete t axis commits only 4,096 points per viewer slice.
       const droppedNodes = [...state.pointClouds, ...state.lineMeshes, ...state.gsplatMeshes]
         .filter((node) => node.droppedElementCount > 0)
         .map((node) => `${node.name}: ${node.droppedElementCount}`)
