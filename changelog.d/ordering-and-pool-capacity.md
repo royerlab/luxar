@@ -29,8 +29,9 @@ a commit lands at every timepoint. The guard meant to preserve the previous orde
 required an unchanged element count, and an nD re-slice changes the resident count at
 almost every step (this demo walks 27834 -> 27643 -> 27416 -> ...), so it never fired.
 Commits now hand the adapter the previous count so the existing permutation is
-*rebuilt* over the new population instead of discarded, and nodes at or below 250,000
-elements are sorted synchronously inside the commit, so the first frame is already
-correct. Measured as the fraction of element pairs composited in correct back-to-front
-order across a timepoint step: 0.617 before, 0.858 with the rebuild, 1.000 with the
-synchronous sort.
+*rebuilt* over the new population instead of discarded, and eligible instanced commits
+are sorted synchronously within a shared 250,000-element frame budget, so common
+single-node playback starts the frame already correct without letting multi-node slices
+multiply the main-thread cost. Measured as the fraction of element pairs composited in
+correct back-to-front order across a timepoint step: 0.617 before, 0.858 with the rebuild,
+1.000 with the synchronous sort.

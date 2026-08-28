@@ -18,7 +18,7 @@ export const depthSortConfig: DepthSortConfig = {
   // thread is doing. Missing it is transient (retried when the loader goes
   // idle), so erring long costs nothing but a later first sort.
   workerInitTimeoutMs: 30_000,
-  // Measured: 2.5 ms at this count, 8 ms at 500k. Sized so the synchronous
-  // first sort cannot cost a dropped frame on a slow machine.
+  // Measured: 2.5 ms at this count, 8 ms at 500k. Shared by every commit
+  // between frame evaluations so a multi-node slice cannot multiply the cost.
   syncSortMaxElements: 250_000,
 };

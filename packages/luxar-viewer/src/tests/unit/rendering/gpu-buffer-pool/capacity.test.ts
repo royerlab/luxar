@@ -3,7 +3,7 @@
  *
  * The headroom cap exists because the factor is charged against a real
  * per-element cost: a Lines geometry is 96 B/segment of RGBA32F element
- * texture plus 8 B/segment of ordering pair, so an unbounded 1.5x cost
+ * texture plus 8 B/segment of ordering pair, so an unbounded 1.5x costs
  * `cosmicflows_laniakea_full` 567 MiB of slack against a 2000 MiB budget and
  * the scene died with "Array buffer allocation failed". These assertions pin
  * both halves: small nodes keep the full factor, large nodes stop paying it.

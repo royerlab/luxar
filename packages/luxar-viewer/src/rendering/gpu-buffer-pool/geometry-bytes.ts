@@ -68,8 +68,7 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
   // GSplat, Points and Lines geometries all carry their element data in an
   // RGBA32F texture (gsplats: 64 B/splat, 4 texels; points: 48 B/point, 3
   // texels; lines: 96 B/segment, 6 texels) riding `userData.elementTexture`
-  // (see
-  // `element-storage.ts::attachElementStorage`); it shares the
+  // (see `element-storage.ts::attachElementStorage`); it shares the
   // geometry's lifetime, so its footprint belongs to the geometry. The
   // capacity-padded texture rows plus the `aSortedIndex`/`aSortedIndexB`
   // ordering PAIR (4 B/element each = 8 B/element, both counted in the

@@ -8,12 +8,20 @@ back-to-front by the async SortWorker at commit time (Phase 2). This section
 tunes the per-frame scheduler (`rendering/depth-sort-coordinator.ts` →
 `evaluateDepthSortPerFrame`) that keeps the ordering tracking the camera:
 
-| Knob                  | Default | Meaning                                                                                                         |
-| --------------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
-| `enabled`             | `true`  | Master switch; `false` pins the identity (storage) order. URL escape hatch: `?depthSort=0`.                     |
-| `angleThresholdDeg`   | `3`     | Re-sort when the node-relative view axis rotates past this angle.                                               |
-| `translationFraction` | `0.05`  | Re-sort when the camera translates along the view axis past this fraction of the node's bounding-sphere radius. |
-| `workerInitTimeoutMs` | `30000` | Deadline for the SortWorker's one-time `initialize()` (WASM load + instantiate). `0` disables the guard.        |
+| Knob                  | Default  | Meaning                                                                                                         |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------- |
+| `enabled`             | `true`   | Master switch; `false` pins the identity (storage) order. URL escape hatch: `?depthSort=0`.                     |
+| `angleThresholdDeg`   | `3`      | Re-sort when the node-relative view axis rotates past this angle.                                               |
+| `translationFraction` | `0.05`   | Re-sort when the camera translates along the view axis past this fraction of the node's bounding-sphere radius. |
+| `workerInitTimeoutMs` | `30000`  | Deadline for the SortWorker's one-time `initialize()` (WASM load + instantiate). `0` disables the guard.        |
+| `syncSortMaxElements` | `250000` | Shared per-frame element budget for synchronous first-ordering sorts on eligible instanced nodes. `0` disables. |
+
+`syncSortMaxElements` removes the worker-round-trip flash for the first eligible
+instanced commits after a frame evaluation. Each node must fit the ceiling and
+the remaining shared budget; later nodes stay on the repaired fallback plus the
+normal async sort, so a multi-node slice cannot multiply the main-thread cost.
+Mesh stays async because its ordering is applied through `geometry.index`, not
+the instanced `aSortedIndex` pair.
 
 `workerInitTimeoutMs` is the odd one out — it is a startup deadline, not a
 re-sort trigger, and it bounds ONE attempt rather than the worker's life. A miss

@@ -36,9 +36,10 @@ export interface DepthSortConfig {
    *  forever, and every order-dependent commit parks another continuation on
    *  it — precisely the accumulation the deadline exists to prevent. */
   workerInitTimeoutMs: number;
-  /** Largest element count for which the FIRST ordering after a commit is
-   *  computed synchronously, on the main thread, inside the commit itself
-   *  (default: 250,000). `0` disables the synchronous path entirely.
+  /** Per-frame element budget for computing the FIRST ordering after a commit
+   *  synchronously on the main thread (default: 250,000). A node must fit both
+   *  this per-node ceiling and the budget remaining since the last
+   *  `evaluateDepthSortPerFrame()` call. `0` disables the synchronous path.
    *
    *  Without it, every commit of an order-dependent node writes a storage-order
    *  fallback and waits ~5 ms for the worker's answer, so at least one frame
@@ -57,8 +58,8 @@ export interface DepthSortConfig {
    *  ```
    *
    *  250k stays inside a 60 Hz frame with room to spare on a slow machine and
-   *  covers every animated demo node in the repo. Above it the async path is
-   *  the only sane answer and the storage-order frame is accepted — but see
+   *  covers every animated demo node in the repo. Larger nodes, and later nodes
+   *  after the frame budget is spent, stay on the async path — but see
    *  `repairSortedIndexForCount`, which keeps that frame much closer to sorted
    *  than storage order was. */
   syncSortMaxElements: number;

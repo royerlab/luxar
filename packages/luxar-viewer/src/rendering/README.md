@@ -290,15 +290,17 @@ staleness. Two changes close it, and they compose. First, the commit paths now p
 `repairSortedIndexForCount` instead: the existing permutation is compacted (shrink) or
 extended (grow) into a valid permutation of the new `[0, count)` rather than discarded.
 Second, `noteDepthSortCommit` computes the ordering SYNCHRONOUSLY, on the main thread,
-for nodes at or below `config.depthSort.syncSortMaxElements` (default 250,000), and
-publishes it live via `writeSortedIndexOrderingLive` — no staging, because a permutation
-computed in one shot has no partial state to hide. The kernel is the TypeScript
-reference `sort_splats_by_depth` (exact-parity with the Rust one, and the WASM module
-lives in the worker), a counting sort measured at 0.8 ms for 34k elements, 2.5 ms for
-250k and 16.2 ms for 1M — hence the ceiling. The async pipeline is deliberately
-untouched: the node still registers and still dispatches, because keeping the ordering
-current as the camera moves is still its job; the worker's answer is the same
-permutation landing as a no-op overwrite. Measured on the live demo at a frozen camera
+for eligible instanced nodes within `config.depthSort.syncSortMaxElements` (default
+250,000), and publishes it live via `writeSortedIndexOrderingLive` — no staging, because
+a permutation computed in one shot has no partial state to hide. The ceiling is a
+shared element budget between frame evaluations, not a per-node allowance. The kernel
+is the TypeScript reference `sort_splats_by_depth` (exact-parity with the Rust one, and
+the WASM module lives in the worker), a counting sort measured at 0.8 ms for 34k
+elements, 2.5 ms for 250k and 16.2 ms for 1M — enough to bound the whole commit batch.
+The async pipeline is deliberately untouched: the node still registers and still
+dispatches, because keeping the ordering current as the camera moves is still its job;
+the worker's answer is the same permutation landing as a no-op overwrite. Measured on
+the live demo at a frozen camera
 pose, as the fraction of sampled element pairs composited in correct back-to-front
 order across a timepoint step: storage order 0.617, repaired 0.858, sorted 1.000. (When
 measuring anything like this, freeze the camera pose first — demos open in cinematic

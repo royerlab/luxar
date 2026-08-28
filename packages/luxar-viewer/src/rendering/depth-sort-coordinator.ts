@@ -304,6 +304,8 @@ let initRetryWakeTimer: ReturnType<typeof setTimeout> | null = null;
 let captureSuppressDepth = 0;
 let requestRenderBeforeCapture: (() => void) | null = null;
 const nodeStates = new Map<string, NodeSortState>();
+// Shared across every commit between frame evaluations: the configured ceiling
+// bounds the whole main-thread batch, not each node independently.
 let syncSortElementsRemaining = config.depthSort.syncSortMaxElements;
 
 /**
@@ -1303,10 +1305,12 @@ function computeModelView(mesh: THREE.Mesh, camera: THREE.Camera): THREE.Matrix4
  *
  * WHY it is bounded. The kernel is a counting sort — two O(n) passes and a
  * 65,536-bucket histogram — so its cost is linear and measurable rather than
- * data-dependent: 0.8 ms at 34k elements, 2.5 ms at 250k, 16.2 ms at 1M. Above
- * `config.depthSort.syncSortMaxElements` the async path stays the only sane
- * answer, and `repairSortedIndexForCount` (the commit paths' fallback) keeps
- * that one frame far closer to sorted than storage order was.
+ * data-dependent: 0.8 ms at 34k elements, 2.5 ms at 250k, 16.2 ms at 1M.
+ * `config.depthSort.syncSortMaxElements` is both the per-node ceiling and the
+ * shared element budget for every commit between frame evaluations; once spent,
+ * the async path stays the only sane answer. `repairSortedIndexForCount` (the
+ * commit paths' fallback) keeps that one frame far closer to sorted than storage
+ * order was.
  *
  * The result is written LIVE rather than staged, because a permutation
  * computed in one shot has no partial state to hide — see
