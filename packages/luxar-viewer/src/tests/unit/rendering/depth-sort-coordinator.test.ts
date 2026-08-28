@@ -4989,6 +4989,23 @@ describe('depth-sort coordinator — synchronous first sort', () => {
     expect(activeOrdering(second, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
   });
 
+  it('restores the synchronous budget when the coordinator is disposed and reconfigured', async () => {
+    const coord = await loadCoordinator(3);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const first = makeGSplatsMesh(3, 'normal');
+    coord.evaluateDepthSortPerFrame();
+    coord.noteDepthSortCommit(first, CENTERS.slice(), 3);
+    expect(activeOrdering(first, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
+
+    coord.disposeDepthSort();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const afterReinit = makeGSplatsMesh(3, 'normal');
+    seedSentinel(afterReinit);
+    coord.noteDepthSortCommit(afterReinit, CENTERS.slice(), 3);
+
+    expect(activeOrdering(afterReinit, 3)).toEqual(EXPECTED_BACK_TO_FRONT);
+  });
+
   it('declines without throwing when the centers provider throws', async () => {
     // Must land where it always did: the async path's outer catch, which owns
     // the once-per-episode report.

@@ -2162,6 +2162,7 @@ export function disposeDepthSort(): void {
   isLoadInProgress = null;
   getProfiler = null;
   depthSortEnabled = true;
+  syncSortElementsRemaining = config.depthSort.syncSortMaxElements;
   warnedWorkerUnavailable = false;
   // Init-failure bookkeeping is module state too: an embedder that disposes
   // and re-inits in one page must start with a full retry budget and a
