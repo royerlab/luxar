@@ -254,8 +254,9 @@ export class SceneLoader {
   private _updateInProgress = false;
   // Terminal for this loader: loadScene is one-shot, and dataset switches create
   // a fresh SceneLoader through SceneLoaderManager.createLoaderAsync. Only
-  // bootstrapStandalone registers the notifier backend, so an embedded host gets
-  // just the log.error below and no visible message while updates stay stopped (#2280).
+  // bootstrapStandalone registers the notifier backend, so an embedded host sees no
+  // built-in message; hosts observe the fault through onArchiveFault (re-emitted by
+  // LuxarApp as dataset-fault) instead (#2280).
   private _archiveFault: ArchiveFaultError | null = null;
   private archiveFaultListeners = new Set<(error: ArchiveFaultError) => void>();
   /**
@@ -462,7 +463,12 @@ export class SceneLoader {
     return this._archiveFault;
   }
 
-  /** Subscribe to the loader's one-shot terminal archive fault. */
+  /**
+   * Subscribe to the loader's one-shot terminal archive fault.
+   * Listener exceptions are logged and do not propagate to the caller.
+   *
+   * @param options.replayCurrent Replay the current fault immediately when one is latched.
+   */
   onArchiveFault(
     listener: (error: ArchiveFaultError) => void,
     options: { replayCurrent?: boolean } = {}

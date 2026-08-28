@@ -92,7 +92,8 @@ group table.
 
 Beyond `init()`/`dispose()`, `LuxarApp` exposes flat methods so a host page can
 drive the viewer without the built-in UI. All throw if called before `init()`,
-except `shortcutForAction()`, which returns `undefined` until input is available.
+except `shortcutForAction()` and `getDatasetFault()`. The former returns
+`undefined` until input is available; the latter returns `null` until a dataset is loaded.
 
 ```ts
 // Dataset
