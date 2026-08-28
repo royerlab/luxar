@@ -867,15 +867,59 @@ Two regimes, and the ratio tells you which one you are in:
   total bytes and is nearly indifferent to node count. `cmu1` fetches 508 chunks
   from 60 arrays; halving its node count would barely move that.
 
-Practical consequence: **before claiming a node reduction buys a faster load,
-check the arrays:chunks ratio of the published store.** A store with many small
-nodes gains directly; a store with few large ones gains almost nothing and its
-lever is total bytes instead (3.17).
+**The ratio is a property of a pipeline STAGE, not of a store.** `optimise` is
+what creates the node-bound regime. The same eight demos measured **as-built**,
+before optimise, are all heavily byte-bound:
+
+    nuclear_pore_complex   ratio  9.25      cellxgene_census_umap    52.10
+    laniakea              12.16      mouse_multiome_peak_umap  51.68
+    biodiversity          24.54      esm3_protein_landscape    84.62
+    zebrahub_..._peak_umap 128.11    human_multiome_peak_umap 160.98
+
+`biodiversity_planetary_scale` reads **24.54 as-built against 1.72 published** —
+same demo, same data, a factor of 14 apart, because optimise re-chunks to a 1 MB
+target and collapses the chunk count. Consistent with 3.17's measurement in the
+other direction (173 requests as-built, 2 after optimise).
+
+So a node reduction's payoff is **contingent on the publish step**: these stores
+only enter the node-bound regime after `optimise --profile archive`. "18 groups →
+9" is a real request win on the published artefact and close to meaningless on the
+as-built one. The win belongs to the combination, not to the authoring change
+alone.
+
+Practical consequence: **before claiming a node reduction buys a faster load, check
+the arrays:chunks ratio of the artefact you will actually serve** — post-optimise,
+and of the generation you are publishing, not whichever one happens to be live. A
+store with many small nodes gains directly; a store with few large ones gains
+almost nothing and its lever is total bytes instead (3.17).
 
 Corollary for the other direction: adding nodes is only expensive in the
 node-bound regime. A per-part additive ladder that multiplies groups is cheap on a
 byte-bound store and costly on a node-bound one — so the same structural change
 has opposite cost depending on chunk layout.
+
+#### Worked example: is a per-part ladder worth its nodes?
+
+`nuclear_pore_complex` (9,874,128 elements, 32-part BSP), both versions taken
+through `optimise --profile archive` so the comparison is like-for-like:
+
+    version        groups  arrays  chunks   first commit
+    un-laddered        36     160     224    9,874,128 elements
+    4 rungs/part      161     640     672    ~1,250,000 elements
+
+Post-optimise arrays:chunks is **1.05**, so this store *is* node-bound and the 128
+rung groups cost real fetches: **+448 requests** to reach full detail, 3x the
+un-laddered total.
+
+But that is the wrong total to compare. First paint needs only the **first rung**
+of each part — roughly a quarter of the arrays, ~128-160 chunks — against **all
+224** for the un-laddered store, which must also commit 9.87M elements in one go.
+So the ladder is cheaper at first paint on *both* axes and more expensive only in
+the total to reach full detail, which arrives progressively and off the critical
+path.
+
+For a gallery tile that is the right trade. State it that way round: a ladder does
+not reduce total requests, it moves them after first paint.
 
 ## 4. Cloudflare configuration
 
