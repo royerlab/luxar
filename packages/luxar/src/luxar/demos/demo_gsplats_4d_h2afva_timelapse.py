@@ -25,10 +25,11 @@ DATA SOURCE & CITATIONS:
 
 WHICH TIMEPOINTS:
     Every fifth frame of the 253-timepoint recording — original indices
-    0, 5, 10, ... 250 — giving 51 frames. The archive records this itself
-    (``source_archive``, ``source_stride``, ``source_timepoints``), and the
-    stacked axis is renumbered 0..50 so the viewer's discrete navigation grid
-    lands exactly on stored values.
+    0, 5, 10, ... 250 — giving 51 frames. The demo fixes that sampling with
+    ``SOURCE_STRIDE = 5``. If an archive records ``source_stride`` or
+    ``source_timepoints``, scene creation cross-checks those attributes; the
+    pinned archive does not retain them. Its stacked axis is renumbered 0..50
+    so the viewer's discrete navigation grid lands exactly on stored values.
 
     The Time axis is therefore a FRAME INDEX, not minutes. The acquisition
     interval is not recorded anywhere in this dataset or its metadata, and
