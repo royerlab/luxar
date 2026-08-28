@@ -33,6 +33,9 @@ const layer = new LuxarLayer({
     frameRequested = true;
   },
 });
+layer.onDatasetFault(({ src: faultSrc, error }) => {
+  status.textContent = `Dataset fault for ${faultSrc}: ${error.message}`;
+});
 
 function resize() {
   const width = Math.max(1, viewport.clientWidth);
