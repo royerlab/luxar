@@ -31,6 +31,8 @@ import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import * as zarr from 'zarrita';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
+import { EventGroup } from '../../../utils/cross-layer/event-group';
+import { installOnlineRetry } from '../../../core/app/lifecycle/online-retry';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1269,7 +1271,7 @@ describe('SceneLoader', () => {
       expect(result.deferred).toBeUndefined();
     });
 
-    it('resets exhausted deferred-group budgets even when no loader record survives', async () => {
+    it('online recovery resets deferred-group budgets when no loader record survives', () => {
       const registry = new LODGroupRegistry({
         getCamera: () => new THREE.Camera(),
         getViewportSize: () => ({ width: 100, height: 100 }),
@@ -1294,13 +1296,19 @@ describe('SceneLoader', () => {
         activeChildIndex: 0,
       });
       const loader = new SceneLoader(undefined, undefined, undefined, undefined, () => registry);
+      const events = new EventGroup();
+      const toast = vi.fn();
 
       try {
-        await loader.retryAllFailedLoaders();
+        installOnlineRetry({ events, getLoader: () => loader, toast });
+        window.dispatchEvent(new Event('online'));
+
         expect(child.automaticRetriesRemaining).toBeUndefined();
         expect(child.failed).toBe(false);
         expect(child.failedTick).toBeUndefined();
+        expect(toast).not.toHaveBeenCalled();
       } finally {
+        events.dispose();
         loader.dispose();
       }
     });
