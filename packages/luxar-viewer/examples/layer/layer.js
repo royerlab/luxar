@@ -149,7 +149,9 @@ try {
   await layer.load(src);
   frameLayer();
   loaded = true;
-  status.textContent = `Loaded ${new URL(src).pathname.split('/').pop()}`;
+  if (!layer.getDatasetFault()) {
+    status.textContent = `Loaded ${new URL(src).pathname.split('/').pop()}`;
+  }
   frameRequested = true;
 } catch (error) {
   status.textContent = `Load failed: ${error instanceof Error ? error.message : String(error)}`;
