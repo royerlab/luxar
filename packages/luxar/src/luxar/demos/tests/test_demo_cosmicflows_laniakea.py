@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 import zarr
 
 from luxar.demos.demo_cosmicflows_laniakea import (
@@ -121,4 +120,58 @@ def test_an_interior_gap_would_still_be_safe() -> None:
         assert indexed_components_are_chains(
             int(basin.vertices.shape[0]),
             np.asarray(basin.segments, dtype=np.intp).reshape(-1, 2),
+        )
+
+
+def test_basin_streamlines_carry_a_streaming_ladder(tmp_path) -> None:
+    """End-to-end: the written scene has additive rungs and no substitutive levels.
+
+    Test shape adapted from the substitutive attempt in #2297, which asserted the
+    on-disk tree rather than only a precondition — the right thing to check, since
+    an `additive_lod=` that silently collapses leaves no other trace.
+
+    The fixture must exceed the ladder's ~39,062-vertex first rung, or the ladder
+    legitimately collapses to a single level and the assertion would be vacuous.
+    """
+
+    n_lines, n_steps = 2_000, 50
+    n_vertices = n_lines * n_steps
+    idx = np.arange(n_vertices, dtype=np.uint32).reshape(n_lines, n_steps)
+    segments = np.stack([idx[:, :-1], idx[:, 1:]], axis=-1).reshape(-1, 2)
+    rng = np.random.default_rng(3)
+    vertices = (rng.normal(size=(n_vertices, 3)) * 100.0).astype(np.float32)
+
+    galaxies = GalaxyData(
+        positions=np.array([[0, 0, 0]], dtype=np.float32),
+        basin_ids=np.array([1], dtype=np.int16),
+        radii=np.ones(1, dtype=np.float32),
+        colors=np.ones((1, 3), dtype=np.float32),
+        pgc=np.array([4], dtype=np.int64),
+    )
+    basin = BasinLineData(
+        basin_id=1,
+        vertices=vertices,
+        segments=segments,
+        streamline_count=n_lines,
+    )
+    output = tmp_path / "cosmicflows_lod.luxar.zarr"
+
+    write_laniakea_scene(output, galaxies, [basin], "preview", PRESETS["preview"])
+
+    root = zarr.open_group(str(output), mode="r")
+    node = root["Basin 1 streamlines"]
+    attrs = dict(node.attrs)
+
+    # A prefix ladder, NOT a substitutive group: no `kind`, no child_N levels,
+    # and crucially no synthesised gsplats where the ribbons should be.
+    assert attrs.get("kind") != "lod"
+    children = sorted(node.group_keys())
+    assert children, "no ladder rungs were written"
+    assert all(name.startswith("additive_") for name in children), children
+    assert int(attrs.get("n_additive_sublods", 1)) > 1
+
+    for name in children:
+        assert dict(node[name].attrs).get("type") != "gsplats", (
+            f"{name} holds synthesised gsplats; a prefix ladder must keep the "
+            "original Lines geometry"
         )

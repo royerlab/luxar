@@ -719,7 +719,25 @@ def write_laniakea_scene(
                     # instead of all-at-once. At the `full` preset a basin runs to
                     # ~617,685 vertices, well past the 200,000 at which
                     # `scripts/check_demo_ladders.py` requires one, and these
-                    # nodes had none.
+                    # nodes had none (#2296).
+                    #
+                    # ADDITIVE rather than substitutive, and the measurement from
+                    # the substitutive attempt (#2297) is why. Coarse levels do
+                    # not bound this scene: the finest anchor of a whole-object
+                    # ladder is fixed at 0.5 screen occupancy, adding levels
+                    # cannot move it, and explicit `coverage_fractions` would
+                    # switch the group back to the legacy diagonal-coverage
+                    # selector. Measured at the authored opening pose, two
+                    # substitutive levels settled at ~892k splats on a 16:9
+                    # viewport but the wide outer basins still selected ~2.1M and
+                    # ~3.2M FINE segments at 4:3 and 1:1 — so the aspect ratio,
+                    # not the ladder, decided whether the scene was bounded.
+                    #
+                    # A prefix ladder bounds first paint at every aspect ratio
+                    # because it does not depend on level selection at all. It
+                    # also keeps the ribbons: `substitutive_lod=` coarsens a line
+                    # set by SYNTHESISING gsplats (beads), and these streamlines
+                    # are the picture.
                     #
                     # `indexed` lines could not be laddered at all until the
                     # writer's fabricated per-component chain was made VERIFIABLE

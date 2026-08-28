@@ -687,7 +687,7 @@ Recreates the Cosmicflows-4 / Laniakea visualization by Simone Conradi and Manli
 
 **Requires**: Internet access on first run (downloads ~26 MB from the public `manlius/laniakea` GitHub data cache; reused from `~/.cache/luxar/laniakea/`). The full preset reproduces the reported 29,555 valid streamlines and writes a large line dataset; `--preset preview` is faster for iteration. The streaming ladder needs no optional dependencies — unlike substitutive coarsening, an additive prefix imports neither torch nor scipy, so there is no degraded no-LOD path.
 
-**Demonstrates**: Real astronomical catalogs, supergalactic coordinates, basin-of-attraction coloring, vectorized RK4 streamline integration, substitutive LOD over large indexed Lines layers, HDR additive rendering, layer toggles per basin. Data: Cosmicflows-4 / EDD and the open [`manlius/laniakea`](https://github.com/manlius/laniakea) pipeline.
+**Demonstrates**: Real astronomical catalogs, supergalactic coordinates, basin-of-attraction coloring, vectorized RK4 streamline integration, a per-basin streaming ladder over large **indexed** Lines layers (the ladder verifies each connected component is an ascending simple path, so the ribbons survive intact rather than being coarsened into synthesised gsplats), HDR additive rendering, layer toggles per basin. Data: Cosmicflows-4 / EDD and the open [`manlius/laniakea`](https://github.com/manlius/laniakea) pipeline.
 
 ---
 

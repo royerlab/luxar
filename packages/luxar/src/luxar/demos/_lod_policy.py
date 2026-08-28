@@ -194,9 +194,40 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
     # max_elements caps splats per tile; K/L are the per-tile level ladder.
     # L=2 rather than 3 because a tile is already a fraction of the object, so
     # a third level would coarsen past anything a viewer requests.
+    #
+    # max_elements was 250,000, and that made `adaptive` by far the most
+    # node-expensive thing in the corpus. Measured on the built
+    # gsplats_2d_codex_pancreas store: 12 channels x 172 tiles x 3 levels x 4
+    # rungs = 12 + 172 + 516 + 2,064 = **2,764 groups**, three times the next
+    # largest store and 24% of the whole 91-store corpus's 6,924. Hosted first
+    # paint costs roughly one request per node, and node count is what Loic
+    # named as the thing that slows loading.
+    #
+    # 1,000,000 quarters the tile count. MEASURED, by flattening two of codex's
+    # real per-channel archives and rebuilding this recipe at both values (no
+    # refit needed — `adaptive` is applied to a GSplatData at save time):
+    #
+    #   channel   splats     250k -> tiles/groups    1M -> tiles/groups
+    #   ch01        562,180        4 / 65                 1 / 17
+    #   ch05      1,114,331        8 / 129                2 / 33
+    #
+    # ch01's 4 tiles at 250k is exactly what the shipped store holds for that
+    # channel, which is what anchors the extrapolation: 172 tiles -> ~43, so
+    # 12 wrappers + 43 lod + 129 levels + 516 rungs = **~700 groups**, a 3.9x
+    # reduction. A tile stays 4x under the 4,194,304 gsplat cap. What it
+    # costs is culling granularity — ~43 tiles over a 46000x33000 slide is ~6-7
+    # per side instead of ~13 — which is the right trade for a recipe whose whole
+    # point is that most tiles are off screen anyway: at 6-7 per side a
+    # full-screen view still holds a minority of them.
+    #
+    # Shared rather than per-demo on purpose. The only two `adaptive` users are
+    # the two 2D pathology slides, which want the same thing, and this table
+    # exists so they cannot drift apart — a per-demo override would defeat that
+    # for no benefit here. Both need a REFIT for the change to reach their
+    # artifacts (they fit locally and graft their own output).
     "adaptive": {
         "n_lods": 4,
-        "max_elements": 250_000,
+        "max_elements": 1_000_000,
         "compression_factor": 4,
         "levels": 2,
     },
