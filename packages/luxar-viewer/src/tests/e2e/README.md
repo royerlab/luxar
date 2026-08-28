@@ -416,14 +416,11 @@ then runs five preflight checks:
    warning. Example-independent specs (`basic-rendering`,
    `viewer-initialization`, `test-fixtures-rendering`, `geometry-types`) remain
    runnable while one example producer is stale or unavailable.
-
-   ```
    This warning path is for package-level Playwright commands run directly,
    including `pnpm test:e2e`. The repository `make test-e2e`,
    `make test-e2e-smoke`, and `make test-perf-e2e` targets regenerate examples
    first, and the CI E2E job also runs `make run-examples`, so CI coverage is
    not weakened by the warning behavior.
-   ```
 
 3. **Required datasets** — checks for the eight required `*.zarr`
    directories and then issues an HTTP `HEAD` request for each one
