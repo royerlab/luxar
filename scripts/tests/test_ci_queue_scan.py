@@ -188,6 +188,31 @@ def test_scan_repository_marks_truncation_without_querying_extra_jobs(
     assert len([call for call in calls if "/jobs?" in call]) == 2
 
 
+def test_scan_repository_marks_full_api_page_as_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_api(endpoint: str) -> object:
+        if "?status=" in endpoint:
+            return {
+                "workflow_runs": [
+                    {"id": run_id, "created_at": "2026-08-27T00:00:00Z"}
+                    for run_id in range(100)
+                ]
+            }
+        return {"jobs": []}
+
+    monkeypatch.setattr(ci_queue_scan, "read_api", fake_api)
+    result = ci_queue_scan.scan_repository(
+        "royerlab/luxar",
+        statuses=["queued"],
+        queued_before=ci_queue_scan.parse_timestamp("2026-08-27T00:05:00Z"),
+        max_runs=100,
+    )
+
+    assert result.scanned_runs == 100
+    assert result.truncated is True
+
+
 def test_cli_classify_emits_structured_error_for_malformed_json(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

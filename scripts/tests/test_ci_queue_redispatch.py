@@ -37,12 +37,20 @@ def test_select_candidate_requires_complete_saturation_evidence() -> None:
         ci_queue_scan.ScanResult(
             running=["other run"],
             truncated=True,
-            runs=[ci_queue_scan.RunScan(10, queued=["queued"])],
+            runs=[ci_queue_scan.RunScan(10, queued=["python-tests (3.12)"])],
         ),
-        ci_queue_scan.ScanResult(runs=[ci_queue_scan.RunScan(10, queued=["queued"])]),
+        ci_queue_scan.ScanResult(
+            runs=[ci_queue_scan.RunScan(10, queued=["python-tests (3.12)"])]
+        ),
         ci_queue_scan.ScanResult(
             running=["same run"],
-            runs=[ci_queue_scan.RunScan(10, queued=["queued"], running=["same run"])],
+            runs=[
+                ci_queue_scan.RunScan(
+                    10,
+                    queued=["python-tests (3.12)"],
+                    running=["same run"],
+                )
+            ],
         ),
         ci_queue_scan.ScanResult(
             running=["other run"],
@@ -149,3 +157,67 @@ def test_finish_retries_rejected_rerun_request() -> None:
 
     assert changed is True
     assert attempts == 2
+
+
+def test_finish_refuses_run_that_completed_successfully() -> None:
+    writes: list[tuple[str, object]] = []
+
+    changed = ci_queue_redispatch.finish_redispatch(
+        "royerlab/luxar",
+        42,
+        read=lambda endpoint: {
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+        },
+        write=lambda endpoint, fields: writes.append((endpoint, fields)),
+        sleep=lambda seconds: None,
+    )
+
+    assert changed is False
+    assert writes == []
+
+
+def test_finish_returns_false_when_poll_budget_expires() -> None:
+    now = 0.0
+    writes: list[tuple[str, object]] = []
+
+    def clock() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+
+    changed = ci_queue_redispatch.finish_redispatch(
+        "royerlab/luxar",
+        42,
+        read=lambda endpoint: {"status": "in_progress", "run_attempt": 1},
+        write=lambda endpoint, fields: writes.append((endpoint, fields)),
+        sleep=sleep,
+        clock=clock,
+        timeout_seconds=20,
+    )
+
+    assert changed is False
+    assert now == 20
+    assert writes == []
+
+
+def test_finish_command_fails_when_first_attempt_may_be_stranded(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(ci_queue_redispatch, "finish_redispatch", lambda *args: False)
+    monkeypatch.setattr(
+        ci_queue_scan,
+        "read_api",
+        lambda endpoint: {"status": "in_progress", "run_attempt": 1},
+    )
+
+    assert (
+        ci_queue_redispatch.main(
+            ["finish", "--repository", "royerlab/luxar", "--run-id", "42"]
+        )
+        == 1
+    )
+    assert "::error::" in capsys.readouterr().out

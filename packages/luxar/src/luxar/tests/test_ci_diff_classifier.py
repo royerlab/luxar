@@ -65,6 +65,12 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_docs_workflow.py derives the published LFS candidate set from it",
     ),
     (
+        ".github/workflows/ci-queue-redispatch.yml",
+        "py",
+        "test_queue_redispatch_workflow_is_bounded_and_durable guards the "
+        "redispatch workflow itself",
+    ),
+    (
         ".github/workflows/docs.yml",
         "py",
         "test_docs_workflow.py guards the Pages workflow itself",
@@ -834,6 +840,7 @@ def test_queue_redispatch_workflow_is_bounded_and_durable() -> None:
     assert parsed["concurrency"]["cancel-in-progress"] == "false"
     assert job["runs-on"] == "ubuntu-latest"
     assert job["timeout-minutes"] == "5"
+    assert parsed["on"]["schedule"] == [{"cron": "*/15 * * * *"}]
     assert "persist-credentials: false" in workflow
     assert "sparse-checkout: scripts" in workflow
     assert "${MAX_QUEUE_RESIDENCY_MINUTES:-30}" in workflow
@@ -1590,10 +1597,25 @@ def test_pick_runner_hosted_overrides_bypass_heartbeat(
     assert label == "ubuntu-latest"
 
 
-def test_pick_runner_routes_full_workflow_reruns_hosted(
+def test_pick_runner_routes_full_workflow_reruns_hosted_without_fresh_capacity(
     workflow: str, tmp_path: Path
 ) -> None:
     """A queue-residency rerun must not return to the queue it escaped."""
+    result, label = _run_pick_runner(
+        workflow,
+        tmp_path,
+        heartbeat="700",
+        run_attempt="2",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == "ubuntu-latest"
+    assert not (tmp_path / "gh-calls").exists()
+
+
+def test_pick_runner_keeps_full_workflow_reruns_on_fresh_capacity(
+    workflow: str, tmp_path: Path
+) -> None:
     result, label = _run_pick_runner(
         workflow,
         tmp_path,
@@ -1602,7 +1624,7 @@ def test_pick_runner_routes_full_workflow_reruns_hosted(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert label == "ubuntu-latest"
+    assert label == "obsidian"
     assert not (tmp_path / "gh-calls").exists()
 
 

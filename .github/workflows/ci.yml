@@ -178,7 +178,7 @@ jobs:
             # external-reference-audits.yml is one too: its schedule, permissions
             # and token wiring are asserted by test_run_external_reference_audits.py,
             # and a workflow file matches no other domain on its own.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|\.(pyx|pxd|cu|cuh)$|^\.gitattributes$|^scripts/complexity_baseline\.json$|^scripts/gallery/manifest\.json$|^docs/(guides/user/CLI_REFERENCE|specs/GSPLATS_DIMENSION_MAPPING)\.md$|^format-contract/|^\.github/workflows/(ci-queue-redispatch|docs|external-reference-audits)\.yml$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|src/(config/sections/(camera|rendering-controls)/data\.ts$|data/(attrs-composer\.ts$|loaders/spatial-query/tolerance-computer\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$)|types/(data-monitor-types|format-contract|geometry-capabilities|line-join|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
             # The gallery-selection unit test also reads the root README and gallery manifest.
             printf '%s\n' "$changed" | grep -qE '(^packages/luxar-viewer/|^README\.md$|^scripts/gallery/manifest\.json$|^tsconfig[^/]*\.json$|(^|/)vitest[^/]*\.(ts|js|mjs)$)' && dom_ts=true || true
@@ -276,12 +276,6 @@ jobs:
             echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if echo "$RUN_ATTEMPT" | grep -qE '^[0-9]+$' && [ "$RUN_ATTEMPT" -gt 1 ]; then
-            echo "full workflow rerun attempt $RUN_ATTEMPT -> routing to ubuntu-latest"
-            echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
       - id: scanner-checkout
         name: Check out the stdlib queue scanner
         if: steps.guard.outputs.label == ''
@@ -305,6 +299,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HEARTBEAT: ${{ vars.LUXAR_CI_HEARTBEAT }}
           MAX_QUEUED_OBSIDIAN: ${{ vars.LUXAR_CI_MAX_QUEUED_OBSIDIAN }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           now=$(date +%s)
           hb=${HEARTBEAT:-0}
@@ -322,6 +317,11 @@ jobs:
           if [ "$hb" -gt 0 ] && [ "$age" -ge -30 ] && [ "$age" -lt 180 ]; then
             echo "capacity heartbeat is ${age}s old -> routing to obsidian"
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if echo "$RUN_ATTEMPT" | grep -qE '^[0-9]+$' && [ "$RUN_ATTEMPT" -gt 1 ]; then
+            echo "full workflow rerun attempt $RUN_ATTEMPT without fresh capacity -> routing to ubuntu-latest"
+            echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           max_queued_obsidian=${MAX_QUEUED_OBSIDIAN:-5}
@@ -384,8 +384,10 @@ jobs:
   # is unavailable here; a stale GitHub `in_progress` state can therefore keep a
   # dead runner covered. A box that dies after this window can still leave an
   # undispatched leg queued until the 24-hour ceiling, or a dispatch-lost leg
-  # running down its timeout. Set LUXAR_CI_FORCE_HOSTED=1 and re-run ALL jobs to
-  # recover ("re-run failed" reuses the previous router output).
+  # running down its timeout. Re-run ALL jobs to recover; without a fresh
+  # capacity heartbeat the full rerun routes hosted. "Re-run failed" reuses the
+  # previous router output, while LUXAR_CI_FORCE_HOSTED remains the broad escape
+  # hatch when all subsequent runs must avoid obsidian.
   #
   # On a push or the daily full-matrix schedule, max-parallel deliberately holds
   # one Python leg queued while two Python legs and TypeScript occupy the three

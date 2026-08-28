@@ -947,7 +947,7 @@ so the cap deliberately limits how often those larger budgets burst onto paid ru
 Router decisions are concurrent snapshots, so a burst can still overshoot the cap
 before its newly routed jobs materialise.
 
-Queue entry is also bounded after routing. `ci-queue-redispatch.yml` scans every five
+Queue entry is also bounded after routing. `ci-queue-redispatch.yml` scans every 15
 minutes and, by default, selects one first-attempt run with an obsidian job queued for
 at least 30 minutes, no obsidian job running in that same run, and active obsidian work
 in another run. `LUXAR_CI_MAX_QUEUE_RESIDENCY_MINUTES` overrides the validated positive
@@ -955,14 +955,21 @@ threshold. The scan reuses `scripts/ci_queue_scan.py`, acts only on a complete s
 at most 100 active runs, and fails unreadable or truncated data toward leaving runs
 alone. Before cancelling the whole target run it dispatches a separate hosted recovery
 run; that durable handoff waits for the cancellation to settle and then requests a full
-run rerun. Full workflow reruns enter `pick-runner` again and are routed directly to
-GitHub-hosted Linux, so removing the target's old queued jobs cannot drop the backlog
-below the admission cap and send the replacement attempt back to obsidian. Failed-job
+run rerun. The recovery step polls for up to four minutes of its five-minute job budget;
+if the first attempt could remain cancelled without an accepted rerun, the recovery job
+fails visibly instead of reporting success. Full workflow reruns enter `pick-runner` again:
+a fresh capacity heartbeat still routes obsidian, while a stale or absent heartbeat routes
+rerun attempts directly to GitHub-hosted Linux before consulting the backlog cap. Failed-job
 and job-level repairs do not rerun the already-successful router, so they retain their
-existing routing behavior. Only attempt 1 is eligible for automatic cancellation, which caps
+existing routing behavior. That includes `repair-cancelled-push-checks`, which can race a
+recent watchdog cancellation by issuing a job-level rerun; the recovery run then observes
+attempt 2 and declines its full rerun rather than creating another attempt. Only attempt 1
+is eligible for automatic cancellation, which caps
 automatic recovery at one rerun and prevents a persistent saturation signal from
 forming a cancellation loop. Cancelling an individual required job remains forbidden:
 it strands the protected context and a job-level rerun preserves the original routing.
+The scanner's additive JSON surface exposes the same evidence per active run in `runs[]`,
+with each entry carrying `run_id`, aged `queued` jobs, and `running` jobs.
 
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the

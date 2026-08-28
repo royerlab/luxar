@@ -13,6 +13,8 @@ import ci_queue_scan
 
 WORKFLOW = "ci-queue-redispatch.yml"
 REQUIRED_OBSIDIAN_JOBS = {"python-tests (3.12)", "typescript-tests"}
+FINISH_TIMEOUT_SECONDS = 240.0
+POLL_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -94,27 +96,30 @@ def finish_redispatch(
     read: Callable[[str], object] = ci_queue_scan.read_api,
     write: Callable[[str, Mapping[str, str] | None], None] = write_api,
     sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+    timeout_seconds: float = FINISH_TIMEOUT_SECONDS,
 ) -> bool:
     """Wait for the target cancellation, then rerun the complete original workflow."""
     run_endpoint = f"repos/{repository}/actions/runs/{run_id}"
-    for _ in range(24):
+    deadline = clock() + timeout_seconds
+    while clock() < deadline:
         try:
             run = _object(read(run_endpoint))
         except ci_queue_scan.ApiError:
-            sleep(5)
+            sleep(min(POLL_SECONDS, max(0.0, deadline - clock())))
             continue
         if run.get("status") == "completed":
             if run.get("conclusion") != "cancelled" or run.get("run_attempt") != 1:
                 return False
-            for _ in range(12):
+            while clock() < deadline:
                 try:
                     write(f"{run_endpoint}/rerun", None)
                 except ci_queue_scan.ApiError:
-                    sleep(5)
+                    sleep(min(POLL_SECONDS, max(0.0, deadline - clock())))
                     continue
                 return True
             return False
-        sleep(5)
+        sleep(min(POLL_SECONDS, max(0.0, deadline - clock())))
     return False
 
 
@@ -177,13 +182,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         changed = finish_redispatch(args.repository, args.run_id)
     except ci_queue_scan.ApiError as error:
-        print(f"redispatch failed safely: {error}")
-        return 0
+        print(f"::error::redispatch failed: {error}")
+        return 1
     if changed:
         print(f"re-dispatched run {args.run_id}")
-    else:
-        print(f"run {args.run_id} did not reach the eligible cancelled state")
-    return 0
+        return 0
+    try:
+        run = _object(
+            ci_queue_scan.read_api(
+                f"repos/{args.repository}/actions/runs/{args.run_id}"
+            )
+        )
+    except ci_queue_scan.ApiError as error:
+        print(f"::error::redispatch outcome is unreadable: {error}")
+        return 1
+    if run.get("run_attempt") != 1 or (
+        run.get("status") == "completed" and run.get("conclusion") != "cancelled"
+    ):
+        print(f"run {args.run_id} is no longer eligible for automatic redispatch")
+        return 0
+    print(
+        f"::error::run {args.run_id} may be stranded after cancellation; "
+        "the full rerun was not accepted"
+    )
+    return 1
 
 
 if __name__ == "__main__":
