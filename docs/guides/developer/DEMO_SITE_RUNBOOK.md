@@ -599,8 +599,8 @@ selected ~2.1M and ~3.2M **fine** segments at **4:3** and **1:1**.
 
 A ladder that looks bounded on a 16:9 capture can therefore be unbounded on a
 square window. Validate at several aspect ratios, or prefer an additive ladder
-where the geometry allows one (not `indexed` lines — see Section 7.4), whose
-prefix is bounded by construction rather than by framing.
+where the geometry allows one (check Section 7.4 first for `indexed` lines),
+whose prefix is bounded by construction rather than by framing.
 
 ### 3.15 A streaming ladder's first rung is first paint — size it in bytes, not chunks
 
@@ -1152,33 +1152,41 @@ a spatial tree, and is worth checking: the serialized `axis` is a **centre-colum
 index** the viewer maps through `displayDims`, so a split on a non-displayed
 dimension culls nothing.
 
-### 7.4 Plain additive LOD silently rewrites `indexed` edges
+### 7.4 Additive LOD refuses topology-changing `indexed` edges
 
 `indexed` is the only line type that groups connected vertices into whole
 component units, via `lod/lines.py::_indexed_connected_components`; for chain
-inputs, those units are whole polylines. But the additive writer then discards
-the explicit edge list and rebuilds each component as a chain in **ascending
-vertex order**. Unless the original edge set already equals those consecutive
-pairs, the ladder invents edges and drops real ones.
+inputs, those units are whole polylines. A multi-level ladder can only write
+each component back as a chain in **ascending vertex order**, so that rebuild —
+not the authored edge list — is what the rungs would carry. It is also exactly
+what the writer now checks the authored edges against, before that node is
+written.
 
-A plain `add_lines(..., line_type="indexed", additive_lod=...)` writes real
-`additive_N` rungs and emits **no warning**. Do not use that path for indexed
-graphs or streamlines whose topology must be preserved.
+A plain `add_lines(..., line_type="indexed", additive_lod=...)` that resolves
+to more than one level raises `ValueError` unless the rebuild matches: every
+connected component's authored **undirected edge multiset** — multiplicity
+included — must equal its consecutive-vertex pairs. Edge direction and row
+order do not matter; a duplicated edge does. A request that resolves to a
+single level is unaffected and writes the authored edges flat.
 
-Converting to `segments` avoids invented edges, but `identify_polylines` returns
-`n // 2` arrays of shape `(2,)`, so the laddering unit becomes a single segment.
-A prefix is then scattered segments, i.e. fragmented polylines rather than
-whole ones.
+Converting to `segments` lifts the restriction, but `identify_polylines`
+returns `n // 2` arrays of shape `(2,)`, so the laddering unit becomes a single
+segment. A prefix is then scattered segments, i.e. fragmented polylines rather
+than whole ones.
 
-Additive LOD composed under `substitutive_lod=` behaves differently: indexed
-levels are suppressed. An explicit additive request emits a `UserWarning` and
-the levels load all-at-once; the default composed ladder is skipped with an
-informational message.
+Additive LOD composed under `substitutive_lod=` behaves differently: only the
+**finest** indexed level is suppressed, and unconditionally — the composed path
+keys on the line type alone, so it refuses even edges that would round-trip the
+check above. That level loads all-at-once, while the coarse levels — lifted
+gsplat clouds, not indexed lines — keep their ladder where one applies. An
+explicit additive request emits a `UserWarning`; the default composed ladder is
+skipped with an informational message.
 
-Making this work needs a **verified** opt-in: check that every component really
-is an ascending chain (its edge set equals its consecutive-vertex pairs) and
-raise, not warn, when an explicit request cannot be honoured. Track that writer
-fix in #2320.
+The refusal shipped in `172b686e6` (#2321):
+`lod/lines.py::_validate_indexed_ladder_edges` runs at both multi-level return
+paths of `make_additive_lod_lines` and raises rather than warns, so an explicit
+request that cannot be honoured fails loudly instead of writing rewritten
+edges.
 
 ### 7.5 Compare like with like
 
