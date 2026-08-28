@@ -40,6 +40,7 @@ def _module_path(
     import_roots: Sequence[Path],
     cache: dict[str, Path | None],
 ) -> Path | None:
+    """Resolve one import name to a local module or package file."""
     if module in cache:
         return cache[module]
     relative = Path(*module.split("."))
@@ -57,6 +58,7 @@ def _module_path(
 
 
 def _module_name(path: Path, import_roots: Sequence[Path]) -> str:
+    """Return the dotted import name for a source under an import root."""
     for root in import_roots:
         if not path.is_relative_to(root):
             continue
@@ -68,6 +70,7 @@ def _module_name(path: Path, import_roots: Sequence[Path]) -> str:
 
 
 def _imported_modules(path: Path, module: str, cache: dict[Path, set[str]]) -> set[str]:
+    """Parse the static import names referenced by one Python source."""
     if path in cache:
         return cache[path]
     try:
