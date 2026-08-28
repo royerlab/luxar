@@ -31,6 +31,7 @@ scripts/
 | `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
 | `gen_zenodo_records.py` | Generate Zenodo record descriptions from the manifest and committed `demo_archive_characteristics.json`; `--refresh` updates the measurements and `--check` lists incomplete rows (never contacts Zenodo) |
 | `zenodo_migration_audit.py` | Audit migration readiness offline by default; `--live` with `ZENODO_TOKEN` also compares manifest pins with Zenodo depositions, and `make check-zenodo-live` is the lean report-only entry point |
+| `verify_cold_fetch.py` | Cold-fetch every hosted demo dataset with the cache and in-repo payload hidden; `make check-cold-fetch` is the opt-in pre-removal gate |
 | `run_external_reference_audits.py` | Run the documentation, demo click-through, and live Zenodo-pin audits independently; normalize them to PASS/NOTICE/WARNING/ERROR and write a non-gating GitHub job summary |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
