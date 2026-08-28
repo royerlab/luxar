@@ -1064,7 +1064,7 @@ class TestSubstitutiveLodGuards:
         out = tmp_path / "t.luxar.zarr"
         rng = np.random.default_rng(0)
         pos = rng.uniform(0, 40, (600, 3)).astype(np.float32)
-        with pytest.warns(UserWarning, match="finest level will load all-at-once"):
+        with pytest.warns(UserWarning, match="reveal_centre is not applied"):
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_points(
@@ -1075,7 +1075,7 @@ class TestSubstitutiveLodGuards:
                     substitutive_lod=dict(
                         compression_factor=2, levels=1, device="cpu", seed=0
                     ),
-                    additive_lod={"counts": "stream:50"},
+                    additive_lod={"method": "radial", "counts": "stream:50"},
                 )
 
         grp = zarr.open(str(out), mode="r")["cloud"]
@@ -1089,7 +1089,7 @@ class TestSubstitutiveLodGuards:
     ) -> None:
         out = tmp_path / "t.luxar.zarr"
         pos = np.random.default_rng(0).uniform(0, 1, (300, 3)).astype(np.float32)
-        with pytest.warns(UserWarning, match="finest level will load all-at-once"):
+        with pytest.warns(UserWarning, match="where one applies"):
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_points(

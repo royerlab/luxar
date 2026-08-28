@@ -380,12 +380,30 @@ def add_lines_impl(
         # Fires before the single-shot write so we don't double-
         # validate. Mirrors the points add path.
         additive_suppress_reason = (
-            "image_labels is set"
-            if image_labels is not None
-            else "line_type='indexed' edges are not preserved by the ladder"
-            if line_type == "indexed"
-            else None
+            "image_labels is set" if image_labels is not None else None
         )
+        identified_polylines = None
+        if (
+            additive_lod is not None
+            and additive_lod is not False
+            and additive_suppress_reason is None
+            and line_type == "indexed"
+        ):
+            from ..lod.lines import (
+                identify_polylines,
+                indexed_ladder_preserves_edges,
+                resolve_additive_axis_lines,
+            )
+
+            resolve_additive_axis_lines(additive_lod)
+            validate_line_indices_before_split(indices, n_vertices, line_type)
+            identified_polylines = identify_polylines(n_vertices, line_type, indices)
+            if not indexed_ladder_preserves_edges(
+                np.asarray(indices), identified_polylines
+            ):
+                additive_suppress_reason = (
+                    "line_type='indexed' edges are not preserved by the ladder"
+                )
         if (
             additive_lod is not None
             and additive_lod is not False
@@ -406,7 +424,7 @@ def add_lines_impl(
             resolve_additive_axis_lines(additive_lod)
             warnings.warn(
                 f"'{name}': the requested streaming ladder cannot be honoured "
-                f"({additive_suppress_reason}); writing a flat Lines node.",
+                f"({additive_suppress_reason}); writing a flat node.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -456,6 +474,7 @@ def add_lines_impl(
                     spatial_dims=resolve_reveal_spatial_dims(
                         additive_spec, scene, vert_arr.shape[1]
                     ),
+                    identified_polylines=identified_polylines,
                 )
                 if len(polyline_levels) > 1:
                     return add_lines_multi_lod_wrapper_impl(
@@ -1070,14 +1089,14 @@ def add_lines_substitutive_lod_wrapper_impl(
     # Resolve the coarse and finest policies independently. The coarse children
     # are gsplat clouds and can always stream; the suppression reasons below are
     # properties of the original Lines child only.
+    # Keep the existing element-domain stream counts for composed coarse
+    # children. Retuning those counts for gsplat bytes-per-element is a separate
+    # cross-geometry policy change, not part of suppression scoping.
     coarse_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_lines,
         name=name,
     )
-    # Keep the existing element-domain stream counts for composed coarse
-    # children. Retuning those counts for gsplat bytes-per-element is a separate
-    # cross-geometry policy change, not part of suppression scoping.
     finest_suppress_reason = (
         # The multi-LOD writer has no image_labels channel, so laddering would
         # silently drop them. Refuse the ladder, not the labels.
@@ -1093,10 +1112,12 @@ def add_lines_substitutive_lod_wrapper_impl(
         if line_type == "indexed"
         else None
     )
+    from ..lod.reveal import is_reveal_additive_method
+
     reveal_note = (
         " Coarse levels use self_energy ordering, so reveal_centre is not applied."
         if coarse_additive is not None
-        and coarse_additive.get("reveal_centre") is not None
+        and is_reveal_additive_method(str(coarse_additive.get("method")))
         else ""
     )
     finest_additive = compose_additive_under_substitutive(
@@ -1105,7 +1126,8 @@ def add_lines_substitutive_lod_wrapper_impl(
         name=name,
         suppress_reason=finest_suppress_reason,
         suppression_outcome=(
-            "the finest level will load all-at-once; coarse levels still stream."
+            "the finest level will load all-at-once; coarse levels keep their "
+            "ladder where one applies."
             f"{reveal_note}"
         ),
     )

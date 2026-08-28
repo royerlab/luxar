@@ -539,7 +539,8 @@ SUBSTITUTIVE_LOD: Final = dict(compression_factor=256, levels=2)
 #
 #   UserWarning: the requested streaming ladder cannot be honoured
 #   (line_type='indexed' edges are not preserved by the ladder);
-#   the finest level will load all-at-once; coarse levels still stream.
+#   the finest level will load all-at-once; coarse levels keep their ladder
+#   where one applies.
 #
 # The ladder rebuilds each connected component as a plain chain over its
 # members, which for an arbitrary indexed edge list would invent edges that do

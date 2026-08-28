@@ -823,14 +823,15 @@ class TestComposeAdditiveUnderSubstitutive:
         assert result is None
 
     def test_suppression_outcome_can_describe_finest_only(self):
-        with pytest.warns(UserWarning, match="coarse levels still stream"):
+        with pytest.warns(UserWarning, match="coarse levels keep their ladder"):
             result = compose_additive_under_substitutive(
                 {"method": "random"},
                 resolve=self._resolve,
                 name="node",
                 suppress_reason="image_labels is set",
                 suppression_outcome=(
-                    "the finest level will load all-at-once; coarse levels still stream."
+                    "the finest level will load all-at-once; coarse levels keep "
+                    "their ladder where one applies."
                 ),
             )
         assert result is None

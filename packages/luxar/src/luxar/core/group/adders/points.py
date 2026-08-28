@@ -314,7 +314,7 @@ def add_points_impl(
             resolve_additive_axis_points(additive_lod)
             warnings.warn(
                 f"'{name}': the requested streaming ladder cannot be honoured "
-                "(image_labels is set); levels will load all-at-once.",
+                "(image_labels is set); writing a flat node.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -826,18 +826,20 @@ def add_points_substitutive_lod_wrapper_impl(
 
     # The coarse gsplat children never carry image_labels, so only the original
     # Points child must refuse its additive ladder when image_labels is present.
+    # Keep the existing element-domain stream counts for composed coarse
+    # children. Retuning those counts for gsplat bytes-per-element is a separate
+    # cross-geometry policy change, not part of suppression scoping.
     coarse_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_points,
         name=name,
     )
-    # Keep the existing element-domain stream counts for composed coarse
-    # children. Retuning those counts for gsplat bytes-per-element is a separate
-    # cross-geometry policy change, not part of suppression scoping.
+    from ..lod.reveal import is_reveal_additive_method
+
     reveal_note = (
         " Coarse levels use self_energy ordering, so reveal_centre is not applied."
         if coarse_additive is not None
-        and coarse_additive.get("reveal_centre") is not None
+        and is_reveal_additive_method(str(coarse_additive.get("method")))
         else ""
     )
     finest_additive = compose_additive_under_substitutive(
@@ -848,7 +850,8 @@ def add_points_substitutive_lod_wrapper_impl(
         # silently drop them. Refuse the ladder, not the labels.
         suppress_reason="image_labels is set" if image_labels is not None else None,
         suppression_outcome=(
-            "the finest level will load all-at-once; coarse levels still stream."
+            "the finest level will load all-at-once; coarse levels keep their "
+            "ladder where one applies."
             f"{reveal_note}"
         ),
     )

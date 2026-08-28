@@ -448,7 +448,7 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
     ) -> None:
         out = tmp_path / "t.luxar.zarr"
         verts, indices = self._indexed_verts_and_edges()
-        with pytest.warns(UserWarning, match="finest level will load all-at-once"):
+        with pytest.warns(UserWarning, match="reveal_centre is not applied"):
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_lines(
@@ -460,7 +460,7 @@ class TestSubstitutiveLinesIndexedSuppressesAdditive:
                     substitutive_lod=dict(
                         compression_factor=2, levels=1, device="cpu", seed=0
                     ),
-                    additive_lod={"counts": "stream:50"},
+                    additive_lod={"method": "radial", "counts": "stream:50"},
                 )
 
         grp = zarr.open(str(out), mode="r")["curves"]

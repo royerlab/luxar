@@ -10,7 +10,9 @@ Polyline-identification per ``line_type``:
 * ``segments`` — each consecutive pair of vertices is its own polyline
   of length 2. N/2 polylines.
 * ``indexed``  — connected-components walk over the explicit segments;
-  one component = one polyline.
+  one component = one polyline. The additive writer rebuilds each component
+  as a chain in ascending vertex order, so callers must refuse the ladder when
+  that chain would change the deduplicated undirected edge set.
 * ``polyline`` / ``loop`` — ONE polyline encompassing all vertices. A
   multi-LOD ladder over a single polyline is a no-op (would require
   vertex-subsampling, which breaks the "polyline-level, no topology
@@ -198,6 +200,36 @@ def _indexed_connected_components(
     )
     # ``np.split`` returns zero-copy views into the shared permutation.
     return [chunk for chunk in np.split(order, starts[1:])]
+
+
+def indexed_ladder_preserves_edges(
+    indices: NDArray,
+    polylines: List[NDArray[np.intp]],
+) -> bool:
+    """Return whether the additive writer's rebuilt chains preserve ``indices``."""
+    authored = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+    rebuilt_parts = [
+        np.column_stack((members[:-1], members[1:]))
+        for members in polylines
+        if members.size >= 2
+    ]
+    rebuilt = (
+        np.concatenate(rebuilt_parts, axis=0)
+        if rebuilt_parts
+        else np.empty((0, 2), dtype=np.intp)
+    )
+
+    def canonical_edges(edges: NDArray[np.intp]) -> NDArray[np.intp]:
+        if edges.size == 0:
+            return np.empty((0, 2), dtype=np.intp)
+        canonical = np.sort(edges, axis=1)
+        order = np.lexsort((canonical[:, 1], canonical[:, 0]))
+        canonical = canonical[order]
+        keep = np.ones(canonical.shape[0], dtype=bool)
+        keep[1:] = np.any(canonical[1:] != canonical[:-1], axis=1)
+        return canonical[keep]
+
+    return np.array_equal(canonical_edges(authored), canonical_edges(rebuilt))
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -429,6 +461,7 @@ def make_additive_lod_lines(
     salience_kind: Literal["size", "energy"] = "size",
     reveal_centre: Optional[List[float]] = None,
     spatial_dims: Optional[List[int]] = None,
+    identified_polylines: Optional[List[NDArray[np.intp]]] = None,
 ) -> List[List[NDArray[np.intp]]]:
     """Compute per-LOD-level polyline groupings for Lines.
 
@@ -473,7 +506,11 @@ def make_additive_lod_lines(
     if n == 0:
         return []
 
-    polylines = identify_polylines(n, line_type, indices)
+    polylines = (
+        identified_polylines
+        if identified_polylines is not None
+        else identify_polylines(n, line_type, indices)
+    )
     p = len(polylines)
     if p == 0:
         return []

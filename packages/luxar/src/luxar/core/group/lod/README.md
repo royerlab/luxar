@@ -326,13 +326,15 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
    `coverage_fractions=[...]` in the `substitutive_lod=` spec to override.
 
 Composes with `additive_lod` (laddered per level by default, as for Points);
-mutually exclusive with `partition`. A single-polyline `line_type`
-(`polyline`/`loop`) skips the ladder, since a polyline cannot be split without
-breaking its segment topology; `indexed` is NOT laddered in the composed additive
-path at all — neither by default nor with an explicit `additive_lod=dict(...)` —
-because the additive multi-LOD writer discards the explicit edge list and would
-fabricate phantom edges, so its topology cannot be preserved either way. Only
-`segments` gets a composed additive ladder. `scalars`+`colormap` are
+mutually exclusive with `partition`. The synthesized coarse gsplat children
+keep their additive ladders for every `line_type`. The original finest Lines
+child skips its ladder for single-polyline types (`polyline`/`loop`) and for
+`indexed`, whose explicit edge list the additive writer cannot preserve in the
+composed path; only that finest child then loads all-at-once. On a plain
+`indexed` Lines leaf, an explicitly requested additive ladder is accepted when
+rebuilding each connected component as an ascending-vertex chain preserves the
+deduplicated undirected edge set, and is refused with a warning otherwise.
+`scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
 Points, and the same uniform-vs-per-element RGBA rule: a uniform colour is
