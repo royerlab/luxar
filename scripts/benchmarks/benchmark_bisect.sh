@@ -13,7 +13,27 @@ set -euo pipefail
 
 # Configuration
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-HATCH_PYTHON="/home/royer/.local/share/hatch/env/virtual/luxar/zQC0UXGj/luxar/bin/python"
+# Interpreter for the benchmark runs. Resolved from hatch rather than hardcoded:
+# this used to name one developer's virtualenv by absolute path, which no other
+# machine has. Override when hatch cannot report it.
+if [ -n "${LUXAR_BENCH_PYTHON:-}" ]; then
+    HATCH_PYTHON="${LUXAR_BENCH_PYTHON}"
+else
+    HATCH_ENV="$(cd "${REPO_ROOT}" && hatch env find default 2>/dev/null || true)"
+    # `hatch env find` emits ANSI colour even when its output is captured, so the
+    # raw substitution is not a usable path — resolution would fail on every
+    # machine where hatch colourises. Safely (the -f guard rejects it) but
+    # unconditionally, which makes the script unusable rather than merely strict.
+    #
+    # Stripped with bash parameter expansion rather than `sed`/`head`: this runs
+    # with a deliberately minimal PATH in the regression tests, and a pipeline
+    # through absent tools fails into the same empty result it is meant to fix.
+    shopt -s extglob
+    HATCH_ENV="${HATCH_ENV//$'\033'\[*([0-9;])[a-zA-Z]/}"
+    HATCH_ENV="${HATCH_ENV%%$'\n'*}"
+    shopt -u extglob
+    HATCH_PYTHON="${HATCH_ENV:-/nonexistent}/bin/python"
+fi
 BENCHMARK_SCRIPT="${REPO_ROOT}/scripts/benchmarks/benchmark_bisect_runner.py"
 RESULTS_DIR="${REPO_ROOT}/docs/benchmarks/bisection"
 WORKTREE_BASE="/tmp/luxar-bench"
@@ -54,15 +74,16 @@ echo ""
 # Check prerequisites
 if [ ! -f "${HATCH_PYTHON}" ]; then
     echo "ERROR: Hatch Python not found at ${HATCH_PYTHON}"
+    echo "       Run 'hatch env create' or set LUXAR_BENCH_PYTHON to the interpreter to use."
     exit 1
 fi
 
-if ! ${HATCH_PYTHON} -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+if ! "${HATCH_PYTHON}" -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
     echo "ERROR: PyTorch CUDA not available"
     exit 1
 fi
 
-echo "GPU: $(${HATCH_PYTHON} -c 'import torch; print(torch.cuda.get_device_name(0))')"
+echo "GPU: $("${HATCH_PYTHON}" -c 'import torch; print(torch.cuda.get_device_name(0))')"
 echo ""
 
 # Track results
@@ -114,7 +135,7 @@ for entry in "${COMMITS[@]}"; do
     # Build CUDA extension
     echo "  Building CUDA extension..."
     BUILD_START=$(date +%s)
-    if ! ${HATCH_PYTHON} "${WORKTREE}/${BUILD_SCRIPT_REL}" > "${WORKTREE}/build.log" 2>&1; then
+    if ! "${HATCH_PYTHON}" "${WORKTREE}/${BUILD_SCRIPT_REL}" > "${WORKTREE}/build.log" 2>&1; then
         echo "  ERROR: CUDA build failed. See ${WORKTREE}/build.log"
         cat "${WORKTREE}/build.log" | tail -20
         git -C "${REPO_ROOT}" worktree remove --force "${WORKTREE}" 2>/dev/null || true
@@ -143,7 +164,7 @@ for entry in "${COMMITS[@]}"; do
     # Run benchmark
     echo "  Running benchmarks..."
     BENCH_START=$(date +%s)
-    if ! ${HATCH_PYTHON} "${BENCHMARK_SCRIPT}" "${WORKTREE}" "${SHA}" "${OUTPUT_JSON}" 2>&1; then
+    if ! "${HATCH_PYTHON}" "${BENCHMARK_SCRIPT}" "${WORKTREE}" "${SHA}" "${OUTPUT_JSON}" 2>&1; then
         echo "  ERROR: Benchmark failed"
         FAILED=$((FAILED + 1))
         if [ ! -f "${OUTPUT_JSON}" ]; then
