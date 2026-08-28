@@ -953,6 +953,145 @@ export function writeSortedIndexIdentityRange(
 }
 
 /**
+ * Write a COMPLETE depth-sort permutation straight into the ACTIVE ordering
+ * buffer, live, with no staging and no slot flip. Returns `count` on success
+ * and 0 when the ordering is rejected.
+ *
+ * This is the one-shot counterpart of {@link writeSortedIndexOrdering}, which
+ * streams into the INACTIVE buffer and flips only when the last slice lands —
+ * necessarily a frame or more later, because the pump is driven once per
+ * rendered frame. That delay is the whole point when the ordering arrives from
+ * the SortWorker: it keeps a partially written permutation off screen.
+ *
+ * It is dead weight when the ordering was computed synchronously inside the
+ * commit, because there is no partial state to hide — the permutation is
+ * complete before the first write. Writing it live is then safe for exactly
+ * the reason {@link writeSortedIndexIdentityRange} gives for the same choice,
+ * and it is what removes the unsorted frame rather than merely improving it.
+ *
+ * The two rejections mirror `writeSortedIndexOrdering`: a TRUNCATED ordering
+ * is not a permutation of the drawn population, and an OVERSIZED count
+ * describes a population this geometry does not hold. Neither is clamped —
+ * a clamped prefix of a permutation is not a permutation of anything.
+ */
+export function writeSortedIndexOrderingLive(
+  geometry: THREE.InstancedBufferGeometry,
+  ordering: Uint32Array,
+  count: number
+): number {
+  if (!Number.isInteger(count) || count <= 0) return 0;
+  if (ordering.length < count) return 0;
+  const attr = getActiveSortedIndexAttribute(geometry);
+  if (!attr) return 0;
+  const arr = attr.array as Uint32Array;
+  if (count > arr.length) return 0;
+  // Supersedes any in-flight chunked apply: its remaining slices belong to an
+  // older sort of this same population and would land on top of this one.
+  cancelSortedIndexOrderingApply(geometry);
+  arr.set(ordering.subarray(0, count), 0);
+  collapseSortedIndexRanges(attr, count);
+  return count;
+}
+
+/**
+ * Scratch "value already emitted" marks for {@link repairSortedIndexForCount}.
+ * Module-level and grow-only: the repair runs on the commit hot path for
+ * nodes of millions of elements, and a per-call `Uint8Array(count)` would
+ * hand the GC exactly the churn the accumulators exist to avoid.
+ */
+let repairSeenScratch = new Uint8Array(0);
+
+/**
+ * Rebuild the ACTIVE ordering into a valid permutation of `[0, count)`,
+ * reusing whatever permutation the buffer already holds over
+ * `[0, prevCount)` instead of resetting to storage order.
+ *
+ * The problem this solves: an nD re-slice changes a node's resident element
+ * count at almost every step (`cloud`, a 4D Points timelapse, walks
+ * 27834 -> 27643 -> 27416 -> 27124 ...), and the commit paths' `preserveOrdering`
+ * guard requires `prevCount === count`. So it never fired on a real timelapse
+ * and every timepoint fell through to {@link writeSortedIndexIdentity}, drawing
+ * at least one frame in pure storage order before the SortWorker's permutation
+ * landed ~5 ms later. Under an order-dependent blending mode that frame is
+ * visibly wrong — it reads as a flash once per timepoint through playback.
+ *
+ * The reason the guard was written that way is real and is stated at
+ * `commit-gsplats-geometry.ts`: *a permutation of [0,prevCount) is not a
+ * permutation of [0,count)*. This closes that gap rather than relaxing the
+ * invariant. Measured on the live `cloud` demo at a frozen camera pose — the
+ * fraction of sampled element pairs composited in correct back-to-front order,
+ * across a real timepoint step:
+ *
+ * ```
+ * ideal sort of the new data                     1.000
+ * identity / storage order (the old fallback)    0.617
+ * previous permutation, repaired to the count    0.858
+ * ```
+ *
+ * (Freeze the camera pose before measuring anything like this. Demos open in
+ * cinematic mode with the camera orbiting at ~13.85 deg/s, and an ordering
+ * scored against a pose it was not sorted for reads 0.161 — stale in CAMERA,
+ * not in data. That number cost an afternoon.)
+ *
+ * The walk emits each value below `count` the first time it is seen, then
+ * appends whatever is still missing in ascending order. That yields a valid
+ * permutation for a GROWN count, a SHRUNK count, **and a malformed input
+ * alike** — a partially applied chunked ordering degrades to a valid
+ * permutation instead of drawing one element twice and another never, which
+ * matters because {@link cancelSortedIndexOrderingApply} exists precisely
+ * because partial application is a reachable state.
+ *
+ * Unlike {@link writeSortedIndexIdentity} this deliberately does NOT re-home
+ * the geometry on slot 0. A full identity write is the fresh-start signal that
+ * lets an untracked node's default-valued selector uniform be correct; a
+ * repair is the opposite claim — its callers fire only when the tenant, the
+ * geometry and the attribute buffers are all unchanged, so the slot/uniform
+ * pairing is already established, and normalising would throw away the
+ * permutation being repaired.
+ */
+export function repairSortedIndexForCount(
+  geometry: THREE.InstancedBufferGeometry,
+  prevCount: number,
+  count: number
+): void {
+  // Same supersede rule as the two identity writers: this commit's element
+  // population invalidates the ordering an in-flight chunked apply was
+  // streaming for the previous one.
+  cancelSortedIndexOrderingApply(geometry);
+  const attr = getActiveSortedIndexAttribute(geometry);
+  if (!attr) return;
+  const arr = attr.array as Uint32Array;
+  const n = Math.min(count, arr.length);
+  if (n <= 0) return;
+
+  if (repairSeenScratch.length < n) repairSeenScratch = new Uint8Array(n);
+  const seen = repairSeenScratch;
+  seen.fill(0, 0, n);
+
+  // Pass 1 — keep the surviving prefix in its existing relative order.
+  // Read past `n` is deliberate on a shrink: the dropped values are exactly
+  // the ones at or above the new count.
+  const readEnd = Math.min(Math.max(prevCount, 0), arr.length);
+  let write = 0;
+  for (let i = 0; i < readEnd && write < n; i++) {
+    const v = arr[i];
+    if (v < n && seen[v] === 0) {
+      seen[v] = 1;
+      // In-place is safe: `write <= i` always, because every write is
+      // preceded by at least one read.
+      arr[write++] = v;
+    }
+  }
+  // Pass 2 — anything the prefix did not account for (a grown count's new
+  // tail, or a gap left by a malformed input) in ascending order.
+  for (let v = 0; v < n && write < n; v++) {
+    if (seen[v] === 0) arr[write++] = v;
+  }
+
+  collapseSortedIndexRanges(attr, n);
+}
+
+/**
  * Stage a depth-sort permutation (the SortWorker's back-to-front
  * ordering, depth-sorting Phase 2). Returns `count` when the ordering is
  * staged, or 0 when it is rejected (truncated or oversized ordering,

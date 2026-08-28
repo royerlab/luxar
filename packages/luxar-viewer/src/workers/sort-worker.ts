@@ -5,9 +5,12 @@
  * A single PERSISTENT Comlink worker (NOT part of the round-robin data
  * worker pool — spec §2.1 pins sorting to one dedicated worker so node
  * registrations and their transferred center buffers live in exactly one
- * place). Sorting lives exclusively here: never inside projection (the
- * plain-3D projection fast path doesn't run in a worker at all) and
- * never on the main thread.
+ * place). Ongoing and camera-driven sorting lives exclusively here,
+ * never inside projection (the plain-3D projection fast path doesn't
+ * run in a worker at all). The first ordering after an eligible
+ * instanced commit may also be computed on the main thread within the
+ * shared syncSortMaxElements frame budget; async registration and all
+ * subsequent sorting remain here.
  *
  * Task bodies live in `./sort-worker/<file>.ts` and receive the shared
  * `state: SortWorkerCtx` from `./sort-worker/state`. This module's only

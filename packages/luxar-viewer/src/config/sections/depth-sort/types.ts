@@ -1,9 +1,10 @@
 /**
  * Depth-sort scheduling configuration (depth-sorting Phase 3).
  *
- * Gaussian splats in the order-dependent `normal` blending mode are
- * depth-sorted by an async worker (spec §5); this section tunes WHEN the
- * per-frame scheduler dispatches a re-sort as the camera moves (spec §6).
+ * Order-dependent gsplats, points, lines, and mesh are depth-sorted by an
+ * async worker (spec §5); this section tunes the commit-time first sort and
+ * WHEN the per-frame scheduler dispatches a re-sort as the camera moves
+ * (spec §6).
  * The sort kernel orders by view-space z, so a re-sort is only needed
  * when the view axis rotates (relative to the node) or the camera
  * translates along it far enough to change the behind-camera set —
@@ -36,4 +37,31 @@ export interface DepthSortConfig {
    *  forever, and every order-dependent commit parks another continuation on
    *  it — precisely the accumulation the deadline exists to prevent. */
   workerInitTimeoutMs: number;
+  /** Per-frame element budget for computing the FIRST ordering after a commit
+   *  synchronously on the main thread (default: 250,000). A node must fit both
+   *  this per-node ceiling and the budget remaining since the last
+   *  `evaluateDepthSortPerFrame()` call. `0` disables the synchronous path.
+   *
+   *  Without it, every commit of an order-dependent node writes a storage-order
+   *  fallback and waits ~5 ms for the worker's answer, so at least one frame
+   *  renders unsorted. That is invisible on a one-off load and continuous
+   *  during nD playback, where a commit lands at EVERY timepoint: measured on
+   *  the `cloud` demo, the fallback composited only 61.7% of sampled element
+   *  pairs in correct back-to-front order against 100% for a real sort, once
+   *  per timepoint, which reads as a flash.
+   *
+   *  The kernel is a counting sort — two O(n) passes plus a 65,536-bucket
+   *  histogram — so the cost is bounded and measurable. Timed in-browser:
+   *
+   *  ```
+   *  34k    100k   250k   500k    1M      1.65M
+   *  0.8ms  1.1ms  2.5ms  8.0ms  16.2ms  31.7ms
+   *  ```
+   *
+   *  250k stays inside a 60 Hz frame with room to spare on a slow machine and
+   *  covers every animated demo node in the repo. Larger nodes, and later nodes
+   *  after the frame budget is spent, stay on the async path — but see
+   *  `repairSortedIndexForCount`, which keeps that frame much closer to sorted
+   *  than storage order was. */
+  syncSortMaxElements: number;
 }

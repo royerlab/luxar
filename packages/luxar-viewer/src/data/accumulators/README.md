@@ -8,25 +8,26 @@ and the GC pauses that come with it.
 
 ## Files
 
-| File         | Role                                                                                                                                             |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `types.ts`   | Shared `DataAccumulator<TData, TGetArgs, TFillArgs>` contract + `AccumulatorStats` shape. The three per-geometry files implement this interface. |
-| `points.ts`  | `LoadedPointsDataAccumulator` — positions / colors / radii / sharpness / scalars, with native Uint8/Uint16/Float32 color preservation.           |
-| `lines.ts`   | `LinesDataAccumulator` — flat per-vertex buffers (positions, widths, colors, sharpness, scalars) + a separate `Uint32` segment-index buffer.     |
-| `gsplats.ts` | `GSplatsDataAccumulator` — centers, amplitudes, packed Cholesky factors (camelCase `choleskyFactors`), colors.                                   |
+| File         | Role                                                                                                                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`   | Shared `DataAccumulator<TData, TGetArgs, TFillArgs>` contract + `AccumulatorStats` shape. The three per-geometry files implement this interface.                                                  |
+| `growth.ts`  | `nextCapacity(current, needed)` — the shared 1.5× growth policy, clamped so a single large jump lands exactly on the count the loader already knows rather than on a term of the growth sequence. |
+| `points.ts`  | `LoadedPointsDataAccumulator` — positions / colors / radii / sharpness / scalars, with native Uint8/Uint16/Float32 color preservation.                                                            |
+| `lines.ts`   | `LinesDataAccumulator` — flat per-vertex buffers (positions, widths, colors, sharpness, scalars) + a separate `Uint32` segment-index buffer.                                                      |
+| `gsplats.ts` | `GSplatsDataAccumulator` — centers, amplitudes, packed Cholesky factors (camelCase `choleskyFactors`), colors.                                                                                    |
 
 ## The `DataAccumulator<T>` contract
 
 All three implementations expose the same five methods (signatures
 specialised by `TGetArgs` / `TFillArgs`):
 
-| Method                   | Purpose                                                                                                              |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `ensureCapacity(n)`      | Grow underlying buffers to at least `n` (1.5× growth). Returns `true` if a real allocation happened.                 |
-| `getData(...counts)`     | Build a `Loaded{Points,Lines,GSplats}Data` payload of zero-copy `subarray()` views over the live prefix.             |
-| `fill(...offsets, data)` | Write a `Partial<Loaded*Data>` chunk into the buffers at the given offset(s). First call pins per-attribute dtypes.  |
-| `getStats()`             | `{ capacity, allocations, growthEvents, memoryMB }` — surfaced through the monitor port to the data-loading monitor. |
-| `dispose()`              | Drop buffers to zero-length sentinels and set the `_disposed` flag. Subsequent `fill`/`ensureCapacity` throw.        |
+| Method                   | Purpose                                                                                                                                |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `ensureCapacity(n)`      | Grow underlying buffers to at least `n` (1.5× growth, never past `n` — see `growth.ts`). Returns `true` if a real allocation happened. |
+| `getData(...counts)`     | Build a `Loaded{Points,Lines,GSplats}Data` payload of zero-copy `subarray()` views over the live prefix.                               |
+| `fill(...offsets, data)` | Write a `Partial<Loaded*Data>` chunk into the buffers at the given offset(s). First call pins per-attribute dtypes.                    |
+| `getStats()`             | `{ capacity, allocations, growthEvents, memoryMB }` — surfaced through the monitor port to the data-loading monitor.                   |
+| `dispose()`              | Drop buffers to zero-length sentinels and set the `_disposed` flag. Subsequent `fill`/`ensureCapacity` throw.                          |
 
 The variadic shape exists because Lines needs **two** counters
 (vertices and segments grow independently), while Points and GSplats
