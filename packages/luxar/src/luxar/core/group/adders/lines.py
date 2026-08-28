@@ -379,35 +379,10 @@ def add_lines_impl(
         # Additive-LOD branch — polyline-level multi-LOD write.
         # Fires before the single-shot write so we don't double-
         # validate. Mirrors the points add path.
-        additive_suppress_reason = (
-            "image_labels is set" if image_labels is not None else None
-        )
-        identified_polylines = None
         if (
             additive_lod is not None
             and additive_lod is not False
-            and additive_suppress_reason is None
-            and line_type == "indexed"
-        ):
-            from ..lod.lines import (
-                identify_polylines,
-                indexed_ladder_preserves_edges,
-                resolve_additive_axis_lines,
-            )
-
-            resolve_additive_axis_lines(additive_lod)
-            validate_line_indices_before_split(indices, n_vertices, line_type)
-            identified_polylines = identify_polylines(n_vertices, line_type, indices)
-            if not indexed_ladder_preserves_edges(
-                np.asarray(indices), identified_polylines
-            ):
-                additive_suppress_reason = (
-                    "line_type='indexed' edges are not preserved by the ladder"
-                )
-        if (
-            additive_lod is not None
-            and additive_lod is not False
-            and additive_suppress_reason is not None
+            and image_labels is not None
         ):
             from ..lod.lines import resolve_additive_axis_lines
 
@@ -424,7 +399,7 @@ def add_lines_impl(
             resolve_additive_axis_lines(additive_lod)
             warnings.warn(
                 f"'{name}': the requested streaming ladder cannot be honoured "
-                f"({additive_suppress_reason}); writing a flat node.",
+                "(image_labels is set); writing a flat node.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -474,7 +449,6 @@ def add_lines_impl(
                     spatial_dims=resolve_reveal_spatial_dims(
                         additive_spec, scene, vert_arr.shape[1]
                     ),
-                    identified_polylines=identified_polylines,
                 )
                 if len(polyline_levels) > 1:
                     return add_lines_multi_lod_wrapper_impl(

@@ -8,7 +8,6 @@ a ``kind=lod`` Group whose finest child is the original Lines node.
 from __future__ import annotations
 
 import warnings
-from collections import Counter
 
 import numpy as np
 import pytest
@@ -17,7 +16,6 @@ import zarr
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.group import PARTITION_FINEST_AREA, WHOLE_OBJECT_FINEST_ANCHOR
 from luxar.core.group.lod.lines import resolve_substitutive_axis_lines
-from luxar.encoding import ArrayDecoder
 from luxar.gsplats.lift import (
     coarse_substitutive_levels,
     lift_lines_to_gsplats,
@@ -548,88 +546,6 @@ def test_image_labels_suppression_only_flattens_finest_lines(tmp_path) -> None:
     assert int(grp[children[0]].attrs.get("n_additive_sublods", 1)) > 1
     assert grp[children[-1]].attrs.get("has_image_labels") is True
     assert int(grp[children[-1]].attrs.get("n_additive_sublods", 1)) == 1
-
-
-def test_plain_indexed_additive_refuses_to_rebuild_edges(tmp_path) -> None:
-    out = tmp_path / "t.luxar.zarr"
-    verts = np.zeros((24, 3), dtype=np.float32)
-    indices = []
-    for component in range(6):
-        start = component * 4
-        verts[start : start + 4, 0] = component
-        verts[start + 1 : start + 4, 1] = [1, 2, 3]
-        indices.extend([(start, start + 1), (start, start + 2), (start, start + 3)])
-
-    with pytest.warns(UserWarning, match="edges are not preserved by the ladder"):
-        with LuxarZarrCompiler(out) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lines(
-                "stars",
-                verts,
-                0.8,
-                line_type="indexed",
-                indices=np.asarray(indices, dtype=np.uint32),
-                additive_lod={"counts": [2, 4]},
-            )
-
-    node = zarr.open(str(out), mode="r")["stars"]
-    assert node.attrs["type"] == "lines"
-    assert int(node.attrs.get("n_additive_sublods", 1)) == 1
-    decoder = ArrayDecoder()
-    written_vertices = decoder.decode(node["vertices"], node)
-    written_segments = decoder.decode(node["segments"], node).reshape(-1, 2)
-    expected_segments = np.asarray(indices, dtype=np.uint32)
-    assert written_segments.shape == expected_segments.shape
-
-    def coordinate_edges(vertices, segments):
-        return {
-            tuple(sorted((tuple(vertices[a]), tuple(vertices[b])))) for a, b in segments
-        }
-
-    assert coordinate_edges(written_vertices, written_segments) == coordinate_edges(
-        verts, expected_segments
-    )
-
-
-def test_plain_indexed_additive_refuses_to_drop_duplicate_edges(tmp_path) -> None:
-    out = tmp_path / "t.luxar.zarr"
-    verts = np.zeros((18, 3), dtype=np.float32)
-    indices = []
-    for component in range(3):
-        start = component * 6
-        verts[start : start + 6, 0] = component
-        verts[start : start + 6, 1] = np.arange(6)
-        indices.extend((vertex, vertex + 1) for vertex in range(start, start + 5))
-        indices.append((start + 1, start))
-
-    expected_segments = np.asarray(indices, dtype=np.uint32)
-    with pytest.warns(UserWarning, match="edges are not preserved by the ladder"):
-        with LuxarZarrCompiler(out) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lines(
-                "chains",
-                verts,
-                0.8,
-                line_type="indexed",
-                indices=expected_segments,
-                additive_lod={"counts": [1, 2]},
-            )
-
-    node = zarr.open(str(out), mode="r")["chains"]
-    assert int(node.attrs.get("n_additive_sublods", 1)) == 1
-    decoder = ArrayDecoder()
-    written_vertices = decoder.decode(node["vertices"], node)
-    written_segments = decoder.decode(node["segments"], node).reshape(-1, 2)
-    assert written_segments.shape == expected_segments.shape
-
-    def coordinate_edge_multiset(vertices, segments):
-        return Counter(
-            tuple(sorted((tuple(vertices[a]), tuple(vertices[b])))) for a, b in segments
-        )
-
-    assert coordinate_edge_multiset(
-        written_vertices, written_segments
-    ) == coordinate_edge_multiset(verts, expected_segments)
 
 
 class TestAdditiveLevelStatsPairingLines:

@@ -331,11 +331,7 @@ keep their additive ladders for every `line_type`. The original finest Lines
 child skips its ladder for single-polyline types (`polyline`/`loop`) and for
 `indexed`; the composed path keeps that blanket refusal conservatively, and
 narrowing it is a separate change. Only that finest child then loads
-all-at-once. On a plain
-`indexed` Lines leaf, an explicitly requested additive ladder is accepted when
-rebuilding each connected component as an ascending-vertex chain preserves the
-deduplicated undirected edge set, and is refused with a warning otherwise.
-`scalars`+`colormap` are
+all-at-once. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
 Points, and the same uniform-vs-per-element RGBA rule: a uniform colour is

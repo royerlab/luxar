@@ -737,9 +737,7 @@ def write_laniakea_scene(
                     blending_mode="additive",
                     # The indexed Lines child stays flat to preserve its explicit
                     # edges, while the synthesized gsplat children keep their safe
-                    # default streaming ladders. A plain indexed leaf keeps an
-                    # explicit additive_lod when rebuilding its connected components
-                    # preserves the edge set, as these streamline chains do.
+                    # default streaming ladders.
                     substitutive_lod=basin_lod,
                     layer=True,
                 )
