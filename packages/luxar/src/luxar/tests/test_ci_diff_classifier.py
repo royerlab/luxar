@@ -840,6 +840,11 @@ def test_queue_redispatch_workflow_is_bounded_and_durable() -> None:
     assert "--max-runs 100" in workflow
     assert "ci_queue_redispatch.py scan" in workflow
     assert "ci_queue_redispatch.py finish" in workflow
+    scan_step = job["steps"][1]
+    assert scan_step["env"]["DISPATCH_REF"] == (
+        "${{ github.event.repository.default_branch }}"
+    )
+    assert '--ref "$DISPATCH_REF"' in scan_step["run"]
     finish_step = job["steps"][2]
     assert finish_step["env"]["TARGET_RUN_ID"] == "${{ inputs.target_run_id }}"
     assert "^[1-9][0-9]*$" in finish_step["run"]

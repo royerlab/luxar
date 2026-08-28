@@ -32,6 +32,7 @@ jobs:
         if: inputs.target_run_id == ''
         env:
           GH_TOKEN: ${{ github.token }}
+          DISPATCH_REF: ${{ github.event.repository.default_branch }}
           MAX_QUEUE_RESIDENCY_MINUTES: ${{ vars.LUXAR_CI_MAX_QUEUE_RESIDENCY_MINUTES }}
         run: |
           minutes=${MAX_QUEUE_RESIDENCY_MINUTES:-30}
@@ -39,7 +40,7 @@ jobs:
           queued_before=$(( $(date +%s) - minutes * 60 ))
           python3 scripts/ci_queue_redispatch.py scan \
             --repository "$GITHUB_REPOSITORY" \
-            --ref "$GITHUB_REF_NAME" \
+            --ref "$DISPATCH_REF" \
             --queued-before "$queued_before" \
             --max-runs 100
 
