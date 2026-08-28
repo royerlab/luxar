@@ -14,8 +14,9 @@
  *      closure — which derives view-state, fetches the next LOD,
  *      processes, and commits.
  *   4. Call `updateVisibleCountsInMonitor` once per pass.
- *   5. If loaders still have more LODs but none advanced, report the
- *      stalled rung(s), release the SceneLoader lock, and exit.
+ *   5. If loaders still have more LODs and every one of them succeeded
+ *      but none advanced, report the stalled rung(s), release the
+ *      SceneLoader lock, and exit.
  *   6. Otherwise repeat until every loader finishes its ladder.
  *
  * @module data/scene-loader/progressive/refinement
