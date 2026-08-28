@@ -288,7 +288,7 @@ during partial loads.
   index arrays for `_write_lines_multi_lod` to gather and rewrite with
   subgroup-local segment indices. For `indexed` Lines, a multi-level ladder is
   refused unless each component's authored undirected edge multiset is exactly its
-  consecutive-vertex chain; flat writes keep the authored indices unchanged.
+  consecutive-vertex chain; flat writes preserve the authored edge multiset.
 - `salience_kind='energy'` uses the tube-volume score
   `mean_luminance × Σ(seg_length × width²)`.
 - `resolve_additive_axis_lines(spec)` is the `add_lines(..., additive_lod=...)`

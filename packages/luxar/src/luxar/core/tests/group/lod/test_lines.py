@@ -702,7 +702,10 @@ class TestAddLinesAdditiveLod:
         ]
         assert sorted(stored_edges) == sorted(expected_edges)
 
-    def test_indexed_branching_graph_raises_before_writing(self, tmp_path) -> None:
+    @pytest.mark.parametrize("method", ["spatial-uniform", "random"])
+    def test_indexed_branching_graph_raises_before_writing(
+        self, tmp_path, method: str
+    ) -> None:
         output = tmp_path / "t.luxar.zarr"
         vertices = np.array(
             [[component, offset, 0.0] for component in range(6) for offset in range(4)],
@@ -728,7 +731,7 @@ class TestAddLinesAdditiveLod:
                     widths=np.ones(len(vertices), dtype=np.float32),
                     indices=indices,
                     line_type="indexed",
-                    additive_lod={"n_lods": 3},
+                    additive_lod={"n_lods": 3, "method": method},
                 )
 
         assert "stars" not in zarr.open(str(output), mode="r")
