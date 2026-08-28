@@ -1778,8 +1778,9 @@ export class SceneLoader {
    * and the layers panel's per-row error badge (wired in
    * `core/app/dataset/load-dataset.ts`). Each call returns a NEW provider object
    * (the monitor and the panel hold distinct instances), but all of them read
-   * the SAME live loader failures and latched lazy branches through the one
-   * `retryAllFailedLoaders` entry point, so they always agree.
+   * the SAME live loader failures, archive-fault latch, and latched lazy
+   * branches through the one `retryAllFailedLoaders` entry point, so they
+   * always agree.
    * `getFailedReason` powers the layers-panel tooltip.
    */
   getFailedLoadsProvider(): FailedLoadsProviderPort {

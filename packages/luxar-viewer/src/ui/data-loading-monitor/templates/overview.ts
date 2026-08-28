@@ -130,7 +130,7 @@ export function renderFailedLoadsBanner(
   const pathList = failedPaths.join('\n');
   return `
     <div class="luxar-failed-loads" title="${escapeHtml(
-      `These nodes failed to load (network error, missing data, …) and may render incomplete:
+      `These loads failed (network error, missing data, …) and may render incomplete:
 ${pathList}
 
 Retry re-runs each failed load with the current view state. Retryable loader failures and latched LOD branches are also retried automatically when the connection comes back online.`

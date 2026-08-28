@@ -65,9 +65,9 @@ export interface AccumulatorProviderPort {
 }
 
 /**
- * Provider injected via `setFailedLoadsProvider`. Surfaces loader failures
- * and latched lazy-LOD branch failures in the monitor UI, and powers Retry —
- * the visible half of the failed-load recovery story (the `window
+ * Provider injected via `setFailedLoadsProvider`. Surfaces loader failures,
+ * latch-only archive faults, and latched lazy-LOD branch failures in the
+ * monitor UI, and powers Retry — the visible half of the failed-load recovery story (the `window
  * 'online'` listener in `core/app/lifecycle/online-retry.ts` is the
  * automatic half). `retryAll` maps to `SceneLoader.retryAllFailedLoaders`
  * (serialized against the update lock by the loader itself).
