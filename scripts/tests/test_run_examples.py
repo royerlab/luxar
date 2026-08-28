@@ -56,7 +56,6 @@ def _write_marker(
             )
         }
     run_examples.write_marker(
-        repo,
         output_dir,
         examples={
             producer: {
@@ -585,6 +584,60 @@ def test_empty_marker_output_cannot_remove_the_output_directory(
     assert generated.is_dir()
     assert handmade.is_dir()
     assert run_examples.fixtures_are_current(repo, output_dir)
+
+
+def test_invalid_marker_warning_is_printed_once_per_generation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    valid = _write_example(repo, "one", "print('one')\n")
+    _write_example(repo, "bad", "print('bad')\n")
+    output = output_dir / "one_example.luxar.zarr"
+    output.mkdir(parents=True)
+    marker = {
+        "version": run_examples.MARKER_VERSION,
+        "environment": run_examples.build_environment(),
+        "examples": {
+            "one_example.py": {
+                "fingerprint": run_examples.example_fingerprint(repo, valid),
+                "sources": ["packages/luxar/examples/one_example.py"],
+                "outputs": [output.name],
+            },
+            "bad_example.py": {
+                "fingerprint": "bad",
+                "sources": [],
+                "outputs": [],
+            },
+        },
+    }
+    (output_dir / run_examples.MARKER_NAME).write_text(json.dumps(marker))
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 0
+
+    assert capsys.readouterr().err.count("Ignoring invalid fixture stamp: bad_example.py") == 1
+
+
+def test_all_failed_producers_report_the_failure_summary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _repo(tmp_path)
+    output_dir = repo / "datasets/examples"
+    _write_example(repo, "one", "raise RuntimeError('one failed')\n")
+    _write_example(repo, "two", "raise RuntimeError('two failed')\n")
+
+    assert run_examples.generate_examples(repo, output_dir, python=sys.executable) == 1
+
+    captured = capsys.readouterr()
+    assert "Examples FAILED: one_example.py two_example.py" in captured.out
+    assert "no .zarr datasets" not in captured.err
+
+
+def test_write_marker_rejects_an_empty_success_set(tmp_path: Path) -> None:
+    output_dir = tmp_path / "datasets/examples"
+
+    with pytest.raises(RuntimeError, match="no example producer succeeded"):
+        run_examples.write_marker(output_dir, examples={})
 
 
 def test_marker_uses_prebuild_fingerprint(tmp_path: Path) -> None:

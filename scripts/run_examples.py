@@ -249,7 +249,9 @@ def _example_scripts(repo_root: Path) -> list[Path]:
 
 
 def _current_stamps(
-    marker: dict[str, Any] | None, environment: Mapping[str, str | None]
+    marker: dict[str, Any] | None,
+    environment: Mapping[str, str | None],
+    parsed_stamps: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     if (
         marker is None
@@ -257,7 +259,8 @@ def _current_stamps(
         or marker.get("environment") != environment
     ):
         return {}
-    return _marker_examples(marker)
+    stamps = _marker_examples(marker) if parsed_stamps is None else parsed_stamps
+    return {producer: dict(stamp) for producer, stamp in stamps.items()}
 
 
 def _removed_producer_outputs(
@@ -276,14 +279,18 @@ def _stale_producers(
     marker: dict[str, Any] | None,
     repo_root: Path,
     output_dir: Path,
+    *,
+    parsed_stamps: Mapping[str, Mapping[str, Any]] | None = None,
+    environment: Mapping[str, str | None] | None = None,
 ) -> list[str]:
+    current_environment = build_environment() if environment is None else environment
     if (
         marker is None
         or marker.get("version") != MARKER_VERSION
-        or marker.get("environment") != build_environment()
+        or marker.get("environment") != current_environment
     ):
         return [script.name for script in scripts]
-    stamps = _marker_examples(marker)
+    stamps = _marker_examples(marker) if parsed_stamps is None else parsed_stamps
     script_names = {script.name for script in scripts}
     stale = sorted(set(stamps) - script_names)
     source_hash_cache: dict[Path, bytes] = {}
@@ -328,7 +335,6 @@ def fixtures_are_current(
 
 
 def write_marker(
-    repo_root: Path = REPO_ROOT,
     output_dir: Path = OUTPUT_DIR,
     *,
     environment: dict[str, str | None] | None = None,
@@ -337,7 +343,7 @@ def write_marker(
     """Atomically stamp per-producer fingerprints and output inventories."""
     output_dir.mkdir(parents=True, exist_ok=True)
     if not examples:
-        raise RuntimeError("example generation produced no .zarr datasets")
+        raise RuntimeError("no example producer succeeded")
     serialized = {
         producer: {
             "fingerprint": stamp["fingerprint"],
@@ -363,13 +369,12 @@ def write_marker(
 
 
 def _checkpoint_marker(
-    repo_root: Path,
     output_dir: Path,
     environment: dict[str, str | None],
     stamps: Mapping[str, Mapping[str, Any]],
 ) -> None:
     if stamps:
-        write_marker(repo_root, output_dir, environment=environment, examples=stamps)
+        write_marker(output_dir, environment=environment, examples=stamps)
     else:
         _marker_path(output_dir).unlink(missing_ok=True)
 
@@ -421,10 +426,6 @@ def generate_examples(
     force: bool = False,
 ) -> int:
     """Build stale examples, continuing after failures, and stamp each success."""
-    if not force and fixtures_are_current(repo_root, output_dir):
-        print("✅ Example datasets are current; nothing to rebuild.", flush=True)
-        return 0
-
     scripts = _example_scripts(repo_root)
     if not scripts:
         print("❌ No example scripts found.", file=sys.stderr, flush=True)
@@ -434,25 +435,37 @@ def generate_examples(
     marker = _read_marker(output_dir)
     previous_stamps = _marker_examples(marker)
     environment = build_environment()
-    stamps = _current_stamps(marker, environment)
+    current_names = {script.name for script in scripts}
+    stale_producers = (
+        current_names
+        if force
+        else set(
+            _stale_producers(
+                scripts,
+                marker,
+                repo_root,
+                output_dir,
+                parsed_stamps=previous_stamps,
+                environment=environment,
+            )
+        )
+    )
+    if not force and not stale_producers:
+        print("✅ Example datasets are current; nothing to rebuild.", flush=True)
+        return 0
+    stamps = _current_stamps(marker, environment, previous_stamps)
     legacy_outputs = (
         set(_marker_outputs(marker))
         if marker is not None and marker.get("version") != MARKER_VERSION
         else set()
     )
-    current_names = {script.name for script in scripts}
     removed_outputs = _removed_producer_outputs(previous_stamps, current_names)
     for producer in set(stamps) - current_names:
         del stamps[producer]
-    stale_names = (
-        current_names
-        if force
-        else set(_stale_producers(scripts, marker, repo_root, output_dir))
-        & current_names
-    )
+    stale_names = stale_producers & current_names
     for producer in stale_names:
         stamps.pop(producer, None)
-    _checkpoint_marker(repo_root, output_dir, environment, stamps)
+    _checkpoint_marker(output_dir, environment, stamps)
     scripts_to_run = [script for script in scripts if script.name in stale_names]
     import_cache: dict[Path, set[str]] = {}
     module_cache: dict[str, Path | None] = {}
@@ -504,12 +517,15 @@ def generate_examples(
             ],
             "outputs": outputs,
         }
-        _checkpoint_marker(repo_root, output_dir, environment, stamps)
+        _checkpoint_marker(output_dir, environment, stamps)
         print(f"✅ Success: {script.name}", flush=True)
 
     print("\n" + "━" * 48, flush=True)
+    if failures and not stamps:
+        print(f"❌ Examples FAILED: {' '.join(failures)}", flush=True)
+        return 1
     try:
-        write_marker(repo_root, output_dir, environment=environment, examples=stamps)
+        write_marker(output_dir, environment=environment, examples=stamps)
     except RuntimeError as error:
         _marker_path(output_dir).unlink(missing_ok=True)
         print(f"❌ {error}", file=sys.stderr, flush=True)
