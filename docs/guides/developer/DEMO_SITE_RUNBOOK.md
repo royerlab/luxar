@@ -415,14 +415,30 @@ verbatim, so on this Mac it produces a flat scene (12 element nodes, 20,591,415
 elements — exactly the sum of the three in-repo archives) and on a machine with
 the hosted copy it would produce a partitioned, laddered one.
 
-Two things follow for this site:
+Three things follow for this site:
 
 - **A tile's structure is a property of the build host, not just the recipe.**
   Record which host built a tile when its demo grafts pinned archives.
 - **A tile can be accidentally correct.** cmu1's live tile is flat because the
   publishing machine held the stale in-repo generation — not because anything
-  chose that. Refreshing the LFS payload to match hosted would change the live
-  scene's structure with no code change and no manifest change visible in a diff.
+  chose that.
+- **The trigger is an LFS payload refresh** — which looks like routine
+  housekeeping, touches no code, and changes no reviewable line. That is what
+  makes this worth a runbook entry rather than a comment.
+
+**But 3.11's rule narrows the exposure sharply.** A refreshed archive can only
+restructure a scene where the demo *grafts* it; a demo that declares a recipe
+rebuilds locally and never sees the archive's topology. Of the fourteen diverged
+datasets, twelve are consumed by demos declaring `recipe="stream"` or
+`recipe="levels"`, so they are exposed on **bytes only**. Two graft:
+
+| dataset | evidence |
+|---|---|
+| `gsplats_flylight_mcfo_63x` | `add_gsplats_from_file`, no recipe anywhere |
+| `gsplats_cmu1_pathology` | grafts verbatim — its scene's 20,591,415 elements are exactly the sum of its three in-repo archives |
+
+So the armed set is **two**, not fourteen. Check membership with the graft test
+before treating a divergence as a structural risk.
 
 #### Scope: this is not a cmu1 quirk
 
@@ -448,13 +464,21 @@ datasets are affected:
 | `gsplats_opencell_map4` | 2 | 1.6 | 1.5 | 0.93x |
 
 So the presence of `hosted_sha256` **is** the divergence signal — there is
-currently no dataset carrying the field whose two generations agree. Ratios below
-1.0 are refits that shrank; a small ratio does not mean a small structural
-difference, and cmu1's 2.44x is flat-leaf vs partition + 64 lod groups.
+currently no dataset carrying the field whose two generations agree.
+
+**The ratio column predicts nothing about structure, in either direction.** It is
+here to size the download, not the risk:
+
+- `cells3d` at **2.25x** is flat -> flat. Only the splat count moved (20,323 vs
+  41,975); both sides are 2 element nodes.
+- `cryoem_virus` at **1.44x** is flat -> `kind=lod` with 6 substitutive levels.
+- `cmu1` at **2.44x** is flat leaf -> partition + 64 lod groups.
+
+Ratios below 1.0 are refits that shrank, and they are not exempt either. Only a
+kind-based read of a **digest-confirmed hosted copy** settles topology.
 
 Practical consequence: for any of these fourteen, a local measurement describes
-the in-repo generation only, and the tile a fresh machine would build may differ.
-Reproduce on the host that published, or hash first.
+the in-repo generation only. Reproduce on the host that published, or hash first.
 
 #### And the docstring
 
