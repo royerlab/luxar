@@ -181,7 +181,7 @@ export function computeWorkingSetBudgetBytes(
   if (positive(poolOverrideBytes)) {
     budgetBytes = budgetFromCachePool(poolOverrideBytes);
   } else {
-    const heap = positive(heapLimitBytes) ? heapLimitBytes : readHeapLimitBytes();
+    const heap = heapLimitBytes === undefined ? readHeapLimitBytes() : heapLimitBytes;
     if (positive(heap)) {
       budgetBytes =
         heap *

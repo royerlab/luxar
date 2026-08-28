@@ -42,6 +42,12 @@ describe('computeWorkingSetBudgetBytes', () => {
     expect(computeWorkingSetBudgetBytes(undefined, undefined, 384 * MB)).toBe(128 * MB);
   });
 
+  it('uses a measured heap before the device-class cache pool', () => {
+    expect(computeWorkingSetBudgetBytes(512 * MB, undefined, 2048 * MB)).toBe(
+      Math.floor(512 * MB * target * 0.4 * 0.5)
+    );
+  });
+
   it('uses the fixed fallback when no pool or heap signal is available', () => {
     expect(computeWorkingSetBudgetBytes()).toBe(256 * MB);
     expect(computeWorkingSetBudgetBytes(0)).toBe(256 * MB);
