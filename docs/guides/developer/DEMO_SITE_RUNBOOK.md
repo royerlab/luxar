@@ -726,6 +726,39 @@ literal truth.
   to 100% of the leaf. Only a partition, or a hidden axis to slice on, reduces
   what is resident.
 
+### 3.17 Dropping substitutive LODs without re-chunking makes the store slower
+
+Removing substitutive levels is the right call for most single-object scenes, but
+it is **half an operation**. The recipe is three steps, in this order:
+
+    flatten  ->  lod --recipe stream  ->  optimise --profile archive
+
+Measured on `h2afva_51tp`, requests per timepoint step:
+
+    as-built after flatten + stream        173
+    after `optimise --profile archive`       2
+    the PARTITIONED store it replaced       12   (already re-chunked)
+
+So an additive-only store that skips the re-chunk is **worse than what it
+replaced** — 173 against 12 — because flattening trades a few large arrays for
+many small ones and the rungs land at whatever chunking the source had.
+**Additive-only and re-chunking are a package**, and `optimise` must run *last* so
+the newly written rungs get the 1 MB layout too.
+
+Two further traps from the same rebuild:
+
+- **Don't stop at `flatten`.** A bare flat leaf loses the ladder entirely; the
+  target is a leaf *plus* rungs (`lod --recipe stream`), which is what
+  `_lod_policy.py`'s `stream 4 nodes` row describes.
+- **A partition can be worth nothing on a time-stacked node.** The writer already
+  lexsorts by the time barrier, so per-timepoint chunk locality exists without any
+  partition — adding one buys no request reduction there. (It still earns its place
+  on a *static* node over the element cap, 3.12.)
+
+Result on that store: 1,873,559,527 → 1,115,714,088 bytes (**−40.5%**), 176
+substitutive levels → 0, 176 element nodes → 1, 125,751 chunks → 2,316, with all
+51 timepoints intact at uniform spacing and none blended.
+
 ## 4. Cloudflare configuration
 
 ### 4.1 Cache rule on the data subdomain
