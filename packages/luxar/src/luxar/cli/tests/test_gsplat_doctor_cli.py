@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from typer.models import OptionInfo
+from typer.models import ParameterInfo
 from typer.testing import CliRunner
 
 from luxar._zarr_compat import consolidate as zc_consolidate
@@ -263,10 +263,10 @@ def test_doctor_passes_concrete_values_for_every_info_option(
     missing = [
         name
         for name, parameter in signature.parameters.items()
-        if isinstance(parameter.default, OptionInfo) and name not in bound.arguments
+        if isinstance(parameter.default, ParameterInfo) and name not in bound.arguments
     ]
     assert missing == []
-    assert not any(isinstance(value, OptionInfo) for value in bound.arguments.values())
+    assert not any(isinstance(value, ParameterInfo) for value in bound.arguments.values())
 
 
 def test_doctor_writes_a_json_report() -> None:
