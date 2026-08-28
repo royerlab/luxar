@@ -5,6 +5,8 @@
  */
 
 import * as THREE from 'three';
+import { computeWorkingSetBudgetBytes } from '../../../cache/heap-budget';
+import { log, Modules } from '../../../utils/log';
 import * as zarr from '../../zarr';
 import type { SceneNode } from '../../data-loader-types';
 import type { NodeBuildCtx } from './build-ctx';
@@ -13,6 +15,107 @@ import type { NodeBuildCtx } from './build-ctx';
 // Eight siblings expose roughly 40 rung-array requests at one level, which
 // stays below the global 64-request fetch gate while collapsing waterfalls.
 export const EAGER_CHILD_LOAD_CONCURRENCY = 8;
+
+const EAGER_CHILD_LOAD_MEMORY_FALLBACK_BYTES = 256 * 1024 * 1024;
+const ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES = 220;
+
+interface WorkingSetWaiter {
+  bytes: number;
+  path: string;
+  resolve: (release: () => void) => void;
+}
+
+class WorkingSetGate {
+  private activeBytes = 0;
+  private readonly waiters: WorkingSetWaiter[] = [];
+
+  constructor(private readonly budgetBytes: number) {}
+
+  acquire(estimatedBytes: number, path: string): Promise<() => void> {
+    const bytes = Math.min(this.budgetBytes, Math.max(0, estimatedBytes));
+    if (bytes === 0) return Promise.resolve(() => undefined);
+
+    return new Promise((resolve) => {
+      const waiter = { bytes, path, resolve };
+      this.waiters.push(waiter);
+      this.drain();
+      if (this.waiters.includes(waiter)) {
+        const mib = (value: number): string => `${(value / (1024 * 1024)).toFixed(1)} MiB`;
+        log.query(
+          Modules.SCENE_LOADER,
+          `Eager load waiting for ${waiter.path}: charged ${mib(bytes)}, active ${mib(this.activeBytes)}, budget ${mib(this.budgetBytes)}`
+        );
+      }
+    });
+  }
+
+  private drain(): void {
+    while (this.waiters.length > 0) {
+      const waiterIndex =
+        this.activeBytes === 0
+          ? 0
+          : this.waiters.findIndex((waiter) => this.activeBytes + waiter.bytes <= this.budgetBytes);
+      if (waiterIndex < 0) return;
+
+      const [waiter] = this.waiters.splice(waiterIndex, 1);
+      this.activeBytes += waiter.bytes;
+      let released = false;
+      waiter.resolve(() => {
+        if (released) return;
+        released = true;
+        this.activeBytes -= waiter.bytes;
+        this.drain();
+      });
+    }
+  }
+}
+
+const workingSetGates = new WeakMap<NodeBuildCtx, WorkingSetGate>();
+
+function workingSetGateFor(ctx: NodeBuildCtx): WorkingSetGate {
+  let gate = workingSetGates.get(ctx);
+  if (!gate) {
+    gate = new WorkingSetGate(
+      computeWorkingSetBudgetBytes() ?? EAGER_CHILD_LOAD_MEMORY_FALLBACK_BYTES
+    );
+    workingSetGates.set(ctx, gate);
+  }
+  return gate;
+}
+
+function estimateWorkingSetBytes(node: SceneNode): number {
+  if (node.type !== 'lines') return 0;
+  const readCount = (value: unknown): number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : 0;
+  const vertexCount = readCount(node.attrs.n_vertices);
+  if (vertexCount === 0) {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `Line node ${node.path} has no positive n_vertices; eager memory admission cannot estimate its vertex pressure`
+    );
+  }
+  const segmentCount = readCount(node.attrs.n_segments) || vertexCount;
+  const rawNdim = readCount(node.attrs.ndim);
+  const ndim = rawNdim || 3;
+  const vertexBytes = 10 * ndim + 70;
+
+  // Accumulator growth can briefly retain old + new vertex/segment buffers;
+  // projection then emits endpoint attributes. The segment term deliberately
+  // includes the resident 6-texel RGBA32F texture and ordering storage as a
+  // conservative total-heap proxy during handoff, even though the renderer's
+  // GPU budget also accounts for them. Authored totals intentionally upper-bound
+  // spatial-index partial slices and the first rung of progressive line ladders.
+  // Vertex pressure is `2.5 × (4 × ndim + 28)` = `10 × ndim + 70` bytes: the
+  // 1.5x accumulator grow can retain both old and new capacities. Segment
+  // pressure rounds the remaining overlap to 220 B/segment. Legacy nodes
+  // without n_segments use the accumulator's conservative 1:1 fallback.
+  // Admission only changes overlap, never stored or rendered data.
+  return vertexCount * vertexBytes + segmentCount * ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES;
+}
+
+export function acquireEagerWorkingSet(node: SceneNode, ctx: NodeBuildCtx): Promise<() => void> {
+  return workingSetGateFor(ctx).acquire(estimateWorkingSetBytes(node), node.path);
+}
 
 /**
  * Signature of the recursive scene-graph walker. Injected at the call site to
@@ -74,13 +177,17 @@ export async function loadChildrenConcurrently(
   let nextIndex = 0;
   let failed = false;
   let firstError: unknown;
-
   const worker = async (): Promise<void> => {
     while (!failed) {
       const index = nextIndex++;
       if (index >= sceneChildren.length) return;
       const child = sceneChildren[index];
       const slot = slots[index];
+      const releaseWorkingSet = await acquireEagerWorkingSet(child, ctx);
+      if (failed) {
+        releaseWorkingSet();
+        return;
+      }
       try {
         const childLoc = parentLoc.resolve(child.path.slice(1));
         await loadChild(child, slot, childLoc, ctx);
@@ -88,6 +195,7 @@ export async function loadChildrenConcurrently(
         if (!failed) firstError = error;
         failed = true;
       } finally {
+        releaseWorkingSet();
         replaceSlot(parentThree, slot, (object) =>
           options.configureLoadedChild?.(object, child, index)
         );

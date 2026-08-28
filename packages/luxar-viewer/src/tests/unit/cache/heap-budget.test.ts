@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeCacheBudgets,
+  computeWorkingSetBudgetBytes,
   readHeapLimitBytes,
   inferDeviceClass,
 } from '../../../cache/heap-budget';
@@ -20,6 +21,23 @@ describe('readHeapLimitBytes', () => {
   it('returns undefined in the node/jsdom test env (no performance.memory)', () => {
     // The whole point of the fallback: no Chrome heap API here.
     expect(readHeapLimitBytes()).toBeUndefined();
+  });
+});
+
+describe('computeWorkingSetBudgetBytes', () => {
+  it('uses half of the non-cache share of the configured heap target', () => {
+    const heap = 512 * MB;
+    expect(computeWorkingSetBudgetBytes(heap)).toBe(Math.floor(heap * target * 0.4 * 0.5));
+  });
+
+  it('caps the eager working set on a large measured heap', () => {
+    expect(computeWorkingSetBudgetBytes(8 * 1024 * MB)).toBe(512 * MB);
+  });
+
+  it('returns undefined when the heap is unmeasurable', () => {
+    expect(computeWorkingSetBudgetBytes()).toBeUndefined();
+    expect(computeWorkingSetBudgetBytes(0)).toBeUndefined();
+    expect(computeWorkingSetBudgetBytes(Number.NaN)).toBeUndefined();
   });
 });
 
