@@ -456,13 +456,41 @@ describe('SceneLoader', () => {
       const fault = new ArchiveFaultError('archive unavailable', 'scene.zip');
       (sceneLoader as any)._archiveFault = fault;
       const listener = vi.fn();
+      const throwingListener = vi.fn(() => {
+        throw new Error('listener boom');
+      });
+      let unsubscribeThrowingListener: (() => void) | undefined;
 
       const unsubscribe = sceneLoader.onArchiveFault(listener, { replayCurrent: true });
+      expect(() => {
+        unsubscribeThrowingListener = sceneLoader.onArchiveFault(throwingListener, {
+          replayCurrent: true,
+        });
+      }).not.toThrow();
 
       expect(listener).toHaveBeenCalledOnce();
       expect(listener).toHaveBeenCalledWith(fault);
+      expect(throwingListener).toHaveBeenCalledOnce();
 
       unsubscribe();
+      unsubscribeThrowingListener!();
+      (sceneLoader as any).notifyArchiveFault(fault);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(throwingListener).toHaveBeenCalledOnce();
+    });
+
+    it('does not notify listeners added during archive-fault delivery twice', () => {
+      const fault = new ArchiveFaultError('archive unavailable', 'scene.zip');
+      const lateListener = vi.fn();
+      sceneLoader.onArchiveFault(() => {
+        sceneLoader.onArchiveFault(lateListener, { replayCurrent: true });
+      });
+      (sceneLoader as any)._archiveFault = fault;
+
+      (sceneLoader as any).notifyArchiveFault(fault);
+
+      expect(lateListener).toHaveBeenCalledOnce();
+      expect(lateListener).toHaveBeenCalledWith(fault);
     });
 
     it('drains a superseded waiter when an archive fault stops the active pass', async () => {

@@ -469,18 +469,25 @@ export class SceneLoader {
   ): () => void {
     this.archiveFaultListeners.add(listener);
     if (options.replayCurrent && this._archiveFault) {
-      listener(this._archiveFault);
+      this.invokeArchiveFaultListener(listener, this._archiveFault);
     }
     return () => this.archiveFaultListeners.delete(listener);
   }
 
   private notifyArchiveFault(error: ArchiveFaultError): void {
-    for (const listener of this.archiveFaultListeners) {
-      try {
-        listener(error);
-      } catch (listenerError) {
-        log.warning(Modules.SCENE_LOADER, 'Archive-fault listener threw:', listenerError);
-      }
+    for (const listener of [...this.archiveFaultListeners]) {
+      this.invokeArchiveFaultListener(listener, error);
+    }
+  }
+
+  private invokeArchiveFaultListener(
+    listener: (error: ArchiveFaultError) => void,
+    error: ArchiveFaultError
+  ): void {
+    try {
+      listener(error);
+    } catch (listenerError) {
+      log.warning(Modules.SCENE_LOADER, 'Archive-fault listener threw:', listenerError);
     }
   }
 
