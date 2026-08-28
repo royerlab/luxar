@@ -34,6 +34,7 @@ Five ordering methods mirror the Points helper:
 from __future__ import annotations
 
 import warnings
+from collections import Counter
 from typing import Any, List, Literal, Optional, Tuple, Union
 
 import numpy as np
@@ -201,11 +202,10 @@ def _indexed_connected_components(
     return [chunk for chunk in np.split(order, starts[1:])]
 
 
-def _indexed_ladder_preserves_edges(
+def _indexed_ladder_edge_multisets(
     indices: NDArray,
     polylines: List[NDArray[np.intp]],
-) -> bool:
-    """Return whether rebuilt component chains preserve the authored edges."""
+) -> Tuple[NDArray[np.intp], NDArray[np.intp]]:
     authored = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
     if polylines:
         lengths = np.fromiter(
@@ -229,24 +229,42 @@ def _indexed_ladder_preserves_edges(
         canonical = np.sort(edges, axis=1)
         return canonical[np.lexsort((canonical[:, 1], canonical[:, 0]))]
 
-    return np.array_equal(canonical_edges(authored), canonical_edges(rebuilt))
+    return canonical_edges(authored), canonical_edges(rebuilt)
+
+
+def _indexed_ladder_preserves_edges(
+    indices: NDArray,
+    polylines: List[NDArray[np.intp]],
+) -> bool:
+    """Compare undirected edge multisets, ignoring edge direction and row order."""
+    authored, rebuilt = _indexed_ladder_edge_multisets(indices, polylines)
+    return np.array_equal(authored, rebuilt)
 
 
 def _validate_indexed_ladder_edges(
     line_type: str,
     indices: Optional[NDArray],
     polylines: List[NDArray[np.intp]],
+    levels: List[List[NDArray[np.intp]]],
 ) -> None:
-    if line_type != "indexed":
+    """Reject multi-level indexed ladders that would change authored edges."""
+    if len(levels) <= 1 or line_type != "indexed":
         return
     assert indices is not None
-    if _indexed_ladder_preserves_edges(indices, polylines):
+    authored, rebuilt = _indexed_ladder_edge_multisets(indices, polylines)
+    if np.array_equal(authored, rebuilt):
         return
+
+    authored_rows = [tuple(map(int, edge)) for edge in authored]
+    rebuilt_rows = [tuple(map(int, edge)) for edge in rebuilt]
+    missing_edge = next(iter(Counter(authored_rows) - Counter(rebuilt_rows)))
     raise ValueError(
         "line_type='indexed' additive LOD cannot preserve the explicit edge list: "
         "every connected component's undirected edge multiset must equal its consecutive "
-        "vertex pairs (edge direction and row order do not matter). Drop "
-        "additive_lod=, use partition=, or re-author the edges with "
+        "vertex pairs (edge direction and row order do not matter). "
+        f"Authored {len(authored_rows)} edges but the component chains produce "
+        f"{len(rebuilt_rows)}; offending authored edge {missing_edge} is absent. "
+        "Remove additive_lod= and use partition= alone, or re-author the edges with "
         "line_type='segments'."
     )
 
@@ -570,8 +588,7 @@ def make_additive_lod_lines(
                 ]
                 out.append(level_polylines)
             cursor += count
-        if len(out) > 1:
-            _validate_indexed_ladder_edges(line_type, indices, polylines)
+        _validate_indexed_ladder_edges(line_type, indices, polylines, out)
         return out
 
     # random / salience: slice the polyline permutation by breakpoints.
@@ -633,8 +650,7 @@ def make_additive_lod_lines(
     if start < p:
         level_polylines = [polylines[int(i)] for i in perm[start:p]]
         out.append(level_polylines)
-    if len(out) > 1:
-        _validate_indexed_ladder_edges(line_type, indices, polylines)
+    _validate_indexed_ladder_edges(line_type, indices, polylines, out)
     return out
 
 

@@ -722,9 +722,7 @@ class TestAddLinesAdditiveLod:
 
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(
-                ValueError, match="cannot preserve the explicit edge list"
-            ):
+            with pytest.raises(ValueError) as error:
                 scene.add_lines(
                     "stars",
                     vertices,
@@ -733,6 +731,12 @@ class TestAddLinesAdditiveLod:
                     line_type="indexed",
                     additive_lod={"n_lods": 3, "method": method},
                 )
+
+        message = str(error.value)
+        assert "cannot preserve the explicit edge list" in message
+        assert "Authored 18 edges but the component chains produce 18" in message
+        assert "offending authored edge (0, 2) is absent" in message
+        assert "Remove additive_lod= and use partition= alone" in message
 
         assert "stars" not in zarr.open(str(output), mode="r")
 
