@@ -685,9 +685,10 @@ literal truth.
    against the expected duration of the thing being measured.** Twelve rungs at
    the 10–26 s per level actually observed is minutes; a 15 s settle rule and even
    a 180 s cap are both inside that range.
-2. **"Stopped changing" is not "finished."** Prefer a terminal signal the system
-   emits (`— complete`, `isLoading: false`) over inferring one from a stationary
-   number.
+2. **"Stopped changing" is not "finished."** Prefer a signal that matches the
+   phase being measured: `— complete` for a full ladder, or `isLoading: false`
+   only for the first committed view, rather than inferring either from a
+   stationary number.
 3. **A stable artifact is not a real effect.** If two runs agree, check they do not
    share a stopping rule, a cache, or a filter.
 4. **Grep for what the code says, not for what you suspect.** Loaders, policies and
@@ -726,7 +727,7 @@ literal truth.
   to 100% of the leaf. Only a partition, or a hidden axis to slice on, reduces
   what is resident.
 
-### 3.17 Dropping substitutive LODs without re-chunking makes the store slower
+### 3.17 Dropping substitutive LODs without re-chunking leaves the store far slower than it needs to be
 
 Removing substitutive levels is the right call for most single-object scenes, but
 it is **half an operation**. The recipe is three steps, in this order:
@@ -767,46 +768,61 @@ spacing and none blended.
 advice, and advice does not run. Make it a **reported field** instead, so a
 meaningless run announces itself.
 
-Worked example. The depth-sort flashing bug lives only on *count-changed* commits;
-equal-count re-commits take a path that always worked. Two runs of the same script
-against the same live bundle:
+Worked example from an ad-hoc browser-console probe; there is no checked-in script
+to rerun. The depth-sort flashing bug lives only on *count-changed* commits;
+equal-count re-commits take a path that always worked. Three runs against the same
+live bundle reported:
 
-    host A   loadWaitMs   501    countChanged  99   unsorted 0   -> FIXED
-    host B   loadWaitMs   (none)  countChanged   0   unsorted 0   -> INCONCLUSIVE
-    host B   loadWaitMs  1752    countChanged   0   unsorted 0   -> INCONCLUSIVE
+    host A   firstCommitWaitMs  501                    commits 99   countChanged 99   distinctSteps 89   unsorted 0   -> FIXED
+    host B   firstCommitWaitMs  (none — fixed 8 s warm-up)   commits 73   countChanged  0   distinctSteps  1   unsorted 0   -> INCONCLUSIVE
+    host B   firstCommitWaitMs 1752                    commits 85   countChanged  0   distinctSteps  1   unsorted 0   -> INCONCLUSIVE
 
-Host B's first run looked like a pass on the headline numbers and was worth
-nothing: a zero denominator, with all 73 observed commits equal-count progressive
-re-commits on a path that never had the bug.
+Host B's runs looked like passes on the headline numbers and were worth nothing:
+zero denominators, with every observed commit an equal-count progressive re-commit
+on a path that never had the bug.
 
-**And then the diagnostic earned its keep by refuting the proposed cause.** The
-natural explanation for host B was a cold cache filling the window with load
-phase. Adding `loadWaitMs` tested that directly: 1752 ms against a 30 s window, so
-host B was past loading almost immediately and still saw zero count-changed
-commits. The cold-cache theory is dead, and something environmental between the
-two hosts remains unexplained — which is exactly the state the field is supposed
-to reveal instead of hiding behind a verdict.
+The 1752 ms diagnostic did **not** refute a cold-cache explanation. In the viewer,
+`isLoading === false` reports first-commit latency, not full-ladder completion, and
+the debug interface is installed only after the initial `loadDataset` call returns.
+Progressive refinement may continue afterwards; the 85 re-commits show that it did.
+The number therefore bounds time to the debug interface and first committed view,
+not time to a settled ladder, so a load-bound observation window remained plausible.
 
-The fix is two lines — wait on the system's own terminal signal, and **publish the
-wait** as a diagnostic:
+Open the viewer with `?debug`, keep the 180 s first-commit timeout separate from the
+30 s observation window, and **publish both the wait and its exit reason**:
 
 ```js
+const firstCommitTimeoutMs = 180000;
+const observationWindowMs = 30000;
 const tWait = Date.now();
-while (Date.now() - tWait < 180000) {
+let firstCommitObserved = false;
+while (Date.now() - tWait < firstCommitTimeoutMs) {
   const st = window.__luxarDebug?.getState?.();
-  if (st && st.isLoading === false) break;
+  if (st && st.isLoading === false) {
+    firstCommitObserved = true;
+    break;
+  }
   await new Promise(r => setTimeout(r, 500));
 }
-window.__loadWaitMs = Date.now() - tWait;   // report this
+window.__firstCommitWaitMs = Date.now() - tWait;
+window.__firstCommitObserved = firstCommitObserved;
+window.__observationWindowMs = observationWindowMs;
+if (!firstCommitObserved) {
+  throw new Error('first-commit timeout; probe inconclusive');
+}
+// Run the measurement for exactly observationWindowMs from here.
 ```
 
 Rules:
 
-- **Gate on the terminal signal, not a fixed sleep.** A hardcoded warm-up is a
-  claim about the system's timescale, and it will be wrong on a cold cache, a
-  slower link, or a bigger store.
-- **Report the wait.** If `loadWaitMs` comes back near the window length, the run
-  was load-phase-bound and the verdict is void whatever it says.
+- **Gate on a signal that matches the phase being measured, not a fixed sleep.**
+  `isLoading: false` is suitable for first commit; full-ladder work needs the
+  loader's `Progressive: n/n LODs loaded — complete` signal. A hardcoded warm-up
+  is only an untested claim about the system's timescale.
+- **Report the wait and the exit reason.** `firstCommitObserved: false` means the
+  180 s cap expired and the run is inconclusive; the elapsed value alone cannot
+  distinguish timeout from success. This timeout precedes the separate 30 s
+  observation window, so do not compare one duration to the other.
 - **Print the denominator next to every ratio.** `0 unsorted` and `0 of 0` render
   identically in a summary line and mean opposite things — one is a pass, the other
   is no measurement. A zero denominator is never a pass; emit an explicit
