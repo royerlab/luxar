@@ -92,21 +92,6 @@ def _print_fitting_value(
         aprint(f"  {key}: {value}")
 
 
-def _print_additional_metadata_value(
-    key: str, value: Any, *, show_full_provenance: bool
-) -> None:
-    if key == "part_provenance":
-        _print_fitting_value(
-            key,
-            value,
-            show_full_provenance=show_full_provenance,
-        )
-    elif isinstance(value, (dict, list)):
-        aprint(f"  {key}: {type(value).__name__} with {len(value)} items")
-    else:
-        aprint(f"  {key}: {value}")
-
-
 def _ascii_histogram(
     data: "np.ndarray", bins: int = 40, width: int = 60, title: str = "Distribution"
 ) -> str:
@@ -207,6 +192,50 @@ def _normalized_amplitude_cdf(amplitudes: "np.ndarray") -> "Optional[np.ndarray]
         return None
     cumulative /= total
     return cumulative
+
+
+def _print_dataset_metadata(
+    stats: dict[str, Any],
+    source_grid_keys: tuple[str, ...],
+    *,
+    show_full_provenance: bool,
+) -> None:
+    """Print metadata, excluding stats already reported by the source-grid block."""
+    aprint("\n" + "─" * 70)
+    aprint("METADATA")
+    aprint("─" * 70)
+
+    displayed_keys = set()
+    for key in _IMPORTANT_FITTING_KEYS:
+        if key in stats:
+            _print_fitting_value(
+                key,
+                stats[key],
+                show_full_provenance=show_full_provenance,
+            )
+            displayed_keys.add(key)
+
+    # The source-volume block already reported its own keys (and RECOMPUTED
+    # voxels/splat from the stored splats), so re-dumping them here would quote
+    # one quantity twice with two different numbers. Only the keys it actually
+    # reported are suppressed: when that block bailed out (no `source_shape`)
+    # it returns nothing and the stamps still surface here.
+    remaining = set(stats) - displayed_keys - set(source_grid_keys)
+    if remaining:
+        aprint("\nAdditional Metadata:")
+        for key in sorted(remaining):
+            if key not in ["movie_frames", "movie_shape", "config", "provenance"]:
+                value = stats[key]
+                if key == "part_provenance":
+                    _print_fitting_value(
+                        key,
+                        value,
+                        show_full_provenance=show_full_provenance,
+                    )
+                elif isinstance(value, (dict, list)):
+                    aprint(f"  {key}: {type(value).__name__} with {len(value)} items")
+                else:
+                    aprint(f"  {key}: {value}")
 
 
 def info_dataset(
@@ -398,43 +427,11 @@ def info_dataset(
         # Metadata
         # ================================================================
         if data.stats:
-            aprint("\n" + "─" * 70)
-            aprint("METADATA")
-            aprint("─" * 70)
-
-            # Display important metadata
-            displayed_keys = set()
-            for key in _IMPORTANT_FITTING_KEYS:
-                if key in data.stats:
-                    _print_fitting_value(
-                        key,
-                        data.stats[key],
-                        show_full_provenance=full_provenance,
-                    )
-                    displayed_keys.add(key)
-
-            # Display remaining metadata. The source-volume block above already
-            # reported its own keys (and RECOMPUTED voxels/splat from the stored
-            # splats), so re-dumping them here would quote one quantity twice with
-            # two different numbers. Only the keys it actually reported are
-            # suppressed: when that block bailed out (no `source_shape`) it
-            # returns nothing and the stamps still surface here.
-            remaining = set(data.stats.keys()) - displayed_keys - set(source_grid_keys)
-            if remaining:
-                aprint("\nAdditional Metadata:")
-                for key in sorted(remaining):
-                    if key not in [
-                        "movie_frames",
-                        "movie_shape",
-                        "config",
-                        "provenance",
-                    ]:
-                        value = data.stats[key]
-                        _print_additional_metadata_value(
-                            key,
-                            value,
-                            show_full_provenance=full_provenance,
-                        )
+            _print_dataset_metadata(
+                data.stats,
+                source_grid_keys,
+                show_full_provenance=full_provenance,
+            )
 
         # ================================================================
         # Summary
