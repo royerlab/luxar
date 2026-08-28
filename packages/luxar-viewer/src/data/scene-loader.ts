@@ -1753,6 +1753,11 @@ export class SceneLoader {
     return this.registry.hasAutoRetryableFailures();
   }
 
+  /** Re-open bounded retries for anonymous deferred groups after reconnecting. */
+  resetDeferredRetryBudgets(): void {
+    this.lodGroupRegistry?.resetAutomaticRetryBudgets();
+  }
+
   /**
    * Clear failed loader tracking
    * Useful for retry operations or after user acknowledges errors
@@ -1865,7 +1870,7 @@ export class SceneLoader {
     failed: string[];
     deferred?: boolean;
   }> {
-    this.lodGroupRegistry?.resetAutomaticRetryBudgets();
+    this.resetDeferredRetryBudgets();
 
     const failedPaths = opts.onlyAutoRetryable
       ? this.registry.autoRetryablePaths()

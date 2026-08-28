@@ -399,9 +399,11 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    the data-loading monitor and connectivity recovery clear that latch via
    `retryLazyChildByLeafPath`. An anonymous deferred-group placeholder has
    no path-based retry entry point, so archive faults receive a bounded
-   cooldown budget; Retry-all resets every such budget and its cooldown,
-   including when no loader failure record remains. Ordinary subtree
-   failures keep retrying after each cooldown without a fixed attempt cap.
+   cooldown budget. Connectivity restoration resets those budgets
+   unconditionally; the monitor's Retry-all does so when a recorded loader
+   failure exposes that control. Surfacing an otherwise silent exhausted
+   branch in the monitor is tracked separately. Ordinary subtree failures
+   keep retrying after each cooldown without a fixed attempt cap.
 9. **Never-downgrade display gate**: a lazy level flips `ready` after
    its _first_ additive chunk commits, so an ungated swap to a
    fresh-but-still-streaming aspiration would pop displayed quality

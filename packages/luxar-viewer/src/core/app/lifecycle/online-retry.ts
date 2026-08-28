@@ -15,6 +15,8 @@ export interface RetryCapableLoader {
    * permanent 404 past the cap) from being re-fetched on every `online` event.
    */
   hasAutoRetryableFailures(): boolean;
+  /** Re-open bounded anonymous deferred-group retries after connectivity returns. */
+  resetDeferredRetryBudgets(): void;
   /** `deferred: true` ⇒ a main update held the lock and NOTHING was retried. */
   retryAllFailedLoaders(opts?: {
     onlyAutoRetryable?: boolean;
@@ -56,7 +58,8 @@ export const MAX_DEFERRED_RETRY_ATTEMPTS = 10;
  * own doc names "after connectivity is restored" as the intended use).
  *
  * Behavior:
- *   - No failures recorded → silent no-op (the common case).
+ *   - No retryable loader failures → reset deferred-group retry budgets, then
+ *     remain silent (the common case).
  *   - Failures present → toast that a retry is starting, run
  *     `retryAllFailedLoaders()` (the loader serializes it against the
  *     update lock internally), and toast the genuine outcome.
@@ -143,6 +146,7 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
   ports.events.on(window, 'online', () => {
     if (retryInFlight) return;
     const loader = ports.getLoader();
+    loader?.resetDeferredRetryBudgets();
     // Deliberately NOT `hasFailures()`: a scene whose only failures are
     // deterministic gets no retry and no "Connection restored" toast, since
     // reconnecting cannot help it.

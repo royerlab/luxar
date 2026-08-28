@@ -389,9 +389,9 @@ export interface LODGroupChild {
   permanentlyFailed?: boolean;
   /**
    * Archive-fault-only bound for anonymous placeholders' automatic cooldown
-   * retries. A successful load clears it; zero terminally suppresses further
-   * kicks because these children have no explicit retry surface. ``undefined``
-   * preserves the normal unlimited transient-recovery policy.
+   * retries. A successful load clears it; zero suppresses further automatic
+   * kicks until ``resetAutomaticRetryBudgets`` explicitly reopens the child.
+   * ``undefined`` preserves the normal unlimited transient-recovery policy.
    */
   automaticRetriesRemaining?: number;
   /**
