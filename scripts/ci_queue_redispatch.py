@@ -102,8 +102,14 @@ def finish_redispatch(
         if run.get("status") == "completed":
             if run.get("conclusion") != "cancelled" or run.get("run_attempt") != 1:
                 return False
-            write(f"{run_endpoint}/rerun", None)
-            return True
+            for _ in range(12):
+                try:
+                    write(f"{run_endpoint}/rerun", None)
+                except ci_queue_scan.ApiError:
+                    sleep(5)
+                    continue
+                return True
+            return False
         sleep(5)
     return False
 

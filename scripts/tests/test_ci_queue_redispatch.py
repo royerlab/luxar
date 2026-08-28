@@ -120,3 +120,28 @@ def test_finish_waits_through_api_error_then_reruns_cancelled_attempt() -> None:
 
     assert changed is True
     assert writes == [("repos/royerlab/luxar/actions/runs/42/rerun", None)]
+
+
+def test_finish_retries_rejected_rerun_request() -> None:
+    attempts = 0
+
+    def write(endpoint: str, fields: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ci_queue_scan.ApiError("not settled")
+
+    changed = ci_queue_redispatch.finish_redispatch(
+        "royerlab/luxar",
+        42,
+        read=lambda endpoint: {
+            "status": "completed",
+            "conclusion": "cancelled",
+            "run_attempt": 1,
+        },
+        write=write,
+        sleep=lambda seconds: None,
+    )
+
+    assert changed is True
+    assert attempts == 2
