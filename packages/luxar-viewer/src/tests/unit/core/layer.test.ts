@@ -824,8 +824,8 @@ describe('LuxarLayer', () => {
 
   describe('visibility and bounds', () => {
     it('hides via the root flag rather than detaching', async () => {
-      // Detaching would drop the caches and in-flight streams; the point of the
-      // toggle is that re-showing costs no refetch.
+      // Detaching would drop caches and in-flight streams; keeping the root
+      // attached lets lazy LOD loading resume after re-showing.
       const options = makeOptions();
       const layer = new LuxarLayer(options);
       const root = await layer.load('http://example.test/scene.zarr');
