@@ -6,6 +6,7 @@ import {
   type LoadSceneChildren,
 } from '../../../../../data/scene-loader/nodes/load-children-concurrently';
 import type { SceneNode } from '../../../../../data/data-loader-types';
+import { log, Modules } from '../../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
 
 function makeChildren(count: number): SceneNode[] {
@@ -165,6 +166,80 @@ describe('loadChildrenConcurrently', () => {
     await vi.waitFor(() => expect(started).toHaveLength(2));
     releases.shift()?.();
     await loadPromise;
+  });
+
+  it('caps eager line admission on a large measured heap', async () => {
+    setHeapLimitBytes(8 * 1024 * 1024 * 1024);
+    const children = makeLineChildren(9, 1_630_000, 1_280_000);
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async (child) => {
+        started.push(child.path);
+        await gate;
+      }
+    );
+
+    await vi.waitFor(() => expect(started.length).toBeGreaterThan(0));
+    expect(started).toHaveLength(1);
+    release();
+    await loadPromise;
+    expect(started).toEqual(children.map((child) => child.path));
+  });
+
+  it('logs when a line child waits for working-set admission', async () => {
+    const children = makeLineChildren(2, 1_000_000);
+    const querySpy = vi.spyOn(log, 'query').mockImplementation(() => {});
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loadPromise = loadChildrenConcurrently(
+      children,
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async () => gate
+    );
+
+    await vi.waitFor(() =>
+      expect(querySpy).toHaveBeenCalledWith(
+        Modules.SCENE_LOADER,
+        expect.stringContaining(children[1].path)
+      )
+    );
+    expect(querySpy).toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      expect.stringMatching(/charged .* active .* budget/)
+    );
+    release();
+    await loadPromise;
+  });
+
+  it('warns when a lines node has no usable vertex count', async () => {
+    const child = makeLineChildren(1, 1_000)[0];
+    delete child.attrs.n_vertices;
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    await loadChildrenConcurrently(
+      [child],
+      new THREE.Group(),
+      makeStubLoc(),
+      makeTestNodeBuildCtx(),
+      async () => undefined
+    );
+
+    expect(warningSpy).toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      expect.stringContaining(child.path)
+    );
   });
 
   it('keeps small line siblings at the existing eight-wide concurrency', async () => {

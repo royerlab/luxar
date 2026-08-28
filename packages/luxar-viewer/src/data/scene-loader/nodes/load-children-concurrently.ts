@@ -6,6 +6,7 @@
 
 import * as THREE from 'three';
 import { computeWorkingSetBudgetBytes } from '../../../cache/heap-budget';
+import { log, Modules } from '../../../utils/log';
 import * as zarr from '../../zarr';
 import type { SceneNode } from '../../data-loader-types';
 import type { NodeBuildCtx } from './build-ctx';
@@ -20,6 +21,7 @@ const ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES = 220;
 
 interface WorkingSetWaiter {
   bytes: number;
+  path: string;
   resolve: (release: () => void) => void;
 }
 
@@ -29,13 +31,21 @@ class WorkingSetGate {
 
   constructor(private readonly budgetBytes: number) {}
 
-  acquire(estimatedBytes: number): Promise<() => void> {
+  acquire(estimatedBytes: number, path: string): Promise<() => void> {
     const bytes = Math.min(this.budgetBytes, Math.max(0, estimatedBytes));
     if (bytes === 0) return Promise.resolve(() => undefined);
 
     return new Promise((resolve) => {
-      this.waiters.push({ bytes, resolve });
+      const waiter = { bytes, path, resolve };
+      this.waiters.push(waiter);
       this.drain();
+      if (this.waiters.includes(waiter)) {
+        const mib = (value: number): string => `${(value / (1024 * 1024)).toFixed(1)} MiB`;
+        log.query(
+          Modules.SCENE_LOADER,
+          `Eager load waiting for ${waiter.path}: charged ${mib(bytes)}, active ${mib(this.activeBytes)}, budget ${mib(this.budgetBytes)}`
+        );
+      }
     });
   }
 
@@ -78,19 +88,28 @@ function estimateWorkingSetBytes(node: SceneNode): number {
   const readCount = (value: unknown): number =>
     typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : 0;
   const vertexCount = readCount(node.attrs.n_vertices);
+  if (vertexCount === 0) {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `Line node ${node.path} has no positive n_vertices; eager memory admission cannot estimate its vertex pressure`
+    );
+  }
   const segmentCount = readCount(node.attrs.n_segments) || vertexCount;
   const rawNdim = readCount(node.attrs.ndim);
   const ndim = rawNdim || 3;
   const vertexBytes = 10 * ndim + 70;
 
   // Accumulator growth can briefly retain old + new vertex/segment buffers;
-  // projection then emits endpoint attributes, and the committed geometry owns
-  // a 6-texel RGBA32F texture plus ordering storage per segment. Vertex pressure
-  // is `2.5 × (4 × ndim + 28)` = `10 × ndim + 70` bytes: the 1.5x
-  // accumulator grow can retain both old and new capacities. Segment pressure
-  // rounds the remaining overlap to 220 B/segment. Legacy nodes without
-  // n_segments use the accumulator's conservative 1:1 fallback. Admission only
-  // changes overlap, never stored or rendered data.
+  // projection then emits endpoint attributes. The segment term deliberately
+  // includes the resident 6-texel RGBA32F texture and ordering storage as a
+  // conservative total-heap proxy during handoff, even though the renderer's
+  // GPU budget also accounts for them. Authored totals intentionally upper-bound
+  // spatial-index partial slices and the first rung of progressive line ladders.
+  // Vertex pressure is `2.5 × (4 × ndim + 28)` = `10 × ndim + 70` bytes: the
+  // 1.5x accumulator grow can retain both old and new capacities. Segment
+  // pressure rounds the remaining overlap to 220 B/segment. Legacy nodes
+  // without n_segments use the accumulator's conservative 1:1 fallback.
+  // Admission only changes overlap, never stored or rendered data.
   return vertexCount * vertexBytes + segmentCount * ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES;
 }
 
@@ -162,7 +181,10 @@ export async function loadChildrenConcurrently(
       if (index >= sceneChildren.length) return;
       const child = sceneChildren[index];
       const slot = slots[index];
-      const releaseWorkingSet = await workingSetGate.acquire(estimateWorkingSetBytes(child));
+      const releaseWorkingSet = await workingSetGate.acquire(
+        estimateWorkingSetBytes(child),
+        child.path
+      );
       if (failed) {
         releaseWorkingSet();
         return;

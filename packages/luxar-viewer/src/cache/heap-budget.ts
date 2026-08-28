@@ -36,7 +36,9 @@ const MB = 1024 * 1024;
  * accumulators (which are uncapped and transient).
  */
 const CACHE_SHARE_OF_TARGET = 0.6;
-const WORKING_SET_SHARE_OF_TARGET = 1 - CACHE_SHARE_OF_TARGET;
+const NON_CACHE_SHARE_OF_TARGET = 1 - CACHE_SHARE_OF_TARGET;
+const EAGER_WORKING_SET_SHARE_OF_REMAINDER = 0.5;
+const EAGER_WORKING_SET_CAP_BYTES = 512 * MB;
 
 /** Hard ceiling on the S-cache so a huge heap can't pin an absurd budget. */
 const SLICE_CAP_BYTES = 2048 * MB;
@@ -152,9 +154,12 @@ export function readHeapLimitBytes(): number | undefined {
 }
 
 /**
- * Heap headroom left outside the cache pool for transient decode, projection,
- * scene-graph, render, and WASM work. Returns `undefined` when the browser does
- * not expose a measurable heap so the caller can retain its existing fallback.
+ * The eager child loader's share of the heap headroom left outside the cache
+ * pool. Half of that shared remainder stays available for render, WASM,
+ * prefetch, and unrelated scene-graph work, while the absolute cap prevents a
+ * large V8 heap limit from recreating an eight-wide allocation spike. Returns
+ * `undefined` when the browser does not expose a measurable heap so the caller
+ * can retain its existing fallback.
  */
 export function computeWorkingSetBudgetBytes(
   heapLimitBytes: number | undefined = readHeapLimitBytes()
@@ -162,8 +167,10 @@ export function computeWorkingSetBudgetBytes(
   if (heapLimitBytes === undefined || !Number.isFinite(heapLimitBytes) || heapLimitBytes <= 0) {
     return undefined;
   }
+  const nonCacheRemainder =
+    heapLimitBytes * config.dataLoading.memory.targetHeapUsage * NON_CACHE_SHARE_OF_TARGET;
   return Math.floor(
-    heapLimitBytes * config.dataLoading.memory.targetHeapUsage * WORKING_SET_SHARE_OF_TARGET
+    Math.min(nonCacheRemainder * EAGER_WORKING_SET_SHARE_OF_REMAINDER, EAGER_WORKING_SET_CAP_BYTES)
   );
 }
 
