@@ -29,7 +29,15 @@ from .model import Check, Finding
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import zarr
 
-__all__ = ["ALL_CHECKS", "check_partition_split_planes"]
+__all__ = ["ALL_CHECKS", "check_gsplat_readable", "check_partition_split_planes"]
+
+
+class _GsplatStructureError(ValueError):
+    """Structural validation failure with its store-relative location."""
+
+    def __init__(self, path: str, message: str) -> None:
+        super().__init__(message)
+        self.path = path
 
 
 def _iter_groups(group: "zarr.Group", path: str = "") -> "List[Tuple[str, Any]]":
@@ -38,6 +46,178 @@ def _iter_groups(group: "zarr.Group", path: str = "") -> "List[Tuple[str, Any]]"
     for name in sorted(group.group_keys()):
         out.extend(_iter_groups(group[name], f"{path}/{name}" if path else name))
     return out
+
+
+def _logical_array_shape(
+    root: "zarr.Group", array: "zarr.Array", name: str, where: str
+) -> Tuple[int, ...]:
+    """Decoded shape inferred from zarr and encoding metadata, without reading data."""
+    shape = tuple(int(size) for size in array.shape)
+    encoding = array.attrs.get("encoding")
+    if not isinstance(encoding, dict):
+        return shape
+    if encoding.get("name") == "broadcasted":
+        if not shape:
+            raise ValueError("broadcasted array has no leading dimension")
+        return (int(encoding["n_elements"]), *shape[1:])
+    if encoding.get("name") == "array_ref":
+        target = encoding.get("target")
+        try:
+            root[encoding["target"]]
+        except KeyError as exc:
+            raise ValueError(
+                f"array {name!r} at {where} references a missing target {target!r}"
+            ) from exc
+        original_shape = encoding.get("original_shape")
+        if not isinstance(original_shape, (list, tuple)) or not original_shape:
+            raise ValueError("array_ref is missing a non-empty original_shape")
+        return tuple(int(size) for size in original_shape)
+    return shape
+
+
+def _leaf_array_lengths(
+    root: "zarr.Group", group: "zarr.Group", path: str
+) -> Dict[str, int]:
+    """Required leaf-array lengths from metadata only."""
+    where = path or "root"
+    arrays = dict(group.arrays())
+    names = ["centers", "amplitudes"]
+    if "cholesky_factors_diag" in arrays:
+        names.append("cholesky_factors_diag")
+        diag_shape = _logical_array_shape(
+            root, arrays["cholesky_factors_diag"], "cholesky_factors_diag", where
+        )
+        if len(diag_shape) < 2:
+            raise ValueError(
+                f"array 'cholesky_factors_diag' at {where} has invalid shape "
+                f"{diag_shape}"
+            )
+        if diag_shape[1] > 1:
+            names.append("cholesky_factors_offdiag")
+    else:
+        names.append("cholesky_factors")
+    if "colors" in arrays:
+        names.append("colors")
+
+    lengths: Dict[str, int] = {}
+    for name in names:
+        if name not in arrays:
+            raise ValueError(f"missing required array {name!r} at {where}")
+        shape = _logical_array_shape(root, arrays[name], name, where)
+        if not shape:
+            raise ValueError(f"array {name!r} at {where} has no leading dimension")
+        lengths[name] = shape[0]
+    return lengths
+
+
+def _validate_leaf_arrays(root: "zarr.Group", group: "zarr.Group", path: str) -> None:
+    """Require every leaf array to describe the same number of splats."""
+    try:
+        lengths = _leaf_array_lengths(root, group, path)
+    except Exception as exc:
+        raise _GsplatStructureError(path, str(exc)) from exc
+    if len(set(lengths.values())) == 1:
+        return
+    joined = ", ".join(f"{name}={length}" for name, length in lengths.items())
+    raise _GsplatStructureError(
+        path, f"array lengths disagree at {path or 'root'}: {joined}"
+    )
+
+
+def _validate_gsplat_structure(
+    root: "zarr.Group", group: "zarr.Group", path: str = ""
+) -> None:
+    """Mirror ``read_gsplat_node`` using group and array metadata only."""
+    kind = group.attrs.get("kind")
+    if kind == "lod":
+        prefix = "child_"
+    elif kind == "partition":
+        prefix = "part_"
+    else:
+        n_additive = int(group.attrs.get("n_additive_sublods", 1))
+        if n_additive > 1:
+            for index in range(n_additive):
+                name = f"additive_{index}"
+                if name not in group:
+                    child_path = f"{path}/{name}" if path else name
+                    raise _GsplatStructureError(
+                        child_path,
+                        f"missing required group {name!r} at {path or 'root'}",
+                    )
+                _validate_leaf_arrays(
+                    root, group[name], f"{path}/{name}" if path else name
+                )
+            return
+        _validate_leaf_arrays(root, group, path)
+        return
+
+    names = [name for name in group.group_keys() if str(name).startswith(prefix)]
+    if not names:
+        raise _GsplatStructureError(
+            path, f"{kind} group at {path or 'root'} has no children"
+        )
+    for index in range(len(names)):
+        name = f"{prefix}{index}"
+        if name not in group:
+            child_path = f"{path}/{name}" if path else name
+            raise _GsplatStructureError(
+                child_path, f"missing required group {name!r} at {path or 'root'}"
+            )
+        _validate_gsplat_structure(
+            root, group[name], f"{path}/{name}" if path else name
+        )
+
+
+def check_gsplat_readable(root: "zarr.Group") -> List[Finding]:
+    """A standalone gsplat store must use a format the current reader accepts."""
+    if root.attrs.get("format_type") != "gsplats_zarr":
+        return []
+
+    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
+
+    version = root.attrs.get("format_version")
+    if version not in SUPPORTED_FORMAT_VERSIONS:
+        return [
+            Finding(
+                check="format-version",
+                severity="error",
+                path="",
+                summary=f"unsupported gsplat format version {version!r}",
+                detail=(
+                    "The current Luxar reader cannot open this store; supported "
+                    f"versions are {SUPPORTED_FORMAT_VERSIONS}."
+                ),
+                remedy=(
+                    "Convert it with `luxar gsplat migrate-format <input> "
+                    "<output.gsplats.zarr>`."
+                ),
+            )
+        ]
+
+    try:
+        _validate_gsplat_structure(root, root)
+    except _GsplatStructureError as exc:
+        path = exc.path
+        error = str(exc)
+    except Exception as exc:
+        path = ""
+        error = str(exc)
+    else:
+        return []
+    return [
+        Finding(
+            check="readability",
+            severity="error",
+            path=path,
+            summary="gsplat store cannot be read",
+            detail=(
+                f"The store's tree or leaf-array metadata is incomplete: {error}. "
+                "This check does not read chunk payloads, so corruption inside "
+                "stored chunks may only surface when the data is loaded."
+            ),
+            remedy="Restore the incomplete store or regenerate it from its source.",
+        )
+    ]
 
 
 def _part_boxes(
@@ -552,4 +732,4 @@ def _stale_finding(
 
 
 #: Every check, in the order the doctor runs them.
-ALL_CHECKS: "List[Check]" = [check_partition_split_planes]
+ALL_CHECKS: "List[Check]" = [check_gsplat_readable, check_partition_split_planes]
