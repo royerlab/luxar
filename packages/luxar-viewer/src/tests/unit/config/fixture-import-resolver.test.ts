@@ -8,6 +8,7 @@ import {
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }));
 
 const mockedExecFileSync = vi.mocked(execFileSync);
+const expectedTimeoutMs = Number(process.env.LUXAR_FIXTURE_GEN_TIMEOUT_MS) || 1_200_000;
 
 describe('fixture import resolver', () => {
   beforeEach(() => {
@@ -24,7 +25,7 @@ describe('fixture import resolver', () => {
     fixtureInputFiles('/checkout-one', '/checkout-one/fixtures');
     fixtureInputFiles('/checkout-one', '/checkout-one/fixtures');
 
-    expect(FIXTURE_GENERATOR_TIMEOUT_MS).toBe(1_200_000);
+    expect(FIXTURE_GENERATOR_TIMEOUT_MS).toBe(expectedTimeoutMs);
     expect(mockedExecFileSync).toHaveBeenCalledOnce();
     expect(mockedExecFileSync).toHaveBeenCalledWith(
       'hatch',
@@ -39,10 +40,8 @@ describe('fixture import resolver', () => {
     });
 
     expect(() => fixtureInputFiles('/checkout-two', '/checkout-two/fixtures')).toThrow(
-      'Fixture import resolution exceeded the 1200000 ms budget. Raise it with '
-    );
-    expect(() => fixtureInputFiles('/checkout-two', '/checkout-two/fixtures')).toThrow(
-      'LUXAR_FIXTURE_GEN_TIMEOUT_MS'
+      `Fixture import resolution exceeded the ${expectedTimeoutMs} ms budget. ` +
+        'Raise it with LUXAR_FIXTURE_GEN_TIMEOUT_MS if this machine is slower.'
     );
   });
 });
