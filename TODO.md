@@ -372,8 +372,9 @@ to ship after). Sequencing is at the bottom.
     **permanent** (no self-delete; files immutable — edits become new versions).
     So: (1) rehearse on **`sandbox.zenodo.org`** first — a published Sandbox record
     serves files over the identical `/records/<id>/files/<name>?download=1` URL, so
-    point a record's `base_url` there, fetch + checksum-verify via
-    `ensure_dataset`, and only then repeat against production — a
+    point a record's `base_url` there, run `make check-cold-fetch` so every
+    variant is fetched with both the cache and in-repo copy hidden, and only then
+    repeat against production — a
     `ZENODO_SANDBOX_TOKEN` is needed to *create* that Sandbox record, not to
     download from it (the fetch leg is unauthenticated: `zenodo_file_url` builds a
     plain public URL and no code reads a Zenodo token today);
@@ -522,13 +523,14 @@ to ship after). Sequencing is at the bottom.
     reachable by outsiders yet. Confirm it goes live when the repo is made public
     (or enable/verify Pages visibility), and that the built site actually renders
     — nav, API autosummary, viewer typedoc, and images all resolve.
-  - **Content cleanup:** partially done — `handoffs/`, `reports/`, and `bugs/`
-    were pruned 2026-07-14 (#518), but `archive/`, `benchmarks/`, and
-    `templates/` are still in `docs/` (verified 2026-08-11). Prune or exclude
-    the remainder from the Sphinx build, then update/improve the user-facing
-    guides + API reference to match the current surface (gsplat cal→fit→lod
-    pipeline, LOD recipes, export/native, batch-fit, filtering). Cross-check
-    against the CLI so examples don't drift.
+  - **Content cleanup:** the non-public docs trees are pruned: `handoffs/`,
+    `reports/`, and `bugs/` on 2026-07-14 (#518), then `archive/` and
+    `templates/` on 2026-08-27 (#2274). `benchmarks/` deliberately remains as
+    result data used by the bisection tooling and is excluded from Sphinx. The
+    remaining work is to update/improve the user-facing guides + API reference
+    to match the current surface (gsplat cal→fit→lod pipeline, LOD recipes,
+    export/native, batch-fit, filtering). Cross-check against the CLI so
+    examples don't drift.
 - **R19 [LAUNCH] — README refresh + showcase the newer/better demos (images +
   video).** Extends R11 (whose one open remainder was "regenerate the gallery
   media"). The pipeline exists: `make generate-readme-demos →
@@ -798,8 +800,9 @@ to ship after). Sequencing is at the bottom.
 >   licensing-mandated `git rm` of the four local-compute datasets — start the
 >   Sandbox rehearsal. *(2026-08-12: the dataset removal is now in flight as
 >   PR #1554, with the history-purge plan recorded under R17.)*
-> - **R18:** handoffs/reports/bugs were pruned in July (#518); `archive/`,
->   `benchmarks/`, `templates/` still ship in `docs/`.
+> - **R18:** handoffs/reports/bugs were pruned in July (#518), and
+>   archive/templates on 2026-08-27 (#2274); benchmark result data remains
+>   deliberately excluded from Sphinx. The guide/API content pass remains.
 > - **R19:** incremental refreshes landing (tractography #1119, mesh tile #1376,
 >   ATP synthase #1394; harness hardening #1384/#1400); hold the full curation
 >   sweep until the mesh/capsule arcs settle + R17 is live.
