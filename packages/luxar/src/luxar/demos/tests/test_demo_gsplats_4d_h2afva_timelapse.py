@@ -17,8 +17,8 @@ from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_gsplats_4d_h2afva_timelapse.py"
 _MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
-_ARCHIVE_SHA256 = "c5e14be93c3e5626697bb12b9f9729050985dd9c65e8aece09394358e5874c11"
-_ARCHIVE_BYTES = 1_873_559_527
+_ARCHIVE_SHA256 = "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae"
+_ARCHIVE_BYTES = 1_115_714_088
 
 
 def _load_demo_module(name: str = "_luxar_demo_h2afva_timelapse_for_tests"):

@@ -13,12 +13,10 @@ four splat budgets, this is the recording as a TIMELAPSE — the axis the other
 two hold fixed.
 
 STRUCTURE:
-    ``kind=partition`` of 44 spatial parts. Each part is an adaptive LOD group
-    with four substitutive levels (64x, 16x, 4x, and full resolution), and each
-    level carries a four-step stream ladder. The viewer frustum-culls whole
-    parts, selects coarser or finer levels by screen coverage, and progressively
-    streams the selected level; the stacked time axis is a hard coarsening
-    barrier, so no coarse splat ever blends two timepoints together.
+    One 4D gsplat leaf with a twelve-step progressive stream ladder. There are
+    no spatial partitions or substitutive LOD levels; the viewer progressively
+    streams the ladder. The stacked time axis is a hard coarsening barrier, so
+    no coarse splat ever blends two timepoints together.
 
 DATA SOURCE & CITATIONS:
     Royer lab, CZ Biohub San Francisco (zebrahub). Raw acquisition:
@@ -47,7 +45,7 @@ ANISOTROPY AND UNITS:
     lateral pitch (0.40625 um) folded in as a second uniform scale. This
     archive does not, and grafting cannot apply one — converting would mean a
     ``gsplat transform --scale 0.40625,0.40625,0.40625,1`` pass over the whole
-    1.87 GB fit, which changes its bytes and therefore its published checksum.
+    1.12 GB fit, which changes its bytes and therefore its published checksum.
     That is a data-side change, not a scene-authoring one, so the axes here are
     honest about being pixels. At the companion's calibration (0.40625 um
     laterally, 1.625 um axially) this envelope is 660 x 828 x 831 um.
@@ -56,8 +54,7 @@ PIPELINE (provenance of the bundled gsplats — NOT re-run here):
     1. Fit the full 253-timepoint ``h2afva/fused`` timelapse
        (``h2afva_253tp.gsplats.zarr``).
     2. Slice every fifth timepoint and renumber the stacked axis
-       -> ``h2afva_51tp.gsplats.zarr``, 44 content-balanced parts with four
-       substitutive LOD levels and a four-step stream ladder inside each level.
+       -> ``h2afva_51tp.gsplats.zarr``, one leaf with a twelve-step stream ladder.
     3. ``gsplat transform --scale 4,1,1,1`` -> isotropic proportions.
 
     The 51-frame fit is the manifest's default variant precisely because the
@@ -75,13 +72,13 @@ DEMO_META = {
     "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
     "description": (
         "Zebrafish embryogenesis as a 4D Gaussian-splat timelapse: 51 timepoints "
-        "of histone-labelled nuclei in 44 frustum-culled spatial parts with "
-        "adaptive coarse-to-fine LOD and per-level streaming."
+        "of histone-labelled nuclei in one progressively streamed twelve-step "
+        "detail ladder."
     ),
     "category": "microscopy",
     "geometry": "gsplats",
     "requirements": {
-        "download_mb": 1787,
+        "download_mb": 1064,
         "compute": "light",
         "gpu": "none",
         # Hosted-only: the fitted archive lives on Zenodo record 21912284, which
@@ -153,7 +150,7 @@ def resolve_data() -> Path:
 
 
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
-    """Build the 4D scene by grafting the 44-part partition subtree."""
+    """Build the 4D scene by grafting the progressive-ladder subtree."""
     with asection("Creating h2afva timelapse scene"):
         node, _ = load_gsplat_node(str(data_path))
         bmin, bmax = center_bounds(node)
@@ -224,18 +221,16 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 f"Zebrafish embryo nuclei (histone H2A variant label) across "
                 f"{n_frames} timepoints of the zebrahub h2afva light-sheet "
                 f"recording — every {SOURCE_STRIDE}th frame of 253 — fitted as "
-                "Gaussian splats in 44 spatial parts. Each part has adaptive "
-                "coarse-to-fine LOD with a stream ladder inside every level and is "
-                "frustum-culled independently; the time axis is a coarsening "
-                "barrier, so no coarse splat blends two timepoints. Step Time to "
-                "watch the body axis form. Press L for the Layers panel."
+                "one Gaussian-splat leaf with a twelve-step progressive ladder. "
+                "The time axis is a coarsening barrier, so no coarse splat blends "
+                "two timepoints. Step Time to watch the body axis form. Press L "
+                "for the Layers panel."
             )
 
-            with asection(f"Adding gsplats (44-part partition, {n_frames} frames)"):
-                # This archive has no BSP split planes, so the viewer can only
-                # order its 44 parts by centroid. Keep the additive mode used for
-                # the validated gallery build: unlike volumetric compositing, it
-                # is order-independent and cannot pop at part seams during orbit.
+            with asection(f"Adding gsplats (12-step ladder, {n_frames} frames)"):
+                # Keep the additive mode used for the validated gallery build:
+                # unlike volumetric compositing, it is order-independent as the
+                # progressive rungs arrive.
                 scene.add_gsplats_from_file(
                     name="zebrafish_nuclei_4d",
                     path=str(data_path),
@@ -295,7 +290,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("GSplats Demo: Zebrafish Embryogenesis (h2afva timelapse)")
     aprint("=" * 70)
-    aprint("51 timepoints • 44 frustum-culled parts • progressive ladders")
+    aprint("51 timepoints • one leaf • 12-step progressive ladder")
     aprint("")
 
     output_path = get_demos_output_dir() / SCENE_NAME

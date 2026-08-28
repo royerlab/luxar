@@ -537,7 +537,7 @@
       "variants": {
         "51tp": {
           "default": true,
-          "approx_bytes": 1873559527,
+          "approx_bytes": 1115714088,
           "note": "51-timepoint fit (every 5th frame) \u2014 lighter default for the demo.",
           "files": [
             {
