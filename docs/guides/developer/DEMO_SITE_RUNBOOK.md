@@ -532,6 +532,88 @@ So **split the claim per demo** before promising a load win. "Fewer nodes" and
 "fewer bytes" are different wins; only paths that preserve archive topology get
 the first, and some demos are already correct.
 
+### 3.12 Before flattening, compute the RESIDENT count — the total will mislead you
+
+Section 7 gives the counting rule (only the resident slice counts, and its two
+traps). This is the flatten-specific consequence, because flattening is where the
+wrong number is most tempting: it collapses a tree into one node, and that node's
+**total** is what the compiler prints.
+
+Worked case. Flattening `h2afva_51tp` collapses 4,446 groups to 7 and yields one
+node of 121,163,285 splats:
+
+    node total, 51 timepoints   121,163,285   <- what ElementCapacityWarning prints
+    resident slice, worst case    2,629,840   <- what the GPU commits
+    cap (4096-class GPU)          4,194,304   -> 1.59x UNDER, fine
+
+Read as a total that is 28.89x over cap and looks like a blocker. It is not: only
+one of the 51 timepoints is ever resident. `_lod_policy.py` says so directly —
+*"the compiler also warns on the node total rather than the resident slice, so
+that warning is expected for a sliced nD node that satisfies the runtime limit."*
+**An `ElementCapacityWarning` on a sliced nD node is not a finding.**
+
+**The exception is a STATIC object**, which has no hidden axis to reduce the
+committed set. `cmu1`'s three channels flatten to 8,823,953 / 9,924,486 /
+10,830,790 splats and are 2D — nothing to slice on, so no configuration renders a
+channel whole, and the overflow shows as a Hilbert-contiguous clean-edged hole
+that reads as missing data. There, parts stop being optional and become
+load-bearing.
+
+So the check before flattening is arithmetic, not a run: a `kind=lod` group
+contributes only its finest child, a `kind=partition` sums its parts,
+`additive_N` rungs are prefixes that add nothing — then divide by the hidden-axis
+extent if there is one. Only if the **resident** figure exceeds the cap does the
+demo need `partition=dict(max_elements=…)` landing in the same change as the
+flatten.
+
+### 3.13 A ladder's `counts` are in different UNITS per geometry, and the wrong one writes zero rungs
+
+On `add_lines`, an explicit `counts` list is in **polylines** while
+`"stream:<c>"` is in **vertices**. Measured on 4,000 polylines x 27 vertices:
+
+    counts=[39062, 78124, 108000]   -> clamped to the polyline count -> 0 RUNGS
+    "stream:39062"                  -> 3 rungs (39,069 / 39,069 / 29,862 vertices)
+
+The clamp is silent: no error, no warning, and a store with zero rungs still
+loads and still renders. `check_demo_ladders.py` is the only thing that catches
+it, and only above 200,000 elements — so a mid-sized demo can ship a ladder that
+does not exist.
+
+`_lod_policy.stream_ladder` now takes an explicit `geometry=` and raises on an
+unknown value rather than guessing the unit.
+
+### 3.14 One viewport does not validate a substitutive ladder
+
+A whole-object substitutive ladder anchors its finest level at **0.5 screen
+occupancy**, and adding levels cannot move that anchor. So the *viewport aspect
+ratio* — not the ladder — can decide whether a scene is bounded.
+
+Measured on `cosmicflows_laniakea_full` at the authored pose: two substitutive
+levels settled at ~892k splats on **16:9**, while the wide outer basins still
+selected ~2.1M and ~3.2M **fine** segments at **4:3** and **1:1**.
+
+A ladder that looks bounded on a 16:9 capture can therefore be unbounded on a
+square window. Validate at several aspect ratios, or prefer an additive ladder,
+whose prefix is bounded by construction rather than by framing.
+
+### 3.15 A streaming ladder's first rung is first paint — size it in bytes, not chunks
+
+desi's `stream:2000` is sized so its eager coarsest **substitutive** level lands
+in one zarr chunk. An additive-only leaf has no coarse level, so **its first rung
+*is* first paint**, and 2,000 elements is far below a sensible download budget.
+
+Measured across six embedding demos, group counts before and after converting
+substitutive to additive:
+
+    today            13 / 13 / 18 / 17 / 17 / 18
+    at stream:2000   12 / 12 / 15 / 14 / 17 / 18   <- essentially NO reduction
+    at stream:39062   7 /  7 / 11 /  9 / 13 / 13
+
+39,062 is a 200 ms budget at 25 Mbps and 16 B/element. At 2,000 every extra rung
+is another node, so the ladder costs requests without buying a faster first
+paint — the same accounting trap as counting nodes instead of bytes, one level
+down.
+
 ## 4. Cloudflare configuration
 
 ### 4.1 Cache rule on the data subdomain
