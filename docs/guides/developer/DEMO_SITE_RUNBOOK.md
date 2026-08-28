@@ -376,44 +376,65 @@ Consequences for this site:
 archive spread 0.08–0.35 dB with counts within ±0.3%. Treat anything under
 ~0.4 dB as noise; a difference only means something above that.
 
-### 3.10 A measurement is only evidence about the object it was pointed at
+### 3.10 One path, two generations: hash before asserting
 
-`demo_gsplats_2d_cmu1_pathology.py` states its hosted archives "are still flat
-leaves". A measurement came back contradicting it — 4,867 groups, 66 partition
-parts, 192 substitutive levels per channel — and this section originally recorded
-that as a docstring lying about its own artifact.
+`demo_gsplats_2d_cmu1_pathology.py` says its hosted archives "are still flat
+leaves". Two sessions measured `cmu1_ch0.gsplats.zarr.zip` and got answers that
+could not both be true — flat laddered leaf with **no `kind` attr anywhere**, and
+`{'partition': 1, 'lod': 64}` with 4,867 metadata docs.
 
-**The docstring was correct.** Read from the pinned bytes
-(`~/.cache/luxar/gsplats_cmu1_pathology/cmu1_ch{0,1,2}.gsplats.zarr.zip`):
+**Both were right.** The manifest pins two generations of the same filename:
 
-    .zgroup docs 7   declared kinds: NONE ANYWHERE
-    part_* 0   child_* 0   additive_* 4   element arrays 4
+    cmu1_ch0   sha256         cd22645f...   bytes          38,201,205   <- in-repo copy
+               hosted_sha256  29faffc1...   hosted_bytes   84,492,218   <- what the record serves
 
-Flat laddered leaves, all three channels, zarr format 2. The structured numbers
-belong to **`codex_pancreas`**, which sits beside cmu1 in the cache: its
-`codex_ch00` declares `kinds={'partition': 1, 'lod': 16}`, and the cache holds
-12 channels — so 16 x 12 = the 192 that was reported "per channel" for a demo
-that has only 3.
+This Mac's cache holds the in-repo generation (all three channels hash to
+`sha256` exactly). obsidian's cache holds the hosted generation (all three hash
+to `hosted_sha256` exactly). Same path string, same demo, 2.2-2.75x apart in
+bytes and structurally unrelated.
 
-Two independent invariants would have caught it before it reached this file:
+`_support/datasets/data_fetch.py` documents why: the two contracts were one field
+until a refit replaced the hosted artifact without touching the in-repo copy, and
+splitting them is what kept Zenodo publication off the critical path of every
+demo-data PR.
 
-- **Channel count.** 192 does not factor by 3. It factors by 12.
-- **Element totals.** cmu1's three archives sum to 6,896,619 + 7,093,383 +
-  6,601,413 = **20,591,415**, exactly the scene store's total, with largest node
-  1,773,346 in both. The scene is a verbatim graft — which is *also* the proof
-  the docstring was right.
+**The discriminator, and the only reliable one:** hash the file and match it
+against `sha256` vs `hosted_sha256`. That names the generation in one command.
+Byte size alone is suggestive; a digest is decisive. Neither session did this
+before asserting, and each had numbers to show.
 
-So the rule is not "distrust docstrings". It is: **before believing a
-measurement that contradicts a documented claim, confirm it was pointed at the
-right object** — with an invariant the object itself carries (a count, a total, a
-checksum), not by re-reading the same scan. Two sibling demos in one cache
-directory is all it takes, and the wrong answer arrives with numbers attached,
-which is what makes it persuasive.
+#### The consequence worth knowing
+
+`data_fetch.py` states the resolution order plainly: *"while an in-repo payload
+is present it wins over a newer hosted artifact, so a checkout with a stale LFS
+object keeps serving the older generation (loudly)."*
+
+So **the same demo builds a structurally different scene depending on which
+generation the building machine has in cache.** cmu1 grafts its archives
+verbatim, so on this Mac it produces a flat scene (12 element nodes, 20,591,415
+elements — exactly the sum of the three in-repo archives) and on a machine with
+the hosted copy it would produce a partitioned, laddered one.
+
+Two things follow for this site:
+
+- **A tile's structure is a property of the build host, not just the recipe.**
+  Record which host built a tile when its demo grafts pinned archives.
+- **A tile can be accidentally correct.** cmu1's live tile is flat because the
+  publishing machine held the stale in-repo generation — not because anything
+  chose that. Refreshing the LFS payload to match hosted would change the live
+  scene's structure with no code change and no manifest change visible in a diff.
+
+#### And the docstring
+
+It is describing the *hosted* archives, which do carry a partition and 64 lod
+groups per channel. So it is **wrong**, as the first instinct had it — but not for
+the reason v1 of this section gave, and the correction cannot be made from an
+in-repo measurement alone.
 
 Derive topology from each group's declared `kind` (children of `kind=lod` are
 substitutive levels, children of `kind=partition` are parts) rather than from
-node-name patterns. But note that cmu1 carries **no `kind` attr at all** and is
-still perfectly well-formed, so "no kinds" means *flat*, not *unreadable*.
+node-name patterns. And note that **no `kind` attr anywhere means flat, not
+unreadable** — the in-repo cmu1 generation is well-formed with zero kinds.
 
 ### 3.11 Flattening an archive only cuts requests if the demo grafts it
 
@@ -433,9 +454,10 @@ Measured on this corpus:
   and grafts its own output, so its 2,764 groups are authored, not inherited.
   Changing the *archive* would not move them; changing the recipe's
   `max_elements` would.
-- **`cmu1_pathology`** is neither: it grafts three already-flat archives
-  verbatim, so it is already the target shape end to end and there is nothing to
-  win on either axis.
+- **`cmu1_pathology`** grafts verbatim, so it inherits whichever generation is
+  in cache (3.10): flat from the in-repo copy, partitioned + laddered from the
+  hosted one. Flattening the hosted archives is a real win *and* collapses that
+  divergence — but measure the generation before claiming either.
 
 So **split the claim per demo** before promising a load win. "Fewer nodes" and
 "fewer bytes" are different wins, only the grafting demos get the first, and
