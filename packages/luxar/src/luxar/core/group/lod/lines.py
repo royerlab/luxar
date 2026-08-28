@@ -34,7 +34,6 @@ Five ordering methods mirror the Points helper:
 from __future__ import annotations
 
 import warnings
-from collections import Counter
 from typing import Any, List, Literal, Optional, Tuple, Union
 
 import numpy as np
@@ -206,6 +205,7 @@ def _indexed_ladder_edge_multisets(
     indices: NDArray,
     polylines: List[NDArray[np.intp]],
 ) -> Tuple[NDArray[np.intp], NDArray[np.intp]]:
+    """Return canonical undirected edge multisets with multiplicity preserved."""
     authored = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
     if polylines:
         lengths = np.fromiter(
@@ -251,19 +251,25 @@ def _validate_indexed_ladder_edges(
     if len(levels) <= 1 or line_type != "indexed":
         return
     assert indices is not None
-    authored, rebuilt = _indexed_ladder_edge_multisets(indices, polylines)
-    if np.array_equal(authored, rebuilt):
+    if _indexed_ladder_preserves_edges(indices, polylines):
         return
 
-    authored_rows = [tuple(map(int, edge)) for edge in authored]
-    rebuilt_rows = [tuple(map(int, edge)) for edge in rebuilt]
-    missing_edge = next(iter(Counter(authored_rows) - Counter(rebuilt_rows)))
+    authored, rebuilt = _indexed_ladder_edge_multisets(indices, polylines)
+    combined = np.concatenate((authored, rebuilt), axis=0)
+    unique_edges, inverse = np.unique(combined, axis=0, return_inverse=True)
+    split = authored.shape[0]
+    authored_counts = np.bincount(inverse[:split], minlength=unique_edges.shape[0])
+    rebuilt_counts = np.bincount(inverse[split:], minlength=unique_edges.shape[0])
+    mismatch = int(np.flatnonzero(authored_counts > rebuilt_counts)[0])
+    missing_edge = tuple(map(int, unique_edges[mismatch]))
     raise ValueError(
         "line_type='indexed' additive LOD cannot preserve the explicit edge list: "
         "every connected component's undirected edge multiset must equal its consecutive "
         "vertex pairs (edge direction and row order do not matter). "
-        f"Authored {len(authored_rows)} edges but the component chains produce "
-        f"{len(rebuilt_rows)}; offending authored edge {missing_edge} is absent. "
+        f"Authored {authored.shape[0]} edges but the component chains produce "
+        f"{rebuilt.shape[0]}; offending authored edge {missing_edge} is not matched "
+        f"by the component chains (authored multiplicity {authored_counts[mismatch]}, "
+        f"chain multiplicity {rebuilt_counts[mismatch]}). "
         "Remove additive_lod= and use partition= alone, or re-author the edges with "
         "line_type='segments'."
     )

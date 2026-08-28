@@ -735,10 +735,32 @@ class TestAddLinesAdditiveLod:
         message = str(error.value)
         assert "cannot preserve the explicit edge list" in message
         assert "Authored 18 edges but the component chains produce 18" in message
-        assert "offending authored edge (0, 2) is absent" in message
+        assert "offending authored edge (0, 2) is not matched" in message
         assert "Remove additive_lod= and use partition= alone" in message
 
         assert "stars" not in zarr.open(str(output), mode="r")
+
+    def test_indexed_duplicate_edge_reports_multiplicity(self, tmp_path) -> None:
+        output = tmp_path / "t.luxar.zarr"
+        vertices = np.zeros((4, 3), dtype=np.float32)
+        indices = np.array([[0, 1], [0, 1], [2, 3]], dtype=np.uint32)
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError) as error:
+                scene.add_lines(
+                    "duplicate",
+                    vertices,
+                    widths=np.ones(4, dtype=np.float32),
+                    indices=indices,
+                    line_type="indexed",
+                    additive_lod={"n_lods": 2, "method": "random"},
+                )
+
+        message = str(error.value)
+        assert "offending authored edge (0, 1) is not matched" in message
+        assert "authored multiplicity 2, chain multiplicity 1" in message
+        assert "duplicate" not in zarr.open(str(output), mode="r")
 
     @pytest.mark.parametrize(
         ("component_count", "n_lods"),
