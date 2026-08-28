@@ -26,9 +26,14 @@ keywords:
   - n-dimensional
   - webgl
   - zarr
+# Kept in step with packages/luxar/src/luxar/__init__.py and the viewer
+# package.json by `make set-version`, and gated by `hatch run check-versions`.
+# Zero-padded CalVer, matching the `v<version>` git tag; PyPI displays the same
+# release with leading zeros stripped.
+version: "2026.06.05"
+date-released: "2026-06-05"
 # ── TODO at launch (once the bioRxiv preprint is posted) ─────────────────────
-#   * set `version:` to the released CalVer (e.g. 2026.06.29)
-#   * set `date-released:` to the release date (YYYY-MM-DD)
+#   (`version:` / `date-released:` are stamped by `make set-version`.)
 #   * add the preprint as the preferred citation, e.g.:
 #       preferred-citation:
 #         type: article

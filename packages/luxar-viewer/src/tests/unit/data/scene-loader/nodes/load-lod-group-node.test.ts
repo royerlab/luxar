@@ -63,6 +63,8 @@ vi.mock('../../../../../data/scene-loader/nodes/load-mesh-node', () => ({
 }));
 
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
+import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
+import { ArchiveFaultError } from '../../../../../cache/chunk-source';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
@@ -889,7 +891,9 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
   it('marks the child failed (not ready) when the deferred load throws', async () => {
     attachStubChildren();
-    loadGSplatsNodeExpensiveMock.mockRejectedValue(new Error('boom'));
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(
+      new Error('outer load failure', { cause: new Error('boom') })
+    );
     const reg = makeReg();
     const ctx = makeCtx(reg);
 
@@ -905,6 +909,87 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
     expect(deferred.ready).toBe(false);
     expect(deferred.loading).toBe(false);
+    expect(deferred.permanentlyFailed).not.toBe(true);
+  });
+
+  it('latches a wrapped archive fault as a permanent lazy-level failure', async () => {
+    attachStubChildren();
+    const archiveFault = new ArchiveFaultError('archive is no longer readable', '/scene.zip');
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(
+      new Error('outer load failure', {
+        cause: new LoaderError('Network', '/lod/child_1', archiveFault),
+      })
+    );
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.failed).toBe(true));
+
+    expect(deferred.permanentlyFailed).toBe(true);
+    expect(deferred.ready).toBe(false);
+    expect(deferred.loading).toBe(false);
+
+    deferred.ready = true;
+    deferred.release!();
+    expect(deferred.ready).toBe(false);
+    expect(deferred.failed).toBe(true);
+    expect(deferred.permanentlyFailed).toBe(true);
+  });
+
+  it.each([
+    ['an archive fault', new ArchiveFaultError('archive open failed', '/scene.zip')],
+    ['an ordinary error', new Error('nested subtree failed')],
+  ])('keeps an anonymous deferred GROUP recoverable after %s', async (_label, failure) => {
+    attachStubChildren();
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      if (child.path === '/lod/child_1') throw failure;
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+    });
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const deferred = reg.get('/lod')!.children[1];
+      deferred.ensureLoaded!();
+      await vi.waitFor(() => expect(deferred.failed).toBe(true));
+
+      expect(deferred.object.name).toBe('');
+      expect(deferred.release).toBeUndefined();
+      expect(deferred.loading).toBe(false);
+      expect(deferred.permanentlyFailed).not.toBe(true);
+      expect(reg.retryLazyChildByLeafPath('')).toBe(false);
+      expect(reg.retryLazyChildByLeafPath('/lod/child_1')).toBe(false);
+
+      reg.setSelectorMode('/lod', { lockLevel: 1 });
+      reg.evaluatePerFrame();
+      for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+      await vi.waitFor(() => expect(deferred.failed).toBe(true));
+      expect(deferred.loading).toBe(false);
+
+      const attempts = loadSceneNodesMock.mock.calls.filter(
+        ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
+      );
+      expect(attempts).toHaveLength(2);
+    } finally {
+      warningSpy.mockRestore();
+    }
   });
 });
 

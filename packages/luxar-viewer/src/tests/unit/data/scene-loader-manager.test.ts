@@ -10,7 +10,7 @@
  * object, originally the C1/C2 hardening of the audit.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SceneLoaderManager, dispose } from '../../../data';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 
@@ -115,6 +115,29 @@ describe('SceneLoaderManager', () => {
     // New instance should be empty
     const newManager = SceneLoaderManager.getInstance();
     expect(newManager.getLoaderCount()).toBe(0);
+  });
+
+  it('disposes the previous KTX2 decoder when replaced or reset', () => {
+    const manager = SceneLoaderManager.getInstance();
+    const first = Object.assign(vi.fn(), { dispose: vi.fn() });
+    const second = Object.assign(vi.fn(), { dispose: vi.fn() });
+
+    manager.setKTX2TextureDecoder(first);
+    manager.setKTX2TextureDecoder(second);
+    expect(first.dispose).toHaveBeenCalledOnce();
+
+    SceneLoaderManager.disposeInstance();
+    expect(second.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('forwards the KTX2 decoder to each created SceneLoader', () => {
+    const manager = SceneLoaderManager.getInstance();
+    const decodeKTX2 = Object.assign(vi.fn(), { dispose: vi.fn() });
+
+    manager.setKTX2TextureDecoder(decodeKTX2);
+    const loader = manager.createLoader('ktx2');
+
+    expect((loader as unknown as { decodeKTX2: unknown }).decodeKTX2).toBe(decodeKTX2);
   });
 
   it('should handle getAllLoaders correctly', () => {

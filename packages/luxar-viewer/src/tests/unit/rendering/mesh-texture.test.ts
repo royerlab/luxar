@@ -76,6 +76,32 @@ describe('linearizeSRGBFloat', () => {
 });
 
 describe('createMeshTexture — formats', () => {
+  it('uses a transcoded compressed texture directly and preserves its mip chain', () => {
+    const compressed = new THREE.CompressedTexture([], 2, 1, THREE.RGBA_S3TC_DXT5_Format);
+    compressed.generateMipmaps = false;
+    const tex = createMeshTexture(
+      { kind: 'compressed', texture: compressed, width: 2, height: 1, channels: 4 },
+      attrs({ texture_encoding: 'ktx2' }),
+      CAPS
+    );
+    expect(tex).toBe(compressed);
+    expect(tex.generateMipmaps).toBe(false);
+    expect(tex.colorSpace).toBe(THREE.SRGBColorSpace);
+  });
+
+  it('uses a non-mipmapped filter for a single-level compressed texture', () => {
+    const compressed = new THREE.CompressedTexture([], 2, 1, THREE.RGBA_S3TC_DXT5_Format);
+    compressed.mipmaps = [{ data: new Uint8Array(16), width: 2, height: 1 }];
+    compressed.minFilter = THREE.LinearFilter;
+    const tex = createMeshTexture(
+      { kind: 'compressed', texture: compressed, width: 2, height: 1, channels: 4 },
+      attrs({ texture_encoding: 'ktx2' }),
+      CAPS
+    );
+    expect(tex.minFilter).toBe(THREE.LinearFilter);
+    expect(tex.generateMipmaps).toBe(false);
+  });
+
   it('keeps an 8-bit texture 8-bit and lets the sampler decode sRGB', () => {
     // Widening would cost 4x the memory to reach the identical sampled value:
     // the GPU normalizes uint8 to [0, 1] and decodes sRGB in hardware, both free.

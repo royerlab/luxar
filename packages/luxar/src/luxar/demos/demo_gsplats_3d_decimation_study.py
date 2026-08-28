@@ -65,13 +65,17 @@ The shipped levels use ``merge-levels`` (the winner in the range that matters).
 
 REPRODUCING IT:
 
-    # decimate (Python: luxar.gsplats.lod.substitutive.make_substitutive_lod)
-    luxar gsplat lod flat.gsplats.zarr out.gsplats.zarr --recipe levels -K 10 -L 1
+    luxar gsplat flatten parent.gsplats.zarr flat.gsplats.zarr
+    luxar gsplat decimate flat.gsplats.zarr quarter.gsplats.zarr \
+        -f 0.25 -m merge --device cpu
+    # Repeat at -f 0.10 and -f 0.05 for the other shipped levels.
     # score against the source volume
-    luxar gsplat compare out.gsplats.zarr orig_tp234.npy --device cuda
+    luxar gsplat compare quarter.gsplats.zarr orig_tp234.npy --device cuda
 
-  ``compare`` reports GLOBAL PSNR; the foreground figures above come from the
-  same render with the MSE restricted to the Otsu-masked voxels.
+  The shipped counts were produced by this flatten + direct merge-decimation
+  recipe. ``--recompute`` is the supported rebuild and reproduces their counts
+  within 0.02%. ``compare`` reports GLOBAL PSNR; the foreground figures above
+  come from the same render with the MSE restricted to Otsu-masked voxels.
 
 DATA SOURCE & CITATIONS:
     Royer lab, CZ Biohub San Francisco (zebrahub). ``h2afva/fused``, timepoint
@@ -83,7 +87,7 @@ DATA SOURCE & CITATIONS:
     of the two numbers).
 
 USAGE:
-    python demo_gsplats_3d_decimation_study.py [--no-serve] [--serve-only]
+    python demo_gsplats_3d_decimation_study.py [--recompute] [--parent PATH] [--no-serve] [--serve-only]
 
 OUTPUT:
     - Scene saved to:  datasets/demos/gsplats_3d_decimation_study.luxar.zarr
@@ -115,6 +119,7 @@ DEMO_META = {
     },
 }
 
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -127,6 +132,8 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    parse_path_arg,
+    run_luxar_cli,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
 from luxar.gsplats.tree import center_bounds
@@ -174,6 +181,118 @@ LEVELS = [
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
+
+#: ``--parent PATH`` — the tp234 fit the levels are derived from. Optional: with
+#: no flag the parent is fetched via ``ensure_dataset`` like any other demo
+#: dataset. It exists because the parent is a lab fit rather than a public
+#: download, so a rebuild from scratch has to be able to name a local copy.
+PARENT_ARG = parse_path_arg("parent")
+
+#: Reduction fractions, coarsest LAST, matched to LEVELS[1:].
+#: `merge` (substitutive) NOT `prefix`: at these ratios merging beats deleting by
+#: 3-4 dB because it conserves mass instead of discarding it. Verified against
+#: the shipped files rather than assumed -- see RECOMPUTE_NOTES below.
+DECIMATION_FRACTIONS = [0.25, 0.10, 0.05]
+
+RECOMPUTE_NOTES = """\
+Derived, not fitted: no source volume and no GPU are needed, only the tp234
+parent. Chain, with every step verified against the shipped archives:
+
+    tp234 parent   1,653,405 splats, 41 spatial tiles   (a kind=partition)
+      flatten   ->  h2afva_full, single flat leaf, SAME count
+      decimate  ->  quarter / tenth / twentieth at -f 0.25 / 0.10 / 0.05,
+                    method=merge, device=cpu
+
+`--device cpu` pins CUDA-capable hosts to the CPU path used for the recorded
+rebuild; `auto` otherwise prefers CUDA when available. MPS already falls back to
+CPU, so the explicit flag only silences that warning there. The measured CPU run
+at -f 0.10 gave 165,271 splats against the shipped 165,276 (0.003%). No
+CPU-versus-CUDA count comparison was made.
+
+NOT REPRODUCED HERE: the shipped files went through a further encoding pass --
+every family member differs in size between the 2026-08-12 build and the pinned
+record copy (full 18,070,045 -> 17,812,123; twentieth 1,036,456 -> 1,010,680),
+which is the v3/3.4 reencode. Byte-identity with the shipped archives is
+therefore NOT expected from this path; splat counts and quality are.
+"""
+
+
+# =============================================================================
+# Recompute (--recompute): rebuild the four levels from the tp234 parent
+# =============================================================================
+def _resolve_parent() -> Path:
+    """The tp234 fit: an explicit --parent, else the shipped stack dataset."""
+    if PARENT_ARG is not None:
+        parent = PARENT_ARG.expanduser()
+        if not parent.exists():
+            raise FileNotFoundError(f"--parent does not exist: {parent}")
+        aprint(f"parent from --parent: {parent}")
+        return parent
+    aprint("no --parent given; resolving the shipped tp234 stack")
+    (parent,) = ensure_dataset("gsplats_3d_h2afva_stack")
+    return parent
+
+
+def recompute_levels(work_dir: Path) -> list[Path]:
+    """Rebuild all four levels; returns them in LEVELS order.
+
+    Writes into ``work_dir`` and returns directory stores (not zips) -- the
+    scene builder loads either, and zipping is a packaging step that belongs to
+    whoever publishes, not to a rebuild.
+    """
+    with asection("Recomputing decimation levels"):
+        aprint(RECOMPUTE_NOTES)
+        parent = _resolve_parent()
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Flatten the partition into the single flat leaf the study needs.
+        #    Every level here must be ONE leaf: the demo's whole point is that
+        #    what you see is the splats named in the selector, with no LOD tree
+        #    swapping content in behind the camera.
+        full = work_dir / LEVELS[0]["file"].replace(".zip", "")
+        run_luxar_cli("gsplat", "flatten", str(parent), str(full))
+
+        out = [full]
+        for level, fraction in zip(LEVELS[1:], DECIMATION_FRACTIONS, strict=True):
+            dest = work_dir / level["file"].replace(".zip", "")
+            run_luxar_cli(
+                "gsplat",
+                "decimate",
+                str(full),
+                str(dest),
+                "-f",
+                str(fraction),
+                "-m",
+                "merge",
+                "--device",
+                "cpu",
+            )
+            out.append(dest)
+
+        # Report the counts against what the labels claim. A level whose count
+        # drifts far from its label makes the on-screen "25% / 411K / 41.7 dB"
+        # a lie, and the label is the only thing telling a viewer what they are
+        # looking at.
+        drifted = []
+        for level, path in zip(LEVELS, out, strict=True):
+            node, _stats = load_gsplat_node(str(path))
+            got = int(node.n_splats)
+            want = level["splats"]
+            drift = abs(got - want) / max(want, 1)
+            flag = "ok" if drift < 0.01 else "DRIFT"
+            aprint(f"  [{flag}] {path.name}: {got:,} splats (label says {want:,})")
+            if drift >= 0.01:
+                drifted.append(f"{path.name}: {got:,} instead of {want:,}")
+        if drifted:
+            details = "; ".join(drifted)
+            raise ValueError(
+                "--parent does not reproduce the counts behind the shipped labels "
+                f"({details}); expected the tp234 h2afva fit, got {parent}"
+            )
+        return out
 
 
 # =============================================================================
@@ -319,7 +438,10 @@ def main() -> None:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    level_paths = resolve_data()
+    if RECOMPUTE:
+        level_paths = recompute_levels(get_demos_output_dir() / "decimation_recompute")
+    else:
+        level_paths = resolve_data()
     scene_path = create_luxar_scene(level_paths, output_path)
 
     if not NO_SERVE:

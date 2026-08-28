@@ -1044,6 +1044,24 @@ describe('preflightMesh — textures and UVs', () => {
     expect(result.accountedBytes).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
   });
 
+  it('charges KTX2 at one byte per pixel plus the complete mip tail', async () => {
+    const result = await preflightMesh(
+      PATH,
+      texAttrs({ texture_encoding: 'ktx2', texture_width: 4096, texture_height: 4096 }),
+      texHandles()
+    );
+    expect(result.texture?.decode).toBe('ktx2');
+    const surfaceWithMips = Math.ceil((4096 * 4096 * 4) / 3);
+    expect(result.accountedBytes).toBeGreaterThan(surfaceWithMips);
+    expect(result.accountedBytes).toBeLessThan(surfaceWithMips + 1024 * 1024);
+  });
+
+  it('refuses single-channel KTX2 rather than silently expanding it to RGB', async () => {
+    await expect(
+      preflightMesh(PATH, texAttrs({ texture_encoding: 'ktx2', texture_channels: 1 }), texHandles())
+    ).rejects.toThrow(/only RGB or RGBA.*use 'raw'/);
+  });
+
   it('does NOT double-charge a raw texture', async () => {
     // The raw surface is already charged by the generic per-array loop, so the
     // dedicated term must skip it. A raw 4096x4096x4 uint8 texture accounts for

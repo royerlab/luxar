@@ -29,14 +29,16 @@
  * filterable in core WebGL2 and carries ~11 bits of mantissa, which is ample for
  * an image; float32 is used only where the capability probe confirms it.
  *
- * **3. `v = 0` is the FIRST row of the image, on both arms.** `texture.flipY` is
- * set to `false` explicitly rather than left at its default, because the two
- * defaults disagree AND one of them is a lie:
+ * **3. `v = 0` is the FIRST row of the image, on all three arms.** `texture.flipY`
+ * is set to `false` explicitly rather than left at its default, because the
+ * defaults disagree AND two of them are inert or misleading:
  *
  * - `DataTexture` defaults `flipY = false`;
  * - a `Texture` over an `ImageBitmap` defaults `flipY = true`, and WebGL
  *   **silently ignores it** — `UNPACK_FLIP_Y_WEBGL` has no effect on an
  *   `ImageBitmap` upload, so the flag reads `true` while nothing is flipped.
+ * - a `CompressedTexture` defaults `flipY = false`, and WebGL likewise cannot
+ *   apply `UNPACK_FLIP_Y_WEBGL` to its already-compressed mip payloads.
  *
  * Left alone, that made `texture_encoding` change the MEANING of a UV: the same
  * coordinates over the same pixels rendered upside down as raw vs as JPEG. Since
@@ -179,7 +181,9 @@ function resolveWrap(attrs: MeshMetadata): { wrapS: THREE.Wrapping; wrapT: THREE
  * Build a GPU texture from a decoded mesh texture payload.
  *
  * The caller owns disposal. For the `bitmap` arm the returned texture holds the
- * `ImageBitmap`, so disposing the texture is what releases it.
+ * `ImageBitmap`, so disposing the texture is what releases it. The `compressed`
+ * arm returns the decoder-owned texture instance after applying mesh sampling
+ * state; `applyMeshTexture` transfers that instance to geometry-owned disposal.
  */
 export function createMeshTexture(
   data: MeshTextureData,
@@ -193,7 +197,10 @@ export function createMeshTexture(
 
   let texture: THREE.Texture;
 
-  if (data.kind === 'bitmap') {
+  if (data.kind === 'compressed') {
+    texture = data.texture;
+    texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  } else if (data.kind === 'bitmap') {
     // The browser already produced an 8-bit RGBA surface, so the hardware sRGB
     // sampler is available and exact — no CPU pass, and no precision lost.
     texture = new THREE.Texture(data.bitmap);
@@ -241,15 +248,18 @@ export function createMeshTexture(
     }
   }
 
-  // Decision (3): pinned off on BOTH arms, so `texture_encoding` cannot change
+  // Decision (3): pinned off on ALL arms, so `texture_encoding` cannot change
   // what a UV means. Not left to the defaults — they differ by arm, and the
-  // ImageBitmap one is silently ignored by WebGL.
+  // ImageBitmap/compressed upload flags are ignored by WebGL.
   texture.flipY = false;
   texture.magFilter = magFilter;
-  texture.minFilter = minFilter;
+  texture.minFilter =
+    data.kind === 'compressed' && texture.mipmaps.length <= 1 && mipmaps
+      ? THREE.LinearFilter
+      : minFilter;
   texture.wrapS = wrapS;
   texture.wrapT = wrapT;
-  texture.generateMipmaps = mipmaps;
+  texture.generateMipmaps = data.kind === 'compressed' ? false : mipmaps;
   // Anisotropy matters more here than for any existing texture: a globe is viewed
   // at grazing incidence near its silhouette, which is exactly where isotropic
   // mipmapping blurs along the wrong axis. Clamped to the material manager's
