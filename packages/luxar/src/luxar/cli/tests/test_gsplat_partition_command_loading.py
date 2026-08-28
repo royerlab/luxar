@@ -209,6 +209,82 @@ def test_flatten_keeps_root_stats_out_of_leaf_lod_stats(tmp_path: Path) -> None:
     assert output["pipeline"].attrs["image_min"] == 600.0
 
 
+def test_flatten_discards_partition_slot_provenance(tmp_path: Path) -> None:
+    import zarr
+
+    partition_path, _, _ = _write_inputs(tmp_path)
+    output_path = tmp_path / "flattened.gsplats.zarr"
+    source = zarr.open_group(str(partition_path), mode="a")
+    source["fitting"].attrs["part_provenance"] = [
+        {"coordinate": 0.0, "fitting": {"source_bytes": 3000}},
+        {"coordinate": 1.0, "fitting": {"source_bytes": 3000}},
+    ]
+    assert "part_provenance" in source["fitting"].attrs
+
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "flatten", str(partition_path), str(output_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    output = zarr.open_group(str(output_path), mode="r")
+    assert "part_provenance" not in output["fitting"].attrs
+
+
+def test_flatten_discards_single_part_partition_slot_provenance(
+    tmp_path: Path,
+) -> None:
+    import zarr
+
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+    from luxar.gsplats.tree import GSplatPartition
+
+    partition_path, _, _ = _write_inputs(tmp_path)
+    node, _ = load_gsplat_node(partition_path)
+    assert isinstance(node, GSplatPartition)
+
+    single_part_path = tmp_path / "single-part.gsplats.zarr"
+    provenance = [{"coordinate": 1.0, "fitting": {"source_bytes": 3000}}]
+    write_gsplats_tree(
+        single_part_path,
+        GSplatPartition(children=[node.children[0]], max_elements=node.max_elements),
+        fitting_info={"part_provenance": provenance},
+    )
+    output_path = tmp_path / "flattened.gsplats.zarr"
+
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "flatten", str(single_part_path), str(output_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    output = zarr.open_group(str(output_path), mode="r")
+    assert "part_provenance" not in output["fitting"].attrs
+
+
+def test_flatten_preserves_single_leaf_part_provenance(tmp_path: Path) -> None:
+    import zarr
+
+    _, flat_path, _ = _write_inputs(tmp_path)
+    output_path = tmp_path / "flattened.gsplats.zarr"
+    source = zarr.open_group(str(flat_path), mode="a")
+    provenance = [
+        {"coordinate": 0.0, "fitting": {"source_bytes": 3000}},
+        {"coordinate": 1.0, "fitting": {"source_bytes": 3000}},
+    ]
+    source.require_group("fitting").attrs["part_provenance"] = provenance
+
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "flatten", str(flat_path), str(output_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    output = zarr.open_group(str(output_path), mode="r")
+    assert output["fitting"].attrs["part_provenance"] == provenance
+
+
 @pytest.mark.parametrize(
     ("case", "command_name"),
     [

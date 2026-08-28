@@ -392,3 +392,25 @@ describe('runAtomicCommit — superseded (signal aborted)', () => {
     expect(ctx.spies.markPickingDirty).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('runAtomicCommit — discarded sweep', () => {
+  it('skips every mutation but ends all sessions', () => {
+    const points = makePointsStaged(1);
+    const lines = makeLinesStaged(1);
+    const gsplats = makeGSplatsStaged(1);
+    const mesh = makeMeshStaged(1);
+    const ctx = makeCtx({ discard: true });
+
+    runAtomicCommit(points, lines, gsplats, mesh, ctx);
+
+    expect(ctx.spies.beginFrame).not.toHaveBeenCalled();
+    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitGSplatsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitMeshGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.markPickingDirty).not.toHaveBeenCalled();
+    for (const entry of [...points, ...lines, ...gsplats, ...mesh]) {
+      expect(entry.session.end).toHaveBeenCalledTimes(2);
+    }
+  });
+});

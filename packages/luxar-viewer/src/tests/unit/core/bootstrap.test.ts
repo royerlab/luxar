@@ -79,6 +79,7 @@ import { bootstrapStandalone } from '../../../core/bootstrap';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { setDocumentTitle } from '../../../core/document-title';
 import { log } from '../../../utils/log';
+import { notifier } from '../../../utils/cross-layer/notifier';
 import type { UrlParams } from '../../../config/url-params';
 import {
   defaultUserSettings,
@@ -243,6 +244,36 @@ describe('bootstrapStandalone', () => {
         warmCodecs: false,
       });
       expect(mocks.bloscThunk).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('notifier backend', () => {
+    it('disables auto-dismiss only for persistent errors', async () => {
+      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+
+      notifier.error('archive unavailable', { persistent: true });
+      notifier.error('ordinary failure');
+
+      expect(mocks.showError).toHaveBeenNthCalledWith(
+        1,
+        'archive unavailable',
+        expect.any(Function),
+        {
+          datasetBrowser: 'dataset-browser.toggle',
+          help: 'help.toggle',
+        },
+        { autoDismiss: false }
+      );
+      expect(mocks.showError).toHaveBeenNthCalledWith(
+        2,
+        'ordinary failure',
+        expect.any(Function),
+        {
+          datasetBrowser: 'dataset-browser.toggle',
+          help: 'help.toggle',
+        },
+        undefined
+      );
     });
   });
 
@@ -515,6 +546,26 @@ describe('bootstrapStandalone', () => {
           datasetBrowser: 'dataset-browser.toggle',
           help: 'help.toggle',
         },
+        { autoDismiss: false }
+      );
+    });
+
+    it('surfaces authored archive faults through wrapper causes', async () => {
+      const fault = new ArchiveFaultError(
+        'The archive became unreadable. Retry from a stable host.',
+        'https://example.test/data.zarr.zip'
+      );
+      const initError = new Error('scene loading failed', { cause: fault });
+      mocks.init.mockRejectedValueOnce(initError);
+
+      await expect(bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS })).rejects.toBe(
+        initError
+      );
+
+      expect(mocks.showError).toHaveBeenCalledWith(
+        fault.message,
+        expect.any(Function),
+        expect.any(Object),
         { autoDismiss: false }
       );
     });

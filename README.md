@@ -31,7 +31,7 @@ Three ideas carry most of the design:
 install. Or open your own data in the hosted viewer:
 [luxarviewer.dev](https://luxarviewer.dev)`?src=<url-to-your-scene>`.
 
-[Live Demos](https://demos.luxarviewer.dev) | [Quick Start](#quick-start) | [Volume Rendering](#volume-rendering-with-gaussian-splats) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
+[Live Demos](https://demos.luxarviewer.dev) | [Docs Site](https://royerlab.github.io/luxar/) | [Quick Start](#quick-start) | [Volume Rendering](#volume-rendering-with-gaussian-splats) | [Gallery](#gallery) | [Documentation](#documentation) | [API Reference](#api-reference)
 
 ---
 
@@ -93,7 +93,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 88 bundled demos
+luxar demo              # Browse the 89 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -107,7 +107,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 geometry, what it needs, and whether you have already built it:
 
 ```
-🎬 88 Luxar demos  ·  75 built  ·  8 cached  ·  5 not generated yet
+🎬 89 Luxar demos  ·  75 built  ·  8 cached  ·  6 not generated yet
 
  ASTRONOMY ───────────────────────────────────────────────────────────── 6 demos
  ✓  2  asteroids_solar_system                  points+lines  300 MB
@@ -805,6 +805,9 @@ make build-wasm    # Build WASM module
 
 ## API Reference
 
+Full generated reference for Python and TypeScript:
+[Luxar documentation](https://royerlab.github.io/luxar/).
+
 ### Python API
 
 ```python
@@ -889,10 +892,13 @@ layout and how to add a new skill.
 
 | Document | Description |
 |----------|-------------|
+| **[Documentation site](https://royerlab.github.io/luxar/)** | Tutorials, guides, format specs, and the generated Python + TypeScript API reference |
 | **[Live demo gallery](https://demos.luxarviewer.dev)** | 85 demos as interactive scenes in the browser |
 | **[Hosted viewer](https://luxarviewer.dev)** | Open any reachable scene: `luxarviewer.dev/?src=<url>` |
 | [Demo Site Runbook](docs/guides/developer/DEMO_SITE_RUNBOOK.md) | How the two sites above are hosted and published |
 | [Python Package README](packages/luxar/README.md) | Full Python API documentation |
+| [Viewer Guide](docs/guides/user/VIEWER_GUIDE.md) | Navigating a scene: camera, nD slicing, panels, keyboard |
+| [CLI Reference](docs/guides/user/CLI_REFERENCE.md) | Every `luxar` command and flag |
 | [Viewer README](packages/luxar-viewer/README.md) | Viewer features and configuration |
 | [Zarr Format Spec](docs/guides/user/LUXAR_ZARR_FORMAT.md) | Complete data format specification |
 | [HDR Guide](docs/guides/user/HDR_GUIDE.md) | HDR color workflow |
