@@ -853,13 +853,17 @@ prefix `2026-08-27b`; `arrays` excludes zero-shaped `array_ref` placeholders,
 the viewer's `default_level` deferral rule in
 `packages/luxar-viewer/src/data/scene-loader/nodes/load-lod-group-node.ts`:
 
-| store | groups | arrays | chunks | eager arrays | eager chunks | chunks:arrays |
+| store | groups | arrays | chunks | eager arrays | eager chunks | whole chunks:arrays |
 |---|---:|---:|---:|---:|---:|---:|
 | `gsplats_2d_codex_pancreas` | 2767 | 10320 | 10320 | 3440 | 3440 | **1.00** |
 | `desi_galaxies` | 87 | 320 | 389 | 80 | 80 | 1.22 |
 | `biodiversity_planetary_scale` | 29 | 108 | 187 | 108 | 187 | 1.73 |
 | `cosmicflows_laniakea_full` | 15 | 79 | 224 | 79 | 224 | 2.84 |
 | `gsplats_2d_cmu1_pathology` | 18 | 60 | 508 | 60 | 508 | **8.47** |
+
+Use the eager columns for a first-paint claim and the whole-store ratio for the
+cost to reach full detail. They differ only where substitutive levels defer
+non-default children.
 
 Two regimes, and the ratio tells you which one you are in:
 
