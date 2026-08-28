@@ -194,7 +194,7 @@ def test_gsplat_info_handles_partition_file():
             p, data.to_spatial_partition(max_elements=40), ordering="none"
         )
         # Must not raise (previously GSplatData.load → ValueError crashed info).
-        _info_report(p, show_histograms=False, bins=40, full_provenance=False)
+        assert _info_report(p, show_histograms=False, bins=40, full_provenance=False)
 
 
 def test_partition_file_grafts_into_a_scene(capsys):

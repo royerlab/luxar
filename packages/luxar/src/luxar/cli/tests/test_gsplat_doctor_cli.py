@@ -225,6 +225,17 @@ def test_doctor_continues_when_info_rejects_a_legacy_store() -> None:
         assert "No problems found" in result.stdout
 
 
+def test_info_command_exits_when_report_rejects_a_legacy_store() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _legacy_gsplat_store(Path(tmp))
+
+        result = CliRunner().invoke(app, ["gsplat", "info", str(path)])
+
+        assert result.exit_code == 1, result.stdout
+        assert "migrate-format" in result.stdout
+        assert "Traceback" not in result.stdout
+
+
 def test_doctor_summarizes_nested_provenance_unless_full_is_requested() -> None:
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as tmp:
@@ -280,7 +291,7 @@ def test_doctor_accepts_custom_info_histogram_bins() -> None:
     assert "--bins" in normalized_cli_output(help_result)
 
 
-def test_doctor_passes_concrete_values_for_every_info_option(
+def test_doctor_passes_every_info_report_option(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     signature = inspect.signature(inspect_commands._info_report)
@@ -302,12 +313,11 @@ def test_doctor_passes_concrete_values_for_every_info_option(
     assert result.exit_code == 1, result.stdout
     assert len(calls) == 1
     bound = calls[0]
-    missing = [
-        name
-        for name, parameter in signature.parameters.items()
-        if isinstance(parameter.default, ParameterInfo) and name not in bound.arguments
-    ]
-    assert missing == []
+    assert set(bound.arguments) == set(signature.parameters)
+    assert not any(
+        isinstance(parameter.default, ParameterInfo)
+        for parameter in signature.parameters.values()
+    )
     assert not any(
         isinstance(value, ParameterInfo) for value in bound.arguments.values()
     )
