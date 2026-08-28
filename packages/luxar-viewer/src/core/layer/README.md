@@ -138,6 +138,8 @@ blending when exposure should produce smooth surface transparency.
 | `awaitDimensionUpdate()`           | Resolve once no slice update is in flight                         |
 | `setVisible(v)` / `isVisible()`    | Show/hide while preserving caches and in-flight fetches           |
 | `setExposure(m)` / `getExposure()` | Scale exposure relative to authored                               |
+| `getDatasetFault()`                | Current `{ src, error }` archive fault, or `null`                 |
+| `onDatasetFault(fn)`               | Subscribe to faults; replays current state; returns unsubscribe   |
 | `handleContextLost()`              | Back off the Luxar GPU budget after WebGL context loss            |
 | `handleContextRestored()`          | Rebuild Luxar resources after host WebGL context recovery         |
 | `dispose()`                        | Async full teardown of Luxar in the page                          |
@@ -190,9 +192,13 @@ blending when exposure should produce smooth surface transparency.
   is in flight rather than silently producing dead geometry.
 - **No UI.** No panels, no picking UI, no monitor, no keyboard handling. The
   cross-layer `notifier` stays unregistered, so Luxar's toasts and error
-  overlays are silently dropped unless the host registers a backend. Terminal
-  archive failures are the exception: use `onDatasetFault()` to receive the
-  one-shot fault and `getDatasetFault()` to inspect it after the fact.
+  overlays are silently dropped unless the host registers a backend. Archive
+  failures are the exception: `onDatasetFault()` receives a
+  `{ src, error }` payload, and `getDatasetFault()` reads the current state.
+  The last complete frame stays visible. Fault delivery is one-way: an
+  explicit retry can clear the loader's latch without a callback, and a later
+  failure can notify again, so a host that renders recoverable state must poll
+  `getDatasetFault()` rather than permanently latch the callback result.
 - **Mesh textures use the host renderer.** The layer installs a renderer-owned
   KTX2 decoder for compressed mesh textures; raw and JPEG textures keep using
   the portable decode path.

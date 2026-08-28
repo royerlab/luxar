@@ -81,7 +81,7 @@
  * One layer per page, and never alongside a `LuxarApp`. The scene-loader
  * manager, dimension manager, material manager, and worker pool are process
  * singletons; two owners would share and then corrupt each other's state.
- * The layer has no notifier UI; terminal archive failures are exposed through
+ * The layer has no notifier UI; archive failures are exposed through
  * {@link LuxarLayer.onDatasetFault} and {@link LuxarLayer.getDatasetFault} so
  * the host can surface them.
  *
