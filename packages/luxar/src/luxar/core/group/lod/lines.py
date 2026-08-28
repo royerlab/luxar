@@ -10,7 +10,8 @@ Polyline-identification per ``line_type``:
 * ``segments`` — each consecutive pair of vertices is its own polyline
   of length 2. N/2 polylines.
 * ``indexed``  — connected-components walk over the explicit segments;
-  one component = one polyline.
+  one component = one polyline. Additive LOD requires each component's
+  edge list to equal its ascending consecutive-vertex chain.
 * ``polyline`` / ``loop`` — ONE polyline encompassing all vertices. A
   multi-LOD ladder over a single polyline is a no-op (would require
   vertex-subsampling, which breaks the "polyline-level, no topology
