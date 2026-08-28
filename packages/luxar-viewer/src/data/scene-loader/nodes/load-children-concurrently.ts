@@ -113,6 +113,10 @@ function estimateWorkingSetBytes(node: SceneNode): number {
   return vertexCount * vertexBytes + segmentCount * ESTIMATED_LINE_SEGMENT_WORKING_SET_BYTES;
 }
 
+export function acquireEagerWorkingSet(node: SceneNode, ctx: NodeBuildCtx): Promise<() => void> {
+  return workingSetGateFor(ctx).acquire(estimateWorkingSetBytes(node), node.path);
+}
+
 /**
  * Signature of the recursive scene-graph walker. Injected at the call site to
  * break the otherwise-cyclic import with `load-scene-nodes.ts`; a static
@@ -173,18 +177,13 @@ export async function loadChildrenConcurrently(
   let nextIndex = 0;
   let failed = false;
   let firstError: unknown;
-  const workingSetGate = workingSetGateFor(ctx);
-
   const worker = async (): Promise<void> => {
     while (!failed) {
       const index = nextIndex++;
       if (index >= sceneChildren.length) return;
       const child = sceneChildren[index];
       const slot = slots[index];
-      const releaseWorkingSet = await workingSetGate.acquire(
-        estimateWorkingSetBytes(child),
-        child.path
-      );
+      const releaseWorkingSet = await acquireEagerWorkingSet(child, ctx);
       if (failed) {
         releaseWorkingSet();
         return;
