@@ -92,6 +92,21 @@ def _print_fitting_value(
         aprint(f"  {key}: {value}")
 
 
+def _print_additional_metadata_value(
+    key: str, value: Any, *, show_full_provenance: bool
+) -> None:
+    if key == "part_provenance":
+        _print_fitting_value(
+            key,
+            value,
+            show_full_provenance=show_full_provenance,
+        )
+    elif isinstance(value, (dict, list)):
+        aprint(f"  {key}: {type(value).__name__} with {len(value)} items")
+    else:
+        aprint(f"  {key}: {value}")
+
+
 def _ascii_histogram(
     data: "np.ndarray", bins: int = 40, width: int = 60, title: str = "Distribution"
 ) -> str:
@@ -415,18 +430,11 @@ def info_dataset(
                         "provenance",
                     ]:
                         value = data.stats[key]
-                        if key == "part_provenance":
-                            _print_fitting_value(
-                                key,
-                                value,
-                                show_full_provenance=full_provenance,
-                            )
-                        elif isinstance(value, (dict, list)):
-                            aprint(
-                                f"  {key}: {type(value).__name__} with {len(value)} items"
-                            )
-                        else:
-                            aprint(f"  {key}: {value}")
+                        _print_additional_metadata_value(
+                            key,
+                            value,
+                            show_full_provenance=full_provenance,
+                        )
 
         # ================================================================
         # Summary
