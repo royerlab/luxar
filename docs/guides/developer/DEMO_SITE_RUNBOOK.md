@@ -553,18 +553,19 @@ that warning is expected for a sliced nD node that satisfies the runtime limit."
 **An `ElementCapacityWarning` on a sliced nD node is not a finding.**
 
 **The exception is a STATIC object**, which has no hidden axis to reduce the
-committed set. `cmu1`'s three channels flatten to 8,823,953 / 9,924,486 /
-10,830,790 splats and are 2D — nothing to slice on, so no configuration renders a
-channel whole, and the overflow shows as a Hilbert-contiguous clean-edged hole
-that reads as missing data. There, parts stop being optional and become
-load-bearing.
+committed set. The hosted `cmu1` generation (`hosted_sha256`; ch0
+`29faffc1...`) flattens its three channels to 8,823,953 / 9,924,486 / 10,830,790
+splats; the in-repo `sha256` generation flattens to 6,896,619 / 7,093,383 /
+6,601,413. Both are 2D — nothing to slice on — and every channel exceeds the
+cap, so the overflow shows as a Hilbert-contiguous clean-edged hole that reads
+as missing data. There, parts stop being optional and become load-bearing.
 
 So the check before flattening is arithmetic, not a run: a `kind=lod` group
 contributes only its finest child, a `kind=partition` sums its parts,
-`additive_N` rungs are prefixes that add nothing — then divide by the hidden-axis
-extent if there is one. Only if the **resident** figure exceeds the cap does the
-demo need `partition=dict(max_elements=…)` landing in the same change as the
-flatten.
+`additive_N` rungs are deltas that re-partition the level's own content, so never
+add them on top of it — then divide by the hidden-axis extent if there is one.
+Only if the **resident** figure exceeds the cap does the demo need
+`partition=dict(max_elements=…)` landing in the same change as the flatten.
 
 ### 3.13 A ladder's `counts` are in different UNITS per geometry, and the wrong one writes zero rungs
 
@@ -579,9 +580,6 @@ loads and still renders. `check_demo_ladders.py` is the only thing that catches
 it, and only above 200,000 elements — so a mid-sized demo can ship a ladder that
 does not exist.
 
-`_lod_policy.stream_ladder` now takes an explicit `geometry=` and raises on an
-unknown value rather than guessing the unit.
-
 ### 3.14 One viewport does not validate a substitutive ladder
 
 A whole-object substitutive ladder anchors its finest level at **0.5 screen
@@ -589,25 +587,33 @@ occupancy**, and adding levels cannot move that anchor. So the *viewport aspect
 ratio* — not the ladder — can decide whether a scene is bounded.
 
 Measured on `cosmicflows_laniakea_full` at the authored pose: two substitutive
-levels settled at ~892k splats on **16:9**, while the wide outer basins still
+levels settled at ~892k segments on **16:9**, while the wide outer basins still
 selected ~2.1M and ~3.2M **fine** segments at **4:3** and **1:1**.
 
 A ladder that looks bounded on a 16:9 capture can therefore be unbounded on a
-square window. Validate at several aspect ratios, or prefer an additive ladder,
-whose prefix is bounded by construction rather than by framing.
+square window. Validate at several aspect ratios, or prefer an additive ladder
+where the geometry allows one (not `indexed` lines — see Section 7.4), whose
+prefix is bounded by construction rather than by framing.
 
 ### 3.15 A streaming ladder's first rung is first paint — size it in bytes, not chunks
 
-desi's `stream:2000` is sized so its eager coarsest **substitutive** level lands
-in one zarr chunk. An additive-only leaf has no coarse level, so **its first rung
-*is* first paint**, and 2,000 elements is far below a sensible download budget.
+desi's 2,000-element first rung (`SCENE_FIRST_CHUNK`,
+`demo_desi_galaxies.py:186`) is sized so its eager coarsest **substitutive**
+level lands in one zarr chunk. An additive-only leaf has no coarse level, so
+**its first rung *is* first paint**, and 2,000 elements is far below a sensible
+download budget.
 
-Measured across six embedding demos, group counts before and after converting
+Measured group counts before and after converting six embedding demos from
 substitutive to additive:
 
-    today            13 / 13 / 18 / 17 / 17 / 18
-    at stream:2000   12 / 12 / 15 / 14 / 17 / 18   <- essentially NO reduction
-    at stream:39062   7 /  7 / 11 /  9 / 13 / 13
+| demo | today | at `stream:2000` | at `stream:39062` |
+|---|---:|---:|---:|
+| `mouse_multiome_peak_umap` | 13 | 12 | 7 |
+| `esm3_protein_landscape` | 13 | 12 | 7 |
+| `zebrahub_multiome_peak_umap` | 17 | 15 | 11 |
+| `cellxgene_census_umap` | 18 | 14 | 9 |
+| `human_multiome_peak_umap` | 17 | 17 | 13 |
+| `arxiv_papers_kaggle` | 18 | 18 | 13 |
 
 39,062 is a 200 ms budget at 25 Mbps and 16 B/element. At 2,000 every extra rung
 is another node, so the ladder costs requests without buying a faster first
