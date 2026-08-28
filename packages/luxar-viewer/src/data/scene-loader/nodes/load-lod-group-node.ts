@@ -143,6 +143,7 @@ function attachLazyChild(
         if (archiveFault) {
           entryChild.permanentlyFailed = true;
           entryChild.failedTick = undefined;
+          // A container fault makes the whole archive unreadable, not just this lazy level.
           if (ctx.isDatasetLive()) ctx.reportArchiveFault(archiveFault);
         }
         log.warning(
