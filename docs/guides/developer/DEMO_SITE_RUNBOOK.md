@@ -502,7 +502,8 @@ Summing across levels instead reported that store as "11,123,187 elements" when
 it holds 9,751,955 with 1.37M of ladder redundancy above it.
 
 A logical node's size is likewise the **sum over its parts**, not the largest
-single array.
+single array. `desi_galaxies`' finest level reads 900,000 if you take the
+biggest `positions` array and 9,751,955 if you total its parts.
 
 And the rule that moves the most numbers: **only the RESIDENT slice counts.** A
 node stacked on a hidden axis is measured per hidden coordinate, not by its
@@ -518,21 +519,26 @@ rework:
   the path measured was a single `part_N`.
 - Summing **each part's largest slice** over-reports, because different parts
   peak on different hidden coordinates. Group globally by hidden coordinate
-  first, *then* take the max. The same store's finest level reads 900,000 if you take the biggest
-`positions` array and 9,751,955 if you total its parts.
+  first, *then* take the max.
 
-### 7.2 `shape=[0]` arrays are normal
+Never infer element counts from physical array shapes. An `array_ref` encoding
+stores a deduplicated array with a zero first dimension; use the node's
+`n_points` / `n_splats`, or `encoding.original_shape` when inspecting that array.
 
-Additive rung nodes carry `centers` / `positions` of shape `[0]` or `[0, 3]`
-beside non-empty `colors` / `cholesky_factors`. That is the format, not
-corruption — the scene loads 10,056,479 elements across 12 nodes with zero
-failures. Do not "repair" it.
+### 7.2 `shape=[0]` means `array_ref`
 
-### 7.3 The BSP tree is `bsp_tree`, on the geometry node
+A byte-identical duplicate of another array in the same store is encoded as an
+empty `(0,)` / `(0, D)` array with `encoding.name="array_ref"`; `target` names
+the source array and `original_shape` records the logical shape. Readers resolve
+the target. A zero-shaped array with that encoding is normal; one without it is
+wrong. See [Array Encodings](../user/LUXAR_ZARR_FORMAT.md#array-encodings).
 
-Not on the `kind=partition` wrapper. A check that inspects only `kind=partition`
-groups finds nothing and reports, wrongly, that partitions carry no BSP
-metadata.
+### 7.3 The BSP tree is `bsp_tree`, on the `kind=partition` wrapper
+
+New stores use zarr format 3: each node's attributes are nested under
+`attributes` in its `zarr.json`; there is no `.zattrs`. A format-2-only scanner
+therefore finds nothing and reports, wrongly, that partitions carry no BSP
+metadata. Use Luxar's bi-format metadata readers when inspecting stores.
 
 The serialized form is a nested dict with `left` / `right` and an `axis` per
 internal node. The algebra on it lives in `core/group/partition.py`:
@@ -541,15 +547,13 @@ internal node. The algebra on it lives in `core/group/partition.py`:
 `serialized_bsp_tree_straddles_centers`,
 `serialized_bsp_tree_axis_overlap_floors`, and `persist_pruned_bsp_tree`.
 
-Measured on the published corpus (2026-08-28):
+Measured on published prefix `2026-08-27b`:
 
 | store | node | depth | leaves | axes |
 |---|---|---:|---:|---|
 | `ocean_currents_earth` | `currents` | 4 | 16 | 0,1,2 |
-| `nuclear_pore_complex` | root | 5 | 32 | 0,1,2 |
 | `biodiversity_planetary_scale` | `Migrations by slice` | 2 | 3 | 0,1 |
 | `biodiversity_planetary_scale` | `By taxon & period` | 1 | 2 | 2 |
-| `desi_galaxies` | `<branch>/child_2` | 2 | 4 | 0,1 |
 
 A depth-1 single-axis entry like `By taxon & period` is a planar cut rather than
 a spatial tree, and is worth checking: the serialized `axis` is a **centre-column
