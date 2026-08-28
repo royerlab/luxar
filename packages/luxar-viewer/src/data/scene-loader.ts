@@ -110,7 +110,11 @@ import { config as appConfig } from '../config';
 import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
 import { SliceCache } from '../cache/slice-cache';
-import type { CacheBudgets } from '../cache/heap-budget';
+import {
+  cachePoolOverrideBytes,
+  deviceClassPoolBytes,
+  type CacheBudgets,
+} from '../cache/heap-budget';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
 import type {
@@ -171,7 +175,7 @@ import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
 import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
-import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
+import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
 
 /**
@@ -215,7 +219,7 @@ export class SceneLoader {
   // Resolved per-tier cache budgets from setupCaches (Settings popover readout)
   private cacheBudgets: CacheBudgets | null = null;
   private registry = new LoaderRegistry();
-  private readonly lineWorkingSetGate = createLineWorkingSetGate();
+  private readonly lineWorkingSetGate: LineWorkingSetGate;
 
   // Delegate registry-backed maps used by the loader orchestration methods.
   private get loaders() {
@@ -647,6 +651,11 @@ export class SceneLoader {
   ) {
     this.profiler = profiler ?? null;
     this.config = config;
+    // The explicit cache budget is unavailable to field initializers because config is assigned here.
+    this.lineWorkingSetGate = createLineWorkingSetGate(
+      cachePoolOverrideBytes(config.cacheBudgetMB),
+      deviceClassPoolBytes()
+    );
     this.viewState = {
       displayDims: [0, 1, 2],
       slicePosition: [],

@@ -45,12 +45,15 @@ construction, slice updates, and retry-after-failure.
   identical to the serial walk and preserving lifecycle-based renderer tracking.
 - **Memory-aware eager admission.** The eight-wide slot pool remains the latency
   bound for small siblings. Line leaves additionally reserve a conservative
-  working-set estimate from half of the measured heap's shared non-cache
-  remainder, capped at 512 MiB and falling back to 256 MiB where the heap is
-  unavailable. The gate is owned by the `SceneLoader` session and shared by
-  every `NodeBuildCtx` plus registered line retries, so nested parent pools
-  and recovery attempts cannot multiply several million-vertex decode,
-  projection, staging, and texture allocations. A small waiter may pass a large
+  working-set estimate against a budget resolved like the cache pool itself —
+  the explicit `?cacheBudgetMB=` override, then the measured heap, then the
+  device class, then a fixed 256 MiB fallback — taking half of the
+  corresponding non-cache remainder, capped at 512 MiB. So a WebKit session
+  (no `performance.memory`) that configures a pool gets that pool's line budget
+  instead of the fixed fallback. The gate is owned by the `SceneLoader` session
+  and shared by every `NodeBuildCtx` plus registered line retries, so nested
+  parent pools and recovery attempts cannot multiply several million-vertex
+  decode, projection, staging, and texture allocations. A small waiter may pass a large
   one that does not fit yet, while an oversized head still progresses when the
   gate empties. The conservative estimate uses authored whole-node totals, so it
   overstates spatial-index partial slices and progressive ladders, and includes
