@@ -509,12 +509,17 @@ def create_luxar_scene(
     that is a ``kind=partition`` tree with no flat matrix form, so
     ``add_gsplats_from_file`` is the entry point that grafts one whole.
 
-    Grafting is deliberately topology-agnostic, because the two paths do not
-    fully agree: the published archives graft as four-part spatial partitions,
-    with a four-step progressive ladder in each leaf. A ``--recompute`` instead
-    writes ``adaptive`` partitions whose tiles each choose among substitutive
-    detail levels. ``add_gsplats_from_file`` renders either tree; the remaining
-    hosted-versus-recomputed difference is per-tile levels, not spatial tiles.
+    Grafting is deliberately topology-agnostic, because the three paths do not
+    agree. The published archives graft as four-part spatial partitions, with a
+    four-step progressive ladder in each leaf; a ``--recompute`` instead writes
+    ``adaptive`` partitions whose tiles each choose among substitutive detail
+    levels, so the hosted-versus-recomputed difference is per-tile levels, not
+    spatial tiles. The in-repo copies are a third shape again — one flat leaf
+    carrying the same four-step ladder, no spatial tiles at all — and they win
+    while they remain in the tree, because ``ensure_dataset`` prefers an in-repo
+    payload over the hosted one, so that is what a default run renders today.
+    ``add_gsplats_from_file`` routes a matrix-shaped file down the ordinary data
+    path and a partition through the graft, so any of the three renders.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel

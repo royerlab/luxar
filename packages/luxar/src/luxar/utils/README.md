@@ -138,8 +138,6 @@ Stable fingerprints for Python sources that produce Luxar stores.
 - `fingerprint_source_files()`: Hash source paths and contents in stable, boundary-safe order
 - `imported_source_files()`: Resolve a module's static local-import closure, optionally within one source tree
 - `fingerprint_imported_sources()`: Hash a module's static local-import closure
-- `fingerprint_production_sources()`: Hash production Luxar Python sources without caching
-- `production_source_fingerprint()`: Cache that production-source hash per package root and process
 - `store_writer_environment()`: Report installed/configured inputs that affect Zarr output
 
 Static import closures do not discover string-built imports or non-Python inputs;

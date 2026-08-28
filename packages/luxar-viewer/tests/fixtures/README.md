@@ -55,12 +55,12 @@ may occupy disk until the fixture environment is removed with
 
 `src/tests/global-setup.ts` runs once before the Vitest suite, detects
 missing `test_*.zarr` archives or an out-of-date `roundtrip_expectations.json`
-(staleness is deliberately NOT an mtime check — a content digest of the
-generators and all production Luxar Python sources is recorded next to the
-fixtures and compared on each run), and re-runs the relevant generator. The
-expectations file is regenerated whenever any fixture or either generator
-script has changed. Playwright applies the same freshness check but does not
-run the minute-long generator; stale fixtures fail fast with the
+(staleness is deliberately NOT an mtime check — a content digest of each
+generator and the local Python sources reachable from its imports is recorded
+next to the fixtures and compared on each run), and re-runs the relevant
+generator. The expectations file is regenerated whenever any fixture or either
+generator script has changed. Playwright applies the same freshness check but
+does not run the minute-long generator; stale fixtures fail fast with the
 `pnpm test:generate-fixtures` command.
 
 ## Fixture matrix
