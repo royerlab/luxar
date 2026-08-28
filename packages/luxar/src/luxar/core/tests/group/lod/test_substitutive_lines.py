@@ -509,9 +509,7 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
         # their ladder), and the store is checked to agree.
         out = tmp_path / "t.luxar.zarr"
         verts, indices = self._forked_verts_and_edges()
-        with pytest.warns(
-            UserWarning, match="not a simple path in ascending"
-        ) as caught:
+        with pytest.warns(UserWarning, match="explicit edge multiset") as caught:
             with LuxarZarrCompiler(out) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_lines(
@@ -528,8 +526,8 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
 
         assert [str(warning.message) for warning in caught] == [
             "'curves': the requested streaming ladder cannot be honoured "
-            "(line_type='indexed' has a component that is not a simple path in "
-            "ascending vertex order, so the ladder would invent edges); the "
+            "(line_type='indexed' has an explicit edge multiset that does not "
+            "equal its consecutive vertex pairs, so the ladder would rewrite edges); the "
             "finest level will load all-at-once; coarse levels keep their ladder "
             "where one applies. Coarse levels use self_energy ordering, so "
             "reveal_centre is not applied."
@@ -538,6 +536,41 @@ class TestSubstitutiveLinesIndexedVerifiesAdditive:
         grp = zarr.open(str(out), mode="r")["curves"]
         assert grp.attrs["kind"] == "lod"
         assert grp.attrs["display_type"] == "lines"
+        self._assert_only_coarse_child_ladders(grp)
+
+    def test_duplicate_edge_suppresses_before_the_writer(self, tmp_path) -> None:
+        out = tmp_path / "duplicate.luxar.zarr"
+        n_paths, n_steps = 20, 8
+        verts = np.random.default_rng(0).normal(size=(n_paths * n_steps, 3))
+        indices = np.concatenate(
+            [
+                np.column_stack(
+                    (
+                        np.arange(start, start + n_steps - 1),
+                        np.arange(start + 1, start + n_steps),
+                    )
+                )
+                for start in range(0, n_paths * n_steps, n_steps)
+            ]
+        )
+        indices = np.vstack((indices, indices[0, ::-1]))
+
+        with pytest.warns(UserWarning, match="explicit edge multiset"):
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_lines(
+                    "curves",
+                    verts,
+                    0.8,
+                    line_type="indexed",
+                    indices=indices,
+                    substitutive_lod=dict(
+                        compression_factor=2, levels=1, device="cpu", seed=0
+                    ),
+                    additive_lod=dict(counts=[5, 12], method="random", seed=0),
+                )
+
+        grp = zarr.open(str(out), mode="r")["curves"]
         self._assert_only_coarse_child_ladders(grp)
 
     def test_default_additive_on_non_chain_is_suppressed_quietly(

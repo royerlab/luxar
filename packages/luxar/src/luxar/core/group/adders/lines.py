@@ -1159,8 +1159,8 @@ def add_lines_substitutive_lod_wrapper_impl(
         # simple path. So TEST the edge set rather than refusing every indexed
         # node: only the components that would actually be corrupted are refused.
         else (
-            f"line_type={line_type!r} has a component that is not a simple "
-            "path in ascending vertex order, so the ladder would invent edges"
+            f"line_type={line_type!r} has an explicit edge multiset that does not "
+            "equal its consecutive vertex pairs, so the ladder would rewrite edges"
         )
         if additive_lod is not False
         and line_type == "indexed"
