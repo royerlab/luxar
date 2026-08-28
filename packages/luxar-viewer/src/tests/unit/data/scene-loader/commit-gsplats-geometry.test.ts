@@ -665,9 +665,9 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     root.add(mesh);
     commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
     commitGSplatsGeometry(makeStaged(5), root, null, undefined, V);
-    // Same split as the pool path: the count moved, so the permutation is
-    // rebuilt over the new population rather than reset to storage order.
-    expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false, repairFromCount: 11 });
+    // A count change rebuilds the non-pool geometry, so there is no existing
+    // ordering buffer to repair; the fresh geometry starts from identity.
+    expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false });
   });
 
   it('non-pool path: recommit after committedData was cleared → false', () => {

@@ -245,13 +245,8 @@ export function commitGSplatsGeometry(
       // updateInstancedGSplatsMesh, whose rebuild branch always writes
       // identity regardless of the flag — fresh geometries are
       // zero-filled), so geometry identity + count are the guards.
-      // Non-pool fallback: same split as the pooled branch above.
       const sameMeshBuffers = hadCommittedData && mesh.geometry === prevGeometry;
       const preserveOrdering = sameMeshBuffers && prevCount === splatCount;
-      const repairFromCount =
-        sameMeshBuffers && prevCount !== undefined && prevCount !== splatCount
-          ? prevCount
-          : undefined;
       const rebuilt = updateInstancedGSplatsMesh(
         mesh,
         {
@@ -263,7 +258,7 @@ export function commitGSplatsGeometry(
           splatCount,
           bounds: processed.bounds,
         },
-        { preserveOrdering, repairFromCount }
+        { preserveOrdering }
       );
       syncGSplatMaterialWithGeometry(mesh);
       if (rebuilt) invalidateRenderObjectFor(mesh);

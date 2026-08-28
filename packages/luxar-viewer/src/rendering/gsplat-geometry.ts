@@ -37,7 +37,6 @@ import {
   attachElementStorage,
   getElementTexture,
   registerElementTexelDirtyRange,
-  repairSortedIndexForCount,
   writeSortedIndexIdentity,
   elementTexelCapacity,
 } from './element-storage';
@@ -419,7 +418,7 @@ export function createInstancedGSplatsMesh(
 export function updateInstancedGSplatsMesh(
   mesh: THREE.Mesh,
   meshConfig: InstancedGSplatsMeshConfig,
-  options?: { preserveOrdering?: boolean; repairFromCount?: number }
+  options?: { preserveOrdering?: boolean }
 ): boolean {
   // SEMANTIC clamp, mirrored from createInstancedGSplatsMesh. Also
   // load-bearing for the rebuild check below: instanceCount holds the
@@ -480,17 +479,7 @@ export function updateInstancedGSplatsMesh(
     writeSplatTexels(texture, meshConfig, count);
     stampGSplatPresenceFlags(geometry, meshConfig);
     if (!options?.preserveOrdering) {
-      // Count CHANGED but the buffers did not: rebuild the existing
-      // permutation over the new population rather than dropping to storage
-      // order. Peer of the pooled adapters' branch — see
-      // `repairSortedIndexForCount`. (The fresh-geometry branch above keeps a
-      // plain identity write: those buffers hold nothing to rebuild from.)
-      const repairFrom = options?.repairFromCount;
-      if (repairFrom !== undefined && repairFrom > 0) {
-        repairSortedIndexForCount(geometry, repairFrom, count);
-      } else {
-        writeSortedIndexIdentity(geometry, count);
-      }
+      writeSortedIndexIdentity(geometry, count);
     }
   }
 
