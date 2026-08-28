@@ -1450,6 +1450,8 @@ def validate_texture_for_writing(
         channels: Declared channel count. Required for encoded payloads.
         color_space: ``srgb`` or ``linear``. HDR raw values require ``linear``.
         context: Context for error messages.
+        ktx2_mode: Basis encoding mode for KTX2 authoring.
+        ktx2_quality: Optional mode-specific KTX2 quality.
 
     Returns:
         ``(height, width, channels)``, resolved.
