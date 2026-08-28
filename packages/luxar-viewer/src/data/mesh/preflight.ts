@@ -622,16 +622,17 @@ const UNENCODED_COLOR_DTYPES = new Set([
  *
  * Closed for the same reason {@link ENCODING_BUDGET_KIND} is closed: an
  * unrecognised value must be a REJECTION, never a fall-through to "probably an
- * image". The two arms allocate differently — `raw` materializes
- * `h * w * c` values through the decoder, while a codec arm hands the bytes to
- * `createImageBitmap` and gets back a 4-channel 8-bit surface whatever the source
- * stored — so guessing wrong means charging the wrong number against the ceiling.
+ * image". The three arms allocate differently: `raw` materializes
+ * `h * w * c` values, a bitmap codec produces a 4-channel 8-bit surface, and
+ * KTX2 remains GPU-compressed with a full mip chain. Guessing wrong would charge
+ * the wrong admission budget.
  */
-export const TEXTURE_DECODE_KIND: Record<MeshTextureEncoding, 'raw' | 'codec'> = {
+export const TEXTURE_DECODE_KIND: Record<MeshTextureEncoding, 'raw' | 'codec' | 'ktx2'> = {
   raw: 'raw',
   png: 'codec',
   webp: 'codec',
   jpeg: 'codec',
+  ktx2: 'ktx2',
 };
 
 /**
@@ -661,7 +662,7 @@ export interface TextureDeclaration {
   height: number;
   channels: number;
   /** Which decode path {@link TEXTURE_DECODE_KIND} assigns this encoding. */
-  decode: 'raw' | 'codec';
+  decode: 'raw' | 'codec' | 'ktx2';
 }
 
 /**
@@ -726,6 +727,12 @@ function resolveTextureDeclaration(path: string, attrs: MeshMetadata): TextureDe
       path,
       `texture_channels is ${channels}; must be 1 (luminance), 3 (RGB) or 4 (RGBA). ` +
         'Any other count has no defined mapping onto a GPU texture format.'
+    );
+  }
+  if (encoding === 'ktx2' && channels === 1) {
+    rejectMesh(
+      path,
+      "texture_encoding 'ktx2' supports only RGB or RGBA LDR textures; use 'raw' for a single-channel texture."
     );
   }
   if (width > MAX_MESH_TEXTURE_SIZE || height > MAX_MESH_TEXTURE_SIZE) {
@@ -960,8 +967,8 @@ export async function preflightMesh(
       );
     }
   }
-  // The texture's DECODED SURFACE, charged only on the codec arm — and the
-  // asymmetry is the interesting part rather than an oversight.
+  // The texture's DECODED SURFACE, charged separately for opaque payloads —
+  // and the asymmetry is the interesting part rather than an oversight.
   //
   // On the `raw` arm the loop above already charged it: `logicalLayout` reads the
   // `(h, w, c)` shape, so `count * DECODED_BYTES_PER_VALUE` is exactly the
@@ -980,6 +987,10 @@ export async function preflightMesh(
   // `w * h * 4`. Using the declared channel count here would under-charge by 4x.
   if (texture?.decode === 'codec') {
     arraysBytes += texture.width * texture.height * 4;
+  } else if (texture?.decode === 'ktx2') {
+    // Keep this 4/3 mip-chain charge aligned with validation/base.py and
+    // mesh-whole-node-loader.ts's textureResidentBytes.
+    arraysBytes += Math.ceil((texture.width * texture.height * 4) / 3);
   }
 
   const peakBytes = arraysBytes + maxChunkBytes;
