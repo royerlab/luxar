@@ -600,7 +600,7 @@ prefix is bounded by construction rather than by framing.
 ### 3.15 A streaming ladder's first rung is first paint — size it in bytes, not chunks
 
 desi's 2,000-element first rung (`SCENE_FIRST_CHUNK`,
-`demo_desi_galaxies.py:186`) is sized so its eager coarsest **substitutive**
+`demo_desi_galaxies.py:207`) is sized so its eager coarsest **substitutive**
 level lands in one zarr chunk. An additive-only leaf has no coarse level, so
 **its first rung *is* first paint**, and 2,000 elements is far below a sensible
 download budget.
