@@ -1865,6 +1865,8 @@ export class SceneLoader {
     failed: string[];
     deferred?: boolean;
   }> {
+    this.lodGroupRegistry?.resetAutomaticRetryBudgets();
+
     const failedPaths = opts.onlyAutoRetryable
       ? this.registry.autoRetryablePaths()
       : Array.from(this.failedLoaders.keys());

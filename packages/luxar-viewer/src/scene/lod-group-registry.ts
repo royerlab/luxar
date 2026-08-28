@@ -1001,6 +1001,23 @@ export class LODGroupRegistry {
   }
 
   /**
+   * Reopen anonymous lazy children whose archive-fault retry budget was
+   * exhausted. Retry-all is the only recovery surface that can address these
+   * unnamed placeholders, so clear their cooldown state as well to permit an
+   * immediate attempt. A repeated archive fault seeds a fresh bounded budget.
+   */
+  resetAutomaticRetryBudgets(): void {
+    for (const entry of this.entries.values()) {
+      for (const child of entry.children) {
+        if (child.automaticRetriesRemaining === undefined) continue;
+        child.automaticRetriesRemaining = undefined;
+        child.failed = false;
+        child.failedTick = undefined;
+      }
+    }
+  }
+
+  /**
    * Update an lod_group's selector mode. ``'auto'`` re-enables
    * view-driven selection; ``{ lockLevel: i }`` pins the lod_group to
    * child index ``i`` (0-based in coarsest→finest order). An

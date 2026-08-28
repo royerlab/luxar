@@ -30,6 +30,7 @@ import { getPointTexture } from '../../../rendering/point-geometry';
 import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import * as zarr from 'zarrita';
 import { ArchiveFaultError } from '../../../cache/chunk-source';
+import { LODGroupRegistry } from '../../../scene/lod-group-registry';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1266,6 +1267,42 @@ describe('SceneLoader', () => {
       // Empty batch (no failures): resolves immediately without the flag.
       const result = await sceneLoader.retryAllFailedLoaders();
       expect(result.deferred).toBeUndefined();
+    });
+
+    it('resets exhausted deferred-group budgets even when no loader record survives', async () => {
+      const registry = new LODGroupRegistry({
+        getCamera: () => new THREE.Camera(),
+        getViewportSize: () => ({ width: 100, height: 100 }),
+        getDisplayDims: () => [0, 1, 2],
+      });
+      const child = {
+        object: new THREE.Group(),
+        coverageFraction: 0.5,
+        positionBounds: { min: [0, 0, 0], max: [10, 10, 10] },
+        ready: false,
+        failed: true,
+        failedTick: 42,
+        automaticRetriesRemaining: 0,
+        ensureLoaded: vi.fn(),
+      };
+      registry.register({
+        path: '/lod',
+        groupObject: new THREE.Group(),
+        children: [child],
+        selectorMode: 'auto',
+        defaultLevel: 0,
+        activeChildIndex: 0,
+      });
+      const loader = new SceneLoader(undefined, undefined, undefined, undefined, () => registry);
+
+      try {
+        await loader.retryAllFailedLoaders();
+        expect(child.automaticRetriesRemaining).toBeUndefined();
+        expect(child.failed).toBe(false);
+        expect(child.failedTick).toBeUndefined();
+      } finally {
+        loader.dispose();
+      }
     });
   });
 
