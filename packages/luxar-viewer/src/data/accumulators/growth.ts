@@ -8,8 +8,9 @@
  * Capacity to grow to when `needed` elements must fit and `current` is the
  * present capacity. Returns `current` unchanged when it already fits.
  *
- * Amortised 1.5× growth, but **never past `needed`**. The distinction matters
- * because the accumulators are grown two very different ways:
+ * Amortised 1.5× growth, but never beyond the larger of `needed` and one
+ * 1.5× step from `current`. The distinction matters because the accumulators
+ * are grown two very different ways:
  *
  * - **Incrementally**, a chunk at a time, where each call needs slightly more
  *   than the last. Multiplying gives the usual amortised-O(1) behaviour and

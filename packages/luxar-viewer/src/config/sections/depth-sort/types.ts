@@ -1,9 +1,10 @@
 /**
  * Depth-sort scheduling configuration (depth-sorting Phase 3).
  *
- * Gaussian splats in the order-dependent `normal` blending mode are
- * depth-sorted by an async worker (spec §5); this section tunes WHEN the
- * per-frame scheduler dispatches a re-sort as the camera moves (spec §6).
+ * Order-dependent gsplats, points, lines, and mesh are depth-sorted by an
+ * async worker (spec §5); this section tunes the commit-time first sort and
+ * WHEN the per-frame scheduler dispatches a re-sort as the camera moves
+ * (spec §6).
  * The sort kernel orders by view-space z, so a re-sort is only needed
  * when the view axis rotates (relative to the node) or the camera
  * translates along it far enough to change the behind-camera set —

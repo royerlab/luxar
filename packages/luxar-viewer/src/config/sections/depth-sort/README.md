@@ -1,11 +1,11 @@
 # Depth-Sort Config Section
 
-Scheduling knobs for camera-triggered gsplat depth re-sorts (depth-sorting
-Phase 3, `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §6).
+Scheduling knobs for commit-time and camera-triggered depth sorts
+(`docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5-§6).
 
-Gaussian splats in the order-dependent `normal` blending mode are sorted
-back-to-front by the async SortWorker at commit time (Phase 2). This section
-tunes the per-frame scheduler (`rendering/depth-sort-coordinator.ts` →
+Order-dependent gsplats, points, lines, and mesh are sorted back-to-front by
+the async SortWorker. This section tunes the synchronous first-sort budget and
+the per-frame scheduler (`rendering/depth-sort-coordinator.ts` →
 `evaluateDepthSortPerFrame`) that keeps the ordering tracking the camera:
 
 | Knob                  | Default  | Meaning                                                                                                         |
