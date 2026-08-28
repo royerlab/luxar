@@ -194,7 +194,7 @@ def test_gsplat_info_handles_partition_file():
             p, data.to_spatial_partition(max_elements=40), ordering="none"
         )
         # Must not raise (previously GSplatData.load → ValueError crashed info).
-        info_dataset(p, show_histograms=False, bins=40)
+        info_dataset(p, show_histograms=False, bins=40, full_provenance=False)
 
 
 def test_partition_file_grafts_into_a_scene(capsys):
@@ -565,7 +565,7 @@ def test_gsplat_info_legacy_file_shows_migrate_hint_not_traceback():
         root.attrs["format_type"] = "gsplats_zarr"
         root.attrs["format_version"] = "2.0"  # legacy matrix format
         with pytest.raises(typer.Exit):
-            info_dataset(legacy, show_histograms=False, bins=40)
+            info_dataset(legacy, show_histograms=False, bins=40, full_provenance=False)
 
 
 def test_spatial_partition_warns_on_multi_substitutive():

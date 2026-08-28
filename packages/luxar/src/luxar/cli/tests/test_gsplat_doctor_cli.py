@@ -266,7 +266,9 @@ def test_doctor_passes_concrete_values_for_every_info_option(
         if isinstance(parameter.default, ParameterInfo) and name not in bound.arguments
     ]
     assert missing == []
-    assert not any(isinstance(value, ParameterInfo) for value in bound.arguments.values())
+    assert not any(
+        isinstance(value, ParameterInfo) for value in bound.arguments.values()
+    )
 
 
 def test_doctor_writes_a_json_report() -> None:
