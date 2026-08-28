@@ -557,6 +557,37 @@ class TestGsplatReadabilityCheck:
         assert all(report.findings == [] for report in reports)
         assert calls == 0
 
+    @pytest.mark.parametrize(
+        ("kind", "missing_group"),
+        [("partition", "part_1"), ("lod", "child_1")],
+    )
+    def test_missing_tree_child_reports_its_store_path(
+        self, kind: str, missing_group: str
+    ) -> None:
+        from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
+
+        with tempfile.TemporaryDirectory() as tmp:
+            flat = GSplatData.load(_flat_store(Path(tmp))).tree
+            assert isinstance(flat, GSplatLeaf)
+            leaf = GSplatLeaf([flat.additive_sublods[0]])
+            node = (
+                GSplatPartition([leaf, leaf, leaf])
+                if kind == "partition"
+                else GSplatLodGroup([leaf, leaf, leaf])
+            )
+            path = Path(tmp) / f"truncated-{kind}.gsplats.zarr"
+            write_gsplats_tree(path, node, ordering="none")
+            root = zc_open_group(path, mode="r+")
+            del root[missing_group]
+            zc_consolidate(root)
+
+            report = diagnose_store(path)
+
+        assert not report.healthy
+        finding = next(item for item in report.findings if item.check == "readability")
+        assert finding.path == missing_group
+        assert f"missing required group '{missing_group}'" in finding.detail
+
     def test_mismatched_leaf_array_lengths_are_diagnosed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = _flat_store(Path(tmp))

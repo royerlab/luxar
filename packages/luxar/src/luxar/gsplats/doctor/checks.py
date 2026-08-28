@@ -32,6 +32,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["ALL_CHECKS", "check_gsplat_readable", "check_partition_split_planes"]
 
 
+class _GsplatStructureError(ValueError):
+    """Structural validation failure with its store-relative location."""
+
+    def __init__(self, path: str, message: str) -> None:
+        super().__init__(message)
+        self.path = path
+
+
 def _iter_groups(group: "zarr.Group", path: str = "") -> "List[Tuple[str, Any]]":
     """Every group in the store, depth-first, with its store-relative path."""
     out = [(path, group)]
@@ -61,10 +69,11 @@ def _logical_array_shape(array: "zarr.Array") -> Tuple[int, ...]:
 def _leaf_array_lengths(group: "zarr.Group", path: str) -> Dict[str, int]:
     """Required leaf-array lengths from metadata only."""
     where = path or "root"
+    arrays = dict(group.arrays())
     names = ["centers", "amplitudes"]
-    if "cholesky_factors_diag" in group:
+    if "cholesky_factors_diag" in arrays:
         names.append("cholesky_factors_diag")
-        diag_shape = _logical_array_shape(group["cholesky_factors_diag"])
+        diag_shape = _logical_array_shape(arrays["cholesky_factors_diag"])
         if len(diag_shape) < 2:
             raise ValueError(
                 f"array 'cholesky_factors_diag' at {where} has invalid shape "
@@ -74,14 +83,14 @@ def _leaf_array_lengths(group: "zarr.Group", path: str) -> Dict[str, int]:
             names.append("cholesky_factors_offdiag")
     else:
         names.append("cholesky_factors")
-    if "colors" in group:
+    if "colors" in arrays:
         names.append("colors")
 
     lengths: Dict[str, int] = {}
     for name in names:
-        if name not in group:
+        if name not in arrays:
             raise ValueError(f"missing required array {name!r} at {where}")
-        shape = _logical_array_shape(group[name])
+        shape = _logical_array_shape(arrays[name])
         if not shape:
             raise ValueError(f"array {name!r} at {where} has no leading dimension")
         lengths[name] = shape[0]
@@ -90,11 +99,16 @@ def _leaf_array_lengths(group: "zarr.Group", path: str) -> Dict[str, int]:
 
 def _validate_leaf_arrays(group: "zarr.Group", path: str) -> None:
     """Require every leaf array to describe the same number of splats."""
-    lengths = _leaf_array_lengths(group, path)
+    try:
+        lengths = _leaf_array_lengths(group, path)
+    except Exception as exc:
+        raise _GsplatStructureError(path, str(exc)) from exc
     if len(set(lengths.values())) == 1:
         return
     joined = ", ".join(f"{name}={length}" for name, length in lengths.items())
-    raise ValueError(f"array lengths disagree at {path or 'root'}: {joined}")
+    raise _GsplatStructureError(
+        path, f"array lengths disagree at {path or 'root'}: {joined}"
+    )
 
 
 def _validate_gsplat_structure(group: "zarr.Group", path: str = "") -> None:
@@ -110,8 +124,10 @@ def _validate_gsplat_structure(group: "zarr.Group", path: str = "") -> None:
             for index in range(n_additive):
                 name = f"additive_{index}"
                 if name not in group:
-                    raise ValueError(
-                        f"missing required group {name!r} at {path or 'root'}"
+                    child_path = f"{path}/{name}" if path else name
+                    raise _GsplatStructureError(
+                        child_path,
+                        f"missing required group {name!r} at {path or 'root'}",
                     )
                 _validate_leaf_arrays(group[name], f"{path}/{name}" if path else name)
             return
@@ -120,11 +136,16 @@ def _validate_gsplat_structure(group: "zarr.Group", path: str = "") -> None:
 
     names = [name for name in group.group_keys() if str(name).startswith(prefix)]
     if not names:
-        raise ValueError(f"{kind} group at {path or 'root'} has no children")
+        raise _GsplatStructureError(
+            path, f"{kind} group at {path or 'root'} has no children"
+        )
     for index in range(len(names)):
         name = f"{prefix}{index}"
         if name not in group:
-            raise ValueError(f"missing required group {name!r} at {path or 'root'}")
+            child_path = f"{path}/{name}" if path else name
+            raise _GsplatStructureError(
+                child_path, f"missing required group {name!r} at {path or 'root'}"
+            )
         _validate_gsplat_structure(group[name], f"{path}/{name}" if path else name)
 
 
@@ -156,22 +177,28 @@ def check_gsplat_readable(root: "zarr.Group") -> List[Finding]:
 
     try:
         _validate_gsplat_structure(root)
+    except _GsplatStructureError as exc:
+        path = exc.path
+        error = str(exc)
     except Exception as exc:
-        return [
-            Finding(
-                check="readability",
-                severity="error",
-                path="",
-                summary="gsplat store cannot be read",
-                detail=(
-                    f"The store's tree or leaf-array metadata is incomplete: {exc}. "
-                    "This check does not read chunk payloads, so corruption inside "
-                    "stored chunks may only surface when the data is loaded."
-                ),
-                remedy="Restore the incomplete store or regenerate it from its source.",
-            )
-        ]
-    return []
+        path = ""
+        error = str(exc)
+    else:
+        return []
+    return [
+        Finding(
+            check="readability",
+            severity="error",
+            path=path,
+            summary="gsplat store cannot be read",
+            detail=(
+                f"The store's tree or leaf-array metadata is incomplete: {error}. "
+                "This check does not read chunk payloads, so corruption inside "
+                "stored chunks may only surface when the data is loaded."
+            ),
+            remedy="Restore the incomplete store or regenerate it from its source.",
+        )
+    ]
 
 
 def _part_boxes(
