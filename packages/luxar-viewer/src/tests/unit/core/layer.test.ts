@@ -42,12 +42,37 @@ const setRequestRender = vi.fn();
 const setKTX2TextureDecoder = vi.fn();
 const disposeInstance = vi.fn();
 const getProfiler = vi.fn();
-const sceneLoaderStub = {
-  lodGroupRegistry: { evaluatePerFrame: vi.fn(() => false) },
-  nodeFactory: { rebuildAfterContextRestore: vi.fn() },
-  isUpdateInProgress: vi.fn(() => false),
-  updateView: vi.fn(),
-};
+function makeSceneLoaderStub() {
+  let archiveFault: Error | null = null;
+  const archiveFaultListeners = new Set<(error: Error) => void>();
+  return {
+    lodGroupRegistry: { evaluatePerFrame: vi.fn(() => false) },
+    nodeFactory: { rebuildAfterContextRestore: vi.fn() },
+    isUpdateInProgress: vi.fn(() => false),
+    updateView: vi.fn(),
+    get archiveFault() {
+      return archiveFault;
+    },
+    onArchiveFault: vi.fn(
+      (listener: (error: Error) => void, options: { replayCurrent?: boolean } = {}) => {
+        archiveFaultListeners.add(listener);
+        if (options.replayCurrent && archiveFault) listener(archiveFault);
+        return () => archiveFaultListeners.delete(listener);
+      }
+    ),
+    emitArchiveFault(error: Error) {
+      archiveFault = error;
+      for (const listener of [...archiveFaultListeners]) listener(error);
+    },
+    resetArchiveFault() {
+      archiveFault = null;
+      archiveFaultListeners.clear();
+    },
+  };
+}
+
+const sceneLoaderStub = makeSceneLoaderStub();
+let currentSceneLoaderStub = sceneLoaderStub;
 
 const destroyAllAsync = vi.fn(async () => {});
 const destroyLoaderAsync = vi.fn(async (_id: string) => {});
@@ -64,7 +89,7 @@ vi.mock('../../../data/scene-loader-manager', () => ({
     }),
     disposeInstance: () => disposeInstance(),
   },
-  getSceneLoader: () => sceneLoaderStub,
+  getSceneLoader: () => currentSceneLoaderStub,
 }));
 
 vi.mock('../../../scene/lod-group-registry', () => ({
@@ -177,6 +202,8 @@ function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOpti
 describe('LuxarLayer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sceneLoaderStub.resetArchiveFault();
+    currentSceneLoaderStub = sceneLoaderStub;
     loadSceneMock.mockImplementation(async () => new THREE.Group());
     updateSceneForDimensionsMock.mockResolvedValue(undefined);
     getDimsMock.mockReturnValue(dimsState);
@@ -332,6 +359,117 @@ describe('LuxarLayer', () => {
   });
 
   describe('load', () => {
+    it('delivers terminal dataset faults and replays them to late subscribers', async () => {
+      const layer = new LuxarLayer(makeOptions());
+      const earlyListener = vi.fn();
+      layer.onDatasetFault(earlyListener);
+      await layer.load('http://example.test/scene.zarr');
+
+      const fault = new Error('archive unavailable');
+      sceneLoaderStub.emitArchiveFault(fault);
+
+      expect(earlyListener).toHaveBeenCalledOnce();
+      expect(earlyListener).toHaveBeenCalledWith({
+        src: 'http://example.test/scene.zarr',
+        error: fault,
+      });
+      expect(layer.getDatasetFault()).toEqual({
+        src: 'http://example.test/scene.zarr',
+        error: fault,
+      });
+
+      const lateListener = vi.fn();
+      layer.onDatasetFault(lateListener);
+      expect(lateListener).toHaveBeenCalledOnce();
+      expect(lateListener).toHaveBeenCalledWith({
+        src: 'http://example.test/scene.zarr',
+        error: fault,
+      });
+    });
+
+    it('replays a fault latched during load and replaces the loader subscription on switch', async () => {
+      const firstLoader = makeSceneLoaderStub();
+      const secondLoader = makeSceneLoaderStub();
+      const firstFault = new Error('first archive unavailable');
+      const secondFault = new Error('second archive unavailable');
+      currentSceneLoaderStub = firstLoader;
+      loadSceneMock.mockImplementationOnce(async () => {
+        firstLoader.emitArchiveFault(firstFault);
+        return new THREE.Group();
+      });
+      const listener = vi.fn();
+      const layer = new LuxarLayer(makeOptions());
+      layer.onDatasetFault(listener);
+
+      await layer.load('http://example.test/a.zarr');
+      expect(listener).toHaveBeenCalledWith({
+        src: 'http://example.test/a.zarr',
+        error: firstFault,
+      });
+      expect(layer.getDatasetFault()).toEqual({
+        src: 'http://example.test/a.zarr',
+        error: firstFault,
+      });
+
+      loadSceneMock.mockImplementationOnce(async () => {
+        currentSceneLoaderStub = secondLoader;
+        return new THREE.Group();
+      });
+      await layer.load('http://example.test/b.zarr');
+      firstLoader.emitArchiveFault(new Error('stale archive unavailable'));
+      secondLoader.emitArchiveFault(secondFault);
+
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(listener).toHaveBeenLastCalledWith({
+        src: 'http://example.test/b.zarr',
+        error: secondFault,
+      });
+      expect(layer.getDatasetFault()).toEqual({
+        src: 'http://example.test/b.zarr',
+        error: secondFault,
+      });
+
+      loadSceneMock.mockRejectedValueOnce(new Error('dataset unavailable'));
+      await expect(layer.load('http://example.test/c.zarr')).rejects.toThrow('dataset unavailable');
+      secondLoader.emitArchiveFault(new Error('stale second archive unavailable'));
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(layer.getDatasetFault()).toBeNull();
+
+      const thirdLoader = makeSceneLoaderStub();
+      currentSceneLoaderStub = thirdLoader;
+      await layer.load('http://example.test/d.zarr');
+      const thirdFault = new Error('third archive unavailable');
+      thirdLoader.emitArchiveFault(thirdFault);
+
+      expect(listener).toHaveBeenCalledTimes(3);
+      expect(listener).toHaveBeenLastCalledWith({
+        src: 'http://example.test/d.zarr',
+        error: thirdFault,
+      });
+    });
+
+    it('isolates a throwing dataset fault listener during replay', async () => {
+      const fault = new Error('archive unavailable');
+      loadSceneMock.mockImplementationOnce(async () => {
+        sceneLoaderStub.emitArchiveFault(fault);
+        return new THREE.Group();
+      });
+      const layer = new LuxarLayer(makeOptions());
+      layer.onDatasetFault(() => {
+        throw new Error('listener boom');
+      });
+      const healthyListener = vi.fn();
+      layer.onDatasetFault(healthyListener);
+
+      await expect(layer.load('http://example.test/scene.zarr')).resolves.toBeInstanceOf(
+        THREE.Group
+      );
+      expect(healthyListener).toHaveBeenCalledWith({
+        src: 'http://example.test/scene.zarr',
+        error: fault,
+      });
+    });
+
     it('attaches the root, then resolves dims, then requests the first slice', async () => {
       const layer = new LuxarLayer(makeOptions());
       const root = await layer.load('http://example.test/scene.zarr');
@@ -1110,6 +1248,44 @@ describe('LuxarLayer', () => {
   });
 
   describe('dispose', () => {
+    it('clears the current fault and unsubscribes host listeners', async () => {
+      const listener = vi.fn();
+      const layer = new LuxarLayer(makeOptions());
+      layer.onDatasetFault(listener);
+      await layer.load('http://example.test/scene.zarr');
+      const fault = new Error('archive unavailable');
+      sceneLoaderStub.emitArchiveFault(fault);
+      expect(listener).toHaveBeenCalledOnce();
+
+      await layer.dispose();
+      sceneLoaderStub.emitArchiveFault(new Error('post-dispose archive unavailable'));
+
+      expect(layer.getDatasetFault()).toBeNull();
+      expect(listener).toHaveBeenCalledOnce();
+    });
+
+    it('does not install or replay a fault subscription after disposal begins mid-load', async () => {
+      const fault = new Error('archive unavailable');
+      sceneLoaderStub.emitArchiveFault(fault);
+      let releaseWarmup!: () => void;
+      warmSceneBlendModePrograms.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseWarmup = resolve))
+      );
+      const listener = vi.fn();
+      const layer = new LuxarLayer(makeOptions());
+      layer.onDatasetFault(listener);
+
+      const loading = layer.load('http://example.test/scene.zarr');
+      await vi.waitFor(() => expect(warmSceneBlendModePrograms).toHaveBeenCalled());
+      const disposing = layer.dispose();
+      releaseWarmup();
+      await Promise.all([loading, disposing]);
+
+      expect(sceneLoaderStub.onArchiveFault).not.toHaveBeenCalled();
+      expect(listener).not.toHaveBeenCalled();
+      expect(layer.getDatasetFault()).toBeNull();
+    });
+
     it('detaches the root and tears down the process singletons', async () => {
       const options = makeOptions();
       const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
