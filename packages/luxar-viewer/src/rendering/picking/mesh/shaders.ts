@@ -33,6 +33,7 @@
  * |---|---|---|
  * | `uSurfaceDepth` | `isNormalMode(mode) \|\| isOpaqueMode(mode)` | real projected depth (front-most wins) vs brightness-as-depth (brightest wins) |
  * | `uAlphaCutout` | `isOpaqueMode(mode)` | apply the visual shader's identical `a < uAlphaCutoff` discard |
+ * | `LUXAR_MESH_PICK_BASE_COLOR_TEX` | the node has a texture | sample the texture's ALPHA into coverage, so cutout holes are unpickable |
  *
  * ## The surface-depth VALUE matches across backends — despite how the snapshot reads
  *
@@ -104,6 +105,10 @@ export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp float vNodeId;
     flat out highp vec2 vElementId;
     out mediump float vAlpha;
+    #ifdef LUXAR_MESH_PICK_BASE_COLOR_TEX
+    // \`uv\` is three's own auto-declared attribute, like \`position\` above.
+    out mediump vec2 vUv;
+    #endif
     // VIEW-space depth for the fragment stage's near fade. highp: it is compared
     // against a scene-relative uNearCull that can be ~1e-3 of the scene diagonal,
     // which mediump cannot resolve on a large scene.
@@ -119,6 +124,9 @@ export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
       // term for a mesh, and a NaN would survive into the cutout comparison as a
       // fragment that never discards — pickable where the visual has a hole.
       vAlpha = sanitizeAlpha(color.a);
+      #ifdef LUXAR_MESH_PICK_BASE_COLOR_TEX
+      vUv = uv;
+      #endif
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
       vViewZ = mvPosition.z;
       gl_Position = projectionMatrix * mvPosition;
@@ -173,6 +181,21 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
     flat in highp vec2 vElementId;
     in mediump float vAlpha;
     in highp float vViewZ;
+    #ifdef LUXAR_MESH_PICK_BASE_COLOR_TEX
+    // The pick pass samples the texture for its ALPHA ONLY — it has no colour
+    // output. Not an optimisation that could be skipped: texture alpha multiplies
+    // coverage in the visual shader, so an RGBA basemap's cutout holes exist on
+    // screen. A pick pass that ignored the texture would leave those holes
+    // pickable AND depth-occluding, which is exactly the visual/pick divergence
+    // \`syncMeshPickAppearance\` exists to prevent.
+    //
+    // A define rather than the runtime uniform \`uAlphaCutout\` uses, because a
+    // sampler has to be DECLARED and \`has_texture\` is a per-node constant: unlike
+    // the blending mode, no layers-panel action can turn a texture on for a node
+    // whose store had none.
+    uniform sampler2D uBaseColorTex;
+    in mediump vec2 vUv;
+    #endif
 
     uniform mediump float uOpacity;
     uniform mediump float uAlphaCutoff;
@@ -198,6 +221,14 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
       // intensity/amplitude, so coverage is the per-vertex alpha times node
       // opacity — NOT \`intensity * uOpacity\` like the emissive types.
       mediump float a = vAlpha * uOpacity;
+      #ifdef LUXAR_MESH_PICK_BASE_COLOR_TEX
+      // Alpha only, and NO luminance swizzle: a 1-channel texture samples alpha
+      // 1.0, so the swizzle the visual shader needs for \`.rgb\` has no analogue
+      // here. Multiplied in BEFORE the cutout comparison below, matching the
+      // visual shader's ordering exactly — comparing a different quantity is how
+      // the two passes would disagree about where the holes are.
+      a *= texture(uBaseColorTex, vUv).a;
+      #endif
 
       // Same fade, same 1e-20 degenerate-smoothstep floor and same 0.01 reject as
       // the visual shader — pick coverage must keep matching visible coverage as

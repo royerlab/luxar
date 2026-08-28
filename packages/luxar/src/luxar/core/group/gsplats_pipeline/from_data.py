@@ -20,6 +20,13 @@ from ..compositing import (
     reject_mesh_only_appearance,
     strip_absent_attr_kwargs,
 )
+from .amplitude_norm import (
+    NormalizeSpec,
+    normalize_gsplat_data,
+)
+from .amplitude_norm import (
+    stamp_factor as stamp_amplitude_factor,
+)
 from .lod_dispatch import (
     add_gsplats_as_lod_group_impl,
     add_gsplats_multi_lod_impl,
@@ -732,6 +739,7 @@ def add_gsplats_from_data_impl(
     fill_sigma: Optional[Dict[str, float]] = None,
     lod_group: Any = None,
     additive_lod: Any = None,
+    normalize_amplitudes: NormalizeSpec = True,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -768,6 +776,16 @@ def add_gsplats_from_data_impl(
     # stripped above, so the data's own value applies).
     if "truncation_radius" not in attrs:
         attrs["truncation_radius"] = result.truncation_radius
+
+    # Normalise amplitudes into [0, ~1] BEFORE the LOD axes are resolved. A
+    # fitted archive stores raw source units (detector counts), which the shader
+    # turns directly into radiance and optical depth with no display-side
+    # compensation available — see :mod:`.amplitude_norm` for the measurement.
+    # Done here rather than after resolution because scaling is linear and
+    # commutes with the mass-conserving coarsening, so one pass over the single
+    # input is equivalent to (and cheaper than) one pass per built level.
+    result, _amp_factor = normalize_gsplat_data(result, normalize_amplitudes)
+    stamp_amplitude_factor(attrs, _amp_factor)
 
     # Resolve coarsen_dims (which dims substitutive coarsening may merge over)
     # on the COMPUTE path only — scene + data ndim are available here, but the

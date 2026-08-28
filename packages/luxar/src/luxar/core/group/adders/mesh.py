@@ -424,6 +424,7 @@ def _maybe_add_mesh_substitutive_lod(
     normal_dims: Optional[Sequence[int]],
     colors: Any,
     scalars: Any,
+    uvs: Any,
     shading: Optional[str],
     double_sided: bool,
     labels: Any,
@@ -479,6 +480,7 @@ def _maybe_add_mesh_substitutive_lod(
         normal_dims=normal_dims,
         colors=colors,
         scalars=scalars,
+        uvs=uvs,
         shading=shading,
         double_sided=double_sided,
         labels=labels,
@@ -491,6 +493,112 @@ def _maybe_add_mesh_substitutive_lod(
         scene=scene,
         **attrs,
     )
+
+
+def _reject_texture_conflicts(texture: Any, uvs: Any, colors: Any, attrs: Any) -> None:
+    """Refuse the texture combinations a single base colour cannot express.
+
+    Mesh admits exactly ONE base-colour source. `colors` and `colormap` were
+    already mutually exclusive (:func:`_reject_colors_colormap_conflict`); a
+    texture is the third arm of the same rule, not an independent channel that
+    modulates the others. Tinting a texture per-vertex is a reasonable thing to
+    want and is deliberately NOT what this does — it would need its own shader
+    variant and its own composition semantics, so it stays a follow-up rather
+    than an accident of leaving the gate open.
+
+    The `uvs`/`texture` pairing is the mesh peer of `normals`/`normal_dims`
+    (§3.4): each is meaningless alone. A texture with no UVs has no mapping and
+    would sample one arbitrary texel across every triangle; UVs with no texture
+    describe a mapping into nothing and cost a per-vertex array to say so. Both
+    are refused rather than warned, because both render *something* — the failure
+    is silent, which is the case §3.4 already argues must be made loud.
+    """
+    if texture is not None and colors is not None:
+        raise ValueError(
+            "Cannot specify both 'texture' and 'colors'. A mesh has one base "
+            "colour source: per-vertex colours, a colormap over scalars, or a "
+            "texture. (Per-vertex tinting OF a texture is not implemented.)"
+        )
+    if texture is not None and attrs.get("colormap") is not None:
+        raise ValueError(
+            "Cannot specify both 'texture' and 'colormap'. A mesh has one base "
+            "colour source: per-vertex colours, a colormap over scalars, or a "
+            "texture."
+        )
+    if texture is not None and uvs is None:
+        raise ValueError(
+            "'texture' requires 'uvs'. Without texture coordinates there is no "
+            "mapping from the surface into the image, so every triangle would "
+            "sample the same arbitrary texel."
+        )
+    if uvs is not None and texture is None:
+        raise ValueError(
+            "'uvs' requires 'texture'. Texture coordinates describe a mapping "
+            "into an image; with no image they cost a per-vertex array and "
+            "affect nothing."
+        )
+    # The sampling attrs are refused on a mesh with no texture for the same
+    # reason `reject_mesh_only_appearance` refuses them on a POINTS node: there
+    # is nothing to sample, so the setting persists to the store, reads back
+    # exactly as authored, and changes no pixel. A silent no-op that survives a
+    # round trip is the hardest kind of mistake to notice.
+    if texture is None:
+        orphaned = sorted(k for k in ("texture_filter", "texture_wrap") if k in attrs)
+        if orphaned:
+            raise ValueError(
+                f"{', '.join(repr(k) for k in orphaned)} "
+                f"{'require' if len(orphaned) > 1 else 'requires'} 'texture'. "
+                "Sampling attrs configure how a texture is read; with no texture "
+                "they affect nothing."
+            )
+
+
+def _reject_texture_with_structural_routes(
+    texture: Any, partition: Any, substitutive_lod: Any, additive_lod: Any
+) -> None:
+    """Refuse a texture on the three structural routes, naming why for each.
+
+    Not "meaningless" — each is a coherent thing to want, and each needs work
+    nothing does yet, which is the distinction the sibling refusals in this module
+    are careful to draw:
+
+    * ``partition=`` — a part is a re-indexing, so its UVs gather through
+      ``vertex_index`` like colours do (easy), but the IMAGE is node-level. Each
+      part would either duplicate the whole texture on disk or need a shared
+      sibling array with a reference from every part, and neither exists.
+    * ``substitutive_lod=`` — a decimated level has its own vertices, so its UVs
+      must be resampled at the collapse targets. ``luxar.mesh.decimate``
+      re-derives normals but carries no UV interpolation.
+    * ``additive_lod=`` — a reveal shell duplicates boundary vertices, so its UVs
+      gather like colours (easy), but the texture would be stored once per shell
+      and charged per level by the viewer's ladder budget.
+
+    Deliberately not blocking for the motivating use case: a UV sphere is ~20k
+    triangles and needs none of the three.
+    """
+    from ..partition import is_requested
+
+    if texture is None:
+        return
+    for value, label, reason in (
+        (partition, "partition", "each part would duplicate the whole image"),
+        (
+            substitutive_lod,
+            "substitutive_lod",
+            "a decimated level needs its UVs resampled at the collapse targets",
+        ),
+        (
+            additive_lod,
+            "additive_lod",
+            "the image would be stored once per reveal shell",
+        ),
+    ):
+        if is_requested(value):
+            raise ValueError(
+                f"'texture' cannot be combined with {label}= yet ({reason}). "
+                "Write the textured surface as a plain mesh leaf; a UV sphere or "
+                "a UV-mapped surface rarely needs either."
+            )
 
 
 def _reject_colors_colormap_conflict(colors: Any, scalars: Any, attrs: Any) -> None:
@@ -527,6 +635,7 @@ def _maybe_add_mesh_additive_lod(
     normal_dims: Optional[Sequence[int]],
     colors: Any,
     scalars: Any,
+    uvs: Any,
     shading: Optional[str],
     double_sided: bool,
     labels: Any,
@@ -622,6 +731,7 @@ def _maybe_add_mesh_additive_lod(
         normal_dims=normal_dims,
         colors=colors,
         scalars=scalars,
+        uvs=uvs,
         shading=shading,
         double_sided=double_sided,
         labels=None,
@@ -857,6 +967,13 @@ def add_mesh_impl(
     normal_dims: Optional[Sequence[int]] = None,
     colors: Any = None,
     scalars: Any = None,
+    uvs: Any = None,
+    texture: Any = None,
+    texture_encoding: str = "raw",
+    texture_width: Optional[int] = None,
+    texture_height: Optional[int] = None,
+    texture_channels: Optional[int] = None,
+    texture_color_space: str = "srgb",
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Optional[Union[List[str], Sequence[str]]] = None,
@@ -876,6 +993,9 @@ def add_mesh_impl(
     # "Could not add mesh '<name>': …".
     _reject_partition_with_substitutive_lod(partition, substitutive_lod)
     _reject_additive_lod_compositions(additive_lod, substitutive_lod, partition)
+    _reject_texture_with_structural_routes(
+        texture, partition, substitutive_lod, additive_lod
+    )
     try:
         # "An explicit None means absent" (#1574), applied ONCE here rather than
         # at each consumer: above the refusals below (none of which judges these
@@ -927,6 +1047,7 @@ def add_mesh_impl(
 
         # Colormap / colors mutual exclusivity, matching the sibling adders.
         _reject_colors_colormap_conflict(colors, scalars, attrs)
+        _reject_texture_conflicts(texture, uvs, colors, attrs)
 
         faces_arr: np.ndarray = (
             faces if isinstance(faces, np.ndarray) else np.asarray(faces)
@@ -1028,6 +1149,7 @@ def add_mesh_impl(
             normal_dims=normal_dims,
             colors=colors,
             scalars=scalars,
+            uvs=uvs,
             shading=shading,
             double_sided=double_sided,
             labels=labels,
@@ -1080,6 +1202,7 @@ def add_mesh_impl(
                 keys=keys,
                 image_labels=image_labels,
                 parent_node=parent_node,
+                split_axes=scene.dimensions.displayed,
                 extend_to_all=final_extend_dims or extend_to_all,
                 scalar_data_range=scalar_data_range,
                 **partition_attrs,
@@ -1111,6 +1234,7 @@ def add_mesh_impl(
             normal_dims=normal_dims,
             colors=colors,
             scalars=scalars,
+            uvs=uvs,
             shading=shading,
             double_sided=double_sided,
             labels=labels,
@@ -1136,6 +1260,13 @@ def add_mesh_impl(
             normal_dims=normal_dims,
             colors=cast(Any, colors),
             scalars=scalars,
+            uvs=uvs,
+            texture=texture,
+            texture_encoding=texture_encoding,
+            texture_width=texture_width,
+            texture_height=texture_height,
+            texture_channels=texture_channels,
+            texture_color_space=texture_color_space,
             shading=shading,
             double_sided=double_sided,
             labels=labels,
@@ -1179,6 +1310,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
     normal_dims: Optional[Sequence[int]],
     colors: Any,
     scalars: Any,
+    uvs: Any,
     shading: Optional[str],
     double_sided: bool,
     labels: Any,
@@ -1260,6 +1392,7 @@ def add_mesh_substitutive_lod_wrapper_impl(
         normal_dims=normal_dims,
         colors=colors,
         scalars=scalars,
+        uvs=uvs,
         shading=shading,
         double_sided=double_sided,
         labels=labels,
@@ -1576,6 +1709,7 @@ def _add_mesh_partition(
     keys: Any = None,
     image_labels: Any,
     parent_node: "Node",
+    split_axes: Sequence[int],
     extend_to_all: Optional[Union[List[str], str]],
     scalar_data_range: Optional[tuple[float, float]] = None,
     **attrs: Any,
@@ -1654,7 +1788,7 @@ def _add_mesh_partition(
 
     faces2d = faces_arr.reshape(-1, 3)
     centroids = face_centroids(vert_arr, faces2d)
-    tree = spatial_bsp_tree(centroids, max_elements, rule=rule)
+    tree = spatial_bsp_tree(centroids, max_elements, rule=rule, split_axes=split_axes)
     face_parts = bsp_leaf_parts(tree)
 
     warn_if_oversized_single_part(

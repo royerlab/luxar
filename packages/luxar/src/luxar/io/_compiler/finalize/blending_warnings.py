@@ -20,6 +20,7 @@ _BLENDING_MODES = frozenset(mode.value for mode in BlendingMode)
 _MESH_SUPPORTED_BLENDING_MODES = frozenset(
     {"opaque", "normal", "additive", "luminous", "max"}
 )
+_MAX_CLUSTER_PARTICIPANTS = 5
 
 
 @dataclass(frozen=True)
@@ -127,10 +128,110 @@ def _candidate_pairs(
             yield left, right
 
 
+def _cluster_root(parents: dict[str, str], path: str) -> str:
+    root = path
+    while parents[root] != root:
+        root = parents[root]
+    while path != root:
+        parent = parents[path]
+        parents[path] = root
+        path = parent
+    return root
+
+
+def _merge_sorted_overlap(
+    parents: dict[str, str],
+    modes: dict[str, set[str]],
+    geometry_types: dict[str, set[str]],
+    opacities: dict[str, set[float]],
+    containers: set[str],
+    left: _BlendLeaf,
+    right: _BlendLeaf,
+) -> None:
+    for node in (left, right):
+        parents.setdefault(node.owner_path, node.owner_path)
+        modes.setdefault(node.owner_path, set()).add(node.mode)
+        geometry_types.setdefault(node.owner_path, set()).add(node.leaf.geometry_type)
+        opacities.setdefault(node.owner_path, set()).add(node.opacity)
+    if _contains(left.leaf, right.leaf):
+        containers.add(left.owner_path)
+    if _contains(right.leaf, left.leaf):
+        containers.add(right.owner_path)
+    left_root = _cluster_root(parents, left.owner_path)
+    right_root = _cluster_root(parents, right.owner_path)
+    if left_root != right_root:
+        parents[max(left_root, right_root)] = min(left_root, right_root)
+
+
+def _warn_sorted_overlap_clusters(
+    parents: dict[str, str],
+    modes: dict[str, set[str]],
+    geometry_types: dict[str, set[str]],
+    opacities: dict[str, set[float]],
+    containers: set[str],
+) -> None:
+    clusters: dict[str, list[str]] = {}
+    for path in sorted(parents):
+        clusters.setdefault(_cluster_root(parents, path), []).append(path)
+    has_mergeable_cluster = False
+    has_unmergeable_cluster = False
+    for cluster in sorted(clusters.values()):
+        ordered = sorted(cluster, key=lambda path: (path not in containers, path))
+        shown = ordered[:_MAX_CLUSTER_PARTICIPANTS]
+        participants = ", ".join(
+            f"'{path}' ({' + '.join(sorted(modes[path]))})"
+            f"{' [contains another node]' if path in containers else ''}"
+            for path in shown
+        )
+        omitted = len(ordered) - len(shown)
+        if omitted:
+            participants += f", and {omitted} more"
+        cluster_modes = {mode for path in cluster for mode in modes[path]}
+        cluster_geometry_types = {
+            geometry_type for path in cluster for geometry_type in geometry_types[path]
+        }
+        cluster_opacities = {opacity for path in cluster for opacity in opacities[path]}
+        if (
+            len(cluster_geometry_types) == 1
+            and len(cluster_modes) == 1
+            and len(cluster_opacities) == 1
+        ):
+            has_mergeable_cluster = True
+            merge_note = ""
+        else:
+            has_unmergeable_cluster = True
+            merge_note = " Merging cannot preserve this cluster."
+        aprint(
+            f"  ⚠️  overlapping order-dependent nodes {participants} have view-dependent "
+            f"cross-node order.{merge_note}"
+        )
+    if not clusters:
+        return
+
+    advice: list[str] = []
+    if has_mergeable_cluster:
+        advice.append(
+            'For compatible clusters, merge the nodes and pass partition={"max_elements": N} '
+            "to order disjoint BSP cells back-to-front. This preserves placement and appearance "
+            "for same-type, same-mode, same-effective-opacity Points, Lines, Mesh, and Gaussian "
+            "Splats."
+        )
+    if has_unmergeable_cluster:
+        advice.append(
+            "Merging cannot preserve clusters whose geometry types, blending modes, or "
+            "opacities differ."
+        )
+    advice.append(
+        "For an emissive medium, additive blending is order-independent but changes surface "
+        "appearance; otherwise separate their bounds."
+    )
+    aprint(f"      {' '.join(advice)}")
+
+
 def warn_overlapping_blending(
     store: zarr.Group, world_leaves: list[WorldBoundsLeaf] | None = None
 ) -> None:
-    """Warn once per co-visible node with unsafe overlapping blend semantics."""
+    """Warn about co-visible nodes with unsafe overlapping blend semantics."""
     if "scene_dimensions" not in store.attrs:
         return
     dimensions = Dimensions.from_dict(store.attrs["scene_dimensions"])
@@ -139,7 +240,11 @@ def warn_overlapping_blending(
         world_leaves = collect_world_bounds(store)
     leaves = [_effective_leaf(leaf) for leaf in world_leaves]
     warned_additive: set[str] = set()
-    warned_sorted: set[str] = set()
+    sorted_parents: dict[str, str] = {}
+    sorted_modes: dict[str, set[str]] = {}
+    sorted_geometry_types: dict[str, set[str]] = {}
+    sorted_opacities: dict[str, set[float]] = {}
+    sorted_containers: set[str] = set()
     for left, right in _candidate_pairs(leaves, displayed_dimensions):
         if left.owner_path == right.owner_path:
             continue
@@ -171,11 +276,20 @@ def warn_overlapping_blending(
             and _internally_sorted(right)
             and (_contains(left.leaf, right.leaf) or _contains(right.leaf, left.leaf))
         ):
-            if left.owner_path in warned_sorted or right.owner_path in warned_sorted:
-                continue
-            warned_sorted.update((left.owner_path, right.owner_path))
-            aprint(
-                f"  ⚠️  overlapping order-dependent nodes '{left.owner_path}' ({left.mode}) "
-                f"and '{right.owner_path}' ({right.mode}) have view-dependent cross-node "
-                "order; make one node additive or separate their bounds."
+            _merge_sorted_overlap(
+                sorted_parents,
+                sorted_modes,
+                sorted_geometry_types,
+                sorted_opacities,
+                sorted_containers,
+                left,
+                right,
             )
+
+    _warn_sorted_overlap_clusters(
+        sorted_parents,
+        sorted_modes,
+        sorted_geometry_types,
+        sorted_opacities,
+        sorted_containers,
+    )

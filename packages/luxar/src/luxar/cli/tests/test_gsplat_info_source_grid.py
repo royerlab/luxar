@@ -26,6 +26,7 @@ from typer.testing import CliRunner  # noqa: E402
 
 from luxar._zarr_compat import read_node_attrs
 from luxar.cli import app  # noqa: E402
+from luxar.cli.tests._testing import normalized_cli_output  # noqa: E402
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats  # noqa: E402
 
 
@@ -58,6 +59,85 @@ def test_info_surfaces_the_source_grid(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Source volume: 24 x 32 x 32 uint16" in result.output, result.output
     assert "compression:" in result.output, result.output
+
+
+def test_info_summarizes_nested_part_provenance_unless_full_is_requested(
+    tmp_path: Path,
+) -> None:
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+    from luxar.gsplats.io.save_gsplats import write_partition_streaming
+    from luxar.gsplats.tree import GSplatLeaf
+
+    records = [
+        {
+            "coordinate": 0.0,
+            "fitting": {
+                "part_provenance": [
+                    {
+                        "coordinate": 1.0,
+                        "fitting": {
+                            "part_provenance": [
+                                {"coordinate": 2.0, "fitting": {"psnr_db": 40.0}}
+                            ]
+                        },
+                    }
+                ]
+            },
+        }
+    ]
+    centers = np.zeros((1, 3), dtype=np.float32)
+    amplitudes = np.ones(1, dtype=np.float32)
+    cholesky_factors = np.array([[1.0, 0.0, 1.0, 0.0, 0.0, 1.0]], dtype=np.float32)
+    flat = tmp_path / "flat.gsplats.zarr"
+    GSplatData(
+        centers=centers,
+        amplitudes=amplitudes,
+        cholesky_factors=cholesky_factors,
+        stats={"part_provenance": records},
+    ).save(flat, ordering="none")
+
+    partition = tmp_path / "partition.gsplats.zarr"
+    leaf = GSplatLeaf(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky_factors,
+            )
+        ]
+    )
+    write_partition_streaming(
+        partition,
+        lambda: iter([leaf]),
+        fitting_info={"part_provenance": records},
+        ordering="none",
+    )
+
+    for path in (flat, partition):
+        summary = CliRunner().invoke(
+            app, ["gsplat", "info", str(path), "--no-histograms"]
+        )
+        assert summary.exit_code == 0, summary.output
+        summary_output = normalized_cli_output(summary)
+        assert "part_provenance: 1 part, nested channels × timepoints" in summary_output
+        assert "psnr_db" not in summary_output
+
+        full = CliRunner().invoke(
+            app,
+            [
+                "gsplat",
+                "info",
+                str(path),
+                "--no-histograms",
+                "--full-provenance",
+            ],
+        )
+        assert full.exit_code == 0, full.output
+        assert "psnr_db" in normalized_cli_output(full)
+
+    help_result = CliRunner().invoke(app, ["gsplat", "info", "--help"])
+    assert help_result.exit_code == 0, help_result.output
+    assert "--full-provenance" in normalized_cli_output(help_result)
 
 
 def test_cli_fit_stamps_the_stored_dtype_not_the_loaders_cast(tmp_path: Path) -> None:
@@ -289,7 +369,8 @@ def test_a_single_downscaled_tile_does_not_claim_the_whole_acquisition(
     src = tmp_path / "vol.npy"
     V = _sparse_blobs(shape=(32, 32, 32), n=16)
     np.save(src, V)
-    n_tiles = len(compute_tile_specs((16, 16, 16), 8, 2))
+    specs = compute_tile_specs((16, 16, 16), 8, 2)
+    n_tiles = len(specs)
     assert n_tiles > 1, "a single tile would cover the whole grid, proving nothing"
     out = tmp_path / "tile0.gsplats.zarr"
     result = CliRunner().invoke(
@@ -320,5 +401,7 @@ def test_a_single_downscaled_tile_does_not_claim_the_whole_acquisition(
     if not out.exists():
         pytest.skip("tile 0 windowed to empty; nothing was stamped")
     attrs = read_node_attrs(out / "fitting")
-    assert attrs["source_shape"] != [32, 32, 32], attrs
+    assert attrs["psnr_db"] > 0
+    assert np.isfinite(attrs["foreground_psnr_db"])
+    assert attrs["source_shape"] == list(specs[0].shape), attrs
     assert "source_declared" not in attrs, attrs

@@ -114,6 +114,81 @@ describe('DimensionSliders - keyboard selection indicator', () => {
     expect(status?.textContent).not.toContain('[/]: 10 · Channel');
     sliders.dispose();
   });
+
+  // A slider row's name is now CSS-ellipsised once it would claim the value's
+  // reserved width, so the full text has to survive somewhere. jsdom does no
+  // layout and therefore cannot see the truncation itself — what it CAN pin is
+  // that nothing is left unrecoverable, which is the half that regressed when
+  // the ellipsis was added.
+  it('gives every slider name a tooltip carrying its full text', () => {
+    const sliders = buildSliders();
+    const names = Array.from(
+      document.querySelectorAll<HTMLElement>('.luxar-dimension-slider__name')
+    );
+
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      expect(name.title).toBe(name.textContent);
+    }
+    sliders.dispose();
+  });
+
+  /**
+   * The tooltip text and the `--with-tooltip` dotted underline are two
+   * decisions off the SAME fact, so they are asserted together: the underline
+   * advertises that hovering reveals something new, and must not appear on a
+   * fallback tooltip that merely repeats the visible name.
+   *
+   * The empty-string row is the one that matters. Compilers write
+   * `description: ''` rather than omitting the key — the shipped
+   * `dimension_sliders_5d_example` does — and reading it with `??` (which falls
+   * through on null/undefined only) put `title=""` on every row of the real
+   * viewer: the class ternary saw no description, the tooltip used it anyway,
+   * and the full name became unrecoverable precisely where the CSS had begun
+   * truncating it. Nothing else in the suite covers a falsy-but-present
+   * description.
+   */
+  it.each([
+    { label: 'no description key', descriptionMetadata: {}, title: 'Frame', underlined: false },
+    {
+      label: 'an empty description',
+      descriptionMetadata: { description: '' },
+      title: 'Frame',
+      underlined: false,
+    },
+    {
+      label: 'an authored description',
+      descriptionMetadata: { description: 'Acquisition frame index' },
+      title: 'Acquisition frame index',
+      underlined: true,
+    },
+  ])('with $label the name reads title "$title"', ({ descriptionMetadata, title, underlined }) => {
+    const described: SimpleDims = {
+      ...dims,
+      metadata: dims.metadata!.map((meta, index) =>
+        index === 3 ? { ...meta, ...descriptionMetadata } : meta
+      ),
+    };
+    const sliders = new DimensionSliders({
+      container: document.getElementById('test-container')!,
+      dims: described,
+      dimensionRanges: [
+        [0, 100],
+        [0, 100],
+        [0, 100],
+        [0, 15],
+        [0, 2],
+      ],
+      dimensionNames: ['X', 'Y', 'Z', 'Frame', 'Channel'],
+      selectedDimension: 0,
+    });
+
+    const frame = document.querySelector<HTMLElement>('.luxar-dimension-slider__name')!;
+    expect(frame.textContent).toBe('Frame');
+    expect(frame.title).toBe(title);
+    expect(frame.className.includes('luxar-dimension-slider__name--with-tooltip')).toBe(underlined);
+    sliders.dispose();
+  });
 });
 
 // ui.md O1 / Phase E39: previously named "Memory Leak Prevention" — a

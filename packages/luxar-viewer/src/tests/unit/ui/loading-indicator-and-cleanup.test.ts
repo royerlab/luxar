@@ -20,6 +20,7 @@ vi.mock('../../../ui/help-overlay', () => ({
 
 import { showLoadingIndicator, hideLoadingIndicator } from '../../../ui/loading-indicator';
 import { cleanupUI } from '../../../ui/ui-cleanup';
+import { clearError, showError } from '../../../ui/error-overlay';
 import { hideHelpOverlay } from '../../../ui/help-overlay';
 import {
   showSceneIdentityBanner,
@@ -32,6 +33,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearError();
+  vi.restoreAllMocks();
   document.body.innerHTML = '';
 });
 
@@ -86,13 +89,13 @@ describe('cleanupUI', () => {
   });
 
   it('removes the luxar-error-message if present', () => {
-    const errEl = document.createElement('div');
-    errEl.id = 'luxar-error-message';
-    document.body.appendChild(errEl);
+    const removeEventListener = vi.spyOn(document, 'removeEventListener');
+    showError('Persistent error', undefined, undefined, { autoDismiss: false });
 
     cleanupUI();
 
     expect(document.getElementById('luxar-error-message')).toBeNull();
+    expect(removeEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
   });
 
   it('invokes hideHelpOverlay', () => {

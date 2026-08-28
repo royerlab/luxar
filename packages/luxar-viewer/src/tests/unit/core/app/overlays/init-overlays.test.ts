@@ -160,10 +160,15 @@ describe('initOverlays', () => {
     expect(manager.loadOverlays).not.toHaveBeenCalled();
   });
 
-  it('calls loadOverlays(configs, baseUrl) when both are present and non-empty', async () => {
+  it('passes configs, base URL, and the scene file reader to loadOverlays', async () => {
     const configs = [{ name: 'foo' }, { name: 'bar' }];
     const baseUrl = 'http://example.com/dataset.zarr';
-    const root = makeLuxarRoot({ overlayConfigs: configs, zarrBaseUrl: baseUrl });
+    const readOverlayFile = vi.fn();
+    const root = makeLuxarRoot({
+      overlayConfigs: configs,
+      zarrBaseUrl: baseUrl,
+      readOverlayFile,
+    });
     const ports: InitOverlaysPorts = {
       disposePrevious: vi.fn(),
       sceneManager: makeSceneManager(root),
@@ -173,7 +178,7 @@ describe('initOverlays', () => {
 
     const manager = await initOverlays(ports);
 
-    expect(manager.loadOverlays).toHaveBeenCalledExactlyOnceWith(configs, baseUrl);
+    expect(manager.loadOverlays).toHaveBeenCalledExactlyOnceWith(configs, baseUrl, readOverlayFile);
   });
 
   it('wires the new manager into inputHandler.setOverlayManager', async () => {

@@ -33,7 +33,7 @@ PLACE (no `-e`).
 | --- | --- |
 | Crop to a coordinate box | `slice` (numpy-style ranges) |
 | Move/scale/rotate/recenter in space | `transform` |
-| Rescale or normalize brightness | `transform --scale-intensity / --normalize-intensity` |
+| Rescale or normalize brightness | `transform --scale-intensity / --normalize-intensity` — but see below: you usually do NOT need this |
 | Drop low-value splats (shrink file) | `cull` |
 | Reduce to a target splat count | `decimate --target N` / `-f 0.1` |
 | Keep splats matching property thresholds | `filter` |
@@ -46,6 +46,83 @@ PLACE (no `-e`).
 | Retrofit Q·e LOD quality stamps in place | `annotate-quality` |
 | Upgrade an old-format file | `migrate-format` |
 | Look at stats / quality | `info` / `render` / `compare` / `view` / `napari` |
+
+## Amplitudes: normalisation now happens on INSERTION, not here
+
+A fitted `.gsplats.zarr` stores amplitudes in **raw source units** — the fitter
+multiplies its `[0,1]` working copy back out by the volume's intensity range, so
+a fit from a uint16 detector stack carries detector counts, in the hundreds or
+thousands. Those units cannot be corrected at display time: the colormap window
+only feeds the LUT index (`t = clamp((A-min)*scale, 0, 1)`, clamped, so it picks
+a *colour*), while emitted radiance and volumetric optical depth are both LINEAR
+in the raw stored amplitude and nothing windows them.
+
+**Since #2211 the scene adders normalise by default** — `add_gsplats_from_data`,
+`add_gsplats_from_file` and the graft path scale a robust p99.9 to 1.0, with ONE
+factor for the whole structure, recorded as `amplitude_normalization_factor`.
+Data already in range is untouched.
+
+So `transform --normalize-intensity` is now for the cases the default does not
+cover: pinning an explicit target across SEVERAL archives that must share an
+exposure (multichannel, or a timelapse fitted in separate batches), or preparing
+an archive for a consumer that is not the Luxar scene compiler. **`--scale-intensity`
+on `gsplat convert` implies opting out of the automatic normalisation**, since
+normalising straight after an explicit scale would cancel it exactly.
+
+## `cull --method cumulative` ranks by PEAK, and that is not what you see
+
+`--retention R` keeps splats carrying a fraction R of the total **peak
+amplitude**. But a splat's contribution to the render is amplitude x volume, and
+the dim splats a cumulative cull discards first are the LARGE, diffuse ones. So
+the retention number systematically understates what the cull costs.
+
+Measured on one Drosophila timepoint at `--retention 0.960`:
+
+| | splats | peak amplitude | integrated mass | rendered intensity |
+|---|---|---|---|---|
+| pre-cull | 256,000 | 1.804e7 | 6.881e7 | 43.54 |
+| post-cull | 165,739 | 1.738e7 | 5.749e7 | 32.25 |
+| **retained** | 64.7% | **96.3%** | **83.5%** | **74.1%** |
+
+The cull is honest about its own contract — 96.3% of peak, as asked. But it
+removed **16.5% of the mass and 26% of the rendered intensity**, because the
+discarded splats carry ~4.4x more mass per unit peak than the kept ones. Against
+the raw volume that frame scored **28.7 dB foreground post-cull vs 37.2 dB
+pre-cull** — an 8.5 dB drop for a nominal 4% amplitude loss.
+
+Two consequences:
+
+* **`retention` is not a fidelity dial.** 0.96 does not mean "96% as good"; on
+  diffuse data it can mean a quarter of the light. If you need to bound the
+  quality loss, score the culled result — do not infer it from R.
+* **It is still the right tool when the diffuse component IS haze**, which is
+  the usual case in light-sheet: the removed intensity was background, the
+  render looks unchanged, and the authored `opacity` absorbs the difference.
+  That is a judgement about the data, not something R guarantees.
+
+## `cull --method cumulative`: report the COUNT, not the retention
+
+`--retention R` is an *input*; the surviving splat count is the *outcome*, and it
+depends entirely on the amplitude distribution. **Always report and check the
+count** — R alone tells a reader nothing about what they will get.
+
+This was worth more than a style note. The same `-r 0.960` returned **65%** of
+splats on a 20-frame store and **12%** on the 500-frame one, from provably
+identical amplitude distributions (both need exactly 65.0% of splats for 96% of
+amplitude). Cause: the cumulative sum accumulated in **float32** and saturated on
+the larger set — fixed in #2260, filed as #2258. Ladder depth was the obvious
+suspect and was wrong: 1, 2, 4, 8 and 13 rungs all gave 65.3% on the same data.
+
+So the check that would have caught it, and is worth keeping:
+
+* **Compare the resulting count against the CDF.** If `-r 0.96` does not keep
+  roughly the fraction `np.cumsum(np.sort(amps)[::-1], dtype=np.float64)` says
+  it should, something other than the documented rule is acting. Here `amps`
+  means alpha-effective amplitude (`A·α` for RGBA), as returned by
+  `luxar.gsplats.utils.alpha.effective_amplitudes`, not raw amplitude.
+* **Check per-slice survival on a timelapse** (`np.unique` on the stacked centre
+  column). On this data all 500 frames survived within a 2.4x spread, so the loss
+  was uniform rather than gutting dim timepoints — worth confirming, not assuming.
 
 **There is deliberately no occlusion/shading command here.** If a fit renders as a
 flat glow with no visible shape, the fix is `luxar.shading.bake_ambient_occlusion`

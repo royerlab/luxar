@@ -12,6 +12,13 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 import numpy as np
 
 from ..compositing import reject_mesh_only_appearance, strip_absent_attr_kwargs
+from .amplitude_norm import (
+    NormalizeSpec,
+    normalize_node_in_place,
+)
+from .amplitude_norm import (
+    stamp_factor as stamp_amplitude_factor,
+)
 from .from_data import (
     ABSENT_WHEN_NONE_ATTRS,
     GRAFT_REMEDY,
@@ -37,7 +44,7 @@ if TYPE_CHECKING:
 
 
 def _grafted_partition_bsp_tree(
-    node: "GSplatPartition",
+    node: "GSplatPartition", axes: "List[int]"
 ) -> Optional[Dict[str, Any]]:
     """Return stored or exactly recoverable planes and report recovery."""
     if node.bsp_tree is not None:
@@ -56,7 +63,7 @@ def _grafted_partition_bsp_tree(
         aprint("  🧭 No exact BSP split planes recovered; using centroid part ordering")
         return None
     boxes = [bounds for bounds in child_bounds if bounds is not None]
-    recovered = reconstruct_serialized_bsp_tree(boxes)
+    recovered = reconstruct_serialized_bsp_tree(boxes, axes=axes)
     if serialized_bsp_tree_separates(recovered, boxes):
         if recovered is not None and "part" not in recovered:
             aprint(f"  🧭 Recovered BSP split planes for {len(node.children)} parts")
@@ -659,6 +666,19 @@ def _graft_gsplat_node_transaction(
         raise
 
 
+def _ensure_graft_normalized(
+    node: Any,
+    attrs: Dict[str, Any],
+    normalize_amplitudes: NormalizeSpec,
+    normalized: bool,
+) -> None:
+    """Apply the one tree-wide insertion factor before graft recursion."""
+    if normalized:
+        return
+    factor = normalize_node_in_place(node, normalize_amplitudes)
+    stamp_amplitude_factor(attrs, factor)
+
+
 def graft_gsplat_node(
     group: "Group",
     *,
@@ -666,7 +686,9 @@ def graft_gsplat_node(
     node: Any,  # luxar.gsplats.tree.GSplatNode
     parent: Optional["Node"] = None,
     extend_to_all: Optional[Union[List[str], str]] = None,
+    normalize_amplitudes: NormalizeSpec = True,
     _under_partition: Optional[bool] = None,
+    _normalized: bool = False,
     **attrs: Any,
 ) -> Union["GSplats", "Group"]:
     """Graft a pre-built ``GSplatNode`` subtree into the scene, node-for-node.
@@ -712,13 +734,19 @@ def graft_gsplat_node(
     so that known failures keep the caller-facing node name.
     """
     if _under_partition is None:
+        # Entry call: re-dispatch through the writer transaction, which comes
+        # back into this function with a concrete ``_under_partition``. The
+        # transaction forwards only ``attrs``, so ``normalize_amplitudes`` has to
+        # ride in there or the caller's choice is silently replaced by the
+        # default on the second frame — measured: an explicit
+        # ``normalize_amplitudes=False`` normalised anyway.
         return _graft_gsplat_node_transaction(
             group,
             name=name,
             node=node,
             parent=parent,
             extend_to_all=extend_to_all,
-            attrs=attrs,
+            attrs={**attrs, "normalize_amplitudes": normalize_amplitudes},
         )
 
     from luxar.gsplats.gsplat_data import GSplatData
@@ -756,6 +784,22 @@ def graft_gsplat_node(
     _reject_a_bad_partition_spec_on_a_graft(name, node, attrs)
     _reject_labels_on_a_grafted_wrapper(name, node, attrs)
 
+    # Normalise ONCE, over the WHOLE subtree, at the entry call — then thread
+    # ``_normalized`` down so no descendant repeats it. This is the one place a
+    # partition / nested tree can be normalised at all: it never becomes a
+    # ``GSplatData``, so it never reaches the data path's own normalisation.
+    #
+    # Doing it per node would be actively wrong, not merely redundant. Each part
+    # of a tiling has its own amplitude distribution — the tile holding the
+    # brightest region has a higher p99.9 than its neighbours — so a per-part
+    # factor would scale adjacent tiles differently and reintroduce exactly the
+    # cross-seam exposure mismatch ``finalize/amplitude_window.py`` exists to
+    # prevent. Idempotence does not save us here: after a tree-wide scale a hot
+    # tile's OWN p99.9 can still exceed 1.0, so ``auto`` would fire again on it
+    # alone.
+    _ensure_graft_normalized(node, attrs, normalize_amplitudes, _normalized)
+    _normalized = True
+
     if isinstance(node, GSplatLeaf):
         # Matrix-shaped → the normal data path. A graft preserves the file's own
         # coordinates, so no scene-embed transforms are applied here.
@@ -765,6 +809,9 @@ def graft_gsplat_node(
             result=GSplatData.from_tree(node),
             parent=parent,
             extend_to_all=extend_to_all,
+            # Already normalised above, tree-wide. Re-running it on this leaf's
+            # own distribution is the per-part hazard described there.
+            normalize_amplitudes=False,
             **attrs,
         )
 
@@ -875,6 +922,7 @@ def graft_gsplat_node(
                 node=child,
                 extend_to_all=extend_to_all,
                 coverage_fraction=cov,
+                _normalized=True,
                 # A nested ladder inside a partition-bound one is still inside the
                 # same tile, so the binding propagates down.
                 _under_partition=partition_bound,
@@ -893,7 +941,9 @@ def graft_gsplat_node(
         # stored tree; recover one only when the child bounds admit an exact
         # separating BSP. Overlapping/interlocking parts keep the viewer's
         # centroid fallback rather than receiving an invented ordering.
-        bsp_tree = _grafted_partition_bsp_tree(node)
+        bsp_tree = _grafted_partition_bsp_tree(
+            node, group._find_scene().dimensions.displayed
+        )
         if bsp_tree is not None:
             partition_attrs["bsp_tree"] = bsp_tree
         # `max_elements` is a per-part CAP, so only a capped splitter sets it
@@ -932,6 +982,7 @@ def graft_gsplat_node(
                 node=child,
                 extend_to_all=extend_to_all,
                 _under_partition=child_under_partition,
+                _normalized=True,
                 **child_attrs,
             )
         return wrapper
@@ -956,6 +1007,7 @@ def add_gsplats_from_volume_impl(
     dim_order: Optional[List[str]] = None,
     fill: Optional[Dict[str, float]] = None,
     fill_sigma: Optional[Dict[str, float]] = None,
+    normalize_amplitudes: NormalizeSpec = True,
     opacity: Optional[float] = None,
     absorption: Optional[float] = None,
     blending_mode: Optional[str] = None,
@@ -1025,5 +1077,6 @@ def add_gsplats_from_volume_impl(
         dim_order=dim_order,
         fill=fill,
         fill_sigma=fill_sigma,
+        normalize_amplitudes=normalize_amplitudes,
         **scene_attrs,
     )

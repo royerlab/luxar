@@ -194,6 +194,30 @@ describe('RangeSlider — track-fill geometry', () => {
 });
 
 describe('RangeSlider — public setters', () => {
+  it('applies an initial label tooltip and hover affordance', () => {
+    makeSlider({ label: 'Display range', tooltip: 'Scalar data window' });
+    const label = host.querySelector('.luxar-range-slider__label') as HTMLElement;
+
+    expect(label.textContent).toBe('Display range');
+    expect(label.title).toBe('Scalar data window');
+    expect(label.classList.contains('luxar-range-slider__label--with-tooltip')).toBe(true);
+  });
+
+  it('setLabel updates both the visible label and its tooltip', () => {
+    const { slider } = makeSlider({ label: 'Display range' });
+    const label = host.querySelector('.luxar-range-slider__label') as HTMLElement;
+
+    slider.setLabel('Colour range', 'Input RGB window');
+    expect(label.textContent).toBe('Colour range');
+    expect(label.title).toBe('Input RGB window');
+    expect(label.classList.contains('luxar-range-slider__label--with-tooltip')).toBe(true);
+
+    slider.setLabel('Display range');
+    expect(label.textContent).toBe('Display range');
+    expect(label.hasAttribute('title')).toBe(false);
+    expect(label.classList.contains('luxar-range-slider__label--with-tooltip')).toBe(false);
+  });
+
   it('setValues writes both inputs and refreshes labels', () => {
     const { slider } = makeSlider({ label: 'Range' });
     slider.setValues(0.3, 0.7);

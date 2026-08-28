@@ -15,11 +15,11 @@ keys a caller must not supply.
 from __future__ import annotations
 
 import difflib
+import warnings
 from typing import Any, Dict, FrozenSet, Optional
 
 import numpy as np
 import zarr
-from arbol import aprint
 from numpy.typing import NDArray
 
 from ...core.dimensions import Dimensions
@@ -34,7 +34,14 @@ from ...typing_utils.constants import (
 from ...validation.types import (
     validate_appearance_fraction,
     validate_positive_finite,
+    validate_texture_filter,
+    validate_texture_wrap,
 )
+
+
+class ElementCapacityWarning(UserWarning):
+    """A node may exceed the viewer's per-node element-texture capacity."""
+
 
 # Writer-authoritative attrs each geometry writer stamps unconditionally.
 # User-supplied values for these keys are rejected in the fail-fast gate:
@@ -128,6 +135,21 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "normal_dims",
         "has_colors",
         "has_scalars",
+        "has_uvs",
+        # Texture stamps: all writer-derived, and the three DIMENSION ones are
+        # reserved for a sharper reason than tidiness. The viewer's admission gate
+        # budgets a node from these numbers before it fetches a chunk, so a
+        # caller-supplied value that disagreed with the payload would make the
+        # budget mean something other than what it says — which is the whole
+        # decompression-bomb surface. They come from the validator, never from
+        # `**attrs`.
+        "has_texture",
+        "texture_encoding",
+        "texture_width",
+        "texture_height",
+        "texture_channels",
+        "texture_color_space",
+        "texture_data_range",
         "has_labels",
         "has_image_labels",
         "has_keys",
@@ -188,6 +210,10 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         # attributes" hint instead of being reported as an unknown key.
         "slab_tolerance",
         "specular",
+        # Mesh-only texture sampling. Same reasoning again: authorable knobs, so
+        # a typo should see them in the hint.
+        "texture_filter",
+        "texture_wrap",
         "visible",
     }
 )
@@ -198,6 +224,11 @@ _MESH_APPEARANCE_VALIDATORS = {
     "alpha_cutoff": (validate_appearance_fraction, "Alpha cutoff"),
     "shade_exponent": (validate_positive_finite, "Shade exponent"),
     "shininess": (validate_positive_finite, "Shininess"),
+    # Texture sampling. Mesh-only for the same reason the five above are: only a
+    # mesh has a texture to sample, so on any other node these are a silent
+    # no-op that reads like a working setting.
+    "texture_filter": (validate_texture_filter, "Texture filter"),
+    "texture_wrap": (validate_texture_wrap, "Texture wrap"),
     # Slab half-width in CELLS, so any positive multiple is meaningful and there
     # is no upper bound to impose. Zero is refused by `validate_positive_finite`
     # and that refusal is load-bearing: a zero slab reduces mesh's whole-triangle
@@ -229,6 +260,13 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # Viewer-consumed LOD quality stamps injected by additive ladders.
         "level_stats",
         "lod_stats",
+        # Provenance for the insertion-time amplitude normalisation (see
+        # ``core/group/gsplats_pipeline/amplitude_norm.py``). Records the single
+        # factor the whole structure was scaled by, so an authored window, an
+        # ``amplitude_mass`` stamp or a later refit can be reconciled with the
+        # values actually stored. Not a render attr — the viewer does not read
+        # it — hence here rather than in ``KNOWN_RENDER_ATTRS``.
+        "amplitude_normalization_factor",
         # Structural keys injected by node construction / specialized-group
         # builders (add_lod_group / add_partition_group) / LOD wrappers.
         "type",
@@ -566,6 +604,10 @@ def warn_if_over_element_cap(
         enabled: False to suppress a redundant child warning when its parent
             checks the aggregate count.
 
+    Warns:
+        ElementCapacityWarning: If a supported geometry node exceeds the
+            conservative viewer capacity floor.
+
     Returns:
         True if a warning was emitted.
     """
@@ -581,8 +623,8 @@ def warn_if_over_element_cap(
         if geometry_type == "gsplats"
         else "Split it with partition=dict(max_elements=...)"
     )
-    aprint(
-        f"⚠️  '{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
+    message = (
+        f"'{node_path}' holds {count:,} {noun}, above the {cap:,} a single "
         f"{geometry_type} node can render on a 4096-class GPU. If the whole "
         f"node is committed at once, such a GPU can silently drop the tail — "
         f"and because elements are stored in Hilbert "
@@ -591,6 +633,7 @@ def warn_if_over_element_cap(
         f"non-displayed dimension commits only its current slice. {remedy} "
         f"to render everywhere."
     )
+    warnings.warn(message, ElementCapacityWarning, stacklevel=1)
     return True
 
 
@@ -725,7 +768,7 @@ def validate_render_attrs(
 
 
 def _validate_mesh_appearance_attrs(attrs: Dict[str, Any]) -> None:
-    """Validate five appearance controls plus slab tolerance in the shared gate."""
+    """Validate seven appearance controls plus slab tolerance in the shared gate."""
     for key, (validator, label) in _MESH_APPEARANCE_VALIDATORS.items():
         if key in attrs:
             validator(attrs[key], label)

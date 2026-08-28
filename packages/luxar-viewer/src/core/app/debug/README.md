@@ -104,7 +104,7 @@ For lines, the `hasColormap` flag is read structurally from
 is running on the GLSL `ShaderMaterial` or the TSL `NodeMaterial` backend.
 
 The returned `DebugState` carries `totalPoints`, `totalGSplats`, `totalLines`,
-`totalTriangles`, `totalElements` (their sum), the per-node arrays
+`totalTriangles`, `totalElements` (their sum), `totalDroppedElements`, the per-node arrays
 (`pointClouds`, `gsplatMeshes`, `lineMeshes`, `meshNodes`), `lodGroups`, `partitions`, an
 optional `gpuPool` byte-stats block, `dimensions`, a nested `camera`
 (`{position, fov}`) plus flat `cameraPosition` / `cameraFov` mirrors kept for
@@ -160,7 +160,8 @@ screenshot/capture driver asks — "does this scene graph carry drawable
 elements?" — as `ok` plus all four per-type totals (`totalPoints`,
 `totalGSplats`, `totalLines`, `totalTriangles`), a `totalElements`, and the four
 per-node counts (`pointCloudCount`, `gsplatCount`, `lineCount`,
-`meshNodeCount`). `ok` is true iff `totalElements > 0`, where `totalElements` is
+`meshNodeCount`). `ok` is true iff `totalElements > 0` and
+`totalDroppedElements === 0`, where `totalElements` is
 `max(the snapshot's own totalElements field, sum of the four per-type totals)`.
 That max is a version-skew hedge, not arithmetic: the capture tool talks to
 whatever viewer build is served at `APP_URL`, so a missing total is re-derived
@@ -168,7 +169,9 @@ from the per-type ones and a stale or partial snapshot's own field can only
 under-claim relative to itself — never under-claim against the per-type totals it
 is carrying. The current viewer sets the field to exactly that sum
 (`debug-state.ts`), so on a live snapshot the max is inert and it is simply the
-sum.
+sum. A false verdict therefore covers both retryable "nothing loaded yet" and
+permanent "loaded but renderer-truncated" states; callers distinguish them from
+the human-readable `reason`.
 
 Every not-ready path (no state, an unexpected snapshot shape,
 present-but-non-finite totals, an empty scene) carries a human-readable `reason`

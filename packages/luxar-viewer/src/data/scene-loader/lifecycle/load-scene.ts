@@ -126,6 +126,8 @@ export interface LoadSceneCtx {
    * `reportLoadOutcome` to log an honest load outcome.
    */
   getFailedLoaderPaths(): string[];
+  /** Recorded failure messages in the same encounter order as the paths. */
+  getFailedLoaderReasons(): string[];
   /**
    * The shared failed-loads provider (paths + retry-all + per-path reason).
    * Single construction point so the monitor banner and the layers-panel
@@ -430,8 +432,10 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const overlayConfigs = await loadOverlayConfigs(zarrStore, rootLoc);
   if (overlayConfigs.length > 0) {
     rootGroup.userData.overlayConfigs = overlayConfigs;
-    // Store base URL for image fetching
+    // Store both directory-URL and opaque-file access for image overlays.
     rootGroup.userData.zarrBaseUrl = ctx.normalizeURL(url);
+    rootGroup.userData.readOverlayFile = async (path: string) =>
+      zarrStore.get(path as zarr.AbsolutePath);
   }
 
   // Post-load monitor-tab provider wiring (extracted to
@@ -455,16 +459,16 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     drawOrderProvider: createDrawOrderProvider(rootGroup),
   });
 
-  // Report what ACTUALLY happened. `loadScene` cannot throw on a failed node
-  // (loadLeafNode swallows LoaderError so the rest of the scene still builds), so
-  // without this a scene whose every node failed logged success over an empty
-  // viewport. Totality is graded against the registered path set — a failed lazy
-  // LOD level records a failure without registering, so a count would over-report.
-  reportLoadOutcome(ctx.getFailedLoaderPaths(), [
-    ...ctx.loaders.keys(),
-    ...ctx.linesLoaders.keys(),
-    ...ctx.gsplatLoaders.keys(),
-  ]);
+  // Report what ACTUALLY happened. Ordinary leaf-local LoaderErrors are swallowed
+  // so the rest of the scene still builds; without this, a scene whose every node
+  // failed logged success over an empty viewport. Container-wide archive faults
+  // rethrow before this point. Totality is graded against the registered path set
+  // because a failed lazy LOD level records a failure without registering.
+  reportLoadOutcome(
+    ctx.getFailedLoaderPaths(),
+    [...ctx.loaders.keys(), ...ctx.linesLoaders.keys(), ...ctx.gsplatLoaders.keys()],
+    ctx.getFailedLoaderReasons()
+  );
 
   // Schedule progressive LOD refinement after initial load.
   // Each per-type loader maps may include progressive loaders that

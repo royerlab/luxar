@@ -30,8 +30,12 @@ import {
   clampShadeExponent,
   clampShininess,
   resolveMeshBlendingMode,
+  resolveMeshColorSource,
   resolveMeshOutput,
+  syncMeshColorSourceDefines,
   syncMeshEmissionDefines,
+  syncMeshShadingDefines,
+  type MeshShadingMode,
 } from './appearance';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -80,11 +84,37 @@ export interface MeshMaterialConfig {
    */
   blendingMode?: BlendingMode;
   /**
-   * Shade from screen-space derivatives instead of the stored `normal` attribute.
-   * A compile-time variant, not a runtime branch — see `MeshTSLConfig.flatNormal`
-   * for why, and `createMeshNode` for who decides it.
+   * How normals are obtained: stored, derivative, or none at all.
+   *
+   * A compile-time variant, not a runtime branch — see `MeshTSLConfig.shading` for
+   * why, and `createMeshNode` for who decides it.
+   *
+   * Replaced the earlier `flatNormal` boolean when `'none'` arrived. Two booleans
+   * would admit a meaningless `flatNormal && noShading` state and double the
+   * variant count for something with one behaviour; an enum makes the invalid
+   * combination not exist.
    */
-  flatNormal?: boolean;
+  shading?: MeshShadingMode;
+  /**
+   * Base-colour texture, sampled per fragment through the `uv` attribute.
+   *
+   * The third and most specific base-colour source: it WINS over
+   * `colormapTexture`, because a colormap can be switched on at runtime by the
+   * layers panel for any node with scalars while a texture only exists if the
+   * store carried an image and its UVs. Exactly one source is ever active — see
+   * {@link syncMeshColorSourceDefines}.
+   */
+  baseColorTexture?: THREE.Texture;
+  /**
+   * Whether {@link baseColorTexture} is single-channel, so the shader must
+   * replicate red to RGB.
+   *
+   * A 1-channel texture uploads as `RedFormat` and samples as `(r, 0, 0, 1)`, so
+   * without this a greyscale basemap renders pure red. Carried as a flag rather
+   * than read off the texture's `format` so the material never has to reach into
+   * the upload's choices.
+   */
+  baseColorTextureLuminance?: boolean;
   /** Wrapped-diffuse shade floor; default {@link MESH_DEFAULTS}.ambient. */
   ambient?: number;
   /** Wrapped-diffuse exponent; default {@link MESH_DEFAULTS}.shadeExponent. */
@@ -119,13 +149,18 @@ function meshDefines(
 ): Record<string, string | number | boolean> {
   const output = resolveMeshOutput(config.blendingMode ?? 'opaque');
   const defines: Record<string, string | number | boolean> = {
-    ...(config.colormapTexture ? { USE_COLORMAP: '' } : {}),
     ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
     ...(isNoGOG(config.intensity ?? 1.0, config.offset ?? 0.0) ? { LUXAR_NO_GOG: '' } : {}),
-    ...(config.flatNormal ? { LUXAR_MESH_FLAT_NORMAL: '' } : {}),
+    ...(config.baseColorTexture && config.baseColorTextureLuminance
+      ? { LUXAR_MESH_TEX_LUMINANCE: '' }
+      : {}),
   };
-  // Seeded through the same helper `applyBlendingMode` uses, so the constructor and
-  // the runtime path cannot disagree about which flag a mode implies.
+  // All three seeded through the same helpers the runtime paths use, so the
+  // constructor and a later mutation cannot disagree about which flag a state
+  // implies. USE_COLORMAP is set HERE rather than inline above for exactly that
+  // reason: it is one arm of the at-most-one-colour-source invariant.
+  syncMeshColorSourceDefines(defines, resolveMeshColorSource(config));
+  syncMeshShadingDefines(defines, config.shading ?? 'smooth');
   syncMeshEmissionDefines(defines, output);
   return defines;
 }
@@ -163,6 +198,9 @@ export class MeshMaterial
         },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
+        ...(materialConfig.baseColorTexture
+          ? { uBaseColorTex: { value: materialConfig.baseColorTexture } }
+          : {}),
         ...(materialConfig.colormapTexture
           ? {
               uColormapTex: { value: materialConfig.colormapTexture },
@@ -214,7 +252,12 @@ export class MeshMaterial
     // layers panel clones on first interaction, and a clone that lost `flatNormal`
     // would silently switch a flat-shaded mesh to smooth (or read an unbound
     // `normal` attribute as (0,0,0) and shade the whole surface at `uAmbient`).
-    this.userData.flatNormal = materialConfig.flatNormal === true;
+    this.userData.shading = materialConfig.shading ?? 'smooth';
+    // Carried too, because `clone()` rebuilds from the config and the texture is
+    // not recoverable from a uniform alone: `uBaseColorTex` exists only when a
+    // texture was supplied, and the luminance flag is not derivable from it
+    // without reaching into the upload's format choice.
+    this.userData.baseColorTextureLuminance = materialConfig.baseColorTextureLuminance === true;
   }
 
   /**
@@ -326,21 +369,57 @@ export class MeshMaterial
   }
 
   /**
-   * Switch between the stored-normal and derivative-normal shader variants.
+   * Switch between the stored-normal, derivative-normal and unlit variants.
    *
    * Called per commit by `applyMeshShading`, because the `normal_dims ==
    * displayDims` half of the §3.4 rule is view-dependent. Idempotent and guarded:
-   * toggling the define recompiles the program, which must not happen on a slice
+   * toggling a define recompiles the program, which must not happen on a slice
    * move that changed nothing.
+   *
+   * `'none'` is NOT view-dependent — it is authored — but it flows through the
+   * same setter so there is one place that owns the shading define set. A separate
+   * `setUnlit` would let a per-commit `updateShading('flat')` silently clear it.
    */
-  updateFlatNormal(flatNormal: boolean): void {
+  updateShading(mode: MeshShadingMode): void {
     if (!this.defines) this.defines = {};
-    const had = 'LUXAR_MESH_FLAT_NORMAL' in this.defines;
-    if (flatNormal === had) return;
-    if (flatNormal) this.defines.LUXAR_MESH_FLAT_NORMAL = '';
-    else delete this.defines.LUXAR_MESH_FLAT_NORMAL;
-    this.userData.flatNormal = flatNormal;
-    this.needsUpdate = true;
+    if (syncMeshShadingDefines(this.defines, mode)) {
+      this.userData.shading = mode;
+      this.needsUpdate = true;
+    } else {
+      this.userData.shading = mode;
+    }
+  }
+
+  /**
+   * Swap the base-colour texture, maintaining the one-colour-source invariant.
+   *
+   * A null texture falls back to whatever the other sources provide, which is why
+   * this routes through the shared resolver rather than just deleting its own
+   * define: dropping a texture from a node that also has a colormap LUT must
+   * re-enable `USE_COLORMAP`, not leave the mesh with no colour source at all.
+   */
+  updateBaseColorTexture(texture: THREE.Texture | null, luminance = false): void {
+    if (!this.defines) this.defines = {};
+    if (texture) {
+      if (this.uniforms.uBaseColorTex) this.uniforms.uBaseColorTex.value = texture;
+      else this.uniforms.uBaseColorTex = { value: texture };
+    } else if (this.uniforms.uBaseColorTex) {
+      this.uniforms.uBaseColorTex.value = null;
+    }
+    const wantLuminance = !!texture && luminance;
+    const hadLuminance = 'LUXAR_MESH_TEX_LUMINANCE' in this.defines;
+    if (wantLuminance && !hadLuminance) this.defines.LUXAR_MESH_TEX_LUMINANCE = '';
+    else if (!wantLuminance && hadLuminance) delete this.defines.LUXAR_MESH_TEX_LUMINANCE;
+    this.userData.baseColorTextureLuminance = wantLuminance;
+
+    const changed = syncMeshColorSourceDefines(
+      this.defines,
+      resolveMeshColorSource({
+        baseColorTexture: texture ?? undefined,
+        colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
+      })
+    );
+    if (changed || wantLuminance !== hadLuminance) this.needsUpdate = true;
   }
 
   updateColormapTexture(texture: THREE.DataTexture | null): void {
@@ -402,7 +481,9 @@ export class MeshMaterial
       shininess: this.uniforms.uShininess.value,
       alphaCutoff: this.uniforms.uAlphaCutoff.value,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'opaque',
-      flatNormal: this.userData.flatNormal === true,
+      shading: (this.userData.shading as MeshShadingMode | undefined) ?? 'smooth',
+      baseColorTexture: (this.uniforms.uBaseColorTex?.value as THREE.Texture | null) ?? undefined,
+      baseColorTextureLuminance: this.userData.baseColorTextureLuminance === true,
       depthTest: this.userData.depthTest ?? true,
       transparent: this.transparent,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,
@@ -433,7 +514,6 @@ export class MeshMaterial
 
   setColormapTexture(texture: THREE.DataTexture | null): void {
     if (texture) {
-      this.defines.USE_COLORMAP = '';
       if (!this.uniforms.uColormapTex) {
         this.uniforms.uColormapTex = { value: texture };
         this.uniforms.uScalarMin = { value: 0.0 };
@@ -442,11 +522,17 @@ export class MeshMaterial
         this.uniforms.uColormapTex.value = texture;
       }
     } else {
-      delete this.defines.USE_COLORMAP;
       if (this.uniforms.uColormapTex) this.uniforms.uColormapTex.value = null;
       if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = 0.0;
       if (this.uniforms.uScalarScale) this.uniforms.uScalarScale.value = 1.0;
     }
+    syncMeshColorSourceDefines(
+      this.defines,
+      resolveMeshColorSource({
+        baseColorTexture: this.uniforms.uBaseColorTex?.value ?? undefined,
+        colormapTexture: texture ?? undefined,
+      })
+    );
   }
 
   setScalarRange(min: number, max: number): void {

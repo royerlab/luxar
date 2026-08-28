@@ -36,6 +36,7 @@ from ..chunking import calculate_intelligent_chunks
 from ..context import GeometryWriteCtx
 from ..dataset_writers.colors import write_colors
 from ..dataset_writers.scalars import write_scalars
+from ..dataset_writers.texture import write_texture
 from ..labels.image_labels import (
     validate_image_labels_for_writing,
     write_image_labels_csr,
@@ -54,6 +55,9 @@ from ..node_common import (
 #: Below this face count the unwelded-vertices lint stays quiet — a handful of
 #: independent triangles is a normal test fixture, not an authoring mistake.
 _AUTHORING_LINT_MIN_FACES = 8
+
+#: Accepted shading values, public so the core read type can stay pinned to the writer.
+VALID_SHADING_MODES = ("smooth", "flat", "none")
 
 
 def _is_unwelded(faces: NDArray[np.integer], n_vertices: int) -> bool:
@@ -130,6 +134,85 @@ def _validate_normal_pair(
         )
 
 
+def _validate_mesh_metadata(shading: Optional[str], double_sided: Any) -> None:
+    """Validate mesh metadata that directly controls viewer rendering."""
+    # A typo must not reach zarr: an unrecognised shading value would silently
+    # take the stored-normal path.
+    if shading is not None and shading not in VALID_SHADING_MODES:
+        raise ValueError(
+            f"shading must be one of {VALID_SHADING_MODES}, got {shading!r}"
+        )
+    if not isinstance(double_sided, bool):
+        raise ValueError(
+            f"double_sided must be a bool, got {type(double_sided).__name__}"
+        )
+
+
+def _write_mesh_texture_arrays(
+    group: Any,
+    ctx: GeometryWriteCtx,
+    n_vertices: int,
+    uvs: Optional[NDArray[np.float32]],
+    texture: Optional[NDArray[Any]],
+    texture_encoding: str,
+    texture_width: Optional[int],
+    texture_height: Optional[int],
+    texture_channels: Optional[int],
+    texture_color_space: str,
+) -> dict[str, Any]:
+    """Write the UV and texture arrays, and return the attrs they imply.
+
+    Extracted so :func:`write_mesh` gains no branches for them — it sat at the
+    complexity ratchet's limit, and three more `if`s tipped it over. The two
+    arrays travel together because they are a pair the adder already refuses
+    apart, so there is no caller that wants one function and not the other.
+
+    Returns the presence flags always, and the dimension attrs only alongside a
+    texture, so the caller can stamp whatever comes back without deciding again.
+    """
+    meta: dict[str, Any] = {"has_uvs": uvs is not None, "has_texture": False}
+
+    if uvs is not None:
+        # COORDINATE, like `normals`: a per-vertex 2-vector that quantizes over
+        # its own range and must never broadcast. NOT a bounded scalar — a UV is
+        # deliberately allowed outside [0, 1] so `texture_wrap="repeat"` can tile.
+        uvs_f32 = np.asarray(uvs).astype(np.float32, copy=False)
+        ctx.dataset_ctx.encoder.encode(
+            data=uvs_f32,
+            zarr_group=group,
+            name="uvs",
+            semantic_type=SemanticType.COORDINATE,
+            mode=ctx.dataset_ctx.encoding_mode,
+            chunks=calculate_intelligent_chunks((n_vertices, 2), dtype=uvs_f32.dtype),
+            compressor=ctx.dataset_ctx.compressor,
+        )
+        aprint(f"  ✓ Wrote uvs ({n_vertices:,} texture coordinates)")
+
+    if texture is not None:
+        tex_h, tex_w, tex_c = write_texture(
+            group,
+            texture,
+            texture_encoding,
+            texture_width,
+            texture_height,
+            texture_channels,
+            texture_color_space,
+            ctx.dataset_ctx,
+        )
+        meta.update(
+            has_texture=True,
+            texture_encoding=texture_encoding,
+            # Stamped unconditionally, including for `raw` where they are
+            # redundant with the array shape: a reader must never have to open the
+            # payload to learn how large it decodes to.
+            texture_height=tex_h,
+            texture_width=tex_w,
+            texture_channels=tex_c,
+            texture_color_space=texture_color_space,
+        )
+    return meta
+
+
 def validate_mesh_arrays(
     vertices: Any,
     faces: Any,
@@ -138,6 +221,13 @@ def validate_mesh_arrays(
     normal_dims: Any = None,
     colors: Any = None,
     scalars: Any = None,
+    uvs: Any = None,
+    texture: Any = None,
+    texture_encoding: str = "raw",
+    texture_width: Optional[int] = None,
+    texture_height: Optional[int] = None,
+    texture_channels: Optional[int] = None,
+    texture_color_space: str = "srgb",
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Any = None,
@@ -187,6 +277,8 @@ def validate_mesh_arrays(
         validate_labels_for_writing,
         validate_mesh_decode_budget,
         validate_positions_for_writing,
+        validate_texture_for_writing,
+        validate_uvs_for_writing,
         validate_vertices_for_writing,
     )
 
@@ -199,14 +291,9 @@ def validate_mesh_arrays(
     # writer's uint32 cast, which is what makes the bounds check meaningful.
     validate_faces_for_writing(faces, n_vertices)
     _validate_normal_pair(normals, normal_dims, n_vertices, n_dims)
-    # Shading is metadata the viewer acts on, so a typo must not reach zarr: an
-    # unrecognised value would silently take the stored-normal path.
-    if shading is not None and shading not in ("smooth", "flat"):
-        raise ValueError(f"shading must be 'smooth' or 'flat', got {shading!r}")
-    if not isinstance(double_sided, bool):
-        raise ValueError(
-            f"double_sided must be a bool, got {type(double_sided).__name__}"
-        )
+    if uvs is not None:
+        validate_uvs_for_writing(uvs, n_vertices)
+    _validate_mesh_metadata(shading, double_sided)
     # Optional per-vertex channels.
     if colors is not None:
         if isinstance(colors, np.ndarray):
@@ -229,6 +316,21 @@ def validate_mesh_arrays(
     # Last, because it needs every channel's presence and the validated shapes.
     # A store over the viewer's per-node ceiling does not render at all, so it is
     # refused here rather than in a browser (#2145).
+    texture_decoded_bytes = 0
+    if texture is not None:
+        texture_height, texture_width, texture_channels = validate_texture_for_writing(
+            texture,
+            texture_encoding,
+            texture_width,
+            texture_height,
+            texture_channels,
+            texture_color_space,
+        )
+        texture_decoded_bytes = (
+            texture_width
+            * texture_height
+            * (4 if texture_encoding != "raw" else texture_channels * 4)
+        )
     validate_mesh_decode_budget(
         n_vertices,
         n_dims,
@@ -236,6 +338,8 @@ def validate_mesh_arrays(
         normals=normals,
         colors=colors,
         scalars=scalars,
+        uvs=uvs,
+        texture_decoded_bytes=texture_decoded_bytes,
     )
     return n_vertices, n_dims
 
@@ -249,6 +353,13 @@ def write_mesh(
     normal_dims: Optional[Sequence[int]] = None,
     colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
     scalars: Optional[Union[NDArray[np.float32], float]] = None,
+    uvs: Optional[NDArray[np.float32]] = None,
+    texture: Optional[NDArray[Any]] = None,
+    texture_encoding: str = "raw",
+    texture_width: Optional[int] = None,
+    texture_height: Optional[int] = None,
+    texture_channels: Optional[int] = None,
+    texture_color_space: str = "srgb",
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Optional["Sequence[str]"] = None,
@@ -300,6 +411,13 @@ def write_mesh(
         normal_dims=normal_dims,
         colors=colors,
         scalars=scalars,
+        uvs=uvs,
+        texture=texture,
+        texture_encoding=texture_encoding,
+        texture_width=texture_width,
+        texture_height=texture_height,
+        texture_channels=texture_channels,
+        texture_color_space=texture_color_space,
         shading=shading,
         double_sided=double_sided,
         labels=labels,
@@ -322,6 +440,12 @@ def write_mesh(
     # explicit "smooth" with no stored normals is honoured by the viewer falling
     # back to a derived flat normal at render time, and an explicit "flat" gives a
     # faceted surface even when normals are present.
+    #
+    # "none" is never a DEFAULT, only ever explicit. It suppresses the diffuse and
+    # specular terms entirely, so the base colour reaches the screen unmodulated —
+    # what a data basemap wants (a textured globe whose colours must stay faithful),
+    # and what every other Luxar geometry type does, since the other three are
+    # purely emissive. Defaulting to it would silently un-light every existing mesh.
     resolved_shading = (
         shading
         if shading is not None
@@ -422,6 +546,20 @@ def write_mesh(
         metadata["normal_dims"] = [int(d) for d in normal_dims]  # type: ignore[union-attr]
         aprint(f"  ✓ Wrote normals (dims {metadata['normal_dims']})")
 
+    texture_attrs = _write_mesh_texture_arrays(
+        group,
+        ctx,
+        n_vertices,
+        uvs,
+        texture,
+        texture_encoding,
+        texture_width,
+        texture_height,
+        texture_channels,
+        texture_color_space,
+    )
+    metadata.update(texture_attrs)
+
     if colors is not None:
         if isinstance(colors, np.ndarray):
             validate_colors_for_writing(colors, n_vertices, channels=(3, 4))
@@ -462,6 +600,14 @@ def write_mesh(
     group.attrs["has_normals"] = metadata["has_normals"]
     group.attrs["has_colors"] = metadata["has_colors"]
     group.attrs["has_scalars"] = metadata["has_scalars"]
+    # Every key the texture helper returned, verbatim — `update`, not a loop with
+    # a membership test, because the helper already decided what applies. It
+    # returns `has_uvs` / `has_texture` always, and the DIMENSION attrs only
+    # alongside a texture, for the same reason `normal_dims` is conditional: a
+    # stray dimension attr with no payload would be handed on as if it described
+    # something, and here it would additionally be CHARGED, since the viewer
+    # budgets a node from these numbers before it fetches anything.
+    group.attrs.update(texture_attrs)
     group.attrs["shading"] = resolved_shading
     group.attrs["double_sided"] = bool(double_sided)
     if metadata["has_normals"]:

@@ -536,17 +536,17 @@ def test_each_additive_offender_warns_only_once(capsys) -> None:
     assert capsys.readouterr().out.count("⚠️") == 1
 
 
-def test_each_sorted_offender_warns_only_once(capsys) -> None:
+def test_sorted_overlap_cluster_warns_once_with_every_remedy(capsys) -> None:
     root = _root()
     _leaf(
         root,
         "envelope",
         "points",
         minimum=[0.0, 0.0, 0.0],
-        maximum=[10.0, 10.0, 10.0],
+        maximum=[20.0, 10.0, 10.0],
         blending_mode="normal",
     )
-    for index in range(3):
+    for index in range(10):
         _leaf(
             root,
             f"contained_{index}",
@@ -560,7 +560,344 @@ def test_each_sorted_offender_warns_only_once(capsys) -> None:
 
     output = capsys.readouterr().out
     assert output.count("⚠️") == 1
-    assert "'envelope'" in output
+    assert "'envelope' (normal) [contains another node]" in output
+    for index in range(4):
+        assert f"'contained_{index}' (normal)" in output
+    assert "contained_4" not in output
+    assert "and 6 more" in output
+    assert 'partition={"max_elements": N}' in output
+    assert "Put the displayed dimensions first" not in output
+    assert "Points, Lines, Mesh, and Gaussian Splats" in output
+    assert "emissive medium" in output
+    assert "changes surface appearance" in output
+
+
+def test_disconnected_sorted_overlap_clusters_warn_separately(capsys) -> None:
+    root = _root()
+    for prefix, offset in (("left", 0.0), ("right", 20.0)):
+        _leaf(
+            root,
+            f"{prefix}_outer",
+            "points",
+            minimum=[offset, 0.0, 0.0],
+            maximum=[offset + 10.0, 10.0, 10.0],
+            blending_mode="normal",
+        )
+        _leaf(
+            root,
+            f"{prefix}_inner",
+            "points",
+            minimum=[offset + 1.0, 1.0, 1.0],
+            maximum=[offset + 2.0, 2.0, 2.0],
+            blending_mode="normal",
+        )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    warnings = [line for line in output.splitlines() if "⚠️" in line]
+    assert len(warnings) == 2
+    assert "left_inner" in warnings[0]
+    assert "left_outer" in warnings[0]
+    assert "right_" not in warnings[0]
+    assert "right_inner" in warnings[1]
+    assert "right_outer" in warnings[1]
+    assert "left_" not in warnings[1]
+    assert output.count('partition={"max_elements": N}') == 1
+    assert output.count("For an emissive medium") == 1
+
+
+def test_heterogeneous_sorted_overlap_does_not_suggest_merging(capsys) -> None:
+    root = _root()
+    _leaf(
+        root,
+        "cloud",
+        "points",
+        maximum=[10.0, 10.0, 10.0],
+        blending_mode="normal",
+        opacity=0.9,
+    )
+    _leaf(
+        root,
+        "surface",
+        "mesh",
+        minimum=[1.0, 1.0, 1.0],
+        maximum=[2.0, 2.0, 2.0],
+        blending_mode="normal",
+        opacity=0.9,
+    )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert "Merging cannot preserve this cluster" in output
+    assert "partition=" not in output
+    assert "otherwise separate their bounds" in output
+
+
+def test_heterogeneous_overlap_omits_partition_displayed_dimension_advice(
+    capsys,
+) -> None:
+    root = _root(n_dims=4)
+    scene_dimensions = root.attrs["scene_dimensions"]
+    for index, dimension in enumerate(scene_dimensions["dimensions"]):
+        dimension["display"] = index in {1, 2, 3}
+        dimension["discrete"] = index == 0
+    root.attrs["scene_dimensions"] = scene_dimensions
+    _leaf(
+        root,
+        "cloud",
+        "points",
+        maximum=[10.0, 10.0, 10.0, 10.0],
+        blending_mode="normal",
+        opacity=0.9,
+    )
+    _leaf(
+        root,
+        "surface",
+        "mesh",
+        minimum=[1.0, 1.0, 1.0, 1.0],
+        maximum=[2.0, 2.0, 2.0, 2.0],
+        blending_mode="normal",
+        opacity=0.9,
+    )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert "Merging cannot preserve this cluster" in output
+    assert "Displayed dimensions are position columns" not in output
+    assert "Put the displayed dimensions first" not in output
+
+
+def test_mixed_mode_sorted_overlap_does_not_suggest_merging(capsys) -> None:
+    root = _root()
+    _leaf(
+        root,
+        "outer",
+        "points",
+        maximum=[10.0, 10.0, 10.0],
+        blending_mode="normal",
+    )
+    _leaf(
+        root,
+        "inner",
+        "points",
+        minimum=[1.0, 1.0, 1.0],
+        maximum=[2.0, 2.0, 2.0],
+        blending_mode="volumetric",
+    )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert "Merging cannot preserve this cluster" in output
+    assert "partition=" not in output
+
+
+def test_mixed_opacity_sorted_overlap_does_not_suggest_merging(capsys) -> None:
+    root = _root()
+    _leaf(
+        root,
+        "outer",
+        "points",
+        maximum=[10.0, 10.0, 10.0],
+        blending_mode="normal",
+        opacity=0.2,
+    )
+    _leaf(
+        root,
+        "inner",
+        "points",
+        minimum=[1.0, 1.0, 1.0],
+        maximum=[2.0, 2.0, 2.0],
+        blending_mode="normal",
+        opacity=0.95,
+    )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert "Merging cannot preserve this cluster" in output
+    assert "opacities differ" in output
+    assert "partition=" not in output
+
+
+def test_shared_advice_covers_mergeable_and_unmergeable_clusters(capsys) -> None:
+    root = _root(n_dims=4)
+    scene_dimensions = root.attrs["scene_dimensions"]
+    for index, dimension in enumerate(scene_dimensions["dimensions"]):
+        dimension["display"] = index in {1, 2, 3}
+        dimension["discrete"] = index == 0
+    root.attrs["scene_dimensions"] = scene_dimensions
+    for name, geometry_type, minimum, maximum in (
+        ("merge_outer", "points", [0.0] * 4, [10.0] * 4),
+        ("merge_inner", "points", [1.0] * 4, [2.0] * 4),
+        ("mixed_outer", "points", [20.0, 0.0, 0.0, 0.0], [30.0, 10.0, 10.0, 10.0]),
+        ("mixed_inner", "mesh", [21.0, 1.0, 1.0, 1.0], [22.0, 2.0, 2.0, 2.0]),
+    ):
+        _leaf(
+            root,
+            name,
+            geometry_type,
+            minimum=minimum,
+            maximum=maximum,
+            blending_mode="normal",
+            opacity=0.9,
+        )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert output.count("overlapping order-dependent nodes") == 2
+    assert output.count('partition={"max_elements": N}') == 1
+    assert "Put the displayed dimensions first" not in output
+    assert output.count("Merging cannot preserve this cluster") == 1
+    assert output.count("For an emissive medium") == 1
+
+
+def test_additive_warning_precedes_sorted_overlap_cluster(capsys) -> None:
+    root = _root()
+    _leaf(root, "additive", "points", maximum=[1.0, 1.0, 1.0])
+    _leaf(root, "writer", "mesh", maximum=[1.0, 1.0, 1.0])
+    _leaf(
+        root,
+        "outer",
+        "points",
+        minimum=[20.0, 0.0, 0.0],
+        maximum=[30.0, 10.0, 10.0],
+        blending_mode="normal",
+    )
+    _leaf(
+        root,
+        "inner",
+        "points",
+        minimum=[21.0, 1.0, 1.0],
+        maximum=[22.0, 2.0, 2.0],
+        blending_mode="normal",
+    )
+
+    warn_overlapping_blending(root)
+
+    warning_lines = [
+        line for line in capsys.readouterr().out.splitlines() if "⚠️" in line
+    ]
+    assert len(warning_lines) == 2
+    assert "mix depth-ignoring and depth-writing geometry" in warning_lines[0]
+    assert "overlapping order-dependent nodes" in warning_lines[1]
+
+
+def test_nonstandard_displayed_dimensions_do_not_add_obsolete_advice(capsys) -> None:
+    root = _root(n_dims=4)
+    scene_dimensions = root.attrs["scene_dimensions"]
+    for index, dimension in enumerate(scene_dimensions["dimensions"]):
+        dimension["display"] = index in {1, 2, 3}
+        dimension["discrete"] = index == 0
+    root.attrs["scene_dimensions"] = scene_dimensions
+    _leaf(
+        root,
+        "outer",
+        "points",
+        maximum=[10.0, 10.0, 10.0, 10.0],
+        blending_mode="normal",
+    )
+    _leaf(
+        root,
+        "inner",
+        "points",
+        minimum=[1.0, 1.0, 1.0, 1.0],
+        maximum=[2.0, 2.0, 2.0, 2.0],
+        blending_mode="normal",
+    )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert 'partition={"max_elements": N}' in output
+    assert "Displayed dimensions are position columns" not in output
+    assert "Put the displayed dimensions first" not in output
+
+
+def test_two_dimensional_scene_warns_for_overlap_cluster(capsys) -> None:
+    root = _root(n_dims=2)
+    _leaf(
+        root,
+        "outer",
+        "points",
+        maximum=[10.0, 10.0],
+        blending_mode="normal",
+    )
+    _leaf(
+        root,
+        "inner",
+        "points",
+        minimum=[1.0, 1.0],
+        maximum=[2.0, 2.0],
+        blending_mode="normal",
+    )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert "overlapping order-dependent nodes" in output
+
+
+def test_overlap_union_joins_existing_multi_member_clusters(capsys) -> None:
+    root = _root()
+    for name, minimum, maximum in (
+        ("a_outer", [0.0, 0.0, 0.0], [10.0, 10.0, 10.0]),
+        ("b_inner", [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]),
+        ("c_outer", [20.0, 0.0, 0.0], [30.0, 10.0, 10.0]),
+        ("d_inner", [21.0, 1.0, 1.0], [22.0, 2.0, 2.0]),
+        ("e_bridge", [0.5, 0.5, 0.5], [22.5, 2.5, 2.5]),
+    ):
+        _leaf(
+            root,
+            name,
+            "points",
+            minimum=minimum,
+            maximum=maximum,
+            blending_mode="normal",
+        )
+
+    warn_overlapping_blending(root)
+
+    output = capsys.readouterr().out
+    assert output.count("⚠️") == 1
+    for name in ("a_outer", "b_inner", "c_outer", "d_inner", "e_bridge"):
+        assert f"'{name}' (normal)" in output
+
+
+def test_multiple_modes_for_one_owner_use_clear_separator(capsys) -> None:
+    root = _root()
+    world_leaves = [
+        WorldBoundsLeaf(
+            path="multi/normal",
+            owner_path="multi",
+            geometry_type="points",
+            bounds={"min": [0.0, 0.0, 0.0], "max": [10.0, 10.0, 10.0]},
+            blending_mode="normal",
+        ),
+        WorldBoundsLeaf(
+            path="multi/volumetric",
+            owner_path="multi",
+            geometry_type="points",
+            bounds={"min": [0.0, 0.0, 0.0], "max": [10.0, 10.0, 10.0]},
+            blending_mode="volumetric",
+        ),
+        WorldBoundsLeaf(
+            path="inner",
+            geometry_type="points",
+            bounds={"min": [1.0, 1.0, 1.0], "max": [2.0, 2.0, 2.0]},
+            blending_mode="normal",
+        ),
+    ]
+
+    warn_overlapping_blending(root, world_leaves)
+
+    output = capsys.readouterr().out
+    assert "'multi' (normal + volumetric)" in output
+    assert "normal/volumetric" not in output
 
 
 def test_world_transforms_decide_overlap(capsys) -> None:

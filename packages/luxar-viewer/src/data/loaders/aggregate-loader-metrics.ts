@@ -49,10 +49,20 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
  *
  * @param inner per-LOD metrics snapshots (already produced by `getMetrics()`)
  * @param path the parent node path to report as this aggregate's `path`
+ * @param emptyType the `type` to report when `inner` is EMPTY — a disposed
+ *   ladder clears its level loaders, so this is the only thing left to name the
+ *   node by. Required from the caller rather than defaulted: it used to be a
+ *   hard-coded `'point-spatial-index'`, which silently relabelled a disposed
+ *   lines / gsplats / mesh node as a points loader in the monitor's loader list
+ *   (mesh visibly so — a mesh row reading "points / pts").
  */
-export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): LoaderMetrics {
+export function aggregateLoaderMetrics(
+  inner: LoaderMetrics[],
+  path: string,
+  emptyType: LoaderType
+): LoaderMetrics {
   if (inner.length === 0) {
-    return zeroedMetrics('point-spatial-index', path);
+    return zeroedMetrics(emptyType, path);
   }
 
   const out = zeroedMetrics(inner[0].type, path);

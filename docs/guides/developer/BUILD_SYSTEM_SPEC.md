@@ -903,21 +903,48 @@ same species of lie as an untested 3.10 claim would be. All eight scheduled wind
 land every three hours; the seven other than 09:17 carry only the required 3.12 leg.
 On obsidian, `max-parallel: 2` prevents one run's Python matrix from monopolising all
 three shared slots; repository-wide queue order may still put other work ahead of
-that run's `typescript-tests`. The final Python leg follows. Every scheduled window
-also runs the short `release-readiness` and `wheel-viewer` checks on GitHub-hosted
-runners, and `pick-runner` routes the long Python/TypeScript legs to hosted runners
-when obsidian has neither fresh capacity nor work in flight. Five of the twelve most
-recent daily scheduled runs (2026-08-14 to 2026-08-25) took that billed path. Every
-added window therefore consumes hosted minutes for short jobs, while routing adds
-either obsidian queue depth or the long legs to the hosted bill. Those routed long
-legs alone expose roughly 200–240 hosted minutes/day at that observed rate; one daily
-pair of extra Python legs is small beside that baseline. (If newer interpreters ever
-become deliberately unsupported, the honest fix is a `requires-python` upper bound,
-not a quiet single-leg matrix.)
+that run's `typescript-tests`. The final Python leg follows. A successful TypeScript
+attempt ran 17m53s of real steps; at the documented 3.3x `SCHED_IDLE` extreme, a
+healthy starved run projects to roughly 59 minutes, leaving the former 60-minute
+budget no headroom for any pre-step dispatch latency. A dispatch-lost leg can spend
+the same budget without starting a step. `typescript-tests` now carries 120 minutes,
+at the cost of a doubled time-to-red and delayed stale repair for that leg. Every
+scheduled window also runs the short `release-readiness` and `wheel-viewer` checks on
+GitHub-hosted runners, and `pick-runner` routes the long Python/TypeScript legs to
+hosted runners when obsidian has no fresh capacity and either no work in flight, an
+aged backlog at the configured cap, or any aged backlog when the bounded scan cannot
+inspect every eligible run. Five of the twelve most recent daily scheduled runs
+(2026-08-14 to 2026-08-25) took that billed path. Every added window therefore
+consumes hosted minutes for short jobs, while routing adds either obsidian queue
+depth or the long legs to the hosted bill. Those routed long legs alone expose
+roughly 200–240 hosted minutes/day at that observed rate; one daily pair of extra
+Python legs is small beside that baseline. (If newer interpreters ever become
+deliberately unsupported, the honest fix is a `requires-python` upper bound, not a
+quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
 defect behind issue #839, where all three legs silently ran the same version.
+
+The router bounds that queue/cost tradeoff after fresh capacity has been ruled out.
+Both `pick-runner` and `queue-watchdog` use the stdlib-only
+`scripts/ci_queue_scan.py` helper as the single definition of visible, queued and
+running obsidian work. Each job sparse-checks out `scripts/` with credentials
+disabled; the fork guard remains ahead of checkout, so untrusted fork code is never
+fetched before the hosted-only decision. Policy stays outside the helper: the router
+fails unreadable scans toward obsidian until backlog evidence exists, while the
+watchdog treats an unreadable liveness scan as a reason not to cancel.
+
+The router scans at most ten eligible queued/in-progress runs and counts only
+obsidian jobs that have waited at least five minutes. When fewer than ten runs are
+eligible, five aged jobs by default send new work to GitHub-hosted runners;
+`LUXAR_CI_MAX_QUEUED_OBSIDIAN` overrides that validated cap. Reaching the scan bound
+instead routes hosted after finding any aged backlog; without backlog evidence,
+known obsidian liveness still wins.
+Raising a long-leg timeout for queue tolerance also raises its worst-case hosted bill,
+so the cap deliberately limits how often those larger budgets burst onto paid runners.
+Router decisions are concurrent snapshots, so a burst can still overshoot the cap
+before its newly routed jobs materialise.
 
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
@@ -947,25 +974,42 @@ documentation gate as well.
 GitHub branch protection does not necessarily replace a cancelled push check with a
 later successful scheduled check of the same name on the same SHA. After a scheduled
 run has completed the five protected contexts successfully,
-`repair-cancelled-push-checks` inspects the completed push run for that SHA and reruns
-cancelled jobs for any of those five protected contexts. A single cancelled context uses
-a job-level rerun. Two or more use one failed-jobs rerun because GitHub returns `403`
-once the first job-level rerun has moved the run into a new attempt; the run-level path
-also re-enqueues cancelled or failed non-required matrix legs such as Python 3.13/3.14.
-A schedule whose own protected contexts are not all green performs no repair, and a
-rejected rerun is reported as a warning. A failed repaired job is terminal for that SHA
-unless it is included in the multi-job failed-jobs rerun; otherwise recovery requires a
-manual rerun. Workflow reruns carry a distinct concurrency key from fresh runs, so a
-later merge cannot cancel the repaired attempt. That exemption applies to ordinary PR
-reruns too, and neither rerun path restarts `queue-watchdog`; an obsidian-routed job
-can therefore remain queued until GitHub's 24-hour limit if the runner disappears. The
-repair job has only `actions: write` permission and runs on GitHub-hosted Linux;
-recovered long legs reuse their original runner-routing decision and repay work that the
-scheduled run already performed. On the multi-job path, up to four obsidian-routed long
-legs can therefore run alongside the next push run, increasing self-hosted contention.
-When the original routing decision was `ubuntu-latest`, up to eight repair windows per
-day can also add hosted-runner minutes, but only on a SHA that can otherwise block
-promotion.
+`repair-cancelled-push-checks` enumerates every commit still in `main..GITHUB_SHA`,
+newest first, and inspects each completed push run. This covers commits skipped by the
+three-hour schedule instead of repairing only the scheduled tip. The promotion daemon
+fast-forwards `main` to the newest green ancestor, so the walk stops after successfully
+enqueueing two candidates: the second is a hedge against a genuinely red newest
+candidate, while repairing still-older commits cannot advance the same promotion.
+Cancelled jobs for any of the five protected contexts are rerun. A single cancelled
+context uses a job-level rerun. Two or more use one failed-jobs rerun because GitHub
+returns `403` once the first job-level rerun has moved the run into a new attempt; the
+run-level path also re-enqueues cancelled or failed non-required matrix legs such as
+Python 3.13/3.14. A schedule whose own protected contexts are not all green performs no
+repair. Candidate API read failures and rejected reruns are reported as warnings; one
+candidate cannot abort the remaining walk. A failed repaired job is terminal for that
+SHA unless it is included in the multi-job failed-jobs rerun; otherwise recovery
+requires a manual rerun.
+
+Fresh runs keep coalescing by event and ref, while reruns use their original run id in
+the concurrency key. A later merge therefore cannot cancel a repaired attempt, and
+repairs for different backlog commits cannot cancel each other. A later attempt of the
+same original run now supersedes its earlier attempt because both use the same run id;
+the previous attempt-number key kept them apart. That exemption applies to ordinary PR
+reruns too, and neither rerun path restarts `queue-watchdog`. An obsidian-routed job
+left undispatched after its runners disappear can therefore remain queued until
+GitHub's 24-hour ceiling; one dispatched before its slot recycles can instead reach its
+timeout before any step starts or runner name is recorded. The repair job has only
+`actions: write` and `contents: read` permissions and runs on GitHub-hosted Linux;
+recovered long legs reuse their original runner-routing decision and repay work that
+the scheduled run already performed. A multi-job candidate can add up to four long
+obsidian-routed legs alongside the next push run, so the two-candidate cap permits up
+to eight per window; when the original routing decision was `ubuntu-latest`, it also
+adds hosted-runner minutes. Do not widen the two-candidate cap before #2217 bounds jobs
+queued behind a live but saturated self-hosted runner.
+Reruns execute the workflow definition from their original SHA, so commits predating
+the run-id key retain the older attempt-only collision behavior; the scheduled SHA
+itself carries the new policy and provides the forward promotion candidate that clears
+that rollout backlog.
 
 ## Architecture Notes
 

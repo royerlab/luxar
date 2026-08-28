@@ -28,6 +28,7 @@
 
 import * as THREE from 'three';
 import type { BspTreeNode } from '../../types/partition-group';
+import { log, Modules } from '../../utils/log';
 
 // Per-frame scratch (no allocation on the hot path — the
 // 'lod-group-selector' invariant). Allocated lazily on first use rather
@@ -53,6 +54,9 @@ let scratch: RenderOrderScratch | null = null;
  * outlives a frame.
  */
 const partitionRankCache = new Map<THREE.Object3D, Map<number, number> | null>();
+
+/** Partition wrappers already diagnosed for an unusable display-axis mapping. */
+const warnedAxisMappingWrappers = new WeakSet<THREE.Object3D>();
 
 /**
  * Nearest partition-wrapper ancestor of `mesh` plus the mesh's part index
@@ -116,36 +120,37 @@ function traverseBspBackToFront(
  * Map each BSP split axis (a CENTER-COLUMN index of the stored data) to the
  * local x/y/z component that column is currently displayed as.
  *
- * The producer splits on the first up-to-three center columns, so a serialized
- * `axis` is 0/1/2 in STORED-COLUMN space (`partition.py::spatial_bsp_tree`).
- * `eyeLocal`, however, is in the wrapper's local 3D space, where x/y/z are
- * `displayDims[0..2]`. The two coincide only for `displayDims == [0, 1, 2]`;
- * a 4D scene displaying `[1, 2, 3]` would otherwise order along the wrong axis
- * — silently, since the result is still a valid permutation of the parts.
+ * A serialized `axis` is in STORED-COLUMN space. `eyeLocal`, however, is in the
+ * wrapper's local 3D space, where x/y/z are `displayDims[0..2]`. The two
+ * coincide only for `displayDims == [0, 1, 2]`; a 4D scene displaying
+ * `[1, 2, 3]` needs column 3 mapped to z.
  *
  * Read from the LIVE dims rather than a value stamped at load: display dims can
  * change at runtime (nD navigation) while the stored tree stays valid, so a
  * load-time snapshot would go stale.
  *
- * @returns A center-column → component lookup, or `null` when any split axis is
- *   not currently displayed (its plane then carries no on-screen depth
- *   information, so the caller must fall back to the centroid heuristic).
+ * @returns A center-column → component lookup, or `null` when any split axis
+ *   cannot be mapped to a displayed component. Without display metadata only
+ *   the conventional first three columns can be mapped safely.
  */
-function bspAxisToComponent(tree: BspTreeNode): readonly number[] | null {
-  const displayed = getDisplayDims?.();
-  // No dims yet (or a 3-displayed identity map): the naive axis === component
-  // reading is exactly right, and this is the overwhelmingly common case. Note
-  // the app-layer accessor returns an EMPTY array before dims init, which must
-  // read as "unknown" rather than as a zero-length mapping.
-  if (!displayed || displayed.length === 0) return IDENTITY_AXIS_MAP;
+function bspAxisToComponent(
+  tree: BspTreeNode,
+  displayed: readonly number[] | null | undefined
+): readonly number[] | null {
+  // The app-layer accessor returns an EMPTY array before dims init. Treat that
+  // as unknown: the conventional first-three mapping is usable only when every
+  // split axis actually belongs to it.
+  if (!displayed || displayed.length === 0) {
+    return bspTreeAxesAreMapped(tree, IDENTITY_AXIS_MAP) ? IDENTITY_AXIS_MAP : null;
+  }
   if (displayed.length === 3 && displayed[0] === 0 && displayed[1] === 1 && displayed[2] === 2) {
-    return IDENTITY_AXIS_MAP;
+    return bspTreeAxesAreMapped(tree, IDENTITY_AXIS_MAP) ? IDENTITY_AXIS_MAP : null;
   }
 
   // A split axis is usable only if that stored column is on screen.
   const map: number[] = [];
-  for (let axis = 0; axis < 3; axis++) {
-    map[axis] = displayed.indexOf(axis);
+  for (let component = 0; component < displayed.length; component++) {
+    map[displayed[component]] = component;
   }
   return bspTreeAxesAreMapped(tree, map) ? map : null;
 }
@@ -198,11 +203,19 @@ function wrapperPartRanks(
   wrapper.updateWorldMatrix(true, false);
   s.wrapperInv.copy(wrapper.matrixWorld).invert();
   s.eyeLocal.copy(camPos).applyMatrix4(s.wrapperInv);
-  const axisToComponent = bspAxisToComponent(tree);
+  const displayed = getDisplayDims?.();
+  const axisToComponent = bspAxisToComponent(tree, displayed);
   if (axisToComponent === null) {
     // A split axis isn't on screen under the current display dims, so its
     // plane carries no depth information — fall back to the centroid
     // heuristic rather than ordering along the wrong axis.
+    if (!warnedAxisMappingWrappers.has(wrapper)) {
+      warnedAxisMappingWrappers.add(wrapper);
+      log.warning(
+        Modules.RENDERER,
+        `partition-kind group ${wrapper.name || '(unnamed)'} has a valid bsp_tree whose split axes are not all displayed (displayDims=[${displayed?.join(', ') ?? ''}]); falling back to centroid ordering`
+      );
+    }
     partitionRankCache.set(wrapper, null);
     return null;
   }

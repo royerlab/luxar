@@ -26,7 +26,7 @@ hatch run test              # Run tests
 hatch run test-cov          # Tests with coverage
 hatch run python script.py  # Run script
 hatch run python -m ruff check .  # Lint
-hatch run mypy packages/luxar/src/luxar/  # Type check
+hatch run mypy packages/luxar/src/luxar/ scripts/ci_queue_scan.py  # Type check
 ```
 
 The hatch env pins `OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` (see the note in
@@ -95,6 +95,7 @@ make check-demo-links  # opt-in demo click-through audit (reports only; not a ga
 make check-zenodo-live          # opt-in live Zenodo manifest-pin audit (not a gate)
 make check-external-references  # aggregate external audits (report-only, non-gating)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
+make check-gallery-staleness  # REPORT only; requires full Git history
 make format-all   # Format all code (Python, TypeScript, Rust, Go, CUDA)
 
 # Viewer
@@ -257,7 +258,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 87 bundled demos (table)
+luxar demo                       # List the 89 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
@@ -548,6 +549,8 @@ luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no fl
 #   tiles     spatial BSP tiles, culled + streamed per tile        — large N
 #   overview  instant coarse overview level + fine tiles on zoom   — huge N
 #   adaptive  tiles where EVERY tile picks its own detail level    — largest N
+# Scale is not the only axis: when first paint is request-constrained, eager-rung
+# count picks the recipe. See "First paint cost" in the gsplat-pipeline skill.
 # Renamed 2026-07 (old → new): additive→stream, substitutive/pyramid→levels,
 # partitioned→tiles, multiscale→overview, mosaic→adaptive. Old names error with
 # a pointer; stored batch manifests translate silently.
@@ -1018,7 +1021,8 @@ npx playwright test line-join-artifact.spec.ts
 
 # Data & I/O
 npx playwright test data-integrity.spec.ts dataset-switching.spec.ts real-dataset-loading.spec.ts \
-  url-parameters.spec.ts python-typescript-integration.spec.ts luxar-serve-integration.spec.ts
+  url-parameters.spec.ts python-typescript-integration.spec.ts luxar-serve-integration.spec.ts \
+  zipped-store-loading.spec.ts
 
 # Spatial, cache & nD transforms
 npx playwright test spatial-index-accuracy.spec.ts cache-system.spec.ts nd-transforms.spec.ts \

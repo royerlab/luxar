@@ -1,5 +1,6 @@
 """Input/Output operations for Luxar data."""
 
+from ._compiler.node_common import ElementCapacityWarning
 from .compiler import LuxarZarrCompiler
 from .ordering import (
     compute_chunk_bounds_gsplats,
@@ -19,6 +20,7 @@ from .writer import ZarrWriterProtocol
 
 __all__ = [
     "LuxarZarrCompiler",
+    "ElementCapacityWarning",
     "LuxarScene",
     "ZarrWriterProtocol",
     "DEFAULT_COMP",

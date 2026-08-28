@@ -1,11 +1,12 @@
 Distributing Scenes
 ===================
 
-This tutorial walks through the two ways Luxar packages a finished scene
-for someone else to look at: a **standalone folder** anyone with Python 3
-can serve, and a **double-clickable native bundle** with no Python
-dependency at all. We also cover how to share bundles across machines
-and operating systems without tripping macOS Gatekeeper.
+This tutorial walks through the ways Luxar gets a finished scene in front of
+someone else: a **standalone folder** anyone with Python 3 can serve, a
+**double-clickable native bundle** with no Python dependency at all, and —
+when you would rather send a link than a folder — **hosting the archive** and
+opening it in the deployed viewer. We also cover how to share bundles across
+machines and operating systems without tripping macOS Gatekeeper.
 
 What You Will Learn
 -------------------
@@ -17,7 +18,7 @@ What You Will Learn
 * How to share bundles across machines without tripping macOS Gatekeeper
 * How the embedded launcher's lifecycle works (close window → graceful
   server shutdown)
-* When to use which option
+* When to use which option, including hosting the archive and sharing a viewer link
 
 Prerequisites
 -------------
@@ -243,3 +244,42 @@ Use **native bundles** when:
   audiences, paper reviewers)
 * You want a "real app" experience: Dock icon, Cmd+Q, native window
   controls
+
+
+Sharing a link instead: the hosted viewer
+------------------------------------------
+
+Both options above ship the viewer *alongside* the data. There is a third
+route that ships neither: put the compiled archive on any web host and hand
+someone a URL into the deployed viewer at
+`luxarviewer.dev <https://luxarviewer.dev>`_.
+
+.. code-block:: text
+
+   https://luxarviewer.dev/?src=https://example.org/data/scene.luxar.zarr
+
+The viewer is a static build parameterised entirely by ``?src=``, so nothing
+needs to be deployed per scene — the same viewer opens any archive it can
+reach. The public demo gallery at
+`demos.luxarviewer.dev <https://demos.luxarviewer.dev>`_ works exactly this
+way: 85 archives on object storage, one viewer.
+
+Requirements on the host serving the data depend on the store shape:
+
+* **Directory ``.luxar.zarr`` stores** need CORS: the host must send
+  ``Access-Control-Allow-Origin``. Their metadata and chunks use simple GETs,
+  so byte-range support is not required.
+* **Zipped ``.zarr.zip`` stores** additionally need byte-range support. The
+  host must honour ``Range``, allow the ``Range`` request header in CORS, and
+  expose ``Content-Range``, ``Content-Length``, ``Accept-Ranges``, and ``ETag``.
+  The range headers validate partial responses; ``ETag`` preserves archive
+  identity across cross-origin cache validation.
+
+A plain static file host with CORS enabled is sufficient for directory stores.
+Use this when the recipient just needs to *look* at the scene and you would
+rather send a link than a multi-gigabyte folder — and note the data stays
+wherever you put it, so the link is only as durable, and as private, as that
+host.
+
+:doc:`../guides/developer/DEMO_SITE_RUNBOOK` documents how the demo corpus is
+hosted this way, including the CORS configuration and its failure modes.

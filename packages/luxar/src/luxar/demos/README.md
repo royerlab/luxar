@@ -69,6 +69,9 @@ channel through a 3-D volume share the implementation in
 images, over sampled timepoints, or with demo-specific titles for a
 single-channel volume.
 
+The two FlyLight MCFO demos share `_h5j.py`, which identifies reference and
+signal channels from H5J metadata and decodes the stitched HEVC channel payloads.
+
 The LOD topology a fitting demo writes its cached artifact with is chosen in
 `_lod_policy.py`, not left to whichever fitter the demo happened to call
 (`fit_gaussian_splats` returns one additive sub-LOD, the progressive fitter
@@ -308,13 +311,19 @@ Visualizes the complete ATP Synthase rotary motor structure with F1 catalytic he
 ---
 
 #### demo_nuclear_pore_complex.py - Nuclear Pore Complex
-Downloads real Nup107-160 subcomplex structure from PDB and applies perfect 8-fold rotational symmetry to visualize the nuclear gateway.
+The complete human NPC at atomic resolution: **4,937,064 atoms, 808 protein chains, 25 distinct nucleoporins**, assembled from the PDB deposition's *own* eight-fold symmetry operators and scrubbable between the constricted and dilated conformational states.
+
+Uses PDB **7R5J** (dilated) / **7R5K** (constricted) — Mosalaganti et al., *Science* 2022, the reference whole-NPC model. Each entry deposits one C8 protomer (101 chains, 617,133 atoms) plus the eight operators that generate its declared `808-meric` biological assembly, so nothing about the radius, orientation or spacing is invented here. Measured on the assembled result: outer diameter 149.9 nm (constricted) / 159.7 nm (dilated), central channel 41.1 / 53.1 nm, axial height 72.2 / 76.5 nm. Atoms carry true van der Waals radii — no visibility fudge factor.
+
+Six structural modules, every chain assigned by a curated table that the test suite refuses to let drift: cytoplasmic filaments (RanBP2/Nup358 x40, the Nup214-Nup88-p62 export platform), cytoplasmic ring and nuclear ring (32 Y-complexes = 16 + 16, two concentric rings per face, ELYS nuclear-only), inner ring (Nup205/188/93/155/35), membrane ring (gp210 x64, NDC1, ALADIN), and the central channel FG nucleoporins. Absent and documented as such: the nuclear basket (Tpr/Nup153/Nup50), most FG repeat regions, and the membrane itself.
 
 **Run**: `luxar demo run nuclear_pore_complex`
 
-**Requires**: Internet access (downloads PDB structure).
+**Options**: `--state=both|dilated|constricted`, `--color=module|nucleoporin|element|protomer`, `--representation=all|backbone|calpha`, `--split=none|nucleoporin`.
 
-**Demonstrates**: PDB structure download and parsing, all-atom rendering (`--representation=calpha` for a C-alpha backbone trace instead), 8-fold rotational symmetry application, van der Waals radii for atomic sizes, CPK element colors (`--color=spoke` for one color per spoke), depth-sorted `normal` blending for surface-like atomic structures, `layer=True` for live blending / opacity / display-range control in the Layers panel (press **L**; the absorption slider appears once the layer is switched to `volumetric`).
+**Requires**: Internet access (~28 MB of mmCIF from RCSB).
+
+**Demonstrates**: mmCIF parsing and biological-assembly expansion from deposited `_pdbx_struct_oper_list` operators; a 9.87M-element Points scene as **one** BSP-partitioned node — the NPC's subunits are concave and interpenetrate, so splitting by protein has no valid draw order while splitting by space does, and the recorded `bsp_tree` gives the viewer an exact Fuchs-Kedem-Naylor back-to-front traversal even with the camera inside the channel (the partition is also what keeps every part under the 5,591,040-element per-node texture clamp); a hidden **categorical** `state` axis placed **last** so `displayDims == [0, 1, 2]` and the BSP split columns stay displayed; symmetry-averaged baked ambient occlusion (`luxar.shading`) as a burial cue; depth-sorted `normal` blending for surface-like atomic structure; `layer=True` for live control in the Layers panel (press **L**).
 
 ---
 
@@ -630,22 +639,22 @@ Variant of the Chromatrace demo with an 89-step slider stepping through each fin
 ### Data-Driven Demos (External Datasets)
 
 #### demo_global_rivers_earth.py - Rivers of Earth
-A topographic ETOPO globe (Points) plus every HydroRIVERS reach (Lines) in geographic 3D.
+A relief-displaced textured mesh globe plus every HydroRIVERS reach (Lines) in geographic 3D.
 
 **Run**: `luxar demo run global_rivers_earth`
 
-**Demonstrates**: Mixed Points+Lines geometry in one scene, geographic (lat/lon/elevation) coordinate mapping, large real-world datasets with local caching (~1 GB download on first run).
+**Demonstrates**: Mixed Mesh+Lines geometry, tiled high-resolution textures, geographic (lat/lon/elevation) coordinate mapping, and large real-world datasets with local caching (~1 GB download on first run).
 
 ---
 
 #### demo_ocean_currents_earth.py - Ocean Currents of Earth
-HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) draped over a jittered-Fibonacci NASA Blue Marble globe — a "Perpetual Ocean"-style visualization of the Gulf Stream, Kuroshio, and Antarctic Circumpolar Current.
+HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) draped over a textured NASA Blue Marble mesh globe — a "Perpetual Ocean"-style visualization of the Gulf Stream, Kuroshio, and Antarctic Circumpolar Current.
 
 **Run**: `luxar demo run ocean_currents_earth`
 
-**Requires**: Internet access on first run (~72 MB: HYCOM GLBy0.08 surface u/v + Blue Marble texture; cached under `~/.cache/luxar/ocean_currents_earth/`).
+**Requires**: Internet access on first run (HYCOM GLBy0.08 surface u/v under `~/.cache/luxar/ocean_currents_earth/`, plus the shared NASA Blue Marble imagery under `~/.cache/luxar/blue_marble/` — ~28 MB, downloaded once and reused by all four Earth demos).
 
-**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node segment ceiling, and **partition-of-LOD on both layers** — each is a `kind=partition` of 16 per-tile `kind=lod` ladders, which is what keeps the opening whole-globe view at 5.47M resident elements instead of 19.44M (`partition=` alone bounds node size but not residency: every part is drawn and only frustum-culled). Coarse levels are fewer whole elements with a compensating `sqrt` point radius / linear ribbon width, so a streamline still looks like a streamline. The scene is ~546 MB on disk against ~290 MB for a flat build — substitutive LOD stores levels, not deltas; `LOD_COMPRESSION` / `LOD_LEVELS` move that balance.
+**Demonstrates**: Mixed Mesh+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, tiled globe textures, and a **partition-of-LOD current layer** — 16 per-tile `kind=lod` ladders keep the opening whole-globe view from retaining every ribbon. Coarse levels preserve whole streamlines and widen them linearly so the field's apparent ink stays stable across switches; `LOD_COMPRESSION` / `LOD_LEVELS` tune the residency-versus-disk trade.
 
 ---
 

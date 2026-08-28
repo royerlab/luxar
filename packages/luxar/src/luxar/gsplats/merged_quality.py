@@ -21,27 +21,36 @@ _FIT_REFERENCE_KINDS = frozenset(("acquisition", "preprocessed", "synthetic"))
 #: silently carries no PSNR is the failure this scoring exists to end. Override
 #: with ``LUXAR_TILED_QUALITY_MAX_GB`` when the machine can take more, or set it
 #: to ``0`` to decline scoring outright. This is a CEILING, not the budget: the
-#: default is additionally held under a share of the memory actually free (see
-#: :func:`_default_quality_budget_gb`), since a fixed number describes whichever
-#: machine it was written on and not the one running the fit.
+#: default is additionally held under a share of the host memory or CUDA memory
+#: actually free, since a fixed number describes whichever machine it was
+#: written on and not the one running the fit.
 _QUALITY_BUDGET_GB = 24.0
 
-#: Share of currently-free physical memory the default budget will commit to a
-#: score. Deliberately well under 1: the peak below is an estimate, the fit
-#: process is holding the merged splats too, and being wrong in this direction
-#: costs a metric while being wrong in the other costs the whole fit.
+#: Share of currently-free host memory or CUDA memory the default budget will
+#: commit to a score. Deliberately well under 1: the peaks below are estimates,
+#: the fit process is holding the merged splats too, and being wrong in this
+#: direction costs a metric while being wrong in the other costs the whole fit.
 _QUALITY_BUDGET_MEM_FRACTION = 0.5
 
-#: Full-size float32 volumes live at the scoring peak, which sits inside SSIM
-#: rather than at the render: the reconstruction and the reference, plus the
-#: convolution intermediates :func:`luxar.gsplats.metrics._ssim_nd` keeps live
-#: (``_SSIM_PEAK_TENSOR_COUNT``, the same count that function's own tiled
-#: fallback is sized by — and that fallback only engages on CUDA, so on CPU this
-#: is the true peak). Counting only the reconstruction and the reference
-#: under-reports it fourfold, and the shortfall does not merely cost a metric:
-#: scoring runs BEFORE the archive is written, so thrashing or an OOM kill here
-#: loses the whole fit.
-_QUALITY_PEAK_VOLUMES = 8
+#: Host-side float32 copies held before the reference reaches the render device:
+#: ``np.asarray`` materializes a lazy source, then a non-zero ``image_min`` makes
+#: ``reference_on_fit_basis`` allocate the shifted/clipped array.
+_QUALITY_HOST_REFERENCE_VOLUMES = 2
+
+#: Full-size float32 volumes estimated at the scoring-device peak. This retains
+#: the existing conservative count until the compiled CUDA renderer is measured
+#: independently; CUDA SSIM already tiles itself from free VRAM, so this is now
+#: a device-side render/metric allowance rather than a host-memory proxy.
+_QUALITY_DEVICE_PEAK_VOLUMES = 8
+
+#: Local ``batch-fit run`` workers share one CUDA device. Its parent records that
+#: concurrency here so each process admits only its share of device VRAM.
+QUALITY_WORKERS_PER_DEVICE_ENV = "LUXAR_QUALITY_WORKERS_PER_DEVICE"
+
+#: Local ``batch-fit run`` workers across every device share the host's RAM. The
+#: single-card ``-j N`` and Slurm fan-outs do not yet set these counts; their
+#: per-tile scoring work is tracked by #2195.
+QUALITY_WORKERS_PER_HOST_ENV = "LUXAR_QUALITY_WORKERS_PER_HOST"
 
 
 def _available_ram_gb() -> "float | None":
@@ -102,29 +111,114 @@ def _quality_budget_gb() -> float:
     return value
 
 
+def _quality_worker_count(env_name: str, *, default: int = 1) -> int:
+    """Concurrent scoring workers sharing the named memory resource."""
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 1
+
+
+def _has_usable_quality_override() -> bool:
+    raw = os.environ.get("LUXAR_TILED_QUALITY_MAX_GB")
+    if raw is None:
+        return False
+    try:
+        return not math.isnan(float(raw))
+    except ValueError:
+        return False
+
+
+def _quality_memory_guard(
+    volume_shape: tuple[int, ...], device: Optional[str]
+) -> "str | None":
+    """Return the resource that cannot safely admit scoring, if any."""
+    voxel_gb = 4 * float(np.prod(volume_shape)) / 1024**3
+
+    from luxar.gsplats.utils.device import resolve_torch_device
+
+    try:
+        resolved = resolve_torch_device(device)
+    except Exception:
+        # Preserve the scoring path's existing failure contract: device errors
+        # are reported by the guarded render attempt, never raised after fitting.
+        return None
+
+    device_workers = _quality_worker_count(QUALITY_WORKERS_PER_DEVICE_ENV)
+    host_workers = _quality_worker_count(
+        QUALITY_WORKERS_PER_HOST_ENV, default=device_workers
+    )
+    has_override = _has_usable_quality_override()
+    # CPU renders and MPS unified device memory both consume host RAM at peak.
+    peak_gb = (
+        _QUALITY_HOST_REFERENCE_VOLUMES
+        if resolved.type == "cuda"
+        else _QUALITY_DEVICE_PEAK_VOLUMES
+    ) * voxel_gb
+    host_budget_gb = _quality_budget_gb()
+    if has_override:
+        host_budget_description = (
+            f"{host_budget_gb:g} GiB LUXAR_TILED_QUALITY_MAX_GB cap"
+        )
+    else:
+        host_budget_gb /= host_workers
+        host_budget_description = (
+            f"{host_budget_gb:g} GiB per-worker budget "
+            f"({host_workers} worker(s) sharing the host)"
+        )
+    if peak_gb > host_budget_gb:
+        return (
+            f"needs ~{peak_gb:.1f} GiB of host memory, over the "
+            f"{host_budget_description}"
+        )
+
+    if resolved.type == "cuda":
+        from luxar.gsplats.metrics import _gpu_free_memory
+
+        free_bytes = _gpu_free_memory(resolved)
+        if has_override:
+            device_budget_gb = host_budget_gb
+            budget_description = (
+                f"{device_budget_gb:g} GiB LUXAR_TILED_QUALITY_MAX_GB cap"
+            )
+        elif free_bytes is None:
+            device_budget_gb = _QUALITY_BUDGET_GB / device_workers
+            budget_description = (
+                f"{device_budget_gb:g} GiB per-worker budget "
+                f"({device_workers} worker(s) sharing the device)"
+            )
+        else:
+            device_budget_gb = min(
+                _QUALITY_BUDGET_GB,
+                _QUALITY_BUDGET_MEM_FRACTION * free_bytes / device_workers / 1024**3,
+            )
+            budget_description = (
+                f"{device_budget_gb:g} GiB per-worker budget "
+                f"({device_workers} worker(s) sharing the device)"
+            )
+        device_peak_gb = _QUALITY_DEVICE_PEAK_VOLUMES * voxel_gb
+        if device_peak_gb > device_budget_gb:
+            return (
+                f"needs ~{device_peak_gb:.1f} GiB of {resolved} memory, over "
+                f"the {budget_description}"
+            )
+    return None
+
+
 #: What to do about an archive this module could not score. One wording for
 #: every shape: ``luxar gsplat compare`` reads the written archive whatever tree
 #: it is, ``kind=partition`` included (#1978), so nothing needs flattening first.
 _COMPARE_RECOURSE = "Run `luxar gsplat compare` on the written archive instead."
 
 
-def collect_part_provenance(
-    datasets: Sequence[GSplatData],
-    *,
-    values: Sequence[float],
-    fit_reference: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Collect JSON-safe per-fit stamps for a caller-defined stacked axis.
-
-    The caller supplies the reference classification because only it knows what
-    each fit was scored against. The returned records describe the component
-    fits; they are not a scalar quality claim for the transformed union.
-    """
-    if len(values) != len(datasets):
-        raise ValueError(
-            f"Number of values ({len(values)}) must match number of datasets "
-            f"({len(datasets)})"
-        )
+def _validated_fit_reference(
+    fit_reference: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    if fit_reference is None:
+        return None
     kind = fit_reference.get("kind")
     if kind not in _FIT_REFERENCE_KINDS:
         allowed = ", ".join(sorted(_FIT_REFERENCE_KINDS))
@@ -135,26 +229,53 @@ def collect_part_provenance(
     safe_reference = {"kind": kind}
     if note is not None:
         safe_reference["note"] = note
+    return safe_reference
+
+
+def _json_safe_fitting(stats: dict[str, Any]) -> dict[str, Any]:
+    fitting: dict[str, Any] = {}
+    for key in _FITTING_INFO_KEYS:
+        if key not in stats:
+            continue
+        ok, safe_value = json_safe_value(stats[key])
+        if ok:
+            fitting[key] = safe_value
+    return fitting
+
+
+def collect_part_provenance(
+    datasets: Sequence[GSplatData],
+    *,
+    values: Sequence[float],
+    fit_reference: Optional[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collect JSON-safe per-fit stamps for caller-defined component coordinates.
+
+    The caller supplies the reference classification when it knows what each fit
+    was scored against; ``None`` records the contract's unknown-reference case.
+    The returned records describe the component fits; they are not a scalar
+    quality claim for the transformed union. Existing component provenance is
+    retained recursively when composed datasets are collected again.
+    """
+    if len(values) != len(datasets):
+        raise ValueError(
+            f"Number of values ({len(values)}) must match number of datasets "
+            f"({len(datasets)})"
+        )
+    safe_reference = _validated_fit_reference(fit_reference)
 
     records: list[dict[str, Any]] = []
     for coordinate, dataset in zip(values, datasets):
         ok, safe_coordinate = json_safe_value(coordinate)
         if not ok or not isinstance(safe_coordinate, (int, float)):
             raise ValueError(f"stack coordinate {coordinate!r} is not a finite number")
-        fitting: dict[str, Any] = {}
-        for key in _FITTING_INFO_KEYS:
-            if key not in dataset.stats or key == "part_provenance":
-                continue
-            ok, safe_value = json_safe_value(dataset.stats[key])
-            if ok:
-                fitting[key] = safe_value
-        records.append(
-            {
-                "coordinate": safe_coordinate,
-                "fit_reference": dict(safe_reference),
-                "fitting": fitting,
-            }
-        )
+        record = {
+            "coordinate": safe_coordinate,
+            "fitting": _json_safe_fitting(dataset.stats),
+        }
+        if safe_reference is not None:
+            record["fit_reference"] = dict(safe_reference)
+        records.append(record)
     return records
 
 
@@ -270,13 +391,10 @@ def stamp_merged_quality(
     if not parts or sum(part.n_splats for part in parts) == 0:
         return
     _announce_missing_basis(image_min)
-    budget_gb = _quality_budget_gb()
-    needed_gb = _QUALITY_PEAK_VOLUMES * 4 * float(np.prod(volume_shape)) / 1024**3
-    if needed_gb > budget_gb:
+    over_budget = _quality_memory_guard(volume_shape, device)
+    if over_budget is not None:
         aprint(
-            f"Merged quality metrics skipped: scoring {volume_shape} peaks at "
-            f"~{needed_gb:.1f} GiB (the reconstruction, the reference, and "
-            f"SSIM's intermediates), over the {budget_gb:g} GiB budget. Raise "
+            f"Merged quality metrics skipped: scoring {volume_shape} {over_budget}. Raise "
             f"LUXAR_TILED_QUALITY_MAX_GB to score it anyway. {_COMPARE_RECOURSE}"
         )
         return

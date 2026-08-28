@@ -478,7 +478,7 @@ becomes drawable; today both sets include `mesh`.
 - nD `vertices` plus a `faces` triangle-index array (`(F, 3)` or flat `(3F,)`)
 - Optional per-vertex `normals`, with a **required** `normal_dims` companion
 - Per-vertex colors (RGB or RGBA) and scalars for colormap lookup
-- `shading` (`"smooth"` / `"flat"`) and `double_sided`
+- `shading` (`"smooth"` / `"flat"` / `"none"`) and `double_sided`
 - `add_mesh(partition=True | {"max_elements": N, "rule": …})` → a `kind=partition`
   wrapper; the BSP cuts face centroids (`max_elements` counts faces, no triangle
   split), and each part re-indexes its own vertices — cut ones duplicated,
@@ -564,7 +564,7 @@ explicit turns an invisible wrong-orientation render into a checkable equality.
 - `has_colors` / `has_scalars` - Optional per-vertex appearance channels
 - `has_labels` / `has_image_labels` - Hover tooltips / thumbnails
 - `has_keys` - Per-vertex machine-readable keys (`{hover_key}` for `link` / `copy`)
-- `shading` - `"smooth"` or `"flat"`
+- `shading` - `"smooth"`, `"flat"`, or unlit `"none"`
 - `double_sided` - Whether back faces render
 - `ordering` - Always `"none"` in v1 (no spatial index)
 

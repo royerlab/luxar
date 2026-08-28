@@ -52,9 +52,9 @@ Exposed:
   points / lines / gsplats leaves and on Groups, where they do not compose. The
   second door into the same attrs (a post-hoc ``node.attrs[...] = ...``) is guarded
   by ``core/node/node.py::_WriteThroughAttrs._reject_mesh_only_on_non_mesh``.
-* :data:`MESH_ONLY_APPEARANCE_ATTRS` — the mesh-only authored keys (five
-  appearance controls plus the slab-membership tolerance) refused on every
-  non-mesh node by those two guards.
+* :data:`MESH_ONLY_APPEARANCE_ATTRS` — the mesh-only authored keys (the
+  appearance and texture-sampling controls plus the slab-membership tolerance)
+  refused on every non-mesh node by those two guards.
 * :func:`unnest_add_error` — strip a SAME-geometry inner adder's own ``Could
   not add <geometry> '<child>': …`` prefix from a caught exception's message,
   so a refusal from inside a synthesised same-kind split child (``child_3``,
@@ -82,12 +82,13 @@ _GEOMETRY_WORDS = ("points", "lines", "mesh", "gsplats")
 #: The mesh-only authored keys refused on every non-mesh node by the
 #: adder/group and write-through guards.
 #:
-#: Five are appearance (the shading controls), which is what the name records.
-#: ``slab_tolerance`` is the exception and is deliberately here anyway: it is a
-#: LOADING knob — the half-width of the nD membership slab a continuous hidden
-#: dimension is culled against (spec §5.2.1) — but it is mesh-only for exactly
-#: the same reason and must be refused on the other three types by exactly the
-#: same guard. A second frozenset would be a second thing to forget.
+#: Seven are appearance (five shading controls plus the two texture-sampling
+#: ones), which is what the name records. ``slab_tolerance`` is the exception
+#: and is deliberately here anyway: it is a LOADING knob — the half-width of
+#: the nD membership slab a continuous hidden dimension is culled against
+#: (spec §5.2.1) — but it is mesh-only for exactly the same reason and must be
+#: refused on the other three types by exactly the same guard. A second
+#: frozenset would be a second thing to forget.
 MESH_ONLY_APPEARANCE_ATTRS = frozenset(
     {
         "alpha_cutoff",
@@ -96,6 +97,8 @@ MESH_ONLY_APPEARANCE_ATTRS = frozenset(
         "shininess",
         "slab_tolerance",
         "specular",
+        "texture_filter",
+        "texture_wrap",
     }
 )
 

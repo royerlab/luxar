@@ -2,10 +2,17 @@
  * Duck-type-guarded loader → monitor wiring.
  *
  * Points loaders always implement the full `LoaderMonitor` surface;
- * Lines / GSplats expose those methods as optional. This helper checks
- * for the four-method shape (`addEventListener` / `removeEventListener`
- * / `getMetrics` / `getActiveQueries`) before wiring, so a loader that
+ * Lines / GSplats / Mesh expose those methods as optional (all four
+ * geometries' shipped loaders do implement them). This helper checks for
+ * the four-method shape (`addEventListener` / `removeEventListener` /
+ * `getMetrics` / `getActiveQueries`) before wiring, so a loader that
  * doesn't carry the surface is silently skipped.
+ *
+ * "Silently" is load-bearing to get right, and it bit mesh: `MeshWholeNodeLoader`
+ * had none of the four, so every mesh node reached this helper, failed the shape
+ * check, and was dropped without a log line — leaving the monitor's panel with
+ * mesh nodes in its scene-graph tree but no mesh loader row, no mesh bytes in
+ * its loader-memory total and no mesh loads in its rate windows.
  *
  * Takes the monitor by parameter — no ctx needed. A null monitor short-
  * circuits (the data-monitor UI is opt-in per scene).

@@ -19,6 +19,7 @@ detection). It does not touch the uniform-tiled path.
 from __future__ import annotations
 
 import contextlib
+import os
 import shutil
 import subprocess
 import threading
@@ -32,6 +33,7 @@ from arbol import aprint, asection
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_basis import fit_image_min
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
+from luxar.gsplats.gsplat_data import scrub_measured_stats, scrub_region_scoped_stats
 
 from .fit_planned import (
     _padded_bounds,
@@ -43,6 +45,22 @@ from .spec import FitPlan
 
 # Builds the argv for plan box ``i`` writing to a given output path.
 WorkerCmdBuilder = Callable[[int, Path], "list[str]"]
+
+_SKIP_CONTENT_BOX_STAMP_ENV = "LUXAR_INTERNAL_SKIP_CONTENT_BOX_STAMP"
+
+
+def _worker_env(keep_boxes: bool) -> "dict[str, str]":
+    """Build the internal parent-to-child environment for box scoring.
+
+    Disposable boxes skip stamps that the merge scrubs anyway; ``keep_boxes``
+    opts retained box artifacts back into scoring.
+    """
+    env = os.environ.copy()
+    if keep_boxes:
+        env.pop(_SKIP_CONTENT_BOX_STAMP_ENV, None)
+    else:
+        env[_SKIP_CONTENT_BOX_STAMP_ENV] = "1"
+    return env
 
 
 def _default_worker_cmd_builder(
@@ -183,7 +201,8 @@ def fit_planned_parallel(
         Device used to render the merged reconstruction for scoring. ``None``
         auto-detects, matching :func:`render_to_volume_tensor`.
     keep_boxes : bool, default False
-        Keep the per-box temp outputs after a successful merge.
+        Keep the per-box temp outputs after a successful merge and let each
+        retained worker score and stamp its own box output.
     verbose : bool, default True
         Emit the section header and per-box progress lines. ``False``
         (``fit --quiet``) suppresses progress output; failures still raise.
@@ -216,6 +235,7 @@ def fit_planned_parallel(
     budgeted = [i for i, b in enumerate(plan.boxes) if b.budget > 0]
     box_paths = {i: tmp_dir / f"box_{i}.gsplats.zarr" for i in budgeted}
     stop = threading.Event()
+    worker_env = _worker_env(keep_boxes)
 
     def _run(i: int) -> tuple[int, int, str]:
         # A worker that dequeued this box after a Ctrl-C must not spawn a new
@@ -224,7 +244,7 @@ def fit_planned_parallel(
             return i, -1, "cancelled before launch"
         try:
             cmd = [str(c) for c in worker_cmd_builder(i, box_paths[i])]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=worker_env)
         except Exception as exc:  # bad argv / builder bug → funnel to failure path
             return i, -1, f"failed to build/launch worker: {exc!r}"
         return i, proc.returncode, proc.stderr or proc.stdout or ""
@@ -289,6 +309,8 @@ def fit_planned_parallel(
                 corrupt.append((i, repr(exc)))
                 continue
             if gd.n_splats > 0:
+                scrub_measured_stats(gd)
+                scrub_region_scoped_stats(gd)
                 regions.append(gd)
                 region_boxes.append(i)
             n_boxes_fit += 1

@@ -9,6 +9,7 @@ must be refused from. The pure validators live in
 from __future__ import annotations
 
 import re
+from typing import get_args
 
 import numpy as np
 import pytest
@@ -16,8 +17,9 @@ import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import create_array
-from luxar.core.mesh import Mesh
+from luxar.core.mesh import Mesh, ShadingMode
 from luxar.io import LuxarScene, MeshData
+from luxar.io._compiler.geometry_writers.mesh import VALID_SHADING_MODES
 
 # A welded tetrahedron: 4 vertices, 4 faces, every vertex shared by 3 faces.
 _V = np.array(
@@ -82,6 +84,7 @@ def test_n_elements_counts_vertices_not_faces(tmp_path) -> None:
             "explicit_flat_overrides_normals",
         ),
         ({"shading": "smooth"}, "smooth", "explicit_smooth_without_normals_kept"),
+        ({"shading": "none"}, "none", "explicit_unlit_kept"),
     ],
 )
 def test_shading_resolution(tmp_path, kwargs, expected_shading, test_id) -> None:
@@ -95,6 +98,11 @@ def test_shading_resolution(tmp_path, kwargs, expected_shading, test_id) -> None
     store = _write(tmp_path, name=test_id, **kwargs)
     node = zarr.open_group(store, mode="r")[test_id]
     assert dict(node.attrs)["shading"] == expected_shading
+
+
+def test_shading_mode_type_matches_the_writer_contract() -> None:
+    """The public read type must cover every shading value the writer accepts."""
+    assert set(get_args(ShadingMode)) == set(VALID_SHADING_MODES)
 
 
 def test_double_sided_defaults_true_and_round_trips_false(tmp_path) -> None:
@@ -1269,6 +1277,31 @@ def test_face_index_width_escalates_past_uint16(tmp_path) -> None:
     assert results[66_000].itemsize >= 4, (
         f"index width did not escalate above 65535 (got {results[66_000]})"
     )
+
+
+def test_add_mesh_rejects_geometry_and_texture_over_the_combined_budget(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two individually admissible terms must not author an unloadable node."""
+    monkeypatch.setattr(
+        "luxar.typing_utils.constants.MESH_DECODE_BUDGET_BYTES", 1_000, raising=True
+    )
+    store = tmp_path / "combined-budget.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match="over the viewer"):
+            scene.add_mesh(
+                "m",
+                _V,
+                _F,
+                uvs=np.zeros((len(_V), 2), dtype=np.float32),
+                texture=np.zeros(69, dtype=np.uint8),
+                texture_encoding="png",
+                texture_width=16,
+                texture_height=16,
+                texture_channels=3,
+            )
+        assert "m" not in zarr.open_group(store, mode="r")
 
 
 def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_accepted(
@@ -3116,3 +3149,317 @@ def test_no_sub_LOD_carries_the_private_skip_scene_bounds_flag(tmp_path) -> None
         )
     # The flag must still DO its job: the parent describes the whole ladder.
     assert "position_bounds" in parent.attrs
+
+
+# --- textures end to end (#2175) -------------------------------------------
+
+_TEX_UV = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float32)
+_TEX_RGB = np.arange(8 * 4 * 3, dtype=np.uint8).reshape(8, 4, 3)
+
+
+def _write_textured(tmp_path, name="m", **kwargs):
+    """Write a textured tetrahedron. `uvs` defaults but stays overridable."""
+    kwargs.setdefault("uvs", _TEX_UV)
+    store = tmp_path / f"{name}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(name, _V, _F, **kwargs)
+    return LuxarScene.load(store).get_mesh(name)
+
+
+def test_raw_texture_round_trips_byte_exact_with_its_declared_dimensions(
+    tmp_path,
+) -> None:
+    """A raw texture survives the round trip, and declares what it decodes to.
+
+    The declared dimensions are asserted for a RAW texture even though they are
+    redundant with the array's own shape, because that redundancy is the point: a
+    reader must never have to open the payload to learn how large it decodes to.
+    The viewer's admission gate budgets a node from these numbers before it
+    fetches a single chunk.
+    """
+    mesh = _write_textured(tmp_path, texture=_TEX_RGB)
+    assert np.array_equal(mesh.texture, _TEX_RGB)
+    assert mesh.texture.dtype == np.uint8
+    assert np.array_equal(mesh.uvs, _TEX_UV)
+    assert mesh.metadata["has_texture"] is True
+    assert mesh.metadata["has_uvs"] is True
+    assert mesh.metadata["texture_encoding"] == "raw"
+    assert mesh.metadata["texture_height"] == 8
+    assert mesh.metadata["texture_width"] == 4
+    assert mesh.metadata["texture_channels"] == 3
+    # sRGB is the default because an ordinary PNG/JPEG is sRGB-encoded, and
+    # getting this wrong gives a subtly over-dark surface rather than an obvious
+    # failure.
+    assert mesh.metadata["texture_color_space"] == "srgb"
+
+
+def test_hdr_texture_keeps_its_range_and_stamps_a_window(tmp_path) -> None:
+    """A float texture above 1.0 is HDR, and says so the way colours do.
+
+    Follows the element-colour contract exactly rather than inventing a second
+    one: float dtype plus any value > 1.0 is HDR, and the RGB min/max is stamped
+    (alpha excluded) so the viewer derives a window from one shape whatever the
+    source. PRECISION keeps it float32 — the encoder deliberately refuses float16
+    for colours as measurably worse than its quantized alternative.
+    """
+    from luxar.encoding import EncodingMode
+
+    hdr = np.zeros((4, 4, 3), dtype=np.float32)
+    hdr[..., 0] = 6.5
+    store = tmp_path / "hdr.luxar.zarr"
+    with LuxarZarrCompiler(
+        store, encoding_mode=EncodingMode.PRECISION, compressor=None
+    ) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh(
+            "m", _V, _F, uvs=_TEX_UV, texture=hdr, texture_color_space="linear"
+        )
+    mesh = LuxarScene.load(store).get_mesh("m")
+    assert mesh.texture.dtype == np.float32
+    assert float(mesh.texture.max()) == pytest.approx(6.5)
+    assert mesh.metadata["texture_data_range"] == [0.0, 6.5]
+    assert mesh.metadata["texture_color_space"] == "linear"
+
+
+def test_hdr_texture_refuses_srgb_transfer(tmp_path) -> None:
+    hdr = np.full((4, 4, 3), 2.0, dtype=np.float32)
+    with pytest.raises(ValueError, match="HDR values above 1.0 cannot use"):
+        _write_textured(tmp_path, texture=hdr)
+
+
+@pytest.mark.parametrize("color_space", ["sRGB", "banana", "rec2020"])
+def test_bad_texture_color_space_is_refused(tmp_path, color_space) -> None:
+    with pytest.raises(ValueError, match="texture_color_space must be one of"):
+        _write_textured(tmp_path, texture=_TEX_RGB, texture_color_space=color_space)
+
+
+def test_sdr_float_texture_stamps_no_hdr_window(tmp_path) -> None:
+    """A float texture entirely within [0, 1] is SDR, and gets no range attr.
+
+    The negative twin of the test above, and the one that pins the rule is on
+    VALUES rather than on dtype — a build keyed on "is it float?" would stamp a
+    window here.
+    """
+    sdr = np.full((4, 4, 3), 0.5, dtype=np.float32)
+    mesh = _write_textured(tmp_path, texture=sdr)
+    assert "texture_data_range" not in mesh.metadata
+
+
+def test_encoded_texture_round_trips_as_opaque_bytes(tmp_path) -> None:
+    """Encoded payloads are stored and returned byte-identical, undecoded.
+
+    The reader deliberately does not decode: `luxar.io` has no image-codec
+    dependency and should not acquire one. `texture_encoding` plus the declared
+    dimensions tell a consumer exactly what it is holding.
+
+    Uses a synthetic byte string rather than a real PNG on purpose — the writer
+    treats the payload as opaque, so requiring Pillow here would only test
+    Pillow.
+    """
+    blob = np.frombuffer(b"\x89PNG\r\n\x1a\n" + bytes(range(64)), dtype=np.uint8)
+    mesh = _write_textured(
+        tmp_path,
+        texture=blob,
+        texture_encoding="png",
+        texture_width=4,
+        texture_height=8,
+        texture_channels=3,
+    )
+    assert np.array_equal(mesh.texture, blob)
+    assert mesh.metadata["texture_encoding"] == "png"
+    # Declared, not derived — they cannot be read from encoded bytes without
+    # decoding them, which is exactly why they are mandatory.
+    assert mesh.metadata["texture_width"] == 4
+    assert mesh.metadata["texture_height"] == 8
+
+
+@pytest.mark.parametrize(
+    "kwargs,error_pattern,test_id",
+    [
+        (
+            dict(texture=_TEX_RGB, colors=np.zeros((4, 3), np.float32)),
+            "one base colour source",
+            "texture_and_colors",
+        ),
+        (
+            dict(texture=_TEX_RGB, scalars=np.zeros(4, np.float32), colormap="viridis"),
+            "one base colour source",
+            "texture_and_colormap",
+        ),
+        (
+            dict(texture=_TEX_RGB, partition={"max_elements": 2}),
+            "cannot be combined with partition",
+            "texture_and_partition",
+        ),
+        (
+            dict(texture=_TEX_RGB, substitutive_lod={"levels": 2}),
+            "cannot be combined with substitutive_lod",
+            "texture_and_substitutive_lod",
+        ),
+        (
+            dict(texture=_TEX_RGB, additive_lod={"n_lods": 2}),
+            "cannot be combined with additive_lod",
+            "texture_and_additive_lod",
+        ),
+    ],
+)
+def test_texture_composition_refusals(tmp_path, kwargs, error_pattern, test_id) -> None:
+    """Each unsupported texture combination is refused by name, with a reason.
+
+    The three structural routes are each coherent to want and each needs work
+    nothing does yet, so they are named as *not implemented* rather than as
+    meaningless — the distinction the sibling refusals in this adder are careful
+    to draw. A UV sphere needs none of them.
+    """
+    with pytest.raises(ValueError, match=error_pattern):
+        _write_textured(tmp_path, name=f"m_{test_id}", **kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs,error_pattern,test_id",
+    [
+        (dict(texture=_TEX_RGB), "'texture' requires 'uvs'", "texture_alone"),
+        (dict(uvs=_TEX_UV), "'uvs' requires 'texture'", "uvs_alone"),
+    ],
+)
+def test_uvs_and_texture_are_a_pair(tmp_path, kwargs, error_pattern, test_id) -> None:
+    """Neither half is accepted alone — the mesh peer of normals/normal_dims.
+
+    Both render *something* rather than failing, which is why both are refused
+    rather than warned: a texture with no UVs samples one arbitrary texel across
+    every triangle, and UVs with no texture cost a per-vertex array to affect
+    nothing. Silent-but-wrong is the case the normals pairing already argues must
+    be made loud.
+    """
+    store = tmp_path / f"pair_{test_id}.luxar.zarr"
+    with pytest.raises(ValueError, match=error_pattern):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F, **kwargs)
+
+
+def test_uvs_outside_the_unit_square_survive_the_round_trip(tmp_path) -> None:
+    """Tiling UVs are not clamped on the way to disk.
+
+    A UV outside [0, 1] is how you tile a detail texture under
+    `texture_wrap="repeat"`. Clamping at write time would silently destroy that,
+    and the loss would be invisible in every count-based assertion.
+    """
+    tiling = np.array(
+        [[0.0, 0.0], [4.0, 0.0], [0.0, 4.0], [4.0, 4.0]], dtype=np.float32
+    )
+    mesh = _write_textured(tmp_path, uvs=tiling, texture=_TEX_RGB)
+    assert float(mesh.uvs.max()) == pytest.approx(4.0)
+
+
+def test_texture_sampling_attrs_round_trip(tmp_path) -> None:
+    """`texture_filter` / `texture_wrap` reach the store as authored.
+
+    Authorable because the right answer is data-dependent and the viewer cannot
+    infer it: `nearest` is correct for a categorical or index-like texture, where
+    interpolating two class ids invents a third that means nothing, and `clamp`
+    is correct for a texture that is not meant to tile.
+    """
+    mesh = _write_textured(
+        tmp_path, texture=_TEX_RGB, texture_filter="nearest", texture_wrap="clamp"
+    )
+    assert mesh.metadata["texture_filter"] == "nearest"
+    assert mesh.metadata["texture_wrap"] == "clamp"
+
+
+def test_texture_sampling_attrs_are_absent_by_default(tmp_path) -> None:
+    """Unset means unset — the viewer owns the default, not the writer.
+
+    The negative twin of the round trip above. Stamping a default here would make
+    a store indistinguishable from one that authored the same value on purpose,
+    which is the distinction `shading` deliberately preserves by only ever
+    stamping what it resolved.
+    """
+    mesh = _write_textured(tmp_path, texture=_TEX_RGB)
+    assert "texture_filter" not in mesh.metadata
+    assert "texture_wrap" not in mesh.metadata
+
+
+@pytest.mark.parametrize(
+    "attrs,error_pattern,test_id",
+    [
+        (
+            dict(texture_filter="nearest"),
+            "'texture_filter' requires 'texture'",
+            "filter_without_texture",
+        ),
+        (
+            dict(texture_wrap="clamp"),
+            "'texture_wrap' requires 'texture'",
+            "wrap_without_texture",
+        ),
+        (
+            dict(texture_filter="nearest", texture_wrap="clamp"),
+            "require 'texture'",
+            "both_without_texture",
+        ),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_sampling_attrs_are_refused_without_a_texture(
+    tmp_path, attrs, error_pattern, test_id
+) -> None:
+    """A sampling attr on an untextured mesh is a silent no-op, so it is refused.
+
+    It would validate, persist, and read back exactly as authored while changing
+    no pixel — the same failure `reject_mesh_only_appearance` prevents when these
+    are set on a points node, reached from the other direction.
+    """
+    store = tmp_path / f"{test_id}.luxar.zarr"
+    with pytest.raises(ValueError, match=error_pattern):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F, **attrs)
+
+
+@pytest.mark.parametrize("filt", ["bilinear", "LINEAR", 3, None])
+def test_bad_texture_filter_is_refused(tmp_path, filt) -> None:
+    """The sampling vocabularies are closed, so a typo fails loudly."""
+    store = tmp_path / "bad_filter.luxar.zarr"
+    with pytest.raises(ValueError, match="Texture filter must be one of"):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh(
+                "m", _V, _F, uvs=_TEX_UV, texture=_TEX_RGB, texture_filter=filt
+            )
+
+
+def test_shading_none_is_stamped_as_authored(tmp_path) -> None:
+    """`shading='none'` is the unlit arm, and only ever explicit.
+
+    An unlit mesh is what a data basemap needs — a textured globe whose colours
+    carry meaning must not be reshaded by a view-anchored key — and it is what the
+    other three geometry types always do, being purely emissive.
+    """
+    mesh = _write_textured(tmp_path, texture=_TEX_RGB, shading="none")
+    assert mesh.metadata["shading"] == "none"
+
+
+def test_shading_none_is_never_a_default(tmp_path) -> None:
+    """Nothing resolves TO 'none'; defaulting to it would un-light every mesh.
+
+    Both default arms are checked, because "never a default" is a claim about the
+    whole resolution rather than about one branch of it.
+    """
+    with_normals = _write_textured(
+        tmp_path, name="lit", texture=_TEX_RGB, normals=_N, normal_dims=[0, 1, 2]
+    )
+    assert with_normals.metadata["shading"] == "smooth"
+    without = _write_textured(tmp_path, name="unlit", texture=_TEX_RGB)
+    assert without.metadata["shading"] == "flat"
+
+
+def test_unknown_shading_still_names_every_arm(tmp_path) -> None:
+    """A typo'd `shading` must advertise the new third arm, not just the old two."""
+    store = tmp_path / "bad_shading.luxar.zarr"
+    expected = f"shading must be one of {VALID_SHADING_MODES}, got 'phong'"
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", _V, _F, shading="phong")

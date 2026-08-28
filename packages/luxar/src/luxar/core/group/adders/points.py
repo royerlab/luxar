@@ -218,7 +218,11 @@ def add_points_impl(
                 fine_partition = None
                 if is_requested(partition):
                     fine_partition = _resolve_points_partition(
-                        pos_arr, partition, name, image_labels
+                        pos_arr,
+                        partition,
+                        name,
+                        image_labels,
+                        scene.dimensions.displayed,
                     )
                 preflight_extend_to_all(scene, extend_to_all, pos_arr, "points")
                 return add_points_substitutive_lod_wrapper_impl(
@@ -254,7 +258,11 @@ def add_points_impl(
         # with a warning rather than in silence.
         if partition is not None:
             partition_plan = _resolve_points_partition(
-                pos_arr, partition, name, image_labels
+                pos_arr,
+                partition,
+                name,
+                image_labels,
+                scene.dimensions.displayed,
             )
             if partition_plan is not None:
                 max_elements, parts, bsp_tree = partition_plan
@@ -443,7 +451,11 @@ def add_points_impl(
 
 
 def _resolve_points_partition(
-    pos_arr: np.ndarray, partition: Any, name: str, image_labels: Any
+    pos_arr: np.ndarray,
+    partition: Any,
+    name: str,
+    image_labels: Any,
+    split_axes: Sequence[int],
 ) -> Optional[tuple[int, List[np.ndarray], Dict[str, Any]]]:
     """Resolve and execute a points partition, returning only a real split."""
     from ..partition import (
@@ -467,7 +479,9 @@ def _resolve_points_partition(
             "Decompose the data manually or omit image_labels."
         )
 
-    tree = spatial_bsp_tree(pos_arr, max_elements, rule=partition_rule)
+    tree = spatial_bsp_tree(
+        pos_arr, max_elements, rule=partition_rule, split_axes=split_axes
+    )
     parts = bsp_leaf_parts(tree)
     warn_if_oversized_single_part(
         len(parts), int(parts[0].size) if parts else 0, max_elements, name

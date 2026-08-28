@@ -748,6 +748,23 @@ class TestServePerformance:
 class TestDataServerMountRoot:
     """The data server must mount the dataset itself, never its parent."""
 
+    def test_directory_mount_serves_file_byte_ranges(self, tmp_path):
+        """Archive files support the exact range contract the viewer requires."""
+        from luxar.cli.serving import _build_data_app
+
+        archive = tmp_path / "scene.luxar.zarr.zip"
+        archive.write_bytes(b"0123456789")
+        client = TestClient(_build_data_app(tmp_path))
+
+        response = client.get(archive.name, headers={"Range": "bytes=2-5"})
+        assert response.status_code == 206
+        assert response.headers["Content-Range"] == "bytes 2-5/10"
+        assert response.content == b"2345"
+
+        response = client.get(archive.name, headers={"Range": "bytes=20-30"})
+        assert response.status_code == 416
+        assert response.headers["Content-Range"] == "bytes */10"
+
     def test_zarr_store_mounted_at_root_hides_siblings(self, sample_scene):
         """Sibling files of a served .zarr store are not exposed over HTTP."""
         from luxar.cli.serving import _build_data_app

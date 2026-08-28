@@ -19,6 +19,7 @@ export interface RangeSliderOptions {
   valueHigh: number;
   step?: number;
   label?: string;
+  tooltip?: string;
   onChange: (low: number, high: number) => void;
   /** Called when the user edits the slider bounds (click-to-edit on limits). */
   onBoundsChange?: (min: number, max: number) => void;
@@ -43,6 +44,7 @@ export class RangeSlider {
   private wrapper: HTMLElement;
   private lowInput: HTMLInputElement;
   private highInput: HTMLInputElement;
+  private labelEl: HTMLElement | null;
   private lowLabel: HTMLElement;
   private highLabel: HTMLElement;
   private boundsLowLabel: HTMLElement;
@@ -69,9 +71,8 @@ export class RangeSlider {
     if (options.label) {
       const labelRow = document.createElement('div');
       labelRow.className = 'luxar-range-slider__label-row';
-      const labelEl = document.createElement('span');
-      labelEl.className = 'luxar-range-slider__label';
-      labelEl.textContent = options.label;
+      this.labelEl = document.createElement('span');
+      this.labelEl.className = 'luxar-range-slider__label';
 
       this.lowLabel = document.createElement('span');
       this.lowLabel.className = 'luxar-range-slider__value';
@@ -85,13 +86,15 @@ export class RangeSlider {
       valuesEl.appendChild(document.createTextNode(' \u2013 '));
       valuesEl.appendChild(this.highLabel);
 
-      labelRow.appendChild(labelEl);
+      labelRow.appendChild(this.labelEl);
       labelRow.appendChild(valuesEl);
       this.wrapper.appendChild(labelRow);
     } else {
+      this.labelEl = null;
       this.lowLabel = document.createElement('span');
       this.highLabel = document.createElement('span');
     }
+    if (options.label) this.setLabel(options.label, options.tooltip);
 
     // Track container (bounds labels + track + sliders)
     const trackRow = document.createElement('div');
@@ -353,6 +356,15 @@ export class RangeSlider {
     this.highInput.value = String(high);
     this.updateLabels();
     this.updateTrackFill();
+  }
+
+  /** Update the visible label and its explanatory tooltip. */
+  setLabel(label: string, tooltip?: string): void {
+    if (!this.labelEl) return;
+    this.labelEl.textContent = label;
+    this.labelEl.classList.toggle('luxar-range-slider__label--with-tooltip', Boolean(tooltip));
+    if (tooltip) this.labelEl.title = tooltip;
+    else this.labelEl.removeAttribute('title');
   }
 
   /** Update the slider bounds */

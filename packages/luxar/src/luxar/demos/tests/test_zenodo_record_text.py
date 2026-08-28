@@ -56,21 +56,20 @@ def _write_frame(
     psnr: float | None = 40.0,
     source_bytes: int | None = 1_000_000,
     gsplats: bool = True,
+    kind: str | None = None,
     part_provenance: list[dict[str, Any]] | None = None,
 ) -> None:
     """One single-store `.gsplats.zarr.zip`, as a bundle's frames are."""
     root = f"{path.name.split('.')[0]}.gsplats.zarr"
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr(f"{root}/.zgroup", json.dumps({"zarr_format": 2}))
-        zf.writestr(
-            f"{root}/.zattrs",
-            json.dumps(
-                {
-                    "format_type": "gsplats_zarr" if gsplats else "luxar_zarr",
-                    "n_splats": n_splats,
-                }
-            ),
-        )
+        root_attrs = {
+            "format_type": "gsplats_zarr" if gsplats else "luxar_zarr",
+            "n_splats": n_splats,
+        }
+        if kind is not None:
+            root_attrs["kind"] = kind
+        zf.writestr(f"{root}/.zattrs", json.dumps(root_attrs))
         zf.writestr(f"{root}/fitting/.zgroup", json.dumps({"zarr_format": 2}))
         fitting = {}
         if psnr is not None:
@@ -344,6 +343,43 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         assert info["psnr_db"] is None
         assert info["foreground_psnr_db"] is None
         assert info["quality_quotable"] is False
+
+    def test_partition_parts_are_not_reported_as_frames(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "partition.gsplats.zarr.zip"
+        _write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            kind="partition",
+            part_provenance=self._parts(None),
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] is None
+        assert info["source_bytes"] is None
+
+    def test_nested_single_part_is_not_reported_as_one_frame(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "single-part-timelapse.gsplats.zarr.zip"
+        _write_frame(
+            path,
+            psnr=None,
+            source_bytes=None,
+            part_provenance=[
+                {
+                    "coordinate": 0.0,
+                    "fitting": {"part_provenance": self._parts(None)},
+                }
+            ],
+        )
+
+        info = gen._read_archive(path)
+
+        assert info["frames"] is None
 
     def test_check_does_not_demand_scores_classified_as_unquotable(
         self, gen: Any, monkeypatch: pytest.MonkeyPatch
@@ -743,7 +779,10 @@ def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
 
     assert counts == (1, 0, 1, 0)
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
-    assert written == absent[key]
+    assert written == {
+        **absent[key],
+        "unmeasured_reason": "unpinned-local-copy",
+    }
 
 
 def test_a_current_local_measurement_replaces_a_stale_staged_one(
@@ -850,14 +889,83 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
         "frames": None,
         "measured_from": None,
         "measured_sha256": None,
+        "unmeasured_reason": "unpinned-local-copy",
     }
-    (row,) = gen._dataset_rows(
-        "ds",
-        _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])["datasets"]["ds"],
-        archives,
+
+
+def test_refresh_preserves_quality_prose_on_a_successful_read(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = "ds/a.gsplats.zarr.zip"
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    _write_frame(archive)
+    digest = gen._sha256_of(archive)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {
+            key: {
+                "quality_note": "internal provenance",
+                "quality_caveat": "reader-facing caveat",
+            }
+        },
     )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+
+    gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
+
+    entry = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
+    assert entry["quality_note"] == "internal provenance"
+    assert entry["quality_caveat"] == "reader-facing caveat"
+
+
+def test_a_hand_recovered_null_digest_is_not_an_unpinned_marker(gen: Any) -> None:
+    row = {"char_key": "ds/a.gsplats.zarr.zip"}
+    chars = {"ds/a.gsplats.zarr.zip": {"measured_sha256": None}}
+    assert gen._why_absent(row, chars) == ""
+    chars["ds/a.gsplats.zarr.zip"]["unmeasured_reason"] = "unpinned-local-copy"
+    assert "not the pinned artifact" in gen._why_absent(row, chars)
+
+
+def test_rejected_read_marks_only_an_empty_retained_entry(gen: Any) -> None:
+    empty = {"quality_note": "not measured from archive bytes"}
+    recovered = {"n_splats": 123, "measured_sha256": None}
+    measured = {
+        "empty": {"measured_sha256": "local"},
+        "recovered": {"measured_sha256": "local"},
+    }
+
+    retained, rejected = gen._retain_preferred_measurements(
+        measured,
+        {"empty": empty, "recovered": recovered},
+        {"empty": "pinned", "recovered": "pinned"},
+    )
+
+    assert (retained, rejected) == (0, 2)
+    assert measured["empty"] == {
+        **empty,
+        "unmeasured_reason": "unpinned-local-copy",
+    }
+    assert measured["recovered"] == recovered
+
+
+def test_a_note_does_not_read_figures_from_unpinned_bytes(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "a.gsplats.zarr.zip"
+    _write_frame(archive, n_splats=30)
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {"ds/a.gsplats.zarr.zip": {"quality_note": "hand note"}},
+    )
+    entry = _entry(archive.name, "d" * 64)
+
+    (row,) = gen._dataset_rows("ds", _fake_manifest([entry])["datasets"]["ds"])
+
     assert row["splats"] == gen._ABSENT
-    assert row["topology"] == gen._ABSENT
 
 
 def test_refresh_summary_distinguishes_rejected_and_retained_reads(
@@ -1008,6 +1116,64 @@ def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None
     assert gen._stale_characteristics(manifest) == []
 
 
+def test_flylight_recovered_figures_yield_to_a_pinned_archive_read(gen: Any) -> None:
+    key = "gsplats_flylight_mcfo_63x/flylight_mcfo_63x.gsplats.zarr.zip"
+    existing = {key: gen.load_characteristics()[key]}
+    pinned_digest = existing[key]["measured_sha256"]
+    measured = {
+        key: {
+            "n_splats": 660_035,
+            "ndim": 3,
+            "format_version": "3.4",
+            "topology": "adaptive",
+            "measured_from": "repo",
+            "measured_sha256": pinned_digest,
+        }
+    }
+
+    retained, rejected = gen._retain_preferred_measurements(
+        measured, existing, {key: pinned_digest}
+    )
+
+    assert (retained, rejected) == (0, 0)
+    assert measured[key]["topology"] == "adaptive"
+    assert measured[key]["measured_from"] == "repo"
+
+
+def test_source_derived_figures_fill_only_missing_pinned_archive_stamps(
+    gen: Any,
+) -> None:
+    key = "gsplats_3d_h2afva_decimation/h2afva_full.gsplats.zarr.zip"
+    existing = {key: gen.load_characteristics()[key]}
+    pinned_digest = "p" * 64
+    measured = {
+        key: {
+            "n_splats": 999_999,
+            "ndim": 3,
+            "format_version": "3.4",
+            "topology": "single level",
+            "psnr_db": 12.34,
+            "foreground_psnr_db": None,
+            "source_bytes": None,
+            "measured_from": "staged",
+            "measured_sha256": pinned_digest,
+        }
+    }
+
+    retained, rejected = gen._retain_preferred_measurements(
+        measured, existing, {key: pinned_digest}
+    )
+
+    assert (retained, rejected) == (1, 0)
+    assert measured[key]["psnr_db"] == 12.34
+    assert measured[key]["foreground_psnr_db"] == 48.93
+    assert measured[key]["source_bytes"] == 3_414_163_456
+    assert measured[key]["n_splats"] == 999_999
+    assert measured[key]["topology"] == "single level"
+    assert measured[key]["measured_from"] == "staged"
+    assert measured[key]["measured_sha256"] == pinned_digest
+
+
 def test_every_committed_measurement_names_a_manifest_archive(gen: Any) -> None:
     manifest = json.loads(gen.MANIFEST.read_text())
     manifest_keys = {
@@ -1106,3 +1272,289 @@ def test_an_additive_count_is_absent_if_any_chunk_is_unreadable(
     )
 
     assert total is None, "a partial sum must not be published as a total"
+
+
+# ---------------------------------------------------------------------------
+# `--check` has to say WHY a figure is absent when it already knows.
+#
+# refresh writes an all-null entry when the local copy's bytes are NOT the
+# pinned artifact: the figures are absent deliberately, because measuring that
+# copy would describe a generation the record does not serve. Printed
+# identically to "nobody measured this yet", it reads as an invitation to make
+# the generator read the archive -- which republishes precisely the unpinned
+# numbers the marker withholds. celegans and nexrad both sit in this state with
+# a local copy whose size matches the pin EXACTLY and whose digest does not.
+# ---------------------------------------------------------------------------
+
+
+class TestCheckExplainsAnAbsentFigure:
+    def _gaps_for(
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sidecar: dict[str, Any],
+    ) -> list[str]:
+        archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
+        archive.parent.mkdir(exist_ok=True)
+        _write_bundle(archive, [{"n_splats": 10}], tmp_path)
+        manifest = _fake_manifest([_entry("movie.gsplats.zarr.zip", "p" * 64)])
+        chars_path = tmp_path / "chars.json"
+        chars_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "archives": {
+                        gen._char_key("ds", "", "movie.gsplats.zarr.zip"): sidecar
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(gen, "CHARACTERISTICS", chars_path)
+        problems, _unread, *_rest = gen._gaps(manifest)
+        return problems
+
+    _ADJUDICATED = {
+        "n_splats": None,
+        "psnr_db": None,
+        "foreground_psnr_db": None,
+        "source_bytes": None,
+        "topology": None,
+        "measured_from": None,
+        "measured_sha256": None,
+        "unmeasured_reason": "unpinned-local-copy",
+    }
+
+    def test_committed_unpinned_rows_carry_the_reason(self, gen: Any) -> None:
+        chars = gen.load_characteristics()
+        for key in (
+            "gsplats_celegans/celegans_s1.gsplats.zarr.zip",
+            "gsplats_nexrad_supercell/nexrad_supercell.gsplats.zarr.zip",
+        ):
+            assert chars[key]["unmeasured_reason"] == "unpinned-local-copy"
+
+    def test_an_unpinned_local_copy_is_named_as_the_cause(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (problem,) = self._gaps_for(gen, tmp_path, monkeypatch, dict(self._ADJUDICATED))
+
+        assert "not the pinned artifact" in problem, (
+            "an absence refresh decided on must say so, or it reads as unmeasured "
+            "work and invites republishing the unpinned figures"
+        )
+
+    def test_a_measured_entry_gets_no_such_excuse(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The diagnosis must not fire for an archive that was really measured."""
+        sidecar = dict(self._ADJUDICATED, measured_sha256="a" * 64, n_splats=10)
+        sidecar.pop("unmeasured_reason")
+
+        problems = self._gaps_for(gen, tmp_path, monkeypatch, sidecar)
+
+        assert not any("not the pinned artifact" in p for p in problems)
+
+    def test_a_never_measured_entry_gets_no_such_excuse(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hand-written note is not a refresh verdict, so it explains nothing."""
+        problems = self._gaps_for(
+            gen, tmp_path, monkeypatch, {"quality_note": "measured elsewhere"}
+        )
+
+        assert not any("not the pinned artifact" in p for p in problems)
+
+
+# ---------------------------------------------------------------------------
+# Who wrote the sidecar entry decides whether the archive is consulted.
+#
+# Both arms of this matter, and they pull in opposite directions:
+#   * a refresh entry's nulls are a VERDICT -- the local bytes are not the
+#     pinned artifact -- so reading that copy would publish figures for a
+#     generation the record does not serve;
+#   * a hand-written note is prose, not a verdict, so it must not delete the
+#     figures the bytes can still supply.
+# Keying on "any null" conflates them, and I shipped that conflation for long
+# enough to watch six tests catch it.
+# ---------------------------------------------------------------------------
+
+
+class TestWhoWroteTheEntryDecides:
+    def _row(
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sidecar: dict[str, Any],
+    ) -> dict[str, Any]:
+        archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
+        archive.parent.mkdir(exist_ok=True)
+        _write_bundle(archive, [{"n_splats": 10}, {"n_splats": 20}], tmp_path)
+        # `_locate` searches DATA_DIR and the user cache, never tmp_path, so
+        # without this the archive is unreadable and EVERY figure comes back
+        # absent -- which makes an "absent" assertion pass no matter what the
+        # code under test does.
+        monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+        manifest = _fake_manifest(
+            [_entry("movie.gsplats.zarr.zip", gen._sha256_of(archive))]
+        )
+        chars = {gen._char_key("ds", "", "movie.gsplats.zarr.zip"): sidecar}
+        (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], chars)
+        return row
+
+    def test_the_archive_is_reachable_in_this_fixture(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard the guard: with no sidecar entry the read must supply the count.
+
+        Every other assertion here is about absence, and absence is exactly what
+        a broken fixture produces. This is the control that says the fixture can
+        deliver a figure at all.
+        """
+        archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
+        archive.parent.mkdir(exist_ok=True)
+        _write_bundle(archive, [{"n_splats": 10}, {"n_splats": 20}], tmp_path)
+        monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+        manifest = _fake_manifest(
+            [_entry("movie.gsplats.zarr.zip", gen._sha256_of(archive))]
+        )
+
+        (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], {})
+
+        assert row["splats"] == "30"
+
+    def test_a_note_does_not_delete_the_readable_figures(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explaining one gap must not open others.
+
+        Otherwise the only way to document why a PSNR is absent is to lose the
+        splat count too, and a record that says nothing looks the same as one
+        with nothing to say.
+        """
+        row = self._row(
+            gen, tmp_path, monkeypatch, {"quality_note": "PSNR not recoverable here"}
+        )
+
+        assert row["splats"] == "30"
+
+    def test_a_refresh_verdict_is_respected_including_its_nulls(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The unpinned-copy verdict must survive the note-merging path."""
+        row = self._row(
+            gen,
+            tmp_path,
+            monkeypatch,
+            {
+                "n_splats": None,
+                "psnr_db": None,
+                "measured_from": None,
+                "measured_sha256": None,
+            },
+        )
+
+        assert row["splats"] == gen._ABSENT, (
+            "an all-null refresh entry means the local bytes are not the pinned "
+            "artifact; measuring them would describe the wrong generation"
+        )
+
+    def test_a_committed_measurement_still_outranks_the_local_copy(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A record describes what it SERVES, so the sidecar wins where it speaks."""
+        row = self._row(
+            gen, tmp_path, monkeypatch, {"n_splats": 99999, "measured_sha256": "a" * 64}
+        )
+
+        assert row["splats"] == "99,999"
+
+
+# ---------------------------------------------------------------------------
+# An absent quality figure must publish its reason; its provenance must not.
+#
+# `quality_note` was read by nobody -- so every reason recorded in the sidecar
+# was invisible on the records, and a reader saw a bare em dash with no way to
+# tell "never scored" from "cannot be scored" from "not telling you". On a record
+# whose stated purpose is publishing reconstruction quality, that blank is the
+# cell most likely to read as evasion.
+#
+# The two fields stay separate on purpose. Notes carry the wrong turns taken on
+# the way to a number, which belong in the repository and not on a DOI.
+# ---------------------------------------------------------------------------
+
+
+class TestAnAbsentFigurePublishesItsReason:
+    def _render(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sidecar: dict
+    ) -> str:
+        manifest = _fake_manifest([_entry("movie.gsplats.zarr.zip", "p" * 64)])
+        # `_fake_manifest` is shaped for `_dataset_rows`; rendering a whole record
+        # also needs the record header fields.
+        manifest["records"]["cc-by"].update(
+            {"title": "Test record", "zenodo_doi": "10.5281/zenodo.0"}
+        )
+        chars_path = tmp_path / "chars.json"
+        chars_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "archives": {
+                        gen._char_key("ds", "", "movie.gsplats.zarr.zip"): sidecar
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(gen, "CHARACTERISTICS", chars_path)
+        return gen.render_record("cc-by", manifest)
+
+    _MEASURED = {
+        "n_splats": 10,
+        "psnr_db": None,
+        "measured_from": "cache",
+        "measured_sha256": "a" * 64,
+    }
+
+    def test_the_caveat_reaches_the_record(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        text = self._render(
+            gen,
+            tmp_path,
+            monkeypatch,
+            dict(self._MEASURED, quality_caveat="Scoring measures the regridding."),
+        )
+
+        assert "Scoring measures the regridding." in text
+
+    def test_the_internal_note_never_reaches_the_record(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Provenance is for maintainers. A DOI is forever and public.
+
+        The notes name the files I checked by mistake and the metrics that fooled
+        me. Publishing that would be worse than publishing nothing, so the
+        boundary is a test rather than a convention.
+        """
+        text = self._render(
+            gen,
+            tmp_path,
+            monkeypatch,
+            dict(
+                self._MEASURED,
+                quality_note="measured against fused.deconv.new.zarr.zip by mistake",
+                quality_caveat="Not recoverable for this archive.",
+            ),
+        )
+
+        assert "Not recoverable for this archive." in text
+        assert "by mistake" not in text
+        assert "fused.deconv" not in text
+
+    def test_no_caveat_adds_no_footnote(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A dataset with nothing to explain gains no empty bullet."""
+        text = self._render(gen, tmp_path, monkeypatch, dict(self._MEASURED))
+
+        assert "`movie.gsplats.zarr.zip`:" not in text

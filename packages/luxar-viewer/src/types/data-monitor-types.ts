@@ -38,9 +38,16 @@ export type MonitorEventType =
   | 'error'; // Loading or query error
 
 /**
- * Loader types in the system
+ * Loader types in the system — one per geometry type, named after the
+ * loading STRATEGY rather than the geometry, because that is what the
+ * telemetry means: the three `*-spatial-index` loaders answer per-slice
+ * range queries, while `mesh-whole-node` fetches its node once and serves
+ * every later view from memory. So a mesh loader reports `loads` and
+ * `bytesLoaded` but no `queries` / `spatialIndex` — the honest shape, not a
+ * gap (see `MeshWholeNodeLoader`).
  */
-export type LoaderType = 'point-spatial-index' | 'lines-spatial-index' | 'gsplats-spatial-index';
+export type LoaderType =
+  'point-spatial-index' | 'lines-spatial-index' | 'gsplats-spatial-index' | 'mesh-whole-node';
 
 /**
  * Event emitted by data loaders for monitoring
@@ -53,7 +60,7 @@ export interface MonitorEvent {
     path?: string;
     arrayName?: string;
     ranges?: ElementRange[];
-    /** Element count for the event (points / vertices-or-segments / splats). */
+    /** Element count for the event (points / vertices-or-segments / splats / triangles). */
     elements?: number;
     cells?: number;
     latency?: number;
@@ -94,7 +101,7 @@ export interface LoaderMetrics {
   elementsLoaded: number; // Cumulative (for throughput calculation)
   bytesLoaded: number;
   // Dataset info
-  visibleElements: number; // Currently visible elements: points / segments / splats (non-cumulative)
+  visibleElements: number; // Currently visible elements: points / segments / splats / triangles (non-cumulative)
   avgQueryTime: number;
   avgLoadTime: number;
   // Memory usage
@@ -164,7 +171,7 @@ export interface QueryInfo {
   endTime?: number;
   status: 'pending' | 'loading' | 'complete' | 'error';
   cells?: number;
-  /** Element count the query matched (points / segments / splats). */
+  /** Element count the query matched (points / segments / splats / triangles). */
   elements?: number;
   ranges?: ElementRange[];
   fromCache?: boolean;
@@ -211,20 +218,30 @@ export interface MonitorConfig {
 export interface GlobalStats {
   totalLoaders: number;
   activeSpatialLoaders: number;
-  totalElementsLoaded: number; // Cumulative elements loaded across all loaders (points/vertices/splats — throughput)
+  totalElementsLoaded: number; // Cumulative elements loaded across all loaders (points/vertices/splats/triangles — throughput)
   // Resident memory across all loaders — sum of each loader's `memoryUsed`
   // (current accumulator allocation, set in the spatial-index loaders'
   // recordLoadMetrics). Drives the compact badge's memory figure.
   totalMemory: number;
+  // Dataset metrics — one named pair per geometry type, each labelled with
+  // that type's own element noun (points / segments / splats / triangles).
+  // Named rather than keyed by type because each pair is rendered with its
+  // own label, unit noun and DOM id; `metrics/global-stats.ts` is the single
+  // place the kind-keyed `SceneGraphState` counters are projected onto them.
   // Dataset metrics - Points
   datasetSize: number; // Total points in all datasets
-  visiblePoints: number; // Currently visible/rendered points (per-geometry trio with visibleSegments / visibleSplats)
+  visiblePoints: number; // Currently visible/rendered points (per-geometry quartet with visibleSegments / visibleSplats / visibleTriangles)
   // Dataset metrics - Lines
   datasetSegments: number; // Total segments in all line datasets
   visibleSegments: number; // Currently visible/rendered segments (for lines, typically equals total)
   // Dataset metrics - GSplats
   datasetSplats: number; // Total splats in all gsplats datasets
   visibleSplats: number; // Currently visible/rendered splats
+  // Dataset metrics - Mesh
+  datasetTriangles: number; // Total triangles (faces) in all mesh datasets
+  visibleTriangles: number; // Currently visible/rendered triangles — triangles the active nD slice indexes
+  /** Elements omitted by renderer capacity clamps across visible texture-backed nodes. */
+  droppedElements: number;
   totalQueries: number;
   totalLoads: number;
   avgQueryTime: number;
@@ -457,6 +474,17 @@ export interface SceneGraphNode {
   /** Number of visible splats after nD slicing (for gsplats nodes) */
   visibleSplatCount?: number;
   /**
+   * Number of visible triangles after nD slicing (for mesh nodes) — the fourth
+   * member of the visible-count family above.
+   *
+   * A mesh loads WHOLE, so this is not a streaming residency figure like its
+   * siblings: it is how many of the node's faces the active nD slab indexes,
+   * which is what `commit-mesh-geometry` puts in the index buffer. Pushed per
+   * path by `monitor/visible-counts.ts` and merged in by
+   * `SceneGraphModel.syncVisibleCountsIntoTree`.
+   */
+  visibleFaceCount?: number;
+  /**
    * Specialized-group discriminant, set when the underlying scene-graph
    * node is a `kind=lod` (substitutive LOD) or `kind=partition` (BSP)
    * `Group`. Drives the tree's kind badge + icon. Mirrors `LayerInfo.kind`
@@ -617,6 +645,8 @@ export interface SceneGraphState {
   totalByType: GeometryCounters;
   /** Currently visible elements per type (after nD clipping / progressive LOD) */
   visibleByType: GeometryCounters;
+  /** Elements omitted by renderer capacity clamps across visible texture-backed nodes. */
+  droppedElements: number;
 }
 
 /**

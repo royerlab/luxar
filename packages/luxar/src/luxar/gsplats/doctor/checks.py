@@ -47,9 +47,8 @@ def _part_boxes(
 
     ``None`` when the parts do not describe a usable box set: a missing
     ``position_bounds``, a ``child_index`` that is not a permutation of
-    ``0..n-1``, or fewer than two spatial dims (splitting needs two, so 1D data
-    is never partitioned). Only the first three dims are read — a stacked
-    time/channel axis is never a split axis.
+    ``0..n-1``, inconsistent bounds widths, or fewer than two spatial dims
+    (splitting needs two, so 1D data is never partitioned).
     """
     by_index: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
     names = [n for n in group.group_keys() if str(n).startswith("part_")]
@@ -68,11 +67,28 @@ def _part_boxes(
             return None
         if lo.shape != hi.shape or lo.size < 2:
             return None
-        spatial = min(3, int(lo.size))
-        by_index[int(index)] = (lo[:spatial], hi[:spatial])
+        by_index[int(index)] = (lo, hi)
     if sorted(by_index) != list(range(len(names))):
         return None
-    return [by_index[i] for i in range(len(names))]
+    boxes = [by_index[i] for i in range(len(names))]
+    if any(lo.shape != boxes[0][0].shape for lo, _ in boxes[1:]):
+        return None
+    return boxes
+
+
+def _reconstruction_axes(
+    root: "zarr.Group", boxes: "List[Tuple[np.ndarray, np.ndarray]]"
+) -> Tuple[int, ...]:
+    width = len(boxes[0][0])
+    fallback = tuple(range(min(3, width)))
+    scene_dimensions = root.attrs.get("scene_dimensions")
+    if scene_dimensions is not None:
+        from luxar.core.dimensions import Dimensions
+
+        displayed = Dimensions.from_dict(scene_dimensions).displayed
+        axes = tuple(axis for axis in displayed if 0 <= axis < width)
+        return axes or fallback
+    return fallback
 
 
 def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
@@ -124,7 +140,9 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
             if serialized_bsp_tree_separates(dict(stored), boxes):
                 continue  # healthy
             stored_dict = dict(stored)
-            rebuilt = reconstruct_serialized_bsp_tree(boxes)
+            rebuilt = reconstruct_serialized_bsp_tree(
+                boxes, axes=_reconstruction_axes(root, boxes)
+            )
             labels_name_parts = _labels_name_the_parts(stored_dict, len(boxes))
             approximate_ok = rebuilt is None or group.attrs.get("display_type") in (
                 "lines",
@@ -199,7 +217,9 @@ def check_partition_split_planes(root: "zarr.Group") -> List[Finding]:
             )
             continue
 
-        rebuilt = reconstruct_serialized_bsp_tree(boxes)
+        rebuilt = reconstruct_serialized_bsp_tree(
+            boxes, axes=_reconstruction_axes(root, boxes)
+        )
         findings.append(_missing_finding(group, where, len(boxes), rebuilt))
     return findings
 
@@ -225,8 +245,9 @@ def _recover_frame_scale(
     overlap_floors = serialized_bsp_tree_axis_overlap_floors(stored, boxes)
     if overlap_floors is None:
         return None
-    ratios: Dict[int, List[float]] = {0: [], 1: [], 2: []}
-    ranges: Dict[int, List[Tuple[float, float]]] = {0: [], 1: [], 2: []}
+    axes = range(len(boxes[0][0]))
+    ratios: Dict[int, List[float]] = {axis: [] for axis in axes}
+    ranges: Dict[int, List[Tuple[float, float]]] = {axis: [] for axis in axes}
     if not _collect_frame_scale_ranges(stored, boxes, overlap_floors, ratios, ranges):
         return None
     factors = _resolve_frame_factors(ratios, ranges, len(boxes[0][0]))
@@ -241,7 +262,7 @@ def _recover_frame_scale(
 def _collect_frame_scale_ranges(
     node: Dict[str, Any],
     boxes: "List[Tuple[np.ndarray, np.ndarray]]",
-    overlap_floors: "Tuple[float, float, float]",
+    overlap_floors: "Tuple[float, ...]",
     ratios: Dict[int, List[float]],
     ranges: Dict[int, List[Tuple[float, float]]],
 ) -> bool:
@@ -291,11 +312,12 @@ def _resolve_frame_factors(
 ) -> "Optional[Tuple[float, ...]]":
     factors = []
     for axis in range(ndim):
-        if not ranges[axis]:
+        axis_ranges = ranges.get(axis)
+        if not axis_ranges:
             factors.append(1.0)
             continue
-        low = max(bounds[0] for bounds in ranges[axis])
-        high = min(bounds[1] for bounds in ranges[axis])
+        low = max(bounds[0] for bounds in axis_ranges)
+        high = min(bounds[1] for bounds in axis_ranges)
         if low > high:
             return None
         estimate = float(np.median(ratios[axis]))

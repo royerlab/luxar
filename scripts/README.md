@@ -22,6 +22,7 @@ scripts/
 | `check_demo_links.py` | Report whether canonical demo click-through destinations still discriminate known-good and known-bad identifiers without gating on third-party availability |
 | `check_scene_credits.py` | Verify built demo stores carry the `short`, `doi`, and `license` their registry citation declares |
 | `check_open_issue_pr.py` | Report whether an open PR already claims an issue (advisory, run by hand); inventory unique/shared paths before closing a duplicate |
+| `ci_queue_scan.py` | Classify obsidian-labelled Actions jobs and perform bounded repository run scans for CI routing/watchdog policy |
 | `check_fixture_env.py` | Assert the viewer-fixture Hatch environment is CPU-only and free of default-env tooling |
 | `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
 | `set_version.py` | Update the Python and viewer release versions together |

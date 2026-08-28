@@ -779,8 +779,16 @@
   grid-template-columns: 1fr;
 }
 
-.luxar-overview-grid--cols-2 {
-  grid-template-columns: repeat(2, 1fr);
+/*
+ * The multi-card hero row: as many equal columns as fit, wrapping when they
+ * don't. One rule for 2, 3 and 4 geometry types instead of a fixed class per
+ * count — the fixed set was only ever cols-1/cols-2, so the three-type case
+ * emitted a `--cols-3` with no rule at all and silently stacked in a single
+ * column. The 150px floor is what makes four cards wrap to 2x2 in a narrow
+ * panel rather than crushing their values.
+ */
+.luxar-overview-grid--auto {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 /* ========== Section Titles ========== */

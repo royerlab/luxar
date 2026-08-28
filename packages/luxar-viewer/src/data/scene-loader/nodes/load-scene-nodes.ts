@@ -4,11 +4,12 @@
  * `loadGSplatsNode`); for each group node create a `THREE.Group`,
  * apply its transform if present, and recurse into its children.
  *
- * Each leaf call is wrapped in `loadLeafNode` so a single failing node
- * doesn't sink the whole scene — its siblings still render. The
- * placeholder pattern (each leaf attaches an empty placeholder to
- * parentThree *before* fetching data) makes the failure recoverable
- * through `retryFailedLoader`.
+ * Each leaf call is wrapped in `loadLeafNode` so a single failing node doesn't
+ * sink the whole scene — its siblings still render. Archive container faults
+ * remain fatal because no sibling backed by the same store can recover. The
+ * placeholder pattern (each leaf attaches an empty placeholder to parentThree
+ * *before* fetching data) makes leaf-local failures recoverable through
+ * `retryFailedLoader`.
  */
 
 import * as THREE from 'three';
@@ -19,6 +20,7 @@ import { geometryDescriptorFor } from '../geometry-descriptors';
 import { loadLodGroupNode } from './load-lod-group-node';
 import { loadPartitionGroupNode } from './load-partition-group-node';
 import type { NodeBuildCtx } from './build-ctx';
+import { loadChildrenConcurrently } from './load-children-concurrently';
 
 /**
  * Walk the scene-graph rooted at `node` and load every leaf via the
@@ -70,10 +72,6 @@ export async function loadSceneNodes(
 
     parentThree.add(group);
 
-    // Load children
-    for (const child of node.children) {
-      const childLoc = parentLoc.resolve(child.path.slice(1));
-      await loadSceneNodes(child, group, childLoc, ctx);
-    }
+    await loadChildrenConcurrently(node.children, group, parentLoc, ctx, loadSceneNodes);
   }
 }

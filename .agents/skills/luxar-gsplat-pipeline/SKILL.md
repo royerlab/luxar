@@ -197,10 +197,11 @@ time-FIRST, so comparing both whole silently misaligns them. One archive measure
 17.57 dB foreground whole versus 50.26 dB per timepoint. There is currently no
 CLI route to recover that per-timepoint score from the stacked store:
 `compare --timepoint` slices only the reference, and `gsplat slice` preserves the
-archive rank. Newly built stacks may carry `fitting/part_provenance`; use its
-per-coordinate stamps, but quote dB only when every `fit_reference.kind` is
-`acquisition`. Missing, `preprocessed`, and `synthetic` references are deliberately
-not quotable. Do not present either CLI command as an archive slicer.
+archive rank. Newly built stacks may carry `fitting/part_provenance`; follow the
+format spec's nested part → channel → timepoint levels to find per-timepoint
+coordinates, and quote dB only when every `fit_reference.kind` is `acquisition`.
+Missing, `preprocessed`, and `synthetic` references are deliberately not quotable.
+Do not present either CLI command as an archive slicer.
 
 **2. Keep the input archive's column order separate from the compiled scene's.**
 In an `add_gsplats`/`add_points` authoring call, `dim_order[i]` names input data
@@ -332,6 +333,7 @@ An index into the measured sections, not a substitute for them.
 | Elongated streak artifacts | lower `max_eccentricity` — no `fit` flag, set it in a `--config` YAML (`--dump-config` writes a template). It only starts binding once the fit is converged, and there it measured 2.65 dB (`references/cli-options.md`) |
 | Result far bigger than needed | `decimate --target N` / `-f 0.1`, or `cull --target vol.npy -p 95` — not a lower `--cull-retention` and a refit |
 | Boxy steps at tile boundaries | suspect the SOURCE (mosaic seams, coverage count), not the fit — measure the artefact's period first |
+| First paint costs hundreds of requests | you picked a partition recipe on byte size — "First paint cost" under "Choosing a LOD recipe"; prefer `overview`, or raise `--max-elements` |
 | Fit is slow, exploring | `--preset draft` (2,000 iters) for the search, one `hifi` run at the end |
 
 `--seed-method` matters on structure the default misses. `auto` draws on the same
@@ -384,7 +386,8 @@ Each of these has burned a whole fit cycle. Check them before you launch a long 
 
 ## Choosing a LOD recipe (`lod --recipe`)
 
-Recipes are scale-ordered — pick by element count `N`:
+Recipes are scale-ordered — pick by element count `N`, then check "First paint
+cost" below, which overrides this ordering when first paint is request-constrained:
 
 | Recipe | What it builds | Use when |
 | --- | --- | --- |
@@ -399,6 +402,50 @@ Recipes are scale-ordered — pick by element count `N`:
 (swaps a coarse level for a finer one as the object grows on screen). `overview` and
 `adaptive` compose the two over spatial tiles.
 
+### Scale-ordered is the wrong first question. Ask about the VIEW.
+
+**Default to `stream`, and make anything costlier justify itself.** Element count
+alone is a poor guide: a 128M-splat timelapse wants `stream`, while a 0.7M-splat
+galaxy legitimately wants `levels`. Three questions decide it, and all three
+matter (measured 2026-08-26):
+
+**Is it ONE object, always fully in frame?** Then there is nothing to
+frustum-cull and parts cost a request per node to bootstrap for no return.
+Measured first paint: **63 requests** for a single stacked leaf (8 nodes) vs
+**689** for a `kind=partition` of 44 parts x 4 levels x 4 rungs (704 nodes) —
+~15-18x, like-for-like on chunking. The scaling is SUBLINEAR (88x nodes, ~16x
+requests), so halving a node count does not halve the cost.
+
+**Is it viewed WHOLE, or at range?** The LOD selector is screen-occupancy based,
+so at a full-frame view the *finest* substitutive level shows and coarse levels
+are bytes nobody fetches. They pay off only when the object is genuinely small
+on screen. `cryoem_virus` (a compact particle, always full-frame) moved
+`levels -> stream` for **-28%** when regenerated (16.03 -> 11.50 MB, 16 -> 4
+nodes; publishing the regenerated archive remains #1879);
+`milky_way_dust` keeps `levels` because the galaxy really is orbited at range,
+and pays +39% on purpose.
+
+**Does the RESIDENT set fit?** `MAX_SPLATS_PER_GSPLATS_NODE` is 4,194,304 on a
+4096-class GPU (8.38M at 8192). Above it the viewer reports the clamp at load
+time and drops the tail; since storage is Hilbert-ordered that tail is one
+contiguous lobe — a clean-edged hole, not noise. **Only the resident slice
+counts**: an nD node sliced on a hidden axis is measured per-slice, so a
+500-timepoint node holding 128M splats at ~256k/frame is fine. The compiler also
+warns on the node total rather than the resident slice, so that warning is
+expected for a sliced nD node that satisfies the runtime limit. For a STATIC
+object over the cap, parts are load-bearing.
+
+**On a time-stacked 4D node, a partition buys nothing at all.** The writer
+lexsorts by the time barrier, so a timepoint's splats are already contiguous and
+chunk-local without any partition. Measured: partition-per-timepoint cost +9%
+bytes for zero benefit; substitutive levels cost +49%.
+
+**One catch that comes with `stream`:** a flat store needs re-chunking or
+scrubbing gets WORSE. Measured per timepoint step on a 4D leaf: **173 requests
+as-built, 2 after `luxar optimise --profile archive`** — the as-built figure is
+worse than a partitioned store's re-chunked 12. Additive-only and re-chunking
+are a package, not alternatives.
+
 ```bash
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --n-lods 6
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe tiles --max-elements 250000
@@ -411,6 +458,41 @@ N ≤ 5000, else the cheap O(N log N) `self_energy` for large N. Override with
 `--method` if you want to force one. For `levels`/`overview`/`adaptive`,
 `--coarsen-dims` lists center-column indices coarsening may merge over (the rest
 become hard barriers — e.g. a time or channel axis must stay a barrier).
+
+### First paint cost: choose on eager rungs, not on N
+
+On a request-constrained host, recipe choice is driven by the rungs fetched before
+first paint, not by element count or total tree nodes:
+
+```
+first-pass rungs = eager parts × 1 level × min(3, rungs per level)
+converged rungs  = eager parts × 1 level × rungs per level
+requests         ≥ eager rungs × arrays per rung   (+ one per extra chunk)
+```
+
+A `kind=lod` group fetches only its default level; a `kind=partition` group fetches
+every part. A cold stream pass commits two rungs and prefetches a third, but background
+refinement drains the rest, so size hard limits against the converged count. The
+loader derivation, selector thresholds, measured example, and exact `requestCount`
+procedure are in
+[references/first-paint-requests.md](references/first-paint-requests.md).
+
+- **`overview` — ~3 eager rungs, independent of part count.** Its root is a
+  `kind=lod` whose fine partition defers behind a fills-screen selector. Crossing
+  it loads every fine part at once, so this saves opening-view requests, not total
+  session requests.
+- **`tiles`, `adaptive` — every part is eager**, so ~3 × P rungs on the first pass.
+  The part factor buys frustum culling and, for `adaptive`, per-tile detail; pay it
+  when requests are not the binding limit.
+- **`stream`, `levels` — one eager leaf/level at load**, but `levels` promotes on
+  frame 1 for typical whole-object framing, so do not assume its tree depth makes it
+  the cheapest opening view.
+
+So when first paint is request-constrained: prefer `overview` over `adaptive`/`tiles`
+at huge N, or raise `--max-elements` to cut the part count. At one part,
+`adaptive`/`tiles` reduce to the cheap `levels`/`stream` shapes behind a partition
+wrapper; use those recipes directly. Large byte size alone is not a reason to choose
+`adaptive`.
 
 ## Tiled fits (large volumes)
 

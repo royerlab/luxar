@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import luxar.demos._h5j as _h5j_mod
 from luxar.gsplats.gsplat_data import GSplatData
 
 _DEMO_PATH = (
@@ -850,7 +851,7 @@ def _fake_h5py(n, h, w, pr, pb, spec=b"sssr"):
 
 def _stub_decode_env(monkeypatch, n, h, w, pr, pb, stdout, returncode=0):
     monkeypatch.setattr(
-        _demo, "require_module", lambda name: _fake_h5py(n, h, w, pr, pb)
+        _h5j_mod, "require_module", lambda name: _fake_h5py(n, h, w, pr, pb)
     )
 
     class _Proc:
@@ -859,7 +860,7 @@ def _stub_decode_env(monkeypatch, n, h, w, pr, pb, stdout, returncode=0):
     _Proc.returncode = returncode
     _Proc.stdout = stdout
     _Proc.stderr = b""
-    monkeypatch.setattr(_demo.subprocess, "run", lambda *a, **k: _Proc())
+    monkeypatch.setattr(_h5j_mod.subprocess, "run", lambda *a, **k: _Proc())
 
 
 def test_decode_rejects_a_truncated_stream(tmp_path, monkeypatch) -> None:
@@ -1346,7 +1347,7 @@ def test_reference_channel_index_is_read_from_the_file(
     decoded as the neuropil — a plausible-looking but wrong scene.
     """
     monkeypatch.setattr(
-        _demo, "require_module", lambda name: _fake_h5py(1, 1, 1, 0, 0, spec=spec)
+        _h5j_mod, "require_module", lambda name: _fake_h5py(1, 1, 1, 0, 0, spec=spec)
     )
     assert _demo.reference_channel_index(tmp_path / "x.h5j") == expected
 
@@ -1355,7 +1356,7 @@ def test_reference_channel_index_rejects_a_spec_without_one(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        _demo, "require_module", lambda name: _fake_h5py(1, 1, 1, 0, 0, spec="sss")
+        _h5j_mod, "require_module", lambda name: _fake_h5py(1, 1, 1, 0, 0, spec="sss")
     )
     with pytest.raises(RuntimeError, match="no reference"):
         _demo.reference_channel_index(tmp_path / "x.h5j")

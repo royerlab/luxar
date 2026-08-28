@@ -145,6 +145,8 @@ to `loader_types` (the Phase-3 switch-on, #1241) re-ran `gen-contract` for the v
 | `normals` | float32 | `(V, 3)` | no | `COORDINATE` | Per-vertex; paired with a required `normal_dims` attr — see §3.4 |
 | `colors` | uint8/uint16/float32 | `(V, 3\|4)` | no | color helpers | RGB or RGBA; the 4th component is a **load-bearing** per-vertex opacity — see §6.2 |
 | `scalars` | float32/float16/uint8 | `(V,)` | no | scalar helpers | Colormap lookup |
+| `uvs` | float32 | `(V, 2)` | no | `COORDINATE` | Required iff `texture`; values outside `[0, 1]` are legal |
+| `texture` | raw numeric or encoded uint8 bytes | `(H, W, C)` or `(B,)` | no | `COLOR` for raw | Per-node base colour; mutually exclusive with other base-colour sources |
 | `label_offsets`/`label_bytes` | — | CSR | no | — | Per-vertex hover tooltips |
 | `image_label_*` | — | CSR | no | — | Per-vertex hover thumbnails |
 
@@ -180,9 +182,17 @@ has_normals: bool
 normal_dims: [int, int, int]  # required iff has_normals; see 3.4
 has_colors: bool
 has_scalars: bool
+has_uvs: bool
+has_texture: bool
+texture_encoding: "raw" | "png" | "webp" | "jpeg"
+texture_width: int
+texture_height: int
+texture_channels: 1 | 3 | 4
+texture_color_space: "srgb" | "linear"
+texture_data_range: [float, float]  # HDR raw textures only
 has_labels: bool
 has_image_labels: bool
-shading: "smooth" | "flat"      # default "smooth" when normals present, else "flat"; consumed by §3.4/§6.2
+shading: "smooth" | "flat" | "none"  # "none" is explicit unlit; never the default
 double_sided: bool              # default true
 position_bounds: {"min": [...], "max": [...]}  # nD vertex bbox, per io/_compiler/bounds.py
 ordering: "none"                # v1 always; reserved for a future spatial index
@@ -197,8 +207,10 @@ plus the standard render attrs already handled by `apply_default_render_attrs` a
 ```python
 MESH_RESERVED_ATTRS = frozenset({
     "type", "n_vertices", "n_faces", "ndim",
-    "has_normals", "normal_dims", "has_colors", "has_scalars", "has_labels",
-    "has_image_labels", "shading", "double_sided", "position_bounds",
+    "has_normals", "normal_dims", "has_colors", "has_scalars", "has_uvs",
+    "has_texture", "texture_encoding", "texture_width", "texture_height",
+    "texture_channels", "texture_color_space", "texture_data_range", "has_labels",
+    "has_image_labels", "has_keys", "shading", "double_sided", "position_bounds",
     "ordering",  # mesh-only: no spatial index, so a supplied ordering can't be honoured
 })
 ```
@@ -264,6 +276,8 @@ convention (fail-fast, before any zarr group is created):
   (reject float, which `.astype(np.uint32)` would silently truncate); `min >= 0`; `max < n_vertices`;
   `F >= 1`. Mirrors the `line_type='indexed'` index gate at `geometry_writers/lines.py:134-170`, which
   is the closest precedent and already encodes each of these traps.
+- `validate_uvs_for_writing(uvs, n_vertices)` — shape `(V, 2)`, exactly one finite `(u, v)` pair per
+  vertex. Values outside `[0, 1]` remain legal because `texture_wrap="repeat"` intentionally tiles them.
 - `validate_normals_for_writing(normals, n_vertices)` — shape `(V, 3)`, finite. Zero-length normals are
   **warned**, not rejected (degenerate triangles legitimately produce them). Render-time handling is
   **pointwise, not per-face**: on a shared-vertex indexed mesh the interpolated normal blends toward the
@@ -486,8 +500,15 @@ scene.add_mesh(
     normal_dims: Sequence[int] | None = None,   # required iff normals is given — §3.4/§3.5
     colors: NDArray | Sequence[float] | None = None,
     scalars: NDArray[np.float32] | float | None = None,
+    uvs: NDArray[np.float32] | None = None,
+    texture: NDArray | None = None,
     *,
-    shading: Literal["smooth", "flat"] | None = None,
+    texture_encoding: Literal["raw", "png", "webp", "jpeg"] = "raw",
+    texture_width: int | None = None,
+    texture_height: int | None = None,
+    texture_channels: int | None = None,
+    texture_color_space: Literal["srgb", "linear"] = "srgb",
+    shading: Literal["smooth", "flat", "none"] | None = None,
     double_sided: bool = True,
     labels: Sequence[str] | None = None,
     image_labels: Any | None = None,
@@ -499,7 +520,7 @@ scene.add_mesh(
 `"smooth"` with no stored `normals` has nothing to smooth — the writer stamps the value as given and the
 viewer's §6.2 rule falls back to the flat derivative normal at render time (no write-time rewrite); an
 explicit `"flat"` is always honored and renders the faceted derivative-normal surface even when `normals`
-is present (§3.4, §6.2).
+is present (§3.4, §6.2). Explicit `"none"` is unlit and computes no normal.
 
 `normal_dims` is §3.4's required companion attr, surfaced as an **explicit keyword** because it has no
 other way in: it is a member of `MESH_RESERVED_ATTRS` (§3.3), so passing it through `**attrs` fails the
@@ -1337,6 +1358,16 @@ The loader still implements the standard `MeshDataLoader` interface (`loadMesh` 
 `dispose` + the optional monitor surface), so a spatial-index implementation can be swapped in behind
 it later with no caller change.
 
+It DOES implement that monitor surface (`addEventListener` / `removeEventListener` / `getMetrics` /
+`getActiveQueries`, reporting `type: 'mesh-whole-node'`), and the shape is load-bearing rather than
+decorative: `connect-loader-to-monitor.ts` duck-types the complete set of four and silently skips a
+loader that lacks any of them. What it reports is a whole-node loader's honest telemetry — `loads`,
+`bytesLoaded` (decoded), `avgLoadTime`, `elementsLoaded` in TRIANGLES, and `memoryUsed` (payload plus
+the per-node projection scratch) — with `queries` / `avgQueryTime` / `spatialIndex` deliberately at
+zero/absent, since there is no index and a view change re-serves the resident mesh. `visibleElements`
+is pushed IN by `commit-mesh-geometry.ts` (`recordVisibleElements`), because the count is produced
+downstream of the loader: projection, not the loader, decides which faces reach the index buffer.
+
 `updateView` distinguishes two kinds of view change:
 
 - **slicePosition/tolerance change only** (`displayDims` unchanged): recompute the visibility mask and
@@ -2060,7 +2091,7 @@ Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasO
 | **2** ✅ *(done — #1232)* | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
 | **3** ✅ *(done)* | `mesh` → `loader_types` in `contract.yaml` (the switch-on — fires the three §10.2 compile errors) + `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row + the `computeHiddenDimTolerance` arm | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
 | **4** ✅ *(done)* | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent. Landed as the `mesh/` material stack (4 files + `appearance.ts`), 5 codegen variants (10 snapshot files — the sixth, `mesh-pick`, arrives with picking in Phase 5, which is why §6.4 and §8 count six), and the original §6.2 headlight with its compile-time stored-normal/derivative variant. Two spec refinements were forced by the implementation and are folded back into §6.2: the derivative normal is **forced** viewer-facing rather than assumed so (`cross(dFdx, dFdy)` has the sign of the fragment-space y axis, and WGSL's `dpdy` is top-down where GLSL's `dFdy` is bottom-up), and the stored normal is transformed WITHOUT three's `transformNormalToView` (whose internal `normalize` turns a legitimately zero-length normal into a whole-triangle NaN, contradicting §3.5's locally-distorted contract). The `normal`/`aScalar` attributes are bound for the node's lifetime from the metadata rather than bound/unbound per epoch — the shader variant alone stops reading them, which keeps the attribute set (and hence the WebGPU vertex layout) fixed |
-| **5** ✅ *(done)* | Picking pair, layers panel, monitor, stats, camera framing, debug | Full parity with the other three at the UI level. The pick pair landed as `rendering/picking/mesh/` — six files rather than the siblings' four, the extra two being `pick-mode.ts` (the blending mode's TWO pick-pass consequences derived in one place, so "cutout on, brightness-as-depth" is unrepresentable) and `provoking-vertex.ts` (WebGL's `flat` provoking vertex aligned with WebGPU's). Two §6.5 refinements were forced by the implementation and are folded back above: the pick material tracks the visual material's `side` per epoch (the siblings' quads are view-facing, so theirs can pin `DoubleSide`; a mesh's culled back faces must not rasterize into the pick buffer at true surface depth), and the surface-depth VALUE differs between backends (`gl_FragCoord.z` vs three's `depth` node, which expands to a linear view-space depth) — benign, since both are monotone in distance and the pick depth only orders fragments within one render, and now documented rather than latent. The registration itself went into `NodeFactory.registerExistingSceneNodes`, NOT only the node factory: `initPicking` traverses the finished scene before constructing the `PickingSystem`, so on a first load the factory has no system to register with and that retro pass is the one production runs. It was a three-way `else if` chain and is now a `Record<GeometryTypeName, …>`. Monitor / stats / camera framing needed no work (Phase 3 had already made them four-way); the debug surface did — `getState()` gained `meshNodes` + `totalTriangles`, and `getDrawOrder()` was reporting **0 elements for every mesh** because its element-count fallback was a partial copy of the shared per-type reader with `visibleTriangleCount` missing |
+| **5** ✅ *(done)* | Picking pair, layers panel, monitor, stats, camera framing, debug | Full parity with the other three at the UI level. The pick pair landed as `rendering/picking/mesh/` — six files rather than the siblings' four, the extra two being `pick-mode.ts` (the blending mode's TWO pick-pass consequences derived in one place, so "cutout on, brightness-as-depth" is unrepresentable) and `provoking-vertex.ts` (WebGL's `flat` provoking vertex aligned with WebGPU's). Two §6.5 refinements were forced by the implementation and are folded back above: the pick material tracks the visual material's `side` per epoch (the siblings' quads are view-facing, so theirs can pin `DoubleSide`; a mesh's culled back faces must not rasterize into the pick buffer at true surface depth), and the surface-depth VALUE differs between backends (`gl_FragCoord.z` vs three's `depth` node, which expands to a linear view-space depth) — benign, since both are monotone in distance and the pick depth only orders fragments within one render, and now documented rather than latent. The registration itself went into `NodeFactory.registerExistingSceneNodes`, NOT only the node factory: `initPicking` traverses the finished scene before constructing the `PickingSystem`, so on a first load the factory has no system to register with and that retro pass is the one production runs. It was a three-way `else if` chain and is now a `Record<GeometryTypeName, …>`. Stats / camera framing needed no work (Phase 3 had already made them four-way); the debug surface did — `getState()` gained `meshNodes` + `totalTriangles`, and `getDrawOrder()` was reporting **0 elements for every mesh** because its element-count fallback was a partial copy of the shared per-type reader with `visibleTriangleCount` missing. **The monitor was recorded here as needing no work, and that was wrong** — a later audit found mesh present in its scene-graph tree and absent from every other surface: no headline card (a mesh-only scene showed a permanent "LOADING …"), no compact-badge entry, no per-node visible-triangle suffix, no loader row / bytes / resident memory (the four-method surface above did not exist, so `connectLoaderToMonitor` dropped every mesh node without a log line), and no aggregated `Mesh` row in the Performance tab (its count rode as a free-text `info` string, which is last-write on merge). The lesson generalizes: "already four-way" was inferred from the type VOCABULARY being four-way (`GEOMETRY_TYPES`, `visibleByType.mesh`) while the display layer's named per-type fields — `GlobalStats.visiblePoints`/`visibleSegments`/`visibleSplats` — silently stopped at three, so the counts were aggregated and then dropped |
 | **6** ✅ *(done — real-WebGPU A/B run; two claims remain reasoned, see the cell)* | Fixture + E2E spec + demo + docs + CHANGELOG | Shippable. `test_mesh.luxar.zarr` / `test_mesh_nd.luxar.zarr` + `mesh-rendering.spec.ts` landed first, and earned their keep immediately: the FIRST end-to-end render of a written mesh found three defects, including that §6.3's `opaque` default had never fired on the production load path (`normalizeBlendingMode(undefined)` returns `'additive'`, so the `?? 'opaque'` was dead code — see the §6.3 note). No unit test could have caught it: they all hand the resolver an attrs object rather than one that has been through composition. The fixture is a WELDED, CLOSED icosphere on purpose — welded so `gl_VertexID` is a genuine many-to-one pick target (162 vertices, not the 960 a de-indexed mesh would have), closed so an nD slab cull exposes interior back faces, and smooth non-axis-aligned normals so a build ignoring `shading` renders visibly differently. The reference demo is `demo_mesh_isosurface_cells3d` — marching-cubes isosurfaces of the same volume its gsplat twin fits, so the two representations can be compared directly on one dataset. The docs pass covered the two package READMEs that had omitted mesh entirely (`rendering/` gained a Mesh Material section naming the two backend hazards; `data/` gained the whole-node-loader section explaining why mesh does NOT stream and why its tolerance arm is its own), the Layers-panel README, and the stale "picking and the panel controls land in later phases" claim in `CLAUDE.md`. Two `README.md` claims that still say "all three geometry types" were checked and LEFT: one is about volumetric blending physics and the other about the chunk-bounds spatial query, and mesh genuinely participates in neither (§9). On the remaining gap: a **real-WebGPU A/B was run** (system Chrome channel, `?renderer=webgpu` vs the same URL without it, screenshot-then-decode with the WebGL arm as the control — the recipe matters, see the note below), and it establishes the substance of what was open. Native WebGPU reports `apiSurface: 'webgpu'`, commits all three fixture nodes with identical triangle/vertex counts and identical shader variants, and renders **pixel-equivalent** output to WebGL: 105,822 lit pixels on both, mean lit channel differing by 0.14% (sub-quantization dithering — equivalent to the eye, not byte-identical). So the WGSL path is no longer unexercised, and it agrees with GLSL on a real mesh.
 
 The A/B also **corrected an overstatement** in the §6.2 notes, which is the more useful half. Those notes claimed an unforced derivative normal "would collapse to `uAmbient` everywhere on WebGPU". That is a spec-derived RISK, not an observed behaviour: `test_mesh.luxar.zarr` gained a `flat_facing` node — a flat-shaded quad FACE-ON, where `N.z ≈ ±1` makes the flip the difference between full brightness and the ambient floor — and with the `z >= 0` flip REMOVED, real WebGPU still renders it identically to WebGL. The metric is demonstrably sensitive (a control run with every mesh hidden drops from 93,851 lit pixels to 56,700, so the quad contributes 37,151 and lifts the mean from 40 to 116), so this is a measurement rather than a blind test. Conclusion: on Chrome + Apple Silicon the two derivative conventions COINCIDE and the flip is inert. It is kept because it costs one instruction, is correct under either convention, and neither shading-language spec promises they agree — insurance, not a fix for an observed bug. The shader comments now say exactly that.

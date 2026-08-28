@@ -387,11 +387,12 @@ recursion), a uniform-tiled fit and the batch-fit streaming merge:
   "right": { "part": 2 } }
 ```
 
-An internal node holds the split `axis` (always a spatial axis `0`/`1`/`2` —
-splits only ever fall on the first three center dims) and `split` coordinate
-(in the centers' own space), with `left` = the side where `coord < split` and
-`right` = `coord >= split`. A leaf holds `{"part": i}`, referencing `part_<i>`
-(the same index as its `child_index`), numbered in left-first DFS order.
+An internal node holds the split `axis` (a position-column index; gsplat
+producers currently split only the first three center dims) and `split`
+coordinate (in the centers' own space), with `left` = the side where
+`coord < split` and `right` = `coord >= split`. A leaf holds `{"part": i}`,
+referencing `part_<i>` (the same index as its `child_index`), numbered in
+left-first DFS order.
 
 Because these are BSP cells, a viewer can order the parts **exactly**
 back-to-front (painter's algorithm, Fuchs–Kedem–Naylor): recurse the far side
@@ -536,6 +537,31 @@ display-range controls. Each writer first derives it per node as
 `[min(a), p99.9(a)]` (gsplat amplitudes are heavily right-skewed, so a `[0, max]`
 window would map ~99% of splats to near-black), and then **finalize HARMONIZES
 it across each gsplat structure**.
+
+> **`amplitude_data_range` is a colormap window, NOT a render divisor.** The
+> viewer feeds it to `uScalarMin`/`uScalarScale`, which the shader uses only as
+> `t = clamp((A - min) * scale, 0, 1)` — a LUT index, clamped to `[0, 1]`. It
+> selects a *colour*. It cannot scale brightness, and nothing downstream divides
+> the amplitude by it. Emitted radiance and, under `volumetric`, optical depth
+> (`tau = absorption * opacity * intensity`, `intensity ∝ A`) are both **linear
+> in the raw stored amplitude** and are not windowed by anything.
+>
+> **Consequence — amplitudes must be normalised at scene insertion.** Fitted
+> archives store amplitudes in raw source units: the fitter multiplies its
+> `[0,1]` working copy back out by the volume's intensity range, so a fit from a
+> uint16 detector stack carries detector counts. An amplitude of 800 emits 1000x
+> the radiance of 0.8 and saturates `1 - exp(-tau)` into an opaque shell, and no
+> viewer control can compensate — the only remaining lever is `opacity`, which
+> would have to carry a ~1/500 factor on a `[0,1]` control. `add_gsplats_from_data`,
+> `add_gsplats_from_file`, `add_gsplats_from_volume` and the graft path therefore
+> normalise by default (robust p99.9 -> 1.0, **one factor for the whole
+> structure**), recording it as `amplitude_normalization_factor`; pass
+> `normalize_amplitudes=False` to opt out. A child inserted directly into a
+> `kind=lod` or `kind=partition` group defaults to no normalisation because its
+> exposure must stay shared with its siblings.
+> The factor must be shared across every substitutive level and additive rung —
+> a per-level factor scales the levels against each other and the brightness pops
+> at every LOD switch. See `core/group/gsplats_pipeline/amplitude_norm.py`.
 
 **Window harmonization (#1691)**. A per-node window is right for one flat leaf
 and wrong for a multi-node structure: on a `kind=lod` ladder a coarse level's
@@ -832,11 +858,14 @@ may quote a bare component dB range only when **every** entry says
 `acquisition`; `preprocessed`, `synthetic`, and unknown records remain useful
 provenance but are not scores against the published acquisition. Non-finite
 fields are omitted from that entry rather than shortening the list. When every
-entry records the same source grid and dtype, the stack also carries
+entry records the same source grid and dtype, a composition that creates a
+stacked axis also carries
 `source_shape = [parts, *part_shape]` in source-array order (stack first, unlike
 the appended center column), the shared `source_dtype`, unanimous
 `source_declared`, and sums of `source_voxels`, `source_bytes`, and
-`source_stored_bytes` at the root. Values inside each `fitting` record describe
+`source_stored_bytes` at the root. Source fields recoverable from that unanimous
+root aggregate may be omitted from component records; differing per-component
+values remain explicit. Values inside each `fitting` record describe
 the component as fitted; a caller may subsequently filter or normalize the
 splats before stacking, so per-part counts need not sum to the archived root
 count. The current record does not identify which center column holds its
@@ -844,6 +873,25 @@ coordinate, so a later rewrite can scrub stale fitting/source fields but cannot
 generically remove records for coordinates eliminated wholesale. After such a
 rewrite, the list length is provenance cardinality from stack time, not a
 surviving-frame count; re-stack the rewritten components to refresh it.
+Flattening a partition discards its slot-keyed record because those spatial part
+coordinates no longer exist in the resulting leaf, even when only one part
+survives.
+
+Composition may nest the same record recursively in an entry's `fitting` block.
+`batch-fit merge` uses this for its multi-level fan-in: root entries are spatial
+partition parts; a channel level appears only when multiple channels are selected,
+and a timepoint level appears only when multiple timepoints are selected. Records
+are therefore one to three levels deep, with timepoints directly under a part when
+only one channel is selected. Coordinates at each level are the real slot, channel,
+or timepoint indices. Because the batch manifest does not state what preprocessing
+preceded the selected input array, these generated records omit `fit_reference`
+(unknown) rather than claiming acquisition scores.
+An unstamped tile remains present without quality or source keys in its `fitting`
+dictionary, so a mixed store re-merged after a partial re-fit is explicit rather
+than silently partial. The root `fitting/part_provenance` list is the canonical
+home for this nested batch record; streamed `part_<i>` `lod_stats` do not repeat
+it. A one-slot merge still records coordinate `0.0` there and does not promote
+the tile's component quality to an unqualified root scalar.
 
 On a node tree, a root `fitting/` score is a whole-tree claim: the additive sum
 of the finest surviving parts, after each part's post-fit cull, measured on that

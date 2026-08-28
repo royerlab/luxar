@@ -1,12 +1,14 @@
 /**
  * Playwright config for the zipped-store open benchmark.
  *
- * Separate from `playwright.config.ts` and `playwright.perf.config.ts` for one
- * reason: BOTH of those serve data with `python3 -m http.server`, which has no
- * HTTP `Range` support at all. A zipped store read over a range-less server
- * gets `200`-with-the-whole-body for every window, so a benchmark run against
- * it would measure nonsense (and, before the 206 guard landed, would have done
- * so silently). This config boots `tools/range-http-server.py` instead.
+ * Separate from `playwright.config.ts` and `playwright.perf.config.ts` because
+ * the performance config still serves data with `python3 -m http.server`,
+ * which has no HTTP `Range` support at all. The standard E2E config now uses
+ * the same Range-capable server as this benchmark. A zipped store read over a
+ * range-less server gets `200`-with-the-whole-body for every window, so a
+ * benchmark run against it would measure nonsense (and, before the 206 guard
+ * landed, would have done so silently). This config boots
+ * `tools/range-http-server.py` instead.
  *
  * Invoke via:
  *   pnpm bench:zip

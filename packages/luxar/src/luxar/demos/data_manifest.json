@@ -25,6 +25,14 @@
       "zenodo_record": "21912284",
       "base_url": null,
       "published": false
+    },
+    "droso-timelapse": {
+      "title": "Drosophila melanogaster embryogenesis: a 500-timepoint light-sheet timelapse as Gaussian splats",
+      "license": "cc-by-4.0",
+      "zenodo_doi": "10.5281/zenodo.22118695",
+      "zenodo_record": "22118695",
+      "base_url": null,
+      "published": false
     }
   },
   "datasets": {
@@ -430,8 +438,11 @@
           "name": "flylight_mcfo_63x.gsplats.zarr.zip",
           "sha256": "167461b170c40295cba791616e480b8d80de39df6b532f06bb2c877b7f5b382d",
           "bytes": 8150095,
-          "hosted_sha256": "1356c696ec346c313215d647561b983f86dfe9844c10620e6b2fb528a74d6201",
-          "hosted_bytes": 8163618
+          "hosted_sha256": "74fbe3a7b3ebcb344df21fdab4be6b54d557d8358b91b748cf1eb8c648e5d3fb",
+          "hosted_bytes": 7650636,
+          "superseded_sha256": [
+            "1356c696ec346c313215d647561b983f86dfe9844c10620e6b2fb528a74d6201"
+          ]
         }
       ]
     },
@@ -538,6 +549,26 @@
         }
       }
     },
+    "gsplats_4d_drosophila_embryogenesis": {
+      "bucket": "zenodo",
+      "record": "droso-timelapse",
+      "license": "cc-by-4.0",
+      "source": "Drosophila His2Av::mRFP1 embryo, 500-timepoint SiMView light-sheet timelapse (Royer/Keller)",
+      "attribution": "Royer & Keller labs \u2014 Royer et al., Nat. Biotechnol. 34, 1267-1278 (2016), doi:10.1038/nbt.3708 (CC BY 4.0).",
+      "acquisition": {
+        "description": "the whole 500-timepoint SiMView recording (500 x 108 x 1352 x 532 uint16), every timepoint fitted at full resolution",
+        "comparable": true,
+        "stored_bytes": 19333771628
+      },
+      "dir": "gsplats_4d_drosophila_embryogenesis",
+      "files": [
+        {
+          "name": "drosophila_embryogenesis_500tp.gsplats.zarr.zip",
+          "sha256": "11d3e2d9b2ae374e39d1916b5ac0ba126fdae57a9c311f306aa3ec8c98d4a17b",
+          "bytes": 863811020
+        }
+      ]
+    },
     "gsplats_3d_drosophila_gastrulation": {
       "bucket": "zenodo",
       "record": "cc-by",
@@ -548,10 +579,11 @@
       "files": [
         {
           "name": "droso_gastrulation.gsplats.zarr.zip",
-          "sha256": "7e0b6ba49d763e298d833d80b1cff11134480c6b3d8a2b392e63d4a745eae68b",
-          "bytes": 2286979,
+          "sha256": "2ea85b379fdea7465ae16260a51f4bdd674c1336ba9222a28a213fcc3fca57c1",
+          "bytes": 2151371,
           "superseded_sha256": [
-            "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af"
+            "64367624736b06e4cd26a2578809f142716affad68ce3df1cbbbb802c8afa1af",
+            "7e0b6ba49d763e298d833d80b1cff11134480c6b3d8a2b392e63d4a745eae68b"
           ]
         }
       ]

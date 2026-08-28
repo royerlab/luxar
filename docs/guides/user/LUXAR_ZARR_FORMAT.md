@@ -168,7 +168,7 @@ scene.luxar.zarr/
     └── <overlay_name>/     # Individual overlay
         ├── .zattrs         # Overlay metadata (type, position, style, visible_range, hover)
         ├── .zgroup
-        └── image.png       # Raw image file (image overlays only; exact name; bytes folded into content_hash at compile time)
+        └── image.<png|jpeg|webp>  # Raw image file (image overlays only; exact name matches payload; bytes folded into content_hash at compile time)
 ```
 
 ### Compression & the `luxar_delta_v1` filter
@@ -519,8 +519,9 @@ directly (`?src=<file>.gsplats.zarr`) and frames on `position_bounds`. The
   "kind": "partition",
   "display_type": "points",     // All children resolve to this type.
   "max_elements": 1000000,      // Per-part cap that drove the BSP recursion.
-  "bsp_tree": {                 // Optional recursive tree; axis is a center-column
-    "axis": 0,                  //   index mapped through displayDims by the viewer.
+  "bsp_tree": {                 // Optional recursive tree; axis is a position-column
+    "axis": 0,                  //   index mapped through displayDims by the viewer;
+                                //   any unmapped split axis rejects the whole tree.
     "split": 0.0,
     "left": { "part": 0 },
     "right": { "part": 1 }
@@ -993,20 +994,28 @@ Two structural differences from the other three types:
   "normal_dims": [0, 1, 2],          // REQUIRED iff has_normals — see below
   "has_colors": true,
   "has_scalars": false,
-  "shading": "smooth",               // "smooth" | "flat"
+  "has_uvs": true,
+  "has_texture": true,
+  "texture_encoding": "raw",         // "raw" | "png" | "webp" | "jpeg"
+  "texture_width": 2048,
+  "texture_height": 1024,
+  "texture_channels": 3,
+  "texture_color_space": "srgb",     // "srgb" | "linear"
+  "shading": "smooth",               // "smooth" | "flat" | "none"
   "double_sided": true,
   "position_bounds": {"min": [...], "max": [...]},
   "ordering": "none",                // always "none" in v1 (no spatial index)
   // ... plus the standard render attrs (opacity, gamma, intensity, offset,
   //     absorption, blending_mode, colormap, layer, transform, nd_transform,
   //     extend_to_all) and mesh-only appearance attrs (ambient, shade_exponent,
-  //     specular, shininess, alpha_cutoff), plus slab_tolerance
+  //     specular, shininess, alpha_cutoff, texture_filter, texture_wrap),
+  //     plus slab_tolerance
 }
 ```
 
-The five mesh-only appearance attrs control the view-anchored shading model;
-`slab_tolerance` controls nD membership loading. All six mesh-only authored attrs
-are rejected on points, lines, Gaussian splats, and groups.
+The seven mesh-only appearance attrs control shading and texture sampling;
+`slab_tolerance` controls nD membership loading. All eight mesh-only authored
+attrs are rejected on points, lines, Gaussian splats, and groups.
 
 #### vertices/ (Required)
 - **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.
@@ -1216,9 +1225,10 @@ Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
 `group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
-mode's κ), blending mode, and colormap controls, plus five mesh-only shading
-controls (ambient, shade falloff, specular, shininess, alpha cutoff). The five
-shading attrs are valid only on mesh leaves and do not inherit through groups.
+mode's κ), blending mode, and colormap controls, plus mesh shading controls
+(ambient, shade falloff, specular, shininess, alpha cutoff). Seven mesh-only
+appearance attrs also include `texture_filter` and `texture_wrap`; they are valid
+only on mesh leaves and do not inherit through groups.
 
 ```javascript
 {
@@ -1339,10 +1349,14 @@ Overlays are NOT part of the 3D scene graph — they use normalized screen coord
   "z_index": 1
 }
 ```
-The image file (PNG/JPEG/WebP) is stored directly in the overlay's zarr directory.
-Its bytes are folded into the `content_hash` at compile time, so two builds
-differing only in the image get different hashes; editing the file inside an
-already-finalized store restamps nothing, since nothing re-hashes on the fly.
+The image file is stored directly in the overlay's zarr directory. Compiler-written
+overlays use exactly `image.png`, `image.jpeg`, or `image.webp`, matching the PNG,
+JPEG, or WebP payload bytes. These canonical names avoid case-insensitive metadata
+collisions for compiler-written overlays; hand-authored stores must still follow the
+payload-name rules below. The image bytes are folded into the `content_hash` at
+compile time, so two builds differing only in the image get different hashes; editing
+the file inside an already-finalized store restamps nothing, since nothing re-hashes
+on the fly.
 For a payload name that differs from a zarr metadata document only by case
 (`Zarr.json`, `.ZATTRS`, ...), the authored spelling must appear exactly in the
 store's immediate-child listing before any read. Otherwise it is not treated as

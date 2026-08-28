@@ -729,7 +729,7 @@ Napari-inspired per-layer control panel. See [`./layers/README.md`](./layers/REA
 **Features:**
 
 - Visibility toggle per layer
-- Display range [min, max] with dual-thumb slider
+- Display range / Colour range [min, max] with dual-thumb slider for scalar or direct RGB windows
 - Gamma correction
 - Blending mode (additive, volumetric, normal, max, opaque, luminous)
 - Colormap selection

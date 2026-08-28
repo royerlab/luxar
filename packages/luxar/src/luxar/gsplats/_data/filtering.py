@@ -84,6 +84,23 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
 
+#: Authored reduction-LOD stamp keys shared with
+#: :func:`luxar.gsplats.lod.restamp._has_ladder_stamps`. They live in core
+#: ``_data`` so this module can mirror ``refresh_reduction_lod_stats``' guard
+#: without importing the optional LOD package.
+_REDUCTION_LOD_LEVEL_STATS_KEYS = (
+    "quality",
+    "reference_energy",
+    "n_splats_total",
+    "refine_stats",
+)
+_REDUCTION_LOD_RUNG_STATS_KEYS = (
+    "energy_fraction_cum",
+    "lod_n_splats",
+    "lod_cumulative_n",
+)
+
+
 #: Source-provenance ``stats`` keys that describe the REGION the splats
 #: represent. A bbox crop keeps only part of that region, so carrying them over
 #: would make ``gsplat info`` quote a compression ratio (and an occupancy) for a
@@ -113,6 +130,42 @@ _REGION_SCOPED_STATS_KEYS = (
     "occupancy",
     "voxels_per_splat",
 )
+
+
+def stamp_region_scoped_stats(
+    stats: "MutableMapping[str, Any]",
+    *,
+    source_shape: "Sequence[int]",
+    fitted_shape: "Sequence[int]",
+    n_splats: int,
+    occupancy: float,
+    source_itemsize: "int | None" = None,
+) -> None:
+    """Replace the source-grid record with one measured for this region.
+
+    ``source_declared`` stays absent because this grid was measured rather than
+    declared; ``source_stored_bytes`` describes the whole acquisition, not the
+    extracted region.
+    """
+    for key in _REGION_SCOPED_STATS_KEYS:
+        stats.pop(key, None)
+    source = [int(size) for size in source_shape]
+    fitted = [int(size) for size in fitted_shape]
+    source_voxels = int(np.prod(source)) if source else 0
+    fitted_voxels = int(np.prod(fitted)) if fitted else 0
+    stats.update(
+        {
+            "source_shape": source,
+            "source_voxels": source_voxels,
+            "fitted_shape": fitted,
+            "fitted_voxels": fitted_voxels,
+            "occupancy": float(occupancy),
+        }
+    )
+    if source_itemsize is not None:
+        stats["source_bytes"] = source_voxels * int(source_itemsize)
+    if fitted_voxels and n_splats:
+        stats["voxels_per_splat"] = float(fitted_voxels / n_splats)
 
 
 #: MEASURED reconstruction scores — every number that was obtained by rendering
@@ -328,9 +381,11 @@ def _drop_part_provenance_fitting_keys(
         record = dict(entry)
         fitting = record.get("fitting")
         if isinstance(fitting, dict):
-            record["fitting"] = {
+            scrubbed_fitting = {
                 key: value for key, value in fitting.items() if key not in dropped_set
             }
+            _drop_part_provenance_fitting_keys(scrubbed_fitting, dropped)
+            record["fitting"] = scrubbed_fitting
         scrubbed.append(record)
     stats["part_provenance"] = scrubbed
 
@@ -510,6 +565,13 @@ def scrub_measured_stats(result: "GSplatData") -> None:
         drop_content_scoped_stats(stats)
 
 
+def scrub_region_scoped_stats(result: "GSplatData") -> None:
+    """Drop every source-grid stamp of ``result`` — top level and sub-LODs."""
+    for stats in _measured_stats_dicts(result):
+        for key in _REGION_SCOPED_STATS_KEYS:
+            stats.pop(key, None)
+
+
 def _stats_after_content_change(
     result: "GSplatData", *, changed: bool, source: _GSplatDataOps
 ) -> "GSplatData":
@@ -526,10 +588,49 @@ def _stats_after_content_change(
     Mutates ``result``'s own stats in place (never the caller's — see
     :func:`drop_content_scoped_stats`), for the same reasons spelled out on
     :func:`_stats_after_filter`.
+
+    LOD restamping belongs to the optional gsplats extra; the shared helper
+    keeps that deferred dependency boundary in one place.
     """
     if not changed:
         return result
     scrub_measured_stats(result)
+
+    return _refresh_reduction_lod_stats_if_needed(result, source)
+
+
+def _needs_reduction_lod_restamp(
+    result: _GSplatDataOps, source: _GSplatDataOps
+) -> bool:
+    """Whether a rewrite has authored LOD stamps to refresh.
+
+    This mirrors ``refresh_reduction_lod_stats``' first guard exactly, across
+    every substitutive level, without importing the optional LOD package.
+    """
+
+    source_levels = source.substitutive_levels
+    result_levels = result.substitutive_levels
+    return bool(
+        source_levels
+        and result_levels
+        and any(
+            any(key in level.stats for key in _REDUCTION_LOD_LEVEL_STATS_KEYS)
+            or any(
+                any(key in lod.stats for key in _REDUCTION_LOD_RUNG_STATS_KEYS)
+                for lod in level.additive_sublods
+            )
+            for level in source_levels
+        )
+    )
+
+
+def _refresh_reduction_lod_stats_if_needed(
+    result: "GSplatData", source: _GSplatDataOps
+) -> "GSplatData":
+    """Refresh authored LOD stamps without loading the extra for unstamped data."""
+    if not _needs_reduction_lod_restamp(result, source):
+        return result
+
     from luxar.gsplats.lod.restamp import refresh_reduction_lod_stats
 
     return refresh_reduction_lod_stats(result, source)

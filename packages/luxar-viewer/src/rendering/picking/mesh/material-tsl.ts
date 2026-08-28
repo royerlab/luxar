@@ -23,7 +23,7 @@
  */
 
 import * as THREE from 'three';
-import { uniform } from 'three/tsl';
+import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { meshPickWebGPUFactory } from './pick.tsl';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
@@ -47,6 +47,7 @@ export class MeshPickingTSLMaterial
     uSurfaceDepth: TSLNode;
     uIsOrtho: TSLNode;
     uNearCull: TSLNode;
+    uBaseColorTex?: TSLNode;
   };
 
   constructor(config: MeshPickingMaterialConfig) {
@@ -66,6 +67,10 @@ export class MeshPickingTSLMaterial
       // scene by `updateCameraParams`.
       uIsOrtho: uniform(0),
       uNearCull: uniform(0.1),
+      // Bound only when the node has a texture, matching the GLSL twin's define:
+      // `texture()` captures its Texture, so the real image is installed by
+      // `updateBaseColorTexture` below rather than written through a proxy.
+      ...(config.baseColorTexture ? { uBaseColorTex: texture(config.baseColorTexture) } : {}),
     };
 
     this.uniforms = {
@@ -76,6 +81,11 @@ export class MeshPickingTSLMaterial
       uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      // A plain value holder, NOT a proxy: the graph reads the captured `texture()`
+      // node, so writing this would change nothing. `updateBaseColorTexture` rebuilds
+      // the node instead, and this exists so callers can READ the bound texture
+      // (`clone()` does, and so does `applyMeshTexture`'s idempotence check).
+      ...(config.baseColorTexture ? { uBaseColorTex: { value: config.baseColorTexture } } : {}),
     };
 
     this.toneMapped = false;
@@ -86,6 +96,29 @@ export class MeshPickingTSLMaterial
     this.forceSinglePass = true;
 
     meshPickWebGPUFactory(this.tslNodes, this);
+  }
+
+  /**
+   * Install the real base-colour texture once the data has arrived.
+   *
+   * Rebuilds the graph rather than writing a uniform, and that is not optional
+   * here: `texture()` captures its `THREE.Texture` at construction, so the value
+   * held in `uniforms.uBaseColorTex` is only a record of what is bound — the graph
+   * reads the captured node. Writing the uniform alone would leave the pick pass
+   * sampling the blank placeholder, which has alpha 0 everywhere and would make the
+   * whole mesh unpickable.
+   *
+   * A no-op when the node has no texture (the sampler is not in this variant's
+   * graph) and when the texture is unchanged, so the steady state after the first
+   * commit costs nothing.
+   */
+  updateBaseColorTexture(tex: THREE.Texture | null): void {
+    if (!this.tslNodes.uBaseColorTex || !tex) return;
+    if ((this.uniforms.uBaseColorTex?.value as THREE.Texture | null) === tex) return;
+    this.tslNodes.uBaseColorTex = texture(tex);
+    this.uniforms.uBaseColorTex = { value: tex };
+    meshPickWebGPUFactory(this.tslNodes, this);
+    this.needsUpdate = true;
   }
 
   /**

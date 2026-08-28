@@ -183,6 +183,12 @@ function renderMetadata(metadata: TimingMetadata | undefined): string {
     );
   }
 
+  if (metadata.triangles !== undefined) {
+    tags.push(
+      `<span class="luxar-timing-panel__tag" title="Mesh triangles processed by this step in the latest update">${formatCount(metadata.triangles)} tris</span>`
+    );
+  }
+
   if (metadata.elements !== undefined) {
     tags.push(
       `<span class="luxar-timing-panel__tag" title="Elements processed by this step in the latest update — points, line segments, Gaussian splats or mesh triangles (the depth sorter serves all four geometry types)">${formatCount(metadata.elements)} elements</span>`
@@ -214,11 +220,41 @@ function formatCount(n: number): string {
 /**
  * Node type for aggregation
  */
-type NodeType = 'Points' | 'Lines' | 'GSplats' | 'Unknown';
+type NodeType = 'Points' | 'Lines' | 'GSplats' | 'Mesh' | 'Unknown';
+
+/** The four geometry node types, i.e. every {@link NodeType} that aggregates. */
+type AggregatedNodeType = Exclude<NodeType, 'Unknown'>;
 
 /**
- * Extract node type from entry name (optimized - checks first char)
- * Entry names look like: "Points (/path)", "Lines (/path)", "GSplats (/path)"
+ * Each geometry type's per-node session-name prefix → the {@link TimingMetadata}
+ * counter that type reports.
+ *
+ * `Mesh` used to be absent, and the consequence was not a missing tag but a
+ * missing ROW SHAPE: an unrecognized name falls through to the `Unknown`
+ * pass-through branch below, so a scene's mesh nodes each got their own row
+ * while points / lines / gsplats collapsed into one row per type carrying a
+ * summed element count and an "N nodes" note. Table-driven rather than four
+ * near-identical accumulator literals and a four-armed condition chain, so a
+ * fifth geometry type is one line here instead of five edits.
+ */
+const NODE_TYPE_COUNTERS = {
+  Points: 'points',
+  Lines: 'segments',
+  GSplats: 'splats',
+  Mesh: 'triangles',
+} as const satisfies Record<AggregatedNodeType, keyof TimingMetadata>;
+
+/** Row order in the panel — geometry types first, then anything unrecognized. */
+const NODE_TYPE_ORDER = [
+  ...(Object.keys(NODE_TYPE_COUNTERS) as AggregatedNodeType[]),
+  'Unknown',
+] as const satisfies readonly NodeType[];
+
+/**
+ * Extract node type from entry name (optimized - checks first char).
+ *
+ * The names come from `runLoaderUpdates`, which opens one top-level session per
+ * node as `` `${loaderType} (${path})` `` for all four geometry types.
  */
 function getNodeType(name: string): NodeType {
   // Fast path: check first character
@@ -226,91 +262,57 @@ function getNodeType(name: string): NodeType {
   if (first === 80 && name.startsWith('Points')) return 'Points'; // 'P'
   if (first === 76 && name.startsWith('Lines')) return 'Lines'; // 'L'
   if (first === 71 && name.startsWith('GSplats')) return 'GSplats'; // 'G'
+  if (first === 77 && name.startsWith('Mesh')) return 'Mesh'; // 'M'
   return 'Unknown';
 }
 
+/** One node type's running totals for the update being rendered. */
+interface NodeTypeAccumulator {
+  entries: TimingEntry[];
+  lastMs: number;
+  avgMs: number;
+  count: number;
+  overBudget: boolean;
+  allSkipped: boolean;
+  allStale: boolean;
+  staleLastMs: number;
+  /**
+   * The type's own element count, summed across its nodes — points, segments,
+   * splats or triangles per {@link NODE_TYPE_COUNTERS}. One field rather than
+   * four, since a row only ever reports its own noun; which noun it is comes
+   * from the table at render time.
+   */
+  elements: number;
+  childrenByName: Map<string, TimingEntry[]>;
+}
+
+function emptyAccumulator(): NodeTypeAccumulator {
+  return {
+    entries: [],
+    lastMs: 0,
+    avgMs: 0,
+    count: 0,
+    overBudget: false,
+    allSkipped: true,
+    allStale: true,
+    staleLastMs: 0,
+    elements: 0,
+    childrenByName: new Map(),
+  };
+}
+
 /**
- * Aggregate children entries by node type (optimized single-pass)
- * Returns a new array with aggregated entries for Points, Lines, GSplats
+ * Aggregate children entries by node type (optimized single-pass).
+ * Returns a new array with one aggregated entry per geometry type present,
+ * followed by any unrecognized entries passed through unchanged.
  */
 function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
   if (children.length === 0) return [];
 
-  // Reusable accumulators for each type (pre-allocated)
-  const accumulators: Record<
-    NodeType,
-    {
-      entries: TimingEntry[];
-      lastMs: number;
-      avgMs: number;
-      count: number;
-      overBudget: boolean;
-      allSkipped: boolean;
-      allStale: boolean;
-      staleLastMs: number;
-      points: number;
-      segments: number;
-      splats: number;
-      childrenByName: Map<string, TimingEntry[]>;
-    }
-  > = {
-    Points: {
-      entries: [],
-      lastMs: 0,
-      avgMs: 0,
-      count: 0,
-      overBudget: false,
-      allSkipped: true,
-      allStale: true,
-      staleLastMs: 0,
-      points: 0,
-      segments: 0,
-      splats: 0,
-      childrenByName: new Map(),
-    },
-    Lines: {
-      entries: [],
-      lastMs: 0,
-      avgMs: 0,
-      count: 0,
-      overBudget: false,
-      allSkipped: true,
-      allStale: true,
-      staleLastMs: 0,
-      points: 0,
-      segments: 0,
-      splats: 0,
-      childrenByName: new Map(),
-    },
-    GSplats: {
-      entries: [],
-      lastMs: 0,
-      avgMs: 0,
-      count: 0,
-      overBudget: false,
-      allSkipped: true,
-      allStale: true,
-      staleLastMs: 0,
-      points: 0,
-      segments: 0,
-      splats: 0,
-      childrenByName: new Map(),
-    },
-    Unknown: {
-      entries: [],
-      lastMs: 0,
-      avgMs: 0,
-      count: 0,
-      overBudget: false,
-      allSkipped: true,
-      allStale: true,
-      staleLastMs: 0,
-      points: 0,
-      segments: 0,
-      splats: 0,
-      childrenByName: new Map(),
-    },
-  };
+  // Pre-allocated per call, one slot per NodeType (a plain loop, not
+  // `Object.fromEntries`, which would allocate an intermediate pair array).
+  const accumulators = {} as Record<NodeType, NodeTypeAccumulator>;
+  for (const nodeType of NODE_TYPE_ORDER) accumulators[nodeType] = emptyAccumulator();
 
   // Single pass: accumulate all data
   for (let i = 0; i < children.length; i++) {
@@ -344,12 +346,13 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
     if (child.count > acc.count) acc.count = child.count;
     if (child.overBudget && !child.stale) acc.overBudget = true;
 
-    // Accumulate metadata
+    // Accumulate this type's own element counter. Read through the table, so a
+    // node cannot contribute to another type's noun (an `Unknown` entry has no
+    // counter of its own and contributes to none — it is passed through whole
+    // below, metadata included).
     const meta = child.metadata;
-    if (meta) {
-      if (meta.points) acc.points += meta.points;
-      if (meta.segments) acc.segments += meta.segments;
-      if (meta.splats) acc.splats += meta.splats;
+    if (meta && nodeType !== 'Unknown') {
+      acc.elements += meta[NODE_TYPE_COUNTERS[nodeType]] ?? 0;
     }
 
     // Group children by name
@@ -364,12 +367,9 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
     }
   }
 
-  // Build result in order: Points, Lines, GSplats, Unknown
   const result: TimingEntry[] = [];
-  const typeOrder: NodeType[] = ['Points', 'Lines', 'GSplats', 'Unknown'];
 
-  for (let t = 0; t < typeOrder.length; t++) {
-    const nodeType = typeOrder[t];
+  for (const nodeType of NODE_TYPE_ORDER) {
     const acc = accumulators[nodeType];
     if (acc.entries.length === 0) continue;
 
@@ -393,21 +393,13 @@ function aggregateByNodeType(children: TimingEntry[]): TimingEntry[] {
     // Build metadata only if needed
     let metadata: TimingMetadata | undefined;
     const nodeCount = acc.entries.length;
-    if (
-      acc.allSkipped ||
-      (nodeType === 'Points' && acc.points > 0) ||
-      (nodeType === 'Lines' && acc.segments > 0) ||
-      (nodeType === 'GSplats' && acc.splats > 0) ||
-      nodeCount > 1
-    ) {
+    if (acc.allSkipped || acc.elements > 0 || nodeCount > 1) {
       metadata = {};
       if (acc.allSkipped) {
         metadata.skipped = true;
         metadata.skipReason = acc.entries[0].metadata?.skipReason;
       }
-      if (nodeType === 'Points' && acc.points > 0) metadata.points = acc.points;
-      if (nodeType === 'Lines' && acc.segments > 0) metadata.segments = acc.segments;
-      if (nodeType === 'GSplats' && acc.splats > 0) metadata.splats = acc.splats;
+      if (acc.elements > 0) metadata[NODE_TYPE_COUNTERS[nodeType]] = acc.elements;
       if (nodeCount > 1) metadata.info = `${nodeCount} nodes`;
     }
 

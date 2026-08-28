@@ -245,6 +245,7 @@ describe('renderSceneGraphTree — kind badges', () => {
       nodesByType: { points: 0, lines: 0, gsplats: 1, mesh: 0 },
       totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
       visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+      droppedElements: 0,
     };
   }
 
@@ -261,6 +262,7 @@ describe('renderSceneGraphTree — kind badges', () => {
       // Deliberately disjoint from nodesByType so reading the wrong record shows.
       totalByType: { points: 90000, lines: 5000, gsplats: 70000, mesh: 0 },
       visibleByType: { points: 1, lines: 2, gsplats: 3, mesh: 0 },
+      droppedElements: 0,
     };
     const html = renderSceneGraphTree(state, new Set(['/']), new Map());
 
@@ -368,6 +370,7 @@ describe('renderSceneGraphTree — node glyphs', () => {
         nodesByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
         totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
         visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+        droppedElements: 0,
       },
       new Set(),
       new Map()
@@ -426,6 +429,20 @@ describe('nodeStatsContent — per-type element counts in the scene tree', () =>
 
   it('returns null for a mesh with no faceCount rather than rendering a blank row', () => {
     expect(nodeStatsContent(node({ type: 'mesh' }))).toBeNull();
+  });
+
+  it('appends the visible-triangle count when the slab indexes only part of it', () => {
+    // The fourth member of the visible-suffix family: mesh used to be the one
+    // type whose per-node visible count was measured and then not shown.
+    const r = nodeStatsContent(
+      node({ type: 'mesh', faceCount: 1200, vertexCount: 640, visibleFaceCount: 300 })
+    );
+    expect(r!.title).toContain('300 visible after slicing');
+  });
+
+  it('omits the suffix when every triangle is indexed', () => {
+    const r = nodeStatsContent(node({ type: 'mesh', faceCount: 1200, visibleFaceCount: 1200 }));
+    expect(r!.title).not.toContain('visible');
   });
 
   it('still reports the other three types in their own units', () => {

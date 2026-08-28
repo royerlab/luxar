@@ -39,6 +39,8 @@ const ATTRS: MeshMetadata = {
   has_normals: false,
   has_colors: false,
   has_scalars: false,
+  has_uvs: false,
+  has_texture: false,
   shading: 'flat',
   double_sided: false,
   ordering: 'none',
@@ -213,6 +215,43 @@ describe('commitMeshGeometry', () => {
     // for a reveal ladder (#1521) and would otherwise report the ladder's
     // lifetime total rather than what this commit actually received (#1522).
     expect(mesh.userData.committedVertexCount).toBe(3);
+  });
+
+  it('reports the visible triangles to the loader for the monitor', async () => {
+    // The count is produced HERE, downstream of a loader that holds the whole
+    // mesh either way — so the data-loading monitor's per-loader row can only
+    // learn it if the commit pushes it in. Without this the mesh row would read
+    // 0 visible elements forever.
+    const spy = vi.fn();
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode(
+      '/surface',
+      ATTRS,
+      { recordVisibleElements: spy } as unknown as MeshDataLoader,
+      null
+    );
+    root.add(mesh);
+
+    const staged = await processMeshData('/surface', loaded(), VIEW, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+
+    // The same number the userData stamp carries — one source, two consumers.
+    expect(spy).toHaveBeenCalledWith(mesh.userData.visibleTriangleCount);
+    expect(spy).toHaveBeenCalledWith(1);
+  });
+
+  it('does not require a loader to implement the monitor surface', async () => {
+    // `recordVisibleElements` is optional on `MeshDataLoader`; a metrics-free
+    // implementation must be a no-op here, not a crash mid-commit.
+    const { root } = sceneWithMesh('/surface');
+    const staged = await processMeshData('/surface', loaded(), VIEW, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    expect(() => commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged)).not.toThrow();
   });
 
   it('applies the node transform to the placeholder, like the sibling factories', () => {
