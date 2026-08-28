@@ -340,10 +340,11 @@ edge list — it rebuilds one by chaining each connected component in ascending
 vertex order — so a chain is faithful exactly when every component's undirected
 edge multiset, including duplicate multiplicity, equals its consecutive-vertex
 pairs. Real tractography and streamline
-sets satisfy that and are laddered; a branching, cyclic or
-out-of-ascending-order component is refused (a `UserWarning` when the ladder was
-explicit, an info line when it was the default), and only that finest child then
-loads all-at-once. Note a gap in a producer's vertex numbering is NOT a problem:
+sets satisfy that and are laddered; a branching, cyclic,
+out-of-ascending-order, or duplicate-edge component is refused (a `UserWarning`
+when the ladder was explicit, an info line when it was the default), and only
+that finest child then loads all-at-once. Note a gap in a producer's vertex
+numbering is NOT a problem:
 two index-contiguous but unconnected runs are two components, chained
 separately, so no edge is invented across the gap. On the DIRECT
 `add_lines(additive_lod=…)` path, a non-qualifying set raises when the resolved

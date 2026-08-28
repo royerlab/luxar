@@ -199,9 +199,10 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
     # node-expensive thing in the corpus. Measured on the built
     # gsplats_2d_codex_pancreas store: 12 channels x 172 tiles x 3 levels x 4
     # rungs = 12 + 172 + 516 + 2,064 = **2,764 groups**, three times the next
-    # largest store and 24% of the whole 91-store corpus's 6,924. Hosted first
-    # paint costs roughly one request per node, and node count is what Loic
-    # named as the thing that slows loading.
+    # largest store and 24% of the whole 91-store corpus's 6,924. On the
+    # published, post-`optimise --profile archive` store, hosted first paint
+    # costs roughly one request per node, and node count is what Loic named as
+    # the thing that slows loading.
     #
     # 1,000,000 quarters the tile count. MEASURED, by flattening two of codex's
     # real per-channel archives and rebuilding this recipe at both values (no
@@ -257,7 +258,8 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
     + rungs) for the six embedding demos: at 2,000 they are 12/12/14/15/17/18
     against 13/13/18/17/17/18 today — no reduction at all. At the budget chunk
     they are **7/7/9/11/13/13**, because every rung saved is a node saved, and
-    hosted first paint costs roughly one request per node.
+    on the published, post-``optimise --profile archive`` store, hosted first
+    paint costs roughly one request per node.
 
     **Capped increments**, via :func:`~luxar.utils.lod_breakpoints.
     capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``
