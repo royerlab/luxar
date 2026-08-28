@@ -7,13 +7,13 @@ This example demonstrates:
 - Undulating rainbow colors across temporal frames
 - Pulsating point sizes with spatial patterns
 - Dynamic sharpness variations
-- High-density points (200,000 points per frame × 512 frames)
+- 4D animation over a discrete t dimension (4,096 points per frame × 128 frames)
 
 Educational value:
-- Learn to create large-scale temporal animations
+- Learn to create temporal animations without requiring a stress-sized dataset
 - Understand time as a discrete navigation dimension
 - See how per-frame transformations create smooth animation
-- Good stress test for high-density temporal rendering
+- See how modest per-frame density can still produce a coherent animated shell
 """
 
 import numpy as np
@@ -23,9 +23,12 @@ from arbol import aprint
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.utils.paths import get_examples_output_dir
 
+N_POINTS_PER_FRAME = 4_096
+N_FRAMES = 128
+
 
 def create_spherical_spiral(
-    n_points: int = 200000, radius: float = 10.0, rotation: float = 0.0
+    n_points: int = N_POINTS_PER_FRAME, radius: float = 10.0, rotation: float = 0.0
 ) -> np.ndarray:
     """Create points distributed in a spherical spiral pattern with rotation.
 
@@ -191,9 +194,10 @@ def main():
     aprint("Creating 4D Temporal Spiral Sphere Example")
     aprint("=" * 50)
 
-    # Parameters - increased for testing lazy loading
-    n_points_per_frame = 200000
-    n_frames = 512
+    # The original 200,000 × 512 stress fixture materialized more than 100M
+    # point records and blocked the mandatory example-generation pre-flight.
+    n_points_per_frame = N_POINTS_PER_FRAME
+    n_frames = N_FRAMES
     sphere_radius = 10.0
 
     # Calculate total rotation over all frames (10 points worth)
@@ -298,7 +302,7 @@ def main():
             scene,
             title="Temporal Spiral Sphere",
             body=(
-                "A dense Fibonacci-spiral sphere animated over a discrete "
+                "A Fibonacci-spiral sphere animated over a discrete "
                 "<code>t</code> dimension, with per-frame undulating colors, "
                 "pulsating <code>radii</code>, and dynamic <code>sharpness</code>. "
                 "Press <code>1</code> then <code>[</code>/<code>]</code> to step "
