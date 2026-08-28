@@ -761,6 +761,62 @@ original partitioned generation): 1,873,559,527 → 1,115,714,088 bytes
 its rungs), 125,751 chunks → 2,316, with all 51 timepoints intact at uniform
 spacing and none blended.
 
+### 3.18 A probe must emit the evidence that its own window was valid
+
+3.16 says to check the observation window is longer than the phenomenon. That is
+advice, and advice does not run. Make it a **reported field** instead, so a
+meaningless run announces itself.
+
+Worked example. The depth-sort flashing bug lives only on *count-changed* commits;
+equal-count re-commits take a path that always worked. Two runs of the same script
+against the same live bundle:
+
+    host A   loadWaitMs   501    countChanged  99   unsorted 0   -> FIXED
+    host B   loadWaitMs   (none)  countChanged   0   unsorted 0   -> INCONCLUSIVE
+    host B   loadWaitMs  1752    countChanged   0   unsorted 0   -> INCONCLUSIVE
+
+Host B's first run looked like a pass on the headline numbers and was worth
+nothing: a zero denominator, with all 73 observed commits equal-count progressive
+re-commits on a path that never had the bug.
+
+**And then the diagnostic earned its keep by refuting the proposed cause.** The
+natural explanation for host B was a cold cache filling the window with load
+phase. Adding `loadWaitMs` tested that directly: 1752 ms against a 30 s window, so
+host B was past loading almost immediately and still saw zero count-changed
+commits. The cold-cache theory is dead, and something environmental between the
+two hosts remains unexplained — which is exactly the state the field is supposed
+to reveal instead of hiding behind a verdict.
+
+The fix is two lines — wait on the system's own terminal signal, and **publish the
+wait** as a diagnostic:
+
+```js
+const tWait = Date.now();
+while (Date.now() - tWait < 180000) {
+  const st = window.__luxarDebug?.getState?.();
+  if (st && st.isLoading === false) break;
+  await new Promise(r => setTimeout(r, 500));
+}
+window.__loadWaitMs = Date.now() - tWait;   // report this
+```
+
+Rules:
+
+- **Gate on the terminal signal, not a fixed sleep.** A hardcoded warm-up is a
+  claim about the system's timescale, and it will be wrong on a cold cache, a
+  slower link, or a bigger store.
+- **Report the wait.** If `loadWaitMs` comes back near the window length, the run
+  was load-phase-bound and the verdict is void whatever it says.
+- **Report the population the effect lives in, separately.** "0 unsorted" is
+  meaningless without "of how many count-changed"; a zero denominator is not a
+  pass. Prefer an explicit `INCONCLUSIVE` verdict over a green one.
+
+Note both failures here were the *same* mistake by different hands: a fixed 8 s
+warm-up written by the session that had already documented that a stopping rule is
+a claim about timescale, and a 15 s settle rule (3.16) written by the session that
+had just relayed that lesson. Knowing the rule is not the control; emitting the
+diagnostic is.
+
 ## 4. Cloudflare configuration
 
 ### 4.1 Cache rule on the data subdomain
