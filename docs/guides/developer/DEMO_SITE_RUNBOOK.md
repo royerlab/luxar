@@ -376,8 +376,9 @@ Consequences for this site:
 
 ### 3.10 One path, two generations: hash before asserting
 
-`demo_gsplats_2d_cmu1_pathology.py` says its hosted archives "are still flat
-leaves". Two caches yielded answers that could not both be true for
+`demo_gsplats_2d_cmu1_pathology.py` used to say its hosted archives were "still
+flat leaves" (corrected here; see **And the docstring** below). Two caches
+yielded answers that could not both be true for
 `cmu1_ch0.gsplats.zarr.zip` — flat laddered leaf with **no `kind` attr anywhere**,
 and `{'partition': 1, 'lod': 64}` with 4,867 metadata docs.
 
