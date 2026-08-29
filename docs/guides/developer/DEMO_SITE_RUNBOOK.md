@@ -408,10 +408,10 @@ is present it wins over a newer hosted artifact, so a checkout with a stale LFS
 object keeps serving the older generation (loudly)."*
 
 So **the same demo builds a structurally different scene depending on which
-generation the building machine has in cache.** cmu1 grafts its archives
-verbatim: the in-repo generation produces a flat scene (12 element nodes,
-20,591,415 elements — exactly the sum of the three archives), while the hosted
-generation produces a four-part partition per channel.
+generation the building machine has in cache.** cmu1 re-authors the flat in-repo
+copy but grafts the hosted partition: the former produces a flat scene (12
+element nodes, 20,591,415 elements — exactly the sum of the three archives),
+while the latter produces a four-part partition per channel.
 
 Three things follow for this site:
 
@@ -436,7 +436,7 @@ preserves additive rungs and lowers multiple substitutive levels into a
 |---|---|
 | re-add raw arrays | `gsplats_kidney`, `gsplats_cells3d`, `gsplats_ct_totalsegmentator`, `gsplats_visible_human_head` |
 | pass through `add_gsplats_from_data` | `gsplats_cryoem_virus`, `gsplats_milkyway_dust`, `gsplats_celegans`, `gsplats_dapi`, `gsplats_multichannel`, `gsplats_nexrad_supercell`, `gsplats_opencell_map4` |
-| graft artifact | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology`, `desi_galaxies` |
+| load by file path; graft only a partition or nested tree | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology`, `desi_galaxies` |
 
 Digest-confirmed copies show structural divergence for two pass-through
 datasets: `cryoem_virus` changes from flat to a five-step progressive ladder;
@@ -524,10 +524,10 @@ Applied to the current demo code:
   and grafts its own output, so its groups are authored rather than inherited.
   Its structure changes through recipe settings such as `max_elements`, not by
   flattening a separately supplied artifact.
-- **`cmu1_pathology`** grafts verbatim, so it inherits whichever generation is
-  in cache (3.10): flat from the in-repo copy, four-part partitions from the
-  hosted one. Flattening the hosted archives is a real win *and* collapses that
-  divergence — but measure the generation before claiming either.
+- **`cmu1_pathology`** re-authors the flat in-repo copy but grafts the hosted
+  partition, so either way the archive's structure reaches the scene (3.10).
+  Flattening the hosted archives is a real win *and* collapses that divergence —
+  but measure the generation before claiming either.
 - **`cryoem_virus`**, **`milkyway_dust`**, **`dapi`**, **`multichannel`**, and
   **`opencell_map4`** pass `GSplatData` through, so their digest-confirmed hosted
   ladders and levels become scene nodes rather than being flattened by the demo.
