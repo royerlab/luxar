@@ -52,13 +52,14 @@ view the FINEST substitutive level is what shows. Coarse levels are then bytes
 nobody fetches. They earn their keep only where the object is genuinely small on
 screen. Two live exceptions in this repo, and they are different from each other:
 
-* the two 2D pathology slides keep ``adaptive`` because they are panned and
-  zoomed, so most tiles are off-screen most of the time — which is what PARTS
-  are for;
-* ``milky_way_dust`` keeps ``levels`` because the galaxy is orbited at range as
-  well as inspected close up, so a coarse level really is selected and really is
-  fetched — which is what LEVELS are for. It pays +39% (7.88 -> 10.97 MB) on
-  purpose.
+* the two 2D pathology slides author ``adaptive`` on ``--recompute`` because
+  they are panned and zoomed, so most tiles are off-screen most of the time —
+  which is what PARTS are for. Their pinned record archives currently serve
+  four-part partitions without per-tile levels;
+* ``milky_way_dust`` authors ``levels`` on ``--recompute``, and its pinned
+  record archive preserves those levels, because the galaxy is orbited at range
+  as well as inspected close up. A coarse level really is selected and fetched
+  — which is what LEVELS are for. It pays +39% (7.88 -> 10.97 MB) on purpose.
 
 ``cryoem_virus`` is the counter-example: a single compact particle, always
 full-frame, so its coarse levels were never selected and it moved to ``stream``
@@ -75,6 +76,42 @@ counts**, so an nD node sliced on a hidden axis is measured per-slice — a
 and become load-bearing. The compiler also warns on the node total rather than
 the resident slice, so that warning is expected for a sliced nD node that
 satisfies the runtime limit.
+
+THE CAP IS PER GEOMETRY TYPE, AND RESIDENT IS EASY TO MISMEASURE
+-----------------------------------------------------------------
+
+Two mistakes cost real time on the 2026-08-28 Points/Lines pass, and both look
+like a clean answer rather than an error.
+
+**There is no single element ceiling.** ``typing_utils.constants`` derives one per
+geometry from the element-texture layout: **2,793,472** segments for Lines,
+**5,591,040** points for Points, 4,194,304 splats for GSplats. Comparing a Points
+node against the gsplat number over-flags it by 1.33x; ``desi_galaxies``'
+``SCENE_MAX_POINTS_PER_NODE = 4_000_000`` is a deliberate safety MARGIN under
+5,591,040, not the cap.
+
+**Measuring the resident slice of a PARTITIONED node has two traps.** Measure one
+``part_N`` and you under-report by the part count — that read
+``nuclear_pore_complex`` as 164,633 when it is 4,937,064, a 30x error that turned
+a load-bearing partition into an apparently obvious removal. Sum each part's
+LARGEST slice instead and you over-report, because different parts can peak on
+different hidden coordinates (5,708,398 for the same node, which crosses the cap
+and would have argued the opposite way). The resident set is, for ONE hidden
+coordinate, the sum over every part: group globally by hidden coordinate FIRST,
+then take the max. Likewise a leaf's own array plus its ``additive_<i>`` rungs
+are one level's UNION — and its total is ``max(level count, sum of rungs)``,
+never the sum of both, which double-counts to exactly 2x.
+
+The practical upshot for Points demos: an embedding cloud stacked over 6 colouring
+views at 6,248,730 total is 1,041,455 resident, five times under its cap. Its
+substitutive levels are ~17-20% of the store serving a framing the screen-area
+selector never picks, because the finest level is anchored at half-screen
+occupancy and these demos open auto-fitted. Those go to :func:`stream_ladder`.
+What stays: a node genuinely over its cap (``desi_galaxies``, 9,751,955 with no
+hidden axis), and a partition that is load-bearing for a second reason —
+``nuclear_pore_complex``'s subunits are concave and interpenetrate, so its
+``bsp_tree`` split planes are the only valid draw order, camera inside the
+channel included.
 
 Measured cost of the alternatives, same flat fit, same knobs:
 
@@ -158,13 +195,158 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
     # max_elements caps splats per tile; K/L are the per-tile level ladder.
     # L=2 rather than 3 because a tile is already a fraction of the object, so
     # a third level would coarsen past anything a viewer requests.
+    #
+    # max_elements was 250,000, and that made `adaptive` by far the most
+    # node-expensive thing in the corpus. Measured on the built
+    # gsplats_2d_codex_pancreas store: 12 channels x 172 tiles x 3 levels x 4
+    # rungs = 12 + 172 + 516 + 2,064 = **2,764 groups**, three times the next
+    # largest store and 24% of the whole 91-store corpus's 6,924. On the
+    # published, post-`optimise --profile archive` store, hosted first paint
+    # costs roughly one request per node, and node count is what Loic named as
+    # the thing that slows loading.
+    #
+    # 1,000,000 quarters the tile count. MEASURED, by flattening two of codex's
+    # real per-channel archives and rebuilding this recipe at both values (no
+    # refit needed — `adaptive` is applied to a GSplatData at save time):
+    #
+    #   channel   splats     250k -> tiles/groups    1M -> tiles/groups
+    #   ch01        562,180        4 / 65                 1 / 17
+    #   ch05      1,114,331        8 / 129                2 / 33
+    #
+    # ch01's 4 tiles at 250k is exactly what the shipped store holds for that
+    # channel, which is what anchors the extrapolation: 172 tiles -> ~43, so
+    # 12 wrappers + 43 lod + 129 levels + 516 rungs = **~700 groups**, a 3.9x
+    # reduction. A tile stays 4x under the 4,194,304 gsplat cap. What it
+    # costs is culling granularity — ~43 tiles over a 46000x33000 slide is ~6-7
+    # per side instead of ~13 — which is the right trade for a recipe whose whole
+    # point is that most tiles are off screen anyway: at 6-7 per side a
+    # full-screen view still holds a minority of them.
+    #
+    # Shared rather than per-demo on purpose. The only two `adaptive` users are
+    # the two 2D pathology slides, which want the same thing, and this table
+    # exists so they cannot drift apart — a per-demo override would defeat that
+    # for no benefit here. Both need a REFIT for the change to reach their
+    # artifacts (they fit locally and graft their own output).
     "adaptive": {
         "n_lods": 4,
-        "max_elements": 250_000,
+        "max_elements": 1_000_000,
         "compression_factor": 4,
         "levels": 2,
     },
 }
+
+
+def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
+    """The additive ladder a Points/Lines leaf shown whole should carry.
+
+    The Points/Lines counterpart of choosing ``stream`` above. Those adders take
+    a ladder spec directly rather than going through a recipe, and — unlike the
+    substitutive path, where a ladder is composed in by default — an additive
+    ladder on a PLAIN leaf is strictly opt-in. So dropping ``substitutive_lod=``
+    from a demo silently drops its ladder too unless this is passed; that is the
+    single easiest mistake to make in this rework, and
+    ``scripts/check_demo_ladders.py`` is the backstop (it fails an un-laddered
+    leaf above 200,000).
+
+    Two numbers, and both are chosen rather than inherited:
+
+    **First rung = the ~200 ms download budget** (39,062 elements at 25 Mbps and
+    16 B/element), matching ``default_composed_additive_lod``. Not desi's 2,000:
+    that is sized to land in a single zarr chunk because its EAGER COARSEST
+    SUBSTITUTIVE LEVEL is what paints first. An additive-only leaf has no coarse
+    level, so its first rung IS first paint, and a 2,000-point opening frame buys
+    latency nobody asked for while costing rungs. In the same order as the
+    runbook table — mouse, ESM3, zebrahub, cellxgene, human and arxiv — measured
+    group counts (wrapper + rungs) at 2,000 are 12/12/15/14/17/18 against
+    13/13/17/18/17/18 today, so there is no reduction at all. At the budget
+    chunk they are **7/7/11/9/13/13**, because every rung saved is a node saved,
+    and on the published, post-``optimise --profile archive`` store, hosted
+    first paint costs roughly one request per node.
+
+    **Capped increments**, via :func:`~luxar.utils.lod_breakpoints.
+    capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``
+    and would block the main thread on these leaves.
+
+    LINES SPELL THIS DIFFERENTLY, AND THE UNITS DISAGREE
+    ----------------------------------------------------
+
+    On ``add_lines`` an explicit ``counts`` list is in **POLYLINES**, while
+    ``"stream:<c>"`` is in **VERTICES** (the writer converts each vertex target
+    to the first whole-polyline boundary that reaches it, because a ladder can
+    only cut on polyline boundaries without breaking segment topology).
+
+    That asymmetry fails SILENTLY in the direction you would hit by accident.
+    Measured on 4,000 polylines x 27 vertices = 108,000 vertices: a vertex-sized
+    list ``[39062, 78124, 108000]`` exceeds the 4,000 polylines, so
+    ``_validate_counts`` clamps every entry to 4,000, collapses the ladder to one
+    level, and writes **no rungs at all** — no error, no warning. The same node
+    with ``"stream:39062"`` gets three rungs of 39,069 / 39,069 / 29,862
+    vertices. (``scripts/check_demo_ladders.py`` is the only thing that catches
+    the silent case, and only above 200,000.)
+
+    So for ``geometry="lines"`` this returns the STRING form, which is the one
+    whose unit matches the ``n`` a caller naturally has. The cost is that the
+    string form is a plain doubling ladder — its last increment approaches ``n/2``
+    rather than being capped. The largest increment first exceeds the 900,000
+    ceiling at 2,149,985 vertices, and both Lines demos using this are far below
+    that; a larger Lines leaf needs capped cuts expressed in polylines instead.
+
+    Args:
+        n: Element count of the leaf — points for ``"points"``, VERTICES for
+            ``"lines"``.
+        geometry: ``"points"`` or ``"lines"``. Selects the spelling, because the
+            two are not interchangeable (above).
+
+    Returns:
+        A spec for ``additive_lod=`` on :meth:`Group.add_points` /
+        :meth:`Group.add_lines`.
+
+    Raises:
+        ValueError: ``geometry`` is neither ``"points"`` nor ``"lines"``, or a
+            Lines leaf is too large for the uncapped vertex-count string form.
+    """
+    if geometry not in ("points", "lines"):
+        raise ValueError(
+            f"geometry must be 'points' or 'lines'; got {geometry!r} "
+            "(the two spell their ladder in different units)"
+        )
+    if n < 1:
+        raise ValueError(f"n must be >= 1; got {n}")
+    from luxar.core.group.lod.group import (
+        DEFAULT_LADDER_BYTES_PER_ELEMENT,
+        DEFAULT_LADDER_TARGET_MS,
+    )
+    from luxar.utils.lod_breakpoints import (
+        DEFAULT_BANDWIDTH_MBPS,
+        capped_stream_cuts,
+        streaming_chunk_splats,
+    )
+
+    first_chunk = streaming_chunk_splats(
+        DEFAULT_LADDER_TARGET_MS,
+        DEFAULT_BANDWIDTH_MBPS,
+        DEFAULT_LADDER_BYTES_PER_ELEMENT,
+    )
+    if geometry == "lines" and n >= 2_149_985:
+        raise ValueError(
+            "Lines streaming ladders exceed the 900,000-vertex commit ceiling "
+            f"at n >= 2,149,985; got {n:,}. Supply capped polyline-count cuts "
+            "for this leaf instead."
+        )
+    counts: Any = (
+        f"stream:{first_chunk}"
+        if geometry == "lines"
+        else capped_stream_cuts(int(n), first_chunk)
+    )
+    return {
+        "counts": counts,
+        # `random` is the house default and the right reveal for a density cloud:
+        # a random prefix reads as a sparser version of the whole. The
+        # spatial-uniform sampler walks a doubling grid over the BOUNDING BOX,
+        # which is measurably worse on a shell (see the ocean-currents notes).
+        "method": "random",
+        "seed": 0,
+    }
 
 
 def save_with_lod(

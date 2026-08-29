@@ -188,11 +188,8 @@
           "name": "ct_atlas.gsplats.zarr.zip",
           "sha256": "0ec44cb0f599f5660f82c8cfb55c41b514ffce56b8bf1ddf02c05c500824a839",
           "bytes": 7117626,
-          "hosted_sha256": "b282c1ce1e25d095e8c3197724fb6f702330990fe39aeb5607b34165c4ff9ce8",
-          "hosted_bytes": 6627936,
-          "superseded_sha256": [
-            "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399"
-          ]
+          "hosted_sha256": "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399",
+          "hosted_bytes": 10116328
         },
         {
           "name": "ct_atlas_labels.npz",
@@ -221,11 +218,8 @@
           "name": "milkyway_dust.gsplats.zarr.zip",
           "sha256": "d15e4483414cb9e2e7309df575ea2489443dc152a6519b027cde11943d34694e",
           "bytes": 7822168,
-          "hosted_sha256": "368fa77da5ba16fa5bb8dc70feda847fa3bcddb4caae936d6850e71f4139ae15",
-          "hosted_bytes": 6942291,
-          "superseded_sha256": [
-            "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9"
-          ]
+          "hosted_sha256": "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9",
+          "hosted_bytes": 10647985
         }
       ]
     },
@@ -285,11 +279,8 @@
           "name": "vh_head.gsplats.zarr.zip",
           "sha256": "c6ebbab8c2d1bdff0d5fd35f7032c6a375724b5fe5e6d33e8ca4e6af6ab139f6",
           "bytes": 20572128,
-          "hosted_sha256": "c539b6c46389d6800062f0255df41736c0358234cf27a3554e6107dee7d63eaa",
-          "hosted_bytes": 19184850,
-          "superseded_sha256": [
-            "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065"
-          ]
+          "hosted_sha256": "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065",
+          "hosted_bytes": 29378476
         },
         {
           "name": "vh_head_colors.npz",
@@ -543,7 +534,7 @@
       "variants": {
         "51tp": {
           "default": true,
-          "approx_bytes": 1873559527,
+          "approx_bytes": 1115714088,
           "note": "51-timepoint fit (every 5th frame) \u2014 lighter default for the demo.",
           "files": [
             {

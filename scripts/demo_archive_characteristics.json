@@ -311,9 +311,9 @@
     },
     "gsplats_ct_totalsegmentator/ct_atlas.gsplats.zarr.zip": {
       "n_splats": 647083,
-      "ndim": 3,
+      "ndim": null,
       "format_version": "3.4",
-      "topology": "progressive ladder, 5 steps",
+      "topology": "4 coarse-to-fine levels, each progressively streamed",
       "psnr_db": 42.967820256676305,
       "foreground_psnr_db": 30.585385424392157,
       "foreground_fraction": 0.029363671230055326,
@@ -325,9 +325,8 @@
       "source_dtype": "int16",
       "source_bytes": 83881610,
       "frames": null,
-      "quality_quotable": null,
       "measured_from": "staged",
-      "measured_sha256": "b282c1ce1e25d095e8c3197724fb6f702330990fe39aeb5607b34165c4ff9ce8"
+      "measured_sha256": "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399"
     },
     "gsplats_dapi/dapi.gsplats.zarr.zip": {
       "n_splats": 7740,
@@ -427,9 +426,9 @@
     },
     "gsplats_milkyway_dust/milkyway_dust.gsplats.zarr.zip": {
       "n_splats": 677741,
-      "ndim": 3,
+      "ndim": null,
       "format_version": "3.4",
-      "topology": "progressive ladder, 5 steps",
+      "topology": "4 coarse-to-fine levels, each progressively streamed",
       "psnr_db": 34.83152982461492,
       "foreground_psnr_db": 21.07441543004947,
       "foreground_fraction": 0.02675597218840462,
@@ -441,9 +440,8 @@
       "source_dtype": "float32",
       "source_bytes": 1182816000,
       "frames": null,
-      "quality_quotable": null,
       "measured_from": "staged",
-      "measured_sha256": "368fa77da5ba16fa5bb8dc70feda847fa3bcddb4caae936d6850e71f4139ae15"
+      "measured_sha256": "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9"
     },
     "gsplats_multichannel/blastocyst_ch0.gsplats.zarr.zip": {
       "n_splats": 12916,
@@ -540,9 +538,9 @@
     },
     "gsplats_visible_human_head/vh_head.gsplats.zarr.zip": {
       "n_splats": 1908888,
-      "ndim": 3,
+      "ndim": null,
       "format_version": "3.4",
-      "topology": "progressive ladder, 6 steps",
+      "topology": "4 coarse-to-fine levels, each progressively streamed",
       "psnr_db": 38.2259461041381,
       "foreground_psnr_db": 32.59072160202537,
       "foreground_fraction": 0.15559520354338865,
@@ -555,9 +553,8 @@
       "source_dtype": "uint8",
       "source_bytes": 2816606208,
       "frames": null,
-      "quality_quotable": null,
       "measured_from": "staged",
-      "measured_sha256": "c539b6c46389d6800062f0255df41736c0358234cf27a3554e6107dee7d63eaa"
+      "measured_sha256": "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065"
     },
     "gsplats_zebrafish/zebrafish_4d.gsplats.zarr.zip": {
       "n_splats": 1270233,
@@ -571,6 +568,7 @@
       "source_dtype": null,
       "source_bytes": null,
       "frames": null,
+      "quality_quotable": null,
       "measured_from": "repo",
       "measured_sha256": "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93",
       "quality_caveat": "No reconstruction quality was recorded at fit time for this archive, and its splats are scaled off the source voxel grid, so a figure measured after the fact would describe the rescaling as much as the fit. A refit would stamp one."
@@ -590,8 +588,8 @@
       "quality_quotable": null,
       "measured_from": "staged",
       "measured_sha256": "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae",
-      "quality_note": "PSNR ABSENT, and not obtainable from this archive. Verified 2026-08-26 by reading the store: it carries NO fitting/ or pipeline/ group at all, so there are no fit-time quality stamps and no recorded source_shape to score against. What it does record is its lineage -- source_archive 'h2afva_253tp.gsplats.zarr', source_stride 5, source_timepoints [0, 5, ... 250] (51 entries), stacked_axis_renumbered true -- confirming it is a strided SLICE of the 253tp fit rather than an independent fit, so it inherits that fit's quality and that fit's missing stamps. 121,163,285 splats across 44 spatial tiles, each with its own detail levels; format 3.4. Obtaining a PSNR therefore means refitting the full 253-timepoint timelapse (a 9.25 GB batch-fit) so the figure is stamped at fit time, which is the only honest route for an archive whose fit reference is no longer identifiable. Scoring the shipped bytes post-hoc is not a substitute: this is a partition on an isotropic grid, and the source volume's own grid is anisotropic, so a straight comparison measures the resampling rather than the fit.",
-      "quality_caveat": "No reconstruction quality was recorded at fit time for this timelapse, and it cannot be reconstructed afterwards: the archive is a partition on an isotropic grid while the source volume's grid is anisotropic, so scoring the shipped bytes would measure the resampling. This file is a strided slice (every fifth frame) of the 253-timepoint fit and shares its quality exactly."
+      "quality_note": "PSNR ABSENT, and not obtainable from this archive. Verified 2026-08-28 by reading the pinned store: fitting/ exists but contains only a timestamp, while pipeline/ records recipe 'stream', lod_n_lods 12, and cutpoints ending at 121,163,285; neither group carries fit-time quality stamps or a recorded source_shape to score against. The archive is one 4D leaf with a twelve-step progressive ladder (121,163,285 splats; format 3.4), not a partition with per-tile detail levels. It does not retain source_archive, source_stride, source_timepoints, or stacked_axis_renumbered; its every-fifth-frame provenance comes from the generation history and demo contract rather than embedded lineage attributes. Obtaining a PSNR therefore means refitting the full 253-timepoint timelapse (a 9.25 GB batch-fit) so the figure is stamped at fit time, which is the only honest route for an archive whose fit reference is no longer identifiable. Scoring the shipped bytes post-hoc is not a substitute: the splats use an isotropic grid while the source volume's own grid is anisotropic, so a straight comparison measures the resampling rather than the fit.",
+      "quality_caveat": "No reconstruction quality was recorded at fit time for this timelapse, and it cannot be reconstructed afterwards: the splats use an isotropic grid while the source volume's grid is anisotropic, so scoring the shipped bytes would measure the resampling. This published 51-frame variant is the demo's every-fifth-frame slice of the 253-timepoint fit, although the pinned archive does not retain those lineage attributes."
     }
   }
 }

@@ -79,9 +79,7 @@ def cells_attrs(tmp_path_factory: pytest.TempPathFactory) -> dict:
     tmp_path = tmp_path_factory.mktemp("census_umap")
     cache = _write_synthetic_cache(tmp_path / "census_umap_test.npz")
     output = tmp_path / "cellxgene_census_umap.luxar.zarr"
-    build_scene(
-        cache, output, device="cpu", compression_factor=4, levels=2, max_cells=None
-    )
+    build_scene(cache, output, max_cells=None)
     cells = _find_node(zarr.open_group(output, mode="r"), "cells")
     assert cells is not None, "no `cells` node in the built scene"
     return dict(cells.attrs)

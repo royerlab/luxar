@@ -16,6 +16,7 @@ import pytest
 from luxar._zarr_compat import consolidate, open_group
 from luxar.conftest import read_ts_number_const, viewer_source
 from luxar.core.group.lod.group import MAX_COVERAGE_FRACTION
+from luxar.core.group.lod.lines import indexed_components_are_chains
 from luxar.core.group.partition import serialized_bsp_tree_separates
 from luxar.demos import demo_biodiversity_planetary_scale as demo_module
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
@@ -687,6 +688,16 @@ def test_chain_segment_indices_skips_short_chains_but_keeps_their_offsets():
 def test_chain_segment_indices_empty_is_empty():
     assert chain_segment_indices([]).size == 0
     assert chain_segment_indices([1, 1]).size == 0
+
+
+def test_chain_segment_indices_are_safe_for_the_tracks_ladder():
+    lengths = [0, 1, 3, 2, 4]
+    indices = chain_segment_indices(lengths).reshape(-1, 2)
+    n_vertices = sum(lengths)
+
+    assert indexed_components_are_chains(n_vertices, indices)
+    forked = np.vstack([indices, [2, 6]])
+    assert not indexed_components_are_chains(n_vertices, forked)
 
 
 # ---------------------------------------------------------------------------

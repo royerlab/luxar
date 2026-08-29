@@ -204,6 +204,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.demos._lod_policy import stream_ladder
 from luxar.shading import bake_ambient_occlusion
 from luxar.utils.paths import get_demos_output_dir
 
@@ -919,15 +920,28 @@ def _hue_wheel(index: np.ndarray, n: int) -> np.ndarray:
 #: the viewer traverse them exactly (Fuchs-Kedem-Naylor) — including with the
 #: camera inside the volume, which is what happens flying down the channel.
 #:
-#: **Capacity.** One Points node clamps at ``floor(4096/3) * maxTextureSize`` =
-#: 5,591,040 elements on a 4096-class GPU. Past that ``clampElementCapacity``
-#: TRUNCATES, with one browser-console warning and no Python-side error. The
-#: two-state scene is 9,874,128 atoms, so a single unpartitioned node would
-#: silently drop ~4.3M of them. Every part must stay well under the clamp.
+#: **Capacity** — and this one is tighter than the node total makes it look, in
+#: both directions. One Points node clamps at ``floor(4096/3) * maxTextureSize``
+#: = 5,591,040 elements on a 4096-class GPU; past that ``clampElementCapacity``
+#: TRUNCATES, with one browser-console warning and no Python-side error.
+#:
+#: The two-state scene stores 9,874,128 atoms, but ``state`` is a HIDDEN axis, so
+#: the viewer slices to one state and the resident set is **4,937,064** —
+#: under the clamp, not over it. A single unpartitioned node would therefore
+#: not silently drop ~4.3M atoms, as an earlier version of this note said; only
+#: the resident slice is allocated (see ``demos/_lod_policy`` on why the node
+#: total is the wrong number to compare against a ceiling, and note the compiler
+#: warns on the total anyway).
+#:
+#: What is true is that 4,937,064 leaves only 12% headroom, which is no margin at
+#: all for a demo that may gain atoms — and the correctness reason above is
+#: decisive on its own, so the partition does not depend on this argument.
 #:
 #: 500k gives 32 parts for the two-state all-atom scene: few enough that first
-#: paint stays request-cheap (each
-#: node is ~1 request), small enough for useful frustum culling.
+#: paint stays request-cheap (each node is ~1 request), small enough for useful
+#: frustum culling. Note ``partition=`` is EAGER — every part is fetched, and the
+#: GPU only frustum-culls at draw time — which is why the node also carries an
+#: additive ladder; without one, first paint was the whole resident state.
 MAX_ELEMENTS_PER_PART = 500_000
 
 #: Soft-edged but crisp atoms; a normalized [0, 1] knob, uniform so the writer
@@ -1121,6 +1135,15 @@ def add_npc_node(scene, states: List[Dict[str, Any]]) -> Tuple[int, int]:
         opacity=1.0,
         intensity=1.0,
         partition={"max_elements": MAX_ELEMENTS_PER_PART},
+        # The partition stays (see MAX_ELEMENTS_PER_PART: it is load-bearing for
+        # BOTH interpenetration ordering and capacity) but it did NOT stream. A
+        # `partition=` alone is eager — every part is fetched and the GPU only
+        # frustum-culls at draw time — so first paint was all 4,937,064 atoms of
+        # the resident state across 32 parts. The ladder is resolved per part by
+        # `_validate_counts`, which clamps a cumulative list to each part's own
+        # count, so a ~308k part gets the geometric head and stops. Sized for the
+        # PART, which is the unit the ladder is applied to, not the 9.87M node.
+        additive_lod=stream_ladder(MAX_ELEMENTS_PER_PART),
     )
     return len(positions), 1
 

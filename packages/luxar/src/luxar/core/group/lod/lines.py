@@ -241,6 +241,29 @@ def _indexed_ladder_preserves_edges(
     return np.array_equal(authored, rebuilt)
 
 
+def indexed_components_are_chains(
+    n_vertices: int,
+    segments: NDArray[np.intp],
+) -> bool:
+    """Whether component chains preserve the authored undirected edge multiset.
+
+    The indexed additive writer discards the explicit edge list and rebuilds it
+    by chaining each connected component in ascending vertex order. The authored
+    and rebuilt edge multisets must therefore match exactly, including duplicate
+    multiplicity; edge direction and row order do not matter.
+
+    Branches, cycles, self-loops, chords, non-ascending paths, and duplicate edges
+    are rejected because the rebuilt chains would change their topology or
+    additive brightness. An interior numbering gap is safe because it creates
+    separate connected components that are chained independently.
+    """
+    segments = np.asarray(segments, dtype=np.intp).reshape(-1, 2)
+    if n_vertices == 0 or segments.size == 0:
+        return True
+    components = _indexed_connected_components(n_vertices, segments)
+    return _indexed_ladder_preserves_edges(segments, components)
+
+
 def _validate_indexed_ladder_edges(
     line_type: str,
     indices: Optional[NDArray],

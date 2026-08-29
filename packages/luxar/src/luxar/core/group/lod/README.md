@@ -329,22 +329,39 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
    `coverage_fractions=[...]` in the `substitutive_lod=` spec to override.
 
 Composes with `additive_lod` (laddered per level by default, as for Points);
-mutually exclusive with `partition`. The synthesized coarse gsplat children
-keep their additive ladders for every `line_type`. The original finest Lines
-child skips its ladder for single-polyline types (`polyline`/`loop`) and for
-`indexed`, or whenever `image_labels` is set; the composed path keeps the
-`indexed` refusal conservatively, and narrowing it is a separate change. Only
-that finest child then loads
-all-at-once. `scalars`+`colormap` are
+mutually exclusive with `partition`. The synthesized coarse gsplat children keep
+their additive ladders for every `line_type` — none of the suppression reasons is
+a property of theirs. The original finest Lines child skips its ladder whenever
+`image_labels` is set, for a single-polyline `line_type` (`polyline`/`loop`,
+which cannot be split without breaking its segment topology), and for `indexed`
+**only when its topology does not permit one**, which
+`indexed_components_are_chains` decides. The additive multi-LOD writer carries no
+edge list — it rebuilds one by chaining each connected component in ascending
+vertex order — so a chain is faithful exactly when every component's undirected
+edge multiset, including duplicate multiplicity, equals its consecutive-vertex
+pairs. Real tractography and streamline
+sets satisfy that and are laddered; a branching, cyclic,
+out-of-ascending-order, or duplicate-edge component is refused (a `UserWarning`
+when the ladder was explicit, an info line when it was the default), and only
+that finest child then loads all-at-once. Note a gap in a producer's vertex
+numbering is NOT a problem:
+two index-contiguous but unconnected runs are two components, chained
+separately, so no edge is invented across the gap. On the DIRECT
+`add_lines(additive_lod=…)` path, a non-qualifying set raises when the resolved
+ladder has multiple levels; a one-level result falls through to the flat writer
+and preserves the authored edges. Partition preflight remains deliberately eager
+so invalid indexed input fails before any part is written. Before these checks,
+the writer fabricated edges silently. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
 Points, and the same uniform-vs-per-element RGBA rule: a uniform colour is
 broadcast to the beads with its alpha, a per-element `(N, 4)` is refused —
 uniformity is judged once, per VERTEX, so a line set that collapses to a single
 bead cannot re-present a per-element colour as a uniform row). All `line_type`s
-(segments/polyline/loop/indexed) are supported for the substitutive pyramid and
-receive composed additive ladders on synthesized coarse children; the finest
-child follows the exceptions above.
+(segments/polyline/loop/indexed) are supported for the substitutive pyramid
+itself, and all four receive composed additive ladders on their synthesized
+coarse children; on the finest child, `segments` always receives one and
+`indexed` does whenever its components verify as ascending chains.
 Degenerate-width segments are dropped; bead allocation is bounded both
 per-segment (`lift.MAX_BEADS_PER_SEGMENT`) and in aggregate
 (`lift.MAX_TOTAL_BEADS`, spacing widened to fit with a `UserWarning`), so a
