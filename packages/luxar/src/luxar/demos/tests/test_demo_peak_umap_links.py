@@ -1,7 +1,7 @@
 """Regression coverage for optional peak-UMAP link metadata."""
 
-from types import ModuleType
 from pathlib import Path
+from types import ModuleType
 from typing import Callable
 
 import numpy as np

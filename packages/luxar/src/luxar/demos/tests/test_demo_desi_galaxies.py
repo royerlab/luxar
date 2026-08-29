@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import consolidate, create_array, open_group
+from luxar.demos import is_lfs_pointer
 from luxar.typing_utils.constants import MAX_POINTS_PER_POINTS_NODE
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_desi_galaxies.py"
@@ -683,7 +684,7 @@ class TestSceneRowBudget:
         import zipfile
 
         scene_zip = _demo.SCENE_ZIP_SHIPPED
-        if not scene_zip.exists() or _demo.is_lfs_pointer(scene_zip):
+        if not scene_zip.exists() or is_lfs_pointer(scene_zip):
             pytest.skip("DESI Git LFS scene is not available")
 
         with zipfile.ZipFile(scene_zip) as archive:
