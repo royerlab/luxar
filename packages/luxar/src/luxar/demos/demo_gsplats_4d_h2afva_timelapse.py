@@ -13,10 +13,24 @@ four splat budgets, this is the recording as a TIMELAPSE — the axis the other
 two hold fixed.
 
 STRUCTURE:
-    One 4D gsplat leaf with a twelve-step progressive stream ladder. There are
-    no spatial partitions or substitutive LOD levels; the viewer progressively
-    streams the ladder. The stacked time axis is a hard coarsening barrier, so
-    no coarse splat ever blends two timepoints together.
+    One leaf of 121,163,285 splats carrying a 12-rung progressive (stream)
+    ladder. The viewer paints the first rung immediately and refines as the rest
+    arrive; the stacked time axis is a hard coarsening barrier, so no splat ever
+    blends two timepoints together.
+
+    This archive USED to be a ``kind=partition`` of 44 parts, each an LOD group
+    of four substitutive levels. Both structures were removed deliberately:
+
+      - A partition has no viewer-side selector — ``load-partition-group-node``
+        keeps every child visible — so 44 parts cost 44+ requests per view and
+        bought culling the viewer never performed. Parts are load-bearing only
+        against the per-node element cap, and this node is sliced on the hidden
+        time axis, so only one timepoint's ~2.4M splats are ever resident.
+      - The substitutive levels were the same splats at coarser merges, i.e.
+        pure download weight for a node that is never seen whole.
+
+    Dropping both and re-chunking took the archive from 1.87 GB to 1.12 GB and
+    from 173 requests per timepoint step to 2, at identical finest-level content.
 
 DATA SOURCE & CITATIONS:
     Royer lab, CZ Biohub San Francisco (zebrahub). Raw acquisition:
@@ -25,11 +39,11 @@ DATA SOURCE & CITATIONS:
 
 WHICH TIMEPOINTS:
     Every fifth frame of the 253-timepoint recording — original indices
-    0, 5, 10, ... 250 — giving 51 frames. The demo fixes that sampling with
-    ``SOURCE_STRIDE = 5``. If an archive records ``source_stride`` or
-    ``source_timepoints``, scene creation cross-checks those attributes; the
-    pinned archive does not retain them. Its stacked axis is renumbered 0..50
-    so the viewer's discrete navigation grid lands exactly on stored values.
+    0, 5, 10, ... 250 — giving 51 frames. If an archive records
+    ``source_stride`` or ``source_timepoints``, scene creation cross-checks those
+    attributes; the pinned archive does not retain them. Its stacked axis is
+    renumbered 0..50 so the viewer's discrete navigation grid lands exactly on
+    stored values.
 
     The Time axis is therefore a FRAME INDEX, not minutes. The acquisition
     interval is not recorded anywhere in this dataset or its metadata, and
@@ -44,28 +58,42 @@ ANISOTROPY AND UNITS:
 
     The single-stack companion ships microns, because its archive had the
     lateral pitch (0.40625 um) folded in as a second uniform scale. This
-    archive does not. Converting would mean a
+    archive does not, and grafting cannot apply one — converting would mean a
     ``gsplat transform --scale 0.40625,0.40625,0.40625,1`` pass over the whole
     1.12 GB fit, which changes its bytes and therefore its published checksum.
     That is a data-side change, not a scene-authoring one, so the axes here are
     honest about being pixels. At the companion's calibration (0.40625 um
     laterally, 1.625 um axially) this envelope is 660 x 828 x 831 um.
 
-PIPELINE (provenance of the bundled gsplats — NOT re-run here):
-    1. Fit the full 253-timepoint ``h2afva/fused`` timelapse
-       (``h2afva_253tp.gsplats.zarr``).
-    2. Slice every fifth timepoint and renumber the stacked axis
-       -> ``h2afva_51tp.gsplats.zarr``, one leaf with a twelve-step stream ladder.
-    3. ``gsplat transform --scale 4,1,1,1`` -> isotropic proportions.
+PIPELINE — reproducible with ``--recompute``:
+    1. Fit the full 253-timepoint ``h2afva/fused`` timelapse and scale it
+       isotropic: ``h2afva_253tp.gsplats.zarr``, which this demo takes as its
+       PARENT (``--parent PATH``) rather than refitting. That fit is 9.25 GB and
+       hours of GPU; re-deriving the 51-frame variant from it is minutes of CPU.
+    2. ``restride_stacked_axis(stride=5)`` — keep original timepoints
+       0, 5, ... 250 and renumber them to 0..50, preserving the parent's tree
+       shape. Not ``gsplat slice``: that takes ranges, not a stride, and refuses
+       a partition.
+    3. ``gsplat flatten`` — collapse to one leaf, keeping the finest level.
+    4. ``gsplat lod --recipe stream --target-ms 200`` — put the progressive
+       ladder back (flatten drops it), sized for a ~200 ms first paint.
+    5. ``luxar optimise --profile archive`` — re-chunk. LAST, because step 4
+       adds arrays that also want the 1 MB layout.
 
-    The 51-frame fit is the manifest's default variant precisely because the
-    full 253-frame one is 9.25 GB; this is the same recording at a fifth of the
+    Steps 2 and 3 are in that order for a memory reason, not a stylistic one:
+    the parent is 602M splats at its finest level and flattening it whole peaked
+    at 115 GB. Striding first cuts it to 121M before anything loads flat.
+
+    The 51-frame variant is the manifest's default precisely because the
+    253-frame one is 9.25 GB; this is the same recording at an eighth of the
     download.
 
 USAGE:
     python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse
     python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --no-serve
     python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --serve-only
+    python -m luxar.demos.demo_gsplats_4d_h2afva_timelapse --recompute \
+        --parent /path/to/h2afva_253tp.gsplats.zarr
 """
 
 DEMO_META = {
@@ -73,8 +101,8 @@ DEMO_META = {
     "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
     "description": (
         "Zebrafish embryogenesis as a 4D Gaussian-splat timelapse: 51 timepoints "
-        "of histone-labelled nuclei in one progressively streamed twelve-step "
-        "detail ladder."
+        "of histone-labelled nuclei, 121M splats streamed progressively over a "
+        "12-rung ladder."
     ),
     "category": "microscopy",
     "geometry": "gsplats",
@@ -99,7 +127,9 @@ DEMO_META = {
     },
 }
 
+import shutil
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
@@ -112,10 +142,13 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    parse_path_arg,
+    run_luxar_cli,
 )
 from luxar.gsplats.io._archive import read_archive_root_attrs
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.tree import center_bounds
+from luxar.gsplats.restride import restride_stacked_axis
+from luxar.gsplats.tree import center_bounds, iter_leaves
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -129,10 +162,63 @@ SCENE_NAME = "gsplats_4d_h2afva_timelapse.luxar.zarr"
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
+
+#: ``--parent PATH`` — the 253-timepoint parent archive this variant is derived
+#: from. Required for ``--recompute``. Not a raw microscope recording: the
+#: expensive fit already happened, and re-deriving 51 frames from its output is
+#: minutes of CPU rather than hours of GPU. It is also the only honest input,
+#: since a fresh fit of the parent would not reproduce these bytes.
+PARENT_ARG = parse_path_arg("parent")
 
 #: Original-recording stride: one step of the Time axis is five acquisition
-#: timepoints. Cross-checked against the archive when one records it.
+#: timepoints. Cross-checked against the archive before authoring the caption.
 SOURCE_STRIDE = 5
+
+# ---- Recorded re-authoring recipe (see the module docstring's PIPELINE) ------
+#: Center column holding the stacked time axis. The fit puts spatial dims first
+#: and the stacked axis LAST, so this is 3 for a (Z, Y, X, T) fit — NOT 0, which
+#: is where a time-first source array would have it.
+TIME_COL = 3
+#: Frames the stride must yield out of the parent's 253.
+EXPECTED_FRAMES = 51
+#: Parent's recorded finest-level total. ``EXPECTED_SPLATS`` is sanity-checked
+#: against it in the tests; the parent root exposes no finest-only count that can
+#: be validated before the walk.
+PARENT_FINEST_SPLATS = 602_580_152
+#: What the recipe must reproduce, exactly: every step after the fit is
+#: deterministic (a stride selection, a flatten that keeps the finest level, a
+#: ladder built by a fixed rule), so unlike a refit this admits no drift
+#: tolerance. A mismatch means the parent or the stride changed.
+EXPECTED_SPLATS = 121_163_285
+#: Progressive rungs recorded on the shipped one-leaf archive.
+EXPECTED_RUNGS = 12
+#: Progressive-ladder budget: the first rung is sized to roughly this many
+#: milliseconds of download at the CLI's default assumed bandwidth.
+LADDER_TARGET_MS = 200
+#: Chunk profile. `archive` (1 MB) rather than `hosting` (256 KB) because this
+#: node is read a whole timepoint at a time, and the measured cost of the
+#: as-built layout was 173 requests per timepoint step against 2 after.
+CHUNK_PROFILE = "archive"
+#: Appearance authored into the archive root, matching what the shipped archive
+#: carries. The scene re-states its own when grafting, because grafting carries
+#: no root attrs -- so these govern only a direct `luxar gsplat view`, and the
+#: demo's `blending_mode` below deliberately differs (see the graft call).
+ARCHIVE_BLENDING_MODE = "volumetric"
+ARCHIVE_ABSORPTION = 1.34
+
+
+def _validate_rebuilt_archive(node: Any) -> int:
+    """Require the recorded one-leaf, twelve-rung archive shape."""
+    leaves = list(iter_leaves(node))
+    if len(leaves) != 1:
+        raise RuntimeError(f"rebuild produced {len(leaves)} leaves, expected one")
+    rungs = int(leaves[0].n_additive_sublods)
+    if rungs != EXPECTED_RUNGS:
+        raise RuntimeError(
+            f"rebuild produced {rungs} progressive rungs, expected {EXPECTED_RUNGS}"
+        )
+    return int(leaves[0].n_splats)
 
 
 def _read_source_attrs(data_path: Path) -> dict:
@@ -140,6 +226,147 @@ def _read_source_attrs(data_path: Path) -> dict:
     if data_path.is_dir():
         return read_node_attrs(data_path) or {}
     return read_archive_root_attrs(data_path)
+
+
+def _validate_parent(path: Path) -> None:
+    """Assert ``--parent`` is the 253-timepoint archive this recipe expects.
+
+    Worth doing up front: the strided slice walks the parent's entire tree, so a
+    wrong ``--parent`` costs the better part of an hour before its splat count
+    disagrees. The checks below reject the single-timepoint sibling, an already
+    sliced variant, and a count-compatible parent missing the recorded Z scale.
+    """
+    attrs = _read_source_attrs(path)
+    kind = attrs.get("kind")
+    if kind != "partition":
+        raise SystemExit(
+            f"{path.name} declares kind={kind!r}; --parent must be the 253tp "
+            f"partition archive. A flattened copy has already lost the "
+            f"per-part structure this reproduces."
+        )
+    bounds = attrs.get("position_bounds") or {}
+    maximum = bounds.get("max") or []
+    stacked_max = maximum[TIME_COL] if len(maximum) > TIME_COL else None
+    if stacked_max is None:
+        raise SystemExit(
+            f"{path.name} declares no position_bounds maximum for stacked column "
+            f"{TIME_COL}, so its timepoint count cannot be checked. Refusing to "
+            f"walk 602M splats on faith."
+        )
+    if float(maximum[0]) <= 1000:
+        raise SystemExit(
+            f"{path.name} has Z maximum {maximum[0]}, so it is missing the "
+            f"recorded x4 Z anisotropy. Refusing to rebuild a geometrically "
+            f"flattened embryo."
+        )
+    frames = int(round(float(stacked_max))) + 1
+    # Check what the stride WILL yield, not the parent's exact length: 253
+    # timepoints (0..252) and 251 both give 51 frames at stride 5, and pinning
+    # one of them would reject the real archive. Rounding the bound first because
+    # it is stored float32, so 252 reads back as 251.99998.
+    yielded = -(-frames // SOURCE_STRIDE)
+    if yielded != EXPECTED_FRAMES:
+        raise SystemExit(
+            f"{path.name} spans {frames} timepoints, which at stride "
+            f"{SOURCE_STRIDE} yields {yielded} frames, not {EXPECTED_FRAMES}. "
+            f"This is the check that catches the single-timepoint sibling fit "
+            f"and the already-sliced 51-frame variant."
+        )
+    aprint(f"parent verified: kind=partition, {frames} timepoints")
+
+
+def recompute_archive(work_dir: Path) -> Path:
+    """Re-derive the 51-frame archive from its 253-frame parent.
+
+    Four stages. The stride comes FIRST and the flatten second, which is a
+    memory constraint rather than a preference: the parent holds 602M splats at
+    its finest level and flattening it whole peaked at 115 GB, while striding
+    first cuts it to 121M before anything is held flat.
+    """
+    with asection("Re-deriving the h2afva 51tp archive"):
+        if PARENT_ARG is None:
+            raise SystemExit(
+                "--recompute needs --parent PATH pointing at the 253-timepoint "
+                "archive (h2afva_253tp.gsplats.zarr). This variant is a strided "
+                "slice of that fit, not an independent one — refitting the "
+                "recording would not reproduce these bytes."
+            )
+        parent = PARENT_ARG.expanduser()
+        if not parent.exists():
+            raise FileNotFoundError(f"--parent does not exist: {parent}")
+        if not parent.is_dir():
+            raise SystemExit(
+                f"--parent must be an unpacked directory store, got {parent.name}. "
+                f"zarr-python 3 no longer sniffs the .zip suffix, and the walk "
+                f"reads array by array — unzip it first."
+            )
+        _validate_parent(parent)
+
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        strided = work_dir / "h2afva_51tp_strided.gsplats.zarr"
+        flat = work_dir / "h2afva_51tp_flat.gsplats.zarr"
+        laddered = work_dir / "h2afva_51tp_stream.gsplats.zarr"
+        final = work_dir / "h2afva_51tp.gsplats.zarr"
+
+        summary = restride_stacked_axis(
+            parent,
+            strided,
+            stride=SOURCE_STRIDE,
+            time_col=TIME_COL,
+            # Appearance goes on the ROOT, which is the only node whose attrs a
+            # caller can set -- the writer stamps leaves and groups from its own
+            # key set. That is also where the shipped archive carries them, so a
+            # bare `luxar gsplat view` of the result composites as intended.
+            root_attrs={
+                "blending_mode": ARCHIVE_BLENDING_MODE,
+                "absorption": ARCHIVE_ABSORPTION,
+            },
+        )
+        if summary["frames"] != EXPECTED_FRAMES:
+            raise RuntimeError(
+                f"stride {SOURCE_STRIDE} yielded {summary['frames']} frames, "
+                f"want {EXPECTED_FRAMES}"
+            )
+
+        # Flatten drops the additive ladder along with the levels, so the ladder
+        # is rebuilt after it — not before, or the flatten would discard it.
+        run_luxar_cli("gsplat", "flatten", str(strided), str(flat))
+        run_luxar_cli(
+            "gsplat",
+            "lod",
+            str(flat),
+            str(laddered),
+            "--recipe",
+            "stream",
+            "--target-ms",
+            str(LADDER_TARGET_MS),
+        )
+        # Re-chunk LAST: the ladder above adds arrays that also want the archive
+        # layout, and leaving them as-built is the 173-requests-per-step case.
+        run_luxar_cli(
+            "optimise",
+            str(laddered),
+            str(final),
+            "--profile",
+            CHUNK_PROFILE,
+        )
+
+        node, _ = load_gsplat_node(str(final))
+        got = _validate_rebuilt_archive(node)
+        aprint(f"rebuilt {got:,} splats (recorded {EXPECTED_SPLATS:,})")
+        if got != EXPECTED_SPLATS:
+            # Exact, unlike the refit demos: every step here is deterministic
+            # given the parent, so there is no reduction-order noise to absorb.
+            raise RuntimeError(
+                f"rebuilt {got:,} splats against a recorded {EXPECTED_SPLATS:,}. "
+                f"Every step of this recipe is deterministic given --parent, so "
+                f"this is not float noise: either the parent is a different "
+                f"generation or the stride changed."
+            )
+        aprint(f"rebuilt: {final}")
+        return final
 
 
 def resolve_data() -> Path:
@@ -151,7 +378,7 @@ def resolve_data() -> Path:
 
 
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
-    """Build the 4D scene from the progressive-ladder leaf."""
+    """Build the 4D scene by grafting the progressively-laddered leaf."""
     with asection("Creating h2afva timelapse scene"):
         node, _ = load_gsplat_node(str(data_path))
         bmin, bmax = center_bounds(node)
@@ -222,16 +449,19 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                 f"Zebrafish embryo nuclei (histone H2A variant label) across "
                 f"{n_frames} timepoints of the zebrahub h2afva light-sheet "
                 f"recording — every {SOURCE_STRIDE}th frame of 253 — fitted as "
-                "one Gaussian-splat leaf with a twelve-step progressive ladder. "
-                "The time axis is a coarsening barrier, so no coarse splat blends "
-                "two timepoints. Step Time to watch the body axis form. Press L "
-                "for the Layers panel."
+                "121M Gaussian splats streamed over a 12-rung progressive "
+                "ladder, so the first frame paints immediately and refines. The "
+                "time axis is a coarsening barrier, so no splat blends two "
+                "timepoints. Step Time to watch the body axis form. Press L for "
+                "the Layers panel."
             )
 
-            with asection(f"Adding gsplats (12-step ladder, {n_frames} frames)"):
-                # Keep the additive mode used for the validated gallery build:
-                # unlike volumetric compositing, it is order-independent as the
-                # progressive rungs arrive.
+            with asection(f"Adding gsplats (streamed leaf, {n_frames} frames)"):
+                # Keep the additive mode used for the validated gallery build.
+                # It mattered more when this was a 44-part partition with no BSP
+                # split planes (parts could only be centroid-ordered, and
+                # volumetric compositing popped at their seams); on one leaf the
+                # reason is simply that the gallery stills were approved on it.
                 scene.add_gsplats_from_file(
                     name="zebrafish_nuclei_4d",
                     path=str(data_path),
@@ -262,9 +492,9 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     intensity=17.57,
                     offset=-0.00879,
                     gamma=2.2,
-                    # Keep layer ownership explicit at the scene boundary rather
-                    # than relying on archive attrs. `test_demo_layers` also reads
-                    # the module source to enforce that contract.
+                    # Grafting carries none of the archive's root attrs, so the
+                    # layer flag must be authored here. `test_demo_layers` also
+                    # reads the module source to enforce that contract.
                     layer=True,
                 )
 
@@ -291,7 +521,7 @@ def main() -> None:
     aprint("=" * 70)
     aprint("GSplats Demo: Zebrafish Embryogenesis (h2afva timelapse)")
     aprint("=" * 70)
-    aprint("51 timepoints • one leaf • 12-step progressive ladder")
+    aprint("51 timepoints • 121M splats • 12-rung progressive ladder")
     aprint("")
 
     output_path = get_demos_output_dir() / SCENE_NAME
@@ -304,7 +534,10 @@ def main() -> None:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    data_path = resolve_data()
+    if RECOMPUTE:
+        data_path = recompute_archive(get_demos_output_dir() / "_h2afva_51tp_recompute")
+    else:
+        data_path = resolve_data()
     scene_path = create_luxar_scene(data_path, output_path)
 
     if not NO_SERVE:
