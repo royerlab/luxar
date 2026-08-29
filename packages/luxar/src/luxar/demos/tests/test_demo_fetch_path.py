@@ -1,4 +1,4 @@
-"""Every hosted gsplat demo reaches its data through the manifest.
+"""Every hosted demo dataset reaches its data through the manifest.
 
 Two ways exist to load a precomputed gsplat dataset, and only one of them
 consults the manifest:
@@ -48,7 +48,16 @@ MANIFEST = registry._DEMOS_DIR / "data_manifest.json"
 
 LFS_ONLY = {"load_precomputed_gsplats", "load_precomputed_bundle"}
 MANIFEST_DRIVEN = {"load_dataset_gsplats", "load_dataset_bundle", "ensure_dataset"}
-HOSTED_GSPLAT_EXCEPTIONS = {"gsplats_4d_neuromast_2ch"}
+HOSTED_DATASET_EXCEPTIONS = {
+    # Record unpublished; the module documents its machine-local store until CC BY publishes.
+    "gsplats_4d_neuromast_2ch": "documented machine-local store",
+    # Resolves the shipped scene zip by hand and is already an analysis blind spot below.
+    "desi_galaxies": "shipped scene zip resolved directly",
+    # Packaged arrays are still read directly rather than through the manifest.
+    "census_umap_1m": "packaged NPZ read directly",
+    "3d_umap_coords_human": "packaged Parquet read directly",
+    "3d_umap_coords_mouse": "packaged Parquet read directly",
+}
 
 
 def _manifest() -> dict:
@@ -139,15 +148,13 @@ def test_manifest_driven_loaders_only_name_hosted_datasets(path: Path) -> None:
             )
 
 
-def test_every_hosted_gsplat_dataset_is_reached_through_the_manifest() -> None:
-    """A hosted gsplat artifact must have a real path through the checksum gate.
+def test_every_hosted_dataset_is_reached_through_the_manifest() -> None:
+    """A hosted artifact must have a real path through the checksum gate.
 
     Per-demo classification alone misses the third state: a manifest dataset
     whose demo calls neither loader family.  ``verify_cold_fetch.py`` would still
     exercise and count that dataset even though no user takes the verified path.
     Union every variant because those payloads have no top-level ``files`` entry.
-    Non-gsplat hosted payloads are outside this census; the suffix filter keeps
-    bundle-only datasets such as ``gsplats_celegans`` from becoming false hits.
     """
     datasets = _manifest()
     reached = {
@@ -158,12 +165,12 @@ def test_every_hosted_gsplat_dataset_is_reached_through_the_manifest() -> None:
         for name in names
         if name != "<unresolved>"
     }
-    hosted_gsplats = {
+    hosted = {
         name
         for name, spec in datasets.items()
         if spec.get("bucket") == "zenodo"
         and any(
-            entry["name"].endswith((".gsplats.zarr", ".gsplats.zarr.zip"))
+            files
             for files in (
                 spec.get("files", []),
                 *(
@@ -171,17 +178,16 @@ def test_every_hosted_gsplat_dataset_is_reached_through_the_manifest() -> None:
                     for variant in spec.get("variants", {}).values()
                 ),
             )
-            for entry in files
         )
     }
-    assert "h2afva" in hosted_gsplats, "variant-only gsplat datasets were skipped"
+    assert "h2afva" in hosted, "variant-only datasets were skipped"
 
-    unreached = hosted_gsplats - reached
-    assert unreached == HOSTED_GSPLAT_EXCEPTIONS, (
-        "every hosted gsplat dataset must be reached by a demo through "
+    unreached = hosted - reached
+    assert unreached == set(HOSTED_DATASET_EXCEPTIONS), (
+        "every hosted dataset must be reached by a demo through "
         "load_dataset_gsplats / load_dataset_bundle / ensure_dataset; the "
-        "neuromast demo is the sole deliberate exception while it uses its "
-        f"documented machine-local store (unreached: {sorted(unreached)})"
+        "remaining direct readers must stay explicitly justified in "
+        f"HOSTED_DATASET_EXCEPTIONS (unreached: {sorted(unreached)})"
     )
 
 
