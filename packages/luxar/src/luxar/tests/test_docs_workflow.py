@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -13,6 +14,8 @@ REPO = Path(__file__).resolve().parents[5]
 DOCS = REPO / "docs"
 WORKFLOW = REPO / ".github/workflows/docs.yml"
 GITATTRIBUTES = REPO / ".gitattributes"
+DEMO_SITE_RUNBOOK = DOCS / "guides/developer/DEMO_SITE_RUNBOOK.md"
+DEMO_DATA_MANIFEST = REPO / "packages/luxar/src/luxar/demos/data_manifest.json"
 
 
 def _workflow() -> dict[str, Any]:
@@ -47,6 +50,39 @@ def _published_lfs_assets() -> set[str]:
             if any(docs_relative in source.read_text() for source in sources):
                 published.add(asset.relative_to(REPO).as_posix())
     return published
+
+
+def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
+    """The §3.10–3.12 worked examples must name the active generations."""
+    text = DEMO_SITE_RUNBOOK.read_text()
+    section = text.split("### 3.10", 1)[1].split("### 3.13", 1)[0]
+    quoted_prefixes = set(re.findall(r"\b([0-9a-f]{8})\.\.\.", section))
+    assert quoted_prefixes, "§3.10–3.12 no longer quotes any archive digest prefixes"
+
+    manifest = json.loads(DEMO_DATA_MANIFEST.read_text())
+    active_digests: set[str] = set()
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"sha256", "hosted_sha256"} and isinstance(child, str):
+                    active_digests.add(child)
+                else:
+                    collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    collect(manifest["datasets"])
+    stale = sorted(
+        prefix
+        for prefix in quoted_prefixes
+        if not any(digest.startswith(prefix) for digest in active_digests)
+    )
+    assert not stale, (
+        "DEMO_SITE_RUNBOOK §3.10–3.12 quotes archive generations that are no "
+        f"longer active manifest pins: {stale}"
+    )
 
 
 def test_pages_publishes_daily_or_on_demand_not_on_main_push() -> None:
