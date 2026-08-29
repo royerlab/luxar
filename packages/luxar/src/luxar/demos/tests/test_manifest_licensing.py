@@ -6,7 +6,7 @@ model is only as good as its enforcement: a ShareAlike dataset filed under the
 CC-BY record, or a non-redistributable one given a record at all, is a
 licensing error that is invisible until someone downloads it.
 
-The publication rail is the other half. The four records are drafts, and
+The publication rail is the other half. The records are drafts, and
 whether they go public is the maintainer's call, not an automated one — so
 ``published`` staying false is asserted here rather than left to discipline.
 """

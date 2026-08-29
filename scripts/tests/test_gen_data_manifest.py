@@ -108,46 +108,53 @@ def test_build_rejects_positional_pairs_on_variants(monkeypatch) -> None:
         generator.build()
 
 
-def test_hosted_repin_rejects_a_shrunk_existing_history() -> None:
-    generator = _load_generator()
-    committed = {
-        "datasets": {
-            "toy": {
-                "files": [
-                    {
-                        "name": "fit.zip",
-                        "hosted_sha256": "a" * 64,
-                        "superseded_sha256": ["0" * 64],
-                    }
-                ]
-            }
-        }
-    }
-    repinned = {
-        "datasets": {"toy": {"files": [{"name": "fit.zip", "hosted_sha256": "b" * 64}]}}
-    }
+def _manifest_entry(hosted: str | None, history: list[str] | None = None) -> dict:
+    entry: dict[str, object] = {"name": "fit.zip"}
+    if hosted is not None:
+        entry["hosted_sha256"] = hosted
+    if history is not None:
+        entry["superseded_sha256"] = history
+    return {"datasets": {"toy": {"files": [entry]}}}
 
-    with pytest.raises(ValueError, match="hosted re-pin.*shrinks"):
-        generator._refuse_shrunk_repin_history(repinned, committed)
+
+def test_hosted_repin_accepts_outgoing_digest_and_existing_history() -> None:
+    generator = _load_generator()
+    outgoing = "a" * 64
+    committed = _manifest_entry(outgoing, ["0" * 64])
+    repinned = _manifest_entry("b" * 64, ["0" * 64, outgoing])
+
+    generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_hosted_repin_rejects_missing_outgoing_digest() -> None:
+    generator = _load_generator()
+    committed = _manifest_entry("a" * 64, ["0" * 64])
+    repinned = _manifest_entry("b" * 64, ["0" * 64])
+
+    with pytest.raises(ValueError, match="outgoing hosted digest"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_hosted_repin_rejects_wrong_appended_digest() -> None:
+    generator = _load_generator()
+    committed = _manifest_entry("a" * 64, ["0" * 64])
+    repinned = _manifest_entry("b" * 64, ["0" * 64, "f" * 64])
+
+    with pytest.raises(ValueError, match="outgoing hosted digest"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_first_hosted_pin_needs_no_superseded_history() -> None:
+    generator = _load_generator()
+    committed = _manifest_entry(None)
+    current = _manifest_entry("a" * 64)
+
+    generator._refuse_invalid_repin_history(current, committed)
 
 
 def test_unchanged_hosted_pin_may_remove_obsolete_history() -> None:
     generator = _load_generator()
-    committed = {
-        "datasets": {
-            "toy": {
-                "files": [
-                    {
-                        "name": "fit.zip",
-                        "hosted_sha256": "a" * 64,
-                        "superseded_sha256": ["0" * 64],
-                    }
-                ]
-            }
-        }
-    }
-    current = {
-        "datasets": {"toy": {"files": [{"name": "fit.zip", "hosted_sha256": "a" * 64}]}}
-    }
+    committed = _manifest_entry("a" * 64, ["0" * 64])
+    current = _manifest_entry("a" * 64)
 
-    generator._refuse_shrunk_repin_history(current, committed)
+    generator._refuse_invalid_repin_history(current, committed)

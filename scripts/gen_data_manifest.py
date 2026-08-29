@@ -65,7 +65,7 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 # The record ids and DOIs below are REAL and final: Zenodo reserves a DOI at
 # deposition time and the deposition id becomes the record id on publication, so
 # `https://zenodo.org/records/<id>/...` is already the right URL. What is not yet
-# true is that the records are PUBLIC — all three are still unsubmitted drafts,
+# true is that the records are PUBLIC — all four are still unsubmitted drafts,
 # and a file URL into a draft 404s for everyone.
 #
 # `zenodo_doi` is that reserved DOI, i.e. the VERSION DOI of this deposition —
@@ -74,7 +74,7 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 #
 # Hence `published`: while it is false the fetch helper builds no URL at all, so
 # the Zenodo leg stays dormant exactly as it did when the ids were null, and
-# demos keep resolving cache -> in-repo LFS. Flipping the three flags at
+# demos keep resolving cache -> in-repo LFS. Flipping the four flags at
 # publication time is what activates fetching, and it is the only edit needed.
 # Recording the ids now (rather than at publish time) means the manifest, the
 # record descriptions and the reserved DOIs cannot drift apart in the meantime.
@@ -754,9 +754,10 @@ _HOSTED_KEYS = ("hosted_sha256", "hosted_bytes")
 #: Unbounded and ordered newest-last: a flat list of 64-char hashes is a few
 #: hundred bytes even after many re-pins. Reverting a pin moves that digest to
 #: the end so the runtime's one-generation fallback remains correct.
-#: The generator can reject a hosted re-pin that SHRINKS an existing history,
-#: but it cannot prove that a newly authored history digest is the actual
-#: outgoing hosted artifact: those bytes do not exist in repository state.
+#: For an uncommitted hosted re-pin, the generator can require the previously
+#: pinned digest to appear in the new history and preserve every older entry.
+#: It cannot prove that separately staged fit and sidecar bytes are aligned;
+#: that requires the deep positional-pair check described in data/README.md.
 _SUPERSEDED_KEY = "superseded_sha256"
 
 
@@ -772,30 +773,38 @@ def _manifest_file_entries(manifest: dict) -> dict[tuple[str, str, str], dict]:
     return entries
 
 
-def _refuse_shrunk_repin_history(current: dict, committed: Optional[dict]) -> None:
-    """Reject hosted re-pins that discard an already-recorded history."""
+def _refuse_invalid_repin_history(current: dict, committed: Optional[dict]) -> None:
+    """Reject uncommitted hosted re-pins that lose cache history."""
     if not committed:
         return
     old_entries = _manifest_file_entries(committed)
     for identity, entry in _manifest_file_entries(current).items():
         old_entry = old_entries.get(identity)
-        if not old_entry or entry.get("hosted_sha256") == old_entry.get(
-            "hosted_sha256"
-        ):
+        if not old_entry:
+            continue
+        old_hosted = old_entry.get("hosted_sha256")
+        new_hosted = entry.get("hosted_sha256")
+        if not old_hosted or not new_hosted or new_hosted == old_hosted:
             continue
         old_history = old_entry.get(_SUPERSEDED_KEY) or ()
         new_history = entry.get(_SUPERSEDED_KEY) or ()
-        if old_history and len(new_history) < len(old_history):
-            dataset, variant, filename = identity
-            location = "/".join(part for part in (dataset, variant, filename) if part)
+        dataset, variant, filename = identity
+        location = "/".join(part for part in (dataset, variant, filename) if part)
+        if old_hosted not in new_history:
             raise ValueError(
-                f"hosted re-pin for {location} shrinks {_SUPERSEDED_KEY} "
-                f"from {len(old_history)} entries to {len(new_history)}"
+                f"hosted re-pin for {location} must record the outgoing hosted "
+                f"digest in {_SUPERSEDED_KEY}"
+            )
+        missing = [digest for digest in old_history if digest not in new_history]
+        if missing:
+            raise ValueError(
+                f"hosted re-pin for {location} drops {len(missing)} previously "
+                f"recorded {_SUPERSEDED_KEY} entr{'y' if len(missing) == 1 else 'ies'}"
             )
 
 
 def _head_manifest() -> Optional[dict]:
-    """Read the manifest at HEAD when git is available, else return ``None``."""
+    """Read HEAD for the optional uncommitted-edit guard, else return ``None``."""
     relative = MANIFEST.relative_to(REPO_ROOT).as_posix()
     try:
         text = subprocess.run(
@@ -804,10 +813,16 @@ def _head_manifest() -> Optional[dict]:
             capture_output=True,
             check=True,
             text=True,
+            timeout=10,
         ).stdout
         manifest = json.loads(text)
         return manifest if isinstance(manifest, dict) else None
-    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+    except (
+        OSError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ):
         return None
 
 
@@ -998,8 +1013,8 @@ def main() -> int:
         return 2
 
     try:
-        _refuse_shrunk_repin_history(previous, _head_manifest())
         manifest = build(previous, prune=args.prune)
+        _refuse_invalid_repin_history(manifest, _head_manifest())
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

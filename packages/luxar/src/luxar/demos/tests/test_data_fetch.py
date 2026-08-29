@@ -69,12 +69,16 @@ def test_manifest_loads_and_has_expected_shape():
     m = load_manifest()
     assert m["schema_version"] == 1
     assert m["records"] and m["datasets"]
-    for key in ("cc-by", "cc-by-sa", "h2afva"):
+    for key in ("cc-by", "cc-by-sa", "h2afva", "droso-timelapse"):
         assert key in m["records"], f"missing record group {key}"
 
 
 def test_positional_sidecar_hosted_pairs_move_atomically():
     """Every declared positional group must advance as one generation."""
+    expected_history_depths = {
+        ("gsplats_ct_totalsegmentator", "ct_atlas"): 0,
+        ("gsplats_visible_human_head", "vh_head"): 0,
+    }
     manifest = load_manifest()
     groups: dict[tuple[str, str], list[dict]] = {}
     for dataset_name, dataset in manifest["datasets"].items():
@@ -83,10 +87,7 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
             if pair:
                 groups.setdefault((dataset_name, pair), []).append(entry)
 
-    assert set(groups) == {
-        ("gsplats_ct_totalsegmentator", "ct_atlas"),
-        ("gsplats_visible_human_head", "vh_head"),
-    }
+    assert set(groups) == set(expected_history_depths)
     for (dataset_name, pair), entries in groups.items():
         assert len(entries) >= 2, f"{dataset_name}/{pair} has no positional partner"
         history_lengths = {
@@ -94,6 +95,10 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
         }
         assert len(history_lengths) == 1, (
             f"{dataset_name}/{pair} members did not move atomically"
+        )
+        assert history_lengths == {expected_history_depths[(dataset_name, pair)]}, (
+            f"{dataset_name}/{pair} history depth changed; update the committed "
+            "expectation only after reviewing the hosted re-pin"
         )
         for entry in entries:
             history = entry.get("superseded_sha256") or ()
