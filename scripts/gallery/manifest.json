@@ -336,8 +336,8 @@
       "script": "demo_nuclear_pore_complex.py",
       "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr",
       "citation": "Mosalaganti et al. 2022",
-      "fillTarget": 0.75,
-      "note": "fillTarget 0.75 reframes the whole 25-nucleoporin, two-dilation-state complex introduced by #2262; the inherited 0.95 cropped the ring at all four edges. Border-lit fell from 62.5% to 11.9%, restoring the 8-fold symmetry, central channel and per-nucleoporin colouring."
+      "fillTarget": 0.70,
+      "note": "fillTarget 0.70, re-derived after #2262 replaced one Nup107-160 Y-complex ring (41,288 elements) with the whole pore (9,874,128) \u2014 a 239x change, so the previous 0.75 was metered on a different object. Three arms, final coverage / final lit / border-lit: 0.75 -> 85.8% / 73.9% / 504 of 4316 (11.7%); 0.70 -> 77.8% / 62.3% / 70 (1.6%); 0.65 -> 71.3% / 53.1% / 1 (0.0%). CHOSEN ON THE RENDER, not on the warning clearing. The still is well framed at ALL THREE values \u2014 the crop metric spans all 10 orbit poses, so a clean still can carry a real warning from a pose nobody sees in isolation. Pulling orbit frames with ffmpeg settled it: at 0.75 the outer lilac ring is cut flat against the frame edge, at 0.70 every frame is complete with margin. 0.65 removes the last graze but shrinks the subject visibly for no gain the eye can see. Note the harness suggested 0.65 -> 0.55 for a SINGLE lit pixel: it recommends lower whenever a dense silhouette grazes an edge, which a rotating disc always eventually will, so do not follow it mechanically."
     },
     {
       "id": "fractals_4d",
