@@ -51,12 +51,6 @@ MANIFEST_DRIVEN = {"load_dataset_gsplats", "load_dataset_bundle", "ensure_datase
 HOSTED_DATASET_EXCEPTIONS = {
     # Record unpublished; the module documents its machine-local store until CC BY publishes.
     "gsplats_4d_neuromast_2ch": "documented machine-local store",
-    # Resolves the shipped scene zip by hand and is already an analysis blind spot below.
-    "desi_galaxies": "shipped scene zip resolved directly",
-    # Packaged arrays are still read directly rather than through the manifest.
-    "census_umap_1m": "packaged NPZ read directly",
-    "3d_umap_coords_human": "packaged Parquet read directly",
-    "3d_umap_coords_mouse": "packaged Parquet read directly",
 }
 
 
