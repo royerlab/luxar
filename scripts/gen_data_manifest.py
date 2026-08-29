@@ -462,8 +462,8 @@ DATASETS: dict[str, dict] = {
         # format 3.2 — has been replaced.
         #
         # The 51tp variant is now a strided SLICE of the 253tp fit rather than an
-        # independent fit: every 5th frame (source frames 0, 5, ... 250, recorded
-        # in the archive's own `source_timepoints`), renumbered to a dense 0..50.
+        # independent fit: every 5th frame (source frames 0, 5, ... 250),
+        # renumbered to a dense 0..50.
         # The renumbering is load-bearing, not cosmetic — it puts the stacked axis
         # back on a regular grid so the encoder's gridded-axis snap stores it
         # EXACTLY. The old build's frame values were quantization-smeared off

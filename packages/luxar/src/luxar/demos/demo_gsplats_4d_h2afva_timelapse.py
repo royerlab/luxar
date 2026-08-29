@@ -44,7 +44,7 @@ ANISOTROPY AND UNITS:
 
     The single-stack companion ships microns, because its archive had the
     lateral pitch (0.40625 um) folded in as a second uniform scale. This
-    archive does not, and grafting cannot apply one — converting would mean a
+    archive does not. Converting would mean a
     ``gsplat transform --scale 0.40625,0.40625,0.40625,1`` pass over the whole
     1.12 GB fit, which changes its bytes and therefore its published checksum.
     That is a data-side change, not a scene-authoring one, so the axes here are
@@ -131,7 +131,7 @@ NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
 
 #: Original-recording stride: one step of the Time axis is five acquisition
-#: timepoints. Cross-checked against the archive before authoring the caption.
+#: timepoints. Cross-checked against the archive when one records it.
 SOURCE_STRIDE = 5
 
 
@@ -151,7 +151,7 @@ def resolve_data() -> Path:
 
 
 def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
-    """Build the 4D scene by grafting the progressive-ladder subtree."""
+    """Build the 4D scene from the progressive-ladder leaf."""
     with asection("Creating h2afva timelapse scene"):
         node, _ = load_gsplat_node(str(data_path))
         bmin, bmax = center_bounds(node)
@@ -262,9 +262,9 @@ def create_luxar_scene(data_path: Path, output_path: Path) -> Path:
                     intensity=17.57,
                     offset=-0.00879,
                     gamma=2.2,
-                    # Grafting carries none of the archive's root attrs, so the
-                    # layer flag must be authored here. `test_demo_layers` also
-                    # reads the module source to enforce that contract.
+                    # Keep layer ownership explicit at the scene boundary rather
+                    # than relying on archive attrs. `test_demo_layers` also reads
+                    # the module source to enforce that contract.
                     layer=True,
                 )
 
