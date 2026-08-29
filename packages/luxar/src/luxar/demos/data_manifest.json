@@ -118,22 +118,31 @@
           "name": "cmu1_ch0.gsplats.zarr.zip",
           "sha256": "cd22645f393174ea1d853ae213f751cc1e270a2f290706d388116676060b03e8",
           "bytes": 38201205,
-          "hosted_sha256": "29faffc18cb59f054dd2c4fdfca43103ab02127c2bbc649b4a9e2bdb80e3a496",
-          "hosted_bytes": 84492218
+          "hosted_sha256": "7d605c3cde499e2c29637a7f058cb35fc3dbe6ca7d77e255ded8c88cd9f0d8e3",
+          "hosted_bytes": 45697890,
+          "superseded_sha256": [
+            "29faffc18cb59f054dd2c4fdfca43103ab02127c2bbc649b4a9e2bdb80e3a496"
+          ]
         },
         {
           "name": "cmu1_ch1.gsplats.zarr.zip",
           "sha256": "c1d44d51917cd2b98630eabcc22db07484bf59f98e4fce0d77dba2955c4ce03f",
           "bytes": 39178730,
-          "hosted_sha256": "b63397f62d50b42bd4831bbad1e4f7d4acb587cd7347543b0033e364aa20d00b",
-          "hosted_bytes": 93189978
+          "hosted_sha256": "31a2f119e4cc480b13f5e7bbff2242f4af1cfb9ded548c836179abfbe40a4b36",
+          "hosted_bytes": 50699910,
+          "superseded_sha256": [
+            "b63397f62d50b42bd4831bbad1e4f7d4acb587cd7347543b0033e364aa20d00b"
+          ]
         },
         {
           "name": "cmu1_ch2.gsplats.zarr.zip",
           "sha256": "61bf0aa74ebf60464cff45e1b8ed5a9126018e61fa51f669e995b61af629d59e",
           "bytes": 36430084,
-          "hosted_sha256": "32f37b1420479e59ed6a84c959fda43f3315d6ce966bfb972705552bc61a9dac",
-          "hosted_bytes": 100336780
+          "hosted_sha256": "89fc51f1f81b9d777c4c4af04f5c8c55a401234fb7325161155b264b9e7e2644",
+          "hosted_bytes": 53698264,
+          "superseded_sha256": [
+            "32f37b1420479e59ed6a84c959fda43f3315d6ce966bfb972705552bc61a9dac"
+          ]
         }
       ]
     },
@@ -154,8 +163,11 @@
           "name": "cryoem_virus.gsplats.zarr.zip",
           "sha256": "57554b5514c73e4e35bb94d9054150a8eca279edd99bfb8f5951651bd6f55eae",
           "bytes": 11112371,
-          "hosted_sha256": "84387e0c5cc6bbb0f472f92a22f0e7cd62cf8ea328c63f277610176f4567c373",
-          "hosted_bytes": 15971992
+          "hosted_sha256": "cfb0d94170903a85e7ef2bb08fc1812f23576ab7ceecc447abae9c1798dae14c",
+          "hosted_bytes": 10565577,
+          "superseded_sha256": [
+            "84387e0c5cc6bbb0f472f92a22f0e7cd62cf8ea328c63f277610176f4567c373"
+          ]
         }
       ]
     },
@@ -180,7 +192,8 @@
           "hosted_bytes": 6627936,
           "superseded_sha256": [
             "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399"
-          ]
+          ],
+          "positional_pair": "ct_atlas"
         },
         {
           "name": "ct_atlas_labels.npz",
@@ -190,7 +203,8 @@
           "hosted_bytes": 55164,
           "superseded_sha256": [
             "71a1315146272263c75c92d554dbf49f18e90222e7d7a5b5bef44a34a5efa11d"
-          ]
+          ],
+          "positional_pair": "ct_atlas"
         }
       ]
     },
@@ -277,7 +291,8 @@
           "hosted_bytes": 19184850,
           "superseded_sha256": [
             "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065"
-          ]
+          ],
+          "positional_pair": "vh_head"
         },
         {
           "name": "vh_head_colors.npz",
@@ -287,7 +302,8 @@
           "hosted_bytes": 5092361,
           "superseded_sha256": [
             "82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1"
-          ]
+          ],
+          "positional_pair": "vh_head"
         }
       ]
     },
@@ -534,13 +550,16 @@
       "variants": {
         "51tp": {
           "default": true,
-          "approx_bytes": 1873559527,
+          "approx_bytes": 1115714088,
           "note": "51-timepoint fit (every 5th frame) \u2014 lighter default for the demo.",
           "files": [
             {
               "name": "h2afva_51tp.gsplats.zarr.zip",
-              "sha256": "c5e14be93c3e5626697bb12b9f9729050985dd9c65e8aece09394358e5874c11",
-              "bytes": 1873559527
+              "sha256": "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae",
+              "bytes": 1115714088,
+              "superseded_sha256": [
+                "c5e14be93c3e5626697bb12b9f9729050985dd9c65e8aece09394358e5874c11"
+              ]
             }
           ]
         },

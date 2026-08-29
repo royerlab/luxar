@@ -45,6 +45,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[5]
 WORKFLOW = REPO / ".github/workflows/ci.yml"
+QUEUE_REDISPATCH_WORKFLOW = REPO / ".github/workflows/ci-queue-redispatch.yml"
 
 #: One row per gate input whose required domain is not guaranteed by its ordinary
 #: source extension or package path, so an explicit pattern alternative is required.
@@ -62,6 +63,12 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         ".gitattributes",
         "py",
         "test_docs_workflow.py derives the published LFS candidate set from it",
+    ),
+    (
+        ".github/workflows/ci-queue-redispatch.yml",
+        "py",
+        "test_queue_redispatch_workflow_is_bounded_and_durable guards the "
+        "redispatch workflow itself",
     ),
     (
         ".github/workflows/docs.yml",
@@ -824,6 +831,33 @@ def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
     )
 
 
+def test_queue_redispatch_workflow_is_bounded_and_durable() -> None:
+    workflow = QUEUE_REDISPATCH_WORKFLOW.read_text(encoding="utf-8")
+    parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
+    job = parsed["jobs"]["redispatch"]
+
+    assert parsed["permissions"] == {"actions": "write", "contents": "read"}
+    assert parsed["concurrency"]["cancel-in-progress"] == "false"
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == "5"
+    assert parsed["on"]["schedule"] == [{"cron": "*/15 * * * *"}]
+    assert "persist-credentials: false" in workflow
+    assert "sparse-checkout: scripts" in workflow
+    assert "${MAX_QUEUE_RESIDENCY_MINUTES:-30}" in workflow
+    assert "--max-runs 100" in workflow
+    assert "ci_queue_redispatch.py scan" in workflow
+    assert "ci_queue_redispatch.py finish" in workflow
+    scan_step = job["steps"][1]
+    assert scan_step["env"]["DISPATCH_REF"] == (
+        "${{ github.event.repository.default_branch }}"
+    )
+    assert '--ref "$DISPATCH_REF"' in scan_step["run"]
+    finish_step = job["steps"][2]
+    assert finish_step["env"]["TARGET_RUN_ID"] == "${{ inputs.target_run_id }}"
+    assert "^[1-9][0-9]*$" in finish_step["run"]
+    assert "${{ inputs.target_run_id }}" not in finish_step["run"]
+
+
 def test_scheduled_ci_supplies_a_green_window_every_three_hours(
     workflow: str,
 ) -> None:
@@ -895,6 +929,19 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
         "docs-quality",
     ):
         assert context in script
+    redispatch_tree = ast.parse(
+        (REPO / "scripts/ci_queue_redispatch.py").read_text(encoding="utf-8")
+    )
+    required_redispatch_jobs = next(
+        ast.literal_eval(node.value)
+        for node in redispatch_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "REQUIRED_OBSIDIAN_JOBS"
+            for target in node.targets
+        )
+    )
+    assert all(context in script for context in required_redispatch_jobs)
     assert "actions/jobs/$job_id/rerun" in script
     assert "actions/runs/${push_run}/rerun-failed-jobs" in script
 
@@ -1136,6 +1183,7 @@ def _run_pick_runner(
     head_repo: str = "royerlab/luxar",
     heartbeat: str = "0",
     force_hosted: str = "0",
+    run_attempt: str = "1",
     other_run_active: bool = False,
     active_job_label: str = "obsidian",
     first_run_queued_obsidian_jobs: int = 0,
@@ -1272,6 +1320,7 @@ exec "$REAL_PYTHON" "$@"
         "GITHUB_REPOSITORY": "royerlab/luxar",
         "HEAD_REPO": head_repo,
         "FORCE_HOSTED": force_hosted,
+        "RUN_ATTEMPT": run_attempt,
         "HEARTBEAT": heartbeat,
         "MAX_QUEUED_OBSIDIAN": max_queued_obsidian,
         "ROUTER_API_ERROR": api_error,
@@ -1559,6 +1608,37 @@ def test_pick_runner_hosted_overrides_bypass_heartbeat(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert label == "ubuntu-latest"
+
+
+def test_pick_runner_routes_full_workflow_reruns_hosted_without_fresh_capacity(
+    workflow: str, tmp_path: Path
+) -> None:
+    """A queue-residency rerun must not return to the queue it escaped."""
+    result, label = _run_pick_runner(
+        workflow,
+        tmp_path,
+        heartbeat="700",
+        run_attempt="2",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == "ubuntu-latest"
+    assert not (tmp_path / "gh-calls").exists()
+
+
+def test_pick_runner_keeps_full_workflow_reruns_on_fresh_capacity(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, label = _run_pick_runner(
+        workflow,
+        tmp_path,
+        heartbeat="950",
+        run_attempt="2",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert label == "obsidian"
+    assert not (tmp_path / "gh-calls").exists()
 
 
 def _run_queue_watchdog(

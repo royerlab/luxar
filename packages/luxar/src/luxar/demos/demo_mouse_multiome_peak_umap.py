@@ -62,8 +62,8 @@ from luxar.demos import (
     add_demo_caption,
     launch_viewer,
     require_local_data,
-    substitutive_lod_or_flat,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -298,11 +298,17 @@ def create_mouse_scene(
                 labels=labels,
                 **link_attrs,
                 layer=True,
-                # Substitutive Points LOD (coarsen x/y/z, group by the attribute
-                # barrier) — same wiring as the census demo.
-                substitutive_lod=substitutive_lod_or_flat(
-                    dict(compression_factor=8, levels=3, device="auto")
-                ),
+                # Additive ladder only — no substitutive levels. This is ONE
+                # object shown whole, and the node is stacked on the hidden
+                # `attribute` axis, so the slice the viewer makes resident is
+                # 192,251 points against a 5,591,040 Points cap: 29x under it.
+                # The coarse levels were ~17% of the store (68K + 464K + 2.9M of
+                # 20M) serving a framing the screen-area selector never picks —
+                # the finest level is anchored at half-screen occupancy and this
+                # demo opens auto-fitted, so they were bytes nobody fetched. The
+                # ladder also drops the store from 13 groups to 7, and hosted
+                # first paint costs roughly one request per node.
+                additive_lod=stream_ladder(len(positions_combined)),
             )
 
             # --- Overlays ---

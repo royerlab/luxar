@@ -93,6 +93,45 @@ def _write_bundle(path: Path, frames: list[dict[str, Any]], tmp_path: Path) -> N
             zf.write(member, member.name)
 
 
+@pytest.mark.parametrize("zarr_format", [2, 3])
+def test_a_flat_store_is_read_from_its_archive_root(
+    gen: Any, tmp_path: Path, zarr_format: int
+) -> None:
+    path = tmp_path / f"flat-v{zarr_format}.gsplats.zarr.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        child = {
+            "format_type": "gsplats_zarr",
+            "n_splats": 40,
+            "ndim": 2,
+            "n_additive_sublods": 2,
+        }
+        fitting = {"psnr_db": 40.0, "source_bytes": 1_000_000}
+        root = {
+            "format_type": "gsplats_zarr",
+            "n_splats": 100,
+            "ndim": 3,
+            "n_additive_sublods": 5,
+        }
+        if zarr_format == 2:
+            zf.writestr("additive_0/.zattrs", json.dumps(child))
+            zf.writestr("fitting/.zattrs", json.dumps(fitting))
+            zf.writestr(".zgroup", json.dumps({"zarr_format": 2}))
+            zf.writestr(".zattrs", json.dumps(root))
+        else:
+            zf.writestr("additive_0/zarr.json", json.dumps({"attributes": child}))
+            zf.writestr("fitting/zarr.json", json.dumps({"attributes": fitting}))
+            zf.writestr("zarr.json", json.dumps({"attributes": root}))
+
+    info = gen._read_archive(path)
+
+    assert info is not None
+    assert info["n_splats"] == 100
+    assert info["ndim"] == 3
+    assert info["topology"] == "progressive ladder, 5 steps"
+    assert info["psnr_db"] == 40.0
+    assert info["source_bytes"] == 1_000_000
+
+
 def test_every_record_renders(gen: Any, manifest: dict[str, Any]) -> None:
     for key in manifest["records"]:
         text = gen.render_record(key, manifest)
@@ -1114,6 +1153,39 @@ def test_no_measurement_is_stale_against_its_own_digest(
 def test_committed_measurements_match_the_hosted_manifest_pins(gen: Any) -> None:
     manifest = json.loads(gen.MANIFEST.read_text())
     assert gen._stale_characteristics(manifest) == []
+
+
+def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> None:
+    key = "h2afva/51tp/h2afva_51tp.gsplats.zarr.zip"
+    info = gen.load_characteristics()[key]
+
+    assert (
+        info["n_splats"],
+        info["ndim"],
+        info["format_version"],
+        info["topology"],
+    ) == (121_163_285, 4, "3.4", "progressive ladder, 12 steps")
+    assert info["measured_sha256"] == (
+        "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae"
+    )
+    assert "one 4D leaf" in info["quality_note"]
+    assert "does not retain source_archive" in info["quality_note"]
+
+
+def test_milkyway_hosted_archive_keeps_the_levels_generation(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text())
+    spec = manifest["datasets"]["gsplats_milkyway_dust"]["files"][0]
+    info = gen.load_characteristics()[
+        "gsplats_milkyway_dust/milkyway_dust.gsplats.zarr.zip"
+    ]
+
+    assert spec["hosted_sha256"] == (
+        "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9"
+    )
+    assert spec["hosted_bytes"] == 10_647_985
+    assert "superseded_sha256" not in spec
+    assert info["measured_sha256"] == spec["hosted_sha256"]
+    assert info["topology"] == "4 coarse-to-fine levels, each progressively streamed"
 
 
 def test_flylight_recovered_figures_yield_to_a_pinned_archive_read(gen: Any) -> None:

@@ -74,50 +74,35 @@ def test_manifest_loads_and_has_expected_shape():
 
 
 def test_positional_sidecar_hosted_pairs_move_atomically():
-    """The fit and its row-indexed payload must name one hosted generation.
+    """Every declared positional group must advance as one generation."""
+    manifest = load_manifest()
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for dataset_name, dataset in manifest["datasets"].items():
+        for entry in _all_files(dataset):
+            pair = entry.get("positional_pair")
+            if pair:
+                groups.setdefault((dataset_name, pair), []).append(entry)
 
-    A half-move recreates #1670 at download time: the demo receives a valid fit
-    and a valid sidecar whose rows describe a different ordering. Pin the four
-    exact uploaded contracts, including the immediately outgoing generation,
-    so changing either half alone fails in CI.
-    """
-    expected = {
-        "gsplats_visible_human_head": {
-            "vh_head.gsplats.zarr.zip": (
-                "c539b6c46389d6800062f0255df41736c0358234cf27a3554e6107dee7d63eaa",
-                19_184_850,
-                "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065",
-            ),
-            "vh_head_colors.npz": (
-                "6bc6f6764dfce8f968637fe87fdd120fabf40cc28ca0fdba4e4fb5b6698d996d",
-                5_092_361,
-                "82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1",
-            ),
-        },
-        "gsplats_ct_totalsegmentator": {
-            "ct_atlas.gsplats.zarr.zip": (
-                "b282c1ce1e25d095e8c3197724fb6f702330990fe39aeb5607b34165c4ff9ce8",
-                6_627_936,
-                "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399",
-            ),
-            "ct_atlas_labels.npz": (
-                "d8da820921e94bc29331c1781ea62592b5fa89f1c05188bb2a12f6c7aa7d2437",
-                55_164,
-                "71a1315146272263c75c92d554dbf49f18e90222e7d7a5b5bef44a34a5efa11d",
-            ),
-        },
+    assert set(groups) == {
+        ("gsplats_ct_totalsegmentator", "ct_atlas"),
+        ("gsplats_visible_human_head", "vh_head"),
     }
-
-    datasets = load_manifest()["datasets"]
-    for dataset, pair in expected.items():
-        files = {entry["name"]: entry for entry in datasets[dataset]["files"]}
-        for name, (digest, size, outgoing) in pair.items():
-            entry = files[name]
-            assert (entry["hosted_sha256"], entry["hosted_bytes"]) == (
-                digest,
-                size,
-            )
-            assert entry["superseded_sha256"][-1] == outgoing
+    for (dataset_name, pair), entries in groups.items():
+        assert len(entries) >= 2, f"{dataset_name}/{pair} has no positional partner"
+        history_lengths = {
+            len(entry.get("superseded_sha256") or ()) for entry in entries
+        }
+        assert len(history_lengths) == 1, (
+            f"{dataset_name}/{pair} members did not move atomically"
+        )
+        for entry in entries:
+            history = entry.get("superseded_sha256") or ()
+            if history:
+                for key in ("sha256", "hosted_sha256"):
+                    assert entry.get(key) != history[-1], (
+                        f"{dataset_name}/{entry['name']} still names its "
+                        f"superseded pin as {key}"
+                    )
 
 
 def test_load_manifest_hands_out_an_independent_copy():
@@ -2122,6 +2107,197 @@ def test_a_superseded_cache_is_kept_when_nothing_can_replace_it(fake_repo, monke
     assert find_quarantined_files(dest) == [], "the last copy was destroyed"
 
 
+def test_a_positional_pair_rejects_mixed_current_and_superseded_caches(
+    fake_repo, monkeypatch
+):
+    """An irreplaceable fallback must not pair stale payload with a current fit."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"current-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    repo_root = cache / "repo"
+    repo_pair = repo_root / "gsplats_toy"
+    repo_pair.mkdir(parents=True)
+    pointer = (
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+    (repo_pair / "fit.gsplats.zarr.zip").write_text(pointer)
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
+
+    with pytest.raises(DatasetUnavailable, match="positional pair.*toy") as excinfo:
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    message = str(excinfo.value)
+    assert "gsplats_toy" in message
+    assert "fit.gsplats.zarr.zip: In a source checkout, run `git lfs pull`." in message
+    assert (
+        "colors.npz: This archive is hosted-only and has no in-repo Git LFS copy."
+        in message
+    )
+
+
+def test_a_complete_superseded_positional_pair_remains_usable(fake_repo, monkeypatch):
+    """One unavailable member keeps every partner on the complete prior generation."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"old-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    partial_repo = cache / "partial-repo"
+    repo_pair = partial_repo / "gsplats_toy"
+    repo_pair.mkdir(parents=True)
+    (repo_pair / "fit.gsplats.zarr.zip").write_bytes(b"current-fit")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", partial_repo)
+
+    paths = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert [path.read_bytes() for path in paths] == [b"old-fit", b"old-colors"]
+
+
+def test_a_complete_positional_pair_refreshes_when_current_sources_exist(
+    fake_repo, monkeypatch, capsys
+):
+    """Available current members must not be pinned to a complete stale pair."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"old-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    repo_root = cache / "repo"
+    repo_pair = repo_root / "gsplats_toy"
+    repo_pair.mkdir(parents=True)
+    (repo_pair / "fit.gsplats.zarr.zip").write_bytes(b"current-fit")
+    (repo_pair / "colors.npz").write_bytes(b"current-colors")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
+
+    paths = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert [path.read_bytes() for path in paths] == [b"current-fit", b"current-colors"]
+    captured = capsys.readouterr()
+    assert "Using SUPERSEDED positional pair" not in captured.out + captured.err
+
+
+def test_a_current_positional_pair_reports_each_verification_once(
+    fake_repo, monkeypatch, capsys
+):
+    """Pair preflight must not narrate the resolver's checksum pass twice."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"current-fit")
+    (pair_cache / "colors.npz").write_bytes(b"current-colors")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache)
+
+    out = capsys.readouterr().out
+    assert out.count("Verifying fit.gsplats.zarr.zip") == 1
+    assert out.count("Verifying colors.npz") == 1
+    assert out.index("Ensuring dataset (gsplats_toy)") < out.index(
+        "Verifying fit.gsplats.zarr.zip"
+    )
+
+
+def test_a_positional_pair_rejects_different_superseded_depths(fake_repo, monkeypatch):
+    """Two last-history matches are not one generation when their depths differ."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [
+                hashlib.sha256(b"ancient-colors").hexdigest(),
+                hashlib.sha256(b"old-colors").hexdigest(),
+            ],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"old-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    with pytest.raises(DatasetUnavailable, match="not the same generation"):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+
 def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys):
     """An unpulled current copy is obtainable by hydrating its LFS pointer."""
     manifest, cache = fake_repo
@@ -2145,6 +2321,53 @@ def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys)
     notice = capsys.readouterr().out
     assert "git lfs pull" in notice
     assert "hosted-only" not in notice
+
+
+def test_a_superseded_positional_pair_names_each_source_remedy(
+    fake_repo, monkeypatch, capsys
+):
+    """Every bypassed pair member keeps its own actionable source remedy."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"old-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    repo_root = cache / "repo"
+    repo_pair = repo_root / "gsplats_toy"
+    repo_pair.mkdir(parents=True)
+    pointer = (
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+    (repo_pair / "fit.gsplats.zarr.zip").write_text(pointer)
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
+
+    paths = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert [path.read_bytes() for path in paths] == [b"old-fit", b"old-colors"]
+    notice = capsys.readouterr().out
+    assert "gsplats_toy" in notice
+    assert "fit.gsplats.zarr.zip: In a source checkout, run `git lfs pull`." in notice
+    assert (
+        "colors.npz: This archive is hosted-only and has no in-repo Git LFS copy."
+        in notice
+    )
 
 
 def test_a_superseded_cache_is_replaced_when_a_route_exists(fake_repo, monkeypatch):
