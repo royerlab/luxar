@@ -88,10 +88,14 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 > remains marked `pending_upload`, and the four `gsplats_visible_human_head` /
 > `gsplats_ct_totalsegmentator` pins, which name restructured bytes that are
 > staged for draft deposition 21912280 but not yet uploaded — they must go up
-> (and the outgoing generation must stay in place, since each entry's
-> `superseded_sha256` still points a warm cache at it) before the `cc-by` record
-> is published. `scripts/zenodo_migration_audit.py --live`
-> verifies that every declared pin matches the current draft records. All three
+> before the `cc-by` record is published, because publication freezes the files.
+> The upload replaces the outgoing copy under the same file name; each entry
+> keeps that outgoing digest in `superseded_sha256` so a machine whose cache is
+> already warm with the previous generation reads it as out of date rather than
+> corrupt (the fetch accepts a superseded copy only off the local disk, and
+> never downloads one — the download leg is strict on `hosted_sha256`).
+> `scripts/zenodo_migration_audit.py --live`
+> verifies that every declared pin matches the current draft records. All four
 > records are still unsubmitted, so each carries `published: false` and the fetch
 > derives no public URL from its record id. Publishing the records and enabling
 > their manifest URLs is the remaining record-side step.

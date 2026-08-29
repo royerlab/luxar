@@ -32,9 +32,10 @@ _DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
 # them against MATERIALIZED git-LFS bytes, so they can only ever describe the
 # in-repo copy.
 #
-# The cc-by deposition holds a different, also self-consistent pair — the
-# restructured refit (19,184,850 B, 1,908,888 rows) with its own resampled
-# sidecar — and the manifest records that separately as
+# The manifest points the cc-by record at a different, also self-consistent pair
+# — the restructured refit (19,184,850 B, 1,908,888 rows) with its own resampled
+# sidecar, staged on the draft and not uploaded yet (see the uploads note in
+# `demos/data/README.md`) — and it records that separately as
 # `hosted_sha256`/`hosted_bytes`. Do not "fix" these constants to the hosted
 # digests: the deep check cannot verify bytes that are not on disk, and the two
 # pairs must never be mixed. Pinning one file from each pair is the #1670
