@@ -461,8 +461,8 @@ class _Ctx:
         #    provably not `~/.cache/luxar` because `__file__` is the installed
         #    module. The `__file__` root is
         #    REQUIRED, not decoration: `Path("/tmp/scratch") / "data" /
-        #    "myfit.zip"` would otherwise launder an arbitrary local artifact
-        #    through the exemption — and any OTHER `Path(...)` head is a
+        #    "myfit.zip"` would otherwise make an arbitrary local artifact look
+        #    provably outside the cache — and any OTHER `Path(...)` head is a
         #    directory whose contents this pass cannot read, so it falls through
         #    to "unknown" below rather than claiming a proof it does not have.
         #    `Path.home() / ".cache/luxar" / DS` (one literal, not two) and
