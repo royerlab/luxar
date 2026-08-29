@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar.demos import voxel_sampled_payload_agreement
+from luxar.demos import is_lfs_pointer, voxel_sampled_payload_agreement
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG
 from luxar.gsplats.gsplat_data import GSplatData
 
@@ -26,6 +26,9 @@ _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_3d_visible_human_head.py"
 )
 _DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
+_LFS_DIR = _DEMO_PATH.parent / "data" / "gsplats_visible_human_head"
+_LFS_FIT = _LFS_DIR / "vh_head.gsplats.zarr.zip"
+_LFS_COLORS = _LFS_DIR / "vh_head_colors.npz"
 # The pair SHIPPED IN THIS REPO — the 20,572,128-byte fit and the sidecar #1911
 # resampled against it (1,911,192 rows, matching that fit's splat count). These
 # track the manifest's `sha256`, deliberately: the sibling deep check validates
@@ -429,10 +432,7 @@ class TestRejectedPairFallsThroughToRefit:
             _save_colors_u8(colors[rng.permutation(n)], _demo.LOCAL_COLORS)
 
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
-        # The shipped LFS assets must not rescue (or mask) the outcome, and
-        # neither must a copy of them in the manifest's own cache path.
-        monkeypatch.setattr(_demo, "LFS_FIT", tmp_path / "absent.gsplats.zarr.zip")
-        monkeypatch.setattr(_demo, "LFS_COLORS", tmp_path / "absent.npz")
+        monkeypatch.setattr(_demo, "load_dataset_gsplats", lambda *a, **k: None)
         monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / "absent-cache.zip")
         monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / "absent-cache.npz")
         monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
@@ -494,48 +494,39 @@ class TestRejectedPairFallsThroughToRefit:
         )
 
 
-class TestShippedLfsPairIsGuardedToo:
-    """The SHIPPED (Git LFS) branch of ``load_or_build`` must run the guard too.
+class TestManifestPairIsGuardedToo:
+    """The manifest-resolved pair must still run the semantic alignment guard.
 
-    ``load_or_build`` has two accept doors — the processed cache and the packaged
-    LFS assets — and each one calls ``_colors_match_fit`` separately. The cache
-    door is covered above; without these two the LFS call could be replaced by
-    ``if True:`` with the whole suite still green, because every other test points
-    ``LFS_*`` at absent paths so that branch never runs. That is not academic
-    here: the shipped pair was the one that exposed the missing guard (#1670).
+    Manifest digests prove that each file is expected, not that two newly pinned
+    positional files belong to the same generation. The pair guard remains the
+    last defence against rendering a fit with another generation's colors.
     """
 
     @staticmethod
-    def _lfs_setup(tmp_path, monkeypatch, *, permute: bool):
-        """Materialize an LFS-shaped pair under tmp_path and stub the refit."""
+    def _manifest_setup(tmp_path, monkeypatch, *, permute: bool):
+        """Materialize a manifest-shaped pair under tmp_path and stub the refit."""
         n = 6000
         rng = np.random.default_rng(43)
         rgb_vol = rng.uniform(0.0, 1.0, (16, 16, 16, 3)).astype(np.float32)
         fit = _scattered_gsplat_data(n, extent=15.49, seed=7)
 
-        # Build the pair straight into the "shipped" location.
-        lfs_dir = tmp_path / "lfs"
-        lfs_dir.mkdir()
-        monkeypatch.setattr(_demo, "LOCAL_FIT", lfs_dir / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "LOCAL_COLORS", lfs_dir / _demo.COLORS_FILE)
-        _, colors = _demo.save_and_sample_colors(fit, rgb_vol)
+        manifest_dir = tmp_path / "manifest"
+        monkeypatch.setattr(_demo, "LOCAL_FIT", manifest_dir / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "LOCAL_COLORS", manifest_dir / _demo.COLORS_FILE)
+        stored, colors = _demo.save_and_sample_colors(fit, rgb_vol)
         if permute:
-            _save_colors_u8(colors[rng.permutation(n)], lfs_dir / _demo.COLORS_FILE)
-            colors = _load_colors_f32(lfs_dir / _demo.COLORS_FILE)
-        monkeypatch.setattr(_demo, "LFS_FIT", lfs_dir / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "LFS_COLORS", lfs_dir / _demo.COLORS_FILE)
+            _save_colors_u8(
+                colors[rng.permutation(n)], manifest_dir / _demo.COLORS_FILE
+            )
+            colors = _load_colors_f32(manifest_dir / _demo.COLORS_FILE)
 
-        # …and empty the processed cache the LFS branch copies INTO, plus the
-        # local-refit namespace, so the LFS door is the one under test.
-        # CACHE_DIR must move too: the branch mkdirs it before the atomic copy.
-        cache_dir = tmp_path / "cache"
-        monkeypatch.setattr(_demo, "CACHE_DIR", cache_dir)
-        monkeypatch.setattr(_demo, "CACHE_FIT", cache_dir / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_COLORS", cache_dir / _demo.COLORS_FILE)
+        monkeypatch.setattr(_demo, "CACHE_FIT", manifest_dir / _demo.FIT_FILE)
+        monkeypatch.setattr(_demo, "CACHE_COLORS", manifest_dir / _demo.COLORS_FILE)
         monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / "local" / _demo.FIT_FILE)
         monkeypatch.setattr(
             _demo, "LOCAL_COLORS", tmp_path / "local" / _demo.COLORS_FILE
         )
+        monkeypatch.setattr(_demo, "load_dataset_gsplats", lambda *a, **k: [stored])
 
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
         monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
@@ -551,19 +542,21 @@ class TestShippedLfsPairIsGuardedToo:
     def test_a_permuted_shipped_sidecar_falls_through_to_the_refit(
         self, tmp_path, monkeypatch
     ) -> None:
-        _, sentinel_fit, sentinel_colors = self._lfs_setup(
+        _, sentinel_fit, sentinel_colors = self._manifest_setup(
             tmp_path, monkeypatch, permute=True
         )
         got_fit, got_colors = _demo.load_or_build()
-        assert got_fit is sentinel_fit, "a rejected SHIPPED pair was rendered anyway"
+        assert got_fit is sentinel_fit, "a rejected manifest pair was rendered anyway"
         assert got_colors is sentinel_colors
 
-    def test_an_aligned_shipped_sidecar_is_used_instead_of_refitting(
+    def test_an_aligned_manifest_sidecar_is_used_instead_of_refitting(
         self, tmp_path, monkeypatch
     ) -> None:
-        colors, sentinel_fit, _ = self._lfs_setup(tmp_path, monkeypatch, permute=False)
+        colors, sentinel_fit, _ = self._manifest_setup(
+            tmp_path, monkeypatch, permute=False
+        )
         got_fit, got_colors = _demo.load_or_build()
-        assert got_fit is not sentinel_fit, "an aligned SHIPPED pair triggered a refit"
+        assert got_fit is not sentinel_fit, "an aligned manifest pair triggered a refit"
         np.testing.assert_array_equal(got_colors, colors)
 
 
@@ -614,18 +607,18 @@ class TestShippedPairIsAligned:
 
     @pytest.mark.slow
     def test_shipped_colors_belong_to_the_shipped_fit(self) -> None:
-        if _demo.is_lfs_pointer(_demo.LFS_FIT) or not _demo.LFS_FIT.exists():
+        if is_lfs_pointer(_LFS_FIT) or not _LFS_FIT.exists():
             pytest.skip(
                 "Visible Human Git LFS assets are not materialized (run 'git lfs pull')"
             )
-        if _demo.is_lfs_pointer(_demo.LFS_COLORS) or not _demo.LFS_COLORS.exists():
+        if is_lfs_pointer(_LFS_COLORS) or not _LFS_COLORS.exists():
             pytest.skip(
                 "Visible Human Git LFS colors sidecar is not materialized "
                 "(run 'git lfs pull')"
             )
 
-        fit = GSplatData.load(_demo.LFS_FIT, include_stats=False)
-        colors = _demo._load_colors_f32(_demo.LFS_COLORS)
+        fit = GSplatData.load(_LFS_FIT, include_stats=False)
+        colors = _demo._load_colors_f32(_LFS_COLORS)
 
         assert len(colors) == len(fit.centers), (
             f"{len(colors):,} colors for {len(fit.centers):,} splats — the "

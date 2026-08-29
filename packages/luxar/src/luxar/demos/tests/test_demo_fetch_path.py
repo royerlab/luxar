@@ -138,6 +138,42 @@ def test_manifest_driven_loaders_only_name_hosted_datasets(path: Path) -> None:
             )
 
 
+def test_every_hosted_gsplat_dataset_is_reached_through_the_manifest() -> None:
+    """A hosted artifact must have a real demo path through the checksum gate.
+
+    Per-demo classification alone misses the third state: a manifest dataset
+    whose demo calls neither loader family.  ``verify_cold_fetch.py`` would still
+    exercise and count that dataset even though no user takes the verified path.
+    Keep the one deliberate manual-store exception explicit, so another hosted
+    gsplat dataset cannot become unreachable silently.
+    """
+    datasets = _manifest()
+    reached = {
+        name
+        for path in DEMO_PATHS
+        for helper, names in _fetch_calls(path).items()
+        if helper in MANIFEST_DRIVEN
+        for name in names
+        if name != "<unresolved>"
+    }
+    hosted_gsplats = {
+        name
+        for name, spec in datasets.items()
+        if spec.get("bucket") == "zenodo"
+        and any(
+            entry["name"].endswith((".gsplats.zarr", ".gsplats.zarr.zip"))
+            for entry in spec.get("files", [])
+        )
+    }
+
+    assert hosted_gsplats - reached == {"gsplats_4d_neuromast_2ch"}, (
+        "every hosted gsplat dataset must be reached by a demo through "
+        "load_dataset_gsplats / load_dataset_bundle / ensure_dataset; the "
+        "neuromast demo is the sole deliberate exception while it uses its "
+        "documented machine-local store"
+    )
+
+
 def test_the_exception_list_is_exactly_the_local_compute_datasets() -> None:
     """Spell out who is still on the in-repo loader, so the set cannot grow quietly.
 
@@ -1324,3 +1360,43 @@ def test_ct_atlas_reaches_the_manifest_on_a_cold_cache(tmp_path, monkeypatch) ->
     assert calls, "the manifest fetch was never reached on a cold cache"
     assert fit is stub_fit
     assert got_labels is stub_labels
+
+
+def test_visible_human_reaches_the_manifest_on_a_cold_cache(
+    tmp_path, monkeypatch
+) -> None:
+    """The cold-fetch verifier must exercise the path the demo really takes."""
+    demo = importlib.import_module("luxar.demos.demo_gsplats_3d_visible_human_head")
+    colors_path = tmp_path / "vh_head_colors.npz"
+    calls: list[tuple] = []
+    stub_fit = GSplatData(
+        centers=np.zeros((4, 3), dtype=np.float32),
+        amplitudes=np.ones(4, dtype=np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (4, 1)).astype(np.float32),
+    )
+    stub_colors = np.full((4, 3), 0.5, dtype=np.float32)
+
+    def _fake_fetch(*args, **kwargs):
+        calls.append(args)
+        colors_path.write_bytes(b"the sidecar rides along")
+        return [stub_fit]
+
+    monkeypatch.setattr(demo, "RECOMPUTE", False)
+    monkeypatch.setattr(demo, "CACHE_FIT", tmp_path / "absent.gsplats.zarr.zip")
+    monkeypatch.setattr(demo, "CACHE_COLORS", colors_path)
+    monkeypatch.setattr(demo, "LOCAL_FIT", tmp_path / "absent-local.gsplats.zarr.zip")
+    monkeypatch.setattr(demo, "LOCAL_COLORS", tmp_path / "absent-local.npz")
+    monkeypatch.setattr(demo, "load_dataset_gsplats", _fake_fetch)
+    monkeypatch.setattr(demo, "_load_colors_f32", lambda path: stub_colors)
+    monkeypatch.setattr(demo, "_colors_match_fit", lambda *args: True)
+
+    def _refit_is_a_failure():
+        raise AssertionError("fell through to the download-and-refit path")
+
+    monkeypatch.setattr(demo, "download_head_slices", _refit_is_a_failure)
+
+    fit, got_colors = demo.load_or_build()
+
+    assert calls == [(demo.DEMO_NAME, [demo.FIT_FILE])]
+    assert fit is stub_fit
+    assert got_colors is stub_colors
