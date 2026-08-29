@@ -805,7 +805,8 @@ def _head_manifest() -> Optional[dict]:
             check=True,
             text=True,
         ).stdout
-        return json.loads(text)
+        manifest = json.loads(text)
+        return manifest if isinstance(manifest, dict) else None
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
         return None
 
