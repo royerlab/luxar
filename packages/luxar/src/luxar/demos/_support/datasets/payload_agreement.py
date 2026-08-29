@@ -21,6 +21,8 @@ def voxel_sampled_payload_agreement(
 
     Several demos ship a per-splat payload (an organ label, a sampled RGB) as a
     SEPARATE sidecar file, indexed positionally against a ``.gsplats.zarr`` fit.
+    The data manifest marks these companions with ``positional_pair`` so fetches
+    keep their generations aligned; this check validates their actual row order.
     Nothing in either file records the correspondence, so a sidecar written in a
     different splat order than the store — ``GSplatData.save`` applies a spatial
     ordering, so the stored order is NOT the in-memory one — loads silently and

@@ -202,6 +202,12 @@ DATASETS: dict[str, dict] = {
         bucket="zenodo",
         record="cc-by",
         license="cc-by-4.0",
+        positional_pairs={
+            "ct_atlas": (
+                "ct_atlas.gsplats.zarr.zip",
+                "ct_atlas_labels.npz",
+            )
+        },
         source="TotalSegmentator (Wasserthal et al. 2023)",
         attribution="TotalSegmentator (Wasserthal et al. 2023; CC BY 4.0).",
         acquisition=dict(
@@ -257,6 +263,12 @@ DATASETS: dict[str, dict] = {
         bucket="zenodo",
         record="cc-by",
         license="pd-nlm",
+        positional_pairs={
+            "vh_head": (
+                "vh_head.gsplats.zarr.zip",
+                "vh_head_colors.npz",
+            )
+        },
         source="NLM Visible Human Project (Male head, PNG)",
         attribution="U.S. NLM Visible Human Project (public domain; acknowledge NLM, no endorsement implied).",
         acquisition=dict(
@@ -808,6 +820,45 @@ def _files_for(name: str, spec: dict, prev: dict, *, prune: bool) -> list[dict]:
     return committed if found is None else _carry_hosted(found, committed)
 
 
+def _declare_positional_pairs(
+    files: list[dict], groups: dict[str, tuple[str, ...]]
+) -> list[dict]:
+    """Stamp positionally indexed files with their shared generation group."""
+    if not groups:
+        return files
+    by_name = {entry["name"]: entry for entry in files}
+    declared: set[str] = set()
+    for group, members in groups.items():
+        member_names = set(members)
+        if len(member_names) < 2:
+            raise ValueError(f"positional pair {group!r} must name at least two files")
+        present = member_names.intersection(by_name)
+        if not present:
+            continue
+        missing = member_names - by_name.keys()
+        if missing:
+            raise ValueError(
+                f"positional pair {group!r} names missing files: {sorted(missing)}"
+            )
+        overlap = declared.intersection(members)
+        if overlap:
+            raise ValueError(
+                f"files belong to more than one positional pair: {sorted(overlap)}"
+            )
+        history_lengths = {
+            len(by_name[member].get(_SUPERSEDED_KEY) or ()) for member in members
+        }
+        if len(history_lengths) != 1:
+            raise ValueError(
+                f"positional pair {group!r} did not move atomically: member "
+                "history depths differ"
+            )
+        for member in members:
+            by_name[member]["positional_pair"] = group
+        declared.update(members)
+    return files
+
+
 def _variants_for(name: str, spec: dict, prev: dict, *, prune: bool) -> dict:
     """Build the ``variants`` map, each carrying its own file list.
 
@@ -835,7 +886,15 @@ def build(prev: Optional[dict] = None, *, prune: bool = False) -> dict:
     prev = prev or {}
     datasets = {}
     for name, spec in DATASETS.items():
-        d = {k: v for k, v in spec.items() if k not in ("dir", "variants")}
+        if "variants" in spec and spec.get("positional_pairs"):
+            raise ValueError(
+                f"dataset {name!r} cannot declare both variants and positional_pairs"
+            )
+        d = {
+            k: v
+            for k, v in spec.items()
+            if k not in ("dir", "variants", "positional_pairs")
+        }
         # Emit the effective in-repo subdir explicitly so the packaged manifest
         # carries layout info: "" for top-level datasets, the dataset name
         # otherwise. The in-repo LFS fallback in data_fetch honours this.
@@ -843,7 +902,10 @@ def build(prev: Optional[dict] = None, *, prune: bool = False) -> dict:
         if "variants" in spec:
             d["variants"] = _variants_for(name, spec, prev, prune=prune)
         else:
-            d["files"] = _files_for(name, spec, prev, prune=prune)
+            d["files"] = _declare_positional_pairs(
+                _files_for(name, spec, prev, prune=prune),
+                spec.get("positional_pairs", {}),
+            )
         datasets[name] = d
     return {
         "schema_version": 1,
