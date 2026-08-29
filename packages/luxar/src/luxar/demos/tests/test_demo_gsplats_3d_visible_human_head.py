@@ -543,7 +543,7 @@ class TestManifestPairIsGuardedToo:
         )
         return colors, sentinel_fit, sentinel_colors
 
-    def test_a_permuted_shipped_sidecar_falls_through_to_the_refit(
+    def test_a_permuted_manifest_sidecar_falls_through_to_the_refit(
         self, tmp_path, monkeypatch
     ) -> None:
         _, sentinel_fit, sentinel_colors = self._manifest_setup(

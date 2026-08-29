@@ -43,7 +43,7 @@ the pair is verified against that invariant (splats sharing a voxel must share a
 color); a mismatched pair is reported and refitted rather than rendered.
 
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: the manifest resolves the 1,911,192-splat fit and its colors
+  1. Fast path: the manifest resolves a precomputed fit and its matching colors
      sidecar through a checksum-verified cache, the in-repo Git LFS copies, or
      the hosted record. The pair is then verified against the invariant above.
   2. If no precomputed pair is available, it downloads the 377 color slices
@@ -89,7 +89,7 @@ repair, when the fit is fine and only the sidecar is lost, is not wired into the
 demo (see the refusal in :func:`load_or_build`) but is three calls:
 ``vol, _ = assemble_volume(PNG_DIR)``, then :func:`sample_colors` at
 ``GSplatData.load(CACHE_FIT).centers``, then :func:`_save_colors_u8` — which
-preserves the shipped fit and the 20 MB of Git LFS history that goes with it.
+preserves the resolved fit instead of recomputing it.
 
 USAGE
 -----

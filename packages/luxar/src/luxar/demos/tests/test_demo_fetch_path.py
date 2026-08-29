@@ -716,18 +716,9 @@ def analyse_local_fit(source: str, datasets: dict) -> tuple[list[str], list[str]
       ``P.resolve().write_bytes(b)`` is invisible, because the receiver is a
       ``Call``.
     * ``pathlib`` reached as ``pathlib.Path(...)`` rather than an imported
-      ``Path`` (aliased ``from pathlib import Path as P`` IS handled): the
-      packaged-tree exemption would not recognise it, so a legitimate git-LFS
-      promotion spelled that way is REPORTED, not missed.
-
-    ``atomic_copy_file`` is allowed to write a manifest-owned destination when
-    its SOURCE is the in-repo packaged-data tree — a ``Path(__file__)``-rooted
-    chain containing ``data``, i.e. ``visible_human_head`` promoting its shipped
-    git-LFS pair, bytes that DO match the pinned sha256, exactly as step 2 of
-    ``_ensure_one`` does. The ``__file__`` root is load-bearing: without it
-    ``Path("/tmp/scratch") / "data" / …`` would launder any local artifact
-    through the exemption. From anywhere else the copy is reported. It is a gate
-    against the shapes the demos use, not a proof.
+      ``Path`` (aliased ``from pathlib import Path as P`` IS handled): a
+      packaged-data destination spelled that way may be REPORTED rather than
+      recognised as outside the cache, but it is not missed.
     """
     tree = ast.parse(source)
     ctx = _Ctx(tree, datasets)
@@ -821,12 +812,6 @@ def _scan_call(
 
     if callee in _MANIFEST_PATH_READERS:
         return
-    if (
-        callee == "atomic_copy_file"
-        and node.args
-        and ctx.kind_of(node.args[0])[0] == "packaged"
-    ):
-        return  # in-repo git-LFS promotion; see analyse_local_fit's docstring
     args = list(node.args) + [kw.value for kw in node.keywords]
     for arg in _searchable(args):
         hit = resolve(arg)
@@ -1001,18 +986,15 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
     assert local_fit_violations(
         header + 'D = CACHE_DIR\nsave_with_lod(fit, D / "toy_ch0.zip")\n', datasets
     )
-    # 13. An `atomic_copy_file` whose SOURCE is not the packaged tree is a write
-    #     like any other — only the in-repo git-LFS promotion is exempt.
+    # 13. An `atomic_copy_file` is a write like any other. Even packaged bytes
+    #     must go through the manifest helper so their digest is actually checked.
     assert local_fit_violations(
         header
         + 'atomic_copy_file(local_fit_path(DS, "toy_ch0.zip"), CACHE_DIR / "toy_ch0.zip")\n',
         datasets,
     )
 
-    # 14. …and neither is a source that merely has "data" somewhere in it. The
-    #     exemption is for the PACKAGED tree, which is rooted at `__file__`;
-    #     without that anchor any local scratch directory could launder a fit
-    #     into the manifest's path.
+    # 14. A source that merely has "data" somewhere in it is no different.
     assert local_fit_violations(
         header
         + 'atomic_copy_file(Path("/tmp/scratch") / "data" / "myfit.zip", CACHE_DIR / "toy_ch0.zip")\n',
@@ -1044,17 +1026,15 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
     assert not local_fit_violations(
         header + 'P = CACHE_DIR / "toy_ch0.zip"\nif P.exists():\n    pass\n', datasets
     )
-    # The one permitted write: promoting the in-repo git-LFS copy, whose bytes
-    # ARE the hosted artifact (what visible_human_head does).
-    assert not local_fit_violations(
+    # A packaged Git LFS source is still a violation: copying it by hand is the
+    # exact path that bypassed the manifest checksum in #2343.
+    assert local_fit_violations(
         header + 'DATA_DIR = Path(__file__).parent / "data" / DS\n'
         'LFS = DATA_DIR / "toy_ch0.zip"\natomic_copy_file(LFS, CACHE_DIR / "toy_ch0.zip")\n',
         datasets,
     )
-    # …and the same copy spelled through an ALIASED pathlib import. Comparing
-    # the callee name against the literal "Path" made the real packaged tree
-    # unrecognisable, i.e. reported the one write that is legitimate.
-    assert not local_fit_violations(
+    # …and the same copy spelled through an aliased pathlib import.
+    assert local_fit_violations(
         'from pathlib import Path as P\nDS = "toy_ds"\n'
         'CACHE_DIR = P.home() / ".cache" / "luxar" / DS\n'
         'DATA_DIR = P(__file__).resolve().parent / "data" / DS\n'
