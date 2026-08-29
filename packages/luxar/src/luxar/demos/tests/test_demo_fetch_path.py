@@ -1,4 +1,4 @@
-"""Every hosted gsplat demo reaches its data through the manifest.
+"""Every hosted demo dataset reaches its data through the manifest.
 
 Two ways exist to load a precomputed gsplat dataset, and only one of them
 consults the manifest:
@@ -48,6 +48,16 @@ MANIFEST = registry._DEMOS_DIR / "data_manifest.json"
 
 LFS_ONLY = {"load_precomputed_gsplats", "load_precomputed_bundle"}
 MANIFEST_DRIVEN = {"load_dataset_gsplats", "load_dataset_bundle", "ensure_dataset"}
+HOSTED_DATASET_EXCEPTIONS = {
+    # Record unpublished; the module documents its machine-local store until CC BY publishes.
+    "gsplats_4d_neuromast_2ch": "documented machine-local store",
+    # Resolves the shipped scene zip by hand and is already an analysis blind spot below.
+    "desi_galaxies": "shipped scene zip resolved directly",
+    # Packaged arrays are still read directly rather than through the manifest.
+    "census_umap_1m": "packaged NPZ read directly",
+    "3d_umap_coords_human": "packaged Parquet read directly",
+    "3d_umap_coords_mouse": "packaged Parquet read directly",
+}
 
 
 def _manifest() -> dict:
@@ -136,6 +146,49 @@ def test_manifest_driven_loaders_only_name_hosted_datasets(path: Path) -> None:
                 f"the in-repo file. Use load_precomputed_gsplats / "
                 f"load_precomputed_bundle until its bucket changes."
             )
+
+
+def test_every_hosted_dataset_is_reached_through_the_manifest() -> None:
+    """A hosted artifact must have a real path through the checksum gate.
+
+    Per-demo classification alone misses the third state: a manifest dataset
+    whose demo calls neither loader family.  ``verify_cold_fetch.py`` would still
+    exercise and count that dataset even though no user takes the verified path.
+    Union every variant because those payloads have no top-level ``files`` entry.
+    """
+    datasets = _manifest()
+    reached = {
+        name
+        for path in DEMO_PATHS
+        for helper, names in _fetch_calls(path).items()
+        if helper in MANIFEST_DRIVEN
+        for name in names
+        if name != "<unresolved>"
+    }
+    hosted = {
+        name
+        for name, spec in datasets.items()
+        if spec.get("bucket") == "zenodo"
+        and any(
+            files
+            for files in (
+                spec.get("files", []),
+                *(
+                    variant.get("files", [])
+                    for variant in spec.get("variants", {}).values()
+                ),
+            )
+        )
+    }
+    assert "h2afva" in hosted, "variant-only datasets were skipped"
+
+    unreached = hosted - reached
+    assert unreached == set(HOSTED_DATASET_EXCEPTIONS), (
+        "every hosted dataset must be reached by a demo through "
+        "load_dataset_gsplats / load_dataset_bundle / ensure_dataset; the "
+        "remaining direct readers must stay explicitly justified in "
+        f"HOSTED_DATASET_EXCEPTIONS (unreached: {sorted(unreached)})"
+    )
 
 
 def test_the_exception_list_is_exactly_the_local_compute_datasets() -> None:
@@ -341,10 +394,9 @@ def _base_atom(node: ast.expr) -> ast.expr:
 #: What a directory expression is. ``("cache", ds)`` is one the manifest owns —
 #: ``<root>/<ds>`` or ``<root>/<ds>/<declared variant>``, both of which
 #: ``ensure_dataset`` fetches into and quarantines from; ``("root", None)`` is
-#: ``~/.cache/luxar`` itself; ``("packaged", None)`` is the in-repo
-#: ``demos/data`` tree; ``("other", None)`` is a directory we can PROVE is
-#: neither (a ``Path(__file__)``-rooted chain, a non-variant subdirectory of a
-#: cache dir); ``("unknown", None)`` is one we cannot classify — the state that
+#: ``~/.cache/luxar`` itself; ``("other", None)`` is a directory we can PROVE is
+#: not the cache (a ``Path(__file__)``-rooted chain, a non-variant subdirectory
+#: of a cache dir); ``("unknown", None)`` is one we cannot classify — the state that
 #: used to be indistinguishable from "clean", and that any other ``Path(...)``
 #: head now correctly lands in.
 DirKind = tuple[str, str | None]
@@ -353,11 +405,10 @@ DirKind = tuple[str, str | None]
 def _path_names(tree: ast.Module) -> frozenset[str]:
     """Local names denoting ``pathlib.Path``, aliased imports included.
 
-    ``from pathlib import Path as P`` used to make the packaged-data tree
-    unrecognisable, which turned the one LEGITIMATE copy into the manifest's
-    path (``visible_human_head`` promoting its shipped git-LFS pair) into a
-    reported violation. A name comparison against the literal ``"Path"`` is not
-    a spelling this gate gets to assume.
+    Alias handling lets the classifier prove that a ``Path(__file__)``-rooted
+    destination is outside the cache rather than leaving it ``unknown``. A name
+    comparison against the literal ``"Path"`` is not a spelling this gate gets
+    to assume.
     """
     names = {"Path"}
     for node in ast.walk(tree):
@@ -412,14 +463,12 @@ class _Ctx:
             return self._extend(self.dirs[head.id], rest)
 
         # 4. A leftmost expression we can prove is not the cache: a
-        #    `Path(__file__)`-rooted chain, i.e. the in-repo source tree. With
-        #    `data` in it that is the packaged git-LFS tree, called out so the
-        #    one legitimate copy INTO the manifest's path can be recognised by
-        #    its source; without it, still provably not `~/.cache/luxar`,
-        #    because `__file__` is the installed module. The `__file__` root is
+        #    `Path(__file__)`-rooted chain, i.e. the in-repo source tree. It is
+        #    provably not `~/.cache/luxar` because `__file__` is the installed
+        #    module. The `__file__` root is
         #    REQUIRED, not decoration: `Path("/tmp/scratch") / "data" /
-        #    "myfit.zip"` would otherwise launder an arbitrary local artifact
-        #    through the exemption — and any OTHER `Path(...)` head is a
+        #    "myfit.zip"` would otherwise make an arbitrary local artifact look
+        #    provably outside the cache — and any OTHER `Path(...)` head is a
         #    directory whose contents this pass cannot read, so it falls through
         #    to "unknown" below rather than claiming a proof it does not have.
         #    `Path.home() / ".cache/luxar" / DS` (one literal, not two) and
@@ -440,7 +489,7 @@ class _Ctx:
                 isinstance(a, ast.Name) and a.id == "__file__" for a in base.args
             )
             if is_path_call and rooted_in_file:
-                return ("packaged" if "data" in lits else "other", None)
+                return ("other", None)
 
         return ("unknown", None)
 
@@ -680,18 +729,9 @@ def analyse_local_fit(source: str, datasets: dict) -> tuple[list[str], list[str]
       ``P.resolve().write_bytes(b)`` is invisible, because the receiver is a
       ``Call``.
     * ``pathlib`` reached as ``pathlib.Path(...)`` rather than an imported
-      ``Path`` (aliased ``from pathlib import Path as P`` IS handled): the
-      packaged-tree exemption would not recognise it, so a legitimate git-LFS
-      promotion spelled that way is REPORTED, not missed.
-
-    ``atomic_copy_file`` is allowed to write a manifest-owned destination when
-    its SOURCE is the in-repo packaged-data tree — a ``Path(__file__)``-rooted
-    chain containing ``data``, i.e. ``visible_human_head`` promoting its shipped
-    git-LFS pair, bytes that DO match the pinned sha256, exactly as step 2 of
-    ``_ensure_one`` does. The ``__file__`` root is load-bearing: without it
-    ``Path("/tmp/scratch") / "data" / …`` would launder any local artifact
-    through the exemption. From anywhere else the copy is reported. It is a gate
-    against the shapes the demos use, not a proof.
+      ``Path`` (aliased ``from pathlib import Path as P`` IS handled): a
+      packaged-data destination spelled that way may be REPORTED rather than
+      recognised as outside the cache, but it is not missed.
     """
     tree = ast.parse(source)
     ctx = _Ctx(tree, datasets)
@@ -785,12 +825,6 @@ def _scan_call(
 
     if callee in _MANIFEST_PATH_READERS:
         return
-    if (
-        callee == "atomic_copy_file"
-        and node.args
-        and ctx.kind_of(node.args[0])[0] == "packaged"
-    ):
-        return  # in-repo git-LFS promotion; see analyse_local_fit's docstring
     args = list(node.args) + [kw.value for kw in node.keywords]
     for arg in _searchable(args):
         hit = resolve(arg)
@@ -965,18 +999,15 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
     assert local_fit_violations(
         header + 'D = CACHE_DIR\nsave_with_lod(fit, D / "toy_ch0.zip")\n', datasets
     )
-    # 13. An `atomic_copy_file` whose SOURCE is not the packaged tree is a write
-    #     like any other — only the in-repo git-LFS promotion is exempt.
+    # 13. An `atomic_copy_file` is a write like any other. Even packaged bytes
+    #     must go through the manifest helper so their digest is actually checked.
     assert local_fit_violations(
         header
         + 'atomic_copy_file(local_fit_path(DS, "toy_ch0.zip"), CACHE_DIR / "toy_ch0.zip")\n',
         datasets,
     )
 
-    # 14. …and neither is a source that merely has "data" somewhere in it. The
-    #     exemption is for the PACKAGED tree, which is rooted at `__file__`;
-    #     without that anchor any local scratch directory could launder a fit
-    #     into the manifest's path.
+    # 14. A source that merely has "data" somewhere in it is no different.
     assert local_fit_violations(
         header
         + 'atomic_copy_file(Path("/tmp/scratch") / "data" / "myfit.zip", CACHE_DIR / "toy_ch0.zip")\n',
@@ -1008,17 +1039,15 @@ def test_the_guard_sees_every_path_shape_the_demos_use() -> None:
     assert not local_fit_violations(
         header + 'P = CACHE_DIR / "toy_ch0.zip"\nif P.exists():\n    pass\n', datasets
     )
-    # The one permitted write: promoting the in-repo git-LFS copy, whose bytes
-    # ARE the hosted artifact (what visible_human_head does).
-    assert not local_fit_violations(
+    # A packaged Git LFS source is still a violation: copying it by hand is the
+    # exact path that bypassed the manifest checksum in #2343.
+    assert local_fit_violations(
         header + 'DATA_DIR = Path(__file__).parent / "data" / DS\n'
         'LFS = DATA_DIR / "toy_ch0.zip"\natomic_copy_file(LFS, CACHE_DIR / "toy_ch0.zip")\n',
         datasets,
     )
-    # …and the same copy spelled through an ALIASED pathlib import. Comparing
-    # the callee name against the literal "Path" made the real packaged tree
-    # unrecognisable, i.e. reported the one write that is legitimate.
-    assert not local_fit_violations(
+    # …and the same copy spelled through an aliased pathlib import.
+    assert local_fit_violations(
         'from pathlib import Path as P\nDS = "toy_ds"\n'
         'CACHE_DIR = P.home() / ".cache" / "luxar" / DS\n'
         'DATA_DIR = P(__file__).resolve().parent / "data" / DS\n'
@@ -1097,14 +1126,18 @@ def test_the_guard_reports_a_directory_it_cannot_identify() -> None:
 
     # A directory the analysis can PROVE is not the cache is not a blind spot:
     # a `Path(__file__)`-rooted chain, which is the installed module's own tree.
-    for tail in ('/ "data" / DS', "/ DS"):
-        _, blind_packaged = analyse_local_fit(
-            'from pathlib import Path\nDS = "toy_ds"\n'
-            f"D = Path(__file__).parent {tail}\n"
-            'save_with_lod(fit, D / "toy_ch0.zip")\n',
-            datasets,
-        )
-        assert not blind_packaged, tail
+    for import_line, path_name in (
+        ("from pathlib import Path", "Path"),
+        ("from pathlib import Path as P", "P"),
+    ):
+        for tail in ('/ "data" / DS', "/ DS"):
+            _, blind_packaged = analyse_local_fit(
+                f'{import_line}\nDS = "toy_ds"\n'
+                f"D = {path_name}(__file__).parent {tail}\n"
+                'save_with_lod(fit, D / "toy_ch0.zip")\n',
+                datasets,
+            )
+            assert not blind_packaged, (path_name, tail)
 
     # Nor is an unresolvable directory joined with a name the manifest does not
     # pin — a demo's own scratch file is nobody's business.
@@ -1324,3 +1357,50 @@ def test_ct_atlas_reaches_the_manifest_on_a_cold_cache(tmp_path, monkeypatch) ->
     assert calls, "the manifest fetch was never reached on a cold cache"
     assert fit is stub_fit
     assert got_labels is stub_labels
+
+
+def test_visible_human_reaches_the_manifest_on_a_cold_cache(
+    tmp_path, monkeypatch
+) -> None:
+    """The cold-fetch verifier must exercise the path the demo really takes."""
+    demo = importlib.import_module("luxar.demos.demo_gsplats_3d_visible_human_head")
+    fit_path = tmp_path / "vh_head.gsplats.zarr.zip"
+    colors_path = tmp_path / "vh_head_colors.npz"
+    calls: list[tuple] = []
+    stub_fit = GSplatData(
+        centers=np.zeros((4, 3), dtype=np.float32),
+        amplitudes=np.ones(4, dtype=np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (4, 1)).astype(np.float32),
+    )
+    stub_colors = np.full((4, 3), 0.5, dtype=np.float32)
+
+    def _fake_fetch(*args, **kwargs):
+        calls.append(args)
+        return [fit_path, colors_path]
+
+    monkeypatch.setattr(demo, "RECOMPUTE", False)
+    monkeypatch.setattr(demo, "LOCAL_FIT", tmp_path / "absent-local.gsplats.zarr.zip")
+    monkeypatch.setattr(demo, "LOCAL_COLORS", tmp_path / "absent-local.npz")
+    monkeypatch.setattr(demo, "ensure_dataset", _fake_fetch)
+    monkeypatch.setattr(
+        demo.GSplatData,
+        "load",
+        lambda path, *, include_stats: stub_fit if path == fit_path else None,
+    )
+    monkeypatch.setattr(
+        demo,
+        "_load_colors_f32",
+        lambda path: stub_colors if path == colors_path else None,
+    )
+    monkeypatch.setattr(demo, "_colors_match_fit", lambda *args: True)
+
+    def _refit_is_a_failure():
+        raise AssertionError("fell through to the download-and-refit path")
+
+    monkeypatch.setattr(demo, "download_head_slices", _refit_is_a_failure)
+
+    fit, got_colors = demo.load_or_build()
+
+    assert calls == [(demo.DEMO_NAME,)]
+    assert fit is stub_fit
+    assert got_colors is stub_colors
