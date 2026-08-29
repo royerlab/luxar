@@ -21,9 +21,11 @@ from luxar.demos import ensure_dataset
 
 - `ensure_dataset()` resolves cache, in-repo Git LFS, then hosted data. Existing
   bytes prefer `hosted_sha256`, then `sha256`; the newest
-  `superseded_sha256` is accepted only when no current copy can replace it.
-  Unrecognized bytes are quarantined as `.corrupt` and never returned or used
-  as a download-resume base.
+  `superseded_sha256` is accepted only when no current copy can replace it. A
+  declared `positional_pair` additionally requires every partner to resolve to
+  that same generation, otherwise the whole dataset is refused. Unrecognized
+  bytes are quarantined as `.corrupt` and never returned or used as a
+  download-resume base.
 - `load_dataset_gsplats()` loads a manifest-backed Zenodo GSplat dataset, or
   returns `None` when recomputation is requested.
 - `load_manifest()` and `dataset_spec()` return independent copies of the
