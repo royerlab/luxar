@@ -2322,10 +2322,10 @@ def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys)
     assert "hosted-only" not in notice
 
 
-def test_a_superseded_positional_pair_with_lfs_pointers_names_git_lfs(
+def test_a_superseded_positional_pair_names_each_source_remedy(
     fake_repo, monkeypatch, capsys
 ):
-    """Every bypassed pair member keeps the actionable source remedy."""
+    """Every bypassed pair member keeps its own actionable source remedy."""
     manifest, cache = fake_repo
     entries = manifest["datasets"]["gsplats_toy"]["files"]
     entries[:] = [
@@ -2352,8 +2352,7 @@ def test_a_superseded_positional_pair_with_lfs_pointers_names_git_lfs(
     pointer = (
         f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
     )
-    for entry in entries:
-        (repo_pair / entry["name"]).write_text(pointer)
+    (repo_pair / "fit.gsplats.zarr.zip").write_text(pointer)
     monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
 
     paths = ensure_dataset(
@@ -2363,10 +2362,11 @@ def test_a_superseded_positional_pair_with_lfs_pointers_names_git_lfs(
     assert [path.read_bytes() for path in paths] == [b"old-fit", b"old-colors"]
     notice = capsys.readouterr().out
     assert "gsplats_toy" in notice
-    assert "fit.gsplats.zarr.zip" in notice
-    assert "colors.npz" in notice
-    assert "git lfs pull" in notice
-    assert "hosted-only" not in notice
+    assert "fit.gsplats.zarr.zip: In a source checkout, run `git lfs pull`." in notice
+    assert (
+        "colors.npz: This archive is hosted-only and has no in-repo Git LFS copy."
+        in notice
+    )
 
 
 def test_a_superseded_cache_is_replaced_when_a_route_exists(fake_repo, monkeypatch):
