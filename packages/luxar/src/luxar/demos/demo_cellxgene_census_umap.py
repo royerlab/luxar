@@ -348,20 +348,13 @@ def main() -> None:
     if override:
         cache = Path(override)
         if not cache.exists():
-            aprint(f"⚠ coords cache not found at {cache}")
+            _print_cache_guidance(f"coords cache not found at {cache}")
             return
     else:
         try:
             cache = ensure_dataset(DATASET)[0]
         except DatasetUnavailable as exc:
-            aprint(
-                f"⚠ default coords cache is unavailable: {exc}\n"
-                "  Generate it on a GPU box (see the module docstring / README):\n"
-                "    python scripts/gen_census_umap.py --n 10000000 --out <cache>.npz\n"
-                "  (needs cellxgene-census + cuml; ~96M primary human cells available),\n"
-                "  then point this demo at it via CENSUS_UMAP_CACHE=<cache>.npz.\n"
-                "  Or pre-built scenes can be served directly with `luxar serve --viewer`."
-            )
+            _print_cache_guidance(f"default coords cache is unavailable: {exc}")
             return
     output_path = get_demos_output_dir() / "cellxgene_census_umap.luxar.zarr"
     # No CPU/GPU split any more: the build no longer coarsens, so it is a write,
@@ -372,6 +365,18 @@ def main() -> None:
     aprint(f"Built {n:,}-cell scene. To view: luxar serve --viewer {output_path}")
     if not flags.get("no_serve"):
         launch_viewer(output_path, open_browser=not flags.get("serve_only", False))
+
+
+def _print_cache_guidance(detail: str) -> None:
+    """Explain how to supply a regenerated Census UMAP cache."""
+    aprint(
+        f"⚠ {detail}\n"
+        "  Generate it on a GPU box (see the module docstring / README):\n"
+        "    python scripts/gen_census_umap.py --n 10000000 --out <cache>.npz\n"
+        "  (needs cellxgene-census + cuml; ~96M primary human cells available),\n"
+        "  then point this demo at it via CENSUS_UMAP_CACHE=<cache>.npz.\n"
+        "  Or pre-built scenes can be served directly with `luxar serve --viewer`."
+    )
 
 
 if __name__ == "__main__":

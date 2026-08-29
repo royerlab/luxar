@@ -96,6 +96,34 @@ def test_explicit_cache_override_bypasses_the_manifest(
     assert seen == [override]
 
 
+def test_missing_explicit_cache_keeps_generation_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing = tmp_path / "missing.npz"
+
+    monkeypatch.setenv("CENSUS_UMAP_CACHE", str(missing))
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: pytest.fail(f"unexpected manifest lookup for {name}"),
+    )
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda *args, **kwargs: pytest.fail("missing override must not build"),
+    )
+
+    _demo.main()
+
+    output = capsys.readouterr().out
+    assert str(missing) in output
+    assert "scripts/gen_census_umap.py" in output
+    assert "CENSUS_UMAP_CACHE=<cache>.npz" in output
+
+
 def _write_synthetic_cache(path: Path, n: int = 200) -> Path:
     """Write an npz with exactly the keys ``load_cache`` reads.
 
