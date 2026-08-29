@@ -73,6 +73,33 @@ def test_manifest_loads_and_has_expected_shape():
         assert key in m["records"], f"missing record group {key}"
 
 
+def test_positional_sidecar_hosted_pairs_move_atomically():
+    """Every declared positional group must advance as one generation."""
+    manifest = load_manifest()
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for dataset_name, dataset in manifest["datasets"].items():
+        for entry in _all_files(dataset):
+            pair = entry.get("positional_pair")
+            if pair:
+                groups.setdefault((dataset_name, pair), []).append(entry)
+
+    assert groups, "manifest declares no positionally indexed payload groups"
+    for (dataset_name, pair), entries in groups.items():
+        assert len(entries) >= 2, f"{dataset_name}/{pair} has no positional partner"
+        history_lengths = {
+            len(entry.get("superseded_sha256") or ()) for entry in entries
+        }
+        assert len(history_lengths) == 1, (
+            f"{dataset_name}/{pair} members did not move atomically"
+        )
+        for entry in entries:
+            history = entry.get("superseded_sha256") or ()
+            if history:
+                assert entry.get("hosted_sha256") != history[-1], (
+                    f"{dataset_name}/{entry['name']} still names its superseded pin"
+                )
+
+
 def test_load_manifest_hands_out_an_independent_copy():
     """A caller must not be able to poison the cached parse.
 
@@ -2073,6 +2100,69 @@ def test_a_superseded_cache_is_kept_when_nothing_can_replace_it(fake_repo, monke
     assert path == dest
     assert path.read_bytes() == b"toy-splat-bytes"
     assert find_quarantined_files(dest) == [], "the last copy was destroyed"
+
+
+def test_a_positional_pair_rejects_mixed_current_and_superseded_caches(
+    fake_repo, monkeypatch
+):
+    """An irreplaceable fallback must not pair stale payload with a current fit."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"current-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    with pytest.raises(DatasetUnavailable, match="positional pair.*toy"):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+
+def test_a_complete_superseded_positional_pair_remains_usable(fake_repo, monkeypatch):
+    """A prior generation is safe when every positional member is present."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"old-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    paths = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert [path.read_bytes() for path in paths] == [b"old-fit", b"old-colors"]
 
 
 def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys):

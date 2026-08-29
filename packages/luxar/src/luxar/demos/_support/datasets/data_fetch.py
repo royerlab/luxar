@@ -313,6 +313,9 @@ def ensure_dataset(
     parts = [p for p in (subdir, variant_name) if p]
     lfs_dir = _DEMOS_DATA_DIR.joinpath(*parts)
     record = m["records"].get(spec.get("record", ""), {})
+    positional_fallbacks = _positional_superseded_fallbacks(
+        files, cache_dir, lfs_dir, record, verbose
+    )
 
     resolved: list[Path] = []
     label = f"{name}:{variant_name}" if variant_name else name
@@ -320,6 +323,9 @@ def ensure_dataset(
         for entry in files:
             fname = entry["name"]
             dest = cache_dir / fname
+            if fname in positional_fallbacks:
+                resolved.append(dest)
+                continue
             resolved.append(
                 _ensure_one(
                     dest,
@@ -408,6 +414,83 @@ def _accepted_contract(
         return None
 
     return _verdict_from_one_pass(path, candidates, verbose)
+
+
+def _has_current_source(lfs_dir: Path, record: Manifest, fname: str) -> bool:
+    """Whether the current generation can be obtained without cache fallback."""
+    lfs_file = lfs_dir / fname
+    has_repo_copy = lfs_file.is_file() and not is_lfs_pointer(lfs_file)
+    return has_repo_copy or zenodo_file_url(record, fname) is not None
+
+
+def _positional_superseded_fallbacks(
+    files: list[Manifest],
+    cache_dir: Path,
+    lfs_dir: Path,
+    record: Manifest,
+    verbose: bool,
+) -> set[str]:
+    """Return members that may reuse one complete superseded generation.
+
+    The ordinary resolver decides fallback eligibility per file. Positionally
+    indexed sidecars cannot: if one member has no current source and must stay
+    on its previous generation, every member must have that same generation in
+    cache. Otherwise returning the files would silently pair unrelated rows.
+    """
+    groups: dict[str, list[Manifest]] = {}
+    for entry in files:
+        group = entry.get("positional_pair")
+        if group:
+            groups.setdefault(group, []).append(entry)
+
+    fallbacks: set[str] = set()
+    for group, entries in groups.items():
+        verdicts: dict[str, Optional[str]] = {}
+
+        def cached_verdict(entry: Manifest) -> Optional[str]:
+            fname = entry["name"]
+            if fname not in verdicts:
+                verdicts[fname] = _accepted_contract(
+                    cache_dir / fname,
+                    entry.get("sha256"),
+                    entry.get("hosted_sha256"),
+                    verbose,
+                    tuple(entry.get("superseded_sha256") or ()),
+                )
+            return verdicts[fname]
+
+        forced = any(
+            not _has_current_source(lfs_dir, record, entry["name"])
+            and cached_verdict(entry) == "superseded"
+            for entry in entries
+        )
+        if not forced:
+            continue
+
+        history_lengths = {
+            len(entry.get("superseded_sha256") or ()) for entry in entries
+        }
+        all_superseded = all(cached_verdict(entry) == "superseded" for entry in entries)
+        if not all_superseded or len(history_lengths) != 1:
+            states = ", ".join(
+                f"{entry['name']}={cached_verdict(entry) or 'missing/corrupt'}"
+                for entry in entries
+            )
+            raise DatasetUnavailable(
+                f"Cannot assemble positional pair {group!r}: one member requires "
+                "a superseded cache fallback, but the cached members are not the "
+                f"same generation ({states}). Obtain every current member or "
+                "restore the complete prior generation."
+            )
+
+        names = {entry["name"] for entry in entries}
+        fallbacks.update(names)
+        aprint(
+            f"⚠️  Using SUPERSEDED positional pair {group!r}: every member matches "
+            "the same previously pinned generation, and at least one current "
+            "member is unavailable. The pair is out of date, not corrupt."
+        )
+    return fallbacks
 
 
 def _verdict_from_one_pass(
