@@ -461,9 +461,7 @@ datasets are affected:
 | dataset | files | repo MB | hosted MB | ratio |
 |---|---:|---:|---:|---:|
 | `gsplats_cells3d` | 2 | 0.6 | 1.3 | 2.25x |
-| `gsplats_ct_totalsegmentator` | 2 | 7.2 | 10.2 | 1.42x |
 | `gsplats_milkyway_dust` | 1 | 7.8 | 10.6 | 1.36x |
-| `gsplats_visible_human_head` | 2 | 25.6 | 34.5 | 1.35x |
 | `gsplats_cmu1_pathology` | 3 | 113.8 | 150.1 | 1.32x |
 | `gsplats_nexrad_supercell` | 1 | 10.1 | 12.9 | 1.28x |
 | `gsplats_dapi` | 1 | 0.1 | 0.1 | 1.22x |
@@ -472,7 +470,9 @@ datasets are affected:
 | `gsplats_kidney` | 3 | 2.1 | 2.1 | 0.99x |
 | `gsplats_multichannel` | 2 | 0.4 | 0.4 | 0.95x |
 | `gsplats_cryoem_virus` | 1 | 11.1 | 10.6 | 0.95x |
+| `gsplats_visible_human_head` | 2 | 25.6 | 24.3 | 0.95x |
 | `gsplats_flylight_mcfo_63x` | 1 | 8.2 | 7.7 | 0.94x |
+| `gsplats_ct_totalsegmentator` | 2 | 7.2 | 6.7 | 0.93x |
 | `gsplats_opencell_map4` | 2 | 1.6 | 1.5 | 0.93x |
 
 So the presence of `hosted_sha256` **is** the divergence signal — there is
