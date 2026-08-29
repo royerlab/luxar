@@ -829,7 +829,11 @@ def _declare_positional_pairs(
     by_name = {entry["name"]: entry for entry in files}
     declared: set[str] = set()
     for group, members in groups.items():
-        missing = set(members) - by_name.keys()
+        member_names = set(members)
+        present = member_names.intersection(by_name)
+        if not present:
+            continue
+        missing = member_names - by_name.keys()
         if missing:
             raise ValueError(
                 f"positional pair {group!r} names missing files: {sorted(missing)}"
