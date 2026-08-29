@@ -929,6 +929,19 @@ def test_green_schedule_repairs_cancelled_push_contexts(workflow: str) -> None:
         "docs-quality",
     ):
         assert context in script
+    redispatch_tree = ast.parse(
+        (REPO / "scripts/ci_queue_redispatch.py").read_text(encoding="utf-8")
+    )
+    required_redispatch_jobs = next(
+        ast.literal_eval(node.value)
+        for node in redispatch_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "REQUIRED_OBSIDIAN_JOBS"
+            for target in node.targets
+        )
+    )
+    assert all(context in script for context in required_redispatch_jobs)
     assert "actions/jobs/$job_id/rerun" in script
     assert "actions/runs/${push_run}/rerun-failed-jobs" in script
 

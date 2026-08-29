@@ -23,6 +23,10 @@ class Candidate:
     queued: tuple[str, ...]
 
 
+class CancellationRejected(ci_queue_scan.ApiError):
+    """The recovery run exists, but the target run was not cancelled."""
+
+
 def select_candidate(result: ci_queue_scan.ScanResult) -> Candidate | None:
     """Select one wholly queued run only when complete saturation evidence exists."""
     if result.error is not None or result.truncated or not result.running:
@@ -85,7 +89,10 @@ def hand_off_and_cancel(
         f"repos/{repository}/actions/workflows/{WORKFLOW}/dispatches",
         {"ref": ref, "inputs[target_run_id]": str(candidate.run_id)},
     )
-    write(f"{run_endpoint}/cancel", None)
+    try:
+        write(f"{run_endpoint}/cancel", None)
+    except ci_queue_scan.ApiError as error:
+        raise CancellationRejected(str(error)) from error
     return True
 
 
@@ -126,7 +133,13 @@ def finish_redispatch(
 
 
 def scan_and_handoff(
-    repository: str, *, ref: str, queued_before: float, max_runs: int
+    repository: str,
+    *,
+    ref: str,
+    queued_before: float,
+    max_runs: int,
+    read: Callable[[str], object] = ci_queue_scan.read_api,
+    write: Callable[[str, Mapping[str, str] | None], None] = write_api,
 ) -> int:
     result = ci_queue_scan.scan_repository(
         repository,
@@ -147,7 +160,12 @@ def scan_and_handoff(
     names = ", ".join(candidate.queued)
     print(f"run {candidate.run_id} has aged queued obsidian jobs ({names})")
     try:
-        changed = hand_off_and_cancel(repository, ref, candidate)
+        changed = hand_off_and_cancel(
+            repository, ref, candidate, read=read, write=write
+        )
+    except CancellationRejected as error:
+        print(f"recovery run dispatched but cancellation was rejected: {error}")
+        return 0
     except ci_queue_scan.ApiError as error:
         print(f"redispatch handoff failed safely: {error}")
         return 0

@@ -256,7 +256,6 @@ jobs:
         name: Keep fork code and forced-hosted runs off obsidian
         env:
           FORCE_HOSTED: ${{ vars.LUXAR_CI_FORCE_HOSTED }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
           # Empty on push events; the `|| github.repository` makes those read
           # as same-repo, which they are.
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
@@ -276,6 +275,7 @@ jobs:
             echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
       - id: scanner-checkout
         name: Check out the stdlib queue scanner
         if: steps.guard.outputs.label == ''
@@ -514,8 +514,8 @@ jobs:
               echo "job liveness unreadable; not cancelling on a fluke — retrying"
               sleep 30; continue
             fi
-            # The API request itself is capped at 100 runs, so max-runs=100
-            # cannot truncate this single-status liveness scan.
+            # This liveness scan deliberately ignores truncation: it only needs
+            # one active obsidian job to prove the box is still making progress.
             other_running=$(echo "$liveness" | jq -r '.running | join(", ")')
             if [ -n "$other_running" ]; then
               no_activity_checks=0

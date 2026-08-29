@@ -36,6 +36,11 @@ def test_select_candidate_requires_complete_saturation_evidence() -> None:
     unsafe_results = [
         ci_queue_scan.ScanResult(
             running=["other run"],
+            error={"scope": "jobs", "detail": "boom"},
+            runs=[ci_queue_scan.RunScan(10, queued=["python-tests (3.12)"])],
+        ),
+        ci_queue_scan.ScanResult(
+            running=["other run"],
             truncated=True,
             runs=[ci_queue_scan.RunScan(10, queued=["python-tests (3.12)"])],
         ),
@@ -82,6 +87,147 @@ def test_handoff_precedes_cancellation() -> None:
         ),
         ("repos/royerlab/luxar/actions/runs/42/cancel", None),
     ]
+
+
+def test_handoff_distinguishes_cancel_rejection_after_dispatch() -> None:
+    writes: list[tuple[str, object]] = []
+
+    def write(endpoint: str, fields: object) -> None:
+        writes.append((endpoint, fields))
+        if endpoint.endswith("/cancel"):
+            raise ci_queue_scan.ApiError("conflict")
+
+    with pytest.raises(ci_queue_redispatch.CancellationRejected, match="conflict"):
+        ci_queue_redispatch.hand_off_and_cancel(
+            "royerlab/luxar",
+            "dev",
+            ci_queue_redispatch.Candidate(42, ("typescript-tests",)),
+            read=lambda endpoint: {"status": "in_progress", "run_attempt": 1},
+            write=write,
+        )
+
+    assert writes == [
+        (
+            "repos/royerlab/luxar/actions/workflows/ci-queue-redispatch.yml/dispatches",
+            {"ref": "dev", "inputs[target_run_id]": "42"},
+        ),
+        ("repos/royerlab/luxar/actions/runs/42/cancel", None),
+    ]
+
+
+def test_scan_reports_post_dispatch_cancel_rejection(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def read(endpoint: str) -> object:
+        if endpoint.endswith("actions/runs?status=in_progress&per_page=100"):
+            return {
+                "workflow_runs": [
+                    {
+                        "id": 7,
+                        "name": "CI",
+                        "status": "in_progress",
+                        "created_at": "2026-08-28T20:00:00Z",
+                    },
+                    {
+                        "id": 42,
+                        "name": "CI",
+                        "status": "in_progress",
+                        "created_at": "2026-08-28T20:00:00Z",
+                    },
+                ]
+            }
+        if endpoint.endswith("actions/runs?status=queued&per_page=100"):
+            return {"workflow_runs": []}
+        if endpoint.endswith("actions/runs/7/jobs?per_page=100"):
+            return {
+                "jobs": [
+                    {
+                        "name": "python-tests (3.13)",
+                        "status": "in_progress",
+                        "labels": ["obsidian"],
+                    }
+                ]
+            }
+        if endpoint.endswith("actions/runs/42/jobs?per_page=100"):
+            return {
+                "jobs": [
+                    {
+                        "name": "python-tests (3.12)",
+                        "status": "queued",
+                        "created_at": "2026-08-28T20:00:00Z",
+                        "labels": ["obsidian"],
+                    }
+                ]
+            }
+        if endpoint.endswith("actions/runs/42"):
+            return {"status": "in_progress", "run_attempt": 1}
+        raise AssertionError(endpoint)
+
+    writes: list[str] = []
+
+    def write(endpoint: str, fields: object) -> None:
+        writes.append(endpoint)
+        if endpoint.endswith("/cancel"):
+            raise ci_queue_scan.ApiError("conflict")
+
+    monkeypatch.setattr(ci_queue_scan, "read_api", read)
+    assert (
+        ci_queue_redispatch.scan_and_handoff(
+            "royerlab/luxar",
+            ref="dev",
+            queued_before=1_800_000_000,
+            max_runs=100,
+            read=read,
+            write=write,
+        )
+        == 0
+    )
+
+    assert writes[-1].endswith("/cancel")
+    output = capsys.readouterr().out
+    assert "recovery run dispatched but cancellation was rejected: conflict" in output
+    assert "failed safely" not in output
+
+
+def test_scan_leaves_runs_alone_when_repository_read_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def read(endpoint: str) -> object:
+        raise ci_queue_scan.ApiError("boom")
+
+    monkeypatch.setattr(ci_queue_scan, "read_api", read)
+    assert (
+        ci_queue_redispatch.scan_and_handoff(
+            "royerlab/luxar",
+            ref="dev",
+            queued_before=1_800_000_000,
+            max_runs=100,
+            write=lambda endpoint, fields: pytest.fail("must not write"),
+        )
+        == 0
+    )
+    assert "queue scan unreadable (runs); leaving runs alone" in capsys.readouterr().out
+
+
+def test_scan_leaves_runs_alone_when_result_is_truncated(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        ci_queue_scan,
+        "read_api",
+        lambda endpoint: {"workflow_runs": [{"id": run_id} for run_id in range(100)]},
+    )
+    assert (
+        ci_queue_redispatch.scan_and_handoff(
+            "royerlab/luxar",
+            ref="dev",
+            queued_before=1_800_000_000,
+            max_runs=0,
+            write=lambda endpoint, fields: pytest.fail("must not write"),
+        )
+        == 0
+    )
+    assert "queue scan truncated; leaving runs alone" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
