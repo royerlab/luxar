@@ -106,3 +106,48 @@ def test_build_rejects_positional_pairs_on_variants(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="variants.*positional_pairs"):
         generator.build()
+
+
+def test_hosted_repin_rejects_a_shrunk_existing_history() -> None:
+    generator = _load_generator()
+    committed = {
+        "datasets": {
+            "toy": {
+                "files": [
+                    {
+                        "name": "fit.zip",
+                        "hosted_sha256": "a" * 64,
+                        "superseded_sha256": ["0" * 64],
+                    }
+                ]
+            }
+        }
+    }
+    repinned = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "hosted_sha256": "b" * 64}]}}
+    }
+
+    with pytest.raises(ValueError, match="hosted re-pin.*shrinks"):
+        generator._refuse_shrunk_repin_history(repinned, committed)
+
+
+def test_unchanged_hosted_pin_may_remove_obsolete_history() -> None:
+    generator = _load_generator()
+    committed = {
+        "datasets": {
+            "toy": {
+                "files": [
+                    {
+                        "name": "fit.zip",
+                        "hosted_sha256": "a" * 64,
+                        "superseded_sha256": ["0" * 64],
+                    }
+                ]
+            }
+        }
+    }
+    current = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "hosted_sha256": "a" * 64}]}}
+    }
+
+    generator._refuse_shrunk_repin_history(current, committed)

@@ -51,6 +51,7 @@ import difflib
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -753,7 +754,60 @@ _HOSTED_KEYS = ("hosted_sha256", "hosted_bytes")
 #: Unbounded and ordered newest-last: a flat list of 64-char hashes is a few
 #: hundred bytes even after many re-pins. Reverting a pin moves that digest to
 #: the end so the runtime's one-generation fallback remains correct.
+#: The generator can reject a hosted re-pin that SHRINKS an existing history,
+#: but it cannot prove that a newly authored history digest is the actual
+#: outgoing hosted artifact: those bytes do not exist in repository state.
 _SUPERSEDED_KEY = "superseded_sha256"
+
+
+def _manifest_file_entries(manifest: dict) -> dict[tuple[str, str, str], dict]:
+    """Index manifest file entries by dataset, variant, and filename."""
+    entries = {}
+    for dataset_name, dataset in manifest.get("datasets", {}).items():
+        for entry in dataset.get("files", ()):
+            entries[(dataset_name, "", entry["name"])] = entry
+        for variant_name, variant in dataset.get("variants", {}).items():
+            for entry in variant.get("files", ()):
+                entries[(dataset_name, variant_name, entry["name"])] = entry
+    return entries
+
+
+def _refuse_shrunk_repin_history(current: dict, committed: Optional[dict]) -> None:
+    """Reject hosted re-pins that discard an already-recorded history."""
+    if not committed:
+        return
+    old_entries = _manifest_file_entries(committed)
+    for identity, entry in _manifest_file_entries(current).items():
+        old_entry = old_entries.get(identity)
+        if not old_entry or entry.get("hosted_sha256") == old_entry.get(
+            "hosted_sha256"
+        ):
+            continue
+        old_history = old_entry.get(_SUPERSEDED_KEY) or ()
+        new_history = entry.get(_SUPERSEDED_KEY) or ()
+        if old_history and len(new_history) < len(old_history):
+            dataset, variant, filename = identity
+            location = "/".join(part for part in (dataset, variant, filename) if part)
+            raise ValueError(
+                f"hosted re-pin for {location} shrinks {_SUPERSEDED_KEY} "
+                f"from {len(old_history)} entries to {len(new_history)}"
+            )
+
+
+def _head_manifest() -> Optional[dict]:
+    """Read the manifest at HEAD when git is available, else return ``None``."""
+    relative = MANIFEST.relative_to(REPO_ROOT).as_posix()
+    try:
+        text = subprocess.run(
+            ["git", "show", f"HEAD:{relative}"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+        return json.loads(text)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
 
 
 def _carry_hosted(found: list[dict], committed: list[dict]) -> list[dict]:
@@ -942,7 +996,12 @@ def main() -> int:
         print(f"error: cannot read {MANIFEST}: {exc}", file=sys.stderr)
         return 2
 
-    manifest = build(previous, prune=args.prune)
+    try:
+        _refuse_shrunk_repin_history(previous, _head_manifest())
+        manifest = build(previous, prune=args.prune)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     text = json.dumps(manifest, indent=2) + "\n"
 
     if args.check:
