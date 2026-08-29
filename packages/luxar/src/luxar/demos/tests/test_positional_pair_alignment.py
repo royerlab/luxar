@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,69 @@ def _pair_cases() -> list[pytest.param]:
             )
         )
     return cases
+
+
+def test_cache_hit_does_not_walk_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = "toy"
+    filename = "fit.zip"
+    payload = b"current hosted bytes"
+    cache = tmp_path / "cache"
+    staging = tmp_path / "staging"
+    cache_file = cache / dataset / filename
+    cache_file.parent.mkdir(parents=True)
+    staging.mkdir()
+    cache_file.write_bytes(payload)
+    entry = {
+        "name": filename,
+        "hosted_sha256": hashlib.sha256(payload).hexdigest(),
+        "hosted_bytes": len(payload),
+    }
+
+    def fail_rglob(_path: Path, _pattern: str) -> Iterator[Path]:
+        raise AssertionError("staging was walked despite a valid cache hit")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "_CACHE", cache)
+    monkeypatch.setattr(module, "_STAGING_ROOT", staging)
+
+    assert _locate(dataset, entry) == cache_file
+
+
+def test_size_mismatch_is_not_hashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = "toy"
+    filename = "fit.zip"
+    payload = b"current hosted bytes"
+    cache = tmp_path / "cache"
+    staging = tmp_path / "staging"
+    cache_file = cache / dataset / filename
+    staged_file = staging / filename
+    cache_file.parent.mkdir(parents=True)
+    staging.mkdir()
+    cache_file.write_bytes(b"wrong size")
+    staged_file.write_bytes(payload)
+    entry = {
+        "name": filename,
+        "hosted_sha256": hashlib.sha256(payload).hexdigest(),
+        "hosted_bytes": len(payload),
+    }
+    hashed: list[Path] = []
+
+    def recording_sha256(path: Path) -> str:
+        hashed.append(path)
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "_CACHE", cache)
+    monkeypatch.setattr(module, "_STAGING_ROOT", staging)
+    monkeypatch.setattr(module, "_sha256", recording_sha256)
+
+    assert _locate(dataset, entry) == staged_file
+    assert hashed == [staged_file]
 
 
 @pytest.mark.slow
