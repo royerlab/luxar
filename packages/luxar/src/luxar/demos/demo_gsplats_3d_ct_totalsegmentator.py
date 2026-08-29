@@ -495,10 +495,11 @@ def _load_labels(path: Path) -> np.ndarray:
 def _labels_match_fit(fit: GSplatData, labels: np.ndarray, source: str) -> bool:
     """Is this (fit, labels) pair positionally aligned? Reports why if not.
 
-    The labels are indexed positionally against the fit, so a sidecar written in
-    a different splat order than the store is silently wrong (wrong colors, wrong
-    layers, wrong tooltips). Both were sampled nearest-voxel, so splats sharing a
-    voxel must share a label — see ``voxel_sampled_payload_agreement``.
+    The labels are indexed positionally against the fit; the manifest's
+    ``positional_pair`` declaration keeps hosted generations together, while
+    this check catches a sidecar written in a different splat order (wrong
+    colors, layers, and tooltips). Both were sampled nearest-voxel, so splats
+    sharing a voxel must share a label — see ``voxel_sampled_payload_agreement``.
     """
     if len(labels) != len(fit.centers):
         aprint(

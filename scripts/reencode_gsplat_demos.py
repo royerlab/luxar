@@ -56,6 +56,7 @@ DATA_DIR = REPO / "packages/luxar/src/luxar/demos/data"
 # Re-encoding those fits REORDERS their splats (`flatten` + `lod --recipe stream`,
 # or `additive`), which silently invalidates the sidecar sitting next to them —
 # exactly the bug of #1670, which originally misordered the Visible Human sidecar.
+# Keep this refusal list aligned with the manifest's ``positional_pair`` declarations.
 # This script has no way to resample a sidecar (the source volume is not in hand),
 # so it refuses these datasets rather than recreating the bug.
 SIDECAR_PAIRED_DIRS = frozenset(

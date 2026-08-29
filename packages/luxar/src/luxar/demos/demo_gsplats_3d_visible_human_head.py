@@ -430,10 +430,12 @@ def _load_colors_f32(path: Path) -> np.ndarray:
 def _colors_match_fit(fit: GSplatData, colors: np.ndarray, source: str) -> bool:
     """Is this (fit, colors) pair positionally aligned? Reports why if not.
 
-    The colors are indexed positionally against the fit, so a sidecar written in a
-    different splat order than the store is silently wrong — every splat renders
-    some other splat's color. Both were sampled nearest-voxel, so splats sharing a
-    voxel must share a color — see ``voxel_sampled_payload_agreement``.
+    The colors are indexed positionally against the fit; the manifest's
+    ``positional_pair`` declaration keeps hosted generations together, while
+    this check catches a sidecar written in a different splat order — every
+    splat renders some other splat's color. Both were sampled nearest-voxel, so
+    splats sharing a voxel must share a color — see
+    ``voxel_sampled_payload_agreement``.
     """
     if len(colors) != len(fit.centers):
         aprint(

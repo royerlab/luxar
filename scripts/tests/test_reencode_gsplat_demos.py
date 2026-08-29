@@ -65,7 +65,10 @@ def test_the_refused_set_matches_the_datasets_that_ship_an_npz() -> None:
         directory = spec.get("dir", name)
         if not directory.startswith("gsplats_"):
             continue
-        files = [f["name"] for f in spec.get("files", [])]
+        entries = spec.get("files", [])
+        files = [f["name"] for f in entries]
+        if any(entry.get("positional_pair") for entry in entries):
+            with_sidecar.add(directory)
         if any(f.endswith(".zip") for f in files) and any(
             f.endswith(".npz") for f in files
         ):
