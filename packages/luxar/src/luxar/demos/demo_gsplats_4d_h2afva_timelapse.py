@@ -29,7 +29,7 @@ STRUCTURE:
       - The substitutive levels were the same splats at coarser merges, i.e.
         pure download weight for a node that is never seen whole.
 
-    Dropping both and re-chunking took the archive from 1.87 GB to 1.06 GB and
+    Dropping both and re-chunking took the archive from 1.87 GB to 1.12 GB and
     from 173 requests per timepoint step to 2, at identical finest-level content.
 
 DATA SOURCE & CITATIONS:
@@ -39,10 +39,11 @@ DATA SOURCE & CITATIONS:
 
 WHICH TIMEPOINTS:
     Every fifth frame of the 253-timepoint recording — original indices
-    0, 5, 10, ... 250 — giving 51 frames. The archive records this itself
-    (``source_archive``, ``source_stride``, ``source_timepoints``), and the
-    stacked axis is renumbered 0..50 so the viewer's discrete navigation grid
-    lands exactly on stored values.
+    0, 5, 10, ... 250 — giving 51 frames. If an archive records
+    ``source_stride`` or ``source_timepoints``, scene creation cross-checks those
+    attributes; the pinned archive does not retain them. Its stacked axis is
+    renumbered 0..50 so the viewer's discrete navigation grid lands exactly on
+    stored values.
 
     The Time axis is therefore a FRAME INDEX, not minutes. The acquisition
     interval is not recorded anywhere in this dataset or its metadata, and
@@ -59,7 +60,7 @@ ANISOTROPY AND UNITS:
     lateral pitch (0.40625 um) folded in as a second uniform scale. This
     archive does not, and grafting cannot apply one — converting would mean a
     ``gsplat transform --scale 0.40625,0.40625,0.40625,1`` pass over the whole
-    1.87 GB fit, which changes its bytes and therefore its published checksum.
+    1.12 GB fit, which changes its bytes and therefore its published checksum.
     That is a data-side change, not a scene-authoring one, so the axes here are
     honest about being pixels. At the companion's calibration (0.40625 um
     laterally, 1.625 um axially) this envelope is 660 x 828 x 831 um.
@@ -229,11 +230,13 @@ def _validate_parent(path: Path) -> None:
             f"per-part structure this reproduces."
         )
     bounds = attrs.get("position_bounds") or {}
-    stacked_max = (bounds.get("max") or [None] * 4)[TIME_COL]
+    maximum = bounds.get("max") or []
+    stacked_max = maximum[TIME_COL] if len(maximum) > TIME_COL else None
     if stacked_max is None:
         raise SystemExit(
-            f"{path.name} declares no position_bounds, so its timepoint count "
-            f"cannot be checked. Refusing to walk 602M splats on faith."
+            f"{path.name} declares no position_bounds maximum for stacked column "
+            f"{TIME_COL}, so its timepoint count cannot be checked. Refusing to "
+            f"walk 602M splats on faith."
         )
     frames = int(round(float(stacked_max))) + 1
     # Check what the stride WILL yield, not the parent's exact length: 253

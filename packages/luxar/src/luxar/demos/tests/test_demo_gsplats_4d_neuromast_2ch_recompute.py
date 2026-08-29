@@ -19,6 +19,8 @@ import pytest
 
 from luxar._zarr_compat import open_group
 from luxar.demos import demo_gsplats_4d_neuromast_2ch as demo
+from luxar.gsplats.gsplat_data import AdditiveSubLOD
+from luxar.gsplats.tree import GSplatLeaf
 
 SMALL = (4, 3, 5, 6)
 
@@ -52,6 +54,16 @@ def _source(tmp_path, name="src", *, values=None, shape=SMALL):
     # what `zarr.open` on the real sources returns.
     del zarr
     return tmp_path / f"{name}_store" / "root"
+
+
+def _leaf_with_rungs(rungs):
+    """A tiny real leaf whose splat and rung counts are independently visible."""
+    sublod = AdditiveSubLOD(
+        centers=np.zeros((1, 4), dtype=np.float32),
+        amplitudes=np.ones(1, dtype=np.float32),
+        cholesky_factors=np.ones((1, 10), dtype=np.float32),
+    )
+    return GSplatLeaf(additive_sublods=[sublod] * rungs, meta={})
 
 
 class TestTheBackgroundSubtractionIsClippedAtZero:
@@ -89,6 +101,21 @@ class TestTheBackgroundSubtractionIsClippedAtZero:
         data = np.asarray(out[:])
         for t in range(SMALL[0]):
             assert data[t].min() == pytest.approx(15.0), f"timepoint {t} not written"
+
+    def test_a_zip_store_is_closed_after_the_streamed_read(self, tmp_path):
+        import zarr
+        from zarr.storage import ZipStore
+
+        src = tmp_path / "source.zip"
+        store = ZipStore(str(src), mode="w")
+        array = zarr.create_array(store=store, shape=SMALL, dtype="float32")
+        array[:] = 20.0
+        store.close()
+
+        with demo._open_source(src) as opened:
+            opened_store = opened.store
+            assert opened_store._is_open
+        assert not opened_store._is_open
 
 
 class TestAWrongShapedSourceIsRefused:
@@ -177,3 +204,17 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
     def test_the_seed_budget_is_the_calibrated_k_star(self):
         assert demo.SEEDS == 64_000
         assert demo.PRESET == "n2s"
+
+    def test_the_merged_leaf_has_the_recorded_progressive_rungs(self):
+        channel = {"name": "membranes", "expected_splats": demo.EXPECTED_RUNGS}
+        got = demo._validate_rebuilt_channel(
+            channel, [_leaf_with_rungs(demo.EXPECTED_RUNGS)]
+        )
+        assert got == demo.EXPECTED_RUNGS
+
+    def test_a_changed_progressive_recipe_is_rejected(self):
+        channel = {"name": "membranes", "expected_splats": demo.EXPECTED_RUNGS - 1}
+        with pytest.raises(RuntimeError, match="progressive rungs"):
+            demo._validate_rebuilt_channel(
+                channel, [_leaf_with_rungs(demo.EXPECTED_RUNGS - 1)]
+            )

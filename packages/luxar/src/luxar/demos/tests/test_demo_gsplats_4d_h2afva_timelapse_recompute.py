@@ -88,6 +88,16 @@ class TestTheWrongParentIsRefused:
         with pytest.raises(SystemExit, match="no position_bounds"):
             demo._validate_parent(tmp_path / "p.gsplats.zarr")
 
+    def test_a_three_dimensional_parent_names_the_missing_time_bound(
+        self, monkeypatch, tmp_path
+    ):
+        _attrs(
+            monkeypatch,
+            {"kind": "partition", "position_bounds": {"max": [10, 20, 30]}},
+        )
+        with pytest.raises(SystemExit, match="no position_bounds"):
+            demo._validate_parent(tmp_path / "3d.gsplats.zarr")
+
 
 class TestTheRecipeConstantsAgreeWithEachOther:
     def test_the_stride_yields_the_expected_frames_from_the_real_parent(self):

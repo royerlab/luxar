@@ -99,8 +99,9 @@ DEMO_META = {
 
 import os
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Sequence
 
 import numpy as np
 from arbol import aprint, asection
@@ -212,8 +213,9 @@ EXPECTED_RUNGS = 8
 BGSUB_ARRAY_KEY = "volume"
 
 
-def _open_source(path: Path) -> Any:
-    """Open a channel source, zipped or not, and return its 4D array.
+@contextmanager
+def _open_source(path: Path) -> Iterator[Any]:
+    """Yield a channel source's 4D array and close any zip store afterwards.
 
     The zip branch is load-bearing: zarr-python 3 no longer sniffs the `.zip`
     suffix, and the membrane channel ships as a 7.5 GB zipped array, so handing
@@ -222,13 +224,20 @@ def _open_source(path: Path) -> Any:
     """
     import zarr
 
-    if path.suffix == ".zip":
-        from zarr.storage import ZipStore
+    store = None
+    try:
+        if path.suffix == ".zip":
+            from zarr.storage import ZipStore
 
-        # Read the shape and hand back an in-memory-free view: the caller
-        # slices per timepoint, so the store must stay open for its lifetime.
-        return zarr.open(store=ZipStore(str(path), mode="r"), mode="r")
-    return zarr.open(str(path), mode="r")
+            # The caller slices per timepoint, so keep the store open for the
+            # yielded array's lifetime rather than loading the archive.
+            store = ZipStore(str(path), mode="r")
+            yield zarr.open(store=store, mode="r")
+        else:
+            yield zarr.open(str(path), mode="r")
+    finally:
+        if store is not None:
+            store.close()
 
 
 def _subtract_background(src: Path, out: Path, floor: float) -> Path:
@@ -238,39 +247,52 @@ def _subtract_background(src: Path, out: Path, floor: float) -> Path:
     100 x 84 x 580 x 576 float32 = 11.2 GB, and one expression would hold the
     input, the shifted copy and the clipped copy at once.
 
-    Returns the path of the written ARRAY (``out/<BGSUB_ARRAY_KEY>``).
+    Returns the path of the written group; the array is ``out/<BGSUB_ARRAY_KEY>``.
     """
     from luxar._zarr_compat import create_array, open_group
 
-    array = _open_source(src)
-    shape = tuple(getattr(array, "shape", ()) or ())
-    if shape != SOURCE_SHAPE:
-        raise SystemExit(
-            f"{src.name} has shape {shape or 'no array at its root'}, want "
-            f"{SOURCE_SHAPE}. Both channels of this recording share that extent, "
-            f"so a mismatch means the wrong file or a partial assembly."
-        )
-    with asection(f"Subtracting background floor {floor:.4f} -> {out.name}"):
-        group = open_group(out, mode="w")
-        dest = create_array(
-            group,
-            BGSUB_ARRAY_KEY,
-            shape=SOURCE_SHAPE,
-            dtype="float32",
-            # One timepoint per chunk: every consumer downstream (the fit, the
-            # cull, this loop) reads exactly one timepoint at a time.
-            chunks=(1,) + SOURCE_SHAPE[1:],
-            compressor=None,
-        )
-        for t in range(SOURCE_SHAPE[0]):
-            frame = np.asarray(array[t], dtype=np.float32)
-            np.subtract(frame, np.float32(floor), out=frame)
-            np.clip(frame, 0.0, None, out=frame)
-            dest[t] = frame
-        dest.attrs["axes"] = SOURCE_AXES
-        dest.attrs["background_floor"] = float(floor)
-        dest.attrs["source"] = str(src)
+    with _open_source(src) as array:
+        shape = tuple(getattr(array, "shape", ()) or ())
+        if shape != SOURCE_SHAPE:
+            raise SystemExit(
+                f"{src.name} has shape {shape or 'no array at its root'}, want "
+                f"{SOURCE_SHAPE}. Both channels of this recording share that extent, "
+                f"so a mismatch means the wrong file or a partial assembly."
+            )
+        with asection(f"Subtracting background floor {floor:.4f} -> {out.name}"):
+            group = open_group(out, mode="w")
+            dest = create_array(
+                group,
+                BGSUB_ARRAY_KEY,
+                shape=SOURCE_SHAPE,
+                dtype="float32",
+                # One timepoint per chunk: every consumer downstream (the fit, the
+                # cull, this loop) reads exactly one timepoint at a time.
+                chunks=(1,) + SOURCE_SHAPE[1:],
+                compressor=None,
+            )
+            for t in range(SOURCE_SHAPE[0]):
+                frame = np.asarray(array[t], dtype=np.float32)
+                np.subtract(frame, np.float32(floor), out=frame)
+                np.clip(frame, 0.0, None, out=frame)
+                dest[t] = frame
+            dest.attrs["axes"] = SOURCE_AXES
+            dest.attrs["background_floor"] = float(floor)
+            dest.attrs["source"] = str(src)
     return out
+
+
+def _validate_rebuilt_channel(channel: dict, leaves: Sequence[Any]) -> int:
+    """Validate the merged leaf count and progressive-rung contract."""
+    name = str(channel["name"])
+    if len(leaves) != 1:
+        raise RuntimeError(f"{name}: merge produced {len(leaves)} leaves, expected one")
+    rungs = int(leaves[0].n_additive_sublods)
+    if rungs != EXPECTED_RUNGS:
+        raise RuntimeError(
+            f"{name}: merge produced {rungs} progressive rungs, expected {EXPECTED_RUNGS}"
+        )
+    return int(leaves[0].n_splats)
 
 
 def _cull_tiles(fit_dir: Path, culled_dir: Path) -> int:
@@ -378,7 +400,7 @@ def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
         )
 
         node, _ = load_gsplat_node(str(final))
-        got = sum(int(leaf.n_splats) for leaf in iter_leaves(node))
+        got = _validate_rebuilt_channel(channel, list(iter_leaves(node)))
         expected = int(channel["expected_splats"])
         drift = abs(got - expected) / expected
         aprint(f"{name}: rebuilt {got:,} splats (recorded {expected:,}, {drift:.3%})")
