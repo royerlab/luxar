@@ -48,13 +48,21 @@ GPU only frustum-culls at draw), and a ``stream:`` additive ladder is
 *progressive*, so it converges to 100% of the layer regardless of camera
 distance. Built that way, whole-globe framing held all **18.1M** elements.
 
-The occurrence cloud therefore uses a ``kind=partition`` wrapper whose every
-child is a per-tile ``kind=lod`` ladder — the Points counterpart of the gsplat
-``adaptive`` recipe. ``coverage_fraction`` is evaluated per tile against that
-tile's own screen size and non-default levels are lazily attached, so a tile that
-is small on screen never fetches its fine levels. Whole-globe framing holds
-~0.2M of its 15M; zooming a tile walks it to the full 1,875,000-point level while
-its neighbours stay coarse.
+That was the reasoning behind an earlier shape: a ``kind=partition`` wrapper whose
+every child was a per-tile ``kind=lod`` ladder — the Points counterpart of the
+gsplat ``adaptive`` recipe — which held ~0.2M of 15M at whole-globe framing. **The
+shipped scene no longer does this**, and the aggregate layer that made it
+necessary is gone (it was the densest thing in the scene; ``add_lod_tiles`` below
+is its now-uncalled builder).
+
+What replaced it is smaller than the argument above suggests, because the
+argument counts STORED elements and the viewer allocates RESIDENT ones. Both
+``taxon`` and ``period`` are hidden axes, so every layer here is sliced to one
+(group, period) marginal: 45,000 points for the occurrence cloud and 95,418
+vertices for the tracks, against caps of 5,591,040 and 2,793,472. Two and three
+orders of magnitude of headroom, so there is nothing for a partition to cull and
+nothing for a coarse level to save — just an additive ladder for a cheap first
+paint. See ``demos/_lod_policy`` for the rule and the measurement traps.
 
 **The globe deliberately gets none of that.** It is a fixed-resolution textured
 mesh backdrop: unlike the diffuse occurrence point cloud, its surface detail
@@ -366,6 +374,7 @@ from luxar.demos._globe_common import (
     blue_marble_basemap,
     build_earth,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -588,19 +597,9 @@ GREAT_CIRCLE_MAX_STEP_DEG: Final = 1.5
 # 5,591,040 on a 4096-class GPU. Overflow is a SILENT clamp (one console
 # warning, tail never rendered), so every leaf is asserted below this.
 MAX_POINTS_PER_NODE: Final = 5_000_000
-# Target finest-level size per spatial tile. 2M keeps each tile a comfortable
-# WebGL batch and puts the 15M default at 8 tiles, the 100M ceiling at 64.
+# Historical target retained in the source fingerprint while `add_lod_tiles`
+# remains as an uncalled policy marker; the shipped occurrence cloud is flat.
 TARGET_TILE_POINTS: Final = 2_000_000
-MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
-#: The scrubbable track layer holds three slot-copies of every vertex (taxon
-#: marginal + period marginal + joint), which took it from 106k to 318k. An
-#: indexed-Lines node cannot carry an additive ladder -- rebuilding connected
-#: components as plain chains would invent or drop edges, so the composed ladder
-#: is refused -- and `check_demo_ladders` fails any un-laddered leaf above
-#: 200,000 ("will block the main thread on load"). Partitioning below that
-#: threshold is therefore the only lever, and it happens to be the natural one:
-#: the copies split cleanly into ~106k parts.
-MAX_TRACK_VERTICES_PER_NODE: Final = 150_000
 
 #: View-dependent LOD for the two big summary layers. A `stream:` ladder alone is
 #: NOT enough: it is *progressive*, so it converges to 100% of the layer no
@@ -2909,7 +2908,16 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # scene opens on this layer's (Birds, All years) marginal
                 # instead. Shipping them hidden was tried and made both sliders
                 # look broken; now it would leave the scene empty outright.
-                partition=dict(max_elements=TARGET_TILE_POINTS),
+                #
+                # No `partition=`. At 2,111,885 stored against a 2,000,000 tile
+                # target it only ever split into TWO parts, and both `taxon` and
+                # `period` are hidden axes, so the viewer slices to one (group,
+                # period) marginal: 45,000 points resident against a 5,591,040
+                # Points cap, 124x under it. A partition exists so the viewer can
+                # skip off-screen geometry; a 45,000-point marginal spread over a
+                # globe has nothing worth skipping, and each part costs a request
+                # to bootstrap. The additive ladder is what makes first paint
+                # cheap here.
                 additive_lod=STREAM_LOD,
             )
 
@@ -2932,7 +2940,11 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 blending_mode="normal",
                 opacity=TRACK_HIGHWAY_OPACITY,
                 layer=True,
-                partition=dict(max_elements=MAX_LINE_VERTICES_PER_NODE),
+                # No `partition=`: at 105,662 segments against a 2,500,000-vertex
+                # cap it resolved to a single part and never wrote a wrapper, so
+                # this was already a no-op. No ladder either — the node is below
+                # the 200,000 floor at which `scripts/check_demo_ladders.py`
+                # requires one, and a first paint this small is one request.
             )
 
             scene.add_lines(
@@ -2953,7 +2965,26 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # scene opens on this layer's (Birds, All years) marginal
                 # instead. Shipping them hidden was tried and made both sliders
                 # look broken; now it would leave the scene empty outright.
-                partition=dict(max_elements=MAX_TRACK_VERTICES_PER_NODE),
+                #
+                # No `partition=`. Three parts, and `taxon`/`period` are hidden,
+                # so one slice is 95,418 vertices resident against a 2,793,472
+                # segment cap. Nothing to cull, three requests to bootstrap.
+                #
+                # A ladder instead — 318,078 vertices is above the 200,000 floor
+                # `check_demo_ladders.py` enforces, and these are `indexed` lines,
+                # which can now carry one: `chain_segment_indices` emits
+                # consecutive pairs within each ragged chain and never across, so
+                # every component is an ascending simple path and
+                # `indexed_components_are_chains` accepts it. (Verified including
+                # its length-0 and length-1 chains, which consume a vertex slot
+                # without a segment and so become isolated single-vertex
+                # components.)
+                #
+                # `geometry="lines"` is load-bearing: on add_lines an explicit
+                # `counts` LIST is in POLYLINES while `stream:<c>` is in VERTICES,
+                # and a vertex-sized list here would clamp to the polyline count
+                # and write NO rungs, silently. See `stream_ladder`.
+                additive_lod=stream_ladder(int(track_pos.shape[0]), geometry="lines"),
             )
 
             _add_overlays(scene, sample, tracks)

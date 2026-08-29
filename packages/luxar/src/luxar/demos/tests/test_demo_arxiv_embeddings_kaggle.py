@@ -8,9 +8,11 @@ unconditionally. Building that LOD imports ``luxar.gsplats.lod`` (torch
 coarsening kernels) whose additive sibling imports ``scipy.sparse`` at module
 load — so on a torch/scipy-free machine WITH a complete ``arxiv_kaggle`` cache
 the scene build crashed with ``ModuleNotFoundError`` instead of producing a
-viewable scene. The fix routes the request through
-``luxar.demos.substitutive_lod_or_flat``, which falls back to a flat point cloud
-with a degradation notice when either module is missing.
+viewable scene. The first fix routed the request through
+``luxar.demos.substitutive_lod_or_flat``, which DEGRADED to a flat point cloud
+with a notice. The scene now carries an additive ladder rather than substitutive
+levels, and the additive write path imports neither module — so the contract
+holds with the ladder intact and the structure is identical either way.
 
 PART TWO — the data path that lets the demo show the WHOLE 3,286,365-paper
 corpus instead of its oldest 500,000 (issue #1919): uniform random sampling
@@ -117,10 +119,17 @@ def _install_warm_cache(monkeypatch) -> None:
 
 
 class TestCompleteCacheRunsWithoutLodDeps:
-    """A warm-cache scene build must succeed with torch/scipy unavailable."""
+    """A warm-cache scene build must succeed with torch/scipy unavailable.
+
+    It used to succeed by DEGRADING: ``substitutive_lod_or_flat`` printed a
+    notice and wrote a flat, ladderless leaf. Now the scene carries an additive
+    ladder instead of substitutive levels, and the additive write path imports
+    neither module — so the contract holds with the ladder INTACT, which is the
+    stronger property and what these tests assert.
+    """
 
     @pytest.mark.parametrize("blocked", ["torch", "scipy"])
-    def test_flat_scene_built_when_lod_dep_missing(
+    def test_full_scene_built_when_former_lod_dep_missing(
         self, blocked, monkeypatch, capsys, tmp_path
     ) -> None:
         _install_warm_cache(monkeypatch)
@@ -136,18 +145,14 @@ class TestCompleteCacheRunsWithoutLodDeps:
         assert n == 40
         assert out.exists()
 
-        # The degradation notice named the blocked module.
+        # No degradation, because there is nothing left to degrade.
         stdout = capsys.readouterr().out
-        assert "skipping Points LOD" in stdout
-        assert blocked in stdout
+        assert "skipping Points LOD" not in stdout
 
-        # A FLAT Points leaf was written — not an LOD group. (Node: arxiv_papers_kaggle.)
-        assert (out / "arxiv_papers_kaggle" / "positions").exists()
-        attrs = read_node_attrs(out / "arxiv_papers_kaggle")
-        assert attrs is not None, "the kaggle papers node must carry attributes"
-        assert attrs.get("kind") != "lod"
+        # Identical structure to the deps-present run below: this is the point.
+        self._assert_laddered_points_node(out)
 
-    def test_lod_group_built_when_deps_present(
+    def test_same_structure_when_deps_present(
         self, monkeypatch, capsys, tmp_path
     ) -> None:
         pytest.importorskip("torch")
@@ -159,18 +164,24 @@ class TestCompleteCacheRunsWithoutLodDeps:
 
         assert n == 40
         assert out.exists()
-
-        # No degradation notice.
         stdout = capsys.readouterr().out
         assert "skipping Points LOD" not in stdout
+        self._assert_laddered_points_node(out)
 
-        # A substitutive-LOD group was written: kind=lod with child_N levels and
-        # NO top-level positions leaf.
-        attrs = read_node_attrs(out / "arxiv_papers_kaggle")
+    @staticmethod
+    def _assert_laddered_points_node(out) -> None:
+        """A Points leaf with a streaming ladder, and no substitutive levels."""
+        node = out / "arxiv_papers_kaggle"
+        attrs = read_node_attrs(node)
         assert attrs is not None, "the kaggle papers node must carry attributes"
-        assert attrs.get("kind") == "lod"
-        assert (out / "arxiv_papers_kaggle" / "child_0").exists()
-        assert not (out / "arxiv_papers_kaggle" / "positions").exists()
+        # NOT a kind=lod group, and no coarse replacement levels.
+        assert attrs.get("kind") != "lod"
+        assert not (node / "child_0").exists()
+        # At this sample size (40 x 2 colorings = 80) the ladder collapses to a
+        # single rung, so assert the node is a real Points leaf rather than
+        # counting rungs — the rung schedule itself is tested in
+        # utils/tests/test_lod_breakpoints.py.
+        assert (node / "positions").exists()
 
 
 class TestScenePresentation:
@@ -178,7 +189,6 @@ class TestScenePresentation:
         self, monkeypatch, tmp_path
     ) -> None:
         _install_warm_cache(monkeypatch)
-        monkeypatch.setattr(demo, "substitutive_lod_or_flat", lambda spec: None)
         out = tmp_path / "sampled.luxar.zarr"
 
         demo.generate_paper_landscape(out, sample_size=40)
@@ -201,7 +211,6 @@ class TestScenePresentation:
             + ["biorxiv", "medrxiv", "other"]
         )
         monkeypatch.setattr(demo, "cache_computed", lambda *a, **k: bundle)
-        monkeypatch.setattr(demo, "substitutive_lod_or_flat", lambda spec: None)
         out = tmp_path / "legend.luxar.zarr"
 
         demo.generate_paper_landscape(out, sample_size=40)
@@ -583,7 +592,6 @@ class TestRadiiTrackCloudDensity:
         bundle = _fake_bundle()
         bundle["median_nn"] = median_nn
         monkeypatch.setattr(demo, "cache_computed", lambda *a, **k: bundle)
-        monkeypatch.setattr(demo, "substitutive_lod_or_flat", lambda spec: None)
         out = tmp_path / f"{name}.luxar.zarr"
         demo.generate_paper_landscape(out, sample_size=40)
         attrs = read_node_attrs(out / "arxiv_papers_kaggle")
@@ -617,7 +625,6 @@ class TestUndatedPapersAreNotPaintedAsDated:
         bundle["years"] = [0, 0] + [2010] * 5 + [2020] * 5
         bundle["median_nn"] = 0.01
         monkeypatch.setattr(demo, "cache_computed", lambda *a, **k: bundle)
-        monkeypatch.setattr(demo, "substitutive_lod_or_flat", lambda spec: None)
 
         out = tmp_path / "undated.luxar.zarr"
         demo.generate_paper_landscape(out, sample_size=12)
@@ -687,7 +694,6 @@ class TestBundleCacheVersion:
             return _fake_bundle()
 
         monkeypatch.setattr(demo, "cache_computed", spy)
-        monkeypatch.setattr(demo, "substitutive_lod_or_flat", lambda spec: None)
         demo.generate_paper_landscape(tmp_path / "v.luxar.zarr", sample_size=40)
 
         assert seen["name"] == "arxiv_kaggle"

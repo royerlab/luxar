@@ -106,6 +106,46 @@ def _build_line_partition_tree(
     return tree, parts
 
 
+def _verified_indexed_additive(
+    *,
+    additive_lod: Any,
+    line_type: str,
+    indices: Optional[np.ndarray],
+    n_vertices: int,
+) -> None:
+    """Fail before partition writes if an indexed additive ladder is unsafe.
+
+    Kept outside :func:`add_lines_impl` to avoid adding boolean sub-conditions to
+    an already 24-branch function under the C901 ratchet.
+
+    The multi-LOD writer carries no edge list — it rebuilds one by chaining each
+    connected component in ascending vertex order — so every component's
+    undirected edge multiset, including duplicate multiplicity, must equal its
+    consecutive vertex pairs.
+
+    Raises:
+        ValueError: an explicit ladder was requested and the topology would be
+            corrupted by it.
+    """
+    if additive_lod is None or additive_lod is False:
+        return
+    if line_type != "indexed" or indices is None:
+        return
+
+    from ..lod.lines import indexed_components_are_chains
+
+    if not indexed_components_are_chains(
+        n_vertices, np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+    ):
+        raise ValueError(
+            "line_type='indexed' cannot take an additive ladder unless every "
+            "connected component's undirected edge multiset, including duplicate "
+            "multiplicity, equals its consecutive vertex pairs — the streaming "
+            "writer rebuilds edges by chaining each component in ascending vertex "
+            "order. Pass additive_lod=False to write this node without a ladder."
+        )
+
+
 def add_lines_impl(
     group: "Group",
     *,
@@ -329,6 +369,12 @@ def add_lines_impl(
             # dtype and bounds and then reshapes to pairs, so a malformed edge
             # list is silently reinterpreted there (or dies on a raw reshape).
             validate_line_indices_before_split(indices, n_vertices, line_type)
+            _verified_indexed_additive(
+                additive_lod=additive_lod,
+                line_type=line_type,
+                indices=indices,
+                n_vertices=n_vertices,
+            )
 
             polyline_indices = identify_polylines(n_vertices, line_type, indices)
 
@@ -413,8 +459,6 @@ def add_lines_impl(
 
             additive_spec = resolve_additive_axis_lines(additive_lod)
             if additive_spec is not None:
-                # Topology first, and BEFORE make_additive_lod_lines — same
-                # reshape hazard as the partition branch above.
                 validate_line_indices_before_split(indices, n_vertices, line_type)
                 widths_arr = (
                     widths
@@ -1059,7 +1103,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         level_additive_lod,
         resolve_lod_ladder,
     )
-    from ..lod.lines import resolve_additive_axis_lines
+    from ..lod.lines import indexed_components_are_chains, resolve_additive_axis_lines
 
     # Resolve the coarse and finest policies independently. The coarse children
     # are gsplat clouds and can always stream; the suppression reasons below are
@@ -1081,10 +1125,25 @@ def add_lines_substitutive_lod_wrapper_impl(
         # ladder here is a no-op the builder would only warn about.
         else f"line_type={line_type!r} is a single polyline"
         if line_type in ("polyline", "loop")
-        # Indexed lines carry an explicit edge list the additive multi-LOD
-        # writer discards (see lod/lines.py::_indexed_connected_components).
-        else f"line_type={line_type!r} edges are not preserved by the ladder"
-        if line_type == "indexed"
+        # Indexed lines carry an explicit edge list the additive multi-LOD writer
+        # discards — it re-derives one by chaining each connected component in
+        # ascending vertex order (see lod/lines.py::_indexed_connected_components),
+        # which is faithful exactly when every component's undirected edge
+        # multiset, including duplicate multiplicity, equals its consecutive
+        # vertex pairs. Test that contract rather than refusing every indexed node.
+        else (
+            f"line_type={line_type!r} has an explicit edge multiset that does not "
+            "equal its consecutive vertex pairs, so the ladder would rewrite edges"
+        )
+        if additive_lod is not False
+        and line_type == "indexed"
+        and not (
+            indices is not None
+            and indexed_components_are_chains(
+                int(vert_arr.shape[0]),
+                np.asarray(indices, dtype=np.intp).reshape(-1, 2),
+            )
+        )
         else None
     )
     from ..lod.reveal import is_reveal_additive_method

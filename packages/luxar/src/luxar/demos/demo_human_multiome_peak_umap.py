@@ -62,8 +62,8 @@ from luxar.demos import (
     add_demo_caption,
     launch_viewer,
     require_local_data,
-    substitutive_lod_or_flat,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -302,9 +302,16 @@ def create_human_scene(
                 labels=labels,
                 **link_attrs,
                 layer=True,
-                substitutive_lod=substitutive_lod_or_flat(
-                    dict(compression_factor=8, levels=3, device="auto")
-                ),
+                # Additive ladder only — no substitutive levels. 6,248,730 points
+                # LOOKS like it clears the 5,591,040 Points cap, but the node is
+                # stacked over 6 attribute views on a hidden axis, so the slice
+                # the viewer makes resident is 1,041,455 — five times under it.
+                # The coarse levels were 19.7% of the store (196K + 2.1M + 16M of
+                # 111M) serving a framing the screen-area selector never picks:
+                # the finest level is anchored at half-screen occupancy and this
+                # demo opens auto-fitted. 17 groups -> 13, and hosted first paint
+                # costs roughly one request per node.
+                additive_lod=stream_ladder(len(positions_combined)),
             )
 
             # --- Overlays ---

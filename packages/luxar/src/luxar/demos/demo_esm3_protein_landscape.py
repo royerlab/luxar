@@ -85,9 +85,9 @@ from luxar.demos import (
     quarantine_file,
     require_module,
     stack_colorings,
-    substitutive_lod_or_flat,
     warn_if_quarantined,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -889,12 +889,19 @@ def generate_esm3_landscape(
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
-            # Substitutive Points LOD: ~572k proteins is a large cloud, so coarse
-            # levels replace it with fewer, larger merged splats when zoomed out
-            # (census-style wiring; coarse splats stay pure per coloring via the
-            # `coloring` barrier). Gated through substitutive_lod_or_flat: the
-            # write path imports torch+scipy, and the "complete cache runs
-            # anywhere" contract must hold without them (flat Points instead).
+            # Additive ladder only — no substitutive levels. ~572k proteins per
+            # coloring is not a large cloud by this viewer's standards: stacked
+            # on the hidden `coloring` axis, the resident slice is ~575,503
+            # points against a 5,591,040 Points cap, ~10x under it. The coarse
+            # levels served a framing the screen-area selector never picks (the
+            # finest is anchored at half-screen occupancy and this demo opens
+            # auto-fitted), and cost four levels of nodes: 13 groups -> 7.
+            #
+            # It also retires the substitutive_lod_or_flat gate here. That gate
+            # existed because the coarsening write path imports torch+scipy,
+            # which broke the "complete cache runs anywhere" contract; an
+            # additive ladder imports neither, so the contract now holds without
+            # a degraded no-LOD fallback.
             scene.add_points(
                 "proteins",
                 positions=stacked.positions,
@@ -906,9 +913,7 @@ def generate_esm3_landscape(
                 labels=stacked.labels,
                 **link_attrs,
                 layer=True,
-                substitutive_lod=substitutive_lod_or_flat(
-                    dict(compression_factor=8, levels=3, device="auto")
-                ),
+                additive_lod=stream_ladder(len(stacked.positions)),
             )
 
             scene.add_text(

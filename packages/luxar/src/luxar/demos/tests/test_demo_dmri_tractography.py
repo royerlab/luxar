@@ -579,6 +579,10 @@ class TestBuildScene:
             assert tract.attrs["kind"] == "lod"
             assert tract.attrs["layer"] is True
             assert tract.attrs["blending_mode"] == "additive"
+            finest = tract[
+                sorted(k for k in tract.keys() if k.startswith("child_"))[-1]
+            ]
+            assert int(finest.attrs.get("n_additive_sublods", 1)) == 1
             assert tract.attrs["opacity"] == _demo.LINE_OPACITY
             assert tract.attrs["intensity"] == _demo.LINE_INTENSITY
 

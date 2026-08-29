@@ -133,8 +133,8 @@ from luxar.demos import (
     launch_viewer,
     require_module,
     stack_colorings,
-    substitutive_lod_or_flat,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1258,11 +1258,25 @@ def generate_paper_landscape(
                 viewer_config=ViewerConfig(cinematic_mode=True),
             )
 
-            # Substitutive Points LOD for the multi-million-paper cloud —
-            # coarse merged levels when zoomed out (census-style wiring; coarse
-            # splats stay pure per coloring via the `coloring` barrier). Gated
-            # through substitutive_lod_or_flat so a warm-cache run without
-            # torch/scipy still builds a (flat) viewable scene.
+            # Additive ladder only — no substitutive levels. 3.29M papers x 2
+            # colorings is 6.57M stored, but the colorings stack on the hidden
+            # `coloring` axis, so the resident slice is 3,286,365 against a
+            # 5,591,040 Points cap. The coarse levels served a framing the
+            # screen-area selector never picks (finest anchored at half-screen
+            # occupancy; this demo opens auto-fitted): 18 groups -> 13.
+            #
+            # NOTE for anyone tempted to add `partition=` here instead: the
+            # hidden `coloring` dim is FIRST in this scene, so displayDims is
+            # [1,2,3]. `spatial_bsp_tree` always splits on positions columns 0-2
+            # whatever they mean, and the viewer discards a `bsp_tree` whose
+            # split axis is not displayed — so a partition would quietly revert
+            # to centroid ordering. It would need the stack axis moved LAST, as
+            # demo_nuclear_pore_complex documents.
+            #
+            # Retires the substitutive_lod_or_flat gate: it existed because the
+            # coarsening write path imports torch+scipy, and an additive ladder
+            # imports neither, so a warm-cache run builds the REAL scene rather
+            # than a degraded flat one.
             scene.add_points(
                 "arxiv_papers_kaggle",
                 positions=stacked.positions,
@@ -1274,9 +1288,7 @@ def generate_paper_landscape(
                 labels=stacked.labels,
                 **link_attrs,
                 layer=True,
-                substitutive_lod=substitutive_lod_or_flat(
-                    dict(compression_factor=8, levels=3, device="auto")
-                ),
+                additive_lod=stream_ladder(len(stacked.positions)),
             )
 
             # --- Overlays ---
