@@ -53,11 +53,10 @@ def _published_lfs_assets() -> set[str]:
 
 
 def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
-    """The §3.10–3.12 worked examples must name the active generations."""
+    """Runbook archive examples must name active manifest generations."""
     text = DEMO_SITE_RUNBOOK.read_text()
-    section = text.split("### 3.10", 1)[1].split("### 3.13", 1)[0]
-    quoted_prefixes = set(re.findall(r"\b([0-9a-f]{8})\.\.\.", section))
-    assert quoted_prefixes, "§3.10–3.12 no longer quotes any archive digest prefixes"
+    quoted_prefixes = set(re.findall(r"\b([0-9a-f]{6,64})(?:\.\.\.|…)", text))
+    assert quoted_prefixes, "runbook no longer quotes any archive digest prefixes"
 
     manifest = json.loads(DEMO_DATA_MANIFEST.read_text())
     active_digests: set[str] = set()
@@ -80,8 +79,8 @@ def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
         if not any(digest.startswith(prefix) for digest in active_digests)
     )
     assert not stale, (
-        "DEMO_SITE_RUNBOOK §3.10–3.12 quotes archive generations that are no "
-        f"longer active manifest pins: {stale}"
+        "DEMO_SITE_RUNBOOK quotes archive generations that are no longer active "
+        f"manifest pins: {stale}"
     )
 
 
