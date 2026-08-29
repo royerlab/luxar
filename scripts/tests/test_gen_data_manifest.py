@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "gen_data_manifest.py"
+
+needs_git = pytest.mark.skipif(
+    shutil.which("git") is None,
+    reason="git not available",
+)
 
 
 def _load_generator():
@@ -119,6 +125,7 @@ def _manifest_entry(hosted: str | None, history: list[str] | None = None) -> dic
     return {"datasets": {"toy": {"files": [entry]}}}
 
 
+@needs_git
 def test_head_manifest_activates_repin_guard(tmp_path, monkeypatch) -> None:
     generator = _load_generator()
     repo_root = tmp_path / "repo"
@@ -127,7 +134,12 @@ def test_head_manifest_activates_repin_guard(tmp_path, monkeypatch) -> None:
     committed = _manifest_entry("a" * 64)
     manifest_path.write_text(json.dumps(committed))
     subprocess.run(
-        ["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True
+        ["git", "init", "-q"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     subprocess.run(
         ["git", "add", manifest_path.name],
@@ -135,6 +147,7 @@ def test_head_manifest_activates_repin_guard(tmp_path, monkeypatch) -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=10,
     )
     subprocess.run(
         [
@@ -143,7 +156,10 @@ def test_head_manifest_activates_repin_guard(tmp_path, monkeypatch) -> None:
             "user.name=Luxar Tests",
             "-c",
             "user.email=luxar-tests@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
+            "--no-verify",
             "-m",
             "baseline",
         ],
@@ -151,6 +167,7 @@ def test_head_manifest_activates_repin_guard(tmp_path, monkeypatch) -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=10,
     )
     repinned = _manifest_entry("b" * 64)
     manifest_path.write_text(json.dumps(repinned))
