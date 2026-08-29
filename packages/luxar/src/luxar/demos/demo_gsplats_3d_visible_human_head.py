@@ -90,11 +90,12 @@ Anyone regenerating this sidecar should reproduce all three rather than trusting
 the agreement number alone. ``--recompute`` is the supported route and writes a
 fresh fit AND a matching sidecar via :func:`save_and_sample_colors`. The cheaper
 repair, when the fit is fine and only the sidecar is lost, is not wired into the
-demo (see the refusal in :func:`load_or_build`): map the paths returned by
-``ensure_dataset(DEMO_NAME)`` by filename, call
+demo (see the refusal in :func:`load_or_build`): set ``data_dir`` to
+``Path(__file__).parent / "data" / DEMO_NAME``, call
 ``vol, _ = assemble_volume(PNG_DIR)``, :func:`sample_colors` at
-``GSplatData.load(paths[FIT_FILE]).centers``, then :func:`_save_colors_u8` to
-``paths[COLORS_FILE]``. This preserves the resolved fit instead of recomputing it.
+``GSplatData.load(data_dir / FIT_FILE).centers``, then :func:`_save_colors_u8` to
+``data_dir / COLORS_FILE`` and run ``make gen-data-manifest``. This preserves the
+shipped fit and the 20 MB of Git LFS history that goes with it.
 
 USAGE
 -----
