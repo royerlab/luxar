@@ -1126,14 +1126,18 @@ def test_the_guard_reports_a_directory_it_cannot_identify() -> None:
 
     # A directory the analysis can PROVE is not the cache is not a blind spot:
     # a `Path(__file__)`-rooted chain, which is the installed module's own tree.
-    for tail in ('/ "data" / DS', "/ DS"):
-        _, blind_packaged = analyse_local_fit(
-            'from pathlib import Path\nDS = "toy_ds"\n'
-            f"D = Path(__file__).parent {tail}\n"
-            'save_with_lod(fit, D / "toy_ch0.zip")\n',
-            datasets,
-        )
-        assert not blind_packaged, tail
+    for import_line, path_name in (
+        ("from pathlib import Path", "Path"),
+        ("from pathlib import Path as P", "P"),
+    ):
+        for tail in ('/ "data" / DS', "/ DS"):
+            _, blind_packaged = analyse_local_fit(
+                f'{import_line}\nDS = "toy_ds"\n'
+                f"D = {path_name}(__file__).parent {tail}\n"
+                'save_with_lod(fit, D / "toy_ch0.zip")\n',
+                datasets,
+            )
+            assert not blind_packaged, (path_name, tail)
 
     # Nor is an unresolvable directory joined with a name the manifest does not
     # pin — a demo's own scratch file is nobody's business.
