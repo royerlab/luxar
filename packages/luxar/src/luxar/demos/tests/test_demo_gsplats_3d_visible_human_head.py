@@ -432,7 +432,11 @@ class TestRejectedPairFallsThroughToRefit:
             _save_colors_u8(colors[rng.permutation(n)], _demo.LOCAL_COLORS)
 
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
-        monkeypatch.setattr(_demo, "load_dataset_gsplats", lambda *a, **k: None)
+
+        def _manifest_unavailable(*args, **kwargs):
+            raise _demo.DatasetUnavailable("no cached, LFS, or hosted pair")
+
+        monkeypatch.setattr(_demo, "load_dataset_gsplats", _manifest_unavailable)
         monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / "absent-cache.zip")
         monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / "absent-cache.npz")
         monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
@@ -473,11 +477,11 @@ class TestRejectedPairFallsThroughToRefit:
     ) -> None:
         """Rubble in the local-fit namespace must not brick every future launch.
 
-        These bytes have no checksum, no remote and no second copy — the reason
-        the LFS branch a few lines up copies atomically — so an unguarded
-        ``GSplatData.load`` here raised ``BadZipFile`` out of ``load_or_build``
-        on EVERY launch, with a manual delete as the only recovery. The refit
-        below already overwrites the file; it just has to be reached.
+        These bytes have no checksum, no remote and no second copy, so an
+        unguarded ``GSplatData.load`` here raised ``BadZipFile`` out of
+        ``load_or_build`` on EVERY launch, with a manual delete as the only
+        recovery. The refit below already overwrites the file; it just has to be
+        reached.
         """
         _, sentinel_fit, sentinel_colors = self._sentinel_setup(
             tmp_path, monkeypatch, permute=False

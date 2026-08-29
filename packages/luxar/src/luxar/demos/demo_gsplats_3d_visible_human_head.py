@@ -46,11 +46,11 @@ On a fresh machine this demo bootstraps itself with no manual steps:
   1. Fast path: the manifest resolves the 1,911,192-splat fit and its colors
      sidecar through a checksum-verified cache, the in-repo Git LFS copies, or
      the hosted record. The pair is then verified against the invariant above.
-  2. If no precomputed pair is available, it downloads the 377 color slices (~1.1 GB) to
-     ``~/.cache/luxar/gsplats_visible_human_head/``, builds the masked RGB
-     volume, fits luminance on the GPU, caches the fit, then reloads it and
-     samples the colors from the stored splat order — so subsequent runs load
-     that (verified) local pair instantly.
+  2. If no precomputed pair is available, it downloads the 377 color slices
+     (~1.1 GB) to ``~/.cache/luxar/gsplats_visible_human_head/``, builds the
+     masked RGB volume, fits luminance on the GPU, caches the fit, then reloads
+     it and samples the colors from the stored splat order — so subsequent runs
+     load that (verified) local pair instantly.
 ``--recompute`` forces the download + build + fit path.
 
 The fast path was broken for a while (#1670): the shipped sidecar had been
@@ -528,8 +528,8 @@ def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndar
 def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
     """A pair THIS machine refitted earlier, or None if there is nothing usable.
 
-    Consulted after the fetched cache and the shipped LFS assets, and BEFORE
-    refitting, which is what makes the refit one-time (#1618).
+    Consulted after the manifest-resolved pair and BEFORE refitting, which is
+    what makes the refit one-time (#1618).
 
     Guarded, unlike the two doors above it, for the reason the comment at the LFS
     branch gives: these bytes have no checksum, no remote and no second copy, so
@@ -591,8 +591,8 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         # still scores agreement 1.0. It would need its own, separate guard; until
         # one exists, refitting is the only outcome this file can vouch for.
         aprint(
-            "Precomputed fit not available (Git LFS assets not pulled, or the "
-            "cached/shipped fit and its colors sidecar disagree). Falling back to "
+            "Precomputed fit not available (the manifest pair is unavailable, or "
+            "the fit and its colors sidecar disagree). Falling back to "
             f"download + fit (one-time; cached under {LOCAL_FIT.parent})."
         )
 
