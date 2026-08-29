@@ -61,6 +61,15 @@ class TestTheRecordedParentIsAccepted:
 
 
 class TestTheWrongParentIsRefused:
+    def test_an_unscaled_parent_is_refused_before_the_walk(
+        self, monkeypatch, tmp_path
+    ):
+        attrs = _parent_attrs()
+        attrs["position_bounds"]["max"][0] = 406
+        _attrs(monkeypatch, attrs)
+        with pytest.raises(SystemExit, match="Z anisotropy"):
+            demo._validate_parent(tmp_path / "unscaled.gsplats.zarr")
+
     def test_the_single_timepoint_sibling_fit_is_refused(self, monkeypatch, tmp_path):
         """tp234 is also a partition of this recording with the same appearance
         attrs; the timepoint count is what distinguishes them."""

@@ -254,6 +254,11 @@ def _validate_parent(path: Path) -> None:
             f"{TIME_COL}, so its timepoint count cannot be checked. Refusing to "
             f"walk 602M splats on faith."
         )
+    if float(maximum[0]) <= 1000:
+        raise SystemExit(
+            f"{path.name} has Z maximum {maximum[0]}, so it is missing the "
+            f"recorded x4 Z anisotropy. Refusing to rebuild a flattened embryo."
+        )
     frames = int(round(float(stacked_max))) + 1
     # Check what the stride WILL yield, not the parent's exact length: 253
     # timepoints (0..252) and 251 both give 51 frames at stride 5, and pinning
