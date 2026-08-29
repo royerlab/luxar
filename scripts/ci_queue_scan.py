@@ -17,10 +17,18 @@ class ApiError(RuntimeError):
 
 
 @dataclass
+class RunScan:
+    run_id: int
+    queued: list[str] = field(default_factory=list)
+    running: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ScanResult:
     visible: list[str] = field(default_factory=list)
     queued: list[str] = field(default_factory=list)
     running: list[str] = field(default_factory=list)
+    runs: list[RunScan] = field(default_factory=list)
     scanned_runs: int = 0
     truncated: bool = False
     stopped: bool = False
@@ -165,6 +173,7 @@ def scan_repository(
         try:
             runs_payload = read_api(endpoint)
             runs = _object_list(runs_payload, "workflow_runs")
+            result.truncated = result.truncated or len(runs) == 100
         except (ApiError, ValueError) as error:
             result.error = {"scope": "runs", "detail": str(error)}
             return result
@@ -189,7 +198,16 @@ def scan_repository(
                 jobs_payload = read_api(
                     f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100"
                 )
-                result.extend(classify_jobs(jobs_payload, queued_before=queued_before))
+                classified = classify_jobs(jobs_payload, queued_before=queued_before)
+                result.extend(classified)
+                if classified.queued or classified.running:
+                    result.runs.append(
+                        RunScan(
+                            run_id=run_id,
+                            queued=classified.queued,
+                            running=classified.running,
+                        )
+                    )
             except (ApiError, ValueError) as error:
                 result.error = {"scope": "jobs", "detail": str(error)}
                 return result
