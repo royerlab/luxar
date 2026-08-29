@@ -281,24 +281,12 @@ def _finest_elements(
 
 
 def _store_root(zf: zipfile.ZipFile, names: list[str]) -> Optional[tuple[str, dict]]:
-    """The store root prefix inside the zip, plus its attrs.
+    """Find the candidate root whose attributes declare a gsplats store.
 
-    Do NOT infer this from ``names[0]``. That assumes every member sits under one
-    wrapping directory, and both layouts ship: some archives are zipped with a
-    ``<name>.gsplats.zarr/`` prefix, others with the store contents AT THE ZIP
-    ROOT. On the second kind ``names[0].split("/")[0]`` names whichever CHILD
-    group happens to be listed first, and then:
-
-      - if that child declares no ``format_type`` (``pipeline/``, ``additive_0/``)
-        the caller returns None, which ``refresh_characteristics`` turns into
-        "skip", so the STALE committed row survives with no warning;
-      - if it does look like a node (``part_0/``) the read "succeeds" and
-        publishes that ONE part's ``n_splats`` as the whole archive's.
-
-    Measured on the restructured set: five archives silently skipped and three
-    cmu1 channels credited with their ``part_0`` count. So identify the root by
-    finding the document that actually declares the format, checking the zip root
-    first and then each single top-level directory.
+    Root-level stores and conventional ``*.gsplats.zarr/`` wrappers are common,
+    but valid archives can use another wrapper name or include unrelated
+    top-level members. Inspect the zip root and every top-level directory rather
+    than treating the first member's prefix as authoritative.
     """
     candidates = [""]
     candidates += sorted({n.split("/")[0] + "/" for n in names if "/" in n})

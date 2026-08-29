@@ -46,7 +46,7 @@ ANISOTROPY:
     (a threshold-based extent finds 233 of the 407 z-slices the fitted splats
     actually occupy). Re-stamp both numbers if the acquisition settings surface.
 
-PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here):
+PIPELINE (how the bundled gsplats were produced; re-run with ``--recompute``):
     1. Select timepoint 234 from ``h2afva/fused``.
     2. Reuse the calibrated K* from the full-timelapse campaign
        (Noise2Self blind-spot sweep, K* = 128,000, held-out peak 42.5 dB).
@@ -58,8 +58,12 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
        (1.625 um axially, 0.40625 um laterally; see ANISOTROPY above).
 
 USAGE:
-    python demo_gsplats_3d_h2afva_stack.py [--no-serve] [--serve-only]
+    python demo_gsplats_3d_h2afva_stack.py [--recompute --source PATH --cal PATH]
+        [--no-serve] [--serve-only]
 
+    --recompute:   Rebuild the fitted archive from the source recording.
+    --source:      Source zarr containing ``h2afva/fused`` (required above).
+    --cal:         Recorded calibration JSON (required above).
     --no-serve:    Build the scene but don't launch the viewer.
     --serve-only:  Skip the build, just serve the already-built scene.
 

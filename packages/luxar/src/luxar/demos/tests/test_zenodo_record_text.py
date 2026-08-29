@@ -1639,18 +1639,8 @@ def _write_rootlevel_store(
     child_n_splats: int = 999_999,
     first_child: str = "pipeline",
 ) -> None:
-    """A store zipped with its contents AT THE ZIP ROOT, no wrapping directory.
-
-    Both layouts ship. ``_write_frame`` above only ever produces the
-    wrapping-directory kind, which is why the root-detection bug survived: the
-    generator inferred the root from ``names[0].split("/")[0]``, so on this
-    layout it read ``first_child`` as the store root.
-
-    ``first_child`` is written first so it is ``namelist()[0]``, reproducing the
-    ordering the real archives have.
-    """
+    """A store zipped with its contents at the zip root."""
     with zipfile.ZipFile(path, "w") as zf:
-        # The child that the old code mistook for the root.
         zf.writestr(f"{first_child}/zarr.json", json.dumps({"zarr_format": 3}))
         zf.writestr(
             f"{first_child}/child_marker/zarr.json",
@@ -1671,17 +1661,45 @@ def _write_rootlevel_store(
         )
 
 
-class TestTheStoreRootIsFoundNotGuessedFromTheFirstMember:
-    """Regression: five restructured archives read as None, three as one part.
+def _write_arbitrarily_wrapped_store(path: Path) -> None:
+    """A valid store after an unrelated member and under a nonstandard wrapper."""
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("notes/readme.txt", "archive notes")
+        zf.writestr(
+            "opaque-wrapper/zarr.json",
+            json.dumps(
+                {
+                    "zarr_format": 3,
+                    "node_type": "group",
+                    "attributes": {
+                        "format_type": "gsplats_zarr",
+                        "ndim": 4,
+                        "n_splats": 4321,
+                    },
+                }
+            ),
+        )
+        zf.writestr(
+            "opaque-wrapper/fitting/zarr.json",
+            json.dumps({"zarr_format": 3, "attributes": {"psnr_db": 38.25}}),
+        )
 
-    ``_read_store`` used to take the root prefix from
-    ``names[0].split("/")[0]``. That is right only for a zip with one wrapping
-    directory. On an archive zipped at the root it named whichever child was
-    listed first, so either the read returned None (and
-    ``refresh_characteristics`` skipped the key, silently preserving the STALE
-    committed row) or it "succeeded" and published a child group's ``n_splats``
-    as the archive's.
-    """
+
+class TestTheStoreRootIsFoundFromFormatMetadata:
+    """The root is identified by its format declaration, not naming or order."""
+
+    def test_an_arbitrary_wrapper_after_an_unrelated_member_is_read(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "unconventional.zip"
+        _write_arbitrarily_wrapped_store(path)
+
+        info = gen._read_archive(path)
+
+        assert info is not None
+        assert info["n_splats"] == 4321
+        assert info["ndim"] == 4
+        assert info["psnr_db"] == 38.25
 
     def test_a_root_level_store_is_read_not_skipped(
         self, gen: Any, tmp_path: Path
@@ -1699,7 +1717,7 @@ class TestTheStoreRootIsFoundNotGuessedFromTheFirstMember:
     def test_a_child_groups_count_is_not_published_as_the_archives(
         self, gen: Any, tmp_path: Path
     ) -> None:
-        """The quiet-wrong-answer half: ``part_0/`` DOES look like a node."""
+        """A child node's count must never replace the archive total."""
         path = tmp_path / "parts.gsplats.zarr.zip"
         _write_rootlevel_store(
             path, n_splats=8_823_953, child_n_splats=2_205_857, first_child="part_0"
