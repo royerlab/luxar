@@ -11,9 +11,21 @@ both are required.
 
 import json
 
+import numpy as np
 import pytest
 
 from luxar.demos import demo_gsplats_3d_h2afva_stack as demo
+from luxar.gsplats.gsplat_data import AdditiveSubLOD
+from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
+
+
+def _leaf_with_rungs(rungs=demo.EXPECTED_RUNGS):
+    sublod = AdditiveSubLOD(
+        centers=np.zeros((1, 3), dtype=np.float32),
+        amplitudes=np.ones(1, dtype=np.float32),
+        cholesky_factors=np.ones((1, 6), dtype=np.float32),
+    )
+    return GSplatLeaf(additive_sublods=[sublod] * rungs, meta={})
 
 
 def _cal(tmp_path, exponent, cap, name="cal.json"):
@@ -112,3 +124,53 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
 
     def test_the_expected_count_matches_the_decimation_parent(self):
         assert demo.EXPECTED_SPLATS == 1_653_405
+
+
+class TestTheRecomputeRecipeMatchesTheShippedPartition:
+    def test_the_fit_is_laddered_and_the_partition_is_never_flattened(
+        self, monkeypatch, tmp_path
+    ):
+        source = tmp_path / "source.zarr"
+        source.mkdir()
+        cal = tmp_path / "cal.json"
+        cal.write_text("{}")
+        calls = []
+        monkeypatch.setattr(demo, "SOURCE_ARG", source)
+        monkeypatch.setattr(demo, "CAL_ARG", cal)
+        monkeypatch.setattr(demo, "_validate_cal", lambda _path: None)
+        monkeypatch.setattr(demo, "_validate_source", lambda _path: None)
+        monkeypatch.setattr(demo, "run_luxar_cli", lambda *args: calls.append(args))
+        partition = GSplatPartition(
+            children=[_leaf_with_rungs()] * demo.EXPECTED_PARTS,
+            meta={},
+        )
+        monkeypatch.setattr(demo, "load_gsplat_node", lambda _path: (partition, {}))
+        monkeypatch.setattr(
+            demo,
+            "_validate_rebuilt_archive",
+            lambda _node: demo.EXPECTED_SPLATS,
+        )
+
+        result = demo.recompute_archive(tmp_path / "work")
+
+        assert result.name == "h2afva_stack.gsplats.zarr"
+        assert calls[0][-4:] == ("--recipe", "stream", "--n-lods", "6")
+        assert calls[1][1] == "transform"
+        assert calls[1][calls[1].index("--scale") + 1] == "4.0,1.0,1.0"
+        assert calls[2][1] == "transform"
+        assert calls[2][calls[2].index("--scale") + 1] == "0.40625,0.40625,0.40625"
+        assert all(call[1] != "flatten" for call in calls)
+
+    def test_a_flat_rebuild_is_rejected_before_scene_construction(self):
+        with pytest.raises(RuntimeError, match="not a spatial partition"):
+            demo._validate_rebuilt_archive(_leaf_with_rungs())
+
+    def test_the_recorded_partition_shape_is_accepted(self):
+        partition = GSplatPartition(
+            children=[_leaf_with_rungs()] * demo.EXPECTED_PARTS,
+            meta={},
+        )
+
+        assert demo._validate_rebuilt_archive(partition) == (
+            demo.EXPECTED_PARTS * demo.EXPECTED_RUNGS
+        )

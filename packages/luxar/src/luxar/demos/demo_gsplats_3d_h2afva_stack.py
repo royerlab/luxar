@@ -121,7 +121,7 @@ from luxar.demos import (
     run_luxar_cli,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.tree import center_bounds, iter_leaves
+from luxar.gsplats.tree import GSplatPartition, center_bounds, iter_leaves
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -178,9 +178,15 @@ CAL_SATURATION_EXPONENT = 0.5957
 CAL_SATURATION_CAP = 233937
 #: Voxel anisotropy: z is 4x the lateral pitch on this instrument.
 VOXEL_SCALE = (4.0, 1.0, 1.0)
+#: Lateral pixel pitch in microns, applied uniformly after anisotropy.
+MICRON_SCALE = (0.40625, 0.40625, 0.40625)
 #: Amplitudes are normalised to a unit peak at authoring time, so appearance
 #: does not depend on the recording's absolute intensity scale.
 NORMALIZE_INTENSITY = 1.0
+#: The recorded content plan produced 41 non-empty spatial parts.
+EXPECTED_PARTS = 41
+#: Every part carries the six-rung stream recipe recorded above.
+EXPECTED_RUNGS = 6
 #: What the recipe must reproduce. The four decimation levels of the sibling
 #: decimation-study demo are cut FROM this archive, so a drift here silently
 #: relabels every one of them.
@@ -365,6 +371,28 @@ def _validate_source(path: Path) -> None:
     _validate_source_root(root, path)
 
 
+def _validate_rebuilt_archive(node: Any) -> int:
+    """Return the splat count after verifying the shipped partition topology."""
+    if not isinstance(node, GSplatPartition):
+        raise RuntimeError(
+            "rebuilt archive is not a spatial partition; flattening it breaks "
+            "the partition-box layer and discards per-part streaming"
+        )
+    leaves = list(iter_leaves(node))
+    if len(node.children) != EXPECTED_PARTS or len(leaves) != EXPECTED_PARTS:
+        raise RuntimeError(
+            f"rebuilt archive has {len(node.children)} parts and {len(leaves)} leaves, "
+            f"expected {EXPECTED_PARTS} of each"
+        )
+    rung_counts = {int(leaf.n_additive_sublods) for leaf in leaves}
+    if rung_counts != {EXPECTED_RUNGS}:
+        raise RuntimeError(
+            f"rebuilt archive has progressive rung counts {sorted(rung_counts)}, "
+            f"expected {EXPECTED_RUNGS} on every part"
+        )
+    return sum(int(leaf.n_splats) for leaf in leaves)
+
+
 def recompute_archive(work_dir: Path) -> Path:
     """Rebuild the tp234 archive from the raw recording.
 
@@ -400,7 +428,7 @@ def recompute_archive(work_dir: Path) -> Path:
             shutil.rmtree(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         tiled = work_dir / "h2afva_tp234_tiled.gsplats.zarr"
-        scaled = work_dir / "h2afva_tp234_um.gsplats.zarr"
+        scaled = work_dir / "h2afva_tp234_isotropic.gsplats.zarr"
         final = work_dir / "h2afva_stack.gsplats.zarr"
 
         run_luxar_cli(
@@ -418,6 +446,10 @@ def recompute_archive(work_dir: Path) -> Path:
             str(cal),
             "-j",
             str(JOBS),
+            "--recipe",
+            "stream",
+            "--n-lods",
+            str(EXPECTED_RUNGS),
         )
         run_luxar_cli(
             "gsplat",
@@ -429,12 +461,17 @@ def recompute_archive(work_dir: Path) -> Path:
             "--normalize-intensity",
             str(NORMALIZE_INTENSITY),
         )
-        # Flatten last: the 41 parts merge into one matrix-shaped leaf, which is
-        # what the decimation study cuts its four levels from.
-        run_luxar_cli("gsplat", "flatten", str(scaled), str(final))
+        run_luxar_cli(
+            "gsplat",
+            "transform",
+            str(scaled),
+            str(final),
+            "--scale",
+            ",".join(str(v) for v in MICRON_SCALE),
+        )
 
         node, _ = load_gsplat_node(str(final))
-        got = sum(int(leaf.n_splats) for leaf in iter_leaves(node))
+        got = _validate_rebuilt_archive(node)
         drift = abs(got - EXPECTED_SPLATS) / EXPECTED_SPLATS
         aprint(
             f"rebuilt {got:,} splats (recorded {EXPECTED_SPLATS:,}, drift {drift:.3%})"

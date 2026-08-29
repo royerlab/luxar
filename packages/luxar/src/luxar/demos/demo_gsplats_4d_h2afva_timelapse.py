@@ -77,7 +77,7 @@ PIPELINE — reproducible with ``--recompute``:
     3. ``gsplat flatten`` — collapse to one leaf, keeping the finest level.
     4. ``gsplat lod --recipe stream --target-ms 200`` — put the progressive
        ladder back (flatten drops it), sized for a ~200 ms first paint.
-    5. ``gsplat optimise --profile archive`` — re-chunk. LAST, because step 4
+    5. ``luxar optimise --profile archive`` — re-chunk. LAST, because step 4
        adds arrays that also want the 1 MB layout.
 
     Steps 2 and 3 are in that order for a memory reason, not a stylistic one:
@@ -85,7 +85,7 @@ PIPELINE — reproducible with ``--recompute``:
     at 115 GB. Striding first cuts it to 121M before anything loads flat.
 
     The 51-frame variant is the manifest's default precisely because the
-    253-frame one is 9.25 GB; this is the same recording at a ninth of the
+    253-frame one is 9.25 GB; this is the same recording at an eighth of the
     download.
 
 USAGE:
@@ -325,7 +325,6 @@ def recompute_archive(work_dir: Path) -> Path:
         # Re-chunk LAST: the ladder above adds arrays that also want the archive
         # layout, and leaving them as-built is the 173-requests-per-step case.
         run_luxar_cli(
-            "gsplat",
             "optimise",
             str(laddered),
             str(final),

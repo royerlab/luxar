@@ -12,6 +12,8 @@ figures, so a drift in either direction is caught at test time rather than after
 a rebuild.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from luxar.demos import demo_gsplats_4d_h2afva_timelapse as demo
@@ -119,3 +121,33 @@ class TestTheRecipeConstantsAgreeWithEachOther:
         """`hosting` (256 KB) costs 4.5x the bytes per partial hit; this node is
         read a whole timepoint at a time."""
         assert demo.CHUNK_PROFILE == "archive"
+
+
+class TestTheRecomputeCommandsAreRealCliPaths:
+    def test_the_recipe_invokes_top_level_optimise(self, monkeypatch, tmp_path):
+        parent = tmp_path / "parent.gsplats.zarr"
+        parent.mkdir()
+        calls = []
+        monkeypatch.setattr(demo, "PARENT_ARG", parent)
+        monkeypatch.setattr(demo, "_validate_parent", lambda _path: None)
+        monkeypatch.setattr(
+            demo,
+            "restride_stacked_axis",
+            lambda *_args, **_kwargs: {"frames": demo.EXPECTED_FRAMES},
+        )
+        monkeypatch.setattr(demo, "run_luxar_cli", lambda *args: calls.append(args))
+        monkeypatch.setattr(demo, "load_gsplat_node", lambda _path: (object(), {}))
+        monkeypatch.setattr(
+            demo,
+            "iter_leaves",
+            lambda _node: [SimpleNamespace(n_splats=demo.EXPECTED_SPLATS)],
+        )
+
+        result = demo.recompute_archive(tmp_path / "work")
+
+        assert result.name == "h2afva_51tp.gsplats.zarr"
+        assert [call[:2] for call in calls[:2]] == [
+            ("gsplat", "flatten"),
+            ("gsplat", "lod"),
+        ]
+        assert calls[2][0] == "optimise"
