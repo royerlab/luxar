@@ -85,7 +85,12 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 > **Note — uploads.** The neuromast pair, both h2afva timelapse variants, the
 > h2afva single-stack and decimation files, and the other hosted-only datasets
 > are uploaded and pinned in the manifest, except `gsplats_cell_tracking`, which
-> remains marked `pending_upload`. `scripts/zenodo_migration_audit.py --live`
+> remains marked `pending_upload`, and the four `gsplats_visible_human_head` /
+> `gsplats_ct_totalsegmentator` pins, which name restructured bytes that are
+> staged for draft deposition 21912280 but not yet uploaded — they must go up
+> (and the outgoing generation must stay in place, since each entry's
+> `superseded_sha256` still points a warm cache at it) before the `cc-by` record
+> is published. `scripts/zenodo_migration_audit.py --live`
 > verifies that every declared pin matches the current draft records. All three
 > records are still unsubmitted, so each carries `published: false` and the fetch
 > derives no public URL from its record id. Publishing the records and enabling

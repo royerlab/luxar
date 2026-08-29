@@ -171,8 +171,10 @@ COLORS_FILE = "vh_head_colors.npz"
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 PNG_DIR = CACHE_DIR / "head_png"
 # The manifest's own paths, holding a copy of the SHIPPED pair (see the LFS
-# branch of `load_or_build`): those bytes are the hosted artifact, so they match
-# the pinned sha256 and a manifest fetch is happy to find them there.
+# branch of `load_or_build`): those bytes match the pinned `sha256`, so a
+# manifest fetch is happy to find them there. They are NOT the hosted artifact —
+# that is a different generation under `hosted_sha256`, and mixing one file from
+# each pair is the #1670 mis-ordering all over again.
 CACHE_FIT = CACHE_DIR / FIT_FILE
 CACHE_COLORS = CACHE_DIR / COLORS_FILE
 # A local refit is OUR pair, not a copy of the hosted one, so both halves go to
