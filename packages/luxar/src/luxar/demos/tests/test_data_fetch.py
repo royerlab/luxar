@@ -83,7 +83,10 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
             if pair:
                 groups.setdefault((dataset_name, pair), []).append(entry)
 
-    assert groups, "manifest declares no positionally indexed payload groups"
+    assert set(groups) == {
+        ("gsplats_ct_totalsegmentator", "ct_atlas"),
+        ("gsplats_visible_human_head", "vh_head"),
+    }
     for (dataset_name, pair), entries in groups.items():
         assert len(entries) >= 2, f"{dataset_name}/{pair} has no positional partner"
         history_lengths = {
@@ -95,9 +98,11 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
         for entry in entries:
             history = entry.get("superseded_sha256") or ()
             if history:
-                assert entry.get("hosted_sha256") != history[-1], (
-                    f"{dataset_name}/{entry['name']} still names its superseded pin"
-                )
+                for key in ("sha256", "hosted_sha256"):
+                    assert entry.get(key) != history[-1], (
+                        f"{dataset_name}/{entry['name']} still names its "
+                        f"superseded pin as {key}"
+                    )
 
 
 def test_load_manifest_hands_out_an_independent_copy():
@@ -2167,6 +2172,46 @@ def test_a_complete_superseded_positional_pair_remains_usable(fake_repo, monkeyp
     )
 
     assert [path.read_bytes() for path in paths] == [b"old-fit", b"old-colors"]
+
+
+def test_a_complete_positional_pair_refreshes_when_current_sources_exist(
+    fake_repo, monkeypatch, capsys
+):
+    """Available current members must not be pinned to a complete stale pair."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"old-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    repo_root = cache / "repo"
+    repo_pair = repo_root / "gsplats_toy"
+    repo_pair.mkdir(parents=True)
+    (repo_pair / "fit.gsplats.zarr.zip").write_bytes(b"current-fit")
+    (repo_pair / "colors.npz").write_bytes(b"current-colors")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
+
+    paths = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert [path.read_bytes() for path in paths] == [b"current-fit", b"current-colors"]
+    captured = capsys.readouterr()
+    assert "Using SUPERSEDED positional pair" not in captured.out + captured.err
 
 
 def test_a_positional_pair_rejects_different_superseded_depths(fake_repo, monkeypatch):

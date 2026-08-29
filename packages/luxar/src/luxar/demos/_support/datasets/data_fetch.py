@@ -433,9 +433,12 @@ def _positional_superseded_fallbacks(
     """Return members that may reuse one complete superseded generation.
 
     The ordinary resolver decides fallback eligibility per file. Positionally
-    indexed sidecars cannot: if one member has no current source and must stay
-    on its previous generation, every member must have that same generation in
-    cache. Otherwise returning the files would silently pair unrelated rows.
+    indexed sidecars cannot: if one member has no declared current source and
+    must stay on its previous generation, every member must have that same
+    generation in cache. Otherwise returning the files would silently pair
+    unrelated rows. A declared source that later fails to download or verify is
+    handled by the ordinary per-file resolver; this preflight does not prove
+    that current bytes are obtainable.
     """
     groups: dict[str, list[Manifest]] = {}
     for entry in files:
@@ -459,6 +462,8 @@ def _positional_superseded_fallbacks(
                 )
             return verdicts[fname]
 
+        # Keep the source check first: source checkouts then avoid hashing a
+        # cached superseded payload that the ordinary resolver will refresh.
         forced = any(
             not _has_current_source(lfs_dir, record, entry["name"])
             and cached_verdict(entry) == "superseded"
@@ -703,7 +708,7 @@ def _ensure_one(
     lfs_file = lfs_dir / fname
     has_repo_copy = lfs_file.is_file() and not is_lfs_pointer(lfs_file)
     url = zenodo_file_url(record, fname)
-    irreplaceable = not has_repo_copy and not url
+    irreplaceable = not _has_current_source(lfs_dir, record, fname)
     if lfs_file.exists():
         source_remedy = "In a source checkout, run `git lfs pull`."
     elif not _DEMOS_DATA_DIR.exists():
