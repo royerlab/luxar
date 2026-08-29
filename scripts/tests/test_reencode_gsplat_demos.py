@@ -1,11 +1,11 @@
 """Tests for scripts/reencode_gsplat_demos.py (the LFS baseline re-encoder).
 
 Only the sidecar-pairing refusal is covered: re-encoding a fit reorders its
-splats, which silently invalidates a per-splat ``.npz`` sidecar indexed
-positionally against it — the bug of #1670, which this script's ``--apply`` path
-would otherwise recreate every time it ran. Both halves are tested: the predicate
-that names a refused dataset, and the EFFECT in ``main`` — printing a refusal and
-then re-encoding the dataset anyway would be the whole bug back.
+splats, which silently invalidates a per-splat sidecar indexed positionally
+against it — the bug of #1670, which this script's ``--apply`` path would
+otherwise recreate every time it ran. Both halves are tested: the predicate that
+names a refused dataset, and the EFFECT in ``main`` — printing a refusal and then
+re-encoding the dataset anyway would be the whole bug back.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def test_ordinary_datasets_are_not_refused() -> None:
     assert rg.sidecar_pair_refusal(ok) is None
 
 
-def test_the_refused_set_matches_the_datasets_that_ship_an_npz() -> None:
+def test_the_refused_set_matches_positionally_paired_datasets() -> None:
     """Spell out the coupling, so a NEW sidecar-bearing dataset cannot slip in.
 
     The pairing is read from the MANIFEST, which lists every dataset's files
@@ -65,7 +65,10 @@ def test_the_refused_set_matches_the_datasets_that_ship_an_npz() -> None:
         directory = spec.get("dir", name)
         if not directory.startswith("gsplats_"):
             continue
-        files = [f["name"] for f in spec.get("files", [])]
+        entries = spec.get("files", [])
+        files = [f["name"] for f in entries]
+        if any(entry.get("positional_pair") for entry in entries):
+            with_sidecar.add(directory)
         if any(f.endswith(".zip") for f in files) and any(
             f.endswith(".npz") for f in files
         ):
@@ -76,7 +79,7 @@ def test_the_refused_set_matches_the_datasets_that_ship_an_npz() -> None:
 
     assert with_sidecar == set(rg.SIDECAR_PAIRED_DIRS), (
         "SIDECAR_PAIRED_DIRS must name exactly the datasets that pair a per-splat "
-        ".npz sidecar with their fit: re-encoding a missing one would silently "
+        "sidecar with their fit: re-encoding a missing one would silently "
         "misindex its sidecar, and a spurious one is refused for no reason"
     )
 
