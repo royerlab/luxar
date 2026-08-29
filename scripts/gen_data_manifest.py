@@ -462,8 +462,8 @@ DATASETS: dict[str, dict] = {
         # format 3.2 — has been replaced.
         #
         # The 51tp variant is now a strided SLICE of the 253tp fit rather than an
-        # independent fit: every 5th frame (source frames 0, 5, ... 250, recorded
-        # in the archive's own `source_timepoints`), renumbered to a dense 0..50.
+        # independent fit: every 5th frame (source frames 0, 5, ... 250),
+        # renumbered to a dense 0..50.
         # The renumbering is load-bearing, not cosmetic — it puts the stacked axis
         # back on a regular grid so the encoder's gridded-axis snap stores it
         # EXACTLY. The old build's frame values were quantization-smeared off
@@ -471,12 +471,12 @@ DATASETS: dict[str, dict] = {
         # rendering an empty scene. Because it is a slice, the two variants now
         # agree splat-for-splat on the frames they share, where the previous
         # independent fits differed (2.50M vs 2.38M per timepoint at the finest
-        # level). Shipped as the default because pulling ~1.9 GB is far easier
+        # level). Shipped as the default because pulling ~1.1 GB is far easier
         # than ~9.3 GB over Zenodo's best-effort bandwidth.
         variants={
             "51tp": dict(
                 default=True,
-                approx_bytes=1_873_559_527,
+                approx_bytes=1_115_714_088,
                 note="51-timepoint fit (every 5th frame) — lighter default for the demo.",
             ),
             "253tp": dict(
