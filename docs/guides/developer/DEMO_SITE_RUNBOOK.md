@@ -439,7 +439,8 @@ preserves additive rungs and lowers multiple substitutive levels into a
 | load by file path; graft only a partition or nested tree | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology`, `desi_galaxies` |
 
 Digest-confirmed copies show structural divergence for two pass-through
-datasets: `cryoem_virus` changes from flat to a five-step progressive ladder;
+datasets: `cryoem_virus` changes from a flat leaf to a flat leaf with a five-rung
+ladder (no `kind` either side; the rungs are what reaches the scene);
 `milkyway_dust` changes from flat to four substitutive levels with additive
 rungs. Of the grafted datasets, only `cmu1_pathology` is digest-confirmed on both
 sides, so the confirmed armed set is **three**. The hosted topology of
@@ -479,7 +480,8 @@ here to size the download, not the risk:
 
 - `cells3d` at **2.25x** is flat -> flat. Only the splat count moved (20,323 vs
   41,975); both scenes have 2 element nodes.
-- `cryoem_virus` at **0.95x** is flat -> a five-step progressive ladder.
+- `cryoem_virus` at **0.95x** is flat leaf -> flat leaf with a five-rung ladder
+  (no `kind` either side; the rungs are what reaches the scene).
 - `cmu1` at **1.32x** is flat leaf -> a four-part partition.
 
 Ratios below 1.0 are refits that shrank, and they are not exempt either. Only a
