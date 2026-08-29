@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -115,6 +117,60 @@ def _manifest_entry(hosted: str | None, history: list[str] | None = None) -> dic
     if history is not None:
         entry["superseded_sha256"] = history
     return {"datasets": {"toy": {"files": [entry]}}}
+
+
+def test_head_manifest_activates_repin_guard(tmp_path, monkeypatch) -> None:
+    generator = _load_generator()
+    repo_root = tmp_path / "repo"
+    manifest_path = repo_root / "data_manifest.json"
+    repo_root.mkdir()
+    committed = _manifest_entry("a" * 64)
+    manifest_path.write_text(json.dumps(committed))
+    subprocess.run(
+        ["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True
+    )
+    subprocess.run(
+        ["git", "add", manifest_path.name],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Luxar Tests",
+            "-c",
+            "user.email=luxar-tests@example.invalid",
+            "commit",
+            "-m",
+            "baseline",
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    repinned = _manifest_entry("b" * 64)
+    manifest_path.write_text(json.dumps(repinned))
+    monkeypatch.setattr(generator, "REPO_ROOT", repo_root)
+    monkeypatch.setattr(generator, "MANIFEST", manifest_path)
+
+    baseline = generator._head_manifest()
+
+    assert baseline == committed
+    with pytest.raises(ValueError, match="outgoing hosted digest"):
+        generator._refuse_invalid_repin_history(repinned, baseline)
+
+
+def test_head_manifest_returns_none_outside_git_checkout(tmp_path, monkeypatch) -> None:
+    generator = _load_generator()
+    manifest_path = tmp_path / "data_manifest.json"
+    monkeypatch.setattr(generator, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(generator, "MANIFEST", manifest_path)
+
+    assert generator._head_manifest() is None
 
 
 def test_hosted_repin_accepts_outgoing_digest_and_existing_history() -> None:
