@@ -280,21 +280,49 @@ def _finest_elements(
     return sum(vals) if vals and all(v is not None for v in vals) else None
 
 
+def _store_root(zf: zipfile.ZipFile, names: list[str]) -> Optional[tuple[str, dict]]:
+    """The store root prefix inside the zip, plus its attrs.
+
+    Do NOT infer this from ``names[0]``. That assumes every member sits under one
+    wrapping directory, and both layouts ship: some archives are zipped with a
+    ``<name>.gsplats.zarr/`` prefix, others with the store contents AT THE ZIP
+    ROOT. On the second kind ``names[0].split("/")[0]`` names whichever CHILD
+    group happens to be listed first, and then:
+
+      - if that child declares no ``format_type`` (``pipeline/``, ``additive_0/``)
+        the caller returns None, which ``refresh_characteristics`` turns into
+        "skip", so the STALE committed row survives with no warning;
+      - if it does look like a node (``part_0/``) the read "succeeds" and
+        publishes that ONE part's ``n_splats`` as the whole archive's.
+
+    Measured on the restructured set: five archives silently skipped and three
+    cmu1 channels credited with their ``part_0`` count. So identify the root by
+    finding the document that actually declares the format, checking the zip root
+    first and then each single top-level directory.
+    """
+    candidates = [""]
+    candidates += sorted({n.split("/")[0] + "/" for n in names if "/" in n})
+    for root in candidates:
+        attrs = _attrs(zf, root)
+        if attrs.get("format_type") == "gsplats_zarr" or attrs.get("type") == "gsplats":
+            return root, attrs
+    return None
+
+
 def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     names = zf.namelist()
     if not names:
         return None
-    root = names[0].split("/")[0] + "/"
-    root_attrs = _attrs(zf, root)
-    # An .npz is also a zip, and a point-cloud .luxar.zarr is also a zarr store.
-    # Without this check both parse "successfully" and every field comes back
-    # defaulted -- which reads as a claim ("single level", no PSNR) rather than
-    # as "this is not a splat fit". Publishing that would be publishing a
-    # falsehood, so identify the format before describing it.
-    if root_attrs.get("format_type") != "gsplats_zarr" and (
-        root_attrs.get("type") != "gsplats"
-    ):
+    located = _store_root(zf, names)
+    if located is None:
         return None
+    root, root_attrs = located
+    # The format check that used to live here is now `_store_root`'s search
+    # condition: an .npz is also a zip and a point-cloud .luxar.zarr is also a
+    # zarr store, and on either of those no candidate root declares the gsplats
+    # format, so `_store_root` returns None above. Both would otherwise parse
+    # "successfully" with every field defaulted, which reads as a claim ("single
+    # level", no PSNR) rather than as "this is not a splat fit".
     fit = _attrs(zf, root, "fitting/")
     part_info = _read_part_provenance(
         fit.get("part_provenance"), root_kind=root_attrs.get("kind")
