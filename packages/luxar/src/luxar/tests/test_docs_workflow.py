@@ -88,14 +88,15 @@ def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
         for file in manifest["datasets"]["gsplats_cmu1_pathology"]["files"]
         if file["name"] == "cmu1_ch0.gsplats.zarr.zip"
     )
-    labelled_prefixes = re.search(
-        r"^\s+cmu1_ch0\s+sha256\s+([0-9a-f]{6,64})(?:\.\.\.|…).*\n"
-        r"\s+hosted_sha256\s+([0-9a-f]{6,64})(?:\.\.\.|…)",
+    labelled_pair = re.search(
+        r"^[ \t]+cmu1_ch0[ \t]+sha256[ \t]+"
+        r"([0-9a-f]{6,64})(?:\.\.\.|…).*\n"
+        r"[ \t]+hosted_sha256[ \t]+([0-9a-f]{6,64})(?:\.\.\.|…)",
         text,
         re.MULTILINE,
     )
-    assert labelled_prefixes is not None, "runbook cmu1_ch0 digest pair not found"
-    sha256_prefix, hosted_sha256_prefix = labelled_prefixes.groups()
+    assert labelled_pair is not None, "runbook cmu1_ch0 digest pair not found"
+    sha256_prefix, hosted_sha256_prefix = labelled_pair.groups()
     assert cmu1_ch0["sha256"].startswith(sha256_prefix), (
         "runbook cmu1_ch0 sha256 prefix does not match the active manifest pin"
     )
