@@ -95,8 +95,9 @@ from luxar import (
 )
 from luxar._zarr_compat import consolidate, open_group
 from luxar.demos import (
+    DatasetUnavailable,
     add_demo_caption,
-    is_lfs_pointer,
+    ensure_dataset,
     launch_viewer,
     parse_demo_flags,
     substitutive_lod_or_flat,
@@ -934,14 +935,18 @@ def main() -> None:
         aprint(f"Points: {len(positions):,}")
         create_scene(positions, redshift, tracer_ids, output_path)
     elif not output_path.exists():
-        # Fast path: unzip the shipped, fully-built scene (instant, no LOD build).
-        if SCENE_ZIP_SHIPPED.exists() and not is_lfs_pointer(SCENE_ZIP_SHIPPED):
-            extract_shipped_scene(SCENE_ZIP_SHIPPED, output_path)
+        # Fast path: resolve and unzip the fully-built scene (instant, no LOD build).
+        try:
+            scene_zip = ensure_dataset(DEMO_NAME)[0]
+        except DatasetUnavailable:
+            scene_zip = None
+        if scene_zip is not None:
+            extract_shipped_scene(scene_zip, output_path)
             ensure_origin_framing(output_path)
             warn_if_scene_is_stale(output_path)
         else:
             aprint(
-                "Precomputed scene not available (Git LFS asset not pulled). "
+                "Precomputed scene not available from the manifest. "
                 "Falling back to download + build (one-time; result is cached)."
             )
             positions, redshift, tracer_ids = _load_or_build_or_exit()

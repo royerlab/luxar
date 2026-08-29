@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.demos import demo_cellxgene_census_umap as _demo
 from luxar.demos.demo_cellxgene_census_umap import build_scene
 
 #: The appearance baked in `scene.add_points("cells", ...)` after #1375.
@@ -28,6 +29,71 @@ EXPECTED_INTENSITY = 4.52
 # it and its own self-screening S(tau)=0.36 ate most of its emission, so
 # the cloud read as a screened shell rather than depth-ordered structure.
 EXPECTED_ABSORPTION = 2.12
+
+
+def test_default_cache_uses_the_manifest_resolved_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    resolved = tmp_path / "resolved.npz"
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.delenv("CENSUS_UMAP_CACHE", raising=False)
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: calls.append(("ensure", name)) or [resolved],
+        raising=False,
+    )
+    monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda cache, output, *, max_cells: (
+            calls.append(("build", (cache, output, max_cells))) or 7
+        ),
+    )
+
+    _demo.main()
+
+    assert calls == [
+        ("ensure", "census_umap_1m"),
+        (
+            "build",
+            (
+                resolved,
+                tmp_path / "cellxgene_census_umap.luxar.zarr",
+                1_000_000,
+            ),
+        ),
+    ]
+
+
+def test_explicit_cache_override_bypasses_the_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    override = tmp_path / "custom.npz"
+    override.write_bytes(b"custom")
+    seen: list[Path] = []
+
+    monkeypatch.setenv("CENSUS_UMAP_CACHE", str(override))
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: pytest.fail(f"unexpected manifest lookup for {name}"),
+        raising=False,
+    )
+    monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda cache, output, *, max_cells: seen.append(cache) or 7,
+    )
+
+    _demo.main()
+
+    assert seen == [override]
 
 
 def _write_synthetic_cache(path: Path, n: int = 200) -> Path:

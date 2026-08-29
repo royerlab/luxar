@@ -60,8 +60,8 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
+    ensure_dataset,
     launch_viewer,
-    require_local_data,
 )
 from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import (
@@ -71,14 +71,11 @@ from luxar.demos._support._umap_utils import (
 )
 from luxar.utils.paths import get_demos_output_dir
 
-
-def get_data_dir() -> Path:
-    """Get the data directory path."""
-    return Path(__file__).parent / "data"
+DATASET = "3d_umap_coords_mouse"
 
 
 def load_mouse_umap_data() -> tuple[np.ndarray, dict, dict]:
-    """Load 3D UMAP data from local parquet file.
+    """Load 3D UMAP data from the manifest-resolved parquet file.
 
     Returns:
         Tuple of (coordinates, attributes, category_maps) where:
@@ -87,7 +84,7 @@ def load_mouse_umap_data() -> tuple[np.ndarray, dict, dict]:
         - category_maps: dict of attribute name -> list of category labels
     """
     with asection("Loading Mouse 3D UMAP Data"):
-        data_path = require_local_data(get_data_dir() / "3d_umap_coords_mouse.parquet")
+        data_path = ensure_dataset(DATASET)[0]
         aprint(f"Loading from {data_path}...")
 
         df = pd.read_parquet(data_path)

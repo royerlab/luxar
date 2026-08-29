@@ -1,5 +1,6 @@
 """Regression coverage for optional peak-UMAP link metadata."""
 
+from types import ModuleType
 from pathlib import Path
 from typing import Callable
 
@@ -7,9 +8,57 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.demos import demo_human_multiome_peak_umap as _human
+from luxar.demos import demo_mouse_multiome_peak_umap as _mouse
 from luxar.demos.demo_human_multiome_peak_umap import create_human_scene
 from luxar.demos.demo_mouse_multiome_peak_umap import create_mouse_scene
 from luxar.demos.demo_zebrahub_multiome_peak_umap import create_zebrahub_scene
+
+
+@pytest.mark.parametrize(
+    ("module", "loader", "dataset"),
+    [
+        (_human, _human.load_human_umap_data, "3d_umap_coords_human"),
+        (_mouse, _mouse.load_mouse_umap_data, "3d_umap_coords_mouse"),
+    ],
+)
+def test_packaged_peak_umaps_use_the_manifest_resolved_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    module: ModuleType,
+    loader: Callable[[], tuple[np.ndarray, dict, dict]],
+    dataset: str,
+) -> None:
+    resolved = tmp_path / f"{dataset}.parquet"
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "ensure_dataset",
+        lambda name: calls.append(("ensure", name)) or [resolved],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "require_local_data",
+        lambda path: pytest.fail(f"bypassed manifest for packaged path {path}"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module.pd,
+        "read_parquet",
+        lambda path: (
+            calls.append(("read", path))
+            or module.pd.DataFrame({"UMAP_1": [1.0], "UMAP_2": [2.0], "UMAP_3": [3.0]})
+        ),
+    )
+
+    coordinates, attributes, category_maps = loader()
+
+    assert calls == [("ensure", dataset), ("read", resolved)]
+    np.testing.assert_array_equal(coordinates, [[1.0, 2.0, 3.0]])
+    assert attributes == {}
+    assert category_maps == {}
 
 
 def _geometry_groups(node: zarr.Group) -> list[zarr.Group]:

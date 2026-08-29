@@ -75,7 +75,9 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     add_demo_caption,
+    ensure_dataset,
     launch_viewer,
     parse_demo_flags,
     require_local_data,
@@ -90,9 +92,9 @@ COLORINGS = [
     ("tissue_general", "Tissue"),
     ("disease", "Disease"),
 ]
-# Shipped runnable default: a 1M-cell subsample (Git LFS). Override with the
-# CENSUS_UMAP_CACHE env var to point at a larger (e.g. 10M) regenerated cache.
-DEFAULT_CACHE = Path(__file__).parent / "data" / "census_umap_1m.npz"
+# Hosted runnable default: a 1M-cell subsample. Override with CENSUS_UMAP_CACHE
+# to point at a larger (e.g. 10M) regenerated cache.
+DATASET = "census_umap_1m"
 
 # Per-cell sphere radius in scene units, tied to the local cell spacing rather
 # than picked by eye: at NORM_SPAN the 1M-cell cloud has a median
@@ -341,17 +343,25 @@ def build_scene(
 def main() -> None:
     """Resolve the cache, build the scene, and optionally launch the viewer."""
     flags = parse_demo_flags()
-    cache = Path(os.environ.get("CENSUS_UMAP_CACHE", DEFAULT_CACHE))
-    if not cache.exists():
-        aprint(
-            f"⚠ coords cache not found at {cache}\n"
-            "  Generate it on a GPU box (see the module docstring / README):\n"
-            "    python scripts/gen_census_umap.py --n 10000000 --out <cache>.npz\n"
-            "  (needs cellxgene-census + cuml; ~96M primary human cells available),\n"
-            "  then point this demo at it via CENSUS_UMAP_CACHE=<cache>.npz.\n"
-            f"  Or pre-built scenes can be served directly with `luxar serve --viewer`."
-        )
-        return
+    override = os.environ.get("CENSUS_UMAP_CACHE")
+    if override:
+        cache = Path(override)
+        if not cache.exists():
+            aprint(f"⚠ coords cache not found at {cache}")
+            return
+    else:
+        try:
+            cache = ensure_dataset(DATASET)[0]
+        except DatasetUnavailable as exc:
+            aprint(
+                f"⚠ default coords cache is unavailable: {exc}\n"
+                "  Generate it on a GPU box (see the module docstring / README):\n"
+                "    python scripts/gen_census_umap.py --n 10000000 --out <cache>.npz\n"
+                "  (needs cellxgene-census + cuml; ~96M primary human cells available),\n"
+                "  then point this demo at it via CENSUS_UMAP_CACHE=<cache>.npz.\n"
+                "  Or pre-built scenes can be served directly with `luxar serve --viewer`."
+            )
+            return
     output_path = get_demos_output_dir() / "cellxgene_census_umap.luxar.zarr"
     # No CPU/GPU split any more: the build no longer coarsens, so it is a write,
     # not a compute. CENSUS_UMAP_MAX_CELLS also keeps the selected coloring

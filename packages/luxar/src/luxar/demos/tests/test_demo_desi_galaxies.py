@@ -878,6 +878,59 @@ class TestEnsureOriginFraming:
 
 
 class TestMainSceneReuse:
+    def test_cold_scene_uses_the_manifest_resolved_archive(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        resolved = tmp_path / "resolved-scene.zip"
+        resolved.write_bytes(b"manifest-resolved")
+        calls: list[tuple[str, object]] = []
+
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            _demo,
+            "SCENE_ZIP_SHIPPED",
+            tmp_path / "packaged-scene.zip",
+        )
+        monkeypatch.setattr(
+            _demo,
+            "ensure_dataset",
+            lambda name: calls.append(("ensure", name)) or [resolved],
+            raising=False,
+        )
+        monkeypatch.setattr(
+            _demo,
+            "extract_shipped_scene",
+            lambda source, output: calls.append(("extract", (source, output))),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "ensure_origin_framing",
+            lambda path: calls.append(("frame", path)),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "warn_if_scene_is_stale",
+            lambda path: calls.append(("warn", path)),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "_load_or_build_or_exit",
+            lambda: pytest.fail("manifest archive should avoid the compute fallback"),
+        )
+
+        _demo.main()
+
+        output = tmp_path / "desi_galaxies.luxar.zarr"
+        assert calls == [
+            ("ensure", _demo.DEMO_NAME),
+            ("extract", (resolved, output)),
+            ("frame", output),
+            ("warn", output),
+        ]
+
     def test_serve_only_checks_staleness_before_launch(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
