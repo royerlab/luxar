@@ -45,6 +45,28 @@ VALID_BUCKETS = {"zenodo", "local-compute", "regenerate"}
 GEN_SCRIPT = REPO_ROOT / "scripts" / "gen_data_manifest.py"
 _NO_SCRIPT = "generator script not present (packaged install without repo scripts/)"
 
+# This contract deliberately tracks hosted pins and their history depths. Update
+# it as part of a reviewed hosted re-pin; it is distinct from the demos' shipped
+# LFS digest constants, which intentionally describe the in-repo bytes instead.
+_EXPECTED_POSITIONAL_HOSTED_CONTRACTS = {
+    (
+        "gsplats_ct_totalsegmentator",
+        "ct_atlas.gsplats.zarr.zip",
+    ): ("f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399", 0),
+    (
+        "gsplats_ct_totalsegmentator",
+        "ct_atlas_labels.npz",
+    ): ("71a1315146272263c75c92d554dbf49f18e90222e7d7a5b5bef44a34a5efa11d", 0),
+    (
+        "gsplats_visible_human_head",
+        "vh_head.gsplats.zarr.zip",
+    ): ("859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065", 0),
+    (
+        "gsplats_visible_human_head",
+        "vh_head_colors.npz",
+    ): ("82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1", 0),
+}
+
 
 def _load_generator():
     """Import scripts/gen_data_manifest.py as a module (scripts/ is not a package)."""
@@ -74,28 +96,10 @@ def test_manifest_loads_and_has_expected_shape():
 
 
 def test_positional_sidecar_hosted_pairs_move_atomically():
-    """Every declared positional group must advance as one generation."""
+    """Each positional group advances together and matches its hosted contract."""
     expected_pairs = {
         ("gsplats_ct_totalsegmentator", "ct_atlas"),
         ("gsplats_visible_human_head", "vh_head"),
-    }
-    expected_hosted_contracts = {
-        (
-            "gsplats_ct_totalsegmentator",
-            "ct_atlas.gsplats.zarr.zip",
-        ): ("f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399", 0),
-        (
-            "gsplats_ct_totalsegmentator",
-            "ct_atlas_labels.npz",
-        ): ("71a1315146272263c75c92d554dbf49f18e90222e7d7a5b5bef44a34a5efa11d", 0),
-        (
-            "gsplats_visible_human_head",
-            "vh_head.gsplats.zarr.zip",
-        ): ("859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065", 0),
-        (
-            "gsplats_visible_human_head",
-            "vh_head_colors.npz",
-        ): ("82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1", 0),
     }
     manifest = load_manifest()
     groups: dict[tuple[str, str], list[dict]] = {}
@@ -111,7 +115,7 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
         for (dataset_name, _pair), entries in groups.items()
         for entry in entries
     }
-    assert pair_members == set(expected_hosted_contracts)
+    assert pair_members == set(_EXPECTED_POSITIONAL_HOSTED_CONTRACTS)
     for (dataset_name, pair), entries in groups.items():
         assert len(entries) >= 2, f"{dataset_name}/{pair} has no positional partner"
         history_lengths = {
@@ -122,7 +126,9 @@ def test_positional_sidecar_hosted_pairs_move_atomically():
         )
         for entry in entries:
             history = entry.get("superseded_sha256") or ()
-            expected_contract = expected_hosted_contracts[(dataset_name, entry["name"])]
+            expected_contract = _EXPECTED_POSITIONAL_HOSTED_CONTRACTS[
+                (dataset_name, entry["name"])
+            ]
             assert (entry.get("hosted_sha256"), len(history)) == expected_contract, (
                 f"{dataset_name}/{entry['name']} hosted pin or history depth changed; "
                 "update the committed expectation only after reviewing the re-pin"

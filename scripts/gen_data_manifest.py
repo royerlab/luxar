@@ -65,7 +65,7 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 # The record ids and DOIs below are REAL and final: Zenodo reserves a DOI at
 # deposition time and the deposition id becomes the record id on publication, so
 # `https://zenodo.org/records/<id>/...` is already the right URL. What is not yet
-# true is that the records are PUBLIC — all four are still unsubmitted drafts,
+# true is that the records are PUBLIC — all of them are still unsubmitted drafts,
 # and a file URL into a draft 404s for everyone.
 #
 # `zenodo_doi` is that reserved DOI, i.e. the VERSION DOI of this deposition —
@@ -74,7 +74,7 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 #
 # Hence `published`: while it is false the fetch helper builds no URL at all, so
 # the Zenodo leg stays dormant exactly as it did when the ids were null, and
-# demos keep resolving cache -> in-repo LFS. Flipping the four flags at
+# demos keep resolving cache -> in-repo LFS. Flipping those flags at
 # publication time is what activates fetching, and it is the only edit needed.
 # Recording the ids now (rather than at publish time) means the manifest, the
 # record descriptions and the reserved DOIs cannot drift apart in the meantime.
