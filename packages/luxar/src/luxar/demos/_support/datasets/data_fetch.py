@@ -274,8 +274,10 @@ def ensure_dataset(
     Raises:
         DatasetNotFound: unknown dataset.
         LocalComputeDataset: dataset is local-compute/regenerate (or recompute=True).
-        DatasetUnavailable: data is neither cached, in-repo, nor hosted yet — the
-            one condition a caller may route around by building its own copy.
+        DatasetUnavailable: data is neither cached, in-repo, nor hosted yet, or
+            a declared ``positional_pair`` cannot resolve every member to the
+            same generation — the conditions a caller may route around by
+            building its own copy.
         FileNotFoundError: a fault, not an absence — a missing packaged manifest,
             or an in-repo copy that matches neither pinned digest with no hosted
             fallback.
@@ -314,7 +316,7 @@ def ensure_dataset(
     lfs_dir = _DEMOS_DATA_DIR.joinpath(*parts)
     record = m["records"].get(spec.get("record", ""), {})
     positional_fallbacks = _positional_superseded_fallbacks(
-        files, cache_dir, lfs_dir, record, verbose
+        files, cache_dir, lfs_dir, record
     )
 
     resolved: list[Path] = []
@@ -428,7 +430,6 @@ def _positional_superseded_fallbacks(
     cache_dir: Path,
     lfs_dir: Path,
     record: Manifest,
-    verbose: bool,
 ) -> set[str]:
     """Return members that may reuse one complete superseded generation.
 
@@ -457,7 +458,7 @@ def _positional_superseded_fallbacks(
                     cache_dir / fname,
                     entry.get("sha256"),
                     entry.get("hosted_sha256"),
-                    verbose,
+                    False,
                     tuple(entry.get("superseded_sha256") or ()),
                 )
             return verdicts[fname]

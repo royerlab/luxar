@@ -2214,6 +2214,42 @@ def test_a_complete_positional_pair_refreshes_when_current_sources_exist(
     assert "Using SUPERSEDED positional pair" not in captured.out + captured.err
 
 
+def test_a_current_positional_pair_reports_each_verification_once(
+    fake_repo, monkeypatch, capsys
+):
+    """Pair preflight must not narrate the resolver's checksum pass twice."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"current-fit")
+    (pair_cache / "colors.npz").write_bytes(b"current-colors")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache)
+
+    out = capsys.readouterr().out
+    assert out.count("Verifying fit.gsplats.zarr.zip") == 1
+    assert out.count("Verifying colors.npz") == 1
+    assert out.index("Ensuring dataset (gsplats_toy)") < out.index(
+        "Verifying fit.gsplats.zarr.zip"
+    )
+
+
 def test_a_positional_pair_rejects_different_superseded_depths(fake_repo, monkeypatch):
     """Two last-history matches are not one generation when their depths differ."""
     manifest, cache = fake_repo
