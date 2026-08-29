@@ -1630,3 +1630,152 @@ class TestAnAbsentFigurePublishesItsReason:
         text = self._render(gen, tmp_path, monkeypatch, dict(self._MEASURED))
 
         assert "`movie.gsplats.zarr.zip`:" not in text
+
+
+def _write_rootlevel_store(
+    path: Path,
+    *,
+    n_splats: int | None,
+    child_n_splats: int = 999_999,
+    first_child: str = "pipeline",
+) -> None:
+    """A store zipped with its contents at the zip root."""
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(f"{first_child}/zarr.json", json.dumps({"zarr_format": 3}))
+        zf.writestr(
+            f"{first_child}/child_marker/zarr.json",
+            json.dumps({"zarr_format": 3, "attributes": {"n_splats": child_n_splats}}),
+        )
+        root_attrs: dict[str, Any] = {"format_type": "gsplats_zarr", "ndim": 4}
+        if n_splats is not None:
+            root_attrs["n_splats"] = n_splats
+        zf.writestr(
+            "zarr.json",
+            json.dumps(
+                {"zarr_format": 3, "node_type": "group", "attributes": root_attrs}
+            ),
+        )
+        zf.writestr(
+            "fitting/zarr.json",
+            json.dumps({"zarr_format": 3, "attributes": {"psnr_db": 41.5}}),
+        )
+
+
+def _write_arbitrarily_wrapped_store(path: Path) -> None:
+    """A valid store after an unrelated member and under a nonstandard wrapper."""
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("notes/readme.txt", "archive notes")
+        zf.writestr(
+            "opaque-wrapper/zarr.json",
+            json.dumps(
+                {
+                    "zarr_format": 3,
+                    "node_type": "group",
+                    "attributes": {
+                        "format_type": "gsplats_zarr",
+                        "ndim": 4,
+                        "n_splats": 4321,
+                    },
+                }
+            ),
+        )
+        zf.writestr(
+            "opaque-wrapper/fitting/zarr.json",
+            json.dumps({"zarr_format": 3, "attributes": {"psnr_db": 38.25}}),
+        )
+
+
+class TestTheStoreRootIsFoundFromFormatMetadata:
+    """The root is identified by its format declaration, not naming or order."""
+
+    def test_an_arbitrary_wrapper_after_an_unrelated_member_is_read(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "unconventional.zip"
+        _write_arbitrarily_wrapped_store(path)
+
+        info = gen._read_archive(path)
+
+        assert info is not None
+        assert info["n_splats"] == 4321
+        assert info["ndim"] == 4
+        assert info["psnr_db"] == 38.25
+
+    def test_a_root_level_store_is_read_not_skipped(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "rootlevel.gsplats.zarr.zip"
+        _write_rootlevel_store(path, n_splats=2_205_857)
+
+        info = gen._read_archive(path)
+
+        assert info is not None, "a root-level zip must not read as unreadable"
+        assert info["n_splats"] == 2_205_857
+        assert info["ndim"] == 4
+        assert info["psnr_db"] == 41.5
+
+    def test_a_child_groups_count_is_not_published_as_the_archives(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        """A child node's count must never replace the archive total."""
+        path = tmp_path / "parts.gsplats.zarr.zip"
+        _write_rootlevel_store(
+            path, n_splats=8_823_953, child_n_splats=2_205_857, first_child="part_0"
+        )
+
+        info = gen._read_archive(path)
+
+        assert info is not None
+        assert info["n_splats"] == 8_823_953, "read a child group as the root"
+
+    def test_the_wrapping_directory_layout_still_works(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        """The other half of the corpus must not regress."""
+        path = tmp_path / "wrapped.gsplats.zarr.zip"
+        _write_frame(path, n_splats=1234, psnr=39.0)
+
+        info = gen._read_archive(path)
+
+        assert info is not None
+        assert info["n_splats"] == 1234
+        assert info["psnr_db"] == 39.0
+
+    def test_a_zip_that_is_not_a_splat_store_still_reads_as_none(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        """An .npz is also a zip. Finding no gsplats root must stay a None, not
+        a row of defaults that reads as a claim."""
+        path = tmp_path / "labels.npz"
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("arr_0.npy", b"\x93NUMPY not really")
+
+        assert gen._read_archive(path) is None
+
+    def test_a_luxar_scene_zip_is_not_described_as_a_fit(
+        self, gen: Any, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "scene.luxar.zarr.zip"
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr(
+                "zarr.json",
+                json.dumps(
+                    {
+                        "zarr_format": 3,
+                        "node_type": "group",
+                        "attributes": {"format_type": "luxar_zarr"},
+                    }
+                ),
+            )
+            zf.writestr(
+                "nuclei/zarr.json",
+                json.dumps(
+                    {
+                        "zarr_format": 3,
+                        "node_type": "group",
+                        "attributes": {"type": "gsplats", "n_splats": 20},
+                    }
+                ),
+            )
+
+        assert gen._read_archive(path) is None

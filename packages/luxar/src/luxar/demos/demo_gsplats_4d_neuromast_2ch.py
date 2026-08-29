@@ -22,17 +22,31 @@ DATA SOURCE & CITATIONS:
     deconvolved, motion-aligned. Original volumes on the CZ Biohub HPC:
     ``…/04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1/{Membranes,Nuclei}``.
 
-PIPELINE (how the bundled gsplats were produced — for provenance, NOT re-run
-by this demo):
-    1. Assemble each channel's 100 deconvolved timepoints into a
-       ``time,z,y,x`` volume; subtract a single global background floor.
+PIPELINE — reproducible per channel with ``--recompute``:
+    1. Assemble the channel's 100 deconvolved timepoints into one
+       ``time,z,y,x`` array, and subtract a single global background floor
+       measured once for that channel (105.991 membranes / 103.888 nuclei).
+       ``--recompute`` starts from the assembled array and does the
+       subtraction; assembling from the microscope's per-timepoint files is
+       upstream of this demo.
     2. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
-    3. ``batch-fit`` each channel: 100 timepoints, 64k seeds, ``n2s`` preset,
-       barrier-aware ``stream`` LOD merge (time axis a hard coarsening barrier).
-    4. Anisotropy: scale Z ×2.5 (raw voxels are anisotropic) + normalise
-       intensity, per channel.
-    5. Redundancy-cull each timepoint (``--redundancy-threshold 0.20``,
-       SSIM-flat) → ~11% lighter with imperceptible quality loss.
+       Recorded, not re-run: the sweep is hours and its answer is stable.
+    3. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
+       64k seeds, ``--floor auto``, no fit-time cull.
+    4. Redundancy-cull every per-timepoint tile
+       (``-m redundancy --redundancy-threshold 0.20``) → ~11% lighter at
+       SSIM-flat quality. Per TILE, before the merge: culling the merged
+       timelapse would need the whole 4D reconstruction in memory at once.
+    5. ``batch-fit merge --recipe stream`` over the culled tiles → ONE leaf with
+       an 8-rung progressive ladder. The stacked time axis is a hard coarsening
+       barrier, so no rung blends two timepoints.
+    6. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
+       → isotropic Z, amplitudes on a 0-1 scale.
+
+    Step 3 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
+    ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
+    was OOM-killed (``exit -9``) before a single tile landed — an
+    over-subscribed GPU here fails all-at-once rather than degrading.
 
 DATA STORAGE (important):
     These fitted gsplats are ~220 MB unzipped and are **not bundled with the
@@ -48,9 +62,14 @@ DATA STORAGE (important):
 
 USAGE:
     python demo_gsplats_4d_neuromast_2ch.py [--no-serve] [--serve-only]
+    python demo_gsplats_4d_neuromast_2ch.py --recompute \
+        --source-membranes /path/to/membranes.zarr \
+        --source-nuclei    /path/to/nuclei.zarr
 
     --no-serve:    Build the scene but don't launch the viewer.
     --serve-only:  Skip the build, just serve the already-built scene.
+    --recompute:   Refit both channels from their assembled source arrays
+                   (needs a CUDA GPU and roughly two hours).
 
 OUTPUT:
     - Scene saved to:  datasets/demos/gsplats_4d_neuromast_2ch.luxar.zarr
@@ -79,16 +98,25 @@ DEMO_META = {
 }
 
 import os
+import shutil
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Iterator, Sequence
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import add_demo_caption, launch_viewer, parse_demo_flags
+from luxar.demos import (
+    add_demo_caption,
+    launch_viewer,
+    parse_demo_flags,
+    parse_path_arg,
+    run_luxar_cli,
+)
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.tree import center_bounds
+from luxar.gsplats.tree import center_bounds, iter_leaves
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -116,6 +144,16 @@ CHANNELS = [
         # Membranes are a dense diffuse shell that otherwise dominates and hides
         # the nuclei — render at half opacity so both channels read.
         "opacity": 0.5,
+        # ---- recompute recipe, per channel ----
+        #: ``--source-<name> PATH``: the assembled (time, z, y, x) array.
+        "source_flag": "source-membranes",
+        #: Global background floor, measured ONCE on this channel and recorded.
+        #: Re-measuring would drift, and the fit's own `--floor auto` runs on top
+        #: of the subtraction rather than replacing it.
+        "background_floor": 105.9911880493164,
+        #: What the recipe must reproduce, from the merge that built the shipped
+        #: archive ("Wrote single stream lod: 5,864,440 splats, 4D").
+        "expected_splats": 5_864_440,
     },
     {
         "name": "nuclei",
@@ -123,19 +161,294 @@ CHANNELS = [
         "colormap": "bop_orange",  # GFP nuclei, iSIM 488/525
         "marker": "she:GFP (nuclei)",
         "opacity": 1.0,
+        "source_flag": "source-nuclei",
+        "background_floor": 103.88801574707031,
+        "expected_splats": 5_530_300,
     },
 ]
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
+
+#: Per-channel ``--source-*`` paths, resolved once at import like the other flags.
+SOURCE_ARGS = {ch["name"]: parse_path_arg(str(ch["source_flag"])) for ch in CHANNELS}
 
 SCENE_NAME = "gsplats_4d_neuromast_2ch.luxar.zarr"
+
+# ---- Recorded fit recipe, shared by both channels ---------------------------
+#: Axis labels of the assembled source array. Passed explicitly: the fit records
+#: them, and getting them wrong silently fits the time axis as a spatial one.
+SOURCE_AXES = "time,z,y,x"
+#: Full extent both channels must have; asserted before the GPU is touched.
+SOURCE_SHAPE = (100, 84, 580, 576)
+#: Calibrated splat budget per timepoint (Noise2Self blind-spot sweep).
+SEEDS = 64_000
+#: Fitting preset. `n2s` is the noise-aware one that pairs with the calibration.
+PRESET = "n2s"
+#: One uniform tile per timepoint: 640 exceeds every spatial extent above, so
+#: the volume stays whole and there are no tile seams to apodize.
+TILE_SIZE = 640
+#: Concurrent fit workers per GPU. NOT `auto` — see the docstring's warning.
+JOBS_PER_GPU = 12
+#: Redundancy cull threshold, chosen from a measured 0.02/0.05/0.10/0.20/0.35
+#: sweep as the most aggressive setting still SSIM-flat.
+REDUNDANCY_THRESHOLD = 0.20
+#: Voxel anisotropy: z is 2.5x the lateral pitch on this instrument.
+VOXEL_SCALE = (2.5, 1.0, 1.0, 1.0)
+#: Amplitudes normalised to a unit peak, so appearance does not depend on the
+#: recording's absolute intensity scale.
+NORMALIZE_INTENSITY = 1.0
+#: Progressive rungs the merge produced for each channel.
+EXPECTED_RUNGS = 8
 
 
 # =============================================================================
 # Data loading
 # =============================================================================
+#: Array name inside the background-subtracted intermediate group. Named rather
+#: than left at the store root because the writer facade creates arrays UNDER a
+#: group, and rooting an array directly would mean bypassing it.
+BGSUB_ARRAY_KEY = "volume"
+
+
+@contextmanager
+def _open_source(path: Path) -> Iterator[Any]:
+    """Yield a channel source's 4D array and close any zip store afterwards.
+
+    The zip branch is load-bearing: zarr-python 3 no longer sniffs the `.zip`
+    suffix, and the membrane channel ships as a 7.5 GB zipped array, so handing
+    it straight to ``zarr.open`` raises GroupNotFoundError and blames a file that
+    is perfectly good.
+    """
+    import zarr
+
+    store = None
+    try:
+        if path.suffix == ".zip":
+            from zarr.storage import ZipStore
+
+            # The caller slices per timepoint, so keep the store open for the
+            # yielded array's lifetime rather than loading the archive.
+            store = ZipStore(str(path), mode="r")
+            yield zarr.open(store=store, mode="r")
+        else:
+            yield zarr.open(str(path), mode="r")
+    finally:
+        if store is not None:
+            store.close()
+
+
+def _subtract_background(src: Path, out: Path, floor: float) -> Path:
+    """Write ``src - floor`` (clipped at 0) under ``out``, one timepoint at a time.
+
+    Streamed rather than vectorised over the whole array because a channel is
+    100 x 84 x 580 x 576 float32 = 11.2 GB, and one expression would hold the
+    input, the shifted copy and the clipped copy at once.
+
+    Returns the path of the written group; the array is ``out/<BGSUB_ARRAY_KEY>``.
+    """
+    from luxar._zarr_compat import create_array, open_group
+
+    with _open_source(src) as array:
+        shape = tuple(getattr(array, "shape", ()) or ())
+        if shape != SOURCE_SHAPE:
+            raise SystemExit(
+                f"{src.name} has shape {shape or 'no array at its root'}, want "
+                f"{SOURCE_SHAPE}. Both channels of this recording share that extent, "
+                f"so a mismatch means the wrong file or a partial assembly."
+            )
+        with asection(f"Subtracting background floor {floor:.4f} -> {out.name}"):
+            group = open_group(out, mode="w")
+            dest = create_array(
+                group,
+                BGSUB_ARRAY_KEY,
+                shape=SOURCE_SHAPE,
+                dtype="float32",
+                # One timepoint per chunk: every consumer downstream (the fit, the
+                # cull, this loop) reads exactly one timepoint at a time.
+                chunks=(1,) + SOURCE_SHAPE[1:],
+                compressor=None,
+            )
+            for t in range(SOURCE_SHAPE[0]):
+                frame = np.asarray(array[t], dtype=np.float32)
+                np.subtract(frame, np.float32(floor), out=frame)
+                np.clip(frame, 0.0, None, out=frame)
+                dest[t] = frame
+            dest.attrs["axes"] = SOURCE_AXES
+            dest.attrs["background_floor"] = float(floor)
+            dest.attrs["source"] = str(src)
+    return out
+
+
+def _validate_rebuilt_channel(channel: dict, leaves: Sequence[Any]) -> int:
+    """Validate the merged leaf count and progressive-rung contract."""
+    name = str(channel["name"])
+    if len(leaves) != 1:
+        raise RuntimeError(f"{name}: merge produced {len(leaves)} leaves, expected one")
+    rungs = int(leaves[0].n_additive_sublods)
+    if rungs != EXPECTED_RUNGS:
+        raise RuntimeError(
+            f"{name}: merge produced {rungs} progressive rungs, expected {EXPECTED_RUNGS}"
+        )
+    return int(leaves[0].n_splats)
+
+
+def _cull_tiles(fit_dir: Path, culled_dir: Path) -> int:
+    """Redundancy-cull every per-timepoint tile into a parallel batch directory.
+
+    The manifest is copied verbatim so ``batch-fit merge`` reads the same plan;
+    only the tile stores differ. Culling per tile rather than after the merge is
+    a memory constraint: the redundancy metric renders the splats to measure
+    each one's local contribution, and doing that on the merged 4D result would
+    mean reconstructing all 100 timepoints at once.
+    """
+    tiles = sorted((fit_dir / "tiles").glob("*.gsplats.zarr"))
+    if not tiles:
+        raise SystemExit(
+            f"no tiles under {fit_dir / 'tiles'} -- the fit produced nothing to cull"
+        )
+    shutil.rmtree(culled_dir, ignore_errors=True)
+    (culled_dir / "tiles").mkdir(parents=True)
+    shutil.copy2(fit_dir / "manifest.json", culled_dir / "manifest.json")
+    for marker in sorted((fit_dir / "tiles").glob("*.empty")):
+        shutil.copy2(marker, culled_dir / "tiles" / marker.name)
+    with asection(f"Culling {len(tiles)} tiles (threshold {REDUNDANCY_THRESHOLD})"):
+        for tile in tiles:
+            run_luxar_cli(
+                "gsplat",
+                "cull",
+                str(tile),
+                str(culled_dir / "tiles" / tile.name),
+                "-m",
+                "redundancy",
+                "--shape",
+                ",".join(str(v) for v in SOURCE_SHAPE[1:]),
+                "--redundancy-threshold",
+                str(REDUNDANCY_THRESHOLD),
+            )
+    return len(tiles)
+
+
+def recompute_channel(channel: dict, source: Path, work_dir: Path) -> Path:
+    """Refit one channel end to end and return its finished archive."""
+    name = str(channel["name"])
+    with asection(f"Recomputing the {name} channel"):
+        bgsub = work_dir / f"{name}_bgsub.zarr"
+        fit_dir = work_dir / f"{name}_fit"
+        culled_dir = work_dir / f"{name}_fit_culled"
+        final = work_dir / str(channel["file"])
+
+        _subtract_background(source, bgsub, float(channel["background_floor"]))
+
+        run_luxar_cli(
+            "gsplat",
+            "batch-fit",
+            "run",
+            str(bgsub),
+            str(fit_dir),
+            "--array-key",
+            BGSUB_ARRAY_KEY,
+            "--axes",
+            SOURCE_AXES,
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            str(TILE_SIZE),
+            "--preset",
+            PRESET,
+            "--seeds",
+            str(SEEDS),
+            "--floor",
+            "auto",
+            # No fit-time cull: the redundancy cull below is the one that was
+            # measured, and stacking a second criterion on top of it would make
+            # the retained count depend on two thresholds instead of one.
+            "--cull-retention",
+            "0.0",
+            "--jobs-per-gpu",
+            str(JOBS_PER_GPU),
+        )
+        n_tiles = _cull_tiles(fit_dir, culled_dir)
+        aprint(f"culled {n_tiles} tiles")
+
+        # `batch-fit run` above already merged the UNCULLED tiles; that result is
+        # discarded. Merging here is what produces the shipped ladder.
+        run_luxar_cli(
+            "gsplat",
+            "batch-fit",
+            "merge",
+            str(culled_dir),
+            "--recipe",
+            "stream",
+        )
+        merged = culled_dir / "merged" / "final.gsplats.zarr"
+        if not merged.exists():
+            raise SystemExit(f"merge produced no {merged}")
+
+        # Anisotropy + normalisation LAST: this is what takes the archive off the
+        # voxel grid, and the fit's PSNR stamps are only comparable to the source
+        # before it happens.
+        run_luxar_cli(
+            "gsplat",
+            "transform",
+            str(merged),
+            str(final),
+            "--scale",
+            ",".join(str(v) for v in VOXEL_SCALE),
+            "--normalize-intensity",
+            str(NORMALIZE_INTENSITY),
+        )
+
+        node, _ = load_gsplat_node(str(final))
+        got = _validate_rebuilt_channel(channel, list(iter_leaves(node)))
+        expected = int(channel["expected_splats"])
+        drift = abs(got - expected) / expected
+        aprint(f"{name}: rebuilt {got:,} splats (recorded {expected:,}, {drift:.3%})")
+        # A tolerance, not equality: nothing pins the reduction order of a
+        # 12-worker parallel fit, so exact reproduction is not achievable. 1% is
+        # far tighter than any recipe change and far looser than float noise.
+        if drift >= 0.01:
+            raise RuntimeError(
+                f"{name}: rebuilt {got:,} splats against a recorded {expected:,} "
+                f"({drift:.2%} drift). Over 1% means the recipe changed, not "
+                f"float noise -- check the source array and the cull threshold."
+            )
+        return final
+
+
+def recompute_channel_paths(work_dir: Path) -> list[Path]:
+    """Refit both channels. Each is independent -- no shared fit, no shared cull."""
+    missing = [
+        str(ch["source_flag"]) for ch in CHANNELS if SOURCE_ARGS[ch["name"]] is None
+    ]
+    if missing:
+        raise SystemExit(
+            "--recompute needs a source array per channel: "
+            + ", ".join(f"--{flag} PATH" for flag in missing)
+            + ".\nEach is the channel's assembled (time, z, y, x) recording. The "
+            "two channels were acquired and assembled separately — the membrane "
+            "one ships as a single zipped array, the nuclei one was assembled "
+            "from per-timepoint HPC files — so there is no single --source."
+        )
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    paths = []
+    for channel in CHANNELS:
+        source = SOURCE_ARGS[channel["name"]]
+        assert source is not None  # guarded above
+        source = source.expanduser()
+        if not source.exists():
+            raise FileNotFoundError(
+                f"--{channel['source_flag']} does not exist: {source}"
+            )
+        paths.append(recompute_channel(channel, source, work_dir))
+    return paths
+
+
 def resolve_channel_paths() -> list[Path]:
     """Resolve the per-channel gsplat paths in the local store.
 
@@ -271,7 +584,12 @@ def main() -> None:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    channel_paths = resolve_channel_paths()
+    if RECOMPUTE:
+        channel_paths = recompute_channel_paths(
+            get_demos_output_dir() / "_neuromast_recompute"
+        )
+    else:
+        channel_paths = resolve_channel_paths()
     scene_path = create_luxar_scene(channel_paths, output_path)
 
     if not NO_SERVE:

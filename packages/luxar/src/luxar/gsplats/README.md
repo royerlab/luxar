@@ -1155,6 +1155,7 @@ gsplats/
 ├── fit_basis.py                   # Align raw references with background-relative fits
 ├── fit_progressive_gsplats.py     # Progressive fitting (iterative refinement)
 ├── fit_tiled_gsplats.py           # Tiled fitting for large volumes (fit_tile, fit_tiled)
+├── restride.py                    # Strided stacked-axis re-authoring
 ├── tiling.py                      # Tile geometry and cosine apodization (TileSpec, cosine_window)
 ├── gsplat_data.py                 # GSplatData container (construction/repr) + AdditiveSubLOD / SubstitutiveLevel
 ├── _data/                         # Internal GSplatData domain mixins (see _data/README.md)
@@ -1280,6 +1281,7 @@ gsplats/
     ├── test_metrics.py             # Quality metrics tests
     ├── test_tiled_fitting.py       # Tiled fitting tests
     ├── test_progressive_fitting.py # Progressive fitting tests
+    ├── test_restride.py            # Stacked-axis restriding tests
     ├── test_batch.py               # Batch fitting tests
     └── ...                         # Additional test files
 ```
