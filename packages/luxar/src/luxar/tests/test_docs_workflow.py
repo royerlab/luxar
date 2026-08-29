@@ -1,7 +1,8 @@
-"""Regression guards for the GitHub Pages deployment workflow."""
+"""Regression guards for docs deployment and the demo-site runbook."""
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -13,6 +14,8 @@ REPO = Path(__file__).resolve().parents[5]
 DOCS = REPO / "docs"
 WORKFLOW = REPO / ".github/workflows/docs.yml"
 GITATTRIBUTES = REPO / ".gitattributes"
+DEMO_SITE_RUNBOOK = DOCS / "guides/developer/DEMO_SITE_RUNBOOK.md"
+DEMO_DATA_MANIFEST = REPO / "packages/luxar/src/luxar/demos/data_manifest.json"
 
 
 def _workflow() -> dict[str, Any]:
@@ -47,6 +50,115 @@ def _published_lfs_assets() -> set[str]:
             if any(docs_relative in source.read_text() for source in sources):
                 published.add(asset.relative_to(REPO).as_posix())
     return published
+
+
+def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
+    """Runbook archive examples must name active manifest generations."""
+    text = DEMO_SITE_RUNBOOK.read_text()
+    quoted_prefixes = set(re.findall(r"\b([0-9a-f]{6,64})(?:\.\.\.|…)", text))
+    assert quoted_prefixes, "runbook no longer quotes any archive digest prefixes"
+
+    manifest = json.loads(DEMO_DATA_MANIFEST.read_text())
+    active_digests: set[str] = set()
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in {"sha256", "hosted_sha256"} and isinstance(child, str):
+                    active_digests.add(child)
+                else:
+                    collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    collect(manifest["datasets"])
+    stale = sorted(
+        prefix
+        for prefix in quoted_prefixes
+        if not any(digest.startswith(prefix) for digest in active_digests)
+    )
+    assert not stale, (
+        "DEMO_SITE_RUNBOOK quotes archive generations that are no longer active "
+        f"manifest pins: {stale}"
+    )
+
+    cmu1_ch0 = next(
+        file
+        for file in manifest["datasets"]["gsplats_cmu1_pathology"]["files"]
+        if file["name"] == "cmu1_ch0.gsplats.zarr.zip"
+    )
+    labelled_pair = re.search(
+        r"^[ \t]+cmu1_ch0[ \t]+sha256[ \t]+"
+        r"([0-9a-f]{6,64})(?:\.\.\.|…).*\n"
+        r"[ \t]+hosted_sha256[ \t]+([0-9a-f]{6,64})(?:\.\.\.|…)",
+        text,
+        re.MULTILINE,
+    )
+    assert labelled_pair is not None, "runbook cmu1_ch0 digest pair not found"
+    sha256_prefix, hosted_sha256_prefix = labelled_pair.groups()
+    assert cmu1_ch0["sha256"].startswith(sha256_prefix), (
+        "runbook cmu1_ch0 sha256 prefix does not match the active manifest pin"
+    )
+    assert cmu1_ch0["hosted_sha256"].startswith(hosted_sha256_prefix), (
+        "runbook cmu1_ch0 hosted_sha256 prefix does not match the active manifest pin"
+    )
+
+
+def test_runbook_archive_size_table_matches_active_manifest_pins() -> None:
+    """Runbook archive sizes and ordering must match active manifest pins."""
+    text = DEMO_SITE_RUNBOOK.read_text()
+    table = re.search(
+        r"^\| dataset \| files \| repo MB \| hosted MB \| ratio \|\n"
+        r"^\|---\|---:\|---:\|---:\|---:\|\n"
+        r"(?P<rows>(?:^\| `[^`]+` \| .*\|\n)+)",
+        text,
+        re.MULTILINE,
+    )
+    assert table is not None, "runbook archive size table not found"
+    rows = re.findall(
+        r"^\| `([^`]+)` \| (\d+) \| ([\d.]+) \| ([\d.]+) \| ([\d.]+)x \|$",
+        table.group("rows"),
+        re.MULTILINE,
+    )
+
+    manifest = json.loads(DEMO_DATA_MANIFEST.read_text())
+    hosted_files_by_dataset: dict[str, list[dict[str, Any]]] = {}
+
+    def collect_hosted_files(value: object, files: list[dict[str, Any]]) -> None:
+        if isinstance(value, dict):
+            if "hosted_sha256" in value:
+                files.append(value)
+            else:
+                for child in value.values():
+                    collect_hosted_files(child, files)
+        elif isinstance(value, list):
+            for child in value:
+                collect_hosted_files(child, files)
+
+    for name, dataset in manifest["datasets"].items():
+        hosted_files: list[dict[str, Any]] = []
+        collect_hosted_files(dataset, hosted_files)
+        if hosted_files:
+            hosted_files_by_dataset[name] = hosted_files
+
+    expected_datasets = set(hosted_files_by_dataset)
+    assert {row[0] for row in rows} == expected_datasets
+
+    ratios = []
+    for dataset_name, file_count, repo_mb, hosted_mb, ratio in rows:
+        files = hosted_files_by_dataset[dataset_name]
+        repo_bytes = sum(file["bytes"] for file in files)
+        hosted_bytes = sum(file["hosted_bytes"] for file in files)
+        expected_ratio = hosted_bytes / repo_bytes
+
+        assert file_count == str(len(files)), dataset_name
+        assert repo_mb == f"{repo_bytes / 1_000_000:.1f}", dataset_name
+        assert hosted_mb == f"{hosted_bytes / 1_000_000:.1f}", dataset_name
+        assert ratio == f"{expected_ratio:.2f}", dataset_name
+        ratios.append(expected_ratio)
+
+    assert ratios == sorted(ratios, reverse=True)
 
 
 def test_pages_publishes_daily_or_on_demand_not_on_main_push() -> None:

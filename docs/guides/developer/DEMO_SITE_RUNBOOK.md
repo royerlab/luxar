@@ -379,17 +379,17 @@ Consequences for this site:
 `demo_gsplats_2d_cmu1_pathology.py` used to say its hosted archives were "still
 flat leaves" (corrected here; see **And the docstring** below). Two caches
 yielded answers that could not both be true for
-`cmu1_ch0.gsplats.zarr.zip` — flat laddered leaf with **no `kind` attr anywhere**,
-and `{'partition': 1, 'lod': 64}` with 4,867 metadata docs.
+`cmu1_ch0.gsplats.zarr.zip` — a flat laddered leaf with **no `kind` attr
+anywhere**, and a four-part `kind=partition` tree.
 
 **Both were right.** The manifest pins two generations of the same filename:
 
     cmu1_ch0   sha256         cd22645f...   bytes          38,201,205   <- in-repo copy
-               hosted_sha256  29faffc1...   hosted_bytes   84,492,218   <- what the record serves
+               hosted_sha256  7d605c3c...   hosted_bytes   45,697,890   <- what the record serves
 
 A cache holding the in-repo generation has all three channels matching `sha256`;
 a cache holding the hosted generation has all three matching `hosted_sha256`.
-Same path string, same demo, 2.2-2.75x apart in bytes and structurally unrelated.
+Same path string, same demo, 1.2-1.47x apart in bytes and structurally unrelated.
 
 `_support/datasets/data_fetch.py` documents why: the two contracts were one field
 until a refit replaced the hosted artifact without touching the in-repo copy, and
@@ -408,10 +408,10 @@ is present it wins over a newer hosted artifact, so a checkout with a stale LFS
 object keeps serving the older generation (loudly)."*
 
 So **the same demo builds a structurally different scene depending on which
-generation the building machine has in cache.** cmu1 grafts its archives
-verbatim: the in-repo generation produces a flat scene (12 element nodes,
-20,591,415 elements — exactly the sum of the three archives), while the hosted
-generation produces a partitioned, laddered one.
+generation the building machine has in cache.** cmu1 re-authors the flat in-repo
+copy but grafts the hosted partition: the former produces a flat scene (12
+element nodes, 20,591,415 elements — exactly the sum of the three archives),
+while the latter produces a four-part partition per channel.
 
 Three things follow for this site:
 
@@ -430,22 +430,27 @@ diverged datasets are loaded into `GSplatData` and re-added as raw arrays, so
 their bytes and splat content can change but their archive topology is
 discarded. Seven pass the `GSplatData` object to `add_gsplats_from_data`, which
 preserves additive rungs and lowers multiple substitutive levels into a
-`kind=lod` scene group. Three graft the artifact directly:
+`kind=lod` scene group. Three take the artifact whole: two by file path, grafted
+only when the file is a partition or nested tree, and one by unpacking a shipped
+scene:
 
 | authoring path | datasets |
 |---|---|
 | re-add raw arrays | `gsplats_kidney`, `gsplats_cells3d`, `gsplats_ct_totalsegmentator`, `gsplats_visible_human_head` |
 | pass through `add_gsplats_from_data` | `gsplats_cryoem_virus`, `gsplats_milkyway_dust`, `gsplats_celegans`, `gsplats_dapi`, `gsplats_multichannel`, `gsplats_nexrad_supercell`, `gsplats_opencell_map4` |
-| graft artifact | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology`, `desi_galaxies` |
+| load by file path; graft only a partition or nested tree | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology` |
+| unpack a shipped scene | `desi_galaxies` |
 
 Digest-confirmed copies show structural divergence for two pass-through
-datasets: `cryoem_virus` and `milkyway_dust` change from flat to four
-substitutive levels with additive rungs. Of the grafted datasets, only
-`cmu1_pathology` is digest-confirmed on both sides, so the confirmed armed set is
-**three**. The hosted topology of `flylight_mcfo_63x`, `desi_galaxies`,
-`celegans`, and `nexrad_supercell` remains unclassified; inspect a
-digest-confirmed copy before counting any of them. Check the scene-build call as
-well as the archive before treating a divergence as a structural risk.
+datasets: `cryoem_virus` changes from a flat leaf to a flat leaf with a five-rung
+ladder (no `kind` either side; the rungs are what reaches the scene);
+`milkyway_dust` changes from flat to four substitutive levels with additive
+rungs. Of the three that take the artifact whole, only `cmu1_pathology` is
+digest-confirmed on both sides, so the confirmed armed set is **three**. The
+hosted topology of `flylight_mcfo_63x`, `desi_galaxies`, `celegans`, and
+`nexrad_supercell` remains unclassified; inspect a digest-confirmed copy before
+counting any of them. Check the scene-build call as well as the archive before
+treating a divergence as a structural risk.
 
 #### Scope: this is not a cmu1 quirk
 
@@ -455,18 +460,18 @@ datasets are affected:
 
 | dataset | files | repo MB | hosted MB | ratio |
 |---|---:|---:|---:|---:|
-| `gsplats_cmu1_pathology` | 3 | 113.8 | 278.0 | 2.44x |
 | `gsplats_cells3d` | 2 | 0.6 | 1.3 | 2.25x |
-| `gsplats_cryoem_virus` | 1 | 11.1 | 16.0 | 1.44x |
 | `gsplats_ct_totalsegmentator` | 2 | 7.2 | 10.2 | 1.42x |
 | `gsplats_milkyway_dust` | 1 | 7.8 | 10.6 | 1.36x |
 | `gsplats_visible_human_head` | 2 | 25.6 | 34.5 | 1.35x |
+| `gsplats_cmu1_pathology` | 3 | 113.8 | 150.1 | 1.32x |
 | `gsplats_nexrad_supercell` | 1 | 10.1 | 12.9 | 1.28x |
 | `gsplats_dapi` | 1 | 0.1 | 0.1 | 1.22x |
 | `gsplats_celegans` | 1 | 72.0 | 80.8 | 1.12x |
 | `desi_galaxies` | 1 | 74.3 | 76.8 | 1.03x |
 | `gsplats_kidney` | 3 | 2.1 | 2.1 | 0.99x |
 | `gsplats_multichannel` | 2 | 0.4 | 0.4 | 0.95x |
+| `gsplats_cryoem_virus` | 1 | 11.1 | 10.6 | 0.95x |
 | `gsplats_flylight_mcfo_63x` | 1 | 8.2 | 7.7 | 0.94x |
 | `gsplats_opencell_map4` | 2 | 1.6 | 1.5 | 0.93x |
 
@@ -478,8 +483,9 @@ here to size the download, not the risk:
 
 - `cells3d` at **2.25x** is flat -> flat. Only the splat count moved (20,323 vs
   41,975); both scenes have 2 element nodes.
-- `cryoem_virus` at **1.44x** is flat -> `kind=lod` with 4 substitutive levels.
-- `cmu1` at **2.44x** is flat leaf -> partition + 64 lod groups.
+- `cryoem_virus` at **0.95x** is flat leaf -> flat leaf with a five-rung ladder
+  (no `kind` either side; the rungs are what reaches the scene).
+- `cmu1` at **1.32x** is flat leaf -> a four-part partition.
 
 Ratios below 1.0 are refits that shrank, and they are not exempt either. Only a
 kind-based read of a **digest-confirmed hosted copy** settles topology.
@@ -491,10 +497,10 @@ generation.
 #### And the docstring
 
 `demo_gsplats_2d_cmu1_pathology.py:512-518` used to describe the *hosted*
-archives as flat, even though they carry a partition and 64 lod groups per
-channel. It now records that the in-repo flat generation wins while it remains
-in the tree, despite the record already serving the partitioned generation.
-Neither statement can be established from an in-repo measurement alone.
+archives as flat, even though they carry a four-part partition per channel. It
+now records that the in-repo flat generation wins while it remains in the tree,
+despite the record already serving the partitioned generation. Neither statement
+can be established from an in-repo measurement alone.
 
 Derive topology from each group's declared `kind` (children of `kind=lod` are
 substitutive levels, children of `kind=partition` are parts) rather than from
@@ -503,27 +509,30 @@ unreadable** — the in-repo cmu1 generation is well-formed with zero kinds.
 
 ### 3.11 Flattening only cuts requests when archive topology reaches the scene
 
-Four authoring paths have different outcomes from the same archive change:
+Five authoring paths have different outcomes from the same archive change:
 
 | authoring call | effect of flattening the archive |
 |---|---|
 | load into `GSplatData`, then `scene.add_gsplats(...)` | archive topology is discarded; bytes and splat content can still change |
 | load into `GSplatData`, then `scene.add_gsplats_from_data(...)` | additive rungs and substitutive levels are lowered into the scene, so scene node count changes with the artifact |
-| `add_gsplats_from_file` or `extract_shipped_scene` | grafted scene node count changes with the artifact |
+| `add_gsplats_from_file` | a matrix-shaped leaf/LOD is re-authored through `GSplatData`; a partition or nested tree is grafted |
+| `extract_shipped_scene` | grafted scene node count changes with the artifact |
 | `save_with_lod(recipe=...)`, then graft that output | structure is authored locally by the recipe |
 
 Applied to the current demo code:
 
-- **`h2afva_timelapse`** and **`h2afva_stack`** graft, so flattening changes
-  their request topology as well as their archive bytes.
+- **`h2afva_timelapse`** now supplies a matrix-shaped ladder, so
+  `add_gsplats_from_file` re-authors it through `GSplatData`; **`h2afva_stack`**
+  still supplies a nested partition and is grafted. Only the stack inherits its
+  archive tree node-for-node.
 - **`codex_pancreas`** fits locally through `save_with_lod(recipe="adaptive")`
   and grafts its own output, so its groups are authored rather than inherited.
   Its structure changes through recipe settings such as `max_elements`, not by
   flattening a separately supplied artifact.
-- **`cmu1_pathology`** grafts verbatim, so it inherits whichever generation is
-  in cache (3.10): flat from the in-repo copy, partitioned + laddered from the
-  hosted one. Flattening the hosted archives is a real win *and* collapses that
-  divergence — but measure the generation before claiming either.
+- **`cmu1_pathology`** re-authors the flat in-repo copy but grafts the hosted
+  partition, so either way the archive's structure reaches the scene (3.10).
+  Flattening the hosted archives is a real win *and* collapses that divergence —
+  but measure the generation before claiming either.
 - **`cryoem_virus`**, **`milkyway_dust`**, **`dapi`**, **`multichannel`**, and
   **`opencell_map4`** pass `GSplatData` through, so their digest-confirmed hosted
   ladders and levels become scene nodes rather than being flattened by the demo.
@@ -539,8 +548,9 @@ traps). This is the flatten-specific consequence, because flattening is where th
 wrong number is most tempting: it collapses a tree into one node, and that node's
 **total** is what the compiler prints.
 
-Worked case. Flattening `h2afva_51tp` collapses 4,446 groups to 7 and yields one
-node of 121,163,285 splats:
+Worked case. The pinned `h2afva_51tp` generation is the result of the 3.17
+rebuild (`flatten` → `lod --recipe stream` → `optimise`): one 4D leaf with a
+twelve-step progressive ladder and 121,163,285 splats:
 
     node total, 51 timepoints   121,163,285   <- what ElementCapacityWarning prints
     resident slice, worst case    2,629,840   <- what the GPU commits
@@ -554,7 +564,7 @@ that warning is expected for a sliced nD node that satisfies the runtime limit."
 
 **The exception is a STATIC object**, which has no hidden axis to reduce the
 committed set. The hosted `cmu1` generation (`hosted_sha256`; ch0
-`29faffc1...`) flattens its three channels to 8,823,953 / 9,924,486 / 10,830,790
+`7d605c3c...`) flattens its three channels to 8,823,953 / 9,924,486 / 10,830,790
 splats; the in-repo `sha256` generation flattens to 6,896,619 / 7,093,383 /
 6,601,413. Both are 2D — nothing to slice on — and every channel exceeds the
 cap, so the overflow shows as a Hilbert-contiguous clean-edged hole that reads
@@ -756,11 +766,11 @@ The `h2afva_51tp` rebuild exposed two further traps:
   partition — adding one buys no request reduction there. (It still earns its place
   on a *static* node over the element cap, 3.12.)
 
-Result on an unpublished rebuild of `h2afva_51tp` (the manifest still pins the
-original partitioned generation): 1,873,559,527 → 1,115,714,088 bytes
-(**−40.5%**), 176 substitutive levels → 0, 704 element nodes → 8 (one leaf plus
-its rungs), 125,751 chunks → 2,316, with all 51 timepoints intact at uniform
-spacing and none blended.
+Result now pinned for `h2afva_51tp`: 1,873,559,527 → 1,115,714,088 bytes
+(**−40.5%**), 176 substitutive levels → 0, and the former partitioned tree → one
+4D leaf with a twelve-step progressive ladder. The chunk count fell from
+125,751 to 2,316, with all 51 timepoints intact at uniform spacing and none
+blended.
 
 ### 3.18 A probe must emit the evidence that its own window was valid
 
