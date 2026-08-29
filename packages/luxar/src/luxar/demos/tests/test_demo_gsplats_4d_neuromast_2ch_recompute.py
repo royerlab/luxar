@@ -39,8 +39,6 @@ def _small_shape(monkeypatch):
 
 def _source(tmp_path, name="src", *, values=None, shape=SMALL):
     """A plain zarr array store whose ROOT is the array, as the sources are."""
-    import zarr
-
     from luxar._zarr_compat import create_array
 
     group = open_group(tmp_path / f"{name}_store", mode="w")
@@ -52,16 +50,15 @@ def _source(tmp_path, name="src", *, values=None, shape=SMALL):
     )
     # Re-open as an array-rooted store by pointing at the array itself, which is
     # what `zarr.open` on the real sources returns.
-    del zarr
     return tmp_path / f"{name}_store" / "root"
 
 
-def _leaf_with_rungs(rungs):
+def _leaf_with_rungs(rungs, *, splats_per_rung=1):
     """A tiny real leaf whose splat and rung counts are independently visible."""
     sublod = AdditiveSubLOD(
-        centers=np.zeros((1, 4), dtype=np.float32),
-        amplitudes=np.ones(1, dtype=np.float32),
-        cholesky_factors=np.ones((1, 10), dtype=np.float32),
+        centers=np.zeros((splats_per_rung, 4), dtype=np.float32),
+        amplitudes=np.ones(splats_per_rung, dtype=np.float32),
+        cholesky_factors=np.ones((splats_per_rung, 10), dtype=np.float32),
     )
     return GSplatLeaf(additive_sublods=[sublod] * rungs, meta={})
 
@@ -169,6 +166,26 @@ class TestBothChannelsNeedTheirOwnSource:
             demo.recompute_channel_paths(tmp_path / "work")
 
 
+class TestEmptyFitTilesSurviveTheCullStage:
+    def test_empty_markers_are_copied_beside_culled_tiles(
+        self, monkeypatch, tmp_path
+    ):
+        fit_dir = tmp_path / "fit"
+        tiles = fit_dir / "tiles"
+        tiles.mkdir(parents=True)
+        (fit_dir / "manifest.json").write_text("{}")
+        (tiles / "tile_00000.gsplats.zarr").mkdir()
+        (tiles / "tile_00001.empty").write_text("")
+        calls = []
+        monkeypatch.setattr(demo, "run_luxar_cli", lambda *args: calls.append(args))
+
+        count = demo._cull_tiles(fit_dir, tmp_path / "culled")
+
+        assert count == 1
+        assert len(calls) == 1
+        assert (tmp_path / "culled" / "tiles" / "tile_00001.empty").exists()
+
+
 class TestTheRecipeConstantsMatchTheRecordedRun:
     def test_jobs_per_gpu_is_pinned_not_auto(self):
         """`auto` OOM-killed all 100 workers on the acquisition box."""
@@ -206,11 +223,13 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert demo.PRESET == "n2s"
 
     def test_the_merged_leaf_has_the_recorded_progressive_rungs(self):
-        channel = {"name": "membranes", "expected_splats": demo.EXPECTED_RUNGS}
+        channel = {"name": "membranes"}
+        splats_per_rung = 2
         got = demo._validate_rebuilt_channel(
-            channel, [_leaf_with_rungs(demo.EXPECTED_RUNGS)]
+            channel,
+            [_leaf_with_rungs(demo.EXPECTED_RUNGS, splats_per_rung=splats_per_rung)],
         )
-        assert got == demo.EXPECTED_RUNGS
+        assert got == demo.EXPECTED_RUNGS * splats_per_rung
 
     def test_a_changed_progressive_recipe_is_rejected(self):
         channel = {"name": "membranes", "expected_splats": demo.EXPECTED_RUNGS - 1}

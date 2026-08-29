@@ -1756,6 +1756,26 @@ class TestTheStoreRootIsFoundFromFormatMetadata:
         self, gen: Any, tmp_path: Path
     ) -> None:
         path = tmp_path / "scene.luxar.zarr.zip"
-        _write_frame(path, gsplats=False)
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr(
+                "zarr.json",
+                json.dumps(
+                    {
+                        "zarr_format": 3,
+                        "node_type": "group",
+                        "attributes": {"format_type": "luxar_zarr"},
+                    }
+                ),
+            )
+            zf.writestr(
+                "nuclei/zarr.json",
+                json.dumps(
+                    {
+                        "zarr_format": 3,
+                        "node_type": "group",
+                        "attributes": {"type": "gsplats", "n_splats": 20},
+                    }
+                ),
+            )
 
         assert gen._read_archive(path) is None

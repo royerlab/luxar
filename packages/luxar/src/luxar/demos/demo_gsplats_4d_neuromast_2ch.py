@@ -312,6 +312,8 @@ def _cull_tiles(fit_dir: Path, culled_dir: Path) -> int:
     shutil.rmtree(culled_dir, ignore_errors=True)
     (culled_dir / "tiles").mkdir(parents=True)
     shutil.copy2(fit_dir / "manifest.json", culled_dir / "manifest.json")
+    for marker in sorted((fit_dir / "tiles").glob("*.empty")):
+        shutil.copy2(marker, culled_dir / "tiles" / marker.name)
     with asection(f"Culling {len(tiles)} tiles (threshold {REDUNDANCY_THRESHOLD})"):
         for tile in tiles:
             run_luxar_cli(

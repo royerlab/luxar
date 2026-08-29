@@ -21,9 +21,9 @@ WHY RENUMBER
     fixed-point encoding is lossless there.
 
 MEMORY
-    Read sub-LOD by sub-LOD: peak is one sub-LOD's arrays, not the tree. That is
-    the whole reason this is a walk rather than ``load_gsplats`` plus a fancy
-    index.
+    The output tree remains resident until it is written, plus one decoded
+    input sub-LOD at a time. This is still far below flattening the full input
+    tree first, which is the reason this is a structural walk.
 """
 
 from __future__ import annotations

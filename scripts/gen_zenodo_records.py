@@ -292,7 +292,11 @@ def _store_root(zf: zipfile.ZipFile, names: list[str]) -> Optional[tuple[str, di
     candidates += sorted({n.split("/")[0] + "/" for n in names if "/" in n})
     for root in candidates:
         attrs = _attrs(zf, root)
-        if attrs.get("format_type") == "gsplats_zarr" or attrs.get("type") == "gsplats":
+        self_identified = attrs.get("format_type") == "gsplats_zarr"
+        conventional_root = not root or root.rstrip("/").endswith(".gsplats.zarr")
+        if self_identified or (
+            conventional_root and attrs.get("type") == "gsplats"
+        ):
             return root, attrs
     return None
 

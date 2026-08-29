@@ -335,6 +335,8 @@ class TestAttributesReachTheRootAndNowhereElse:
         assert "blending_mode" not in leaf
         assert leaf["absorption"] != 9.0
 
+
+class TestPartitionMetadataSurvivesRestriding:
     def test_the_partition_bsp_is_pruned_renumbered_and_restrided(self, tmp_path):
         """A dropped middle part must not silently retarget the BSP painter order."""
         parts = [
