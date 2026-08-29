@@ -78,6 +78,7 @@ def test_scan_skips_ineligible_candidate_and_hands_off_next(
             runs=[
                 ci_queue_scan.RunScan(99, queued=["typescript-tests"]),
                 ci_queue_scan.RunScan(42, queued=["python-tests (3.12)"]),
+                ci_queue_scan.RunScan(43, queued=["typescript-tests"]),
                 ci_queue_scan.RunScan(7, running=["python-tests (3.12)"]),
             ],
         ),
