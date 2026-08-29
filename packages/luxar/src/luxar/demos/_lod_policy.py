@@ -52,13 +52,14 @@ view the FINEST substitutive level is what shows. Coarse levels are then bytes
 nobody fetches. They earn their keep only where the object is genuinely small on
 screen. Two live exceptions in this repo, and they are different from each other:
 
-* the two 2D pathology slides keep ``adaptive`` because they are panned and
-  zoomed, so most tiles are off-screen most of the time — which is what PARTS
-  are for;
-* ``milky_way_dust`` keeps ``levels`` because the galaxy is orbited at range as
-  well as inspected close up, so a coarse level really is selected and really is
-  fetched — which is what LEVELS are for. It pays +39% (7.88 -> 10.97 MB) on
-  purpose.
+* the two 2D pathology slides author ``adaptive`` on ``--recompute`` because
+  they are panned and zoomed, so most tiles are off-screen most of the time —
+  which is what PARTS are for. Their pinned record archives currently serve
+  four-part partitions without per-tile levels;
+* ``milky_way_dust`` authors ``levels`` on ``--recompute``, and its pinned
+  record archive preserves those levels, because the galaxy is orbited at range
+  as well as inspected close up. A coarse level really is selected and fetched
+  — which is what LEVELS are for. It pays +39% (7.88 -> 10.97 MB) on purpose.
 
 ``cryoem_virus`` is the counter-example: a single compact particle, always
 full-frame, so its coarse levels were never selected and it moved to ``stream``

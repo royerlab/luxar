@@ -218,11 +218,8 @@
           "name": "milkyway_dust.gsplats.zarr.zip",
           "sha256": "d15e4483414cb9e2e7309df575ea2489443dc152a6519b027cde11943d34694e",
           "bytes": 7822168,
-          "hosted_sha256": "368fa77da5ba16fa5bb8dc70feda847fa3bcddb4caae936d6850e71f4139ae15",
-          "hosted_bytes": 6942291,
-          "superseded_sha256": [
-            "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9"
-          ]
+          "hosted_sha256": "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9",
+          "hosted_bytes": 10647985
         }
       ]
     },

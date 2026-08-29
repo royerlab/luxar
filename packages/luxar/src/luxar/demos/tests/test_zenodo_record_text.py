@@ -1172,6 +1172,22 @@ def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> N
     assert "does not retain source_archive" in info["quality_note"]
 
 
+def test_milkyway_hosted_archive_keeps_the_levels_generation(gen: Any) -> None:
+    manifest = json.loads(gen.MANIFEST.read_text())
+    spec = manifest["datasets"]["gsplats_milkyway_dust"]["files"][0]
+    info = gen.load_characteristics()[
+        "gsplats_milkyway_dust/milkyway_dust.gsplats.zarr.zip"
+    ]
+
+    assert spec["hosted_sha256"] == (
+        "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9"
+    )
+    assert spec["hosted_bytes"] == 10_647_985
+    assert "superseded_sha256" not in spec
+    assert info["measured_sha256"] == spec["hosted_sha256"]
+    assert info["topology"] == "4 coarse-to-fine levels, each progressively streamed"
+
+
 def test_flylight_recovered_figures_yield_to_a_pinned_archive_read(gen: Any) -> None:
     key = "gsplats_flylight_mcfo_63x/flylight_mcfo_63x.gsplats.zarr.zip"
     existing = {key: gen.load_characteristics()[key]}

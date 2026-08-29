@@ -426,9 +426,9 @@
     },
     "gsplats_milkyway_dust/milkyway_dust.gsplats.zarr.zip": {
       "n_splats": 677741,
-      "ndim": 3,
+      "ndim": null,
       "format_version": "3.4",
-      "topology": "progressive ladder, 5 steps",
+      "topology": "4 coarse-to-fine levels, each progressively streamed",
       "psnr_db": 34.83152982461492,
       "foreground_psnr_db": 21.07441543004947,
       "foreground_fraction": 0.02675597218840462,
@@ -440,9 +440,8 @@
       "source_dtype": "float32",
       "source_bytes": 1182816000,
       "frames": null,
-      "quality_quotable": null,
       "measured_from": "staged",
-      "measured_sha256": "368fa77da5ba16fa5bb8dc70feda847fa3bcddb4caae936d6850e71f4139ae15"
+      "measured_sha256": "b4cf131a85e35a356187fd606f9af917080b06dc7de010ff0448ef5982cc90e9"
     },
     "gsplats_multichannel/blastocyst_ch0.gsplats.zarr.zip": {
       "n_splats": 12916,
