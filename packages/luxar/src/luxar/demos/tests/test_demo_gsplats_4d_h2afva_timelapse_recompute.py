@@ -61,9 +61,7 @@ class TestTheRecordedParentIsAccepted:
 
 
 class TestTheWrongParentIsRefused:
-    def test_an_unscaled_parent_is_refused_before_the_walk(
-        self, monkeypatch, tmp_path
-    ):
+    def test_an_unscaled_parent_is_refused_before_the_walk(self, monkeypatch, tmp_path):
         attrs = _parent_attrs()
         attrs["position_bounds"]["max"][0] = 406
         _attrs(monkeypatch, attrs)
