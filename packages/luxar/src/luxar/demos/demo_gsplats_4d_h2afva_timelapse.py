@@ -233,9 +233,8 @@ def _validate_parent(path: Path) -> None:
 
     Worth doing up front: the strided slice walks the parent's entire tree, so a
     wrong ``--parent`` costs the better part of an hour before its splat count
-    disagrees. Both checks below discriminate against a real sibling — the
-    single-timepoint tp234 fit is also a partition with the same appearance
-    attrs, and differs exactly in these two numbers.
+    disagrees. The checks below reject the single-timepoint sibling, an already
+    sliced variant, and a count-compatible parent missing the recorded Z scale.
     """
     attrs = _read_source_attrs(path)
     kind = attrs.get("kind")
@@ -257,7 +256,8 @@ def _validate_parent(path: Path) -> None:
     if float(maximum[0]) <= 1000:
         raise SystemExit(
             f"{path.name} has Z maximum {maximum[0]}, so it is missing the "
-            f"recorded x4 Z anisotropy. Refusing to rebuild a flattened embryo."
+            f"recorded x4 Z anisotropy. Refusing to rebuild a geometrically "
+            f"flattened embryo."
         )
     frames = int(round(float(stacked_max))) + 1
     # Check what the stride WILL yield, not the parent's exact length: 253
