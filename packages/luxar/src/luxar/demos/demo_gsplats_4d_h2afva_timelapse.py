@@ -182,9 +182,9 @@ SOURCE_STRIDE = 5
 TIME_COL = 3
 #: Frames the stride must yield out of the parent's 253.
 EXPECTED_FRAMES = 51
-#: Parent's finest-level total, asserted before an hour of work: the strided
-#: slice reads the parent's whole tree, so a wrong ``--parent`` is worth catching
-#: at the door.
+#: Parent's recorded finest-level total. ``EXPECTED_SPLATS`` is sanity-checked
+#: against it in the tests; the parent root exposes no finest-only count that can
+#: be validated before the walk.
 PARENT_FINEST_SPLATS = 602_580_152
 #: What the recipe must reproduce, exactly: every step after the fit is
 #: deterministic (a stride selection, a flatten that keeps the finest level, a
