@@ -117,6 +117,11 @@ def _slice_sublod(
     centers = decode("centers")
     if centers is None:
         return None, 0, set()
+    if time_col >= centers.shape[1]:
+        raise ValueError(
+            f"{label}: time_col={time_col} is out of range for centers with "
+            f"{centers.shape[1]} columns"
+        )
 
     stacked = np.asarray(centers[:, time_col], dtype=np.float64)
     rounded = np.rint(stacked)
@@ -266,6 +271,8 @@ def restride_stacked_axis(
     """
     if stride < 1:
         raise ValueError(f"stride must be >= 1, got {stride}")
+    if time_col < 0:
+        raise ValueError(f"time_col must be >= 0, got {time_col}")
 
     src = Path(src)
     out = Path(out)
@@ -300,7 +307,7 @@ def restride_stacked_axis(
             part,
             root,
             decoder,
-            part_name=part_name,
+            part_name=f"{src.name}/{part_name}",
             time_col=time_col,
             stride=stride,
         )

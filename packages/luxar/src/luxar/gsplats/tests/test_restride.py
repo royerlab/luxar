@@ -388,6 +388,25 @@ class TestInputsThatCannotBeRestridedAreRejected:
         with pytest.raises(ValueError, match="stride must be"):
             restride_stacked_axis(tmp_path / "x", tmp_path / "y", stride=0)
 
+    def test_a_negative_time_column_is_refused_before_reading(self, tmp_path):
+        with pytest.raises(ValueError, match="time_col must be >= 0, got -1"):
+            restride_stacked_axis(
+                tmp_path / "x", tmp_path / "y", stride=1, time_col=-1
+            )
+
+    def test_a_time_column_past_the_centers_shape_names_the_store(self, tmp_path):
+        src = _partition_of_leaves(tmp_path / "src.gsplats.zarr", [0, 1])
+
+        with pytest.raises(ValueError) as exc:
+            restride_stacked_axis(
+                src, tmp_path / "out.gsplats.zarr", stride=1, time_col=4
+            )
+
+        message = str(exc.value)
+        assert "src.gsplats.zarr/part_0" in message
+        assert "time_col=4" in message
+        assert "centers with 4 columns" in message
+
     def test_a_store_with_no_parts_is_refused_with_its_kind_named(self, tmp_path):
         src = _write(
             tmp_path / "flat.gsplats.zarr",
