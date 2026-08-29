@@ -83,6 +83,68 @@ def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
         f"manifest pins: {stale}"
     )
 
+    cmu1_ch0 = next(
+        file
+        for file in manifest["datasets"]["gsplats_cmu1_pathology"]["files"]
+        if file["name"] == "cmu1_ch0.gsplats.zarr.zip"
+    )
+    labelled_prefixes = dict(
+        re.findall(
+            r"^\s+(?:cmu1_ch0\s+)?(sha256|hosted_sha256)\s+"
+            r"([0-9a-f]{6,64})(?:\.\.\.|…)",
+            text,
+            re.MULTILINE,
+        )
+    )
+    assert labelled_prefixes.keys() == {"sha256", "hosted_sha256"}
+    for field, prefix in labelled_prefixes.items():
+        assert cmu1_ch0[field].startswith(prefix)
+
+
+def test_runbook_archive_size_table_matches_active_manifest_pins() -> None:
+    """Runbook archive sizes and ordering must match active manifest pins."""
+    text = DEMO_SITE_RUNBOOK.read_text()
+    table = re.search(
+        r"^\| dataset \| files \| repo MB \| hosted MB \| ratio \|\n"
+        r"^\|---\|---:\|---:\|---:\|---:\|\n"
+        r"(?P<rows>(?:^\| `[^`]+` \| .*\|\n)+)",
+        text,
+        re.MULTILINE,
+    )
+    assert table is not None, "runbook archive size table not found"
+    rows = re.findall(
+        r"^\| `([^`]+)` \| (\d+) \| ([\d.]+) \| ([\d.]+) \| ([\d.]+)x \|$",
+        table.group("rows"),
+        re.MULTILINE,
+    )
+
+    manifest = json.loads(DEMO_DATA_MANIFEST.read_text())
+    expected_datasets = {
+        name
+        for name, dataset in manifest["datasets"].items()
+        if any("hosted_sha256" in file for file in dataset.get("files", []))
+    }
+    assert {row[0] for row in rows} == expected_datasets
+
+    ratios = []
+    for dataset_name, file_count, repo_mb, hosted_mb, ratio in rows:
+        files = [
+            file
+            for file in manifest["datasets"][dataset_name]["files"]
+            if "hosted_sha256" in file
+        ]
+        repo_bytes = sum(file["bytes"] for file in files)
+        hosted_bytes = sum(file["hosted_bytes"] for file in files)
+        expected_ratio = hosted_bytes / repo_bytes
+
+        assert file_count == str(len(files)), dataset_name
+        assert repo_mb == f"{repo_bytes / 1_000_000:.1f}", dataset_name
+        assert hosted_mb == f"{hosted_bytes / 1_000_000:.1f}", dataset_name
+        assert ratio == f"{expected_ratio:.2f}", dataset_name
+        ratios.append(expected_ratio)
+
+    assert ratios == sorted(ratios, reverse=True)
+
 
 def test_pages_publishes_daily_or_on_demand_not_on_main_push() -> None:
     """Keep publication off pushes; scheduling is active only on default dev."""
