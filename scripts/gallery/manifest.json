@@ -845,6 +845,20 @@
       "citation": "Lange et al. 2024 (Zebrahub)"
     },
     {
+      "id": "gsplats_4d_drosophila_embryogenesis",
+      "title": "4D Drosophila Embryogenesis (500 timepoints)",
+      "geometry": "gsplats",
+      "category": "microscopy",
+      "script": "demo_gsplats_4d_drosophila_embryogenesis.py",
+      "dataset": "datasets/demos/gsplats_4d_drosophila_embryogenesis.luxar.zarr",
+      "timelapse": {
+        "framePoint": 0.9
+      },
+      "citation": "Royer et al. 2016",
+      "fillTarget": 0.80,
+      "note": "fillTarget 0.80, not the 0.9 inherited from the h2afva timelapse: this embryo is a ~2.5:1 prolate ellipsoid, so at 0.9 it is cut flat at BOTH poles \u2014 and for an embryogenesis timelapse the anterior/posterior ends are the subject, not spare margin. Border-lit fell 737/4316 (17.1%) to 16/4316 (0.4%), a 46x reduction, and the render shows the whole embryo with margin at 0.80. The harness then suggested 0.7 for those 16 remaining pixels; that is its standing over-suggestion on any subject whose silhouette grazes an edge and was not followed. framePoint 0.9 KEPT: late in the 500-timepoint series the nuclei are individually resolved and the ventral furrow is legible, which is the point of the demo. Store needs no LOD work \u2014 the hosted archive is already flat with 14 additive rungs and no substitutive levels. Its largest node reads 37,930,613 (9x the 4,194,304 floor) but Time is display=false over [0.0, 249.5] step 0.5, so the resident slice is 166,443, i.e. 25x UNDER; this is the store _lod_policy.py cites for exactly that point."
+    },
+    {
       "id": "gsplats_4d_h2afva_timelapse",
       "title": "4D Zebrafish Embryogenesis (h2afva timelapse)",
       "geometry": "gsplats",
