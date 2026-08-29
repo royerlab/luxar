@@ -2,7 +2,7 @@
 """Self-Contained Demo: Mouse Multiome Peak 3D UMAP Visualization
 
 This demo demonstrates:
-- Loading biological data from local parquet file
+- Loading biological data from a manifest-resolved parquet file
 - 3D UMAP embedding of ~192k single-cell ATAC-seq peaks
 - Color-coded by cell type, lineage, timepoint, and other attributes
 - Navigation through categorical attributes
@@ -33,10 +33,10 @@ DEMO_META = {
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
-        "download_mb": 0,
+        "download_mb": 7,
         "compute": "light",
         "gpu": "none",
-        "local_data": "manual-file",
+        "local_data": "git-lfs",
     },
     "citation": {
         "short": "Argelaguet et al. 2022; peak-UMAP analysis Kim et al. 2024",
@@ -44,7 +44,7 @@ DEMO_META = {
         "doi": "10.1101/2022.06.15.496239",
         "license": "CC BY 4.0",
     },
-    "caches": [],
+    "caches": ["3d_umap_coords_mouse"],
     "outputs": ["mouse_multiome_peak_umap", "mouse_umap"],
 }
 

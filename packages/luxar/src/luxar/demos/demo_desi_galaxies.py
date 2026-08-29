@@ -39,16 +39,16 @@ DESI Collaboration (2025), "Data Release 1 of the Dark Energy Spectroscopic
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a fully-built scene (both LOD colorings, ~73 MB) shipped via
-     Git LFS (``demos/data/desi_galaxies/``); it is unzipped once into the demos
-     output dir and loads instantly — no per-launch LOD build.
-  2. If that asset isn't pulled, ``--recompute`` (or a missing asset)
+  1. Fast path: a fully-built scene (both LOD colorings, ~73 MB) resolved through
+     the checksum-verified dataset manifest from cache, Git LFS, or Zenodo; it is
+     unzipped once into the demos output dir and loads instantly — no per-launch
+     LOD build.
+  2. If that asset is unavailable, ``--recompute`` (or a missing asset)
      AUTOMATICALLY downloads the ~1 GB of DR1 LSS catalogs to
      ``~/.cache/luxar/desi_galaxies/`` (resumable), reads them with ``astropy``,
      converts (RA, Dec, z) → comoving Mpc, keeps every row, and builds the
      substitutive LOD (GPU-accelerated but slow on CPU-only machines — which is
-     exactly why the built scene ships precomputed). If the DESI host is
-     unavailable, ``git lfs pull`` restores the no-download fast path.
+     exactly why the built scene is hosted precomputed).
 
 USAGE
 -----
@@ -547,7 +547,7 @@ def extract_shipped_scene(zip_path: Path, output_path: Path) -> None:
     import shutil
     import zipfile
 
-    with asection("Unpacking precomputed scene (Git LFS)"):
+    with asection("Unpacking precomputed scene"):
         aprint(f"Source: {zip_path.name} ({zip_path.stat().st_size / 1e6:.0f} MB)")
         staging = output_path.parent / (output_path.name + ".part")
         shutil.rmtree(staging, ignore_errors=True)

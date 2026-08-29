@@ -33,12 +33,13 @@ the coarse levels were bytes nobody fetched. See ``_lod_policy`` for the rule.
 
 Scales (measured): the build is a write rather than a compute now that nothing is
 coarsened — no torch/scipy, no CPU/GPU split, runs anywhere. Generating the 10M
-scVI-UMAP *coords* still needs a GPU (cuML; see scripts). This demo ships a
-**1M-cell cache** (Git LFS) and builds a 3M-element scene by default. The viewer
-eagerly converges an additive ladder to 100% of the selected coloring, so keep
-``CENSUS_UMAP_MAX_CELLS`` at or below the portable 5,591,040-Point node cap;
-larger values are silently clamped on a 4096-class GPU after one console
-warning. Point ``CENSUS_UMAP_CACHE`` at another cache to rebuild from it.
+scVI-UMAP *coords* still needs a GPU (cuML; see scripts). This demo resolves a
+**1M-cell cache** through the checksum-verified dataset manifest and builds a
+3M-element scene by default. The viewer eagerly converges an additive ladder to
+100% of the selected coloring, so keep ``CENSUS_UMAP_MAX_CELLS`` at or below the
+portable 5,591,040-Point node cap; larger values are silently clamped on a
+4096-class GPU after one console warning. Point ``CENSUS_UMAP_CACHE`` at another
+cache to rebuild from it.
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ DEMO_META = {
         "gpu": "none",
         "local_data": "git-lfs",
     },
-    "caches": [],
+    "caches": ["census_umap_1m"],
     "outputs": ["cellxgene_census_umap"],
     "citation": {
         "short": "CZ CELLxGENE Discover (CZI Cell Science Program 2024)",
