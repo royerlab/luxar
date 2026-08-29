@@ -545,9 +545,9 @@ traps). This is the flatten-specific consequence, because flattening is where th
 wrong number is most tempting: it collapses a tree into one node, and that node's
 **total** is what the compiler prints.
 
-Worked case. The pinned `h2afva_51tp` generation is the result of flattening the
-former partitioned tree: one 4D leaf with a twelve-step progressive ladder and
-121,163,285 splats:
+Worked case. The pinned `h2afva_51tp` generation is the result of the 3.17
+rebuild (`flatten` → `lod --recipe stream` → `optimise`): one 4D leaf with a
+twelve-step progressive ladder and 121,163,285 splats:
 
     node total, 51 timepoints   121,163,285   <- what ElementCapacityWarning prints
     resident slice, worst case    2,629,840   <- what the GPU commits
