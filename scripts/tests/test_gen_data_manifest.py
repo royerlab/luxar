@@ -144,6 +144,16 @@ def test_hosted_repin_rejects_wrong_appended_digest() -> None:
         generator._refuse_invalid_repin_history(repinned, committed)
 
 
+def test_hosted_repin_rejects_dropped_existing_history() -> None:
+    generator = _load_generator()
+    outgoing = "a" * 64
+    committed = _manifest_entry(outgoing, ["0" * 64, "1" * 64])
+    repinned = _manifest_entry("b" * 64, [outgoing])
+
+    with pytest.raises(ValueError, match="drops 2 previously recorded"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
 def test_first_hosted_pin_needs_no_superseded_history() -> None:
     generator = _load_generator()
     committed = _manifest_entry(None)
