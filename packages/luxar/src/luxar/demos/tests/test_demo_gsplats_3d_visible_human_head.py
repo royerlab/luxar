@@ -26,9 +26,6 @@ _DEMO_PATH = (
     Path(__file__).resolve().parents[1] / "demo_gsplats_3d_visible_human_head.py"
 )
 _DATA_MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
-_LFS_DIR = _DEMO_PATH.parent / "data" / "gsplats_visible_human_head"
-_LFS_FIT = _LFS_DIR / "vh_head.gsplats.zarr.zip"
-_LFS_COLORS = _LFS_DIR / "vh_head_colors.npz"
 # The pair SHIPPED IN THIS REPO — the 20,572,128-byte fit and the sidecar #1911
 # resampled against it (1,911,192 rows, matching that fit's splat count). These
 # track the manifest's `sha256`, deliberately: the sibling deep check validates
@@ -60,6 +57,9 @@ def _load_demo_module():
 
 
 _demo = _load_demo_module()
+_LFS_DIR = _DEMO_PATH.parent / "data" / _demo.DEMO_NAME
+_LFS_FIT = _LFS_DIR / _demo.FIT_FILE
+_LFS_COLORS = _LFS_DIR / _demo.COLORS_FILE
 create_luxar_scene = _demo.create_luxar_scene
 luminance = _demo.luminance
 tissue_mask = _demo.tissue_mask
@@ -436,9 +436,7 @@ class TestRejectedPairFallsThroughToRefit:
         def _manifest_unavailable(*args, **kwargs):
             raise _demo.DatasetUnavailable("no cached, LFS, or hosted pair")
 
-        monkeypatch.setattr(_demo, "load_dataset_gsplats", _manifest_unavailable)
-        monkeypatch.setattr(_demo, "CACHE_FIT", tmp_path / "absent-cache.zip")
-        monkeypatch.setattr(_demo, "CACHE_COLORS", tmp_path / "absent-cache.npz")
+        monkeypatch.setattr(_demo, "ensure_dataset", _manifest_unavailable)
         monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)
 
         sentinel_fit = _scattered_gsplat_data(4, extent=1.0, seed=6)
@@ -524,13 +522,18 @@ class TestManifestPairIsGuardedToo:
             )
             colors = _load_colors_f32(manifest_dir / _demo.COLORS_FILE)
 
-        monkeypatch.setattr(_demo, "CACHE_FIT", manifest_dir / _demo.FIT_FILE)
-        monkeypatch.setattr(_demo, "CACHE_COLORS", manifest_dir / _demo.COLORS_FILE)
         monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / "local" / _demo.FIT_FILE)
         monkeypatch.setattr(
             _demo, "LOCAL_COLORS", tmp_path / "local" / _demo.COLORS_FILE
         )
-        monkeypatch.setattr(_demo, "load_dataset_gsplats", lambda *a, **k: [stored])
+        monkeypatch.setattr(
+            _demo,
+            "ensure_dataset",
+            lambda *a, **k: [
+                manifest_dir / _demo.FIT_FILE,
+                manifest_dir / _demo.COLORS_FILE,
+            ],
+        )
 
         monkeypatch.setattr(_demo, "RECOMPUTE", False)
         monkeypatch.setattr(_demo, "warn_if_no_cuda_gpu", lambda: None)

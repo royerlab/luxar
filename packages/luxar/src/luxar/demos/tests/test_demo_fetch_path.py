@@ -48,6 +48,7 @@ MANIFEST = registry._DEMOS_DIR / "data_manifest.json"
 
 LFS_ONLY = {"load_precomputed_gsplats", "load_precomputed_bundle"}
 MANIFEST_DRIVEN = {"load_dataset_gsplats", "load_dataset_bundle", "ensure_dataset"}
+HOSTED_GSPLAT_EXCEPTIONS = {"gsplats_4d_neuromast_2ch"}
 
 
 def _manifest() -> dict:
@@ -139,13 +140,14 @@ def test_manifest_driven_loaders_only_name_hosted_datasets(path: Path) -> None:
 
 
 def test_every_hosted_gsplat_dataset_is_reached_through_the_manifest() -> None:
-    """A hosted artifact must have a real demo path through the checksum gate.
+    """A hosted gsplat artifact must have a real path through the checksum gate.
 
     Per-demo classification alone misses the third state: a manifest dataset
     whose demo calls neither loader family.  ``verify_cold_fetch.py`` would still
     exercise and count that dataset even though no user takes the verified path.
-    Keep the one deliberate manual-store exception explicit, so another hosted
-    gsplat dataset cannot become unreachable silently.
+    Union every variant because those payloads have no top-level ``files`` entry.
+    Non-gsplat hosted payloads are outside this census; the suffix filter keeps
+    bundle-only datasets such as ``gsplats_celegans`` from becoming false hits.
     """
     datasets = _manifest()
     reached = {
@@ -162,15 +164,24 @@ def test_every_hosted_gsplat_dataset_is_reached_through_the_manifest() -> None:
         if spec.get("bucket") == "zenodo"
         and any(
             entry["name"].endswith((".gsplats.zarr", ".gsplats.zarr.zip"))
-            for entry in spec.get("files", [])
+            for files in (
+                spec.get("files", []),
+                *(
+                    variant.get("files", [])
+                    for variant in spec.get("variants", {}).values()
+                ),
+            )
+            for entry in files
         )
     }
+    assert "h2afva" in hosted_gsplats, "variant-only gsplat datasets were skipped"
 
-    assert hosted_gsplats - reached == {"gsplats_4d_neuromast_2ch"}, (
+    unreached = hosted_gsplats - reached
+    assert unreached == HOSTED_GSPLAT_EXCEPTIONS, (
         "every hosted gsplat dataset must be reached by a demo through "
         "load_dataset_gsplats / load_dataset_bundle / ensure_dataset; the "
         "neuromast demo is the sole deliberate exception while it uses its "
-        "documented machine-local store"
+        f"documented machine-local store (unreached: {sorted(unreached)})"
     )
 
 
@@ -377,10 +388,9 @@ def _base_atom(node: ast.expr) -> ast.expr:
 #: What a directory expression is. ``("cache", ds)`` is one the manifest owns —
 #: ``<root>/<ds>`` or ``<root>/<ds>/<declared variant>``, both of which
 #: ``ensure_dataset`` fetches into and quarantines from; ``("root", None)`` is
-#: ``~/.cache/luxar`` itself; ``("packaged", None)`` is the in-repo
-#: ``demos/data`` tree; ``("other", None)`` is a directory we can PROVE is
-#: neither (a ``Path(__file__)``-rooted chain, a non-variant subdirectory of a
-#: cache dir); ``("unknown", None)`` is one we cannot classify — the state that
+#: ``~/.cache/luxar`` itself; ``("other", None)`` is a directory we can PROVE is
+#: not the cache (a ``Path(__file__)``-rooted chain, a non-variant subdirectory
+#: of a cache dir); ``("unknown", None)`` is one we cannot classify — the state that
 #: used to be indistinguishable from "clean", and that any other ``Path(...)``
 #: head now correctly lands in.
 DirKind = tuple[str, str | None]
@@ -389,11 +399,10 @@ DirKind = tuple[str, str | None]
 def _path_names(tree: ast.Module) -> frozenset[str]:
     """Local names denoting ``pathlib.Path``, aliased imports included.
 
-    ``from pathlib import Path as P`` used to make the packaged-data tree
-    unrecognisable, which turned the one LEGITIMATE copy into the manifest's
-    path (``visible_human_head`` promoting its shipped git-LFS pair) into a
-    reported violation. A name comparison against the literal ``"Path"`` is not
-    a spelling this gate gets to assume.
+    Alias handling lets the classifier prove that a ``Path(__file__)``-rooted
+    destination is outside the cache rather than leaving it ``unknown``. A name
+    comparison against the literal ``"Path"`` is not a spelling this gate gets
+    to assume.
     """
     names = {"Path"}
     for node in ast.walk(tree):
@@ -448,11 +457,9 @@ class _Ctx:
             return self._extend(self.dirs[head.id], rest)
 
         # 4. A leftmost expression we can prove is not the cache: a
-        #    `Path(__file__)`-rooted chain, i.e. the in-repo source tree. With
-        #    `data` in it that is the packaged git-LFS tree, called out so the
-        #    one legitimate copy INTO the manifest's path can be recognised by
-        #    its source; without it, still provably not `~/.cache/luxar`,
-        #    because `__file__` is the installed module. The `__file__` root is
+        #    `Path(__file__)`-rooted chain, i.e. the in-repo source tree. It is
+        #    provably not `~/.cache/luxar` because `__file__` is the installed
+        #    module. The `__file__` root is
         #    REQUIRED, not decoration: `Path("/tmp/scratch") / "data" /
         #    "myfit.zip"` would otherwise launder an arbitrary local artifact
         #    through the exemption — and any OTHER `Path(...)` head is a
@@ -476,7 +483,7 @@ class _Ctx:
                 isinstance(a, ast.Name) and a.id == "__file__" for a in base.args
             )
             if is_path_call and rooted_in_file:
-                return ("packaged" if "data" in lits else "other", None)
+                return ("other", None)
 
         return ("unknown", None)
 
@@ -1347,6 +1354,7 @@ def test_visible_human_reaches_the_manifest_on_a_cold_cache(
 ) -> None:
     """The cold-fetch verifier must exercise the path the demo really takes."""
     demo = importlib.import_module("luxar.demos.demo_gsplats_3d_visible_human_head")
+    fit_path = tmp_path / "vh_head.gsplats.zarr.zip"
     colors_path = tmp_path / "vh_head_colors.npz"
     calls: list[tuple] = []
     stub_fit = GSplatData(
@@ -1358,16 +1366,22 @@ def test_visible_human_reaches_the_manifest_on_a_cold_cache(
 
     def _fake_fetch(*args, **kwargs):
         calls.append(args)
-        colors_path.write_bytes(b"the sidecar rides along")
-        return [stub_fit]
+        return [fit_path, colors_path]
 
     monkeypatch.setattr(demo, "RECOMPUTE", False)
-    monkeypatch.setattr(demo, "CACHE_FIT", tmp_path / "absent.gsplats.zarr.zip")
-    monkeypatch.setattr(demo, "CACHE_COLORS", colors_path)
     monkeypatch.setattr(demo, "LOCAL_FIT", tmp_path / "absent-local.gsplats.zarr.zip")
     monkeypatch.setattr(demo, "LOCAL_COLORS", tmp_path / "absent-local.npz")
-    monkeypatch.setattr(demo, "load_dataset_gsplats", _fake_fetch)
-    monkeypatch.setattr(demo, "_load_colors_f32", lambda path: stub_colors)
+    monkeypatch.setattr(demo, "ensure_dataset", _fake_fetch)
+    monkeypatch.setattr(
+        demo.GSplatData,
+        "load",
+        lambda path, *, include_stats: stub_fit if path == fit_path else None,
+    )
+    monkeypatch.setattr(
+        demo,
+        "_load_colors_f32",
+        lambda path: stub_colors if path == colors_path else None,
+    )
     monkeypatch.setattr(demo, "_colors_match_fit", lambda *args: True)
 
     def _refit_is_a_failure():
@@ -1377,6 +1391,6 @@ def test_visible_human_reaches_the_manifest_on_a_cold_cache(
 
     fit, got_colors = demo.load_or_build()
 
-    assert calls == [(demo.DEMO_NAME, [demo.FIT_FILE])]
+    assert calls == [(demo.DEMO_NAME,)]
     assert fit is stub_fit
     assert got_colors is stub_colors

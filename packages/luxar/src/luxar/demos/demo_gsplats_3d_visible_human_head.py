@@ -53,6 +53,10 @@ On a fresh machine this demo bootstraps itself with no manual steps:
      load that (verified) local pair instantly.
 ``--recompute`` forces the download + build + fit path.
 
+Manifest integrity faults are not treated as ordinary absence: a stale in-repo
+object matching neither pin, or a cache write that cannot be repaired, is
+reported by the resolver instead of being hidden behind an automatic refit.
+
 The fast path was broken for a while (#1670): the shipped sidecar had been
 sampled in the pre-save splat order, so it did not correspond to the shipped
 store (measured same-voxel agreement 0.00097 over 1,911,192 splats) and the
@@ -88,8 +92,9 @@ fresh fit AND a matching sidecar via :func:`save_and_sample_colors`. The cheaper
 repair, when the fit is fine and only the sidecar is lost, is not wired into the
 demo (see the refusal in :func:`load_or_build`) but is three calls:
 ``vol, _ = assemble_volume(PNG_DIR)``, then :func:`sample_colors` at
-``GSplatData.load(CACHE_FIT).centers``, then :func:`_save_colors_u8` — which
-preserves the resolved fit instead of recomputing it.
+the fit path returned by ``ensure_dataset(DEMO_NAME)``, then
+:func:`_save_colors_u8` to its returned colors path — which preserves the
+resolved fit instead of recomputing it.
 
 USAGE
 -----
@@ -142,8 +147,8 @@ from luxar.demos import (
     DatasetUnavailable,
     add_demo_caption,
     detect_device,
+    ensure_dataset,
     launch_viewer,
-    load_dataset_gsplats,
     load_local_fit_gsplats_at,
     local_fit_path,
     parse_demo_flags,
@@ -171,10 +176,6 @@ COLORS_FILE = "vh_head_colors.npz"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 PNG_DIR = CACHE_DIR / "head_png"
-# The manifest's own paths. `load_dataset_gsplats` resolves and verifies the
-# whole pair before loading the fit; the sidecar is read from its resolved path.
-CACHE_FIT = CACHE_DIR / FIT_FILE
-CACHE_COLORS = CACHE_DIR / COLORS_FILE
 # A local refit is OUR pair, not a copy of the hosted one, so both halves go to
 # the demo's local-fit namespace (#1618), outside the manifest checksum gate.
 LOCAL_FIT = local_fit_path(DEMO_NAME, FIT_FILE)
@@ -531,8 +532,8 @@ def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
     Consulted after the manifest-resolved pair and BEFORE refitting, which is
     what makes the refit one-time (#1618).
 
-    Guarded, unlike the two doors above it, for the reason the comment at the LFS
-    branch gives: these bytes have no checksum, no remote and no second copy, so
+    Guarded, unlike the manifest door above it: these bytes have no checksum, no
+    remote and no second copy, so
     a truncated zip here (a Ctrl-C mid-save) would otherwise raise ``BadZipFile``
     out of :func:`load_or_build` on EVERY launch with a manual delete as the only
     recovery. ``load_local_fit_gsplats_at`` reports the path and the error and
@@ -562,20 +563,21 @@ def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
     """Return (fit, per-splat colors), self-contained on a fresh system."""
     if not RECOMPUTE:
-        # Deliberately not gated on an existing cache: the loader resolves the
+        # Deliberately not gated on an existing cache: the resolver returns the
         # whole positional pair through cache -> in-repo LFS -> hosted data and
-        # verifies both manifest digests before returning the fit.
+        # verifies both manifest digests before either path is consumed.
         try:
-            precomputed = load_dataset_gsplats(DEMO_NAME, [FIT_FILE])
+            resolved = {path.name: path for path in ensure_dataset(DEMO_NAME)}
         except DatasetUnavailable as exc:
             aprint(f"Manifest fetch unavailable ({exc}).")
-            precomputed = None
-        if precomputed is not None and CACHE_COLORS.exists():
-            colors = _load_colors_f32(CACHE_COLORS)
-            if _colors_match_fit(
-                precomputed[0], colors, f"{CACHE_FIT} + {CACHE_COLORS}"
-            ):
-                return precomputed[0], colors
+            resolved = {}
+        if resolved:
+            fit_path = resolved[FIT_FILE]
+            colors_path = resolved[COLORS_FILE]
+            precomputed = GSplatData.load(fit_path, include_stats=False)
+            colors = _load_colors_f32(colors_path)
+            if _colors_match_fit(precomputed, colors, f"{fit_path} + {colors_path}"):
+                return precomputed, colors
         # A pair this machine refitted earlier, in its own namespace — checked
         # BEFORE refitting, which is what makes the refit below one-time.
         pair = local_refit_pair()
