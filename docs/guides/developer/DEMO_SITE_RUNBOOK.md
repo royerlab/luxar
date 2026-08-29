@@ -430,19 +430,22 @@ diverged datasets are loaded into `GSplatData` and re-added as raw arrays, so
 their bytes and splat content can change but their archive topology is
 discarded. Seven pass the `GSplatData` object to `add_gsplats_from_data`, which
 preserves additive rungs and lowers multiple substitutive levels into a
-`kind=lod` scene group. Three graft the artifact directly:
+`kind=lod` scene group. Three take the artifact whole: two by file path, grafted
+only when the file is a partition or nested tree, and one by unpacking a shipped
+scene:
 
 | authoring path | datasets |
 |---|---|
 | re-add raw arrays | `gsplats_kidney`, `gsplats_cells3d`, `gsplats_ct_totalsegmentator`, `gsplats_visible_human_head` |
 | pass through `add_gsplats_from_data` | `gsplats_cryoem_virus`, `gsplats_milkyway_dust`, `gsplats_celegans`, `gsplats_dapi`, `gsplats_multichannel`, `gsplats_nexrad_supercell`, `gsplats_opencell_map4` |
-| load by file path; graft only a partition or nested tree | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology`, `desi_galaxies` |
+| load by file path; graft only a partition or nested tree | `gsplats_flylight_mcfo_63x`, `gsplats_cmu1_pathology` |
+| unpack a shipped scene | `desi_galaxies` |
 
 Digest-confirmed copies show structural divergence for two pass-through
 datasets: `cryoem_virus` changes from a flat leaf to a flat leaf with a five-rung
 ladder (no `kind` either side; the rungs are what reaches the scene);
 `milkyway_dust` changes from flat to four substitutive levels with additive
-rungs. Of the grafted datasets, only `cmu1_pathology` is digest-confirmed on both
+rungs. Of those three datasets, only `cmu1_pathology` is digest-confirmed on both
 sides, so the confirmed armed set is **three**. The hosted topology of
 `flylight_mcfo_63x`, `desi_galaxies`, `celegans`, and `nexrad_supercell` remains
 unclassified; inspect a digest-confirmed copy before counting any of them. Check
@@ -506,7 +509,7 @@ unreadable** — the in-repo cmu1 generation is well-formed with zero kinds.
 
 ### 3.11 Flattening only cuts requests when archive topology reaches the scene
 
-Four authoring paths have different outcomes from the same archive change:
+Five authoring paths have different outcomes from the same archive change:
 
 | authoring call | effect of flattening the archive |
 |---|---|
