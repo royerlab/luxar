@@ -60,13 +60,9 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import (
-    add_demo_caption,
-    cached_download,
-    launch_viewer,
-    substitutive_lod_or_flat,
-)
+from luxar.demos import add_demo_caption, cached_download, launch_viewer
 from luxar.demos._cinematic_camera import pull_in
+from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 LANIAKEA_RAW_BASE: Final = "https://raw.githubusercontent.com/manlius/laniakea/main"
@@ -157,19 +153,6 @@ PRESETS: Final[dict[str, StreamlinePreset]] = {
         point_radius=1.45,
     ),
 }
-
-# The full scene has roughly one million indexed segments per basin. At the
-# authored opening pose, two substitutive levels settle at about 892k splats on
-# a 16:9 viewport while preserving the original indexed Lines nodes for close
-# inspection. The whole-object finest anchor stays fixed at 0.5: at 4:3 and 1:1,
-# wide outer basins still select roughly 2.1M and 3.2M fine segments. Adding
-# levels cannot move that anchor; explicit coverage_fractions would switch the
-# group back to the legacy diagonal-coverage selector.
-BASIN_SUBSTITUTIVE_LOD: Final = dict(
-    compression_factor=16,
-    levels=2,
-    seed=0,
-)
 
 
 @dataclass(frozen=True)
@@ -719,9 +702,6 @@ def write_laniakea_scene(
                 copy="{hover_key}",
             )
 
-            basin_lod = substitutive_lod_or_flat(
-                BASIN_SUBSTITUTIVE_LOD, geometry="Lines"
-            )
             for basin in basin_lines:
                 color = hex_to_rgb(BASIN_COLORS[basin.basin_id], intensity=1.55)
                 scene.add_lines(
@@ -735,11 +715,52 @@ def write_laniakea_scene(
                     opacity=0.36,
                     intensity=0.75,
                     blending_mode="additive",
-                    # The indexed Lines child stays flat to preserve its explicit
-                    # edges, while the synthesized gsplat children keep their safe
-                    # default streaming ladders.
-                    substitutive_lod=basin_lod,
                     layer=True,
+                    # A streaming ladder, so each basin paints progressively
+                    # instead of all-at-once. At the `full` preset a basin runs to
+                    # ~617,685 vertices, well past the 200,000 at which
+                    # `scripts/check_demo_ladders.py` requires one, and these
+                    # nodes had none (#2296).
+                    #
+                    # ADDITIVE rather than substitutive, and the measurement from
+                    # the substitutive attempt (#2297) is why. Coarse levels do
+                    # not bound this scene: the finest anchor of a whole-object
+                    # ladder is fixed at 0.5 screen occupancy, adding levels
+                    # cannot move it, and explicit `coverage_fractions` would
+                    # switch the group back to the legacy diagonal-coverage
+                    # selector. Measured at the authored opening pose, two
+                    # substitutive levels settled at ~892k splats on a 16:9
+                    # viewport but the wide outer basins still selected ~2.1M and
+                    # ~3.2M FINE segments at 4:3 and 1:1 — so the aspect ratio,
+                    # not the ladder, decided whether the scene was bounded.
+                    #
+                    # A prefix ladder bounds first paint at every aspect ratio
+                    # because it does not depend on level selection at all. It
+                    # also keeps the ribbons: `substitutive_lod=` coarsens a line
+                    # set by SYNTHESISING gsplats (beads), and these streamlines
+                    # are the picture.
+                    #
+                    # `indexed` lines could not be laddered at all until the
+                    # writer's fabricated per-component chain was made VERIFIABLE
+                    # rather than assumed. This layout qualifies:
+                    # `index_map[basin_valid] = np.arange(n_vertices)` fills
+                    # row-major, so each streamline's vertices are contiguous and
+                    # time-ordered, and streamlines share no vertices.
+                    #
+                    # The interior-hole worry does not apply, and it is worth
+                    # recording why rather than relying on the integrator. Even if
+                    # a row had an interior invalid step, `segment_mask` drops the
+                    # crossing segment, so the two runs become two distinct
+                    # CONNECTED COMPONENTS and the writer chains each separately —
+                    # no edge is invented across the gap. (It cannot happen here
+                    # anyway: `valid[0] = True` and a failed streamline is retired
+                    # permanently, so every row is a contiguous prefix.)
+                    #
+                    # geometry="lines" because an explicit counts list would be in
+                    # POLYLINES, not vertices — see `stream_ladder`.
+                    additive_lod=stream_ladder(
+                        int(basin.vertices.shape[0]), geometry="lines"
+                    ),
                 )
 
             add_reference_cube(scene)

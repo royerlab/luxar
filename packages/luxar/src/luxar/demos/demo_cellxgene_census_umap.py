@@ -3,36 +3,42 @@
 
 A 3D UMAP of millions of human cells from the CZ CELLxGENE Census, embedded from
 their precomputed **scVI latent** (50-d) with cuML UMAP, rendered in Luxar with
-**substitutive Points LOD**. A categorical ``coloring`` dimension
+bounded additive Points streaming. A categorical ``coloring`` dimension
 switches the colour scheme (navigate with ``[`` / ``]``):
 
   0: Cell type        (hundreds of categories — hashed hue)
   1: Tissue           (tissue_general)
   2: Disease
 
-Because the colorings are stacked along the non-displayed ``coloring`` dimension,
-substitutive coarsening's **Auto default** (coarsen displayed dims, group by the
-non-displayed dim) keeps every coarse Gaussian splat pure to a single colour — the
-exact ``coarsen_dims`` barrier feature. With N≈10M cells × 3 colorings this is a
-~30M-element scene that genuinely exercises the LOD machinery.
+The colorings are stacked along the non-displayed ``coloring`` dimension, so the
+viewer slices to ONE of them at a time — which is why the resident element count
+is a third of the stored one, and why this scene needs no coarse levels. (It used
+to demonstrate substitutive coarsening's ``coarsen_dims`` barrier, keeping each
+coarse Gaussian pure to a single colour; ``demo_gsplats_lod_tribolium`` and
+``demo_gsplats_lod_embryo_line`` are where that machinery is shown now.)
 
 Data pipeline (heavy steps are GPU; see ``scripts``/README for the generator):
   CELLxGENE Census scVI latent  ->  cuML UMAP (3D)  ->  coords cache (NPZ)
-  ->  Luxar substitutive-LOD scene.
+  ->  Luxar streaming-ladder scene.
 
 The coords cache (``census_umap_<N>.npz``: ``coords`` (N,3) f32 + per-cell int
 codes for cell_type / tissue_general / disease + a ``labels_json`` map) is the
 shippable artifact; this script loads it and builds the scene.
 
-Scales (measured): the substitutive-LOD **build** is cheap — 1M cells × 3 = 3M
-elements in ~46 s on CPU; the full 10M × 3 = 30M elements in ~8 min / <16 GB RAM.
-Generating the 10M scVI-UMAP *coords* needs a GPU (cuML; see scripts). This demo
-ships a **1M-cell cache** (Git LFS) and builds a 3M-element scene by default —
-which the web viewer renders cleanly. NB: the full 30M scene builds fine and is
-barrier-pure at every level, but the current viewer eagerly streams the finest
-level, so ~10M+ finest points can exhaust the browser — a viewer LOD-streaming
-ceiling, not a scene defect. Override with ``CENSUS_UMAP_CACHE`` / ``CENSUS_UMAP_
-MAX_CELLS`` / ``CENSUS_UMAP_DEVICE`` to build larger.
+The scene carries an ADDITIVE ladder, not substitutive levels. Stacked over the
+three colorings on a hidden axis, 3M elements are ~1M RESIDENT — five times under
+the 5,591,040 Points cap — and the screen-area selector anchors a finest level at
+half-screen occupancy, which this auto-fitted opening pose always satisfies. So
+the coarse levels were bytes nobody fetched. See ``_lod_policy`` for the rule.
+
+Scales (measured): the build is a write rather than a compute now that nothing is
+coarsened — no torch/scipy, no CPU/GPU split, runs anywhere. Generating the 10M
+scVI-UMAP *coords* still needs a GPU (cuML; see scripts). This demo ships a
+**1M-cell cache** (Git LFS) and builds a 3M-element scene by default. The viewer
+eagerly converges an additive ladder to 100% of the selected coloring, so keep
+``CENSUS_UMAP_MAX_CELLS`` at or below the portable 5,591,040-Point node cap;
+larger values are silently clamped on a 4096-class GPU after one console
+warning. Point ``CENSUS_UMAP_CACHE`` at another cache to rebuild from it.
 """
 
 from __future__ import annotations
@@ -73,8 +79,8 @@ from luxar.demos import (
     launch_viewer,
     parse_demo_flags,
     require_local_data,
-    substitutive_lod_or_flat,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import attribute_to_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -145,16 +151,19 @@ def build_scene(
     output_path: Path,
     *,
     max_cells: int | None = None,
-    device: str = "cpu",
-    compression_factor: int = 4,
-    levels: int = 4,
     seed: int = 0,
 ) -> int:
-    """Build the substitutive-LOD Points scene from the coords cache.
+    """Build the streaming-ladder Points scene from the coords cache.
 
     Optionally subsamples to ``max_cells``, stacks the three colorings along
     the categorical ``coloring`` dimension, and returns the per-coloring cell
     count.
+
+    Takes no ``device``/``compression_factor``/``levels`` any more: those were
+    the substitutive-coarsening knobs, and this scene carries an additive ladder
+    instead (see the ``add_points`` call). Dropping them also drops the
+    torch+scipy import the coarsening write path needed, so a warm-cache build
+    now runs anywhere.
     """
     coords, codes, labels = load_cache(cache)
     n = len(coords)
@@ -209,7 +218,7 @@ def build_scene(
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with asection(f"Building substitutive-LOD scene (device={device})"):
+    with asection("Building streaming-ladder scene"):
         with LuxarZarrCompiler(str(output_path)) as compiler:
             scene = compiler.create_scene(
                 citation=DEMO_META["citation"],
@@ -282,19 +291,24 @@ def build_scene(
                 absorption=2.12,
                 blending_mode="volumetric",
                 # Expose the single cells node in the viewer's Layers panel.
-                # With the substitutive-LOD wrapper this rides onto the
-                # kind=lod group (not the per-level children), so the panel
-                # shows one "cells" layer.
+                # This rides onto the multi-LOD wrapper (not the per-rung
+                # children), so the panel still shows one "cells" layer.
                 layer=True,
-                # Auto coarsen_dims = coarsen x/y/z, group by the `coloring`
-                # barrier so coarse splats stay pure per colour.
-                substitutive_lod=substitutive_lod_or_flat(
-                    dict(
-                        compression_factor=compression_factor,
-                        levels=levels,
-                        device=device,
-                    )
-                ),
+                # Additive ladder only — no substitutive levels. Stacked over the
+                # three colorings on a hidden axis, so 3,000,000 total is
+                # ~1,000,000 RESIDENT against a 5,591,040 Points cap. The coarse
+                # levels served a framing the screen-area selector never picks
+                # (finest anchored at half-screen occupancy; this demo opens
+                # auto-fitted), and cost four extra levels of nodes: 18 groups
+                # -> 9.
+                #
+                # This also un-mixes the ladder. The absorption note above
+                # explains that one kappa had to serve BOTH families because the
+                # coarse levels were lifted gsplats; every node here is Points
+                # now. The baked appearance is unchanged because it was tuned on
+                # the finest level, which is what the opening pose showed then
+                # and shows now.
+                additive_lod=stream_ladder(len(positions)),
             )
             for idx, (_, label) in enumerate(COLORINGS):
                 scene.add_text(
@@ -339,11 +353,11 @@ def main() -> None:
         )
         return
     output_path = get_demos_output_dir() / "cellxgene_census_umap.luxar.zarr"
-    # CPU build is tractable to ~1M cells; pass a GPU build (device='cuda',
-    # higher max) for the full ~10M showcase — see the module docstring.
+    # No CPU/GPU split any more: the build no longer coarsens, so it is a write,
+    # not a compute. CENSUS_UMAP_MAX_CELLS also keeps the selected coloring
+    # below the portable 5,591,040-Point node cap — see the module docstring.
     max_cells = int(os.environ.get("CENSUS_UMAP_MAX_CELLS", "1000000"))
-    device = os.environ.get("CENSUS_UMAP_DEVICE", "cpu")
-    n = build_scene(cache, output_path, device=device, max_cells=max_cells)
+    n = build_scene(cache, output_path, max_cells=max_cells)
     aprint(f"Built {n:,}-cell scene. To view: luxar serve --viewer {output_path}")
     if not flags.get("no_serve"):
         launch_viewer(output_path, open_browser=not flags.get("serve_only", False))

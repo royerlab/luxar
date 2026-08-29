@@ -72,8 +72,8 @@ from luxar.demos import (
     add_demo_caption,
     cache_computed,
     launch_viewer,
-    substitutive_lod_or_flat,
 )
+from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -337,11 +337,14 @@ def create_zebrahub_scene(
                 labels=labels,
                 **link_attrs,
                 layer=True,
-                # Substitutive Points LOD (coarsen x/y/z, group by the attribute
-                # barrier) — same wiring as the census demo.
-                substitutive_lod=substitutive_lod_or_flat(
-                    dict(compression_factor=8, levels=3, device="auto")
-                ),
+                # Additive ladder only — no substitutive levels. Stacked over 7
+                # attribute views on a hidden axis, so 4,485,810 total is 640,830
+                # RESIDENT against a 5,591,040 Points cap — 8.7x under it. The
+                # coarse levels served a framing the screen-area selector never
+                # picks (finest anchored at half-screen occupancy, and this demo
+                # opens auto-fitted). 17 groups -> 11. Same wiring as the census
+                # demo.
+                additive_lod=stream_ladder(len(positions_combined)),
             )
 
             # --- Overlays ---
