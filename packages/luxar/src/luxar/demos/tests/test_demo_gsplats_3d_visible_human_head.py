@@ -235,7 +235,7 @@ class TestColorSidecarOrdering:
         monkeypatch.setattr(_demo, "LOCAL_FIT", tmp_path / _demo.FIT_FILE)
         monkeypatch.setattr(_demo, "LOCAL_COLORS", tmp_path / _demo.COLORS_FILE)
 
-        stored, colors = _demo.save_and_sample_colors(fit, rgb_vol)
+        _, colors = _demo.save_and_sample_colors(fit, rgb_vol)
 
         # Non-vacuity: the writer really did permute this input. Without it the
         # pre/post-save samplings would agree and prove nothing.
