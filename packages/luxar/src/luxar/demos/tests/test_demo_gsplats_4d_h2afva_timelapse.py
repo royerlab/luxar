@@ -17,6 +17,10 @@ from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_gsplats_4d_h2afva_timelapse.py"
 _MANIFEST_PATH = _DEMO_PATH.parent / "data_manifest.json"
+#: The RESTRUCTURED generation: substitutive levels and the 44-part partition
+#: dropped, the progressive ladder rebuilt, then re-chunked for archive reads.
+#: Was c5e14be9… / 1,873,559,527 (44 parts x 4 levels) before that pass, at
+#: identical finest-level content.
 _ARCHIVE_SHA256 = "037806639a787ac1270b07bfaa6918a5144e45f5d3198cf2165381316c29afae"
 _ARCHIVE_BYTES = 1_115_714_088
 

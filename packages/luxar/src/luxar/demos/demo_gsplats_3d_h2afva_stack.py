@@ -46,7 +46,7 @@ ANISOTROPY:
     (a threshold-based extent finds 233 of the 407 z-slices the fitted splats
     actually occupy). Re-stamp both numbers if the acquisition settings surface.
 
-PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here):
+PIPELINE (how the bundled gsplats were produced; re-run with ``--recompute``):
     1. Select timepoint 234 from ``h2afva/fused``.
     2. Reuse the calibrated K* from the full-timelapse campaign
        (Noise2Self blind-spot sweep, K* = 128,000, held-out peak 42.5 dB).
@@ -58,8 +58,12 @@ PIPELINE (how the bundled gsplats were produced — provenance, NOT re-run here)
        (1.625 um axially, 0.40625 um laterally; see ANISOTROPY above).
 
 USAGE:
-    python demo_gsplats_3d_h2afva_stack.py [--no-serve] [--serve-only]
+    python demo_gsplats_3d_h2afva_stack.py [--recompute --source PATH --cal PATH]
+        [--no-serve] [--serve-only]
 
+    --recompute:   Rebuild the fitted archive from the source recording.
+    --source:      Source zarr containing ``h2afva/fused`` (required above).
+    --cal:         Recorded calibration JSON (required above).
     --no-serve:    Build the scene but don't launch the viewer.
     --serve-only:  Skip the build, just serve the already-built scene.
 
@@ -97,10 +101,13 @@ DEMO_META = {
 }
 
 import colorsys
+import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
@@ -110,9 +117,11 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    parse_path_arg,
+    run_luxar_cli,
 )
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.tree import center_bounds
+from luxar.gsplats.tree import GSplatPartition, center_bounds, iter_leaves
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -131,6 +140,57 @@ BOX_LINE_WIDTH = 1.625
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
+
+#: ``--source PATH`` — the raw light-sheet recording. Required for
+#: ``--recompute``: this is unpublished lab data, so there is no URL to fetch.
+SOURCE_ARG = parse_path_arg("source")
+
+#: ``--cal PATH`` — the calibration whose splat density drove the content plan.
+#: Required for ``--recompute`` and VERIFIED against the two numbers below,
+#: because five h2afva cal files exist on the acquisition box and only one
+#: produced this archive. Matching on a single attribute picks the wrong one:
+#: a sibling cal shares the exponent but not the cap, another shares the cap but
+#: not the exponent. So the check demands both.
+CAL_ARG = parse_path_arg("cal")
+
+# ---- Recorded fit recipe (recovered from the original run logs) -------------
+#: The array inside the recording. The store also holds sibling arrays, so an
+#: unqualified open picks the wrong one.
+SOURCE_ARRAY_KEY = "h2afva/fused"
+#: Full recording extent, asserted before spending 30 minutes of GPU.
+SOURCE_TIMEPOINTS = 253
+SOURCE_SPATIAL = (407, 2048, 2048)
+#: The timepoint this demo shows, chosen by scanning the movie (task #2).
+TIMEPOINT = 234
+#: Content-adaptive tiling: variable-size boxes packing more splats where the
+#: embryo is busy. The plan logged 45 boxes; 4 came back empty, so the archive
+#: carries 41 parts.
+TILING = "content"
+#: Concurrent fit workers. 8 fitted the 41 boxes in 31.4 minutes on an RTX PRO
+#: 6000. Do NOT raise this blindly -- an over-subscribed GPU OOMs every worker
+#: at once rather than degrading (see the neuromast batch-fit note).
+JOBS = 8
+#: Density figures the chosen cal must reproduce, from the logged line
+#: "118,715 splats / 5,252 peaks features -> K ~ features^0.60 (cap 233,937)".
+#: Stored to 4 dp because the log rounds 0.5957 for display.
+CAL_SATURATION_EXPONENT = 0.5957
+CAL_SATURATION_CAP = 233937
+#: Voxel anisotropy: z is 4x the lateral pitch on this instrument.
+VOXEL_SCALE = (4.0, 1.0, 1.0)
+#: Lateral pixel pitch in microns, applied uniformly after anisotropy.
+MICRON_SCALE = (0.40625, 0.40625, 0.40625)
+#: Amplitudes are normalised to a unit peak at authoring time, so appearance
+#: does not depend on the recording's absolute intensity scale.
+NORMALIZE_INTENSITY = 1.0
+#: The recorded content plan produced 41 non-empty spatial parts.
+EXPECTED_PARTS = 41
+#: Every part carries the six-rung stream recipe recorded above.
+EXPECTED_RUNGS = 6
+#: What the recipe must reproduce. The four decimation levels of the sibling
+#: decimation-study demo are cut FROM this archive, so a drift here silently
+#: relabels every one of them.
+EXPECTED_SPLATS = 1_653_405
 
 
 # =============================================================================
@@ -214,6 +274,221 @@ def partition_box_lines(node: Any) -> tuple[np.ndarray, np.ndarray]:
 # =============================================================================
 # Data loading
 # =============================================================================
+def _validate_cal(path: Path) -> None:
+    """Refuse a cal that did not drive this archive.
+
+    Five h2afva calibrations exist on the acquisition box. They differ in the
+    splat-density block, which is what sizes every content box, so handing over
+    the wrong one yields a plausible archive built to the wrong budget -- the
+    failure would show up only as a splat count nobody was checking.
+    """
+    density = json.loads(path.read_text()).get("splat_density") or {}
+    exponent = density.get("saturation_exponent")
+    cap = density.get("saturation_cap")
+    if exponent is None or cap is None:
+        raise SystemExit(
+            f"{path.name} carries no splat_density.saturation_* figures, so it "
+            f"cannot be the cal that planned this fit (which needs a density)."
+        )
+    if (
+        round(float(exponent), 4) != CAL_SATURATION_EXPONENT
+        or int(cap) != CAL_SATURATION_CAP
+    ):
+        raise SystemExit(
+            f"{path.name} does not match the recorded cal: exponent "
+            f"{float(exponent):.4f} / cap {int(cap)}, want "
+            f"{CAL_SATURATION_EXPONENT} / {CAL_SATURATION_CAP}. A sibling cal "
+            f"matches one of the two but not both -- pick the one matching BOTH."
+        )
+    aprint(f"cal verified: exponent {float(exponent):.4f}, cap {int(cap)}")
+
+
+def _validate_source_root(root: Any, path: Path) -> None:
+    """Assert an opened store is the recording this recipe was written against."""
+    try:
+        arr = root[SOURCE_ARRAY_KEY]
+    except Exception as exc:  # noqa: BLE001 - report what IS there
+        try:
+            available = sorted(root.array_keys()) or sorted(root.group_keys())
+        except Exception:  # noqa: BLE001 - a store that cannot even be listed
+            available = "unlistable"
+        raise SystemExit(
+            f"{path.name} has no {SOURCE_ARRAY_KEY!r} array; found: {available}. "
+            f"A sibling recording on the same instrument exists under a different "
+            f"name and does NOT hold this key -- confirm --source. "
+            f"Underlying error: {exc}"
+        ) from exc
+    aprint(f"source array [{SOURCE_ARRAY_KEY}]: {arr.shape} {arr.dtype}")
+    if arr.ndim != 4:
+        raise SystemExit(f"expected a 4D (t, z, y, x) array, got {arr.ndim}D")
+    if arr.shape[0] != SOURCE_TIMEPOINTS:
+        raise SystemExit(
+            f"{path.name} has {arr.shape[0]} timepoints, want {SOURCE_TIMEPOINTS}. "
+            f"A sibling recording differs only in timepoint count, so this is the "
+            f"assertion that catches the wrong file."
+        )
+    if tuple(arr.shape[1:]) != SOURCE_SPATIAL:
+        raise SystemExit(
+            f"{path.name} has spatial grid {tuple(arr.shape[1:])}, want {SOURCE_SPATIAL}"
+        )
+
+
+def _validate_source(path: Path) -> None:
+    """Assert the recording is the one this recipe was written against.
+
+    The suffix branch is load-bearing: zarr-python 3 no longer sniffs `.zip`, so
+    handing a zipped store straight to ``zarr.open`` raises GroupNotFoundError.
+    The shipped source IS a .zip, so without this the validator rejects the only
+    valid input and the message blames the file.
+    """
+    from zarr.storage import ZipStore
+
+    if path.suffix == ".zip":
+        try:
+            store = ZipStore(str(path), mode="r")
+        except Exception as exc:  # noqa: BLE001 - normalize storage errors
+            raise SystemExit(
+                f"Could not open {path.name} as a zipped Zarr store. "
+                f"Underlying error: {exc}"
+            ) from exc
+        with store:
+            try:
+                root = zarr.open(store=store, mode="r")
+            except Exception as exc:  # noqa: BLE001 - normalize zarr errors
+                raise SystemExit(
+                    f"Could not read {path.name} as a Zarr recording. "
+                    f"Underlying error: {exc}"
+                ) from exc
+            _validate_source_root(root, path)
+        return
+
+    try:
+        root = zarr.open(str(path), mode="r")
+    except Exception as exc:  # noqa: BLE001 - normalize zarr errors
+        raise SystemExit(
+            f"Could not read {path.name} as a Zarr recording. Underlying error: {exc}"
+        ) from exc
+    _validate_source_root(root, path)
+
+
+def _validate_rebuilt_archive(node: Any) -> int:
+    """Return the splat count after verifying the shipped partition topology."""
+    if not isinstance(node, GSplatPartition):
+        raise RuntimeError(
+            "rebuilt archive is not a spatial partition; flattening it breaks "
+            "the partition-box layer and discards per-part streaming"
+        )
+    leaves = list(iter_leaves(node))
+    if len(node.children) != EXPECTED_PARTS or len(leaves) != EXPECTED_PARTS:
+        raise RuntimeError(
+            f"rebuilt archive has {len(node.children)} parts and {len(leaves)} leaves, "
+            f"expected {EXPECTED_PARTS} of each"
+        )
+    rung_counts = {int(leaf.n_additive_sublods) for leaf in leaves}
+    if rung_counts != {EXPECTED_RUNGS}:
+        raise RuntimeError(
+            f"rebuilt archive has progressive rung counts {sorted(rung_counts)}, "
+            f"expected {EXPECTED_RUNGS} on every part"
+        )
+    return sum(int(leaf.n_splats) for leaf in leaves)
+
+
+def recompute_archive(work_dir: Path) -> Path:
+    """Rebuild the tp234 archive from the raw recording.
+
+    Three stages, in this order for a reason: the fit stamps PSNR against the
+    source volume, and it is the ONLY point where the two are comparable --
+    after the anisotropy scale the archive no longer lives on the voxel grid, so
+    a later re-score is meaningless.
+    """
+    with asection("Recomputing the h2afva tp234 fit"):
+        if SOURCE_ARG is None:
+            raise SystemExit(
+                "--recompute needs --source PATH pointing at the raw light-sheet "
+                "recording (fused.deconv.zarr.zip, array 'h2afva/fused'). It is "
+                "unpublished lab data, so there is no URL to fetch it from."
+            )
+        if CAL_ARG is None:
+            raise SystemExit(
+                "--recompute needs --cal PATH pointing at the calibration that "
+                "planned the content boxes. Its splat density must report "
+                f"saturation exponent {CAL_SATURATION_EXPONENT} and cap "
+                f"{CAL_SATURATION_CAP}; anything else built a different archive."
+            )
+        source = SOURCE_ARG.expanduser()
+        if not source.exists():
+            raise FileNotFoundError(f"--source does not exist: {source}")
+        cal = CAL_ARG.expanduser()
+        if not cal.exists():
+            raise FileNotFoundError(f"--cal does not exist: {cal}")
+        _validate_cal(cal)
+        _validate_source(source)
+
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        tiled = work_dir / "h2afva_tp234_tiled.gsplats.zarr"
+        scaled = work_dir / "h2afva_tp234_isotropic.gsplats.zarr"
+        final = work_dir / "h2afva_stack.gsplats.zarr"
+
+        run_luxar_cli(
+            "gsplat",
+            "fit",
+            str(source),
+            str(tiled),
+            "--array-key",
+            SOURCE_ARRAY_KEY,
+            "--timepoint",
+            str(TIMEPOINT),
+            "--tiling",
+            TILING,
+            "--cal",
+            str(cal),
+            "-j",
+            str(JOBS),
+            "--recipe",
+            "stream",
+            "--n-lods",
+            str(EXPECTED_RUNGS),
+        )
+        run_luxar_cli(
+            "gsplat",
+            "transform",
+            str(tiled),
+            str(scaled),
+            "--scale",
+            ",".join(str(v) for v in VOXEL_SCALE),
+            "--normalize-intensity",
+            str(NORMALIZE_INTENSITY),
+        )
+        run_luxar_cli(
+            "gsplat",
+            "transform",
+            str(scaled),
+            str(final),
+            "--scale",
+            ",".join(str(v) for v in MICRON_SCALE),
+        )
+
+        node, _ = load_gsplat_node(str(final))
+        got = _validate_rebuilt_archive(node)
+        drift = abs(got - EXPECTED_SPLATS) / EXPECTED_SPLATS
+        aprint(
+            f"rebuilt {got:,} splats (recorded {EXPECTED_SPLATS:,}, drift {drift:.3%})"
+        )
+        # A tolerance, not an equality: the reduction order of a parallel fit is
+        # not pinned by any flag, so an exact match is not achievable. 1% is far
+        # tighter than any real recipe change and far looser than float noise.
+        if drift >= 0.01:
+            raise RuntimeError(
+                f"rebuilt {got:,} splats against a recorded {EXPECTED_SPLATS:,} "
+                f"({drift:.2%} drift). Over 1% means the recipe changed, not "
+                f"float noise -- check --cal and --timepoint before publishing."
+            )
+        aprint(f"rebuilt: {final}")
+        return final
+
+
 def resolve_data() -> Path:
     """Resolve the fitted gsplats: cache -> in-repo copy -> Zenodo."""
     with asection("Resolving h2afva gsplats"):
@@ -379,7 +654,10 @@ def main() -> None:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    data_path = resolve_data()
+    if RECOMPUTE:
+        data_path = recompute_archive(get_demos_output_dir() / "_h2afva_recompute")
+    else:
+        data_path = resolve_data()
     scene_path = create_luxar_scene(data_path, output_path)
 
     if not NO_SERVE:
