@@ -27,17 +27,18 @@ class CancellationRejected(ci_queue_scan.ApiError):
     """The recovery run exists, but the target run was not cancelled."""
 
 
-def select_candidate(result: ci_queue_scan.ScanResult) -> Candidate | None:
-    """Select one wholly queued run only when complete saturation evidence exists."""
+def select_candidates(result: ci_queue_scan.ScanResult) -> tuple[Candidate, ...]:
+    """Select wholly queued runs only when complete saturation evidence exists."""
     if result.error is not None or result.truncated or not result.running:
-        return None
+        return ()
+    candidates = []
     for run in result.runs:
         required_queued = [
             name for name in run.queued if name in REQUIRED_OBSIDIAN_JOBS
         ]
         if required_queued and not run.running:
-            return Candidate(run.run_id, tuple(required_queued))
-    return None
+            candidates.append(Candidate(run.run_id, tuple(required_queued)))
+    return tuple(candidates)
 
 
 def _object(payload: object) -> dict[str, Any]:
@@ -153,25 +154,26 @@ def scan_and_handoff(
     if result.truncated:
         print("queue scan truncated; leaving runs alone")
         return 0
-    candidate = select_candidate(result)
-    if candidate is None:
+    candidates = select_candidates(result)
+    if not candidates:
         print("no wholly queued obsidian run behind active obsidian work")
         return 0
-    names = ", ".join(candidate.queued)
-    print(f"run {candidate.run_id} has aged queued obsidian jobs ({names})")
-    try:
-        changed = hand_off_and_cancel(
-            repository, ref, candidate, read=read, write=write
-        )
-    except CancellationRejected as error:
-        print(f"recovery run dispatched but cancellation was rejected: {error}")
-        return 0
-    except ci_queue_scan.ApiError as error:
-        print(f"redispatch handoff failed safely: {error}")
-        return 0
-    if changed:
-        print(f"handed off recovery and cancelled run {candidate.run_id}")
-    else:
+    for candidate in candidates:
+        names = ", ".join(candidate.queued)
+        print(f"run {candidate.run_id} has aged queued obsidian jobs ({names})")
+        try:
+            changed = hand_off_and_cancel(
+                repository, ref, candidate, read=read, write=write
+            )
+        except CancellationRejected as error:
+            print(f"recovery run dispatched but cancellation was rejected: {error}")
+            return 0
+        except ci_queue_scan.ApiError as error:
+            print(f"redispatch handoff failed safely: {error}")
+            return 0
+        if changed:
+            print(f"handed off recovery and cancelled run {candidate.run_id}")
+            return 0
         print(f"run {candidate.run_id} is no longer eligible for automatic redispatch")
     return 0
 

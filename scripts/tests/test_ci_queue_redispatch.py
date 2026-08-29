@@ -17,8 +17,8 @@ SPEC.loader.exec_module(ci_queue_redispatch)
 ci_queue_scan = ci_queue_redispatch.ci_queue_scan
 
 
-def test_select_candidate_requires_complete_saturation_evidence() -> None:
-    candidate = ci_queue_redispatch.select_candidate(
+def test_select_candidates_require_complete_saturation_evidence() -> None:
+    candidates = ci_queue_redispatch.select_candidates(
         ci_queue_scan.ScanResult(
             running=["other run"],
             runs=[
@@ -31,7 +31,7 @@ def test_select_candidate_requires_complete_saturation_evidence() -> None:
             ],
         )
     )
-    assert candidate == ci_queue_redispatch.Candidate(10, ("python-tests (3.12)",))
+    assert candidates == (ci_queue_redispatch.Candidate(10, ("python-tests (3.12)",)),)
 
     unsafe_results = [
         ci_queue_scan.ScanResult(
@@ -63,9 +63,56 @@ def test_select_candidate_requires_complete_saturation_evidence() -> None:
         ),
     ]
     assert all(
-        ci_queue_redispatch.select_candidate(result) is None
-        for result in unsafe_results
+        ci_queue_redispatch.select_candidates(result) == () for result in unsafe_results
     )
+
+
+def test_scan_skips_ineligible_candidate_and_hands_off_next(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        ci_queue_scan,
+        "scan_repository",
+        lambda *args, **kwargs: ci_queue_scan.ScanResult(
+            running=["live obsidian work"],
+            runs=[
+                ci_queue_scan.RunScan(99, queued=["typescript-tests"]),
+                ci_queue_scan.RunScan(42, queued=["python-tests (3.12)"]),
+                ci_queue_scan.RunScan(7, running=["python-tests (3.12)"]),
+            ],
+        ),
+    )
+    reads: list[int] = []
+    writes: list[tuple[str, object]] = []
+
+    def read(endpoint: str) -> object:
+        run_id = int(endpoint.rsplit("/", 1)[-1])
+        reads.append(run_id)
+        return {"status": "in_progress", "run_attempt": 2 if run_id == 99 else 1}
+
+    assert (
+        ci_queue_redispatch.scan_and_handoff(
+            "royerlab/luxar",
+            ref="dev",
+            queued_before=1_800_000_000,
+            max_runs=100,
+            read=read,
+            write=lambda endpoint, fields: writes.append((endpoint, fields)),
+        )
+        == 0
+    )
+
+    assert reads == [99, 42]
+    assert writes == [
+        (
+            "repos/royerlab/luxar/actions/workflows/ci-queue-redispatch.yml/dispatches",
+            {"ref": "dev", "inputs[target_run_id]": "42"},
+        ),
+        ("repos/royerlab/luxar/actions/runs/42/cancel", None),
+    ]
+    output = capsys.readouterr().out
+    assert "run 99 is no longer eligible for automatic redispatch" in output
+    assert "handed off recovery and cancelled run 42" in output
 
 
 def test_handoff_precedes_cancellation() -> None:
