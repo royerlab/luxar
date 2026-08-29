@@ -35,6 +35,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar._zarr_compat import open_group
+from luxar.core.group.partition import prune_serialized_bsp_tree
 from luxar.encoding import EncodingMode
 from luxar.encoding.decoder import ArrayDecoder
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
@@ -87,6 +88,7 @@ def _truncation_radius(*nodes: Any, label: str = "") -> float:
 
 
 def _sorted_children(group: Any, prefix: str) -> list[str]:
+    """Return numerically ordered child names matching ``prefix``."""
     return sorted(
         (k for k in group.group_keys() if k.startswith(prefix)),
         key=lambda s: int(s.split("_")[1]),
@@ -109,6 +111,7 @@ def _slice_sublod(
     """
 
     def decode(name: str) -> Optional[np.ndarray]:
+        """Decode one optional array from the current sub-LOD."""
         return decoder.decode(group[name], root) if name in group else None
 
     centers = decode("centers")
@@ -152,6 +155,87 @@ def _slice_sublod(
         splats_read,
         {int(v) for v in np.unique(rounded[keep])},
     )
+
+
+def _restride_part(
+    part: Any,
+    root: Any,
+    decoder: ArrayDecoder,
+    *,
+    part_name: str,
+    time_col: int,
+    stride: int,
+) -> tuple[Optional[Any], int, int, set[int], int]:
+    """Restride one partition child while preserving its leaf/LOD shape."""
+    level_names = _sorted_children(part, "child_") or [""]
+    leaves: list[Any] = []
+    n_in = n_out = 0
+    kept_labels: set[int] = set()
+    for level_name in level_names:
+        level = part[level_name] if level_name else part
+        sub_names = _sorted_children(level, "additive_") or [""]
+        sublods: list[AdditiveSubLOD] = []
+        for sub_name in sub_names:
+            group = level[sub_name] if sub_name else level
+            sublod, splats_read, labels = _slice_sublod(
+                group,
+                level,
+                root,
+                decoder,
+                time_col=time_col,
+                stride=stride,
+                label="/".join(
+                    p for p in (part_name, level_name, sub_name or "(level)") if p
+                ),
+            )
+            n_in += splats_read
+            if sublod is None:
+                continue
+            kept_labels.update(labels)
+            n_out += int(sublod.centers.shape[0])
+            sublods.append(sublod)
+        if sublods:
+            leaves.append(GSplatLeaf(additive_sublods=sublods, meta={}))
+
+    if not leaves:
+        return None, n_in, n_out, kept_labels, 0
+    if level_names == [""]:
+        return leaves[0], n_in, n_out, kept_labels, 1
+    return (
+        GSplatLodGroup(children=leaves, meta={}),
+        n_in,
+        n_out,
+        kept_labels,
+        len(leaves),
+    )
+
+
+def _restride_bsp_tree(
+    tree: Optional[Dict[str, Any]],
+    keep: Sequence[int],
+    *,
+    time_col: int,
+    stride: int,
+) -> Optional[Dict[str, Any]]:
+    """Prune dropped parts and scale split planes on the restrided axis."""
+    pruned = prune_serialized_bsp_tree(tree, keep)
+    if pruned is None:
+        return None
+
+    def scale(node: Dict[str, Any]) -> Dict[str, Any]:
+        """Copy one BSP subtree with transformed stacked-axis splits."""
+        if "part" in node:
+            return {"part": int(node["part"])}
+        axis = int(node["axis"])
+        split = float(node["split"])
+        return {
+            "axis": axis,
+            "split": split / stride if axis == time_col else split,
+            "left": scale(node["left"]),
+            "right": scale(node["right"]),
+        }
+
+    return scale(pruned)
 
 
 def restride_stacked_axis(
@@ -199,61 +283,42 @@ def restride_stacked_axis(
         )
 
     kept_labels: set[int] = set()
+    kept_part_indices: list[int] = []
     n_in = n_out = 0
     # Mixed by design: a part reproduces its input shape, lod group or leaf.
     part_nodes: list[Any] = []
 
     for part_name in part_names:
+        part_index = int(part_name.split("_", 1)[1])
         part = root[part_name]
         # A part is either a kind=lod group of `child_*` levels, or a LEAF in its
         # own right. Both shapes are real and ship: a tiled fit with per-part LOD
         # produces the former, a tiled fit whose substitutive levels were later
         # dropped produces the latter. Reading only `child_*` silently yields an
         # empty result on the second shape — no error, just nothing kept.
-        level_names = _sorted_children(part, "child_") or [""]
-        # Annotated as the union the tree accepts, not list[GSplatLeaf]: a list
-        # is invariant, so the narrower type would not satisfy `children`.
-        leaves: list[Any] = []
-        for level_name in level_names:
-            level = part[level_name] if level_name else part
-            # A level either carries an additive ladder or holds its arrays
-            # directly; the empty name selects the level group itself.
-            sub_names = _sorted_children(level, "additive_") or [""]
-            sublods: list[AdditiveSubLOD] = []
-            for sub_name in sub_names:
-                group = level[sub_name] if sub_name else level
-                sublod, splats_read, labels = _slice_sublod(
-                    group,
-                    level,
-                    root,
-                    decoder,
-                    time_col=time_col,
-                    stride=stride,
-                    label="/".join(
-                        p for p in (part_name, level_name, sub_name or "(level)") if p
-                    ),
-                )
-                n_in += splats_read
-                if sublod is None:
-                    continue
-                kept_labels.update(labels)
-                n_out += int(sublod.centers.shape[0])
-                sublods.append(sublod)
-            if not sublods:
-                continue
-            leaves.append(GSplatLeaf(additive_sublods=sublods, meta={}))
-        if not leaves:
+        part_node, part_in, part_out, labels, levels_kept = _restride_part(
+            part,
+            root,
+            decoder,
+            part_name=part_name,
+            time_col=time_col,
+            stride=stride,
+        )
+        n_in += part_in
+        n_out += part_out
+        kept_labels.update(labels)
+        if part_node is None:
             say(f"  {part_name}: empty after the filter -- dropped")
             continue
-        if level_names == [""]:
+        kept_part_indices.append(part_index)
+        part_nodes.append(part_node)
+        if isinstance(part_node, GSplatLeaf):
             # The part WAS a leaf. Wrapping it in a one-child lod group would
             # invent a level ladder that the input never had, and the viewer
             # would then run its coverage selector over a single option.
-            part_nodes.append(leaves[0])
             say(f"  {part_name}: leaf kept (running out={n_out:,})")
         else:
-            part_nodes.append(GSplatLodGroup(children=leaves, meta={}))
-            say(f"  {part_name}: {len(leaves)} levels kept (running out={n_out:,})")
+            say(f"  {part_name}: {levels_kept} levels kept (running out={n_out:,})")
 
     if not part_nodes:
         raise ValueError(
@@ -265,11 +330,17 @@ def restride_stacked_axis(
     node = GSplatPartition(
         children=part_nodes,
         # `max_elements` and `bsp_tree` are real constructor arguments, so unlike
-        # `meta` they DO survive: carry the input's, since the parts keep their
-        # spatial extents and only their contents thin out.
+        # `meta` they DO survive. The tree must follow the writer's survivor
+        # numbering, and stacked-axis split planes follow the same linear
+        # coordinate transform as centers.
         max_elements=int(root_meta.get("max_elements", 0) or 0),
         meta={},
-        bsp_tree=root_meta.get("bsp_tree"),
+        bsp_tree=_restride_bsp_tree(
+            root_meta.get("bsp_tree"),
+            kept_part_indices,
+            time_col=time_col,
+            stride=stride,
+        ),
     )
 
     renumbered = stride != 1

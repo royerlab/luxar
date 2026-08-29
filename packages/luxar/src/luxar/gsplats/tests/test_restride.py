@@ -13,7 +13,9 @@ Four behaviours are load-bearing and each has a silent failure mode:
    stamps every node from its own key set and drops arbitrary node ``meta``
    silently, so appearance routed through ``meta`` -- the obvious-looking choice
    -- writes a store with those attrs simply missing.
-4. **A non-integral stacked axis is refused rather than rounded.** Rounding one
+4. **The partition BSP follows dropped parts and coordinate renumbering.** A
+   stale but valid-looking tree silently gives the viewer the wrong painter order.
+5. **A non-integral stacked axis is refused rather than rounded.** Rounding one
    would merge or mislabel frames with no error.
 """
 
@@ -333,18 +335,50 @@ class TestAttributesReachTheRootAndNowhereElse:
         assert "blending_mode" not in leaf
         assert leaf["absorption"] != 9.0
 
-    def test_the_partitions_bsp_tree_and_element_cap_are_carried(self, tmp_path):
-        """These are constructor arguments, not meta, so they DO survive -- and
-        they must: the parts keep their spatial extents, only their contents
-        thin out."""
-        src = _partition_of_lod_groups(tmp_path / "in.gsplats.zarr", range(4))
-        before = read_node_attrs(tmp_path / "in.gsplats.zarr") or {}
-        restride_stacked_axis(
-            src, tmp_path / "out.gsplats.zarr", stride=2, time_col=TIME_COL
+    def test_the_partition_bsp_is_pruned_renumbered_and_restrided(self, tmp_path):
+        """A dropped middle part must not silently retarget the BSP painter order."""
+        parts = [
+            GSplatLeaf(additive_sublods=[_sublod(frames, seed=index)], meta={})
+            for index, frames in enumerate(([0, 5], [1, 3, 7], [0, 5], [5, 10]))
+        ]
+        bsp_tree = {
+            "axis": TIME_COL,
+            "split": 7.5,
+            "left": {
+                "axis": 0,
+                "split": 4.0,
+                "left": {"part": 0},
+                "right": {"part": 1},
+            },
+            "right": {
+                "axis": 0,
+                "split": 6.0,
+                "left": {"part": 2},
+                "right": {"part": 3},
+            },
+        }
+        src = _write(
+            tmp_path / "in.gsplats.zarr",
+            GSplatPartition(children=parts, max_elements=123, bsp_tree=bsp_tree),
         )
+        restride_stacked_axis(
+            src, tmp_path / "out.gsplats.zarr", stride=5, time_col=TIME_COL
+        )
+        output = open_group(tmp_path / "out.gsplats.zarr", mode="r")
         after = read_node_attrs(tmp_path / "out.gsplats.zarr") or {}
-        assert after["max_elements"] == before["max_elements"]
-        assert after.get("bsp_tree") == before.get("bsp_tree")
+        assert sorted(output.group_keys()) == ["part_0", "part_1", "part_2", "provenance"]
+        assert after["max_elements"] == 123
+        assert after["bsp_tree"] == {
+            "axis": TIME_COL,
+            "split": 1.5,
+            "left": {"part": 0},
+            "right": {
+                "axis": 0,
+                "split": 6.0,
+                "left": {"part": 1},
+                "right": {"part": 2},
+            },
+        }
 
 
 class TestInputsThatCannotBeRestridedAreRejected:
