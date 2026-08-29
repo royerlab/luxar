@@ -830,6 +830,8 @@ def _declare_positional_pairs(
     declared: set[str] = set()
     for group, members in groups.items():
         member_names = set(members)
+        if len(member_names) < 2:
+            raise ValueError(f"positional pair {group!r} must name at least two files")
         present = member_names.intersection(by_name)
         if not present:
             continue
@@ -842,6 +844,14 @@ def _declare_positional_pairs(
         if overlap:
             raise ValueError(
                 f"files belong to more than one positional pair: {sorted(overlap)}"
+            )
+        history_lengths = {
+            len(by_name[member].get(_SUPERSEDED_KEY) or ()) for member in members
+        }
+        if len(history_lengths) != 1:
+            raise ValueError(
+                f"positional pair {group!r} did not move atomically: member "
+                "history depths differ"
             )
         for member in members:
             by_name[member]["positional_pair"] = group
@@ -876,6 +886,10 @@ def build(prev: Optional[dict] = None, *, prune: bool = False) -> dict:
     prev = prev or {}
     datasets = {}
     for name, spec in DATASETS.items():
+        if "variants" in spec and spec.get("positional_pairs"):
+            raise ValueError(
+                f"dataset {name!r} cannot declare both variants and positional_pairs"
+            )
         d = {
             k: v
             for k, v in spec.items()
