@@ -24,7 +24,7 @@ Per store, the transform is chosen by structure:
 By default output is written to a STAGING dir and the committed LFS files are
 NOT touched (verify first). Pass ``--apply`` to overwrite the committed files.
 
-Datasets paired with a positionally-indexed per-splat ``.npz`` sidecar
+Datasets paired with a positionally-indexed per-splat sidecar
 (``SIDECAR_PAIRED_DIRS``) are REFUSED: re-encoding reorders the splats and
 silently invalidates the sidecar (#1670).
 
@@ -83,7 +83,7 @@ def sidecar_pair_refusal(src_zip: Path) -> str | None:
     if name not in SIDECAR_PAIRED_DIRS:
         return None
     return (
-        f"{name} ships a per-splat sidecar (.npz) indexed positionally against "
+        f"{name} ships a per-splat sidecar indexed positionally against "
         "this fit. Re-encoding reorders the splats, which INVALIDATES the sidecar "
         "and cannot be detected by anything that only reads the fit (see #1670). "
         "Regenerate the sidecar in the same pass — re-sample the source volume at "
