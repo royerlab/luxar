@@ -126,6 +126,42 @@ def test_hosted_repin_accepts_outgoing_digest_and_existing_history() -> None:
     generator._refuse_invalid_repin_history(repinned, committed)
 
 
+def test_hosted_only_repin_requires_outgoing_digest_in_runtime_slot() -> None:
+    generator = _load_generator()
+    outgoing = "a" * 64
+    committed = _manifest_entry(outgoing, ["0" * 64])
+    repinned = _manifest_entry("b" * 64, ["0" * 64, outgoing, "f" * 64])
+
+    with pytest.raises(ValueError, match="outgoing hosted digest last"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_combined_repin_keeps_outgoing_local_digest_in_runtime_slot() -> None:
+    generator = _load_generator()
+    committed_entry = {
+        "name": "fit.zip",
+        "sha256": "0" * 64,
+        "hosted_sha256": "a" * 64,
+    }
+    authored_entry = {
+        **committed_entry,
+        "hosted_sha256": "b" * 64,
+        "superseded_sha256": ["a" * 64],
+    }
+    (repinned_entry,) = generator._carry_hosted(
+        [{"name": "fit.zip", "sha256": "1" * 64}], [authored_entry]
+    )
+    committed = {"datasets": {"toy": {"files": [committed_entry]}}}
+    repinned = {"datasets": {"toy": {"files": [repinned_entry]}}}
+
+    assert repinned_entry["superseded_sha256"] == ["a" * 64, "0" * 64]
+    generator._refuse_invalid_repin_history(repinned, committed)
+
+    repinned_entry["superseded_sha256"] = ["0" * 64, "a" * 64]
+    with pytest.raises(ValueError, match="outgoing local digest last"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
 def test_hosted_repin_rejects_missing_outgoing_digest() -> None:
     generator = _load_generator()
     committed = _manifest_entry("a" * 64, ["0" * 64])

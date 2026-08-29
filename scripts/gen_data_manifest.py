@@ -756,6 +756,11 @@ _HOSTED_KEYS = ("hosted_sha256", "hosted_bytes")
 #: the end so the runtime's one-generation fallback remains correct.
 #: For an uncommitted hosted re-pin, the generator can require the previously
 #: pinned digest to appear in the new history and preserve every older entry.
+#: The runtime accepts only the LAST superseded digest. A hosted-only re-pin
+#: therefore leaves the outgoing hosted digest last; when the in-repo bytes move
+#: in the same edit, `_carry_hosted` leaves the outgoing local digest last instead.
+#: One slot cannot keep both contracts readable; this preserves the generator's
+#: existing local-fallback policy when both move.
 #: It cannot prove that separately staged fit and sidecar bytes are aligned;
 #: that requires the deep positional-pair check described in data/README.md.
 _SUPERSEDED_KEY = "superseded_sha256"
@@ -800,6 +805,16 @@ def _refuse_invalid_repin_history(current: dict, committed: Optional[dict]) -> N
             raise ValueError(
                 f"hosted re-pin for {location} drops {len(missing)} previously "
                 f"recorded {_SUPERSEDED_KEY} entr{'y' if len(missing) == 1 else 'ies'}"
+            )
+        old_local = old_entry.get("sha256")
+        new_local = entry.get("sha256")
+        local_moved = bool(old_local and new_local and new_local != old_local)
+        expected_fallback = old_local if local_moved else old_hosted
+        if not new_history or new_history[-1] != expected_fallback:
+            kind = "local" if local_moved else "hosted"
+            raise ValueError(
+                f"hosted re-pin for {location} must leave the outgoing {kind} "
+                f"digest last in {_SUPERSEDED_KEY}; the runtime accepts only that entry"
             )
 
 
