@@ -78,7 +78,7 @@ def _locate(dataset: str, entry: dict[str, Any]) -> Path | None:
     return None
 
 
-def _pair_cases() -> list[pytest.param]:
+def _pair_cases() -> list[Any]:
     manifest = json.loads(_MANIFEST.read_text())
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for dataset, spec in manifest["datasets"].items():
@@ -90,7 +90,7 @@ def _pair_cases() -> list[pytest.param]:
     assert {dataset for dataset, _pair in groups} == set(_PAIR_CHECKS), (
         "every declared positional-pair dataset needs a deep alignment check"
     )
-    cases: list[pytest.param] = []
+    cases: list[Any] = []
     for (dataset, pair), entries in sorted(groups.items()):
         fit_name, sidecar_name, payload_loader, threshold = _PAIR_CHECKS[dataset]
         by_name = {entry["name"]: entry for entry in entries}
