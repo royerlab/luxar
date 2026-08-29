@@ -122,6 +122,9 @@ class TestTheRecipeConstantsAgreeWithEachOther:
         read a whole timepoint at a time."""
         assert demo.CHUNK_PROFILE == "archive"
 
+    def test_the_progressive_ladder_has_the_recorded_twelve_rungs(self):
+        assert demo.EXPECTED_RUNGS == 12
+
 
 class TestTheRecomputeCommandsAreRealCliPaths:
     def test_the_recipe_invokes_top_level_optimise(self, monkeypatch, tmp_path):
@@ -140,7 +143,12 @@ class TestTheRecomputeCommandsAreRealCliPaths:
         monkeypatch.setattr(
             demo,
             "iter_leaves",
-            lambda _node: [SimpleNamespace(n_splats=demo.EXPECTED_SPLATS)],
+            lambda _node: [
+                SimpleNamespace(
+                    n_splats=demo.EXPECTED_SPLATS,
+                    n_additive_sublods=demo.EXPECTED_RUNGS,
+                )
+            ],
         )
 
         result = demo.recompute_archive(tmp_path / "work")
@@ -151,3 +159,41 @@ class TestTheRecomputeCommandsAreRealCliPaths:
             ("gsplat", "lod"),
         ]
         assert calls[2][0] == "optimise"
+
+
+class TestTheRebuiltArchiveShapeIsPinned:
+    def test_the_recorded_leaf_and_rungs_are_accepted(self, monkeypatch):
+        leaf = SimpleNamespace(
+            n_splats=17, n_additive_sublods=demo.EXPECTED_RUNGS
+        )
+        monkeypatch.setattr(demo, "iter_leaves", lambda _node: [leaf])
+
+        assert demo._validate_rebuilt_archive(object()) == 17
+
+    def test_multiple_leaves_are_rejected_even_when_the_count_matches(
+        self, monkeypatch
+    ):
+        leaves = [
+            SimpleNamespace(
+                n_splats=demo.EXPECTED_SPLATS // 2,
+                n_additive_sublods=demo.EXPECTED_RUNGS,
+            ),
+            SimpleNamespace(
+                n_splats=demo.EXPECTED_SPLATS - demo.EXPECTED_SPLATS // 2,
+                n_additive_sublods=demo.EXPECTED_RUNGS,
+            ),
+        ]
+        monkeypatch.setattr(demo, "iter_leaves", lambda _node: leaves)
+
+        with pytest.raises(RuntimeError, match="2 leaves, expected one"):
+            demo._validate_rebuilt_archive(object())
+
+    def test_a_changed_progressive_ladder_is_rejected(self, monkeypatch):
+        leaf = SimpleNamespace(
+            n_splats=demo.EXPECTED_SPLATS,
+            n_additive_sublods=demo.EXPECTED_RUNGS - 1,
+        )
+        monkeypatch.setattr(demo, "iter_leaves", lambda _node: [leaf])
+
+        with pytest.raises(RuntimeError, match="progressive rungs"):
+            demo._validate_rebuilt_archive(object())

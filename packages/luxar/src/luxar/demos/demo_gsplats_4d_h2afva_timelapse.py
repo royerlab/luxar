@@ -129,6 +129,7 @@ DEMO_META = {
 
 import shutil
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
@@ -190,6 +191,8 @@ PARENT_FINEST_SPLATS = 602_580_152
 #: ladder built by a fixed rule), so unlike a refit this admits no drift
 #: tolerance. A mismatch means the parent or the stride changed.
 EXPECTED_SPLATS = 121_163_285
+#: Progressive rungs recorded on the shipped one-leaf archive.
+EXPECTED_RUNGS = 12
 #: Progressive-ladder budget: the first rung is sized to roughly this many
 #: milliseconds of download at the CLI's default assumed bandwidth.
 LADDER_TARGET_MS = 200
@@ -203,6 +206,19 @@ CHUNK_PROFILE = "archive"
 #: demo's `blending_mode` below deliberately differs (see the graft call).
 ARCHIVE_BLENDING_MODE = "volumetric"
 ARCHIVE_ABSORPTION = 1.34
+
+
+def _validate_rebuilt_archive(node: Any) -> int:
+    """Require the recorded one-leaf, twelve-rung archive shape."""
+    leaves = list(iter_leaves(node))
+    if len(leaves) != 1:
+        raise RuntimeError(f"rebuild produced {len(leaves)} leaves, expected one")
+    rungs = int(leaves[0].n_additive_sublods)
+    if rungs != EXPECTED_RUNGS:
+        raise RuntimeError(
+            f"rebuild produced {rungs} progressive rungs, expected {EXPECTED_RUNGS}"
+        )
+    return int(leaves[0].n_splats)
 
 
 def _read_source_attrs(data_path: Path) -> dict:
@@ -333,7 +349,7 @@ def recompute_archive(work_dir: Path) -> Path:
         )
 
         node, _ = load_gsplat_node(str(final))
-        got = sum(int(leaf.n_splats) for leaf in iter_leaves(node))
+        got = _validate_rebuilt_archive(node)
         aprint(f"rebuilt {got:,} splats (recorded {EXPECTED_SPLATS:,})")
         if got != EXPECTED_SPLATS:
             # Exact, unlike the refit demos: every step here is deterministic

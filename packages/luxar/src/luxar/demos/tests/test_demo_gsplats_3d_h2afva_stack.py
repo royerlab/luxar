@@ -19,11 +19,11 @@ from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.tree import GSplatLeaf, GSplatPartition
 
 
-def _leaf_with_rungs(rungs=demo.EXPECTED_RUNGS):
+def _leaf_with_rungs(rungs=demo.EXPECTED_RUNGS, *, splats_per_rung=1):
     sublod = AdditiveSubLOD(
-        centers=np.zeros((1, 3), dtype=np.float32),
-        amplitudes=np.ones(1, dtype=np.float32),
-        cholesky_factors=np.ones((1, 6), dtype=np.float32),
+        centers=np.zeros((splats_per_rung, 3), dtype=np.float32),
+        amplitudes=np.ones(splats_per_rung, dtype=np.float32),
+        cholesky_factors=np.ones((splats_per_rung, 6), dtype=np.float32),
     )
     return GSplatLeaf(additive_sublods=[sublod] * rungs, meta={})
 
@@ -166,11 +166,15 @@ class TestTheRecomputeRecipeMatchesTheShippedPartition:
             demo._validate_rebuilt_archive(_leaf_with_rungs())
 
     def test_the_recorded_partition_shape_is_accepted(self):
+        splats_per_rung = 2
         partition = GSplatPartition(
-            children=[_leaf_with_rungs()] * demo.EXPECTED_PARTS,
+            children=[
+                _leaf_with_rungs(splats_per_rung=splats_per_rung)
+            ]
+            * demo.EXPECTED_PARTS,
             meta={},
         )
 
         assert demo._validate_rebuilt_archive(partition) == (
-            demo.EXPECTED_PARTS * demo.EXPECTED_RUNGS
+            demo.EXPECTED_PARTS * demo.EXPECTED_RUNGS * splats_per_rung
         )

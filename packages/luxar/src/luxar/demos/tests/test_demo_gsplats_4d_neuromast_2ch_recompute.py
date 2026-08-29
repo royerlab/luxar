@@ -175,7 +175,7 @@ class TestEmptyFitTilesSurviveTheCullStage:
         tiles.mkdir(parents=True)
         (fit_dir / "manifest.json").write_text("{}")
         (tiles / "tile_00000.gsplats.zarr").mkdir()
-        (tiles / "tile_00001.empty").write_text("")
+        (tiles / "tile_00001.gsplats.zarr.empty").write_text("")
         calls = []
         monkeypatch.setattr(demo, "run_luxar_cli", lambda *args: calls.append(args))
 
@@ -183,7 +183,9 @@ class TestEmptyFitTilesSurviveTheCullStage:
 
         assert count == 1
         assert len(calls) == 1
-        assert (tmp_path / "culled" / "tiles" / "tile_00001.empty").exists()
+        assert (
+            tmp_path / "culled" / "tiles" / "tile_00001.gsplats.zarr.empty"
+        ).exists()
 
 
 class TestTheRecipeConstantsMatchTheRecordedRun:
@@ -232,7 +234,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert got == demo.EXPECTED_RUNGS * splats_per_rung
 
     def test_a_changed_progressive_recipe_is_rejected(self):
-        channel = {"name": "membranes", "expected_splats": demo.EXPECTED_RUNGS - 1}
+        channel = {"name": "membranes"}
         with pytest.raises(RuntimeError, match="progressive rungs"):
             demo._validate_rebuilt_channel(
                 channel, [_leaf_with_rungs(demo.EXPECTED_RUNGS - 1)]
