@@ -2131,12 +2131,26 @@ def test_a_positional_pair_rejects_mixed_current_and_superseded_caches(
     pair_cache.mkdir(parents=True)
     (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"current-fit")
     (pair_cache / "colors.npz").write_bytes(b"old-colors")
-    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+    repo_root = cache / "repo"
+    repo_pair = repo_root / "gsplats_toy"
+    repo_pair.mkdir(parents=True)
+    pointer = (
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+    for entry in entries:
+        (repo_pair / entry["name"]).write_text(pointer)
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
 
-    with pytest.raises(DatasetUnavailable, match="positional pair.*toy"):
+    with pytest.raises(DatasetUnavailable, match="positional pair.*toy") as excinfo:
         ensure_dataset(
             "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
         )
+
+    message = str(excinfo.value)
+    assert "gsplats_toy" in message
+    assert "fit.gsplats.zarr.zip" in message
+    assert "colors.npz" in message
+    assert "git lfs pull" in message
 
 
 def test_a_complete_superseded_positional_pair_remains_usable(fake_repo, monkeypatch):
@@ -2304,6 +2318,53 @@ def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys)
 
     assert path == dest
     notice = capsys.readouterr().out
+    assert "git lfs pull" in notice
+    assert "hosted-only" not in notice
+
+
+def test_a_superseded_positional_pair_with_lfs_pointers_names_git_lfs(
+    fake_repo, monkeypatch, capsys
+):
+    """Every bypassed pair member keeps the actionable source remedy."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-colors").hexdigest()],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"old-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    repo_root = cache / "repo"
+    repo_pair = repo_root / "gsplats_toy"
+    repo_pair.mkdir(parents=True)
+    pointer = (
+        f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
+    )
+    for entry in entries:
+        (repo_pair / entry["name"]).write_text(pointer)
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
+
+    paths = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert [path.read_bytes() for path in paths] == [b"old-fit", b"old-colors"]
+    notice = capsys.readouterr().out
+    assert "gsplats_toy" in notice
+    assert "fit.gsplats.zarr.zip" in notice
+    assert "colors.npz" in notice
     assert "git lfs pull" in notice
     assert "hosted-only" not in notice
 

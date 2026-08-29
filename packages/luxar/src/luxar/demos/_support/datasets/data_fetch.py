@@ -315,12 +315,12 @@ def ensure_dataset(
     parts = [p for p in (subdir, variant_name) if p]
     lfs_dir = _DEMOS_DATA_DIR.joinpath(*parts)
     record = m["records"].get(spec.get("record", ""), {})
+    label = f"{name}:{variant_name}" if variant_name else name
     positional_fallbacks = _positional_superseded_fallbacks(
-        files, cache_dir, lfs_dir, record
+        files, cache_dir, lfs_dir, record, dataset_label=label
     )
 
     resolved: list[Path] = []
-    label = f"{name}:{variant_name}" if variant_name else name
     with asection(f"Ensuring dataset ({label})") if verbose else _null_ctx():
         for entry in files:
             fname = entry["name"]
@@ -425,11 +425,25 @@ def _has_current_source(lfs_dir: Path, record: Manifest, fname: str) -> bool:
     return has_repo_copy or zenodo_file_url(record, fname) is not None
 
 
+def _source_remedy(lfs_dir: Path, fname: str) -> str:
+    """Explain how the caller can make the current generation obtainable."""
+    if (lfs_dir / fname).exists():
+        return "In a source checkout, run `git lfs pull`."
+    if not _DEMOS_DATA_DIR.exists():
+        return (
+            "This installed package ships no demo payloads. If this archive has "
+            "an in-repo copy, use a source checkout and run `git lfs pull`."
+        )
+    return "This archive is hosted-only and has no in-repo Git LFS copy."
+
+
 def _positional_superseded_fallbacks(
     files: list[Manifest],
     cache_dir: Path,
     lfs_dir: Path,
     record: Manifest,
+    *,
+    dataset_label: str,
 ) -> set[str]:
     """Return members that may reuse one complete superseded generation.
 
@@ -477,24 +491,30 @@ def _positional_superseded_fallbacks(
             len(entry.get("superseded_sha256") or ()) for entry in entries
         }
         all_superseded = all(cached_verdict(entry) == "superseded" for entry in entries)
+        source_remedies = " ".join(
+            f"{entry['name']}: {_source_remedy(lfs_dir, entry['name'])}"
+            for entry in entries
+        )
         if not all_superseded or len(history_lengths) != 1:
             states = ", ".join(
                 f"{entry['name']}={cached_verdict(entry) or 'missing/corrupt'}"
                 for entry in entries
             )
             raise DatasetUnavailable(
-                f"Cannot assemble positional pair {group!r}: one member requires "
-                "a superseded cache fallback, but the cached members are not the "
-                f"same generation ({states}). Obtain every current member or "
-                "restore the complete prior generation."
+                f"Cannot assemble dataset {dataset_label!r} positional pair {group!r}: "
+                "one member requires a superseded cache fallback, but the cached "
+                f"members are not the same generation ({states}). Obtain every "
+                "current member or restore the complete prior generation. "
+                f"Source remedies: {source_remedies}"
             )
 
         names = {entry["name"] for entry in entries}
         fallbacks.update(names)
         aprint(
-            f"⚠️  Using SUPERSEDED positional pair {group!r}: every member matches "
-            "the same previously pinned generation, and at least one current "
-            "member is unavailable. The pair is out of date, not corrupt."
+            f"⚠️  Using SUPERSEDED positional pair {group!r} for dataset "
+            f"{dataset_label!r}: every member matches the same previously pinned "
+            "generation, and at least one current member is unavailable. The pair "
+            f"is out of date, not corrupt. Source remedies: {source_remedies}"
         )
     return fallbacks
 
@@ -710,15 +730,7 @@ def _ensure_one(
     has_repo_copy = lfs_file.is_file() and not is_lfs_pointer(lfs_file)
     url = zenodo_file_url(record, fname)
     irreplaceable = not _has_current_source(lfs_dir, record, fname)
-    if lfs_file.exists():
-        source_remedy = "In a source checkout, run `git lfs pull`."
-    elif not _DEMOS_DATA_DIR.exists():
-        source_remedy = (
-            "This installed package ships no demo payloads. If this archive has "
-            "an in-repo copy, use a source checkout and run `git lfs pull`."
-        )
-    else:
-        source_remedy = "This archive is hosted-only and has no in-repo Git LFS copy."
+    source_remedy = _source_remedy(lfs_dir, fname)
 
     cached = _resolve_from_cache(
         dest,
