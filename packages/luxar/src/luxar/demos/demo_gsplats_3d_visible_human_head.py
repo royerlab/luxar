@@ -43,15 +43,19 @@ the pair is verified against that invariant (splats sharing a voxel must share a
 color); a mismatched pair is reported and refitted rather than rendered.
 
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: the two Git LFS assets in
-     ``demos/data/gsplats_visible_human_head/`` — the 1,911,192-splat fit and
-     its colors sidecar — are loaded and verified against the invariant above.
-  2. If they aren't pulled, it downloads the 377 color slices (~1.1 GB) to
-     ``~/.cache/luxar/gsplats_visible_human_head/``, builds the masked RGB
-     volume, fits luminance on the GPU, caches the fit, then reloads it and
-     samples the colors from the stored splat order — so subsequent runs load
-     that (verified) local pair instantly.
+  1. Fast path: the manifest resolves a precomputed fit and its matching colors
+     sidecar through a checksum-verified cache, the in-repo Git LFS copies, or
+     the hosted record. The pair is then verified against the invariant above.
+  2. If no precomputed pair is available, it downloads the 377 color slices
+     (~1.1 GB) to ``~/.cache/luxar/gsplats_visible_human_head/``, builds the
+     masked RGB volume, fits luminance on the GPU, caches the fit, then reloads
+     it and samples the colors from the stored splat order — so subsequent runs
+     load that (verified) local pair instantly.
 ``--recompute`` forces the download + build + fit path.
+
+Manifest integrity faults are not treated as ordinary absence: a stale in-repo
+object matching neither pin, or a cache write that cannot be repaired, is
+reported by the resolver instead of being hidden behind an automatic refit.
 
 The fast path was broken for a while (#1670): the shipped sidecar had been
 sampled in the pre-save splat order, so it did not correspond to the shipped
@@ -86,10 +90,12 @@ Anyone regenerating this sidecar should reproduce all three rather than trusting
 the agreement number alone. ``--recompute`` is the supported route and writes a
 fresh fit AND a matching sidecar via :func:`save_and_sample_colors`. The cheaper
 repair, when the fit is fine and only the sidecar is lost, is not wired into the
-demo (see the refusal in :func:`load_or_build`) but is three calls:
-``vol, _ = assemble_volume(PNG_DIR)``, then :func:`sample_colors` at
-``GSplatData.load(LFS_FIT).centers``, then :func:`_save_colors_u8` — which
-preserves the shipped fit and the 20 MB of Git LFS history that goes with it.
+demo (see the refusal in :func:`load_or_build`): set ``data_dir`` to
+``Path(__file__).parent / "data" / DEMO_NAME``, call
+``vol, _ = assemble_volume(PNG_DIR)``, :func:`sample_colors` at
+``GSplatData.load(data_dir / FIT_FILE).centers``, then :func:`_save_colors_u8` to
+``data_dir / COLORS_FILE`` and run ``make gen-data-manifest``. This preserves the
+shipped fit and the 20 MB of Git LFS history that goes with it.
 
 USAGE
 -----
@@ -139,9 +145,10 @@ from arbol import Arbol, aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     add_demo_caption,
     detect_device,
-    is_lfs_pointer,
+    ensure_dataset,
     launch_viewer,
     load_local_fit_gsplats_at,
     local_fit_path,
@@ -170,25 +177,10 @@ COLORS_FILE = "vh_head_colors.npz"
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / DEMO_NAME
 PNG_DIR = CACHE_DIR / "head_png"
-# The manifest's own paths, holding a copy of the SHIPPED pair (see the LFS
-# branch of `load_or_build`): those bytes are the hosted artifact, so they match
-# the pinned sha256 and a manifest fetch is happy to find them there.
-CACHE_FIT = CACHE_DIR / FIT_FILE
-CACHE_COLORS = CACHE_DIR / COLORS_FILE
 # A local refit is OUR pair, not a copy of the hosted one, so both halves go to
-# the demo's local-fit namespace (#1618). The hazard here is LATENT, not live:
-# nothing in this demo routes `gsplats_visible_human_head` through
-# `ensure_dataset` / `load_dataset_gsplats` / `load_dataset_bundle`, so no
-# checksum ever ran over these two names and a pre-fix launch 2 did reuse its
-# refit. It becomes live the moment the demo joins the manifest path — a
-# one-line change that would otherwise silently reintroduce the every-launch
-# refit — so the namespace is separated now, while it costs nothing.
+# the demo's local-fit namespace (#1618), outside the manifest checksum gate.
 LOCAL_FIT = local_fit_path(DEMO_NAME, FIT_FILE)
 LOCAL_COLORS = local_fit_path(DEMO_NAME, COLORS_FILE)
-
-DATA_DIR = Path(__file__).resolve().parent / "data" / DEMO_NAME
-LFS_FIT = DATA_DIR / FIT_FILE
-LFS_COLORS = DATA_DIR / COLORS_FILE
 
 # Preprocessing / fit parameters.
 RULER_CROP_FRAC = 0.14  # drop the bottom rows (color-scale ruler + slice label)
@@ -538,11 +530,11 @@ def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndar
 def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
     """A pair THIS machine refitted earlier, or None if there is nothing usable.
 
-    Consulted after the fetched cache and the shipped LFS assets, and BEFORE
-    refitting, which is what makes the refit one-time (#1618).
+    Consulted after the manifest-resolved pair and BEFORE refitting, which is
+    what makes the refit one-time (#1618).
 
-    Guarded, unlike the two doors above it, for the reason the comment at the LFS
-    branch gives: these bytes have no checksum, no remote and no second copy, so
+    Guarded, unlike the manifest door above it: these bytes have no checksum, no
+    remote and no second copy, so
     a truncated zip here (a Ctrl-C mid-save) would otherwise raise ``BadZipFile``
     out of :func:`load_or_build` on EVERY launch with a manual delete as the only
     recovery. ``load_local_fit_gsplats_at`` reports the path and the error and
@@ -572,36 +564,21 @@ def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
 def load_or_build() -> tuple[GSplatData, np.ndarray]:
     """Return (fit, per-splat colors), self-contained on a fresh system."""
     if not RECOMPUTE:
-        # local processed cache first
-        if CACHE_FIT.exists() and CACHE_COLORS.exists():
-            aprint("  Using cached fit + colors")
-            fit = GSplatData.load(CACHE_FIT, include_stats=False)
-            colors = _load_colors_f32(CACHE_COLORS)
-            if _colors_match_fit(fit, colors, f"{CACHE_FIT} + {CACHE_COLORS}"):
-                return fit, colors
-        # shipped LFS assets (also retried when the cached pair was rejected —
-        # the copy overwrites a cache that has already been judged unusable)
-        if (
-            LFS_FIT.exists()
-            and LFS_COLORS.exists()
-            and not is_lfs_pointer(LFS_FIT)
-            and not is_lfs_pointer(LFS_COLORS)
-        ):
-            aprint("  Copying shipped fit + colors from package data to cache")
-            from luxar.utils.atomic_copy import atomic_copy_file
-
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            # Atomic (temp sibling + rename), not `shutil.copy2`: a Ctrl-C
-            # mid-copy would otherwise leave a truncated file under the canonical
-            # cache name, and the cache door above calls `GSplatData.load` on it
-            # with no `try` — so a half-written zip kills every later run until
-            # the user deletes the cache by hand.
-            atomic_copy_file(LFS_FIT, CACHE_FIT)
-            atomic_copy_file(LFS_COLORS, CACHE_COLORS)
-            fit = GSplatData.load(CACHE_FIT, include_stats=False)
-            colors = _load_colors_f32(CACHE_COLORS)
-            if _colors_match_fit(fit, colors, f"{LFS_FIT} + {LFS_COLORS}"):
-                return fit, colors
+        # Deliberately not gated on an existing cache: the resolver returns the
+        # whole positional pair through cache -> in-repo LFS -> hosted data and
+        # verifies both manifest digests before either path is consumed.
+        try:
+            resolved = {path.name: path for path in ensure_dataset(DEMO_NAME)}
+        except DatasetUnavailable as exc:
+            aprint(f"Manifest fetch unavailable ({exc}).")
+            resolved = {}
+        if resolved:
+            fit_path = resolved[FIT_FILE]
+            colors_path = resolved[COLORS_FILE]
+            precomputed = GSplatData.load(fit_path, include_stats=False)
+            colors = _load_colors_f32(colors_path)
+            if _colors_match_fit(precomputed, colors, f"{fit_path} + {colors_path}"):
+                return precomputed, colors
         # A pair this machine refitted earlier, in its own namespace — checked
         # BEFORE refitting, which is what makes the refit below one-time.
         pair = local_refit_pair()
@@ -617,8 +594,8 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         # still scores agreement 1.0. It would need its own, separate guard; until
         # one exists, refitting is the only outcome this file can vouch for.
         aprint(
-            "Precomputed fit not available (Git LFS assets not pulled, or the "
-            "cached/shipped fit and its colors sidecar disagree). Falling back to "
+            "Precomputed fit not available (the manifest pair is unavailable, or "
+            "the fit and its colors sidecar disagree). Falling back to "
             f"download + fit (one-time; cached under {LOCAL_FIT.parent})."
         )
 

@@ -568,6 +568,7 @@
       "source_dtype": null,
       "source_bytes": null,
       "frames": null,
+      "quality_quotable": null,
       "measured_from": "repo",
       "measured_sha256": "b4c0cf690f6906414c449fb8c713b78ed7d5f5f88c270ab58cf741f019456f93",
       "quality_caveat": "No reconstruction quality was recorded at fit time for this archive, and its splats are scaled off the source voxel grid, so a figure measured after the fact would describe the rescaling as much as the fit. A refit would stamp one."
