@@ -280,11 +280,28 @@ def _finest_elements(
     return sum(vals) if vals and all(v is not None for v in vals) else None
 
 
+def _store_root(names: list[str]) -> str:
+    """Prefix of the one store in an archive, including its trailing slash."""
+    nested_root = next(
+        (
+            name.split("/", 1)[0]
+            for name in names
+            if "/" in name and name.split("/", 1)[0].endswith(".gsplats.zarr")
+        ),
+        None,
+    )
+    if nested_root:
+        return f"{nested_root}/"
+    if ".zgroup" in names or "zarr.json" in names:
+        return ""
+    return names[0].split("/", 1)[0] + "/"
+
+
 def _read_store(zf: zipfile.ZipFile) -> Optional[dict[str, Any]]:
     names = zf.namelist()
     if not names:
         return None
-    root = names[0].split("/")[0] + "/"
+    root = _store_root(names)
     root_attrs = _attrs(zf, root)
     # An .npz is also a zip, and a point-cloud .luxar.zarr is also a zarr store.
     # Without this check both parse "successfully" and every field comes back
