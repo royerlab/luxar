@@ -2135,7 +2135,7 @@ def test_a_positional_pair_rejects_mixed_current_and_superseded_caches(
 
 
 def test_a_complete_superseded_positional_pair_remains_usable(fake_repo, monkeypatch):
-    """A prior generation is safe when every positional member is present."""
+    """One unavailable member keeps every partner on the complete prior generation."""
     manifest, cache = fake_repo
     entries = manifest["datasets"]["gsplats_toy"]["files"]
     entries[:] = [
@@ -2156,13 +2156,50 @@ def test_a_complete_superseded_positional_pair_remains_usable(fake_repo, monkeyp
     pair_cache.mkdir(parents=True)
     (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"old-fit")
     (pair_cache / "colors.npz").write_bytes(b"old-colors")
-    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+    partial_repo = cache / "partial-repo"
+    repo_pair = partial_repo / "gsplats_toy"
+    repo_pair.mkdir(parents=True)
+    (repo_pair / "fit.gsplats.zarr.zip").write_bytes(b"current-fit")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", partial_repo)
 
     paths = ensure_dataset(
         "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
     )
 
     assert [path.read_bytes() for path in paths] == [b"old-fit", b"old-colors"]
+
+
+def test_a_positional_pair_rejects_different_superseded_depths(fake_repo, monkeypatch):
+    """Two last-history matches are not one generation when their depths differ."""
+    manifest, cache = fake_repo
+    entries = manifest["datasets"]["gsplats_toy"]["files"]
+    entries[:] = [
+        {
+            "name": "fit.gsplats.zarr.zip",
+            "sha256": hashlib.sha256(b"current-fit").hexdigest(),
+            "superseded_sha256": [hashlib.sha256(b"old-fit").hexdigest()],
+            "positional_pair": "toy",
+        },
+        {
+            "name": "colors.npz",
+            "sha256": hashlib.sha256(b"current-colors").hexdigest(),
+            "superseded_sha256": [
+                hashlib.sha256(b"ancient-colors").hexdigest(),
+                hashlib.sha256(b"old-colors").hexdigest(),
+            ],
+            "positional_pair": "toy",
+        },
+    ]
+    pair_cache = cache / "gsplats_toy"
+    pair_cache.mkdir(parents=True)
+    (pair_cache / "fit.gsplats.zarr.zip").write_bytes(b"old-fit")
+    (pair_cache / "colors.npz").write_bytes(b"old-colors")
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    with pytest.raises(DatasetUnavailable, match="not the same generation"):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
 
 
 def test_a_superseded_cache_with_an_lfs_pointer_names_git_lfs(fake_repo, capsys):
