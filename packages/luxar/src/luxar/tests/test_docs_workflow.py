@@ -1,4 +1,4 @@
-"""Regression guards for the GitHub Pages deployment workflow."""
+"""Regression guards for docs deployment and the demo-site runbook."""
 
 from __future__ import annotations
 
@@ -88,17 +88,20 @@ def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
         for file in manifest["datasets"]["gsplats_cmu1_pathology"]["files"]
         if file["name"] == "cmu1_ch0.gsplats.zarr.zip"
     )
-    labelled_prefixes = dict(
-        re.findall(
-            r"^\s+(?:cmu1_ch0\s+)?(sha256|hosted_sha256)\s+"
-            r"([0-9a-f]{6,64})(?:\.\.\.|…)",
-            text,
-            re.MULTILINE,
-        )
+    labelled_prefixes = re.search(
+        r"^\s+cmu1_ch0\s+sha256\s+([0-9a-f]{6,64})(?:\.\.\.|…).*\n"
+        r"\s+hosted_sha256\s+([0-9a-f]{6,64})(?:\.\.\.|…)",
+        text,
+        re.MULTILINE,
     )
-    assert labelled_prefixes.keys() == {"sha256", "hosted_sha256"}
-    for field, prefix in labelled_prefixes.items():
-        assert cmu1_ch0[field].startswith(prefix)
+    assert labelled_prefixes is not None, "runbook cmu1_ch0 digest pair not found"
+    sha256_prefix, hosted_sha256_prefix = labelled_prefixes.groups()
+    assert cmu1_ch0["sha256"].startswith(sha256_prefix), (
+        "runbook cmu1_ch0 sha256 prefix does not match the active manifest pin"
+    )
+    assert cmu1_ch0["hosted_sha256"].startswith(hosted_sha256_prefix), (
+        "runbook cmu1_ch0 hosted_sha256 prefix does not match the active manifest pin"
+    )
 
 
 def test_runbook_archive_size_table_matches_active_manifest_pins() -> None:
@@ -119,20 +122,31 @@ def test_runbook_archive_size_table_matches_active_manifest_pins() -> None:
     )
 
     manifest = json.loads(DEMO_DATA_MANIFEST.read_text())
-    expected_datasets = {
-        name
-        for name, dataset in manifest["datasets"].items()
-        if any("hosted_sha256" in file for file in dataset.get("files", []))
-    }
+    hosted_files_by_dataset: dict[str, list[dict[str, Any]]] = {}
+
+    def collect_hosted_files(value: object, files: list[dict[str, Any]]) -> None:
+        if isinstance(value, dict):
+            if "hosted_sha256" in value:
+                files.append(value)
+            else:
+                for child in value.values():
+                    collect_hosted_files(child, files)
+        elif isinstance(value, list):
+            for child in value:
+                collect_hosted_files(child, files)
+
+    for name, dataset in manifest["datasets"].items():
+        hosted_files: list[dict[str, Any]] = []
+        collect_hosted_files(dataset, hosted_files)
+        if hosted_files:
+            hosted_files_by_dataset[name] = hosted_files
+
+    expected_datasets = set(hosted_files_by_dataset)
     assert {row[0] for row in rows} == expected_datasets
 
     ratios = []
     for dataset_name, file_count, repo_mb, hosted_mb, ratio in rows:
-        files = [
-            file
-            for file in manifest["datasets"][dataset_name]["files"]
-            if "hosted_sha256" in file
-        ]
+        files = hosted_files_by_dataset[dataset_name]
         repo_bytes = sum(file["bytes"] for file in files)
         hosted_bytes = sum(file["hosted_bytes"] for file in files)
         expected_ratio = hosted_bytes / repo_bytes

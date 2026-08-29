@@ -445,12 +445,12 @@ Digest-confirmed copies show structural divergence for two pass-through
 datasets: `cryoem_virus` changes from a flat leaf to a flat leaf with a five-rung
 ladder (no `kind` either side; the rungs are what reaches the scene);
 `milkyway_dust` changes from flat to four substitutive levels with additive
-rungs. Of those three datasets, only `cmu1_pathology` is digest-confirmed on both
-sides, so the confirmed armed set is **three**. The hosted topology of
-`flylight_mcfo_63x`, `desi_galaxies`, `celegans`, and `nexrad_supercell` remains
-unclassified; inspect a digest-confirmed copy before counting any of them. Check
-the scene-build call as well as the archive before treating a divergence as a
-structural risk.
+rungs. Of the three that take the artifact whole, only `cmu1_pathology` is
+digest-confirmed on both sides, so the confirmed armed set is **three**. The
+hosted topology of `flylight_mcfo_63x`, `desi_galaxies`, `celegans`, and
+`nexrad_supercell` remains unclassified; inspect a digest-confirmed copy before
+counting any of them. Check the scene-build call as well as the archive before
+treating a divergence as a structural risk.
 
 #### Scope: this is not a cmu1 quirk
 
