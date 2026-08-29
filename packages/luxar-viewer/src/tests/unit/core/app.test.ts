@@ -148,6 +148,7 @@ import { showHelpOverlay } from '../../../ui/help-overlay';
 import { LuxarApp } from '../../../core/app';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { setDocumentTitle } from '../../../core/document-title';
+import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 
 describe('LuxarApp', () => {
   let app: LuxarApp;
@@ -1382,6 +1383,87 @@ describe('LuxarApp', () => {
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError.mock.calls[0][0].src).toBe('http://example.com/bad.zarr');
       expect(onError.mock.calls[0][0].error).toBeInstanceOf(Error);
+    });
+
+    it('emits dataset-fault and exposes the current latched archive fault', async () => {
+      const fault = new Error('archive unavailable');
+      const loader = SceneLoaderManager.getInstance().createLoader();
+      const onFault = vi.fn();
+      app.on('dataset-fault', onFault);
+      mockFetch.mockResolvedValue({ ok: true });
+
+      await app.init({ canvas: mockCanvas, src: SRC });
+      (loader as any)._archiveFault = fault;
+      (loader as any).notifyArchiveFault(fault);
+
+      expect(onFault).toHaveBeenCalledOnce();
+      expect(onFault).toHaveBeenCalledWith({ src: SRC, error: fault });
+      expect(app.getDatasetFault()).toEqual({ src: SRC, error: fault });
+
+      const foreignFault = new Error('foreign archive unavailable');
+      const manager = SceneLoaderManager.getInstance();
+      manager.setMonitorFactory(null);
+      const foreignLoader = manager.createLoader('foreign');
+      (foreignLoader as any)._archiveFault = foreignFault;
+
+      expect(app.getDatasetFault()).toEqual({ src: SRC, error: fault });
+
+      app.dispose();
+
+      expect(app.getDatasetFault()).toBeNull();
+      (loader as any).notifyArchiveFault(fault);
+      expect(onFault).toHaveBeenCalledOnce();
+    });
+
+    it('replays a fault latched before app wiring and replaces the listener on switch', async () => {
+      const firstFault = new Error('first archive unavailable');
+      const secondFault = new Error('second archive unavailable');
+      const firstUnsubscribe = vi.fn();
+      const manager = SceneLoaderManager.getInstance();
+      const firstLoader = manager.createLoader();
+      (firstLoader as any)._archiveFault = firstFault;
+      const subscribe = firstLoader.onArchiveFault.bind(firstLoader);
+      vi.spyOn(firstLoader, 'onArchiveFault').mockImplementation((listener, options) => {
+        const unsubscribe = subscribe(listener, options);
+        return () => {
+          firstUnsubscribe();
+          unsubscribe();
+        };
+      });
+      let secondLoader: ReturnType<typeof manager.createLoader>;
+      const onFault = vi.fn();
+      const eventOrder: string[] = [];
+      let faultAtDatasetLoaded: ReturnType<typeof app.getDatasetFault>;
+      app.on('dataset-loaded', () => {
+        eventOrder.push('loaded');
+        faultAtDatasetLoaded = app.getDatasetFault();
+      });
+      app.on('dataset-fault', onFault);
+      app.on('dataset-fault', () => eventOrder.push('fault'));
+      mockFetch.mockResolvedValue({ ok: true });
+
+      await app.init({ canvas: mockCanvas, src: SRC });
+      expect(faultAtDatasetLoaded!).toEqual({ src: SRC, error: firstFault });
+      expect(onFault).toHaveBeenCalledWith({ src: SRC, error: firstFault });
+      expect(eventOrder).toEqual(['loaded', 'fault']);
+
+      mockSceneManager.loadSceneData.mockImplementationOnce(async () => {
+        manager.setMonitorFactory(null);
+        secondLoader = manager.createLoader();
+      });
+      await app.switchDataset('http://example.com/next.zarr');
+      (secondLoader! as any)._archiveFault = secondFault;
+      (secondLoader! as any).notifyArchiveFault(secondFault);
+
+      expect(firstUnsubscribe).toHaveBeenCalledOnce();
+      expect(onFault).toHaveBeenLastCalledWith({
+        src: 'http://example.com/next.zarr',
+        error: secondFault,
+      });
+      expect(app.getDatasetFault()).toEqual({
+        src: 'http://example.com/next.zarr',
+        error: secondFault,
+      });
     });
 
     it('isolates a throwing embedder listener (no spurious dataset-error, no rejection)', async () => {

@@ -843,9 +843,19 @@ describe('commitLinesGeometry — preserve-ordering on same-node same-count reco
     root.add(makeMesh('/lines'));
     const pool = makePool(new THREE.BufferGeometry());
     commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
-    // A permutation of [0,7) is not a permutation of [0,9).
+    // A permutation of [0,7) is not a permutation of [0,9) — true, and the
+    // reason `preserveOrdering` stays false. But it is REBUILT over the new
+    // population rather than given up: `repairFromCount` carries the previous
+    // count so the adapter can compact/extend the existing permutation instead
+    // of falling back to storage order. This is the branch an nD re-slice
+    // actually takes at almost every step, and the unsorted frame it used to
+    // draw is #2290's per-timepoint flash.
     commitLinesGeometry(makeStaged(9), root, pool as never, undefined, 1);
-    expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
+    expect(lastOpts(pool)).toEqual({
+      preserveOrdering: false,
+      repairFromCount: 7,
+      fromInstance: 0,
+    });
   });
 
   it('recommit after committedData was cleared (LOD demotion) → false', () => {

@@ -146,13 +146,9 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
-    "templates",
-    # Archived/internal docs not part of the main documentation build
-    "archive/**",
+    # Benchmark result data, not prose: kept in the repo for the bisection
+    # tooling, but it is not documentation and does not belong in the build.
     "benchmarks/**",
-    "code_reviews/**",
-    "handoffs/**",
-    "reports/**",
 ]
 
 # -- Options for HTML output -------------------------------------------------

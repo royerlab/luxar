@@ -93,6 +93,7 @@ make check-docs   # REQUIRED gate mirror: completeness + TypeDoc ratchets +
 make check-docs-external-links  # opt-in external HTTP link audit (not a gate)
 make check-demo-links  # opt-in demo click-through audit (reports only; not a gate)
 make check-zenodo-live          # opt-in live Zenodo manifest-pin audit (not a gate)
+make check-cold-fetch           # opt-in hosted demo cold-fetch gate before payload removal
 make check-external-references  # aggregate external audits (report-only, non-gating)
 make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
 make check-gallery-staleness  # REPORT only; requires full Git history
@@ -314,6 +315,9 @@ luxar export scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 --n
 
 ### GSplat CLI (fitting, converting, rendering, merging)
 ```bash
+# Diagnose an existing store; --histograms enables the optional info histograms.
+luxar gsplat doctor splats.gsplats.zarr --histograms --bins 40
+
 # Fit Gaussian splats to a volume (presets: draft/standard/hifi/ultra)
 # Supported input formats: .zarr, .zarr.zip, .tiff, .npy, .npz
 luxar gsplat fit volume.tiff splats.gsplats.zarr --preset standard --seeds 8000
@@ -984,7 +988,8 @@ Instead of running all E2E tests at once (which can timeout or be overwhelming),
 Run `pnpm test:generate-fixtures` once first: the Playwright pre-flight requires the generated
 zarr fixtures for EVERY chunk, not just the two that read them directly (set
 `LUXAR_E2E_NO_FIXTURES=1` to skip the check for a chunk you know needs none).
-Run `make run-examples` from the repository root too: the pre-flight fails on a stale example stamp.
+Run `make run-examples` from the repository root too: the pre-flight warns and continues on a
+stale example stamp, but specs that read those stores may fail against outdated data.
 ```bash
 # Basic functionality
 npx playwright test basic-rendering.spec.ts viewer-initialization.spec.ts
@@ -1048,7 +1053,7 @@ npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts firs
 - Use 3D datasets for general tests (4D/nD slicing may show 0 points)
 - Wait for `window.__luxarDebug` before assertions
 - Run `pnpm test:generate-fixtures` before any Playwright run (the pre-flight enforces it)
-- Run `make run-examples` from the repository root before direct Playwright runs (stale examples fail the pre-flight)
+- Run `make run-examples` from the repository root before direct Playwright runs (stale examples warn and continue, but example-reading specs may fail against outdated data)
 - See `docs/guides/user/E2E_TESTING_GUIDE.md` and `docs/guides/developer/PLAYWRIGHT_GUIDE.md` for details
 
 ### Cross-Language E2E Testing

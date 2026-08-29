@@ -9,18 +9,24 @@ stale store on disk.
 
 from __future__ import annotations
 
+from ast import AST
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+import luxar.utils.source_fingerprints as source_fingerprints
 from luxar._zarr_compat import consolidate, open_group
 from luxar.demos._support.runtime.flags import parse_demo_flags
 from luxar.demos._support.runtime.provenance import (
     BUILDER_FINGERPRINT_ATTR,
+    _clear_demo_source_fingerprint_caches,
     demo_source_fingerprint,
     scene_is_current,
 )
-from luxar.utils.source_fingerprints import production_source_fingerprint
+from luxar.utils.source_fingerprints import (
+    imported_source_files,
+)
 
 
 def _write_scene(path: Path, fingerprint: str | None, *, finished: bool = True) -> Path:
@@ -32,6 +38,13 @@ def _write_scene(path: Path, fingerprint: str | None, *, finished: bool = True) 
     if finished:
         consolidate(group)
     return path
+
+
+@pytest.fixture(autouse=True)
+def _reset_demo_source_fingerprint_caches() -> Iterator[None]:
+    _clear_demo_source_fingerprint_caches()
+    yield
+    _clear_demo_source_fingerprint_caches()
 
 
 # ------------------------------------------------------------------ fingerprint
@@ -62,55 +75,135 @@ def test_fingerprint_changes_when_production_writer_changes(tmp_path: Path) -> N
     writer = package_root / "encoding/writer.py"
     source.parent.mkdir(parents=True)
     writer.parent.mkdir(parents=True)
-    source.write_text("LINE_OPACITY = 0.95\n")
+    source.write_text("from luxar.encoding import writer\nLINE_OPACITY = 0.95\n")
+    (package_root / "__init__.py").write_text("")
+    (writer.parent / "__init__.py").write_text("")
     writer.write_text("ENCODING_VERSION = 1\n")
 
-    production_source_fingerprint.cache_clear()
     before = demo_source_fingerprint(source, package_root=package_root)
     writer.write_text("ENCODING_VERSION = 2\n")
-    production_source_fingerprint.cache_clear()
 
     assert demo_source_fingerprint(source, package_root=package_root) != before
 
 
-def test_production_fingerprint_is_cached_across_demos(tmp_path: Path) -> None:
+def test_fingerprint_ignores_unrelated_production_source(tmp_path: Path) -> None:
     package_root = tmp_path / "luxar"
+    source = package_root / "demos/demo_thing.py"
     writer = package_root / "encoding/writer.py"
+    unrelated = package_root / "unrelated.py"
+    source.parent.mkdir(parents=True)
     writer.parent.mkdir(parents=True)
+    source.write_text("from luxar.encoding import writer\n")
+    (package_root / "__init__.py").write_text("")
+    (writer.parent / "__init__.py").write_text("")
     writer.write_text("ENCODING_VERSION = 1\n")
+    unrelated.write_text("VALUE = 1\n")
 
-    production_source_fingerprint.cache_clear()
-    first = production_source_fingerprint(package_root)
-    second = production_source_fingerprint(package_root)
+    before = demo_source_fingerprint(source, package_root=package_root)
+    unrelated.write_text("VALUE = 2\n")
 
-    assert second == first
-    assert production_source_fingerprint.cache_info().hits == 1
-    assert production_source_fingerprint.cache_info().misses == 1
+    assert demo_source_fingerprint(source, package_root=package_root) == before
 
 
-def test_production_fingerprint_excludes_test_only_sources(tmp_path: Path) -> None:
+def test_fingerprint_confines_out_of_tree_module_imports(tmp_path: Path) -> None:
+    import_root = tmp_path / "site-packages"
+    package_root = import_root / "luxar"
+    sibling_root = import_root / "thirdparty"
+    source = import_root / "user_demo.py"
+    sibling_helper = sibling_root / "heavy.py"
+    package_root.mkdir(parents=True)
+    sibling_root.mkdir()
+    (package_root / "__init__.py").write_text("")
+    (sibling_root / "__init__.py").write_text("")
+    source.write_text("import thirdparty.heavy\n")
+    sibling_helper.write_text("VALUE = 1\n")
+
+    before = demo_source_fingerprint(source, package_root=package_root)
+    sibling_helper.write_text("VALUE = 2\n")
+
+    assert demo_source_fingerprint(source, package_root=package_root) == before
+
+
+def test_fingerprint_follows_transitive_relative_demo_imports(tmp_path: Path) -> None:
     package_root = tmp_path / "luxar"
-    writer = package_root / "encoding/writer.py"
-    test = package_root / "encoding/tests/test_writer.py"
-    conftest = package_root / "conftest.py"
-    writer.parent.mkdir(parents=True)
-    test.parent.mkdir(parents=True)
-    writer.write_text("ENCODING_VERSION = 1\n")
-    test.write_text("def test_writer(): pass\n")
-    conftest.write_text("PYTEST_ONLY = 1\n")
+    source = package_root / "demos/demo_thing.py"
+    helper = package_root / "demos/_shared.py"
+    nested = package_root / "demos/_nested.py"
+    source.parent.mkdir(parents=True)
+    (package_root / "__init__.py").write_text("")
+    (source.parent / "__init__.py").write_text("")
+    source.write_text("from . import _shared\n")
+    helper.write_text("from ._nested import VALUE\n")
+    nested.write_text("VALUE = 1\n")
 
-    production_source_fingerprint.cache_clear()
-    before = production_source_fingerprint(package_root)
-    test.write_text("def test_writer(): assert False\n")
-    conftest.write_text("PYTEST_ONLY = 2\n")
-    production_source_fingerprint.cache_clear()
+    before = demo_source_fingerprint(source, package_root=package_root)
+    nested.write_text("VALUE = 2\n")
 
-    assert production_source_fingerprint(package_root) == before
+    assert demo_source_fingerprint(source, package_root=package_root) != before
 
 
-def test_missing_production_tree_has_no_fingerprint(tmp_path: Path) -> None:
-    production_source_fingerprint.cache_clear()
-    assert production_source_fingerprint(tmp_path / "missing") == ""
+def test_demo_fingerprints_reuse_parsed_shared_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package_root = tmp_path / "luxar"
+    demos_root = package_root / "demos"
+    shared = package_root / "shared.py"
+    demos_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text("")
+    (demos_root / "__init__.py").write_text("")
+    first = demos_root / "first.py"
+    second = demos_root / "second.py"
+    first.write_text("from luxar import shared\nFIRST = 1\n")
+    second.write_text("from luxar import shared\nSECOND = 2\n")
+    shared_payload = b"SHARED_SENTINEL = 123\n"
+    shared.write_bytes(shared_payload)
+    real_parse = source_fingerprints.ast.parse
+    shared_parse_count = 0
+
+    def count_shared_parse(source: bytes) -> AST:
+        nonlocal shared_parse_count
+        if source == shared_payload:
+            shared_parse_count += 1
+        return real_parse(source)
+
+    monkeypatch.setattr(source_fingerprints.ast, "parse", count_shared_parse)
+
+    demo_source_fingerprint(first, package_root=package_root)
+    demo_source_fingerprint(second, package_root=package_root)
+
+    assert shared_parse_count == 1
+
+
+@pytest.mark.parametrize(
+    ("demo", "dependencies"),
+    [
+        ("demo_dmri_tractography.py", {"demos/_cinematic_camera.py"}),
+        (
+            "demo_ocean_currents_earth.py",
+            {"demos/_cinematic_camera.py", "demos/_globe_common.py"},
+        ),
+        ("demo_global_rivers_earth.py", {"demos/_globe_common.py"}),
+        (
+            "demo_biodiversity_planetary_scale.py",
+            {"demos/_cinematic_camera.py", "demos/_globe_common.py"},
+        ),
+        ("demo_gsplats_3d_cryoem_virus.py", {"demos/_lod_policy.py"}),
+        (
+            "demo_particle_collision_animated.py",
+            {"demos/demo_particle_collision.py"},
+        ),
+    ],
+)
+def test_real_demo_source_graph_includes_shared_scene_writers(
+    demo: str, dependencies: set[str]
+) -> None:
+    package_root = Path(__file__).resolve().parents[2]
+    demos_root = package_root / "demos"
+
+    sources = imported_source_files(demos_root / demo, (package_root.parent,))
+    source_names = {path.relative_to(package_root).as_posix() for path in sources}
+
+    assert dependencies <= source_names
 
 
 def test_fingerprint_changes_with_zarr_format_environment(
@@ -118,14 +211,10 @@ def test_fingerprint_changes_with_zarr_format_environment(
 ) -> None:
     package_root = tmp_path / "luxar"
     source = package_root / "demos/demo_thing.py"
-    writer = package_root / "encoding/writer.py"
     source.parent.mkdir(parents=True)
-    writer.parent.mkdir(parents=True)
     source.write_text("LINE_OPACITY = 0.95\n")
-    writer.write_text("ENCODING_VERSION = 1\n")
 
     monkeypatch.delenv("LUXAR_ZARR_FORMAT", raising=False)
-    production_source_fingerprint.cache_clear()
     before = demo_source_fingerprint(source, package_root=package_root)
     monkeypatch.setenv("LUXAR_ZARR_FORMAT", "2")
 

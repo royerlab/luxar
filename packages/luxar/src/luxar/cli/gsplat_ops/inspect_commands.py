@@ -238,83 +238,75 @@ def _print_dataset_metadata(
                     aprint(f"  {key}: {value}")
 
 
-def info_dataset(
-    path: Path = typer.Argument(
-        ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
-    ),
-    show_histograms: bool = typer.Option(
-        True, "--histograms/--no-histograms", help="Show ASCII histograms"
-    ),
-    bins: int = typer.Option(
-        40, "--bins", "-b", help="Number of bins for histograms", min=10, max=100
-    ),
-    full_provenance: bool = typer.Option(
-        False,
-        "--full-provenance",
-        help="Print the complete nested fitting/part_provenance record",
-    ),
-) -> None:
-    """Show detailed information about a Gaussian splat dataset.
+def _load_info_data(
+    path: Path, *, full_provenance: bool
+) -> tuple["Optional[GSplatData]", bool]:
+    """Load a flat dataset, or print a valid tree summary or load failure."""
+    from luxar.gsplats.gsplat_data import GSplatData
 
-    Displays comprehensive statistics including:
-    - Number of splats and dimensions
-    - Bounding box in each dimension
-    - Amplitude distribution with statistics and histogram
-    - Volume distribution (size at the dataset's own truncation radius, in
-      sigmas) with statistics and histogram
-    - Color information (if present)
-    - Metadata (fitting info, provenance, etc.)
+    with asection(f"Loading dataset: {path.name}"):
+        try:
+            data = GSplatData.load(path, include_stats=True)
+        except ValueError:
+            # GSplatData.load raises for two distinct reasons: (a) a valid v3.0
+            # partition/nested tree that has no flat GSplatData form, or (b) a
+            # legacy/invalid file the v3.0 reader rejects. Probe the raw tree
+            # instead of matching text: the rejection itself says "node-tree".
+            from luxar.gsplats.io.load_gsplats import load_gsplat_node
 
-    Examples:
-        # Basic info with histograms
-        luxar gsplat info dataset.gsplats.zarr.zip
+            try:
+                load_gsplat_node(path)  # succeeds only for a valid v3.0 tree
+            except ValueError as load_exc:
+                aprint(f"❌ {load_exc}")
+                return None, False
+            _print_gsplat_tree_summary(path, show_full_provenance=full_provenance)
+            return None, True
 
-        # Info without histograms (faster)
-        luxar gsplat info dataset.gsplats.zarr.zip --no-histograms
+        n_splats = len(data.amplitudes)
+        ndim = data.centers.shape[1]
+        aprint(f"✓ Loaded {n_splats:,} splats ({ndim}D)")
+        return data, True
 
-        # More detailed histograms
-        luxar gsplat info dataset.gsplats.zarr.zip --bins 60
 
-        # Print the complete nested per-part fitting record
-        luxar gsplat info dataset.gsplats.zarr.zip --full-provenance
+def _print_color_information(colors: "Optional[np.ndarray]") -> None:
+    """Print per-channel color statistics when colors are present."""
+    if colors is None:
+        return
 
-    Args:
-        path: Path to .gsplats.zarr or compressed archive
-        show_histograms: Whether to display ASCII histograms
-        bins: Number of bins for histogram plots
-        full_provenance: Whether to print the complete nested component record
-    """
+    import numpy as np
+
+    aprint("\n" + "─" * 70)
+    aprint("COLOR INFORMATION")
+    aprint("─" * 70)
+
+    aprint(f"\nColor dtype: {colors.dtype}")
+    aprint(f"Color range: [{colors.min():.4f}, {colors.max():.4f}]")
+
+    for i, channel_name in enumerate(["Red", "Green", "Blue"]):
+        channel_data = colors[:, i]
+        aprint(f"\n{channel_name} Channel:")
+        aprint(f"  Mean: {np.mean(channel_data):.4f}")
+        aprint(f"  Std:  {np.std(channel_data):.4f}")
+
+
+def _info_report(
+    path: Path,
+    *,
+    show_histograms: bool,
+    bins: int,
+    full_provenance: bool,
+) -> bool:
+    """Print a Gaussian splat dataset report and return whether it succeeded."""
     try:
         import numpy as np
 
-        from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.utils.alpha import effective_amplitudes
 
-        with asection(f"Loading dataset: {path.name}"):
-            try:
-                data = GSplatData.load(path, include_stats=True)
-            except ValueError:
-                # GSplatData.load raises for two distinct reasons: (a) a valid
-                # v3.0 partition/nested tree that has no flat GSplatData form, or
-                # (b) a legacy/invalid file the v3.0 reader rejects. Disambiguate
-                # by probing the raw tree (instead of brittle substring matching
-                # on the message — the v3.0 rejection text contains "node-tree").
-                from luxar.gsplats.io.load_gsplats import load_gsplat_node
-
-                try:
-                    load_gsplat_node(path)  # succeeds only for a valid v3.0 tree
-                except ValueError as load_exc:
-                    # Legacy/invalid → surface the actionable message (which names
-                    # `luxar gsplat migrate-format`) without a traceback.
-                    aprint(f"❌ {load_exc}")
-                    raise typer.Exit(1) from None
-                # Valid v3.0 partition/nested tree → report its shape.
-                _print_gsplat_tree_summary(path, show_full_provenance=full_provenance)
-                return
-            n_splats = len(data.amplitudes)
-            ndim = data.centers.shape[1]
-
-            aprint(f"✓ Loaded {n_splats:,} splats ({ndim}D)")
+        data, report_succeeded = _load_info_data(path, full_provenance=full_provenance)
+        if data is None:
+            return report_succeeded
+        n_splats = len(data.amplitudes)
+        ndim = data.centers.shape[1]
 
         # ================================================================
         # Basic Information
@@ -405,23 +397,7 @@ def info_dataset(
                 )
             )
 
-        # ================================================================
-        # Color Information
-        # ================================================================
-        if data.colors is not None:
-            aprint("\n" + "─" * 70)
-            aprint("COLOR INFORMATION")
-            aprint("─" * 70)
-
-            aprint(f"\nColor dtype: {data.colors.dtype}")
-            aprint(f"Color range: [{data.colors.min():.4f}, {data.colors.max():.4f}]")
-
-            # Per-channel statistics
-            for i, channel_name in enumerate(["Red", "Green", "Blue"]):
-                channel_data = data.colors[:, i]
-                aprint(f"\n{channel_name} Channel:")
-                aprint(f"  Mean: {np.mean(channel_data):.4f}")
-                aprint(f"  Std:  {np.std(channel_data):.4f}")
+        _print_color_information(data.colors)
 
         # ================================================================
         # Metadata
@@ -462,13 +438,67 @@ def info_dataset(
                 f"   Command: luxar gsplat cull {path.name} culled.gsplats.zarr.zip --method cumulative --retention 0.95"
             )
 
-    except typer.Exit:
-        raise
+        return True
     except Exception as e:
         aprint(f"❌ Error: {e}")
         import traceback
 
         traceback.print_exc()
+        return False
+
+
+def info_dataset(
+    path: Path = typer.Argument(
+        ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
+    ),
+    show_histograms: bool = typer.Option(
+        True, "--histograms/--no-histograms", help="Show ASCII histograms"
+    ),
+    bins: int = typer.Option(
+        40, "--bins", "-b", help="Number of bins for histograms", min=10, max=100
+    ),
+    full_provenance: bool = typer.Option(
+        False,
+        "--full-provenance",
+        help="Print the complete nested fitting/part_provenance record",
+    ),
+) -> None:
+    """Show detailed information about a Gaussian splat dataset.
+
+    Displays comprehensive statistics including:
+    - Number of splats and dimensions
+    - Bounding box in each dimension
+    - Amplitude distribution with statistics and histogram
+    - Volume distribution (size at the dataset's own truncation radius, in
+      sigmas) with statistics and histogram
+    - Color information (if present)
+    - Metadata (fitting info, provenance, etc.)
+
+    Examples:
+        # Basic info with histograms
+        luxar gsplat info dataset.gsplats.zarr.zip
+
+        # Info without histograms (faster)
+        luxar gsplat info dataset.gsplats.zarr.zip --no-histograms
+
+        # More detailed histograms
+        luxar gsplat info dataset.gsplats.zarr.zip --bins 60
+
+        # Print the complete nested per-part fitting record
+        luxar gsplat info dataset.gsplats.zarr.zip --full-provenance
+
+    Args:
+        path: Path to .gsplats.zarr or compressed archive
+        show_histograms: Whether to display ASCII histograms
+        bins: Number of bins for histogram plots
+        full_provenance: Whether to print the complete nested component record
+    """
+    if not _info_report(
+        path,
+        show_histograms=show_histograms,
+        bins=bins,
+        full_provenance=full_provenance,
+    ):
         raise typer.Exit(1)
 
 
@@ -1216,7 +1246,7 @@ _SEVERITY_MARK = {"error": "❌", "warning": "⚠️ ", "note": "ℹ️ "}
 def _print_finding(finding: "Finding") -> None:
     """One doctor finding: what it is, what it costs, and where it stands."""
     mark = _SEVERITY_MARK.get(finding.severity, "•")
-    aprint(f"{mark} [{finding.path}] {finding.summary}")
+    aprint(f"{mark} [{finding.path or '/'}] {finding.summary}")
     if finding.detail:
         aprint(f"     {finding.detail}")
     if finding.fixed:
@@ -1257,11 +1287,21 @@ def _resolve_doctor_store_kind(path: Path) -> "StoreKind":
 
 
 def _print_doctor_info(
-    path: Path, store_kind: "StoreKind", *, histograms: bool
-) -> None:
+    path: Path,
+    store_kind: "StoreKind",
+    *,
+    histograms: bool,
+    bins: int,
+    full_provenance: bool,
+) -> bool:
     """Print the optional report appropriate for a doctor input."""
     if store_kind == "gsplats":
-        info_dataset(path, show_histograms=histograms, bins=40)
+        return _info_report(
+            path,
+            show_histograms=histograms,
+            bins=bins,
+            full_provenance=full_provenance,
+        )
     elif store_kind == "scene":
         aprint("ℹ️ The gsplat info report does not apply to a Luxar scene.")
     else:
@@ -1269,6 +1309,7 @@ def _print_doctor_info(
             "ℹ️ Could not classify this store from its metadata; "
             "skipping the optional info report."
         )
+    return True
 
 
 def doctor(
@@ -1294,6 +1335,21 @@ def doctor(
         "--histograms/--no-histograms",
         help="Include the info report's ASCII histograms (implies --info).",
     ),
+    bins: int = typer.Option(
+        40,
+        "--bins",
+        "-b",
+        help="Number of bins for the info report's histograms; only applies "
+        "with --histograms.",
+        min=10,
+        max=100,
+    ),
+    full_provenance: bool = typer.Option(
+        False,
+        "--full-provenance",
+        help="Print the complete nested fitting/part_provenance record in the "
+        "info report (implies --info).",
+    ),
     json_out: Optional[Path] = typer.Option(
         None, "--json", help="Write the findings to a JSON file as well."
     ),
@@ -1310,6 +1366,10 @@ def doctor(
 
     Currently diagnosed:
 
+    - Unsupported standalone gsplat format versions. These stores cannot be
+      opened by the current reader and must be converted with `migrate-format`.
+    - Supported-version standalone gsplat stores with an incomplete tree or
+      inconsistent leaf-array metadata. Restore or regenerate these stores.
     - Partition split planes (bsp_tree): missing, or stale after a transform.
       Without them the viewer orders parts by centroid, which is not a valid
       painter's order — it pops at the seams under `normal`/`volumetric`
@@ -1321,17 +1381,27 @@ def doctor(
         luxar gsplat doctor data.gsplats.zarr
         luxar gsplat doctor scene.luxar.zarr --no-info
         luxar gsplat doctor data.gsplats.zarr --fix
+        luxar gsplat doctor data.gsplats.zarr --histograms --bins 60
+        luxar gsplat doctor data.gsplats.zarr --full-provenance
         luxar gsplat doctor data.gsplats.zarr --no-info --json report.json
     """
     import json as _json
 
     from luxar.gsplats.doctor import diagnose_store
 
-    if histograms:
+    if histograms or full_provenance:
         info = True
     store_kind = _resolve_doctor_store_kind(path)
     if info:
-        _print_doctor_info(path, store_kind, histograms=histograms)
+        report_succeeded = _print_doctor_info(
+            path,
+            store_kind,
+            histograms=histograms,
+            bins=bins,
+            full_provenance=full_provenance,
+        )
+        if not report_succeeded:
+            aprint("ℹ️ Info report failed; continuing to the diagnosis.")
 
     with asection(f"Diagnosing: {path.name}"):
         try:

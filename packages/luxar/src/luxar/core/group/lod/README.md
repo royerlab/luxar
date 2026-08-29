@@ -240,8 +240,9 @@ coarse levels, default 3.0; `None` disables)).
 
 Composes with `additive_lod`: substitutive chooses WHICH level renders at the
 current zoom, additive describes HOW each level streams in. Every level is given
-a `stream:` ladder by default (`additive_lod=False` opts out), so the finest
-level paints progressively instead of committing all-at-once — see "Composed
+a `stream:` ladder by default (`additive_lod=False` opts out), except that
+`image_labels` suppresses only the original finest Points child's ladder so its
+labels are preserved; synthesized coarse levels still stream — see "Composed
 axes" in `group.py`.
 The lift is strictly isotropic (brightness stays view-independent). Scalar +
 colormap points are supported by **baking** `scalars`→RGB through the colormap
@@ -286,7 +287,9 @@ during partial loads.
   bbox center.
 - `make_additive_lod_lines(...)` returns per-LOD-level lists of per-polyline
   index arrays for `_write_lines_multi_lod` to gather and rewrite with
-  subgroup-local segment indices.
+  subgroup-local segment indices. For `indexed` Lines, a multi-level ladder is
+  refused unless each component's authored undirected edge multiset is exactly its
+  consecutive-vertex chain; flat writes preserve the authored edge multiset.
 - `salience_kind='energy'` uses the tube-volume score
   `mean_luminance × Σ(seg_length × width²)`.
 - `resolve_additive_axis_lines(spec)` is the `add_lines(..., additive_lod=...)`
@@ -326,21 +329,22 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
    `coverage_fractions=[...]` in the `substitutive_lod=` spec to override.
 
 Composes with `additive_lod` (laddered per level by default, as for Points);
-mutually exclusive with `partition`. A single-polyline `line_type`
-(`polyline`/`loop`) skips the ladder, since a polyline cannot be split without
-breaking its segment topology; `indexed` is NOT laddered in the composed additive
-path at all — neither by default nor with an explicit `additive_lod=dict(...)` —
-because the additive multi-LOD writer discards the explicit edge list and would
-fabricate phantom edges, so its topology cannot be preserved either way. Only
-`segments` gets a composed additive ladder. `scalars`+`colormap` are
+mutually exclusive with `partition`. The synthesized coarse gsplat children
+keep their additive ladders for every `line_type`. The original finest Lines
+child skips its ladder for single-polyline types (`polyline`/`loop`) and for
+`indexed`, or whenever `image_labels` is set; the composed path keeps the
+`indexed` refusal conservatively, and narrowing it is a separate change. Only
+that finest child then loads
+all-at-once. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
 Points, and the same uniform-vs-per-element RGBA rule: a uniform colour is
 broadcast to the beads with its alpha, a per-element `(N, 4)` is refused —
 uniformity is judged once, per VERTEX, so a line set that collapses to a single
 bead cannot re-present a per-element colour as a uniform row). All `line_type`s
-(segments/polyline/loop/indexed) are supported for the substitutive pyramid
-itself; only `segments` also receives a composed additive ladder.
+(segments/polyline/loop/indexed) are supported for the substitutive pyramid and
+receive composed additive ladders on synthesized coarse children; the finest
+child follows the exceptions above.
 Degenerate-width segments are dropped; bead allocation is bounded both
 per-segment (`lift.MAX_BEADS_PER_SEGMENT`) and in aggregate
 (`lift.MAX_TOTAL_BEADS`, spacing widened to fit with a `UserWarning`), so a

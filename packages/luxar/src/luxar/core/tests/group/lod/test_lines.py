@@ -19,6 +19,7 @@ import zarr
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.lines import (
     _indexed_connected_components,
+    _indexed_ladder_preserves_edges,
     compute_additive_order_lines,
     identify_polylines,
     make_additive_lod_lines,
@@ -100,6 +101,41 @@ class TestIdentifyPolylines:
     ) -> None:
         polys = _indexed_connected_components(n_vertices, segments)
         assert [poly.tolist() for poly in polys] == expected
+
+    @pytest.mark.parametrize(
+        ("n_vertices", "indices", "expected"),
+        [
+            (3, [[0, 1], [1, 2]], True),
+            (3, [[2, 1], [1, 0]], True),
+            (4, [[0, 1], [1, 2]], True),
+            (3, [], True),
+            (2, [[0, 1], [0, 1]], False),
+            (1, [[0, 0]], False),
+            (3, [[0, 1], [1, 2], [2, 0]], False),
+            (3, [[0, 2], [2, 1]], False),
+            (4, [[0, 1], [0, 2], [0, 3]], False),
+        ],
+        ids=[
+            "ascending-chain",
+            "reversed-reordered-chain",
+            "chain-with-isolated-vertex",
+            "edge-less",
+            "duplicate-edge",
+            "self-loop",
+            "cycle",
+            "non-ascending-path",
+            "branching-star",
+        ],
+    )
+    def test_indexed_ladder_preserves_exact_edge_multiset(
+        self,
+        n_vertices: int,
+        indices: list[list[int]],
+        expected: bool,
+    ) -> None:
+        edge_array = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+        polylines = identify_polylines(n_vertices, "indexed", edge_array)
+        assert _indexed_ladder_preserves_edges(edge_array, polylines) is expected
 
     def test_indexed_many_small_components_cover_vertices_once(self) -> None:
         # Representative ribbon-heavy shape: many short disjoint chains. The
@@ -611,6 +647,182 @@ class TestAddLinesAdditiveLod:
         assert grp.attrs["n_additive_sublods"] == 4
         subgroups = sorted(k for k in grp.keys() if k.startswith("additive_"))
         assert len(subgroups) == 4
+
+    def test_indexed_chains_round_trip_exact_edges(self, tmp_path) -> None:
+        from luxar.encoding import ArrayDecoder
+
+        output = tmp_path / "t.luxar.zarr"
+        vertices = np.array(
+            [[component, offset, 0.0] for component in range(6) for offset in range(4)],
+            dtype=np.float32,
+        )
+        indices = np.array(
+            [
+                (start + offset, start + offset + 1)
+                for start in range(0, len(vertices), 4)
+                for offset in range(3)
+            ],
+            dtype=np.uint32,
+        )
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "chains",
+                vertices,
+                widths=np.ones(len(vertices), dtype=np.float32),
+                indices=indices[::-1, ::-1],
+                line_type="indexed",
+                additive_lod={"n_lods": 3, "method": "random", "seed": 0},
+            )
+
+        node = zarr.open(str(output), mode="r")["chains"]
+        assert node.attrs["n_additive_sublods"] == 3
+        decoder = ArrayDecoder()
+        stored_edges = []
+        for key in sorted(k for k in node.keys() if k.startswith("additive_")):
+            level = node[key]
+            level_vertices = np.asarray(decoder.decode(level["vertices"]))
+            level_segments = np.asarray(level["segments"])
+            for endpoint_a, endpoint_b in level_segments:
+                stored_edges.append(
+                    tuple(
+                        sorted(
+                            (
+                                tuple(level_vertices[endpoint_a]),
+                                tuple(level_vertices[endpoint_b]),
+                            )
+                        )
+                    )
+                )
+
+        expected_edges = [
+            tuple(sorted((tuple(vertices[endpoint_a]), tuple(vertices[endpoint_b]))))
+            for endpoint_a, endpoint_b in indices
+        ]
+        assert sorted(stored_edges) == sorted(expected_edges)
+
+    @pytest.mark.parametrize("method", ["spatial-uniform", "random"])
+    def test_indexed_branching_graph_raises_before_writing(
+        self, tmp_path, method: str
+    ) -> None:
+        output = tmp_path / "t.luxar.zarr"
+        vertices = np.array(
+            [[component, offset, 0.0] for component in range(6) for offset in range(4)],
+            dtype=np.float32,
+        )
+        indices = np.array(
+            [
+                (start, start + spoke)
+                for start in range(0, len(vertices), 4)
+                for spoke in range(1, 4)
+            ],
+            dtype=np.uint32,
+        )
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError) as error:
+                scene.add_lines(
+                    "stars",
+                    vertices,
+                    widths=np.ones(len(vertices), dtype=np.float32),
+                    indices=indices,
+                    line_type="indexed",
+                    additive_lod={"n_lods": 3, "method": method},
+                )
+
+        message = str(error.value)
+        assert "cannot preserve the explicit edge list" in message
+        assert "Authored 18 edges but the component chains produce 18" in message
+        assert "offending authored edge (0, 2) is not matched" in message
+        assert "Remove additive_lod= and use partition= alone" in message
+
+        assert "stars" not in zarr.open(str(output), mode="r")
+
+    def test_indexed_duplicate_edge_reports_multiplicity(self, tmp_path) -> None:
+        output = tmp_path / "t.luxar.zarr"
+        vertices = np.zeros((4, 3), dtype=np.float32)
+        indices = np.array([[0, 1], [0, 1], [2, 3]], dtype=np.uint32)
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError) as error:
+                scene.add_lines(
+                    "duplicate",
+                    vertices,
+                    widths=np.ones(4, dtype=np.float32),
+                    indices=indices,
+                    line_type="indexed",
+                    additive_lod={"n_lods": 2, "method": "random"},
+                )
+
+        message = str(error.value)
+        assert "offending authored edge (0, 1) is not matched" in message
+        assert "authored multiplicity 2, chain multiplicity 1" in message
+        assert "duplicate" not in zarr.open(str(output), mode="r")
+
+    @pytest.mark.parametrize(
+        ("component_count", "n_lods"),
+        [(1, 3), (6, 1)],
+        ids=["single-component", "single-requested-level"],
+    )
+    def test_indexed_branching_graph_writes_flat_when_no_ladder_is_emitted(
+        self,
+        tmp_path,
+        component_count: int,
+        n_lods: int,
+    ) -> None:
+        from luxar.encoding import ArrayDecoder
+
+        output = tmp_path / "t.luxar.zarr"
+        vertices = np.array(
+            [
+                [component, offset, 0.0]
+                for component in range(component_count)
+                for offset in range(4)
+            ],
+            dtype=np.float32,
+        )
+        indices = np.array(
+            [
+                (start, start + spoke)
+                for start in range(0, len(vertices), 4)
+                for spoke in range(1, 4)
+            ],
+            dtype=np.uint32,
+        )
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "stars",
+                vertices,
+                widths=np.ones(len(vertices), dtype=np.float32),
+                indices=indices,
+                line_type="indexed",
+                additive_lod={"n_lods": n_lods},
+            )
+
+        node = zarr.open(str(output), mode="r")["stars"]
+        assert "n_additive_sublods" not in node.attrs
+        stored_vertices = np.asarray(ArrayDecoder().decode(node["vertices"]))
+        stored_edges = [
+            tuple(
+                sorted(
+                    (
+                        tuple(stored_vertices[endpoint_a]),
+                        tuple(stored_vertices[endpoint_b]),
+                    )
+                )
+            )
+            for endpoint_a, endpoint_b in np.asarray(node["segments"])
+        ]
+        expected_edges = [
+            tuple(sorted((tuple(vertices[endpoint_a]), tuple(vertices[endpoint_b]))))
+            for endpoint_a, endpoint_b in indices
+        ]
+        assert sorted(stored_edges) == sorted(expected_edges)
 
     def test_image_labels_suppress_ladder_and_are_kept(self, tmp_path) -> None:
         # Regression: the plain additive multi-LOD writer has no image_labels

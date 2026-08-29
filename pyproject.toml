@@ -95,7 +95,11 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/royerlab/luxar"
-Documentation = "https://luxar.readthedocs.io/"
+Documentation = "https://royerlab.github.io/luxar/"
+# PyPI renders these in the project sidebar. The demo gallery is the fastest
+# way for someone reading the page to find out whether this does what they want.
+"Live Demos" = "https://demos.luxarviewer.dev"
+"Hosted Viewer" = "https://luxarviewer.dev"
 Repository = "https://github.com/royerlab/luxar.git"
 "Bug Tracker" = "https://github.com/royerlab/luxar/issues"
 Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"
@@ -413,7 +417,7 @@ lint = [
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
 # Enforce layer direction: domain (gsplats/io/core/encoding) must not import cli.
 check-imports = "lint-imports"
-# Assert Python __version__ and viewer package.json describe the same release.
+# Assert Python, viewer, and citation metadata describe the same release.
 check-versions = "python scripts/check_version_consistency.py"
 # Regenerate the Python + TS format-contract projections from contract.yaml.
 gen-contract = "python scripts/gen_format_contract.py"

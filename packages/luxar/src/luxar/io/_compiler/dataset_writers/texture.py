@@ -34,6 +34,10 @@ since the encoder's types all describe *numbers* it may requantize. This mirrors
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any, Literal, Optional, Tuple
 
 import numpy as np
@@ -47,6 +51,76 @@ from ..chunking import calculate_intelligent_chunks
 from ..context import DatasetCtx
 
 
+def _encode_ktx2(
+    texture: NDArray[Any], mode: str, quality: Optional[int], color_space: str
+) -> NDArray[np.uint8]:
+    if mode not in {"uastc", "etc1s"}:
+        raise ValueError("texture_ktx2_mode must be 'uastc' or 'etc1s'")
+    resolved_quality = (
+        2
+        if quality is None and mode == "uastc"
+        else 128
+        if quality is None
+        else quality
+    )
+    limit = (0, 4) if mode == "uastc" else (1, 255)
+    if (
+        isinstance(resolved_quality, bool)
+        or not isinstance(resolved_quality, int)
+        or not limit[0] <= resolved_quality <= limit[1]
+    ):
+        raise ValueError(
+            f"texture_ktx2_quality must be an integer in [{limit[0]}, {limit[1]}] "
+            f"for {mode}, got {resolved_quality!r}"
+        )
+
+    executable = shutil.which("toktx")
+    if executable is None:
+        raise RuntimeError(
+            "texture_encoding='ktx2' requires the Khronos `toktx` executable; "
+            "install KTX-Software or use texture_encoding='raw'/'jpeg'"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="luxar-ktx2-") as tmp:
+        pixels = np.asarray(texture)
+        source = Path(tmp) / ("source.ppm" if pixels.shape[2] == 3 else "source.pam")
+        output = Path(tmp) / "texture.ktx2"
+        with source.open("wb") as stream:
+            if pixels.shape[2] == 3:
+                stream.write(
+                    f"P6\n{pixels.shape[1]} {pixels.shape[0]}\n255\n".encode("ascii")
+                )
+            else:
+                stream.write(
+                    (
+                        f"P7\nWIDTH {pixels.shape[1]}\nHEIGHT {pixels.shape[0]}\n"
+                        "DEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n"
+                    ).encode("ascii")
+                )
+            pixels.tofile(stream)
+        command = [executable, "--t2", "--genmipmap"]
+        if mode == "uastc":
+            command += [
+                "--encode",
+                "uastc",
+                "--uastc_quality",
+                str(resolved_quality),
+                "--zcmp",
+                "3",
+            ]
+        else:
+            command += ["--encode", "basis-lz", "--qlevel", str(resolved_quality)]
+        command += ["--assign_oetf", color_space]
+        command += [str(output), str(source)]
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        if completed.returncode != 0 or not output.is_file():
+            detail = (
+                completed.stderr or completed.stdout or "unknown toktx failure"
+            ).strip()
+            raise RuntimeError(f"toktx failed to encode KTX2 texture: {detail}")
+        return np.frombuffer(output.read_bytes(), dtype=np.uint8).copy()
+
+
 def write_texture(
     group: zarr.Group,
     texture: NDArray[Any],
@@ -56,18 +130,26 @@ def write_texture(
     channels: Optional[int],
     color_space: str,
     ctx: DatasetCtx,
+    ktx2_mode: str = "uastc",
+    ktx2_quality: Optional[int] = None,
+    encoded_ktx2: Optional[NDArray[np.uint8]] = None,
 ) -> Tuple[int, int, int]:
     """Write a mesh texture and return its resolved ``(height, width, channels)``.
 
     Args:
         group: The mesh node's zarr group.
-        texture: ``(H, W, C)`` array for ``raw``, else 1-D ``uint8`` encoded bytes.
-        encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg``.
+        texture: ``(H, W, C)`` array for ``raw`` or ``ktx2`` authoring;
+            otherwise 1-D ``uint8`` encoded bytes.
+        encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg`` | ``ktx2``.
         width: Declared width; required for encoded payloads.
         height: Declared height; required for encoded payloads.
         channels: Declared channel count; required for encoded payloads.
         color_space: Declared transfer function; HDR raw values require ``linear``.
         ctx: Dataset write context (encoder, mode, compressor).
+        ktx2_mode: Basis encoding mode for KTX2 authoring.
+        ktx2_quality: Optional mode-specific KTX2 quality.
+        encoded_ktx2: Pre-encoded bytes supplied by the mesh writer after its
+            failure-atomic preflight.
 
     Returns:
         ``(height, width, channels)`` as validated.
@@ -75,9 +157,23 @@ def write_texture(
     from ....validation.base import validate_texture_for_writing
 
     res_h, res_w, res_c = validate_texture_for_writing(
-        texture, encoding, width, height, channels, color_space
+        texture,
+        encoding,
+        width,
+        height,
+        channels,
+        color_space,
+        ktx2_mode=ktx2_mode,
+        ktx2_quality=ktx2_quality,
     )
     arr = np.asarray(texture)
+
+    if encoding == "ktx2":
+        arr = (
+            encoded_ktx2
+            if encoded_ktx2 is not None
+            else _encode_ktx2(arr, ktx2_mode, ktx2_quality, color_space)
+        )
 
     if encoding != "raw":
         # Straight to `create_array`, bypassing the encoder — exactly what

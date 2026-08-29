@@ -2,7 +2,7 @@
 //!
 //! These functions dequantize compressed data formats back to float32.
 //! Optimized for large arrays. Note: Manual SIMD was tested but showed no benefit
-//! over simple loops when compiled to WASM (see WASM_ANALYSIS.md for benchmarks).
+//! over simple loops when compiled to WASM.
 //!
 //! ## Optimization Status
 //! ✅ All functions are already optimally implemented:

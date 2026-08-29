@@ -65,9 +65,9 @@ export interface AccumulatorProviderPort {
 }
 
 /**
- * Provider injected via `setFailedLoadsProvider`. Surfaces the loader's
- * failed-load records in the monitor UI and powers its Retry action —
- * the visible half of the failed-load recovery story (the `window
+ * Provider injected via `setFailedLoadsProvider`. Surfaces loader failures,
+ * latch-only archive faults, and latched lazy-LOD branch failures in the
+ * monitor UI, and powers Retry — the visible half of the failed-load recovery story (the `window
  * 'online'` listener in `core/app/lifecycle/online-retry.ts` is the
  * automatic half). `retryAll` maps to `SceneLoader.retryAllFailedLoaders`
  * (serialized against the update lock by the loader itself).
@@ -83,10 +83,10 @@ export interface FailedLoadsProviderPort {
   retryAll: () => Promise<{ succeeded: string[]; failed: string[]; deferred?: boolean }>;
   /**
    * Human-readable failure reason for a single path, or undefined when the
-   * path has no recorded failure. Derived from the loader's `FailedLoaderInfo`
-   * (`error.message` / classified `kind`). OPTIONAL so structural implementers
-   * that only surface the count/paths (e.g. `DataLoadingMonitor`) keep
-   * compiling unchanged; the layers panel uses it for its per-row error
+   * path has no recorded failure. Derived from `FailedLoaderInfo` or the
+   * loader's latched archive fault for a lazy branch. OPTIONAL so structural
+   * implementers that only surface the count/paths (e.g. `DataLoadingMonitor`)
+   * keep compiling unchanged; the layers panel uses it for its per-row error
    * tooltip and falls back to a generic message when absent.
    */
   getFailedReason?: (path: string) => string | undefined;

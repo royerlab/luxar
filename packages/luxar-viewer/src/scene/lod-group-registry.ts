@@ -330,6 +330,8 @@ export interface LODGroupChild {
    * registration; geometry is committed into it by ``ensureLoaded``.
    */
   object: THREE.Object3D;
+  /** Authored scene-node path, including for anonymous deferred-group placeholders. */
+  nodePath?: string;
   /**
    * Viewport-relative LOD-switch threshold, strictly monotonic increasing in
    * coarsest→finest order (coarsest 0.0). Its UNITS — and so its finest anchor —
@@ -382,6 +384,15 @@ export interface LODGroupChild {
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
+   * Marks the lazy branch that observed a latched archive fault, so monitor
+   * rows and explicit Retry can target it even when its THREE placeholder is
+   * anonymous. The owning loader's archive latch is the shared dataset-fault
+   * oracle; this branch marker is cleared by an explicit retry.
+   */
+  permanentlyFailed?: boolean;
+  /** Human-readable reason retained for monitor rows after the loader latch clears. */
+  failureReason?: string;
+  /**
    * Registry tick when ``failed`` was first observed. Drives the
    * transient-failure retry cooldown (``FAILED_RETRY_FRAMES``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
@@ -392,7 +403,8 @@ export interface LODGroupChild {
   /**
    * Idempotent fire-and-forget loader for a lazy child. Kicks the
    * deferred geometry load; on success sets ``ready=true`` and clears
-   * ``loading``; on failure sets ``failed=true`` and clears ``loading``.
+   * ``loading``; on failure sets ``failed=true`` and clears ``loading``. A
+   * container fault may additionally set ``permanentlyFailed``.
    * Must not touch ``object.visible`` — the registry owns the swap.
    */
   ensureLoaded?: () => void;
@@ -595,6 +607,8 @@ export interface LODGroupRegistryDeps {
   getViewportSize(): { width: number; height: number };
   /** Which dimensions of the data are being projected to screen. */
   getDisplayDims(): readonly number[];
+  /** Whether the owning loader has latched an archive fault. */
+  hasArchiveFault?: () => boolean;
   /**
    * Resident-byte budget (the ceiling). The single, adaptive VRAM budget
    * shared with the GPU buffer pool — one authority, not a competing one.
@@ -805,6 +819,26 @@ export class LODGroupRegistry {
     return Array.from(this.entries.values());
   }
 
+  /** Authored paths of lazy levels currently latched on an archive fault. */
+  getFailedLazyChildPaths(): string[] {
+    const paths: string[] = [];
+    for (const entry of this.entries.values()) {
+      for (const child of entry.children) {
+        if (child.permanentlyFailed && child.nodePath) paths.push(child.nodePath);
+      }
+    }
+    return paths;
+  }
+
+  /** Failure reason for a latched lazy level, if that path is still failed. */
+  getFailedLazyChildReason(path: string): string | undefined {
+    for (const entry of this.entries.values()) {
+      const child = entry.children.find((candidate) => candidate.nodePath === path);
+      if (child?.permanentlyFailed) return child.failureReason;
+    }
+    return undefined;
+  }
+
   /**
    * Whether every lod_group that contributes pixels to the CURRENT view is
    * already showing its own selected level at final quality — i.e. one more
@@ -821,6 +855,14 @@ export class LODGroupRegistry {
    * predicate (bounded) before grabbing each frame. Forcing finest instead was
    * deliberately rejected: a capture visits the whole scene, so peak residency
    * would be the entire dataset.
+   *
+   * - **A latched archive fault skips all work that could start or wait for new
+   *   loads, but still waits for loads already in flight to finish committing.**
+   *   The latch prevents any further automatic kick, so every other unmet
+   *   condition would be permanently false until an explicit or connectivity
+   *   retry clears it. An already-started load still clears ``loading`` in its
+   *   ``finally`` block and may commit geometry, so releasing the capture frame
+   *   before that transition would allow a one-frame pop.
    *
    * Per entry, in order:
    *
@@ -896,6 +938,7 @@ export class LODGroupRegistry {
    * object per entry. That cost is genuinely irrelevant here.
    */
   isCaptureQuiescent(): boolean {
+    if (this.deps.hasArchiveFault?.()) return !this.anyChildLoading();
     const version = this.deps.getViewVersion?.();
     for (const entry of this.entries.values()) {
       // Deliberately excluded: an off-screen group is held coarse on purpose
@@ -948,35 +991,42 @@ export class LODGroupRegistry {
     return true;
   }
 
+  private anyChildLoading(): boolean {
+    for (const entry of this.entries.values()) {
+      for (const child of entry.children) {
+        if (child.loading) return true;
+      }
+    }
+    return false;
+  }
+
   /**
-   * Retry a LAZY lod_group level by its LEAF path (the path of the level's
-   * placeholder mesh — leaf lazy children are named with their node path by
-   * the node factory; anonymous deferred-GROUP placeholders carry no name and
-   * correctly never match). Used by ``SceneLoader.retryFailedLoader``: lazy
-   * levels never join the update-sweep loader maps, so the map-based retry
-   * cannot reach them — this is their retry entry point.
+   * Retry a LAZY lod_group level by its authored scene-node path. The path is
+   * stored beside the placeholder in ``LODGroupChild`` so anonymous deferred
+   * GROUP placeholders remain addressable without duplicating scene identity
+   * onto the THREE object.
    *
-   * Clears the failure cooldown (``failed``/``failedTick``) and routes
-   * through the shared ``kickDeferredLoad`` gate, which owns setting
-   * ``loading`` before firing ``ensureLoaded`` (the thunk itself never sets
-   * ``loading`` — only the registry does; keep that invariant here).
+   * Clears the failure cooldown (``failed``/``failedTick``) through the shared
+   * ``kickDeferredLoad`` gate, which owns setting ``loading`` before firing
+   * ``ensureLoaded`` (the thunk itself never sets ``loading`` — only the
+   * registry does; keep that invariant here).
    *
    * Returns ``true`` when a retry was kicked OR one is already in flight
-   * (``loading``), ``false`` when no lazy child with that leaf path exists.
+   * (``loading``), ``false`` when no retryable lazy child with that path
+   * exists. Explicit retries bypass the owning loader's automatic archive-fault
+   * gate; the per-child marker keeps concurrent failed branches independently
+   * targetable.
    * Fire-and-forget semantics: ``true`` means "retry started", not "retry
    * succeeded" — the thunk owns the ready/failed outcome, and a repeat
    * failure re-enters the normal cooldown cycle.
    */
-  retryLazyChildByLeafPath(path: string): boolean {
-    if (!path) return false; // anonymous (deferred-group) placeholders have name '' — never match
+  retryLazyChildByNodePath(path: string): boolean {
+    if (!path) return false;
     for (const entry of this.entries.values()) {
       for (const child of entry.children) {
-        if (child.object.name !== path || !child.ensureLoaded) continue;
+        if (child.nodePath !== path || !child.ensureLoaded) continue;
         if (child.loading) return true; // retry already in flight
-        child.failed = false;
-        child.failedTick = undefined;
-        this.kickDeferredLoad(child);
-        return true;
+        return this.kickDeferredLoad(child, true);
       }
     }
     return false;
@@ -1841,6 +1891,8 @@ export class LODGroupRegistry {
    * the shared fetch gate, the worker pool, and VRAM with the layer the user is
    * actually looking at (measured: a hidden 9.75M-point level finished FIRST,
    * roughly doubling scene load time). So: no group visible ⇒ no new loads.
+   * The same gate refuses every automatic kick while the owning loader has a
+   * latched archive fault; explicit retry remains the only bypass.
    *
    * Scope is deliberately narrow — this only stops STARTING work:
    *   - it never hides or unloads anything already resident (a hidden layer
@@ -1855,12 +1907,13 @@ export class LODGroupRegistry {
    *     ``AnimationController`` → ``evaluatePerFrame``) resumes loading on the
    *     very next frame with no extra wiring.
    *
-   * ``retryLazyChildByLeafPath`` (an explicit user retry of a FAILED level)
+   * ``retryLazyChildByNodePath`` (an explicit user retry of a FAILED level)
    * deliberately bypasses this and calls ``kickDeferredLoad`` directly: an
-   * explicit request is honoured whatever the layer's visibility.
+   * explicit request for a retryable child is honoured whatever the layer's
+   * visibility or the current archive-fault latch.
    */
   private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
-    if (!isEffectivelyVisible(entry.groupObject)) return;
+    if (this.deps.hasArchiveFault?.() || !isEffectivelyVisible(entry.groupObject)) return;
     this.kickDeferredLoad(child);
   }
 
@@ -1872,22 +1925,37 @@ export class LODGroupRegistry {
    * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag clears and the load
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
+   * The automatic caller separately gates loader-level archive faults. The
+   * per-child latch keeps concurrent failed branches individually addressable
+   * by Retry; an explicit retry clears that selected branch as it starts.
    */
-  private kickDeferredLoad(child: LODGroupChild): void {
-    if (!child.ensureLoaded || child.loading) return;
+  private kickDeferredLoad(child: LODGroupChild, explicitRetry = false): boolean {
+    if (!child.ensureLoaded || child.loading || (!explicitRetry && child.permanentlyFailed)) {
+      return false;
+    }
     if (child.failed) {
-      if (child.failedTick == null) {
-        // First frame we observe the failure — start the cooldown clock.
-        child.failedTick = this.tick;
-        return;
+      if (explicitRetry) {
+        child.failed = false;
+        child.failedTick = undefined;
+      } else {
+        if (child.failedTick == null) {
+          // First frame we observe the failure — start the cooldown clock.
+          child.failedTick = this.tick;
+          return false;
+        }
+        if (this.tick - child.failedTick < FAILED_RETRY_FRAMES) return false;
+        // Cooldown elapsed — clear the failure and fall through to retry.
+        child.failed = false;
+        child.failedTick = undefined;
       }
-      if (this.tick - child.failedTick < FAILED_RETRY_FRAMES) return;
-      // Cooldown elapsed — clear the failure and fall through to retry.
-      child.failed = false;
-      child.failedTick = undefined;
+    }
+    if (explicitRetry) {
+      child.permanentlyFailed = false;
+      child.failureReason = undefined;
     }
     child.loading = true;
     child.ensureLoaded();
+    return true;
   }
 
   /**

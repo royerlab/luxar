@@ -17,6 +17,11 @@ This package implements a transparent caching and prefetching layer for zarr dat
   to a timepoint — skips the whole query + fetch + decode pipeline; only the
   cheap nD→3D projection re-runs. Sits ABOVE L0; in-memory, per-session,
   cleared on content-hash invalidation. Disable with `?no-slice-cache`.
+- **Eager line working set (`heap-budget.ts::computeWorkingSetBudgetBytes`)**:
+  resolves from the explicit cache-pool override, measured heap, device class,
+  or fixed fallback in that order. Pool- and heap-derived budgets reserve half
+  of the corresponding non-cache remainder (capped at 512 MiB) for overlapping
+  line decode/projection/staging work.
 - **L0 (Decompressed)**: LRU cache for decoded TypedArrays (eliminates Blosc decompression); heap-aware budget, config `l0MaxSizeMB` (200) is the ceiling — see `heap-budget.ts`
 - **L1 (Memory)**: segmented LRU cache with metadata protection; heap-aware budget, config `l1MaxSizeMB` (100) is the ceiling
 - **L2 (OPFS)**: 2GB persistent storage surviving browser restarts (disk — fixed, not heap-sized)

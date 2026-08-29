@@ -8,6 +8,7 @@ the exit code (so it can gate a pipeline), and the JSON report.
 
 from __future__ import annotations
 
+import inspect
 import json
 import shutil
 import struct
@@ -17,11 +18,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from typer.models import ParameterInfo
 from typer.testing import CliRunner
 
 from luxar._zarr_compat import consolidate as zc_consolidate
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar.cli import app
+from luxar.cli.gsplat_ops import inspect_commands
+from luxar.cli.tests._testing import normalized_cli_output
 
 
 def _partition_without_split_planes(tmp: Path) -> Path:
@@ -48,6 +52,43 @@ def _partition_without_split_planes(tmp: Path) -> Path:
     root = zc_open_group(str(path), mode="r+")
     del root.attrs["bsp_tree"]
     zc_consolidate(root)
+    return path
+
+
+def _partition_with_nested_provenance(tmp: Path) -> Path:
+    path = _partition_without_split_planes(tmp)
+    root = zc_open_group(str(path), mode="r+")
+    root.require_group("fitting").attrs["part_provenance"] = [
+        {
+            "fitting": {
+                "part_provenance": [{"coordinate": 0.0, "fitting": {"psnr_db": 40.0}}]
+            },
+            "coordinate": 0.0,
+        },
+        {
+            "fitting": {
+                "part_provenance": [{"coordinate": 1.0, "fitting": {"psnr_db": 41.0}}]
+            },
+            "coordinate": 1.0,
+        },
+    ]
+    zc_consolidate(root)
+    return path
+
+
+def _legacy_gsplat_store(tmp: Path) -> Path:
+    path = tmp / "legacy.gsplats.zarr"
+    root = zc_open_group(str(path), mode="w")
+    root.attrs["format_type"] = "gsplats_zarr"
+    root.attrs["format_version"] = "2.0"
+    return path
+
+
+def _unreadable_gsplat_store(tmp: Path) -> Path:
+    path = tmp / "unreadable.gsplats.zarr"
+    root = zc_open_group(str(path), mode="w")
+    root.attrs["format_type"] = "gsplats_zarr"
+    root.attrs["format_version"] = "3.4"
     return path
 
 
@@ -178,6 +219,137 @@ def test_doctor_prints_info_before_diagnosing_a_gsplat_store() -> None:
             "Diagnosing:"
         )
         assert "no split planes" in result.stdout
+
+
+def test_doctor_continues_when_info_rejects_a_legacy_store() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _legacy_gsplat_store(Path(tmp))
+
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+
+        assert result.exit_code == 1, result.stdout
+        assert "migrate-format" in result.stdout
+        assert "Info report failed; continuing to the diagnosis" in result.stdout
+        assert "Diagnosing:" in result.stdout
+        assert "unsupported gsplat format version '2.0'" in result.stdout
+        assert "1 problem(s) outstanding" in result.stdout
+
+
+def test_info_command_exits_when_report_rejects_a_legacy_store() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _legacy_gsplat_store(Path(tmp))
+
+        result = CliRunner().invoke(app, ["gsplat", "info", str(path)])
+
+        assert result.exit_code == 1, result.stdout
+        assert "migrate-format" in result.stdout
+        assert "Traceback" not in result.stdout
+
+
+def test_doctor_rejects_a_supported_but_unreadable_store() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _unreadable_gsplat_store(Path(tmp))
+
+        result = CliRunner().invoke(app, ["gsplat", "doctor", str(path)])
+
+        assert result.exit_code == 1, result.stdout
+        assert "Info report failed; continuing to the diagnosis" in result.stdout
+        assert "Diagnosing:" in result.stdout
+        assert "[/] gsplat store cannot be read" in result.stdout
+        assert "missing required array 'centers'" in result.stdout
+        assert "1 problem(s) outstanding" in result.stdout
+
+
+def test_doctor_summarizes_nested_provenance_unless_full_is_requested() -> None:
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_with_nested_provenance(Path(tmp))
+
+        summary = runner.invoke(app, ["gsplat", "doctor", str(path)])
+        assert summary.exit_code == 1, summary.stdout
+        assert (
+            "part_provenance: 2 parts, nested component records (2 levels)"
+            in summary.stdout
+        )
+        assert "{'fitting':" not in summary.stdout
+        assert "psnr_db" not in summary.stdout
+
+        full = runner.invoke(app, ["gsplat", "doctor", str(path), "--full-provenance"])
+        assert full.exit_code == 1, full.stdout
+        assert "{'fitting':" in full.stdout
+        assert "psnr_db" in full.stdout
+        assert (
+            "part_provenance: 2 parts, nested component records (2 levels)"
+            not in full.stdout
+        )
+
+        implied = runner.invoke(
+            app,
+            ["gsplat", "doctor", str(path), "--full-provenance", "--no-info"],
+        )
+        assert implied.exit_code == 1, implied.stdout
+        assert "psnr_db" in implied.stdout
+
+    help_result = runner.invoke(app, ["gsplat", "doctor", "--help"])
+    assert help_result.exit_code == 0, help_result.stdout
+    help_output = normalized_cli_output(help_result)
+    assert "--full-provenance" in help_output
+    assert "implies --info" in help_output
+
+
+def test_doctor_accepts_custom_info_histogram_bins() -> None:
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_without_split_planes(Path(tmp))
+
+        result = runner.invoke(
+            app,
+            ["gsplat", "doctor", str(path), "--histograms", "--bins", "17"],
+        )
+
+    assert result.exit_code == 1, result.stdout
+    assert "No such option" not in result.stderr
+
+    help_result = runner.invoke(app, ["gsplat", "doctor", "--help"])
+    assert help_result.exit_code == 0, help_result.stdout
+    help_output = normalized_cli_output(help_result)
+    assert "--bins" in help_output
+    assert "only applies with --histograms" in help_output
+
+
+def test_doctor_passes_every_info_report_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signature = inspect.signature(inspect_commands._info_report)
+    calls: list[inspect.BoundArguments] = []
+
+    def capture_info_call(*args: object, **kwargs: object) -> bool:
+        calls.append(signature.bind(*args, **kwargs))
+        return True
+
+    monkeypatch.setattr(inspect_commands, "_info_report", capture_info_call)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _partition_without_split_planes(Path(tmp))
+        result = CliRunner().invoke(
+            app,
+            ["gsplat", "doctor", str(path), "--histograms", "--bins", "17"],
+        )
+
+    assert result.exit_code == 1, result.stdout
+    assert len(calls) == 1
+    bound = calls[0]
+    assert set(bound.arguments) == set(signature.parameters)
+    assert not any(
+        isinstance(parameter.default, ParameterInfo)
+        for parameter in signature.parameters.values()
+    )
+    assert not any(
+        isinstance(value, ParameterInfo) for value in bound.arguments.values()
+    )
+    assert bound.arguments["show_histograms"] is True
+    assert bound.arguments["bins"] == 17
+    assert bound.arguments["full_provenance"] is False
 
 
 def test_doctor_writes_a_json_report() -> None:

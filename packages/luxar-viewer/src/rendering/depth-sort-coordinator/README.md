@@ -414,6 +414,16 @@ animationController.addPerFrameCallback('depth-sort-scheduler', () => {
 });
 ```
 
+### Commit-Time First Sort
+
+Eligible instanced nodes publish their first ordering synchronously inside the
+commit so the next frame does not wait for the SortWorker round trip.
+`depthSort.syncSortMaxElements` is both the per-node ceiling and the shared
+element budget between `evaluateDepthSortPerFrame()` calls; once spent, later
+commits keep the repaired prior ordering and use the normal async pipeline.
+Indexed Mesh nodes skip this path because they apply orderings through
+`geometry.index`, not `aSortedIndex`.
+
 ### Disposal
 
 ```typescript
@@ -459,5 +469,5 @@ The per-frame scheduler and render-order assignment do no per-element allocation
 - **`rendering/element-storage.ts`** — `writeSortedIndexOrdering` / `pumpSortedIndexOrderingApply` / chunked-apply machinery
 - **`rendering/blending-state.ts`** — `needsDepthSort(mode)` predicate
 - **`docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`** — Full depth-sorting specification (Phases 1-3)
-- **`config/sections/depth-sort/`** — `depthSort.enabled`, `depthSort.angleThresholdDeg`, `depthSort.translationFraction`, `depthSort.workerInitTimeoutMs`
+- **`config/sections/depth-sort/`** — `depthSort.enabled`, `depthSort.angleThresholdDeg`, `depthSort.translationFraction`, `depthSort.workerInitTimeoutMs`, `depthSort.syncSortMaxElements`
 - **`types/committed-data.ts`** — `hasCommittedData` / `clearCommittedData` (LOD demotion signal)

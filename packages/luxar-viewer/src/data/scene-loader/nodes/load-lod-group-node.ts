@@ -49,6 +49,7 @@
 
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
+import { archiveFaultFrom } from '../../../cache/chunk-source';
 import { log, Modules } from '../../../utils/log';
 import { loadGSplatsNodeCheap, loadGSplatsNodeExpensive } from './load-gsplats-node';
 import { loadPointsNodeCheap, loadPointsNodeExpensive } from './load-points-node';
@@ -60,7 +61,7 @@ import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-regi
 import type { LODGroupMetadata, LODGroupSelectorMode } from '../../../types/lod-group';
 import { supportsLod } from '../../../types/geometry-capabilities';
 import type { NodeBuildCtx } from './build-ctx';
-import type { LoadSceneChildren } from './load-children-concurrently';
+import { acquireEagerWorkingSet, type LoadSceneChildren } from './load-children-concurrently';
 
 /**
  * Default raw bounds for a malformed / missing ``position_bounds``
@@ -79,7 +80,10 @@ const EMPTY_BOUNDS: { min: readonly number[]; max: readonly number[] } = {
  * commit) and an optional ``releaseLoaded`` (return GPU buffers to the evictable
  * pool, and/or drop depth-sort state). Shared between the gsplats, points, lines
  * and mesh defer paths so the ready/failed/loading state machine and the
- * abort-discard error handling live in exactly one place.
+ * abort-discard error handling live in exactly one place. Container-wide
+ * archive faults latch every lazy child as permanently failed so each missing
+ * branch remains independently addressable after the owning loader stops
+ * automatic deferred kicks.
  *
  * **Lazy LEAF levels never join the per-slice update sweep.** ``runExpensive``
  * commits independently and the registry — not the sweep — drives their reload
@@ -105,6 +109,7 @@ function attachLazyChild(
   const positionBounds = readPositionBounds(child.attrs);
   const entryChild: LODGroupChild = {
     object: placeholder,
+    nodePath: child.path,
     coverageFraction,
     positionBounds,
     lodBounds: readLodBounds(child.attrs, child.path, positionBounds),
@@ -134,6 +139,14 @@ function attachLazyChild(
         entryChild.ready = true;
       } catch (error) {
         entryChild.failed = true;
+        const archiveFault = archiveFaultFrom(error);
+        if (archiveFault) {
+          entryChild.permanentlyFailed = true;
+          entryChild.failureReason = archiveFault.message;
+          entryChild.failedTick = undefined;
+          // A container fault makes the whole archive unreadable, not just this lazy level.
+          if (ctx.isDatasetLive()) ctx.reportArchiveFault(archiveFault);
+        }
         log.warning(
           Modules.SCENE_LOADER,
           `lod_group lazy level ${child.path} failed to load: ${String(error)}`
@@ -151,8 +164,10 @@ function attachLazyChild(
       timeLodStageSync('lazy:release', releaseLoaded);
       entryChild.ready = false;
       entryChild.loading = false;
-      entryChild.failed = false;
-      entryChild.failedTick = undefined;
+      if (!entryChild.permanentlyFailed) {
+        entryChild.failed = false;
+        entryChild.failedTick = undefined;
+      }
     };
   }
   return entryChild;
@@ -571,7 +586,12 @@ export async function loadLodGroupNode(
 
     // Eager path: load fully via the generic recursion (handles any
     // geometry type), then look up the attached THREE node by name.
-    await loadChildren(child, lodThreeGroup, childLoc, ctx);
+    const releaseWorkingSet = await acquireEagerWorkingSet(child, ctx);
+    try {
+      await loadChildren(child, lodThreeGroup, childLoc, ctx);
+    } finally {
+      releaseWorkingSet();
+    }
 
     const childObject = lodThreeGroup.getObjectByName(child.path);
     if (!childObject) {

@@ -4,7 +4,7 @@
  *
  * Asserts that:
  *   1. The expected output files exist (JS, CSS, types).
- *   2. The JS bundle exports the public symbols (LuxarApp,
+ *   2. The JS bundle exports the public symbols (LuxarApp, LuxarLayer,
  *      bootstrapStandalone, readUrlParams, StorageKeys).
  *   3. Importing the bundle does NOT monkey-patch the host console — the
  *      embedability contract from src/index.ts.
@@ -54,6 +54,7 @@ if (existsSync(jsPath)) {
     const mod = await import(pathToFileURL(jsPath).href);
     for (const sym of [
       'LuxarApp',
+      'LuxarLayer',
       'bootstrapStandalone',
       'readUrlParams',
       'StorageKeys',

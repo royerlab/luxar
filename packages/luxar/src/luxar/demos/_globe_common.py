@@ -849,6 +849,31 @@ def encode_texture(
     return payload, fmt, width, height, 4 if want_alpha else 3
 
 
+def _prepare_globe_texture(
+    image: np.ndarray, fmt: str, quality: int
+) -> Tuple[np.ndarray, str, int, int, int, dict[str, int]]:
+    if fmt.lower() == "ktx2":
+        payload = np.asarray(image)
+        if np.issubdtype(payload.dtype, np.floating):
+            payload = np.clip(payload * 255.0, 0, 255).astype(np.uint8)
+        elif payload.dtype != np.uint8:
+            payload = payload.astype(np.uint8)
+        height, width, channels = payload.shape
+        return (
+            payload,
+            "ktx2",
+            width,
+            height,
+            channels,
+            {"texture_ktx2_quality": quality},
+        )
+
+    payload, encoding, width, height, channels = encode_texture(
+        image, fmt=fmt, quality=quality, channels=3
+    )
+    return payload, encoding, width, height, channels, {}
+
+
 def add_textured_globe(
     scene: Any,
     name: str,
@@ -859,7 +884,7 @@ def add_textured_globe(
     n_lat: int = 256,
     tiles: int = 1,
     fmt: str = "webp",
-    quality: int = 90,
+    quality: Optional[int] = None,
     shading: str = "smooth",
     relief: Any = 0.0,
     **mesh_kwargs: Any,
@@ -883,7 +908,7 @@ def add_textured_globe(
     every part would either duplicate the whole texture or need a shared-atlas
     mechanism that does not exist.
 
-    Useful sizes:
+    Useful sizes for the default bitmap path:
 
     * ``tiles=1`` at 8192 — 6.0 MB (JPEG) / 4.3 MB (WebP), the comfortable default.
     * ``tiles=1`` at 16384 — 4x the pixels, 20.4 MB JPEG. Over WebP's limit.
@@ -893,9 +918,14 @@ def add_textured_globe(
     * ``tiles=4`` at 5400 each — the native 21600x10800 master, exactly.
 
     The cost is real and worth stating: every tile is a separate draw call and a
-    separate resident decoded surface, so ``tiles=4`` at native resolution holds
-    ~930 MB of texture across the four nodes. That is why this is a knob and not
-    the default.
+    separate resident decoded surface. That is why this is a knob and not the
+    default.
+
+    With opt-in KTX2 UASTC including mipmaps, the resident figures are about
+    43 MiB for one 8192x4096 tile, 171 MiB across two 8192x8192 tiles, and
+    297 MiB across four 5400x10800 tiles, versus 128, 512 and 890 MiB as RGBA8.
+    The 16384 per-axis device limit still applies; KTX2 removes CPU bitmap
+    expansion and cuts resident GPU bytes, not the geometric split.
 
     ## The seam
 
@@ -914,8 +944,10 @@ def add_textured_globe(
         n_lon: Total longitude divisions across the whole globe.
         n_lat: Latitude divisions.
         tiles: Number of longitude bands. 1 = a single node.
-        fmt: Texture codec (see :func:`encode_texture`).
-        quality: Codec quality.
+        fmt: Texture codec. ``ktx2`` passes RGB tiles to the mesh writer for
+            optional ``toktx`` authoring; other values use :func:`encode_texture`.
+        quality: Codec quality. ``None`` selects 2 for KTX2/UASTC and 90 for
+            bitmap codecs; explicit KTX2 values use the UASTC 0-4 scale.
         shading: ``smooth`` | ``flat`` | ``none``.
         relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
         **mesh_kwargs: Forwarded to ``add_mesh`` (blending_mode, opacity, ...).
@@ -939,6 +971,13 @@ def add_textured_globe(
     tile_src_w = src_w // tiles
     lon_per_tile = 360.0 / tiles
     relief_grid = np.asarray(relief, dtype=np.float32)
+    resolved_quality = (
+        2
+        if quality is None and fmt.lower() == "ktx2"
+        else 90
+        if quality is None
+        else quality
+    )
 
     # Displaced terrain needs TRUE surface normals, and they must be computed on
     # the WHOLE sphere before it is sliced. Computing them per band would leave
@@ -1010,8 +1049,8 @@ def add_textured_globe(
         else:
             right = src[:, c1 % src_w : (c1 % src_w) + 1]
             slice_rgb = np.concatenate([src[:, c0:c1], right], axis=1)
-        payload, encoding, tw, th, tc = encode_texture(
-            slice_rgb, fmt=fmt, quality=quality, channels=3
+        payload, encoding, tw, th, tc, texture_kwargs = _prepare_globe_texture(
+            slice_rgb, fmt, resolved_quality
         )
         target.add_mesh(
             f"part_{t}" if tiles > 1 else name,
@@ -1023,6 +1062,7 @@ def add_textured_globe(
             texture_width=tw,
             texture_height=th,
             texture_channels=tc,
+            **texture_kwargs,
             normals=normals,
             normal_dims=[0, 1, 2],
             shading=shading,
@@ -1297,7 +1337,7 @@ def build_earth(
     texture_width: int = 16384,
     tiles: int = 2,
     fmt: str = "webp",
-    quality: int = 90,
+    quality: Optional[int] = None,
     shading: str = "smooth",
     relief: Any = 0.0,
     basemap: Optional[np.ndarray] = None,
@@ -1334,8 +1374,10 @@ def build_earth(
         n_lat: Latitude divisions.
         texture_width: Basemap width to fetch; halved per axis into ``tiles``.
         tiles: Longitude bands, each its own node. See :func:`add_textured_globe`.
-        fmt: Basemap codec.
-        quality: Basemap codec quality.
+        fmt: Basemap codec; defaults to portable ``webp``. Select ``ktx2``
+            explicitly for GPU-compressed UASTC authoring.
+        quality: Basemap codec quality; defaults to 90 for bitmap codecs and
+            UASTC level 2 for KTX2.
         shading: ``smooth`` | ``flat`` | ``none``.
         relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
         basemap: Supply the RGB array directly instead of fetching it — for a demo

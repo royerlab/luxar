@@ -24,13 +24,14 @@ scripts/
 | `check_open_issue_pr.py` | Report whether an open PR already claims an issue (advisory, run by hand); inventory unique/shared paths before closing a duplicate |
 | `ci_queue_scan.py` | Classify obsidian-labelled Actions jobs and perform bounded repository run scans for CI routing/watchdog policy |
 | `check_fixture_env.py` | Assert the viewer-fixture Hatch environment is CPU-only and free of default-env tooling |
-| `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
-| `set_version.py` | Update the Python and viewer release versions together |
+| `check_version_consistency.py` | Verify the Python, viewer, and citation metadata describe the same release |
+| `set_version.py` | Update the Python, viewer, and citation release versions together |
 | `release.sh` | Run release preflight checks, then create and push the release tag |
 | `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
 | `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
 | `gen_zenodo_records.py` | Generate Zenodo record descriptions from the manifest and committed `demo_archive_characteristics.json`; `--refresh` updates the measurements and `--check` lists incomplete rows (never contacts Zenodo) |
 | `zenodo_migration_audit.py` | Audit migration readiness offline by default; `--live` with `ZENODO_TOKEN` also compares manifest pins with Zenodo depositions, and `make check-zenodo-live` is the lean report-only entry point |
+| `verify_cold_fetch.py` | Cold-fetch every hosted demo dataset with the cache and in-repo payload hidden; `make check-cold-fetch` is the opt-in pre-removal gate |
 | `run_external_reference_audits.py` | Run the documentation, demo click-through, and live Zenodo-pin audits independently; normalize them to PASS/NOTICE/WARNING/ERROR and write a non-gating GitHub job summary |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
@@ -44,7 +45,7 @@ scripts/
 | `benchmark_progressive_psnr.py` | Benchmark progressive gsplat fitting (PSNR/SSIM) |
 | `refit_gsplat_demos.sh` | Force-refit every gsplat demo (sequential) |
 | `run_demo_recompute.sh` | Sequential demo recompute from scratch |
-| `run_examples.py` | Regenerate `datasets/examples/` when the example builders or Luxar writer changed; `--check` is the E2E freshness gate |
+| `run_examples.py` | Regenerate only the `datasets/examples/` producers whose source or statically imported Python modules changed, or whose recorded outputs are missing; dynamic imports, non-Python inputs, and `pyproject.toml` are not fingerprinted, so use `--force` after those change; `--check` is the E2E freshness gate |
 
 ## Demo Ladder Structural Gate
 

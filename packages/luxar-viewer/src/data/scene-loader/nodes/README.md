@@ -43,6 +43,27 @@ construction, slice updates, and retry-after-failure.
   child is in flight. Completion relinks each slot's children into the same
   authored position without THREE add/remove events, leaving the final hierarchy
   identical to the serial walk and preserving lifecycle-based renderer tracking.
+- **Memory-aware eager admission.** The eight-wide slot pool remains the latency
+  bound for small siblings. Line leaves additionally reserve a conservative
+  working-set estimate against a budget resolved like the cache pool itself —
+  the explicit `?cacheBudgetMB=` override, then the measured heap, then the
+  device class, then a fixed 256 MiB fallback — taking half of the
+  corresponding non-cache remainder, capped at 512 MiB. So a WebKit session
+  (no `performance.memory`) that configures a pool gets that pool's line budget
+  instead of the fixed fallback. The gate is owned by the `SceneLoader` session
+  and shared by every `NodeBuildCtx` plus registered line retries, so nested
+  parent pools and recovery attempts cannot multiply several million-vertex
+  decode, projection, staging, and texture allocations. A small waiter may pass a large
+  one that does not fit yet, while an oversized head still progresses when the
+  gate empties. The conservative estimate uses authored whole-node totals, so it
+  overstates spatial-index partial slices and progressive ladders, and includes
+  resident line texture/index bytes as a total-heap proxy even though the
+  renderer's GPU budget also accounts for them. Admission covers eager pool
+  siblings, partition parts, eager LOD rungs, and registered line retries;
+  deferred lazy LOD activation remains outside this gate. Retry batches also
+  use the same eight-slot cap as eager sibling loads. Points, gsplats, mesh, and
+  groups reserve no bytes: their eager concurrency remains slot-only until
+  equivalent working-set models are validated.
 - **Three-geometry symmetry.** `load-points-node.ts`,
   `load-lines-node.ts`, and `load-gsplats-node.ts` follow the same
   shape: `createXLoader` helper →

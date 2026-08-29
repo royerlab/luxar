@@ -37,6 +37,10 @@ import type {
 } from '../../../../../data/data-loader-types';
 import type { LinesDataLoader, LoadedLinesData } from '../../../../../types/lines';
 import type { GSplatsDataLoader, LoadedGSplatsData } from '../../../../../types/gsplats';
+import {
+  createLineWorkingSetGate,
+  EAGER_CHILD_LOAD_CONCURRENCY,
+} from '../../../../../data/scene-loader/nodes/load-children-concurrently';
 
 // ============================================================================
 // Local fixtures — flat ctx-stubbing per the data/scene-loader test pattern.
@@ -56,7 +60,7 @@ function makeViewState(): ViewState {
  * helper's `rootGroup.getObjectByName(path)` lookups exercise real
  * scene-graph traversal rather than a mocked getter.
  */
-function makeRootGroupWith(path: string, attrs?: { extend_to_all?: string[] }): THREE.Group {
+function makeRootGroupWith(path: string, attrs?: Record<string, unknown>): THREE.Group {
   const root = new THREE.Group();
   root.name = 'LuxarScene';
   const mesh = new THREE.Mesh();
@@ -100,6 +104,7 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
 
   const ctx: RetryCtx = {
     registry: new LoaderRegistry(),
+    lineWorkingSetGate: createLineWorkingSetGate(undefined, undefined),
     rootGroup: null,
     deriveNodeViewState,
     processPointsData,
@@ -197,6 +202,13 @@ describe('retryFailedLoaderUnlocked — Points loader success path', () => {
 });
 
 describe('retryFailedLoaderUnlocked — Lines loader paths', () => {
+  const oversizedLineAttrs = {
+    type: 'lines',
+    n_vertices: 1_600_000,
+    n_segments: 1_600_000,
+    ndim: 3,
+  };
+
   it('runs process → commit on a successful fetch', async () => {
     const linesData = { segmentCount: 4 } as unknown as LoadedLinesData;
     const stagedFromProcess = { path: PATH } as never;
@@ -236,6 +248,71 @@ describe('retryFailedLoaderUnlocked — Lines loader paths', () => {
     expect(ctx.spies.processLinesData).toHaveBeenCalledTimes(1);
     expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
+  });
+
+  it('waits for shared line working-set admission before a single retry', async () => {
+    let settleRetry!: (data: LoadedLinesData) => void;
+    const updateView = vi.fn(
+      () =>
+        new Promise<LoadedLinesData>((resolve) => {
+          settleRetry = resolve;
+        })
+    );
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH, oversizedLineAttrs),
+    });
+    ctx.registry.registerLinesLoader(PATH, makeLinesLoader(updateView));
+    ctx.registry.recordFailure(PATH, new Error('allocation failed'));
+
+    const releaseEagerAdmission = await ctx.lineWorkingSetGate.acquire({
+      path: '/eager-line',
+      type: 'lines',
+      attrs: oversizedLineAttrs,
+    });
+    const retry = retryFailedLoaderUnlocked(PATH, ctx);
+
+    await Promise.resolve();
+    expect(updateView).not.toHaveBeenCalled();
+
+    releaseEagerAdmission();
+    await vi.waitFor(() => expect(updateView).toHaveBeenCalledTimes(1));
+    settleRetry({ segmentCount: 0 } as unknown as LoadedLinesData);
+    await expect(retry).resolves.toBe(true);
+  });
+
+  it('releases line working-set admission when a retry fails', async () => {
+    const failingPath = '/line-failing';
+    const nextPath = '/line-next';
+    const root = new THREE.Group();
+    for (const path of [failingPath, nextPath]) {
+      const mesh = new THREE.Mesh();
+      mesh.name = path;
+      mesh.userData.attrs = oversizedLineAttrs;
+      root.add(mesh);
+    }
+
+    let settleNext!: (data: LoadedLinesData) => void;
+    const nextUpdateView = vi.fn(
+      () =>
+        new Promise<LoadedLinesData>((resolve) => {
+          settleNext = resolve;
+        })
+    );
+    const ctx = makeRetryCtx({ rootGroup: root });
+    ctx.registry.registerLinesLoader(
+      failingPath,
+      makeLinesLoader(vi.fn().mockRejectedValue(new Error('still cannot allocate')))
+    );
+    ctx.registry.registerLinesLoader(nextPath, makeLinesLoader(nextUpdateView));
+    ctx.registry.recordFailure(failingPath, new Error('allocation failed'));
+    ctx.registry.recordFailure(nextPath, new Error('allocation failed'));
+
+    await expect(retryFailedLoaderUnlocked(failingPath, ctx)).resolves.toBe(false);
+    const nextRetry = retryFailedLoaderUnlocked(nextPath, ctx);
+
+    await vi.waitFor(() => expect(nextUpdateView).toHaveBeenCalledTimes(1));
+    settleNext({ segmentCount: 0 } as unknown as LoadedLinesData);
+    await expect(nextRetry).resolves.toBe(true);
   });
 });
 
@@ -358,17 +435,20 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
   // Lazy substitutive levels never join the sweep maps but DO record
   // failures; previously the no-loader branch silently discarded them.
   it('kicks the lazy child via the LOD registry, keeps the record, returns true', async () => {
-    const retryLazyChildByLeafPath = vi.fn().mockReturnValue(true);
+    const retryLazyChildByNodePath = vi.fn().mockReturnValue(true);
+    const clearArchiveFault = vi.fn();
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
-      lodGroupRegistry: { retryLazyChildByLeafPath } as never,
+      lodGroupRegistry: { retryLazyChildByNodePath } as never,
+      clearArchiveFault,
     });
     ctx.registry.recordFailure(PATH, new Error('lazy load failed'));
 
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(true);
-    expect(retryLazyChildByLeafPath).toHaveBeenCalledWith(PATH);
+    expect(retryLazyChildByNodePath).toHaveBeenCalledWith(PATH);
+    expect(clearArchiveFault).toHaveBeenCalledOnce();
     // The record is KEPT across the kick — the fire-and-forget thunk owns the
     // outcome (success clears it; a repeat failure re-records). Deleting it
     // here reset autoRetryCount, so MAX_AUTO_RETRY_ATTEMPTS never bound a
@@ -377,10 +457,10 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
   });
 
   it('preserves autoRetryCount across a lazy kick so the auto-retry budget binds', async () => {
-    const retryLazyChildByLeafPath = vi.fn().mockReturnValue(true);
+    const retryLazyChildByNodePath = vi.fn().mockReturnValue(true);
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
-      lodGroupRegistry: { retryLazyChildByLeafPath } as never,
+      lodGroupRegistry: { retryLazyChildByNodePath } as never,
     });
     // A network failure that has already burned two automatic attempts.
     ctx.registry.recordFailure(PATH, new Error('lazy 404'), 'Network');
@@ -400,16 +480,19 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
   });
 
   it('falls through to the stale-entry cleanup when the registry has no lazy child', async () => {
-    const retryLazyChildByLeafPath = vi.fn().mockReturnValue(false);
+    const retryLazyChildByNodePath = vi.fn().mockReturnValue(false);
+    const clearArchiveFault = vi.fn();
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
-      lodGroupRegistry: { retryLazyChildByLeafPath } as never,
+      lodGroupRegistry: { retryLazyChildByNodePath } as never,
+      clearArchiveFault,
     });
     ctx.registry.recordFailure(PATH, new Error('orphaned failure'));
 
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(false);
+    expect(clearArchiveFault).not.toHaveBeenCalled();
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false); // stale entry cleaned
   });
 
@@ -485,10 +568,10 @@ describe('retryAllFailedLoadersUnlocked — partition', () => {
     expect(ctx.registry.failedLoaders.has('/c')).toBe(false);
   });
 
-  it('starts every retry before any settles (Promise.all parallelism)', async () => {
-    // Each retry's updateView resolves AFTER the next microtask, so if the
-    // retries were sequential we'd see them start one-at-a-time. We assert
-    // all three are entered before any resolves by recording call order.
+  it('starts every retry in a sub-cap batch before any settles', async () => {
+    // This three-path batch is deliberately below EAGER_CHILD_LOAD_CONCURRENCY.
+    // Each updateView resolves after the next microtask, so record call order
+    // to assert every admitted retry enters before any resolves.
     const callOrder: string[] = [];
     const makeSlowLoader = (p: string) =>
       makePointsLoader(async () => {
@@ -520,5 +603,86 @@ describe('retryAllFailedLoadersUnlocked — partition', () => {
     const firstResolveIdx = callOrder.findIndex((s) => s.startsWith('resolve:'));
     expect(firstResolveIdx).toBe(3);
     expect(callOrder.slice(0, 3).sort()).toEqual(['enter:/x', 'enter:/y', 'enter:/z']);
+  });
+
+  it('caps retry fan-out at the eager child concurrency', async () => {
+    const paths = Array.from({ length: EAGER_CHILD_LOAD_CONCURRENCY + 1 }, (_, i) => `/p-${i}`);
+    const root = new THREE.Group();
+    const started: string[] = [];
+    const settle: Array<() => void> = [];
+    const ctx = makeRetryCtx({ rootGroup: root });
+
+    for (const path of paths) {
+      const mesh = new THREE.Mesh();
+      mesh.name = path;
+      root.add(mesh);
+      ctx.registry.registerPointsLoader(
+        path,
+        makePointsLoader(
+          () =>
+            new Promise((resolve) => {
+              started.push(path);
+              settle.push(() => resolve({ pointCount: 0 } as unknown as LoadedPointsData));
+            })
+        )
+      );
+      ctx.registry.recordFailure(path, new Error('offline'));
+    }
+
+    const retry = retryAllFailedLoadersUnlocked(paths, ctx);
+    await vi.waitFor(() => expect(started).toHaveLength(EAGER_CHILD_LOAD_CONCURRENCY));
+    expect(started).toEqual(paths.slice(0, EAGER_CHILD_LOAD_CONCURRENCY));
+
+    settle.shift()!();
+    await vi.waitFor(() => expect(started).toEqual(paths));
+    for (const resolve of settle.splice(0)) resolve();
+
+    await expect(retry).resolves.toEqual({ succeeded: paths, failed: [] });
+  });
+
+  it('serializes oversized line retries and releases admission after the batch', async () => {
+    const paths = ['/line-a', '/line-b', '/line-c'];
+    const root = new THREE.Group();
+    const started: string[] = [];
+    const settle: Array<() => void> = [];
+    const ctx = makeRetryCtx({ rootGroup: root });
+
+    for (const path of paths) {
+      const mesh = new THREE.Mesh();
+      mesh.name = path;
+      mesh.userData.attrs = {
+        type: 'lines',
+        n_vertices: 1_600_000,
+        n_segments: 1_600_000,
+        ndim: 3,
+      };
+      root.add(mesh);
+      ctx.registry.registerLinesLoader(
+        path,
+        makeLinesLoader(
+          () =>
+            new Promise((resolve) => {
+              started.push(path);
+              settle.push(() => resolve({} as LoadedLinesData));
+            })
+        )
+      );
+    }
+
+    ctx.registry.recordFailure(paths[0], new Error('allocation failed'));
+    ctx.registry.recordFailure(paths[1], new Error('allocation failed'));
+    const firstBatch = retryAllFailedLoadersUnlocked(paths.slice(0, 2), ctx);
+
+    await vi.waitFor(() => expect(started).toEqual([paths[0]]));
+    settle.shift()!();
+    await vi.waitFor(() => expect(started).toEqual(paths.slice(0, 2)));
+    settle.shift()!();
+    await expect(firstBatch).resolves.toEqual({ succeeded: paths.slice(0, 2), failed: [] });
+
+    ctx.registry.recordFailure(paths[2], new Error('allocation failed'));
+    const secondBatch = retryAllFailedLoadersUnlocked([paths[2]], ctx);
+    await vi.waitFor(() => expect(started).toEqual(paths));
+    settle.shift()!();
+    await expect(secondBatch).resolves.toEqual({ succeeded: [paths[2]], failed: [] });
   });
 });

@@ -36,6 +36,11 @@ const MB = 1024 * 1024;
  * accumulators (which are uncapped and transient).
  */
 const CACHE_SHARE_OF_TARGET = 0.6;
+const NON_CACHE_SHARE_OF_TARGET = 1 - CACHE_SHARE_OF_TARGET;
+const EAGER_WORKING_SET_SHARE_OF_REMAINDER = 0.5;
+const EAGER_WORKING_SET_CAP_BYTES = 512 * MB;
+/** Historical line-admission fallback when no session memory signal exists. */
+const EAGER_WORKING_SET_FIXED_FALLBACK_BYTES = 256 * MB;
 
 /** Hard ceiling on the S-cache so a huge heap can't pin an absurd budget. */
 const SLICE_CAP_BYTES = 2048 * MB;
@@ -69,6 +74,17 @@ const DEVICE_CLASS_POOL_BYTES = {
  * desktop app, so a misclassification is low-consequence.
  */
 const DESKTOP_CORE_THRESHOLD = 12;
+
+function positive(value: number | undefined): value is number {
+  return value != null && Number.isFinite(value) && value > 0;
+}
+
+/** Convert a positive cache-pool override from MiB to bytes. */
+export function cachePoolOverrideBytes(
+  cacheBudgetMB: number | null | undefined
+): number | undefined {
+  return cacheBudgetMB != null && cacheBudgetMB > 0 ? cacheBudgetMB * MB : undefined;
+}
 
 /** Device signals used by {@link inferDeviceClass} (injectable for tests). */
 export interface DeviceSignals {
@@ -151,6 +167,55 @@ export function readHeapLimitBytes(): number | undefined {
 }
 
 /**
+ * The eager child loader's share of the heap headroom left outside the cache
+ * pool. Half of that shared remainder stays available for render, WASM,
+ * prefetch, and unrelated scene-graph work, while the absolute cap prevents a
+ * large V8 heap limit from recreating an eight-wide allocation spike.
+ *
+ * Resolution matches the cache pool: explicit pool override → measured heap →
+ * device-class pool → fixed fallback. Pool-based inputs are converted back to
+ * their corresponding non-cache share so a WebKit session uses one coherent
+ * memory model for caches and eager line loading.
+ *
+ * @param heapLimitBytes - Override for the device heap limit (tests). When
+ *   omitted, {@link readHeapLimitBytes} is consulted; invalid explicit values
+ *   skip the heap path without probing browser state.
+ * @param poolOverrideBytes - Explicit total cache pool in bytes. Takes
+ *   precedence over the heap-derived budget.
+ * @param fallbackPoolBytes - Device-class total cache pool in bytes, used only
+ *   when neither an explicit pool nor a measurable heap is available.
+ */
+export function computeWorkingSetBudgetBytes(
+  heapLimitBytes?: number,
+  poolOverrideBytes?: number,
+  fallbackPoolBytes?: number
+): number {
+  const budgetFromCachePool = (poolBytes: number): number =>
+    poolBytes *
+    (NON_CACHE_SHARE_OF_TARGET / CACHE_SHARE_OF_TARGET) *
+    EAGER_WORKING_SET_SHARE_OF_REMAINDER;
+
+  let budgetBytes: number;
+  if (positive(poolOverrideBytes)) {
+    budgetBytes = budgetFromCachePool(poolOverrideBytes);
+  } else {
+    const heap = heapLimitBytes === undefined ? readHeapLimitBytes() : heapLimitBytes;
+    if (positive(heap)) {
+      budgetBytes =
+        heap *
+        config.dataLoading.memory.targetHeapUsage *
+        NON_CACHE_SHARE_OF_TARGET *
+        EAGER_WORKING_SET_SHARE_OF_REMAINDER;
+    } else if (positive(fallbackPoolBytes)) {
+      budgetBytes = budgetFromCachePool(fallbackPoolBytes);
+    } else {
+      return EAGER_WORKING_SET_FIXED_FALLBACK_BYTES;
+    }
+  }
+  return Math.floor(Math.min(budgetBytes, EAGER_WORKING_SET_CAP_BYTES));
+}
+
+/**
  * Compute two-sided, heap-aware budgets for the L0 / L1 / S-cache tiers.
  *
  * Allocation (when the heap is known):
@@ -199,8 +264,6 @@ export function computeCacheBudgets(
   const l0Ceil = l0On ? config.cache.l0MaxSizeMB * MB : 0;
   const l1Ceil = l1On ? config.cache.l1MaxSizeMB * MB : 0;
   const sliceConfig = config.cache.sliceCacheMaxSizeMB * MB;
-
-  const positive = (v: number | undefined): v is number => v != null && Number.isFinite(v) && v > 0;
 
   // Determine the total cache pool: an explicit override wins; else derive it
   // from the measured heap; else a device-class fallback; else fixed config.

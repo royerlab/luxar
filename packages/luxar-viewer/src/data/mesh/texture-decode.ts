@@ -8,7 +8,7 @@
  * of the loader's `nVertices`-shaped machinery and every one of its steps is
  * conditional on an encoding the other arrays do not have.
  *
- * ## Two arms, and why they cannot share a decode
+ * ## Three arms, and why they cannot share a decode
  *
  * `raw` is a numeric `(h, w, c)` array, so it goes through the normal Luxar
  * decode stack — which matters, because the raw arm is the one that carries HDR
@@ -19,6 +19,10 @@
  * A codec arm (`png` / `webp` / `jpeg`) is an opaque blob no Luxar encoder
  * touches, decoded by the browser via `createImageBitmap` — the same mechanism
  * `loaders/picking/image-label-loader.ts` already uses for hover thumbnails.
+ *
+ * The `ktx2` arm is also an opaque blob, but it must bypass browser image decode:
+ * the renderer-owned KTX2 decoder transcodes it directly to a native compressed
+ * GPU texture while preserving the authored mip chain.
  *
  * ## Stage 2 exists because Stage 1 cannot finish the job
  *
@@ -38,7 +42,12 @@ import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
 import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import { validateMaterializedLength } from './validate';
 import type { TextureDeclaration } from './preflight';
-import type { MeshColorArray, MeshTextureData, MeshTextureEncoding } from '../../types/mesh';
+import type {
+  KTX2TextureDecoder,
+  MeshColorArray,
+  MeshTextureData,
+  MeshTextureEncoding,
+} from '../../types/mesh';
 
 /**
  * MIME type per codec encoding, taken from the DECLARED encoding rather than
@@ -55,6 +64,7 @@ const CODEC_MIME: Record<MeshTextureEncoding, string | null> = {
   png: 'image/png',
   webp: 'image/webp',
   jpeg: 'image/jpeg',
+  ktx2: null,
 };
 
 /**
@@ -99,11 +109,12 @@ export async function decodeMeshTexture(
   declared: TextureDeclaration,
   decoder: ArrayDecoder,
   storeRoot: zarr.Location<zarr.Readable>,
+  decodeKTX2?: KTX2TextureDecoder,
   signal?: AbortSignal
 ): Promise<MeshTextureData> {
   const { width, height, channels } = declared;
 
-  if (declared.decode === 'codec') {
+  if (declared.decode === 'codec' || declared.decode === 'ktx2') {
     const raw = await zarr.readArray(handle, undefined, zarr.abortOptions(signal));
     const bytes = asNativeTexels(raw.data as ArrayBufferView);
     if (!(bytes instanceof Uint8Array)) {
@@ -117,15 +128,56 @@ export async function decodeMeshTexture(
         )
       );
     }
+    if (declared.decode === 'ktx2') {
+      if (!decodeKTX2) {
+        throw new LoaderError(
+          'Validation',
+          path,
+          new Error(
+            "texture encoding 'ktx2' has no renderer-owned decoder configured. " +
+              "Initialize the viewer renderer before loading the scene, or use 'raw' or " +
+              "'jpeg' for a portable texture."
+          )
+        );
+      }
+      let texture: import('three').CompressedTexture;
+      try {
+        texture = await decodeKTX2(path, new Uint8Array(bytes));
+      } catch (error) {
+        throw new LoaderError(
+          'Validation',
+          path,
+          new Error(
+            `texture failed to decode as ktx2 (${bytes.length.toLocaleString()} bytes). ` +
+              `${error instanceof Error ? error.message : String(error)}`
+          )
+        );
+      }
+      const image = texture.image as { width?: number; height?: number } | undefined;
+      if (image?.width !== width || image?.height !== height) {
+        texture.dispose();
+        throw new LoaderError(
+          'Validation',
+          path,
+          new Error(
+            `texture decoded to ${image?.width ?? '?'}x${image?.height ?? '?'} but declares ` +
+              `${width}x${height}; refusing a declaration that would invalidate the preflight budget.`
+          )
+        );
+      }
+      return { kind: 'compressed', texture, width, height, channels: channels as 3 | 4 };
+    }
+
     // A fresh copy so the Blob owns a plain ArrayBuffer, exactly as
     // `image-label-loader.ts` does — a typed-array view over a larger buffer
     // would hand the decoder the wrong bytes.
-    // Keyed over EVERY encoding, `raw` included and mapped to null, so adding a
-    // fifth to the contract is a compile error here rather than an `undefined`
-    // MIME the browser silently sniffs around. The null case is unreachable —
-    // `decode === 'codec'` excludes `raw` by construction — but is checked
-    // rather than asserted, since the two tables agreeing is an invariant across
-    // two files and nothing else enforces it.
+    // Keyed over EVERY encoding, with `raw` and `ktx2` mapped to null, so adding
+    // a new encoding to the contract is a compile error here rather than an
+    // `undefined` MIME the browser silently sniffs around. The null case is
+    // unreachable — `raw` is excluded by `decode === 'codec'`, while `ktx2`
+    // returns through the renderer-owned decoder above — but is checked rather
+    // than asserted, since the two tables agreeing is an invariant across two
+    // files and nothing else enforces it.
     const mime = CODEC_MIME[declared.encoding];
     if (mime === null) {
       throw new LoaderError(

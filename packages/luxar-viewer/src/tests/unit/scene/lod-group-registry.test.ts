@@ -466,7 +466,8 @@ function makeRegistry(
   getResidentBytes?: () => number,
   getViewVersion?: () => number,
   requestRender?: () => void,
-  now?: () => number
+  now?: () => number,
+  hasArchiveFault?: () => boolean
 ) {
   const camera = new THREE.Camera();
   camera.matrixWorldInverse.identity();
@@ -478,6 +479,7 @@ function makeRegistry(
     ...(getViewVersion != null ? { getViewVersion } : {}),
     ...(requestRender != null ? { requestRender } : {}),
     ...(now != null ? { now } : {}),
+    ...(hasArchiveFault != null ? { hasArchiveFault } : {}),
     ...(residentByteBudget != null
       ? {
           getResidentByteBudget: () => residentByteBudget,
@@ -1682,6 +1684,47 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(children[1].failed).not.toBe(true);
   });
 
+  it('pauses automatic lazy loads during an archive fault and resumes on the next frame', () => {
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    children[1].nodePath = '/g/child_1';
+    let hasArchiveFault = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => hasArchiveFault
+    );
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).not.toHaveBeenCalled();
+
+    hasArchiveFault = false;
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not auto-retry a permanently failed child after the loader fault clears', () => {
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    children[1].failed = true;
+    children[1].permanentlyFailed = true;
+    const reg = makeRegistry();
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    for (let i = 0; i < 300; i++) reg.evaluatePerFrame();
+
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    expect(children[1].failed).toBe(true);
+    expect(children[1].failedTick).toBeUndefined();
+  });
+
   it('clear() resets the monotonic tick', () => {
     const reg = makeRegistry();
     reg.register(makeEntry([makeChild(0), makeChild(0.5)], 0, '/g'));
@@ -1801,18 +1844,18 @@ describe('LODGroupRegistry — hidden-layer load gate', () => {
   });
 
   it('still honours an explicit retry of a failed level under a hidden layer', () => {
-    // retryLazyChildByLeafPath is a user-driven action (the error toast's retry)
+    // retryLazyChildByNodePath is a user-driven action (the error toast's retry)
     // and deliberately bypasses the visibility gate.
     const reg = makeRegistry();
     const ensureLoaded = vi.fn();
     const child = makeLazyChild(0.5, ensureLoaded);
-    child.object.name = '/g/level1';
+    child.nodePath = '/g/level1';
     child.failed = true;
     const entry = makeEntry([makeChild(0), child], 0, '/g');
     withLayerParent(entry, false);
     reg.register(entry);
 
-    expect(reg.retryLazyChildByLeafPath('/g/level1')).toBe(true);
+    expect(reg.retryLazyChildByNodePath('/g/level1')).toBe(true);
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
   });
 });
@@ -2015,17 +2058,17 @@ function makeCountedChild(
   return child;
 }
 
-describe('LODGroupRegistry — retryLazyChildByLeafPath', () => {
+describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
   it('clears the failure cooldown and re-kicks ensureLoaded for a named lazy leaf', () => {
     const reg = makeRegistry();
     const ensureLoaded = vi.fn();
     const child = makeLazyChild(0.5, ensureLoaded);
-    child.object.name = '/g/child_1'; // leaf lazy placeholders carry the leaf path
+    child.nodePath = '/g/child_1';
     child.failed = true;
     child.failedTick = 42;
     reg.register(makeEntry([makeChild(0), child], 0, '/g'));
 
-    expect(reg.retryLazyChildByLeafPath('/g/child_1')).toBe(true);
+    expect(reg.retryLazyChildByNodePath('/g/child_1')).toBe(true);
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
     expect(child.failed).toBe(false);
     expect(child.failedTick).toBeUndefined();
@@ -2037,22 +2080,56 @@ describe('LODGroupRegistry — retryLazyChildByLeafPath', () => {
     const reg = makeRegistry();
     const ensureLoaded = vi.fn();
     const child = makeLazyChild(0.5, ensureLoaded);
-    child.object.name = '/g/child_1';
+    child.nodePath = '/g/child_1';
     child.loading = true;
     reg.register(makeEntry([makeChild(0), child], 0, '/g'));
 
-    expect(reg.retryLazyChildByLeafPath('/g/child_1')).toBe(true);
+    expect(reg.retryLazyChildByNodePath('/g/child_1')).toBe(true);
     expect(ensureLoaded).not.toHaveBeenCalled();
   });
 
-  it('returns false for unknown paths and for anonymous deferred-group placeholders', () => {
+  it('clears a permanent failure latch for an explicit retry', () => {
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => true
+    );
+    const ensureLoaded = vi.fn();
+    const child = makeLazyChild(0.5, ensureLoaded);
+    child.nodePath = '/g/child_1';
+    child.failed = true;
+    child.failedTick = 42;
+    child.permanentlyFailed = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+
+    expect(reg.retryLazyChildByNodePath('/g/child_1')).toBe(true);
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+    expect(child.failed).toBe(false);
+    expect(child.failedTick).toBeUndefined();
+    expect(child.permanentlyFailed).toBe(false);
+    expect(child.loading).toBe(true);
+  });
+
+  it('retries an anonymous deferred-group placeholder by its authored node path', () => {
     const reg = makeRegistry();
-    // Deferred-GROUP lazy child: anonymous placeholder (no name, by design).
-    const groupChild = makeLazyChild(0.5, vi.fn());
+    const ensureLoaded = vi.fn();
+    const groupChild = makeLazyChild(0.5, ensureLoaded);
+    groupChild.nodePath = '/g/nested';
+    groupChild.failed = true;
+    groupChild.permanentlyFailed = true;
     reg.register(makeEntry([makeChild(0), groupChild], 0, '/g'));
 
-    expect(reg.retryLazyChildByLeafPath('/nope')).toBe(false);
-    expect(reg.retryLazyChildByLeafPath('')).toBe(false); // unnamed never matches
+    expect(groupChild.object.name).toBe('');
+    expect(reg.retryLazyChildByNodePath('/g/nested')).toBe(true);
+    expect(ensureLoaded).toHaveBeenCalledOnce();
+    expect(groupChild.permanentlyFailed).toBe(false);
+    expect(reg.getFailedLazyChildPaths()).toEqual([]);
+    expect(reg.retryLazyChildByNodePath('/nope')).toBe(false);
+    expect(reg.retryLazyChildByNodePath('')).toBe(false);
   });
 
   it('eager children (no ensureLoaded) never match even when named', () => {
@@ -2060,7 +2137,7 @@ describe('LODGroupRegistry — retryLazyChildByLeafPath', () => {
     const eager = makeChild(0);
     eager.object.name = '/g/child_0';
     reg.register(makeEntry([eager], 0, '/g'));
-    expect(reg.retryLazyChildByLeafPath('/g/child_0')).toBe(false);
+    expect(reg.retryLazyChildByNodePath('/g/child_0')).toBe(false);
   });
 });
 
@@ -3763,6 +3840,36 @@ describe('LODGroupRegistry — capture quiescence (isCaptureQuiescent)', () => {
     // Control — the exclusion is what makes it quiescent, not the entry being
     // vacuously settled: the same entry visible blocks on the pending level.
     layer.visible = true;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
+  it('treats an archive-faulted scene as settled until automatic loading resumes', () => {
+    let hasArchiveFault = true;
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => hasArchiveFault
+    );
+    const children = [makeChild(0), makeLazyChild(0.5, () => {})];
+    const entry = makeEntry(children, 0, '/g');
+    reg.register(entry);
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    reg.evaluatePerFrame();
+    expect(entry.desiredChildIndex).toBe(1);
+    expect(entry.activeChildIndex).toBe(0);
+    expect(children[1].loading).toBeFalsy();
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    children[1].loading = true;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+
+    children[1].loading = false;
+    hasArchiveFault = false;
     expect(reg.isCaptureQuiescent()).toBe(false);
   });
 

@@ -26,6 +26,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_ALLOWED_CONSOLE_ERRORS,
+  staleExampleDatasetFailureWarning,
   unexpectedConsoleErrors,
   type CapturedConsoleError,
 } from '../../e2e/fixtures';
@@ -39,6 +40,22 @@ function consoleError(text: string): CapturedConsoleError {
 function pageError(text: string): CapturedConsoleError {
   return { kind: 'pageerror', text };
 }
+
+describe('staleExampleDatasetFailureWarning', () => {
+  it.each(['failed', 'timedOut'] as const)(
+    'adds an actionable reminder to a %s spec when examples are stale',
+    (status) => {
+      expect(staleExampleDatasetFailureWarning(status, true)).toBe(
+        'Example datasets are stale. If this spec reads datasets/examples, run "make run-examples" from the repository root.'
+      );
+    }
+  );
+
+  it('stays silent for passing specs and current examples', () => {
+    expect(staleExampleDatasetFailureWarning('passed', true)).toBeUndefined();
+    expect(staleExampleDatasetFailureWarning('failed', false)).toBeUndefined();
+  });
+});
 
 describe('unexpectedConsoleErrors', () => {
   it('drops an entry an allow pattern matches', () => {

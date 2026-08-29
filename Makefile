@@ -9,7 +9,7 @@
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures ensure-viewer-fixtures test-wasm test-viewer test-viewer-fixtures \
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
-        check-all check-typescript check-rust check-knip check-gallery-staleness check-wasm-deps setup-dev \
+        check-all check-cold-fetch check-typescript check-rust check-knip check-gallery-staleness check-wasm-deps setup-dev \
         check-docs check-docs-verbose check-docs-external-links check-demo-links check-zenodo-live check-external-references clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
@@ -888,6 +888,10 @@ check-docs-external-links:  ## Opt-in external HTTP link audit (not a required C
 check-demo-links:  ## Opt-in demo click-through audit (reports only; never a CI gate)
 	$(HATCH) run python scripts/check_demo_links.py
 
+check-cold-fetch:  ## Verify hosted demo datasets fetch from nothing and match their pins (opt-in)
+	@echo "$(BLUE)❄️  Cold-fetch verification (no cache, no in-repo copy)...$(NC)"
+	$(HATCH) run python scripts/verify_cold_fetch.py
+
 check-zenodo-live:  ## Opt-in live Zenodo manifest-pin audit (not a required CI gate)
 	python3 scripts/zenodo_migration_audit.py --live
 
@@ -1492,9 +1496,9 @@ demo:  ## Generate the Lorenz demo dataset (datasets/demos/lorenz.luxar.zarr, 10
 	@echo "✅ Demo dataset created at datasets/demos/lorenz.luxar.zarr"
 
 run-examples:  ## Run all examples to generate zarr files (output to datasets/examples/)
-	@# The runner fingerprints both the example builders and Luxar's production
-	@# Python writer code. E2E entrypoints can therefore depend on this target
-	@# without rebuilding fixtures whose producer contract has not changed.
+	@# The runner fingerprints each example builder and its statically imported
+	@# Python modules. E2E entrypoints can therefore depend on this target without
+	@# rebuilding fixtures whose individual producer contract has not changed.
 	$(HATCH) run python scripts/run_examples.py
 	@echo ""
 	@echo "📁 Generated zarr files in datasets/examples/:"

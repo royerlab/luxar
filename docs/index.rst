@@ -123,6 +123,7 @@ Features
    guides/specs/VOLUMETRIC_BLENDING_SPEC
    guides/specs/SUBPIXEL_JITTER_TAA_SPEC
    specs/GSPLATS_DIMENSION_MAPPING
+   specs/LUXAR_LAYER_SPEC
 
 .. toctree::
    :maxdepth: 2
@@ -141,6 +142,7 @@ Features
    guides/developer/DEBUG_INTERFACE_GUIDE
    guides/developer/INTENSITY_GAMMA_DESIGN
    guides/developer/DEMO_SITE_RUNBOOK
+   guides/developer/BENCHMARK_FLOOR_DECISION
 
 .. toctree::
    :maxdepth: 3

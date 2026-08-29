@@ -996,7 +996,7 @@ Two structural differences from the other three types:
   "has_scalars": false,
   "has_uvs": true,
   "has_texture": true,
-  "texture_encoding": "raw",         // "raw" | "png" | "webp" | "jpeg"
+  "texture_encoding": "raw",         // "raw" | "png" | "webp" | "jpeg" | "ktx2"
   "texture_width": 2048,
   "texture_height": 1024,
   "texture_channels": 3,

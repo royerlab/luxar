@@ -76,12 +76,19 @@ import {
   activeSortedIndexSlot,
   cancelAllSortedIndexOrderingApplies,
   cancelSortedIndexOrderingApply,
+  getActiveSortedIndexAttribute,
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
   setSortedIndexApplyBackPressureBypassed,
   setSortedIndexApplyRequestRender,
   writeSortedIndexOrdering,
+  writeSortedIndexOrderingLive,
 } from './element-storage';
+// The TypeScript reference kernel, not the WASM one: the WASM module is
+// instantiated inside the SortWorker, and the whole point of the synchronous
+// path is to answer without touching the worker. Exact-parity with the Rust
+// kernel (see its module doc), so the two agree on the permutation.
+import { sort_splats_by_depth } from '../wasm/typescript/depth-sort';
 import { needsDepthSort } from './blending-state';
 import { hasCommittedData, invalidateCommittedDataStamp } from '../types/committed-data';
 import type { BlendingMode } from '../types/blending';
@@ -297,6 +304,13 @@ let initRetryWakeTimer: ReturnType<typeof setTimeout> | null = null;
 let captureSuppressDepth = 0;
 let requestRenderBeforeCapture: (() => void) | null = null;
 const nodeStates = new Map<string, NodeSortState>();
+// Shared across every commit between frame evaluations: the configured ceiling
+// bounds the whole main-thread batch, not each node independently.
+let syncSortElementsRemaining = 0;
+
+function syncSortElementLimit(): number {
+  return config?.depthSort?.syncSortMaxElements ?? 0;
+}
 
 /**
  * Wire the camera accessor + frame-request + reprocess callbacks. Called
@@ -351,6 +365,7 @@ export function configureDepthSort(options: {
   // stream the instant the mesh is drawn again (issue #715 resume gap —
   // the pump never requests a render on a stall).
   setSortedIndexApplyRequestRender(options.requestRender);
+  syncSortElementsRemaining = syncSortElementLimit();
 }
 
 /**
@@ -1135,6 +1150,12 @@ export function noteDepthSortCommit(
     return;
   }
 
+  // Sort NOW when the node is small enough, so the first frame after this
+  // commit is already ordered instead of showing the fallback the commit path
+  // just wrote. Returns the resolved centers so the copy is paid once.
+  const syncedCenters = trySynchronousFirstSort(mesh, centers3, count);
+  const centersForWorker: Float32Array | (() => Float32Array) = syncedCenters ?? centers3;
+
   const generation = state.generation;
   void ensureWorker()
     .then(() => {
@@ -1149,7 +1170,7 @@ export function noteDepthSortCommit(
       // rejection) instead of stranding a phantom registration the
       // per-frame recovery branch would dispatch guaranteed-null sorts
       // against. (The throw lands in the outer catch below.)
-      const buffer = typeof centers3 === 'function' ? centers3() : centers3;
+      const buffer = typeof centersForWorker === 'function' ? centersForWorker() : centersForWorker;
       current.registered = true;
       // The register RPC is its own promise — the surrounding .catch
       // only sees synchronous throws, so a transport/transfer rejection
@@ -1253,6 +1274,96 @@ function formatOrderingBytes(bytes: number, uploaded: boolean): string {
 }
 
 /**
+ * The model-view matrix to sort against.
+ *
+ * Both matrices are normally renderer-maintained (updated during render), but
+ * a commit can fire BEFORE the next frame — the first commit of a load, or
+ * while the on-demand loop is idle-paused — and would otherwise read a
+ * stale/identity pose. Refresh them here and derive the view matrix locally
+ * (`camera.matrixWorldInverse` is only refreshed by `renderer.render`, not by
+ * `updateMatrixWorld`).
+ */
+function computeModelView(mesh: THREE.Mesh, camera: THREE.Camera): THREE.Matrix4 {
+  mesh.updateWorldMatrix(true, false);
+  camera.updateMatrixWorld();
+  return new THREE.Matrix4().copy(camera.matrixWorld).invert().multiply(mesh.matrixWorld);
+}
+
+/**
+ * Sort a just-committed node's ordering RIGHT NOW, on the main thread, so the
+ * very first frame after the commit is already ordered.
+ *
+ * Returns the resolved centers buffer when the sort landed (so the caller can
+ * hand the SAME copy to the worker registration instead of paying the lazy
+ * provider twice), or `undefined` when the synchronous path was declined — in
+ * which case the caller must behave exactly as it did before.
+ *
+ * WHY this exists. Every commit of an order-dependent node writes a fallback
+ * ordering and then waits for the worker's answer, which is a Comlink round
+ * trip through `ensureWorker` + `registerNode` + `sort` — measured at ~5 ms,
+ * so at least one frame renders on the fallback. On a one-off load that frame
+ * is invisible. During nD playback it is not, because a commit lands at EVERY
+ * timepoint: on the `cloud` demo (4D Points, `volumetric` blending) the
+ * fallback was reached 14 times a second, and it composited only 61.7% of
+ * sampled element pairs in correct back-to-front order against 100% for a real
+ * sort. That is the flash reported in #2290.
+ *
+ * WHY it is bounded. The kernel is a counting sort — two O(n) passes and a
+ * 65,536-bucket histogram — so its cost is linear and measurable rather than
+ * data-dependent: 0.8 ms at 34k elements, 2.5 ms at 250k, 16.2 ms at 1M.
+ * `config.depthSort.syncSortMaxElements` is both the per-node ceiling and the
+ * shared element budget for every commit between frame evaluations; once spent,
+ * the async path stays the only sane answer. `repairSortedIndexForCount` (the
+ * commit paths' fallback) keeps that one frame far closer to sorted than storage
+ * order was.
+ *
+ * The result is written LIVE rather than staged, because a permutation
+ * computed in one shot has no partial state to hide — see
+ * {@link writeSortedIndexOrderingLive}.
+ *
+ * The async pipeline behind this is deliberately left ALONE: the node is still
+ * registered and still dispatches its usual first sort. Suppressing that would
+ * save a redundant sort, but the kernels are exact-parity so the worker's
+ * answer is the SAME permutation, landing as a no-op overwrite — not worth
+ * changing the coordinator's dispatch contract for. The whole of this
+ * function's job is to make the FIRST frame correct; the pipeline's job, of
+ * keeping the ordering current as the camera moves, is unchanged.
+ */
+function trySynchronousFirstSort(
+  mesh: THREE.Mesh,
+  centers3: Float32Array | (() => Float32Array),
+  count: number
+): Float32Array | undefined {
+  const limit = syncSortElementLimit();
+  if (limit <= 0 || count > limit || count > syncSortElementsRemaining) return undefined;
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  if (!getActiveSortedIndexAttribute(geometry)) return undefined;
+  const camera = getCamera?.();
+  if (!camera) return undefined;
+
+  let buffer: Float32Array;
+  try {
+    buffer = typeof centers3 === 'function' ? centers3() : centers3;
+  } catch {
+    // A throwing lazy provider must land where it always did: the async
+    // path's outer `.catch`, which owns the once-per-episode report. Decline
+    // and let it be called again there.
+    return undefined;
+  }
+  // A provider that under-delivers (or a detached buffer) is not sortable —
+  // decline rather than sort garbage; the async path re-checks the same way.
+  if (buffer.length < count * 3) return undefined;
+
+  const modelView = computeModelView(mesh, camera);
+  const ordering = new Uint32Array(count);
+  sort_splats_by_depth(buffer, new Float32Array(modelView.elements), ordering, count);
+  if (writeSortedIndexOrderingLive(geometry, ordering, count) !== count) return undefined;
+  syncSortElementsRemaining -= count;
+  requestRender?.();
+  return buffer;
+}
+
+/**
  * Request one sort for a registered node, respecting the
  * single-in-flight rule. Queues a re-sort if one is already running.
  */
@@ -1300,10 +1411,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // would otherwise read a stale/identity pose. Refresh them here and
   // derive the view matrix locally (camera.matrixWorldInverse is only
   // refreshed by renderer.render, not by updateMatrixWorld).
-  mesh.updateWorldMatrix(true, false);
-  camera.updateMatrixWorld();
-  const viewMatrix = new THREE.Matrix4().copy(camera.matrixWorld).invert();
-  const modelView = viewMatrix.multiply(mesh.matrixWorld);
+  const modelView = computeModelView(mesh, camera);
   recordSortPose(state, modelView);
 
   // One detached profiler pass per dispatch — its duration is the whole
@@ -1661,6 +1769,7 @@ function pumpChunkedOrderingApplies(): void {
  * work that touches the SortWorker stays below that gate.
  */
 export function evaluateDepthSortPerFrame(): void {
+  syncSortElementsRemaining = Math.max(0, syncSortElementLimit());
   // Drop the previous frame's render-order state FIRST — before any
   // early-return — so a disposed/dataset-switched frame can't leave the
   // module-scoped rank memo holding stale partition-wrapper subtrees alive.
@@ -2058,6 +2167,7 @@ export function disposeDepthSort(): void {
   isLoadInProgress = null;
   getProfiler = null;
   depthSortEnabled = true;
+  syncSortElementsRemaining = syncSortElementLimit();
   warnedWorkerUnavailable = false;
   // Init-failure bookkeeping is module state too: an embedder that disposes
   // and re-inits in one page must start with a full retry budget and a

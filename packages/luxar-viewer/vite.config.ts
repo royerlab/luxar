@@ -11,7 +11,23 @@ const projectRoot = resolve(viewerRoot, '../..');
 export default defineConfig(({ command }) => ({
   plugins:
     command === 'serve'
-      ? [checkoutIdentityPlugin(ensureCheckoutIdentity(projectRoot, viewerRoot))]
+      ? [
+          checkoutIdentityPlugin(ensureCheckoutIdentity(projectRoot, viewerRoot)),
+          {
+            name: 'layer-example-trailing-slash',
+            configureServer(server) {
+              server.middlewares.use((req, res, next) => {
+                if (req.url?.match(/^\/examples\/layer(?:\?.*)?$/)) {
+                  res.statusCode = 302;
+                  res.setHeader('Location', req.url.replace('/examples/layer', '/examples/layer/'));
+                  res.end();
+                  return;
+                }
+                next();
+              });
+            },
+          },
+        ]
       : [],
   base: './',
   build: {
@@ -61,6 +77,12 @@ export default defineConfig(({ command }) => ({
               priority: 20,
             },
             {
+              name: 'three-ktx2',
+              test: /[\\/]three[\\/]examples[\\/]jsm[\\/](?:loaders[\\/]KTX2Loader|libs[\\/](?:ktx-parse|zstddec))/,
+              priority: 20,
+              includeDependenciesRecursively: false,
+            },
+            {
               name: 'three',
               test: /[\\/]three[\\/]/,
               priority: 10,
@@ -92,6 +114,10 @@ export default defineConfig(({ command }) => ({
         // Playwright auto-starts: hatch run luxar serve examples/
         target: 'http://localhost:8000',
         changeOrigin: true,
+        bypass(req) {
+          // Dataset URLs are proxied to `luxar serve examples/`; this host page stays on Vite.
+          if (req.url?.startsWith('/examples/layer/')) return req.url;
+        },
       },
     },
   },

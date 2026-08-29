@@ -3,7 +3,7 @@
  *
  * This file runs BEFORE any tests and verifies pre-conditions:
  * 1. Servers can be reached, and belong to THIS checkout
- * 2. Example datasets are fresh (fail) and required datasets exist (warn)
+ * 2. Example dataset freshness and required dataset presence (warn)
  * 3. Generated zarr fixtures exist, are complete, are current, and are served (throw — 19 specs
  *    hard-depend on them)
  * 4. Basic environment checks
@@ -30,7 +30,11 @@ import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
 } from '../../../tools/fixture-manifest';
-import { checkExampleFixtureFreshness } from '../../../tools/example-fixture-freshness';
+import {
+  checkExampleFixtureFreshness,
+  exposeExampleFixtureFreshnessToWorkers,
+  reportExampleFixtureFreshness,
+} from '../../../tools/example-fixture-freshness';
 import { e2eWorkerPlan, formatE2EParallelismStamp } from '../../../tools/e2e-workers';
 import { areFixturesStale } from '../../../tools/fixture-freshness';
 
@@ -67,8 +71,8 @@ const REQUIRED_DATASETS = [
  *     run, or a generator killed mid-write. Both are reported by name and both are fixed by
  *     rerunning the generator, so they are one check; `isGeneratedFixtureComplete` is what
  *     keeps an interrupted run's stump directory from passing as a fixture.
- *  2. **Generated but stale** — production Python or generator sources changed after the
- *     fixtures were written. Regenerating refreshes both the stores and their input stamp.
+ *  2. **Generated but stale** — a generator or local Python source reachable from its imports
+ *     changed after the fixtures were written. Regenerating refreshes the stores and stamp.
  *  3. **Generated but unreachable** — the data server is rooted somewhere other than the
  *     repository, so the specs' `/packages/luxar-viewer/tests/fixtures/...` URLs 404 even
  *     though the files exist. One HTTP probe settles this; probing all ~47 would add 47
@@ -160,11 +164,12 @@ export default async function globalSetup(config: FullConfig) {
 
   const projectRoot = serverMetadata.checkout.projectRoot;
   const examplesDir = path.join(projectRoot, 'datasets/examples');
-  let hasDatasetWarnings = false;
+  const datasetWarnings: string[] = [];
 
   // Check 1: Verify examples directory exists
   if (!fs.existsSync(examplesDir)) {
-    hasDatasetWarnings = true;
+    datasetWarnings.push('examples directory missing');
+    exposeExampleFixtureFreshnessToWorkers({ status: 'unavailable' });
     console.warn(`⚠️  Examples directory not found: ${examplesDir}`);
     console.warn('   Run "make run-examples" to generate test datasets');
     console.warn('   Tests requiring example datasets will fail.\n');
@@ -174,18 +179,12 @@ export default async function globalSetup(config: FullConfig) {
     console.log(`✅ Examples directory found: ${examplesDir}`);
 
     const freshness = checkExampleFixtureFreshness(projectRoot);
-    if (freshness.status === 'stale') {
-      throw new Error(
-        'Example datasets are stale. Run "make run-examples" from the repository root.'
+    exposeExampleFixtureFreshnessToWorkers(freshness);
+    const examplesWarned = reportExampleFixtureFreshness(freshness);
+    if (examplesWarned) {
+      datasetWarnings.push(
+        freshness.status === 'stale' ? 'example datasets stale' : 'example freshness unavailable'
       );
-    }
-    if (freshness.status === 'unavailable') {
-      hasDatasetWarnings = true;
-      console.warn('⚠️  Could not run the example fixture freshness checker.');
-      if (freshness.detail) console.warn(`   ${freshness.detail}`);
-      console.warn('   Continuing with presence checks only.\n');
-    } else {
-      console.log('✅ Example datasets match the current fixture producer');
     }
 
     // Check 2: Verify required datasets exist locally and through the HTTP server.
@@ -213,7 +212,7 @@ export default async function globalSetup(config: FullConfig) {
     console.log(`✅ ${foundDatasets.length} required datasets are reachable over HTTP`);
 
     if (missingDatasets.length > 0) {
-      hasDatasetWarnings = true;
+      datasetWarnings.push(`${missingDatasets.length} required example datasets missing`);
       console.warn('\n⚠️  Warning: Some datasets are missing:');
       for (const dataset of missingDatasets) {
         console.warn(`   - ${dataset}`);
@@ -254,8 +253,10 @@ export default async function globalSetup(config: FullConfig) {
     throw error;
   }
 
-  if (hasDatasetWarnings) {
-    console.warn('\n⚠️  Pre-flight checks completed with dataset warnings.\n');
+  if (datasetWarnings.length > 0) {
+    console.warn(
+      `\n⚠️  Pre-flight checks completed with dataset warnings: ${datasetWarnings.join('; ')}.\n`
+    );
   } else {
     console.log('\n✅ Pre-flight checks passed!\n');
   }

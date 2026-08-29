@@ -5,7 +5,7 @@
 > **Goal**: Correct order-dependent transparency (`normal` blending mode) for Gaussian splats at 10M+ splats, via texture-backed splat storage + a per-instance ordering attribute + asynchronous worker depth sorting.
 > **Non-goals** (follow-ups, not this plan): WebGPU compute-shader sorting ("Option 3b"), weighted-blended OIT, global cross-node sorting. (Points AND Lines sorting symmetry have since LANDED — see §8; all three instanced geometry types share the storage + sorting machinery. **Mesh** has since joined the SORTING half only: same registration, worker and kernel, but its apply permutes `geometry.index` rather than `aSortedIndex`, so every statement about instanced-quad STORAGE in this document remains three-geometry — see `MESH_NODE_SPEC.md` §6.3.)
 
-Related reading: `docs/archive/developer-archive/SPARKJS_ANALYSIS.md` (historical — the reference architecture this adapts), `src/rendering/README.md` (the retired `interleaved-attributes.ts` module — whose Float16 narrowing contract this plan superseded — was deleted once the lines migration left it with no consumers).
+Related reading: `src/rendering/README.md` (the retired `interleaved-attributes.ts` module — whose Float16 narrowing contract this plan superseded — was deleted once the lines migration left it with no consumers).
 
 ---
 
@@ -183,7 +183,7 @@ The structural phase. After it, rendering is visually identical (identity orderi
 
 ## 5. Phase 2 — SortWorker + depth-ordered commits
 
-Introduces the sorting engine and wires it at commit time. After this phase, `normal` mode is correct within a frame or two of any load/slice-change and only goes stale while orbiting (fixed in Phase 3). Sorting lives **exclusively** in the SortWorker — never in the projection call (see §1: plain-3D projection doesn't run in a worker at all) and never on the main thread.
+Introduces the sorting engine and wires it at commit time. After this phase, `normal` mode is correct within a frame or two of any load/slice-change and only goes stale while orbiting (fixed in Phase 3). Ongoing and camera-driven sorting lives **exclusively** in the SortWorker, never in the projection call (see §1: plain-3D projection doesn't run in a worker at all). **Implementation delta (Phase 2, 2026-08)**: the first ordering after an eligible instanced commit may also be computed on the main thread within the shared `syncSortMaxElements` frame budget. Indexed Mesh is excluded because its ordering is applied through `geometry.index`; async registration and all subsequent sorting are unchanged.
 
 **Changes**
 

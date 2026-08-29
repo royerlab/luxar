@@ -63,6 +63,8 @@ vi.mock('../../../../../data/scene-loader/nodes/load-mesh-node', () => ({
 }));
 
 import { loadLodGroupNode } from '../../../../../data/scene-loader/nodes/load-lod-group-node';
+import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
+import { ArchiveFaultError } from '../../../../../cache/chunk-source';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
@@ -221,7 +223,7 @@ function makeLodGroupNode(
   };
 }
 
-function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
+function makeCtx(registry?: LODGroupRegistry, overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx {
   // `applyTransform` is the only nodeFactory member loadLodGroupNode reaches —
   // placeholder construction happens in the mocked loadSceneNodes recursion.
   const nodeFactory = {
@@ -242,6 +244,7 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     lodGroupRegistry: registry,
     nodeFactory,
     viewState: { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] },
+    ...overrides,
   });
 }
 
@@ -889,7 +892,9 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
   it('marks the child failed (not ready) when the deferred load throws', async () => {
     attachStubChildren();
-    loadGSplatsNodeExpensiveMock.mockRejectedValue(new Error('boom'));
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(
+      new Error('outer load failure', { cause: new Error('boom') })
+    );
     const reg = makeReg();
     const ctx = makeCtx(reg);
 
@@ -905,6 +910,138 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
     expect(deferred.ready).toBe(false);
     expect(deferred.loading).toBe(false);
+    expect(deferred.permanentlyFailed).not.toBe(true);
+  });
+
+  it('latches a wrapped archive fault as a permanent lazy-level failure', async () => {
+    attachStubChildren();
+    const archiveFault = new ArchiveFaultError('archive is no longer readable', '/scene.zip');
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(
+      new Error('outer load failure', {
+        cause: new LoaderError('Network', '/lod/child_1', archiveFault),
+      })
+    );
+    const reg = makeReg();
+    const reportArchiveFault = vi.fn();
+    const ctx = makeCtx(reg, { reportArchiveFault });
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.failed).toBe(true));
+
+    expect(deferred.permanentlyFailed).toBe(true);
+    expect(deferred.ready).toBe(false);
+    expect(deferred.loading).toBe(false);
+
+    deferred.ready = true;
+    deferred.release!();
+    expect(deferred.ready).toBe(false);
+    expect(deferred.failed).toBe(true);
+    expect(deferred.permanentlyFailed).toBe(true);
+    expect(reportArchiveFault).toHaveBeenCalledOnce();
+    expect(reportArchiveFault).toHaveBeenCalledWith(archiveFault);
+  });
+
+  it('does not report a lazy-level archive fault after its dataset is replaced', async () => {
+    attachStubChildren();
+    const archiveFault = new ArchiveFaultError('archive is no longer readable', '/scene.zip');
+    loadGSplatsNodeExpensiveMock.mockRejectedValue(archiveFault);
+    const reg = makeReg();
+    const reportArchiveFault = vi.fn();
+    const ctx = makeCtx(reg, { isDatasetLive: () => false, reportArchiveFault });
+
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.permanentlyFailed).toBe(true));
+
+    expect(reportArchiveFault).not.toHaveBeenCalled();
+  });
+
+  it('latches and reports an archive fault from an anonymous deferred GROUP', async () => {
+    attachStubChildren();
+    const archiveFault = new ArchiveFaultError('archive open failed', '/scene.zip');
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      if (child.path === '/lod/child_1') throw archiveFault;
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+    });
+    const reg = makeReg();
+    const reportArchiveFault = vi.fn();
+    const ctx = makeCtx(reg, { reportArchiveFault });
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
+      { default_level: 0 }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    const deferred = reg.get('/lod')!.children[1];
+    deferred.ensureLoaded!();
+    await vi.waitFor(() => expect(deferred.failed).toBe(true));
+
+    expect(deferred.object.name).toBe('');
+    expect(deferred.nodePath).toBe('/lod/child_1');
+    expect(deferred.permanentlyFailed).toBe(true);
+    expect(reportArchiveFault).toHaveBeenCalledOnce();
+    expect(reportArchiveFault).toHaveBeenCalledWith(archiveFault);
+    expect(reg.getFailedLazyChildPaths()).toEqual(['/lod/child_1']);
+  });
+
+  it('keeps an anonymous deferred GROUP recoverable after an ordinary error', async () => {
+    const failure = new Error('nested subtree failed');
+    attachStubChildren();
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      if (child.path === '/lod/child_1') throw failure;
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+    });
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+
+    try {
+      const reg = makeReg();
+      const ctx = makeCtx(reg);
+      const node = makeLodGroupNode(
+        [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
+        { default_level: 0 }
+      );
+      await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+      const deferred = reg.get('/lod')!.children[1];
+      deferred.ensureLoaded!();
+      await vi.waitFor(() => expect(deferred.failed).toBe(true));
+
+      expect(deferred.object.name).toBe('');
+      expect(deferred.release).toBeUndefined();
+      expect(deferred.loading).toBe(false);
+      expect(deferred.permanentlyFailed).not.toBe(true);
+      expect(reg.retryLazyChildByNodePath('')).toBe(false);
+
+      reg.setSelectorMode('/lod', { lockLevel: 1 });
+      reg.evaluatePerFrame();
+      for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+      await vi.waitFor(() => expect(deferred.failed).toBe(true));
+      expect(deferred.loading).toBe(false);
+
+      const attempts = loadSceneNodesMock.mock.calls.filter(
+        ([loadedChild]) => (loadedChild as SceneNode).path === '/lod/child_1'
+      );
+      expect(attempts).toHaveLength(2);
+    } finally {
+      warningSpy.mockRestore();
+    }
   });
 });
 
@@ -1071,6 +1208,85 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
       getDisplayDims: () => [0, 1, 2],
     });
   }
+
+  it('shares eager line admission across sibling substitutive ladders', async () => {
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      started.push(child.path);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+    });
+
+    const nodes = Array.from({ length: 2 }, (_, index) => {
+      const child = makeLinesChildNode(`/lod_${index}/child_0`, 0);
+      child.attrs.n_vertices = 1_630_000;
+      child.attrs.n_segments = 1_280_000;
+      child.attrs.ndim = 3;
+      const node = makeLodGroupNode([child], { default_level: 0, display_type: 'lines' });
+      node.path = `/lod_${index}`;
+      return node;
+    });
+
+    const loadPromise = Promise.all(
+      nodes.map((node) =>
+        loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock)
+      )
+    );
+
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    releases.shift()?.();
+    await loadPromise;
+  });
+
+  it('releases eager line admission when a ladder load rejects', async () => {
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+    const makeOversizedLadder = (index: number) => {
+      const child = makeLinesChildNode(`/lod_${index}/child_0`, 0);
+      child.attrs.n_vertices = 1_630_000;
+      child.attrs.n_segments = 1_280_000;
+      child.attrs.ndim = 3;
+      const node = makeLodGroupNode([child], { default_level: 0, display_type: 'lines' });
+      node.path = `/lod_${index}`;
+      return node;
+    };
+
+    loadSceneNodesMock.mockRejectedValueOnce(new Error('line load failed'));
+    await expect(
+      loadLodGroupNode(
+        makeOversizedLadder(0),
+        new THREE.Group(),
+        makeStubLoc(),
+        ctx,
+        loadSceneNodesMock
+      )
+    ).rejects.toThrow('line load failed');
+
+    let secondStarted = false;
+    loadSceneNodesMock.mockImplementationOnce(async (child: SceneNode, parent: THREE.Object3D) => {
+      secondStarted = true;
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+    });
+    const secondLoad = loadLodGroupNode(
+      makeOversizedLadder(1),
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+
+    await vi.waitFor(() => expect(secondStarted).toBe(true));
+    await secondLoad;
+  });
 
   it('defers a non-default lines child via the lines cheap split (not eager)', async () => {
     attachStubChildren();

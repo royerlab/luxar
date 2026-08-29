@@ -62,11 +62,7 @@ const SKIP_SCRIPTS: Record<string, string> = {
 };
 
 // Scripts that take too long for routine zarr output checks
-const SLOW_SCRIPTS = [
-  'temporal_spiral_sphere_4d_example.py',
-  'time_series_4d_example.py',
-  'performance_benchmark_example.py',
-];
+const SLOW_SCRIPTS = ['time_series_4d_example.py', 'performance_benchmark_example.py'];
 
 /**
  * Get the .zarr output name for a script

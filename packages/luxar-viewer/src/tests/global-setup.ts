@@ -13,7 +13,11 @@ import { existsSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { areFixturesStale, ensureGeneratedFixtures } from '../../tools/fixture-freshness';
+import {
+  areFixturesStale,
+  ensureGeneratedFixtures,
+  FIXTURE_GENERATOR_TIMEOUT_MS,
+} from '../../tools/fixture-freshness';
 import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
@@ -30,29 +34,13 @@ const WASM_BIN_PATH = resolve(VIEWER_ROOT, 'public/wasm/luxar_wasm_bg.wasm');
 const GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_test_data.py');
 const EXPECTED_FIXTURES = parseGeneratedFixtureNames(GENERATOR_PATH);
 
-/**
- * Wall-clock budget for one generator run.
- *
- * Measured: `generate_test_data.py` takes ~215 s on an M-series laptop, so the
- * previous 120 s could not finish it — every regeneration was SIGTERM'd
- * mid-write, which leaves incomplete stores AND relands on the same wall the
- * next run, because the stamp is only written on success. The failure reads as
- * `spawnSync ETIMEDOUT`, which looks like a hung shell rather than a budget
- * that was never survivable.
- *
- * The first run also creates the separate ~1.2 GB `fixtures` Hatch environment.
- * The 1,200 s default preserves the previous 600 s generation budget plus the
- * same allowance for that one-time download/install. `LUXAR_FIXTURE_GEN_TIMEOUT_MS`
- * overrides it rather than requiring a source edit on a machine that needs more.
- */
-const GENERATOR_TIMEOUT_MS = Number(process.env.LUXAR_FIXTURE_GEN_TIMEOUT_MS) || 1_200_000;
-
+/** Run one generator within the shared fixture budget from `fixture-freshness.ts`. */
 function runPythonGenerator(command: string, label: string): void {
   try {
     execSync(command, {
       cwd: PROJECT_ROOT,
       stdio: 'pipe',
-      timeout: GENERATOR_TIMEOUT_MS,
+      timeout: FIXTURE_GENERATOR_TIMEOUT_MS,
     });
     console.log(`[test-setup] ${label} generated successfully.`);
   } catch (err: unknown) {
@@ -68,7 +56,7 @@ function runPythonGenerator(command: string, label: string): void {
     // not work here.
     if (err && typeof err === 'object' && (err as { code?: string }).code === 'ETIMEDOUT') {
       console.error(
-        `[test-setup] ...that was the ${GENERATOR_TIMEOUT_MS} ms budget, not a hang. ` +
+        `[test-setup] ...that was the ${FIXTURE_GENERATOR_TIMEOUT_MS} ms budget, not a hang. ` +
           'Raise it with LUXAR_FIXTURE_GEN_TIMEOUT_MS if this machine is slower.'
       );
     }
@@ -243,7 +231,7 @@ export async function setup(): Promise<void> {
     console.log(
       missing.length > 0
         ? `\n[test-setup] ${missing.length} zarr fixture(s) missing or incomplete — generating...`
-        : '\n[test-setup] fixture production sources changed — regenerating...'
+        : "\n[test-setup] fixture producer's imports changed — regenerating..."
     );
   }
 

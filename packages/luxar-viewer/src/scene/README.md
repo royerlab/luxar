@@ -393,7 +393,12 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    shown. It is re-evaluated every frame, so the panel's eye toggle
    (`applyVisibility` → `requestRender`) resumes loading on the next
    frame. An explicit user retry
-   (`retryLazyChildByLeafPath`) deliberately bypasses it.
+   (`retryLazyChildByNodePath`) deliberately bypasses it.
+   A latched archive fault stops every automatic deferred kick through the owning
+   `SceneLoader` latch. The branch that observed it retains its authored node
+   path beside the anonymous placeholder, so the loading monitor can show the
+   missing branch and Retry can re-kick that exact child without assigning a
+   duplicate name/kind to the placeholder.
 8. **Never-downgrade display gate**: a lazy level flips `ready` after
    its _first_ additive chunk commits, so an ungated swap to a
    fresh-but-still-streaming aspiration would pop displayed quality

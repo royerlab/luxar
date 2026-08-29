@@ -36,10 +36,20 @@ import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
+import type { ArchiveFaultError } from '../../../cache/chunk-source';
+
+export type LineWorkingSetNode = Pick<SceneNode, 'path' | 'type' | 'attrs'>;
+
+/** Session-scoped admission shared by eager loads and explicit retries. */
+export interface LineWorkingSetGate {
+  acquire(node: LineWorkingSetNode): Promise<() => void>;
+}
 
 export interface NodeBuildCtx {
   /** Shared loader bookkeeping (registration + failure recording). */
   registry: LoaderRegistry;
+  /** Shared line working-set admission for this SceneLoader session. */
+  lineWorkingSetGate: LineWorkingSetGate;
   /**
    * Per-scene LOD-group registry. Optional — when absent, lod_group
    * nodes still load (default level renders) but the per-frame
@@ -92,6 +102,8 @@ export interface NodeBuildCtx {
    * ``SceneLoader.kickRefinementIfIdle``.
    */
   kickRefinementIfIdle(): void;
+  /** Latch and surface an archive fault episode for this scene loader. */
+  reportArchiveFault(fault: ArchiveFaultError): void;
   /**
    * True while the dataset that created this ctx is still the live one.
    * Returns false once that dataset has been aborted/disposed or

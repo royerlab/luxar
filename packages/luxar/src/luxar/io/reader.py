@@ -106,7 +106,7 @@ class MeshData(_DictCompatMixin):
     faces: np.ndarray
     uvs: Optional[np.ndarray]
     # The payload as stored, NOT decoded: `(H, W, C)` under encoding `raw`, and a
-    # 1-D uint8 blob under `png`/`webp`/`jpeg`. Deliberately not decoded here —
+    # 1-D uint8 blob under `png`/`webp`/`jpeg`/`ktx2`. Deliberately not decoded here —
     # `luxar.io` has no image-codec dependency and should not acquire one, and
     # `metadata["texture_encoding"]` plus the declared dimensions tell a consumer
     # exactly what it is holding.

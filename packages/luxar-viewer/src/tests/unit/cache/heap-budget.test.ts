@@ -1,12 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import {
+  cachePoolOverrideBytes,
   computeCacheBudgets,
+  computeWorkingSetBudgetBytes,
   readHeapLimitBytes,
   inferDeviceClass,
 } from '../../../cache/heap-budget';
 import { config } from '../../../config';
 
 const MB = 1024 * 1024;
+
+describe('cachePoolOverrideBytes', () => {
+  it('converts only positive MiB overrides', () => {
+    expect(cachePoolOverrideBytes(384)).toBe(384 * MB);
+    expect(cachePoolOverrideBytes(null)).toBeUndefined();
+    expect(cachePoolOverrideBytes(undefined)).toBeUndefined();
+    expect(cachePoolOverrideBytes(0)).toBeUndefined();
+    expect(cachePoolOverrideBytes(-1)).toBeUndefined();
+    expect(cachePoolOverrideBytes(Number.NaN)).toBeUndefined();
+  });
+});
 const l0Ceil = config.cache.l0MaxSizeMB * MB;
 const l1Ceil = config.cache.l1MaxSizeMB * MB;
 const sliceConfig = config.cache.sliceCacheMaxSizeMB * MB;
@@ -20,6 +33,37 @@ describe('readHeapLimitBytes', () => {
   it('returns undefined in the node/jsdom test env (no performance.memory)', () => {
     // The whole point of the fallback: no Chrome heap API here.
     expect(readHeapLimitBytes()).toBeUndefined();
+  });
+});
+
+describe('computeWorkingSetBudgetBytes', () => {
+  it('uses half of the non-cache share of the configured heap target', () => {
+    const heap = 512 * MB;
+    expect(computeWorkingSetBudgetBytes(heap)).toBe(Math.floor(heap * target * 0.4 * 0.5));
+  });
+
+  it('caps the eager working set on a large measured heap', () => {
+    expect(computeWorkingSetBudgetBytes(8 * 1024 * MB)).toBe(512 * MB);
+  });
+
+  it('uses an explicit cache-pool override before a measured heap', () => {
+    expect(computeWorkingSetBudgetBytes(512 * MB, 768 * MB)).toBe(256 * MB);
+  });
+
+  it('derives a WebKit budget from the device-class cache pool when no override exists', () => {
+    expect(computeWorkingSetBudgetBytes(undefined, undefined, 384 * MB)).toBe(128 * MB);
+  });
+
+  it('uses a measured heap before the device-class cache pool', () => {
+    expect(computeWorkingSetBudgetBytes(512 * MB, undefined, 2048 * MB)).toBe(
+      Math.floor(512 * MB * target * 0.4 * 0.5)
+    );
+  });
+
+  it('uses the fixed fallback when no pool or heap signal is available', () => {
+    expect(computeWorkingSetBudgetBytes()).toBe(256 * MB);
+    expect(computeWorkingSetBudgetBytes(0)).toBe(256 * MB);
+    expect(computeWorkingSetBudgetBytes(Number.NaN)).toBe(256 * MB);
   });
 });
 

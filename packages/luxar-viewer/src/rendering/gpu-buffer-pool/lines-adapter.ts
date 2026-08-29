@@ -32,6 +32,7 @@ import {
   cancelSortedIndexOrderingApply,
   writeSortedIndexIdentity,
   writeSortedIndexIdentityRange,
+  repairSortedIndexForCount,
 } from '../element-storage';
 import { clampLineCapacity } from '../element-texture-layout';
 import type { ProcessedLinesData } from '../../types/lines';
@@ -300,7 +301,7 @@ export class LinesBufferAdapter {
     geometry: THREE.InstancedBufferGeometry,
     data: ProcessedLinesData,
     count: number,
-    options?: { preserveOrdering?: boolean; fromInstance?: number }
+    options?: { preserveOrdering?: boolean; repairFromCount?: number; fromInstance?: number }
   ): void {
     const instanced = geometry;
     const texture = getLineTexture(instanced);
@@ -332,11 +333,19 @@ export class LinesBufferAdapter {
       // count > prev, preserveOrdering needs count === prev).
       writeSortedIndexIdentityRange(instanced, fromInstance, count);
     } else if (!options?.preserveOrdering) {
-      // `preserveOrdering` (commit path decides — see
-      // commit-lines-geometry.ts) keeps a same-count recommit's existing
-      // depth-sort permutation as a no-worse prior until the re-sort
-      // lands; every other full write resets to identity.
-      writeSortedIndexIdentity(instanced, count);
+      // `preserveOrdering` (commit path decides) keeps a same-count recommit's
+      // existing depth-sort permutation as a no-worse prior until the re-sort
+      // lands. When the count CHANGED, `repairFromCount` carries the previous
+      // count and the existing permutation is rebuilt over the new population
+      // instead of being thrown away — an nD re-slice changes the resident
+      // count at almost every step, so this is the case a timelapse actually
+      // takes. Only a commit with neither falls back to storage order.
+      const repairFrom = options?.repairFromCount;
+      if (repairFrom !== undefined && repairFrom > 0) {
+        repairSortedIndexForCount(instanced, repairFrom, count);
+      } else {
+        writeSortedIndexIdentity(instanced, count);
+      }
     }
 
     prepareLinesGeometryForDraw(geometry, count);

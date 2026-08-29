@@ -1,7 +1,8 @@
 /**
  * Points data accumulator — multi-type object pooling for Points geometry.
  *
- * Implements persistent TypedArray buffers that grow by 1.5x when
+ * Implements persistent TypedArray buffers that grow by 1.5x — never past
+ * the count needed, see `./growth.ts` — when
  * needed, eliminating per-frame allocations and reducing GC pressure.
  * Supports Float32Array, Uint8Array, and Uint16Array natively for
  * memory efficiency consistent with the multi-type GPU buffer pool.
@@ -20,6 +21,7 @@ import type {
 } from '../data-loader-types';
 import { log, Modules } from '../../utils/log';
 import type { DataAccumulator, AccumulatorStats } from './types';
+import { nextCapacity } from './growth';
 
 export type { AccumulatorStats } from './types';
 
@@ -166,7 +168,8 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
   /**
    * Ensure accumulator has sufficient capacity, growing if needed
    *
-   * Uses 1.5x growth strategy to minimize reallocation events while avoiding
+   * Uses the shared 1.5x-capped-at-needed growth strategy (`./growth.ts`) to
+   * minimize reallocation events while avoiding
    * excessive memory overhead. Growth preserves attribute types (Uint8/Uint16/Float32).
    *
    * @param needed - Minimum required capacity (number of points)
@@ -185,11 +188,9 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     this.assertNotDisposed('ensureCapacity');
     if (needed <= this.capacity) return false;
 
-    // Calculate new capacity with 1.5x growth factor
-    let newCapacity = this.capacity;
-    while (newCapacity < needed) {
-      newCapacity = Math.ceil(newCapacity * 1.5);
-    }
+    // 1.5x amortised growth, clamped to the count actually needed — see
+    // `nextCapacity` for why the repeated-multiply loop overshot.
+    const newCapacity = nextCapacity(this.capacity, needed);
 
     log.info(
       Modules.DATA_ACCUMULATOR,

@@ -85,7 +85,7 @@ directly with `pnpm` or `npx`.
 | `scene_dimensions_example.py` | Custom dimension units, ranges, and step sizes. |
 | `rainbow_sphere_4d_example.py` | True 4D spatial geometry (hypersphere slicing). |
 | `time_series_4d_example.py` | Rotating spiral evolving over a discrete time dimension. |
-| `temporal_spiral_sphere_4d_example.py` | Large 4D temporal animation (stress test — 102M point-records). |
+| `temporal_spiral_sphere_4d_example.py` | 4D temporal animation over a discrete t dimension (4,096 points × 128 frames). |
 | `radius_slicing_example.py` | nD-hypersphere radius slicing behavior. |
 | `nd_transform_example.py` | Per-dimension affine + categorical-permutation `nd_transform`. |
 | `categorical_dimensions_example.py` | `Dimension(categories=[...])` for label-driven sliders. |

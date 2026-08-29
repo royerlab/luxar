@@ -7,9 +7,10 @@ that the TypeScript ArrayDecoder can correctly read Python-encoded data.
 IMPORTANT: Uses NO compression (compressor=None) to avoid blosc/numcodecs
 WASM binding issues in Node.js test environment.
 
-Editing this file or Luxar's production Python sources makes every existing
-fixture store stale. Vitest regenerates stale fixtures automatically; Playwright
-fails fast with the regeneration command rather than serving old writer output.
+Editing this file or a local Python source reachable from its imports makes
+every existing fixture store stale. Vitest regenerates stale fixtures
+automatically; Playwright fails fast with the regeneration command rather than
+serving old writer output.
 
 These direct commands run only the generators; record the input stamps afterward
 from ``packages/luxar-viewer/`` with
@@ -96,6 +97,7 @@ FIXTURE_NAMES: list[str] = [
     "test_integer_colors.luxar.zarr",
     "test_labelled_partitioned_points.luxar.zarr",
     "test_labelled_points.luxar.zarr",
+    "test_layer_4d_gsplats.luxar.zarr",
     "test_line_joins.luxar.zarr",
     "test_lines.luxar.zarr",
     "test_lines_blending_modes.luxar.zarr",
@@ -1127,6 +1129,63 @@ def generate_4d_test() -> None:
         aprint(f"  Positions: {positions.shape} (4D)")
         aprint(f"  Time steps: {num_time_steps}")
         aprint(f"  Points per step: {num_points}")
+
+
+def generate_layer_4d_gsplats_test() -> None:
+    """Tiny time-sliced GSplat fixture for the LuxarLayer host E2E test."""
+    from luxar.gsplats.lift import lift_points_to_gsplats
+
+    with asection("Generating LuxarLayer 4D GSplat Test"):
+        output = FIXTURES_DIR / "test_layer_4d_gsplats.luxar.zarr"
+        rng = np.random.default_rng(2293)
+        counts = (24, 72)
+        positions = []
+        colors = []
+
+        for timepoint, count in enumerate(counts):
+            spatial = rng.normal(0.0, 0.7, (count, 3)).astype(np.float32)
+            time = np.full((count, 1), timepoint, dtype=np.float32)
+            positions.append(np.column_stack([time, spatial]))
+            color = np.array(
+                [1.0 - 0.6 * timepoint, 0.4, 0.5 + 0.5 * timepoint], np.float32
+            )
+            colors.append(np.tile(color, (count, 1)))
+
+        positions_4d = np.vstack(positions)
+        colors_4d = np.vstack(colors)
+        # Radius 0.18 lifts to sigma 0.12 on every axis, leaving the two
+        # timepoints about 8 sigma apart so tolerance slicing cannot mix them.
+        lifted = lift_points_to_gsplats(
+            positions_4d,
+            np.full(len(positions_4d), 0.18, dtype=np.float32),
+            colors_4d,
+        )
+        dims = Dimensions(
+            [
+                Dimension("time", range=(0, 1), step=1, display=False, discrete=True),
+                Dimension("x", display=True),
+                Dimension("y", display=True),
+                Dimension("z", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_gsplats(
+                "time_splats",
+                lifted.centers,
+                lifted.amplitudes,
+                lifted.cholesky_factors,
+                colors=lifted.colors,
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint(f"  GSplats per time step: {counts[0]} / {counts[1]}")
 
 
 def generate_hierarchical_transforms_test() -> None:
@@ -4687,6 +4746,7 @@ def main() -> None:
         aprint("")
 
         generate_4d_test()
+        generate_layer_4d_gsplats_test()
         aprint("")
 
         generate_hierarchical_transforms_test()

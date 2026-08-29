@@ -32,14 +32,27 @@ function writeFixtureInputs(): {
   const fixturesDir = join(projectRoot, 'packages/luxar-viewer/tests/fixtures');
   const generatorPath = join(fixturesDir, 'generate_test_data.py');
   const writerPath = join(projectRoot, 'packages/luxar/src/luxar/_zarr_compat.py');
+  const expectationsWriterPath = join(
+    projectRoot,
+    'packages/luxar/src/luxar/core/expectations_writer.py'
+  );
   mkdirSync(fixturesDir, { recursive: true });
   mkdirSync(join(projectRoot, 'packages/luxar/src/luxar/core/tests'), { recursive: true });
-  writeFileSync(generatorPath, 'FIXTURE_NAMES = ["test.luxar.zarr"]\n');
-  writeFileSync(join(fixturesDir, 'generate_expectations.py'), 'EXPECTATIONS_VERSION = 1\n');
+  writeFileSync(
+    generatorPath,
+    'from luxar._zarr_compat import WRITER_VERSION\nFIXTURE_NAMES = ["test.luxar.zarr"]\n'
+  );
+  writeFileSync(
+    join(fixturesDir, 'generate_expectations.py'),
+    'from luxar.core.expectations_writer import EXPECTATIONS_VERSION\n'
+  );
   writeFileSync(join(fixturesDir, 'roundtrip_expectations.json'), '{}\n');
   mkdirSync(join(fixturesDir, 'test.luxar.zarr'));
   writeFileSync(join(fixturesDir, 'test.luxar.zarr/.zmetadata'), '{}\n');
+  writeFileSync(join(projectRoot, 'packages/luxar/src/luxar/__init__.py'), 'PACKAGE = 1\n');
   writeFileSync(writerPath, 'WRITER_VERSION = 1\n');
+  writeFileSync(expectationsWriterPath, 'EXPECTATIONS_VERSION = 1\n');
+  writeFileSync(join(projectRoot, 'packages/luxar/src/luxar/core/unrelated.py'), 'UNRELATED = 1\n');
   writeFileSync(
     join(projectRoot, 'packages/luxar/src/luxar/core/tests/test_writer.py'),
     'def test_writer(): pass\n'
@@ -71,26 +84,18 @@ describe('generated fixture freshness', () => {
     expect(areFixturesStale(projectRoot, fixturesDir)).toBe(false);
   });
 
-  it('uses the same production-source exclusions as the Python fingerprint', () => {
+  it('tracks the producer import closure instead of every production source', () => {
     const { fixturesDir, projectRoot } = writeFixtureInputs();
-    const conftestPath = join(projectRoot, 'packages/luxar/src/luxar/conftest.py');
-    writeFileSync(conftestPath, 'PYTEST_ONLY = 1\n');
-    const pythonFingerprintSource = readFileSync(
-      resolve(REPO_ROOT, 'packages/luxar/src/luxar/utils/source_fingerprints.py'),
-      'utf8'
-    );
 
     const relativeInputs = fixtureInputFiles(projectRoot, fixturesDir).map((path) =>
       path.slice(projectRoot.length + 1)
     );
 
     expect(relativeInputs).toContain('packages/luxar-viewer/tests/fixtures/generate_test_data.py');
+    expect(relativeInputs).toContain('packages/luxar/src/luxar/__init__.py');
     expect(relativeInputs).toContain('packages/luxar/src/luxar/_zarr_compat.py');
-    expect(relativeInputs).not.toContain('packages/luxar/src/luxar/conftest.py');
+    expect(relativeInputs).not.toContain('packages/luxar/src/luxar/core/unrelated.py');
     expect(relativeInputs).not.toContain('packages/luxar/src/luxar/core/tests/test_writer.py');
-    expect(pythonFingerprintSource).toContain('"tests" not in path.relative_to(root).parts');
-    expect(pythonFingerprintSource).toContain('"__pycache__" not in path.relative_to(root).parts');
-    expect(pythonFingerprintSource).toContain('path.name != "conftest.py"');
   });
 
   it('produces the same digest through a symlinked checkout path', () => {
@@ -134,6 +139,23 @@ describe('generated fixture freshness', () => {
     rmSync(join(fixturesDir, 'roundtrip_expectations.json'));
     expect(() => stampExpectationsInputs(projectRoot, fixturesDir)).toThrow(
       'Cannot stamp missing roundtrip_expectations.json'
+    );
+  });
+
+  it('tracks imports used only by the expectations producer', () => {
+    const { fixturesDir, projectRoot } = writeFixtureInputs();
+    const expectationsWriterPath = join(
+      projectRoot,
+      'packages/luxar/src/luxar/core/expectations_writer.py'
+    );
+    const fixtureFingerprint = fixtureInputsFingerprint(projectRoot, fixturesDir);
+    const expectationsFingerprint = expectationsInputsFingerprint(projectRoot, fixturesDir);
+
+    writeFileSync(expectationsWriterPath, 'EXPECTATIONS_VERSION = 2\n');
+
+    expect(fixtureInputsFingerprint(projectRoot, fixturesDir)).toBe(fixtureFingerprint);
+    expect(expectationsInputsFingerprint(projectRoot, fixturesDir)).not.toBe(
+      expectationsFingerprint
     );
   });
 

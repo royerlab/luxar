@@ -47,6 +47,14 @@ export interface ScreenshotOptions {
   includeOverlays?: boolean;
 }
 
+/** A latched fault that leaves the current dataset loaded but unable to update. */
+export interface DatasetFaultPayload {
+  /** Dataset source passed to `init()` or `switchDataset()`. */
+  src: string;
+  /** Current error reported by the active scene loader. */
+  error: Error;
+}
+
 /**
  * A picked element, or `null` when the hover/selection is cleared.
  *
@@ -138,6 +146,10 @@ export interface ElementPointerPayload extends SelectionPayload {
  *
  * - `dataset-loaded` / `dataset-error` — fire around every dataset load
  *   (initial `init()`, the built-in browser, and `switchDataset()`).
+ * - `dataset-fault` — fires when an already-loaded dataset becomes unable to
+ *   update, for example after an archive URL expires. The last complete frame
+ *   remains visible; an explicit retry clears the fault, and a recurring fault
+ *   fires the event again. Call `getDatasetFault()` to inspect the current state.
  * - `dimensions-changed` — fires whenever a slice position changes (slider,
  *   keyboard, or `setDimensionValue()`), carrying a fresh `EmbedderDimensions`.
  * - `selection` — fires on hover-pick changes (the element under the cursor,
@@ -160,6 +172,7 @@ export interface ElementPointerPayload extends SelectionPayload {
 export interface LuxarEmbedderEventMap {
   'dataset-loaded': { src: string };
   'dataset-error': { src: string; error: Error };
+  'dataset-fault': DatasetFaultPayload;
   'dimensions-changed': EmbedderDimensions;
   selection: SelectionPayload | null;
   'element-click': ElementPointerPayload;

@@ -38,6 +38,7 @@ import { vi } from 'vitest';
 import { LoaderRegistry } from '../../data/scene-loader/loaders/loader-registry';
 import type { NodeBuildCtx } from '../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode, ViewState } from '../../data/data-loader-types';
+import { createLineWorkingSetGate } from '../../data/scene-loader/nodes/load-children-concurrently';
 
 /** The ctx `viewState` a spec gets when it does not supply one. */
 function defaultViewState(): ViewState {
@@ -87,6 +88,7 @@ export function makeTestNodeBuildCtx(overrides: Partial<NodeBuildCtx> = {}): Nod
 
   return {
     registry: new LoaderRegistry(),
+    lineWorkingSetGate: createLineWorkingSetGate(undefined, undefined),
     nodeFactory,
     viewState,
     getViewVersion: () => 1,
@@ -96,6 +98,7 @@ export function makeTestNodeBuildCtx(overrides: Partial<NodeBuildCtx> = {}): Nod
     deriveNodeViewState: vi.fn(() => ({ skip: false as const, viewState })),
     connectLoaderToMonitor: vi.fn(),
     kickRefinementIfIdle: vi.fn(),
+    reportArchiveFault: vi.fn(),
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),

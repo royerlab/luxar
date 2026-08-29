@@ -132,7 +132,7 @@
       "script": "demo_gsplats_3d_cryoem_virus.py",
       "dataset": "datasets/demos/gsplats_3d_cryoem_virus.luxar.zarr",
       "fillTarget": 0.65,
-      "note": "FILLTARGET: the default 0.95 framed this as an edge-to-edge texture wall \u2014 you could not tell it was a capsid. Measured border-lit across the pose set, 10/10 poses flagged at every step: 70.6% at 0.95, 34.2% at 0.85, 17.7% at 0.75, 15.2% at 0.65. The harness keeps suggesting lower because a dense icosahedron inherently clips its own silhouette, so 0.65 was chosen on the RENDER, not on the warning clearing: at 0.65 the hexagonal outline, the capsomer texture and the tail stalk are all legible. Auto-exposure tracks the framing and is the other half of the fix \u2014 -1.06 stops at 0.95 (subject filled the frame, so the meter crushed it to muddy brown) vs +2.33 at 0.65. Coverage cannot see any of this: it read 93% at 0.95 and 63% at 0.65, i.e. it preferred the broken framing, because its percentile bbox ignores exactly these outliers. This is a FRAMING fault, not the fit: at 19.2 dB foreground PSNR it is among the four lowest-scoring hosted archives, but opencell_map4 renders well at 18.0 dB, so the metric was never what made this tile look bad.",
+      "note": "FILLTARGET: the default 0.95 framed this as an edge-to-edge texture wall \u2014 you could not tell it was a capsid. Measured border-lit across the pose set, 10/10 poses flagged at every step: 70.6% at 0.95, 34.2% at 0.85, 17.7% at 0.75, 15.2% at 0.65. The harness keeps suggesting lower because a dense icosahedron inherently clips its own silhouette, so 0.65 was chosen on the RENDER, not on the warning clearing: at 0.65 the hexagonal outline, the capsomer texture and the tail stalk are all legible. Auto-exposure tracks the framing and is the other half of the fix \u2014 -1.06 stops at 0.95 (subject filled the frame, so the meter crushed it to muddy brown) vs +2.33 at 0.65. Coverage cannot see any of this: it read 93% at 0.95 and 63% at 0.65, i.e. it preferred the broken framing, because its percentile bbox ignores exactly these outliers. This is a FRAMING fault, not the fit: at 19.2 dB foreground PSNR it is among the four lowest-scoring hosted archives, but opencell_map4 renders well at 18.0 dB, so the metric was never what made this tile look bad. STALE FIGURES: both dB numbers predate #1914 (2026-08-23), which fixed five call sites that scored a fit against the raw volume when a fit reconstructs V minus image_min. These two figures therefore use the wrong basis in an unpredictable direction. The framing conclusion above is unaffected \u2014 it never rested on the metric.",
       "citation": "Zhang et al. 2011 (EMDB EMD-5384)"
     },
     {
@@ -335,7 +335,9 @@
       "category": "structural",
       "script": "demo_nuclear_pore_complex.py",
       "dataset": "datasets/demos/nuclear_pore_complex.luxar.zarr",
-      "citation": "Mosalaganti et al. 2022"
+      "citation": "Mosalaganti et al. 2022",
+      "fillTarget": 0.75,
+      "note": "fillTarget 0.75 reframes the whole 25-nucleoporin, two-dilation-state complex introduced by #2262; the inherited 0.95 cropped the ring at all four edges. Border-lit fell from 62.5% to 11.9%, restoring the 8-fold symmetry, central channel and per-nucleoporin colouring."
     },
     {
       "id": "fractals_4d",
@@ -481,7 +483,8 @@
       "script": "demo_gsplats_3d_tribolium_embryo.py",
       "dataset": "datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr",
       "citation": "Barry 2021 (GIANI, Zenodo 5270323); Cell Tracking Challenge (Ma\u0161ka et al. 2023)",
-      "note": "the old volumetric white-out was fixed by coupling strong absorption (kappa 3.13) with low opacity (0.06); the scene bakes exposure=1.97 and a 0-1.085 display window, so auto-exposure recalibrates. The faint bg rectangle is gone as of the floor fix: the fit now subtracts the specimen's ~675-count haze, not just the ~205-count detector offset, removing ~84% of the scene's emitted mass while leaving nuclei brightness ~unchanged"
+      "note": "the old volumetric white-out was fixed by coupling strong absorption (kappa 3.13) with low opacity (0.06); the scene bakes exposure=1.97 and a 0-1.085 display window, so auto-exposure recalibrates. The faint bg rectangle is gone as of the floor fix: the fit now subtracts the specimen's ~675-count haze, not just the ~205-count detector offset, removing ~84% of the scene's emitted mass while leaving nuclei brightness ~unchanged. fillTarget 0.7 gives the elongated embryo a correctly filled poster frame; border-lit only falls from 54.9% to 48.4% because the subject projects wider at rock +15deg. The harness's suggested 0.6 would shrink the still to optimize the worst orbit pose instead.",
+      "fillTarget": 0.7
     },
     {
       "id": "gsplats_4d_zebrafish_timelapse",
@@ -634,7 +637,9 @@
       "category": "embeddings",
       "script": "demo_zebrahub_multiome.py",
       "dataset": "datasets/demos/zebrahub_multiome.luxar.zarr",
-      "citation": "Kim et al. 2024"
+      "citation": "Kim et al. 2024",
+      "fillTarget": 0.75,
+      "note": "fillTarget 0.75 reduced border-lit from 45.0% to 2.4% and keeps the whole UMAP embedding visible; at 0.95 clusters were cut at three edges, changing the structure shown by the tile."
     },
     {
       "id": "gsplats_3d_tng_cosmic_web",
