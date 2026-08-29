@@ -2137,8 +2137,7 @@ def test_a_positional_pair_rejects_mixed_current_and_superseded_caches(
     pointer = (
         f"version https://git-lfs.github.com/spec/v1\noid sha256:{'0' * 64}\nsize 15\n"
     )
-    for entry in entries:
-        (repo_pair / entry["name"]).write_text(pointer)
+    (repo_pair / "fit.gsplats.zarr.zip").write_text(pointer)
     monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", repo_root)
 
     with pytest.raises(DatasetUnavailable, match="positional pair.*toy") as excinfo:
@@ -2148,9 +2147,11 @@ def test_a_positional_pair_rejects_mixed_current_and_superseded_caches(
 
     message = str(excinfo.value)
     assert "gsplats_toy" in message
-    assert "fit.gsplats.zarr.zip" in message
-    assert "colors.npz" in message
-    assert "git lfs pull" in message
+    assert "fit.gsplats.zarr.zip: In a source checkout, run `git lfs pull`." in message
+    assert (
+        "colors.npz: This archive is hosted-only and has no in-repo Git LFS copy."
+        in message
+    )
 
 
 def test_a_complete_superseded_positional_pair_remains_usable(fake_repo, monkeypatch):
