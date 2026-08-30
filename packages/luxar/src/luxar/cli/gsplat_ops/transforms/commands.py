@@ -515,7 +515,9 @@ def flatten_dataset(
     accept.
 
     A leaf or matrix-shaped lod group flattens to its full finest splat set; a
-    partition (or partitioned/mosaic topology) is merged across all parts.
+    partition (or partitioned/mosaic topology) is merged across all parts. Any
+    additive ladder is dropped while its splats are retained; run ``gsplat lod
+    --recipe stream`` on the flat result to build a new global ladder.
 
     Examples:
         # Tiled batch-fit merge → flat → overview LOD

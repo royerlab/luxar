@@ -7739,6 +7739,49 @@ class TestFlattenCommand:
         assert "migrate-format" in _plain(result.stdout)
         assert not output.exists()
 
+    def test_flatten_subtree_error_names_store_root(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        partition = tmp_path / "partition.gsplats.zarr"
+        self._make_partition(runner, medium_gsplats, partition)
+
+        output = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "flatten", str(partition / "part_0"), str(output)]
+        )
+        assert result.exit_code == 1
+        message = _plain(result.stdout)
+        assert "node-tree subtree" in message
+        assert ".gsplats.zarr store root" in message
+        assert not output.exists()
+
+    def test_flatten_creates_output_parent_and_stores_zip(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        import zipfile
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        self._make_partition(runner, medium_gsplats, partition)
+        output = tmp_path / "nested" / "flat.gsplats.zarr.zip"
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "flatten",
+                str(partition),
+                str(output),
+                "--compress",
+                "zip",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        with zipfile.ZipFile(output) as archive:
+            assert archive.infolist()
+            assert {entry.compress_type for entry in archive.infolist()} == {
+                zipfile.ZIP_STORED
+            }
+
     def test_flatten_corrects_inherited_fitting_count(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

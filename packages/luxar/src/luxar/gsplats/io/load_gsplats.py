@@ -533,7 +533,11 @@ def read_gsplat_root_stats(root: Any, *, include_stats: bool = True) -> Dict[str
     """Validate a standalone gsplat root and return its persisted statistics."""
     format_type = root.attrs.get("format_type")
     if format_type != "gsplats_zarr":
-        raise ValueError(f"Invalid format_type: {format_type}, expected 'gsplats_zarr'")
+        raise ValueError(
+            f"Invalid format_type: {format_type}, expected 'gsplats_zarr'. "
+            "If this path is a node-tree subtree, pass its standalone "
+            ".gsplats.zarr store root instead."
+        )
 
     from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
 

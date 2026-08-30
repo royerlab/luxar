@@ -473,7 +473,7 @@ luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4         # clas
 **Options**: `--n-lods` (default 4, equal-count), `--add-method/-m` (auto/greedy/self_energy/mass/amplitude/spectral/random/radial ordering; `radial` reveals outward from the bbox centre and carries no energy stamps), `--breakpoints/-b` (`equal-count` | `stream:C` | explicit `counts:`/`energy:` lists), `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override) to size the first chunk from a download budget, `--encoding/-e`, `--compress/-c`, `--overwrite`.
 
 #### `luxar gsplat flatten`
-Collapse **any** gsplat tree (leaf, LOD/matrix tree, partition, nested) into one flat matrix-shaped leaf. Use for compatibility with tools that expect a flat `.gsplats.zarr`, or before rebuilding a new global LOD from a tiled/partitioned result.
+Collapse **any** gsplat tree (leaf, LOD/matrix tree, partition, nested) into one flat matrix-shaped leaf. Use for compatibility with tools that expect a flat `.gsplats.zarr`, or before rebuilding a new global LOD from a tiled/partitioned result. Flatten retains every default-selected splat but drops additive ladder structure; run `gsplat lod --recipe stream` on the result to build a new global ladder.
 ```bash
 luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
 ```
