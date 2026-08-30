@@ -399,7 +399,9 @@ def _locate(
     dataset the refit campaign touched — measuring those gives figures that are
     stale or absent (8 of 27 local archives carry a PSNR, none carry a foreground
     PSNR) while the artifacts the records actually serve are fully stamped. Point
-    it at the staging tree holding the uploaded generation.
+    it at the staging tree holding the uploaded generation. Candidates must be
+    files: hashing happens before reporting, and ``_read_archive`` opens zip files,
+    so accepting an unpacked directory would fail before it could be diagnosed.
     """
     roots = [(extra_root, dataset)] if extra_root else []
     roots += [(DATA_DIR, entry.get("dir", dataset)), (CACHE_DIR, dataset)]
@@ -1053,7 +1055,8 @@ def main() -> int:
             if result.staged_selected == 0:
                 print(
                     "WARNING: --archives-root matched no archives; "
-                    "expected layout: <root>/<dataset>/[<variant>/]<file>"
+                    "expected layout: <root>/<dataset>/[<variant>/]<file> "
+                    "(zip files — unpacked .gsplats.zarr.zip/ directories are skipped)"
                 )
         print(
             f"skipped {len(result.unreadable)} pinned archive(s) that were present "

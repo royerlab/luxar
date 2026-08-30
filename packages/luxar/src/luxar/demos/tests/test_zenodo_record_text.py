@@ -1244,6 +1244,41 @@ def test_a_flat_archives_root_warns_with_the_expected_layout(
     assert "<root>/<dataset>/[<variant>/]<file>" in output
 
 
+def test_an_unzipped_archives_root_warning_explains_that_files_are_required(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    file_name = "a.gsplats.zarr.zip"
+    staged_root = tmp_path / "staged"
+    (staged_root / "ds" / file_name).mkdir(parents=True)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(_fake_manifest([_entry(file_name, "a" * 64)])))
+    monkeypatch.setattr(gen, "MANIFEST", manifest_path)
+    monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gen, "DATA_DIR", tmp_path / "repo")
+    monkeypatch.setattr(gen, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "gen_zenodo_records.py",
+            "--refresh",
+            "--archives-root",
+            str(staged_root),
+        ],
+    )
+
+    assert gen.main() == 0
+
+    output = capsys.readouterr().out
+    assert "WARNING" in output
+    assert "zip files" in output
+    assert "unpacked .gsplats.zarr.zip/ directories are skipped" in output
+
+
 def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:
     manifest = _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
 
