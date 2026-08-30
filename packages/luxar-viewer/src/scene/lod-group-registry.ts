@@ -1193,6 +1193,7 @@ export class LODGroupRegistry {
 
     let changed = false;
     let anyLoading = false;
+    let hasVisiblePendingResync = false;
     for (const entry of this.partitionEntries.values()) {
       if (!isEffectivelyVisible(entry.groupObject)) continue;
       const result = this.evaluatePartitionEntry(entry, displayDims, PARTITION_FRUSTUM_SCRATCH);
@@ -1200,6 +1201,7 @@ export class LODGroupRegistry {
       if ((result & PARTITION_BECAME_VISIBLE) !== 0) {
         this.partitionResyncPending.add(entry.path);
       }
+      if (this.partitionResyncPending.has(entry.path)) hasVisiblePendingResync = true;
     }
     if (
       this.partitionResyncPending.size > 0 &&
@@ -1218,7 +1220,9 @@ export class LODGroupRegistry {
       }
       if (shouldResync) this.deps.requestReprocess();
     }
-    if (this.partitionResyncPending.size > 0) this.deps.requestRender?.();
+    if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
+      this.deps.requestRender?.();
+    }
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, camera, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
         changed = true;

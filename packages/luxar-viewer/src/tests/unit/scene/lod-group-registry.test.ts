@@ -763,13 +763,14 @@ describe('LODGroupRegistry — partition frustum selection', () => {
 
   it('defers a pending resync while its partition wrapper is hidden', () => {
     let updateInProgress = true;
+    const requestRender = vi.fn();
     const requestReprocess = vi.fn();
     const reg = makeRegistry(
       [0, 1, 2],
       undefined,
       undefined,
       undefined,
-      undefined,
+      requestRender,
       undefined,
       undefined,
       requestReprocess,
@@ -789,11 +790,14 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     groupObject.position.x = -2.5;
     expect(reg.evaluatePerFrame()).toBe(true);
     expect(requestReprocess).not.toHaveBeenCalled();
+    expect(requestRender).toHaveBeenCalledOnce();
 
     groupObject.visible = false;
     updateInProgress = false;
+    requestRender.mockClear();
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(requestReprocess).not.toHaveBeenCalled();
+    expect(requestRender).not.toHaveBeenCalled();
 
     groupObject.visible = true;
     expect(reg.evaluatePerFrame()).toBe(false);

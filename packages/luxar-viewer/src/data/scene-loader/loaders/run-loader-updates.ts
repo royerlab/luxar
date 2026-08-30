@@ -44,8 +44,8 @@ export function filterPartitionVisibleLoaders<TLoader>(
 /**
  * Run a per-loader update task for every entry in `loaders`, recording
  * failures into `failedLoaders` and forgetting the predictive-prefetch
- * baseline for failed paths. Archive faults are excluded from that bookkeeping
- * and reported once after every task has settled.
+ * baseline for failed or frustum-skipped paths. Archive faults are excluded
+ * from that bookkeeping and reported once after every task has settled.
  */
 export async function runLoaderUpdates<TLoader, TStaged>(
   loaders: Map<string, TLoader>,
