@@ -10,7 +10,10 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
-from luxar.io.ordering import _barrier_axis_qualifies, _rounded_barrier_values
+from luxar.io._ordering.compound import (
+    _barrier_axis_qualifies,
+    _rounded_barrier_values,
+)
 
 from ..encoding import _resolve_encoding_mode
 
