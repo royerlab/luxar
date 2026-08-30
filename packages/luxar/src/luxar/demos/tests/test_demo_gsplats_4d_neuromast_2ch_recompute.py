@@ -22,6 +22,7 @@ import pytest
 
 from luxar._zarr_compat import open_group
 from luxar.demos import demo_gsplats_4d_neuromast_2ch as demo
+from luxar.gsplats.calibration.noise_floor import estimate_floor
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.tree import GSplatLeaf
 
@@ -205,9 +206,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         }
 
     def test_the_source_files_are_stacked_in_numeric_timepoint_order(self):
-        assert demo.SOURCE_TIMEPOINT_LABELS == tuple(
-            range(1, REAL_SOURCE_SHAPE[0] + 1)
-        )
+        assert demo.SOURCE_TIMEPOINT_LABELS == tuple(range(1, REAL_SOURCE_SHAPE[0] + 1))
         assert demo.SOURCE_FILE_PATTERN.format(timepoint=1).endswith("_t1.tiff")
         assert demo.SOURCE_FILE_PATTERN.format(timepoint=100).endswith("_t100.tiff")
 
@@ -229,6 +228,9 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
             88,
             99,
         )
+        assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == tuple(
+            int(round(value)) for value in np.linspace(0, REAL_SOURCE_SHAPE[0] - 1, 10)
+        )
         assert demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE == 95.0
         assert demo.BACKGROUND_FLOOR_HISTOGRAM_BINS == 512
         assert demo.BACKGROUND_FLOOR_REDUCTION == "median"
@@ -237,6 +239,22 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
             "membranes": 105.9911880493164,
             "nuclei": 103.88801574707031,
         }
+
+    def test_the_recorded_per_frame_recipe_matches_estimate_floor(self):
+        rng = np.random.default_rng(0)
+        frame = rng.normal(104.0, 2.0, (32, 32)).astype(np.float32)
+        frame[12:16, 12:16] += 400.0
+        upper = np.percentile(frame, demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE)
+        background = frame[frame <= upper]
+        histogram, edges = np.histogram(
+            background.astype(np.float64),
+            bins=demo.BACKGROUND_FLOOR_HISTOGRAM_BINS,
+        )
+        peak = int(np.argmax(histogram))
+        recorded_floor = float(0.5 * (edges[peak] + edges[peak + 1]))
+
+        assert recorded_floor < float(np.median(frame))
+        assert estimate_floor(frame, method="mode") == recorded_floor
 
     def test_jobs_per_gpu_is_pinned_not_auto(self):
         """`auto` OOM-killed all 100 workers on the acquisition box."""
