@@ -332,17 +332,22 @@ describe('MeshProgressiveLoader', () => {
   });
 
   it('streams resident levels under a playback frame budget', async () => {
-    const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+    try {
+      const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
 
-    await loader.updateView({ ...VIEW, frameBudgetMs: 8 });
+      await loader.updateView({ ...VIEW, frameBudgetMs: 8 });
 
-    // Playback spends its budget on levels that come back cache-resident
-    // rather than committing the LOD-0 floor and stopping (#2374, #2376) —
-    // on a sliced node the floor alone can be a near-empty frame.
-    expect(loader.loadedLODCount).toBe(2);
-    // The budgeted prefix IS the target while playback is running, so nothing
-    // should schedule background refinement between animation ticks.
-    expect(loader.hasMoreLODs).toBe(false);
+      // Playback spends its budget on levels that come back cache-resident
+      // rather than committing the LOD-0 floor and stopping (#2374, #2376) —
+      // on a sliced node the floor alone can be a near-empty frame.
+      expect(loader.loadedLODCount).toBe(2);
+      // The budgeted prefix IS the target while playback is running, so nothing
+      // should schedule background refinement between animation ticks.
+      expect(loader.hasMoreLODs).toBe(false);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('returns the SAME object across view changes once the ladder is complete', async () => {

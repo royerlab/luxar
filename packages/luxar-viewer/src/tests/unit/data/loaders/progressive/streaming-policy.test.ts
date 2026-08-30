@@ -17,6 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyStreamingPass,
+  shouldLoadLevel,
   shouldStopAfterLevel,
 } from '../../../../../data/loaders/progressive/streaming-policy';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../../../data/loaders/progressive/constants';
@@ -33,6 +34,18 @@ describe('classifyStreamingPass', () => {
 
   it('is refine for an unbudgeted foreground pass (static view / refine-on-pause)', () => {
     expect(classifyStreamingPass(false, false)).toBe('refine');
+  });
+});
+
+describe('shouldLoadLevel', () => {
+  it('playback commits a restored prefix as-is but streams from an empty ladder', () => {
+    expect(shouldLoadLevel('playback', 4, 3)).toBe(false);
+    expect(shouldLoadLevel('playback', 5, 0)).toBe(true);
+  });
+
+  it('prefetch and refine load every level', () => {
+    expect(shouldLoadLevel('prefetch', 5, 2)).toBe(true);
+    expect(shouldLoadLevel('refine', 5, 2)).toBe(true);
   });
 });
 
