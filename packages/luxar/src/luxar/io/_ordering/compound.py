@@ -17,6 +17,17 @@ from .curves.morton import morton_encode_nd
 from .grid import normalize_coords_to_grid
 
 
+def _rounded_barrier_values(values: np.ndarray) -> np.ndarray | None:
+    rounded = np.rint(values)
+    if not np.allclose(values, rounded, rtol=0.0, atol=1e-3):
+        return None
+    return rounded.astype(np.int64)
+
+
+def _barrier_axis_qualifies(n_splats: int, n_unique: int, max_cardinality: int) -> bool:
+    return n_unique <= max_cardinality and n_unique * 4 <= n_splats
+
+
 def _compound_sort(
     coords: np.ndarray,
     slice_dims: Sequence[int],
@@ -143,12 +154,13 @@ def detect_barrier_dims(
         # rtol=0: a large-magnitude continuous float must NOT count as integer
         # (np.allclose's default rtol=1e-5 makes |coord|>~5e4 always "integer",
         # which would misclassify a spatial axis → dropped splats).
-        if not np.allclose(col, np.round(col), rtol=0.0, atol=1e-3):
+        rounded = _rounded_barrier_values(col)
+        if rounded is None:
             continue
-        n_unique = int(np.unique(np.round(col).astype(np.int64)).size)
+        n_unique = int(np.unique(rounded).size)
         # Few distinct values, and materially fewer than N (so a genuinely
         # per-splat-varying axis — or a fine integer spatial grid — is never
         # mistaken for a category).
-        if n_unique <= max_cardinality and n_unique * 4 <= n:
+        if _barrier_axis_qualifies(n, n_unique, max_cardinality):
             barrier.append(d)
     return barrier

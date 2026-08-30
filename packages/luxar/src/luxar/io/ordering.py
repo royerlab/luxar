@@ -15,7 +15,18 @@ Everything is re-exported here so the historical public paths
 from __future__ import annotations
 
 from ._ordering.bounds import _BARRIER_BOUND_EPS as _BARRIER_BOUND_EPS  # noqa: F401
-from ._ordering.compound import _compound_sort, detect_barrier_dims  # noqa: F401
+from ._ordering.compound import (
+    _barrier_axis_qualifies as _barrier_axis_qualifies,
+)
+from ._ordering.compound import (
+    _compound_sort as _compound_sort,
+)
+from ._ordering.compound import (
+    _rounded_barrier_values as _rounded_barrier_values,
+)
+from ._ordering.compound import (
+    detect_barrier_dims as detect_barrier_dims,
+)
 from ._ordering.curves.hilbert import hilbert_encode_nd  # noqa: F401
 from ._ordering.curves.morton import (  # noqa: F401
     morton_encode_128bit,

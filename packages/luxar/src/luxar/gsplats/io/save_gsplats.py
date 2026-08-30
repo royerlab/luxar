@@ -1251,14 +1251,13 @@ def write_flat_leaf_streaming(
             )
 
             ordering_dims = list(state.ordering_template.get("ordering_dims", []))
-            ordering_bits_per_dim = (
-                min(21, 64 // len(ordering_dims)) if ordering_dims else 21
-            )
             ordering_data = {
-                "ordering": "hilbert",
+                "ordering": state.ordering_template["ordering"],
                 "ordering_min": state.ordering_min.tolist(),
                 "ordering_max": state.ordering_max.tolist(),
-                "ordering_bits_per_dim": ordering_bits_per_dim,
+                "ordering_bits_per_dim": state.ordering_template[
+                    "ordering_bits_per_dim"
+                ],
                 "chunk_size": chunk_size,
                 "slice_dims": list(resolved_slice_dims),
                 "ordering_dims": ordering_dims,

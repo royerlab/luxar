@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Literal, Optional, Sequence
 
 import numpy as np
 import typer
 from arbol import aprint, asection
+
+from luxar.io.ordering import _barrier_axis_qualifies, _rounded_barrier_values
 
 from ..encoding import _resolve_encoding_mode
 
@@ -114,37 +117,98 @@ def _resolve_barrier_dims(
     return None if not resolved and ndim > 3 else resolved
 
 
+@dataclass
+class _BarrierAxisAccumulator:
+    max_cardinality: int
+    rounded_values: set[int] = field(default_factory=set)
+    exact_values: Optional[set[float]] = field(default_factory=set)
+    counts_by_group: Optional[list[dict[float, int]]] = field(default_factory=list)
+    current_counts: dict[float, int] = field(default_factory=dict)
+    active: bool = True
+
+    def add(self, values: np.ndarray) -> None:
+        if not self.active:
+            return
+        rounded = _rounded_barrier_values(values)
+        if rounded is None:
+            self._disable()
+            return
+        self.rounded_values.update(int(value) for value in np.unique(rounded))
+        if len(self.rounded_values) > self.max_cardinality:
+            self._disable()
+            return
+        if self.counts_by_group is None:
+            return
+        unique, counts = np.unique(values, return_counts=True)
+        assert self.exact_values is not None
+        self.exact_values.update(float(value) for value in unique)
+        if len(self.exact_values) > self.max_cardinality:
+            self.exact_values = None
+            self.counts_by_group = None
+            self.current_counts.clear()
+            return
+        for value, count in zip(unique, counts):
+            key = float(value)
+            self.current_counts[key] = self.current_counts.get(key, 0) + int(count)
+
+    def finish_group(self) -> None:
+        if self.counts_by_group is not None:
+            self.counts_by_group.append(self.current_counts)
+            self.current_counts = {}
+
+    def qualifies(self, n_splats: int) -> bool:
+        return self.active and _barrier_axis_qualifies(
+            n_splats, len(self.rounded_values), self.max_cardinality
+        )
+
+    def runs(self) -> Optional[list[tuple[np.ndarray, np.ndarray]]]:
+        if self.counts_by_group is None:
+            return None
+        runs = []
+        for group_counts in self.counts_by_group:
+            ordered = sorted(group_counts)
+            runs.append(
+                (
+                    np.asarray(ordered, dtype=np.float32).reshape(-1, 1),
+                    np.asarray(
+                        [group_counts[value] for value in ordered], dtype=np.int64
+                    ),
+                )
+            )
+        return runs
+
+    def _disable(self) -> None:
+        self.active = False
+        self.rounded_values.clear()
+        self.exact_values = None
+        self.counts_by_group = None
+        self.current_counts.clear()
+
+
 def _detect_barrier_dims_across_groups(
     splat_groups: Sequence[Any], root: Any, decoder: Any, max_cardinality: int = 1024
-) -> tuple[int, ...]:
+) -> tuple[tuple[int, ...], Optional[list[tuple[np.ndarray, np.ndarray]]]]:
     ndim = int(splat_groups[0].attrs["ndim"])
-    integer_axes = [True] * ndim
-    distinct: list[set[float]] = [set() for _ in range(ndim)]
+    accumulators = [_BarrierAxisAccumulator(max_cardinality) for _ in range(ndim)]
     n_splats = 0
     for group in splat_groups:
         centers = np.asarray(decoder.decode(group["centers"], root))
         n_splats += len(centers)
         for start in range(0, len(centers), 65_536):
             block = centers[start : start + 65_536]
-            for dim in range(ndim):
-                if not integer_axes[dim] or len(distinct[dim]) > max_cardinality:
-                    continue
-                rounded = np.rint(block[:, dim])
-                if not np.allclose(block[:, dim], rounded):
-                    integer_axes[dim] = False
-                    distinct[dim].clear()
-                    continue
-                remaining = max_cardinality + 1 - len(distinct[dim])
-                unique = np.unique(rounded)
-                distinct[dim].update(float(value) for value in unique[:remaining])
+            for dim, accumulator in enumerate(accumulators):
+                accumulator.add(block[:, dim])
+        for accumulator in accumulators:
+            accumulator.finish_group()
         del centers
-    return tuple(
+    barrier_dims = tuple(
         dim
-        for dim in range(ndim)
-        if integer_axes[dim]
-        and len(distinct[dim]) <= max_cardinality
-        and len(distinct[dim]) * 4 <= n_splats
+        for dim, accumulator in enumerate(accumulators)
+        if accumulator.qualifies(n_splats)
     )
+    if len(barrier_dims) != 1:
+        return barrier_dims, None
+    return barrier_dims, accumulators[barrier_dims[0]].runs()
 
 
 def _stored_color_layout(group: Any) -> tuple[Optional[np.dtype[Any]], int]:
@@ -163,20 +227,29 @@ def _stored_color_layout(group: Any) -> tuple[Optional[np.dtype[Any]], int]:
 
 
 def _collect_streaming_metadata(
-    splat_groups: Sequence[Any], root: Any, decoder: Any, barrier_dims: Sequence[int]
+    splat_groups: Sequence[Any],
+    root: Any,
+    decoder: Any,
+    barrier_dims: Sequence[int],
+    barrier_runs: Optional[Sequence[tuple[np.ndarray, np.ndarray]]] = None,
 ) -> list[Any]:
     from luxar.gsplats.io.save_gsplats import StreamingSplatSetMetadata
     from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
     metadata = []
-    for group in splat_groups:
+    if barrier_runs is not None and len(barrier_runs) != len(splat_groups):
+        raise ValueError("barrier runs do not match streamed splat groups")
+    for index, group in enumerate(splat_groups):
         color_dtype, color_channels = _stored_color_layout(group)
         barrier_values = None
         barrier_counts = None
         if barrier_dims:
-            centers = decoder.decode(group["centers"], root)
-            barrier_values, barrier_counts = _barrier_runs(centers, barrier_dims)
-            del centers
+            if barrier_runs is not None:
+                barrier_values, barrier_counts = barrier_runs[index]
+            else:
+                centers = decoder.decode(group["centers"], root)
+                barrier_values, barrier_counts = _barrier_runs(centers, barrier_dims)
+                del centers
         metadata.append(
             StreamingSplatSetMetadata(
                 n_splats=int(group.attrs["n_splats"]),
@@ -358,12 +431,17 @@ def run_flatten_dataset(
                 ]
                 barrier_dims = _resolve_barrier_dims(splat_groups, stats)
                 decoder = ArrayDecoder()
+                barrier_runs = None
                 if barrier_dims is None:
-                    barrier_dims = _detect_barrier_dims_across_groups(
+                    barrier_dims, barrier_runs = _detect_barrier_dims_across_groups(
                         splat_groups, root, decoder
                     )
                 splat_set_metadata = _collect_streaming_metadata(
-                    splat_groups, root, decoder, barrier_dims
+                    splat_groups,
+                    root,
+                    decoder,
+                    barrier_dims,
+                    barrier_runs,
                 )
 
                 def splat_sets() -> Iterator[Any]:

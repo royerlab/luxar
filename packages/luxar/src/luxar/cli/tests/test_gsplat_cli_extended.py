@@ -7647,14 +7647,14 @@ class TestFlattenCommand:
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
         """Flatten stays well below the resident cost of a whole-tree concat."""
-        import gc
-        import threading
-        import time
+        import subprocess
+        import sys
+        import textwrap
 
         from luxar.gsplats.gsplat_data import GSplatData
 
         rng = np.random.default_rng(23)
-        n_splats = 400_000
+        n_splats = 1_000_000
         source = tmp_path / "source.gsplats.zarr"
         GSplatData(
             centers=rng.normal(size=(n_splats, 3)).astype(np.float32),
@@ -7671,37 +7671,110 @@ class TestFlattenCommand:
         )
         assert result.exit_code == 0, result.stdout
 
-        def anonymous_bytes() -> int:
-            for line in Path("/proc/self/smaps_rollup").read_text().splitlines():
-                if line.startswith("Anonymous:"):
-                    return int(line.split()[1]) * 1024
-            raise AssertionError("Anonymous total missing from smaps_rollup")
+        flat = tmp_path / "flat.gsplats.zarr"
+        script = textwrap.dedent(
+            """
+            import gc
+            import threading
+            from pathlib import Path
 
-        gc.collect()
-        baseline = anonymous_bytes()
-        samples = [baseline]
-        stop = threading.Event()
-
-        def sample_memory() -> None:
-            while not stop.wait(0.01):
-                samples.append(anonymous_bytes())
-
-        sampler = threading.Thread(target=sample_memory, daemon=True)
-        sampler.start()
-        try:
-            flat = tmp_path / "flat.gsplats.zarr"
-            result = runner.invoke(
-                app, ["gsplat", "flatten", str(partition), str(flat)]
+            from typer.testing import CliRunner
+            from luxar._zarr_compat import open_group
+            from luxar.cli import app
+            from luxar.cli.gsplat_ops.transforms.partition_flatten import (
+                _default_leaf_paths,
+                _iter_flatten_splat_sets,
             )
-        finally:
-            stop.set()
-            sampler.join()
-            time.sleep(0)
-        assert result.exit_code == 0, result.stdout
+            from luxar.io.ordering import sort_splats_spatial
+
+            def anonymous_bytes():
+                for line in Path('/proc/self/smaps_rollup').read_text().splitlines():
+                    if line.startswith('Anonymous:'):
+                        return int(line.split()[1]) * 1024
+                raise RuntimeError('Anonymous total missing from smaps_rollup')
+
+            root = open_group(__import__('sys').argv[1], mode='r')
+            first = next(_iter_flatten_splat_sets(root, _default_leaf_paths(root)[:1]))
+            sort_splats_spatial(first.centers, method='hilbert')
+            del first, root
+            gc.collect()
+            baseline = anonymous_bytes()
+            samples = [baseline]
+            stop = threading.Event()
+
+            def sample_memory():
+                while not stop.wait(0.01):
+                    samples.append(anonymous_bytes())
+
+            sampler = threading.Thread(target=sample_memory, daemon=True)
+            sampler.start()
+            try:
+                result = CliRunner().invoke(
+                    app, ['gsplat', 'flatten', __import__('sys').argv[1], __import__('sys').argv[2]]
+                )
+            finally:
+                stop.set()
+                sampler.join()
+            if result.exit_code != 0:
+                raise RuntimeError(result.stdout) from result.exception
+            print(f'PEAK_DELTA={max(samples) - baseline}')
+            """
+        )
+        measured = subprocess.run(
+            [sys.executable, "-c", script, str(partition), str(flat)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
         flat_payload_bytes = n_splats * (3 * 4 + 4 + 6 * 4)
-        peak_delta = max(samples) - baseline
+        peak_delta = int(measured.stdout.rsplit("PEAK_DELTA=", 1)[1].splitlines()[0])
         assert peak_delta < flat_payload_bytes * 2.5
+
+    def test_flatten_does_not_invent_large_offset_barrier(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Streaming fallback matches canonical detection at large offsets."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(31)
+        n_splats = 4_000
+        centers = np.empty((n_splats, 4), dtype=np.float32)
+        centers[:, :3] = rng.uniform(0, 100, (n_splats, 3))
+        centers[:, 3] = rng.uniform(100_000, 100_600, n_splats)
+        cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+        cholesky[:, [0, 2, 5, 9]] = 3.0
+        source = tmp_path / "source.gsplats.zarr"
+        GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=cholesky,
+        ).save(source)
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "partition", str(source), str(partition), "--parts", "4"],
+        )
+        assert result.exit_code == 0, result.stdout
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(partition), str(flat)])
+        assert result.exit_code == 0, result.stdout
+
+        expected = zc_open_group(str(source), mode="r")
+        actual = zc_open_group(str(flat), mode="r")
+        assert actual.attrs["slice_dims"] == expected.attrs["slice_dims"] == []
+        assert (
+            actual.attrs["ordering_dims"]
+            == expected.attrs["ordering_dims"]
+            == [
+                0,
+                1,
+                2,
+                3,
+            ]
+        )
 
     def test_flatten_preserves_barrier_chunk_layout(
         self, runner: CliRunner, tmp_path: Path
