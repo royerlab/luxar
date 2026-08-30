@@ -75,6 +75,8 @@ class StreamingSplatSetMetadata:
     truncation_radius: float
     color_channels: int = 0
     color_dtype: Optional[np.dtype[Any]] = None
+    barrier_values: Optional[np.ndarray] = None
+    barrier_counts: Optional[np.ndarray] = None
 
 
 # Get luxar.gsplats version — the subpackage has no own __version__, so fall
@@ -886,18 +888,19 @@ def write_flat_leaf_streaming(
     pipeline_info: Optional[Dict[str, Any]] = None,
     description: Optional[str] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
-    barrier_dims: Optional[Sequence[int]] = None,
+    barrier_dims: Sequence[int],
     root_attrs: Optional[Dict[str, Any]] = None,
     compress: Optional[Literal["zip", "tar.gz"]] = None,
-    zip_deflate: bool = True,
+    zip_deflate: bool = False,
 ) -> int:
-    """Write one flat leaf from a stream, holding one decoded set in memory.
+    """Write one flat leaf from a stream, holding one decoded leaf in memory.
 
-    The decoded source sets are spatially ordered independently and concatenated
-    into disk-backed staging arrays. The final leaf therefore has a piecewise
-    Hilbert order without the whole-array permutation required by the regular
-    writer. The canonical array writer still owns the on-disk encoding, chunk
-    layout, metadata, appearance defaults, and format stamps.
+    The decoded source sets are spatially ordered independently and written into
+    disk-backed staging arrays. Barrier values are grouped globally while each
+    value retains a piecewise Hilbert order, avoiding the whole-array permutation
+    required by the regular writer. The canonical array writer still owns the
+    on-disk encoding, chunk layout, metadata, appearance defaults, and format
+    stamps.
 
     ``splat_set_metadata`` sizes the staging arrays without decoding source data;
     ``splat_sets`` is consumed exactly once to populate them. Streaming currently
@@ -918,7 +921,7 @@ def write_flat_leaf_streaming(
         write_gsplat_arrays,
     )
     from luxar.io._ordering.gsplats import compute_chunk_bounds_gsplats
-    from luxar.io.ordering import detect_barrier_dims, sort_splats_spatial
+    from luxar.io.ordering import sort_splats_spatial
 
     n_splats = 0
     ndim: Optional[int] = None
@@ -954,6 +957,7 @@ def write_flat_leaf_streaming(
     assert truncation_radius is not None
 
     path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
     if temp_dir is None:
         zarr_path = _tmp_sibling(path)
@@ -1003,17 +1007,45 @@ def write_flat_leaf_streaming(
 
             dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
             chunk_size = resolve_gsplat_chunk_size(n_splats, ndim)
+            resolved_slice_dims = list(barrier_dims)
+            barrier_offsets: Optional[dict[tuple[float, ...], int]] = None
+            if resolved_slice_dims:
+                barrier_totals: dict[tuple[float, ...], int] = {}
+                for stream_metadata in splat_set_metadata:
+                    values = stream_metadata.barrier_values
+                    counts = stream_metadata.barrier_counts
+                    if values is None or counts is None:
+                        raise ValueError(
+                            "barrier_values and barrier_counts are required when "
+                            "barrier_dims are non-empty"
+                        )
+                    if values.ndim != 2 or values.shape[1] != len(resolved_slice_dims):
+                        raise ValueError(
+                            "streamed barrier values do not match barrier_dims"
+                        )
+                    if counts.shape != (len(values),):
+                        raise ValueError(
+                            "streamed barrier counts do not match barrier values"
+                        )
+                    if int(np.sum(counts)) != stream_metadata.n_splats:
+                        raise ValueError(
+                            "streamed barrier counts do not match n_splats"
+                        )
+                    for value, count in zip(values, counts):
+                        key = tuple(float(component) for component in value)
+                        barrier_totals[key] = barrier_totals.get(key, 0) + int(count)
+                barrier_offsets = {}
+                next_offset = 0
+                for key in sorted(barrier_totals):
+                    barrier_offsets[key] = next_offset
+                    next_offset += barrier_totals[key]
+
             offset = 0
             ordering_template: Optional[Dict[str, Any]] = None
             ordering_min: Optional[np.ndarray] = None
             ordering_max: Optional[np.ndarray] = None
-            chunk_bounds: list[np.ndarray] = []
-            next_chunk_stop = chunk_size
             cholesky_reference: Optional[np.ndarray] = None
             cholesky_is_uniform = True
-            resolved_slice_dims = (
-                list(barrier_dims) if barrier_dims is not None else None
-            )
             stream = iter(splat_sets())
             for stream_metadata in splat_set_metadata:
                 try:
@@ -1029,9 +1061,6 @@ def write_flat_leaf_streaming(
                     != stream_metadata.truncation_radius
                 ):
                     raise ValueError("streamed splat set does not match its metadata")
-                if resolved_slice_dims is None:
-                    resolved_slice_dims = detect_barrier_dims(sublod.centers)
-
                 sort_indices, meta = sort_splats_spatial(
                     sublod.centers,
                     method="hilbert",
@@ -1043,10 +1072,6 @@ def write_flat_leaf_streaming(
                 part_colors = (
                     sublod.colors[sort_indices] if sublod.colors is not None else None
                 )
-                stop = offset + sublod.n_splats
-                centers[offset:stop] = part_centers
-                amplitudes[offset:stop] = part_amplitudes
-                cholesky[offset:stop] = part_cholesky
                 if colors is not None:
                     if part_colors is None:
                         normalized = np.ones(
@@ -1064,7 +1089,45 @@ def write_flat_leaf_streaming(
                                 normalized = normalized.astype(np.float32, copy=False)
                         if color_channels == 4 and normalized.shape[1] == 3:
                             normalized = widen_colors_to_rgba(normalized)
-                    colors[offset:stop] = normalized
+                if barrier_offsets is None:
+                    destinations = [(offset, 0, sublod.n_splats)]
+                else:
+                    assert stream_metadata.barrier_values is not None
+                    assert stream_metadata.barrier_counts is not None
+                    destinations = []
+                    source_start = 0
+                    for value, count in zip(
+                        stream_metadata.barrier_values,
+                        stream_metadata.barrier_counts,
+                    ):
+                        key = tuple(float(component) for component in value)
+                        destination_start = barrier_offsets[key]
+                        source_stop = source_start + int(count)
+                        destinations.append(
+                            (destination_start, source_start, source_stop)
+                        )
+                        barrier_offsets[key] += int(count)
+                        source_start = source_stop
+                    if source_start != sublod.n_splats:
+                        raise ValueError(
+                            "streamed barrier runs do not cover the splat set"
+                        )
+
+                for destination_start, source_start, source_stop in destinations:
+                    destination_stop = destination_start + source_stop - source_start
+                    centers[destination_start:destination_stop] = part_centers[
+                        source_start:source_stop
+                    ]
+                    amplitudes[destination_start:destination_stop] = part_amplitudes[
+                        source_start:source_stop
+                    ]
+                    cholesky[destination_start:destination_stop] = part_cholesky[
+                        source_start:source_stop
+                    ]
+                    if colors is not None:
+                        colors[destination_start:destination_stop] = normalized[
+                            source_start:source_stop
+                        ]
                 if ordering_template is None:
                     ordering_template = meta
                     ordering_dims = list(meta.get("ordering_dims", []))
@@ -1089,19 +1152,7 @@ def write_flat_leaf_streaming(
                             cholesky_is_uniform = False
                             break
 
-                offset = stop
-                while next_chunk_stop <= offset:
-                    chunk_start = next_chunk_stop - chunk_size
-                    chunk_bounds.append(
-                        compute_chunk_bounds_gsplats(
-                            centers[chunk_start:next_chunk_stop],
-                            cholesky[chunk_start:next_chunk_stop],
-                            chunk_size,
-                            coverage_sigma=float(truncation_radius),
-                            slice_dims=resolved_slice_dims,
-                        )[0]
-                    )
-                    next_chunk_stop += chunk_size
+                offset += sublod.n_splats
                 del sublod, part_centers, part_amplitudes, part_cholesky, part_colors
                 if colors is not None:
                     del normalized
@@ -1113,26 +1164,21 @@ def write_flat_leaf_streaming(
             else:
                 raise ValueError("splat_sets yielded more entries than its metadata")
 
-            chunk_start = next_chunk_stop - chunk_size
-            if offset > chunk_start:
-                chunk_bounds.append(
-                    compute_chunk_bounds_gsplats(
-                        centers[chunk_start:offset],
-                        cholesky[chunk_start:offset],
-                        offset - chunk_start,
-                        coverage_sigma=float(truncation_radius),
-                        slice_dims=resolved_slice_dims,
-                    )[0]
-                )
-
             assert ordering_template is not None
             assert ordering_min is not None and ordering_max is not None
-            assert resolved_slice_dims is not None
             centers.flush()
             amplitudes.flush()
             cholesky.flush()
             if colors is not None:
                 colors.flush()
+
+            chunk_bounds = compute_chunk_bounds_gsplats(
+                centers,
+                cholesky,
+                chunk_size,
+                coverage_sigma=float(truncation_radius),
+                slice_dims=resolved_slice_dims,
+            )
 
             ordering_dims = list(ordering_template.get("ordering_dims", []))
             ordering_bits_per_dim = (
@@ -1146,7 +1192,7 @@ def write_flat_leaf_streaming(
                 "chunk_size": chunk_size,
                 "slice_dims": list(resolved_slice_dims),
                 "ordering_dims": ordering_dims,
-                "chunk_bounds": np.stack(chunk_bounds),
+                "chunk_bounds": chunk_bounds,
             }
 
             store = open_store(zarr_path, mode="w")

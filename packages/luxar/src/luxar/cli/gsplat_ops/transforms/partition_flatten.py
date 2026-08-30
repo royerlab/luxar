@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterator, Literal, Optional, Sequence
 
+import numpy as np
 import typer
 from arbol import aprint, asection
 
@@ -54,11 +55,8 @@ def _leaf_splat_groups(root: Any, leaf_path: str) -> list[Any]:
 
 
 def _resolve_barrier_dims(
-    root: Any, leaf_paths: Sequence[str], stats: dict[str, Any]
+    splat_groups: Sequence[Any], stats: dict[str, Any]
 ) -> Optional[tuple[int, ...]]:
-    splat_groups = [
-        group for path in leaf_paths for group in _leaf_splat_groups(root, path)
-    ]
     if not splat_groups:
         return None
 
@@ -74,6 +72,23 @@ def _resolve_barrier_dims(
             return None
         stamped.add(tuple(int(dim) for dim in group.attrs["slice_dims"]))
     return next(iter(stamped)) if len(stamped) == 1 else None
+
+
+def _barrier_runs(
+    centers: Any, barrier_dims: Sequence[int]
+) -> tuple[np.ndarray, np.ndarray]:
+    counts: dict[tuple[float, ...], int] = {}
+    for start in range(0, len(centers), 65_536):
+        block = np.asarray(centers[start : start + 65_536])[:, barrier_dims]
+        values, block_counts = np.unique(block, axis=0, return_counts=True)
+        for value, count in zip(values, block_counts):
+            key = tuple(float(component) for component in value)
+            counts[key] = counts.get(key, 0) + int(count)
+    ordered = sorted(counts)
+    return (
+        np.asarray(ordered, dtype=np.float32),
+        np.asarray([counts[key] for key in ordered], dtype=np.int64),
+    )
 
 
 def run_partition_dataset(
@@ -180,9 +195,8 @@ def run_flatten_dataset(
     try:
         import shutil
 
-        import numpy as np
-
         from luxar._zarr_compat import open_group as zc_open_group
+        from luxar.encoding import ArrayDecoder
         from luxar.gsplats.gsplat_data import stats_after_structure_change
         from luxar.gsplats.io._archive import resolve_store_path
         from luxar.gsplats.io.load_gsplats import (
@@ -196,7 +210,7 @@ def run_flatten_dataset(
         )
         from luxar.gsplats.tree import GSplatLeaf
         from luxar.io._compiler.gsplat_tree import read_gsplat_node
-        from luxar.io.ordering import sort_splats_spatial
+        from luxar.io.ordering import detect_barrier_dims, sort_splats_spatial
         from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
         if output_path.exists() and not overwrite:
@@ -244,32 +258,57 @@ def run_flatten_dataset(
                     )
                     leaf_paths = [leaf_paths[int(index)] for index in order]
 
-                barrier_dims = _resolve_barrier_dims(root, leaf_paths, stats)
+                splat_groups = [
+                    group
+                    for leaf_path in leaf_paths
+                    for group in _leaf_splat_groups(root, leaf_path)
+                ]
+                barrier_dims = _resolve_barrier_dims(splat_groups, stats)
+                decoder = ArrayDecoder()
+                first_centers = None
+                if barrier_dims is None:
+                    first_centers = decoder.decode(splat_groups[0]["centers"], root)
+                    barrier_dims = tuple(detect_barrier_dims(first_centers))
                 splat_set_metadata = []
-                for leaf_path in leaf_paths:
-                    for group in _leaf_splat_groups(root, leaf_path):
-                        color_dtype = None
-                        color_channels = 0
-                        if "colors" in group:
-                            colors = group["colors"]
-                            encoding = colors.attrs.get("encoding", {})
-                            color_dtype = np.dtype(
-                                encoding.get("original_dtype", colors.dtype)
-                            )
-                            color_channels = int(colors.shape[1])
-                        splat_set_metadata.append(
-                            StreamingSplatSetMetadata(
-                                n_splats=int(group.attrs["n_splats"]),
-                                ndim=int(group.attrs["ndim"]),
-                                truncation_radius=float(
-                                    group.attrs.get(
-                                        "truncation_radius", DEFAULT_TRUNCATION_RADIUS
-                                    )
-                                ),
-                                color_channels=color_channels,
-                                color_dtype=color_dtype,
-                            )
+                for index, group in enumerate(splat_groups):
+                    color_dtype = None
+                    color_channels = 0
+                    if "colors" in group:
+                        colors = group["colors"]
+                        encoding = colors.attrs.get("encoding", {})
+                        color_dtype = np.dtype(
+                            encoding.get("original_dtype", colors.dtype)
                         )
+                        color_channels = int(colors.shape[1])
+                    centers = (
+                        first_centers
+                        if index == 0 and first_centers is not None
+                        else decoder.decode(group["centers"], root)
+                    )
+                    if index == 0:
+                        first_centers = None
+                    barrier_values = None
+                    barrier_counts = None
+                    if barrier_dims:
+                        barrier_values, barrier_counts = _barrier_runs(
+                            centers, barrier_dims
+                        )
+                    splat_set_metadata.append(
+                        StreamingSplatSetMetadata(
+                            n_splats=int(group.attrs["n_splats"]),
+                            ndim=int(group.attrs["ndim"]),
+                            truncation_radius=float(
+                                group.attrs.get(
+                                    "truncation_radius", DEFAULT_TRUNCATION_RADIUS
+                                )
+                            ),
+                            color_channels=color_channels,
+                            color_dtype=color_dtype,
+                            barrier_values=barrier_values,
+                            barrier_counts=barrier_counts,
+                        )
+                    )
+                    del centers
 
                 def splat_sets() -> Iterator[Any]:
                     for leaf_path in leaf_paths:

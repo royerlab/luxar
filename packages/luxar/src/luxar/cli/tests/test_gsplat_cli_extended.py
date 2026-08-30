@@ -7664,16 +7664,18 @@ class TestFlattenCommand:
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
 
         rng = np.random.default_rng(17)
+        n_spatial = 600
         spatial = GSplatData(
-            centers=rng.normal(size=(100, 3)).astype(np.float32),
-            amplitudes=rng.uniform(0.1, 1.0, 100).astype(np.float32),
+            centers=rng.normal(size=(n_spatial, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n_spatial).astype(np.float32),
             cholesky_factors=np.tile(
-                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (100, 1)
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_spatial, 1),
             ),
         )
         stacked = GSplatData.combine_as_new_dimension(
-            [spatial, spatial, spatial, spatial],
-            values=[0.0, 1.0, 2.0, 3.0],
+            [spatial] * 8,
+            values=list(range(8)),
             sigma=0.0,
         )
         source = tmp_path / "stacked.gsplats.zarr"
@@ -7690,7 +7692,7 @@ class TestFlattenCommand:
                 "--recipe",
                 "tiles",
                 "--max-elements",
-                "100",
+                "1200",
             ],
         )
         assert result.exit_code == 0, result.stdout
@@ -7714,6 +7716,7 @@ class TestFlattenCommand:
             assert actual_root.attrs[key] == expected_root.attrs[key]
         expected_bounds = np.asarray(expected_root["chunk_bounds"])
         actual_bounds = np.asarray(actual_root["chunk_bounds"])
+        assert len(expected_bounds) >= 4
         assert actual_bounds.shape == expected_bounds.shape
         np.testing.assert_allclose(
             actual_bounds[:, 3, 1] - actual_bounds[:, 3, 0],
