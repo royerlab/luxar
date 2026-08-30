@@ -352,6 +352,10 @@ export interface CacheMetrics {
     thrashMisses?: number;
     /** Resolved (heap-aware) byte budget — varies by device heap. */
     maxSize?: number;
+    /** Number of ladder entries whose cached prefix is complete. */
+    fullLadderCount?: number;
+    /** Cached ladder counts keyed by `storedDepth/totalDepth`. */
+    ladderDepthHistogram?: Record<string, number>;
   };
   /**
    * Whether caching is enabled. Derived from

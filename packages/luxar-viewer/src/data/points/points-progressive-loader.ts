@@ -51,6 +51,7 @@ import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-h
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
+import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
 
 /**
  * Compose the levels' slot → on-disk maps into ONE map in the parent's union
@@ -489,6 +490,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
+          totalLODCount: this.nLods,
         });
       }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
@@ -551,10 +553,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         break;
       }
       const t0 = performance.now();
-      const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
-        viewState,
-        session,
-        signal
+      const { data: lodData, allResident } = await timeLodStageWithResult(
+        ({ allResident }) => `additive:points:level:${level}:${allResident ? 'resident' : 'miss'}`,
+        `additive:points:level:${level}:aborted`,
+        () => this.lodLoaders[level].updateViewWithResidency(viewState, session, signal)
       );
       const elapsed = performance.now() - t0;
 
@@ -617,6 +619,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
         scan: this._frameBudgetMs !== null,
         pin: viewState.prefetch === true,
+        totalLODCount: this.nLods,
       });
     }
 

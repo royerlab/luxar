@@ -20,8 +20,17 @@ import type { SimpleDims } from '../../../types/dims';
 import { LOADER_TYPES, type LoaderTypeName } from '../../../types/format-contract';
 import { readVisibleElementCount } from '../../../data/scene-loader/monitor/visible-counts';
 
+/** Additive reveal-ladder state shared by every drawable leaf type. */
+export interface AdditiveLadderDebugInfo {
+  committedLadderComplete?: boolean;
+  committedEnergyFraction?: number;
+  loadedLODCount?: number;
+  totalLODCount?: number;
+  lastAllResident?: boolean;
+}
+
 /** Per-mesh point-cloud info reported by getState(). */
-export interface PointCloudInfo {
+export interface PointCloudInfo extends AdditiveLadderDebugInfo {
   name: string;
   pointCount: number;
   visible: boolean;
@@ -34,7 +43,7 @@ export interface PointCloudInfo {
 }
 
 /** Per-mesh gsplat info reported by getState(). */
-export interface GSplatMeshInfo {
+export interface GSplatMeshInfo extends AdditiveLadderDebugInfo {
   name: string;
   splatCount: number;
   visible: boolean;
@@ -44,7 +53,7 @@ export interface GSplatMeshInfo {
 }
 
 /** Per-mesh line-instance info reported by getState(). */
-export interface LineMeshInfo {
+export interface LineMeshInfo extends AdditiveLadderDebugInfo {
   name: string;
   segmentCount: number;
   visible: boolean;
@@ -69,7 +78,7 @@ export interface LineMeshInfo {
  * composed blending mode. They are what an E2E test asserting "this mesh is shading
  * from stored normals right now" has to read.
  */
-export interface MeshNodeInfo {
+export interface MeshNodeInfo extends AdditiveLadderDebugInfo {
   name: string;
   /** Triangles in the current draw range — what is on screen, not what was loaded. */
   triangleCount: number;
@@ -252,6 +261,26 @@ export interface DebugStateContext {
   gpuPoolStats?: () => GPUPoolDebugStats | undefined;
 }
 
+function readAdditiveLadderDebugInfo(userData: Record<string, unknown>): AdditiveLadderDebugInfo {
+  const loader = userData.loader as
+    { loadedLODCount?: unknown; totalLODCount?: unknown; lastAllResident?: unknown } | undefined;
+  if (typeof loader?.totalLODCount !== 'number' || loader.totalLODCount <= 1) return {};
+
+  return {
+    ...(typeof userData.committedLadderComplete === 'boolean'
+      ? { committedLadderComplete: userData.committedLadderComplete }
+      : {}),
+    ...(typeof userData.committedEnergyFraction === 'number'
+      ? { committedEnergyFraction: userData.committedEnergyFraction }
+      : {}),
+    ...(typeof loader.loadedLODCount === 'number' ? { loadedLODCount: loader.loadedLODCount } : {}),
+    totalLODCount: loader.totalLODCount,
+    ...(typeof loader.lastAllResident === 'boolean'
+      ? { lastAllResident: loader.lastAllResident }
+      : {}),
+  };
+}
+
 /**
  * Walk the scene graph and report cumulative point/gsplat counts plus
  * per-mesh detail. The traversal:
@@ -338,6 +367,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         requestedElementCount,
         grantedElementCount: pointCount,
         droppedElementCount,
+        ...readAdditiveLadderDebugInfo(object.userData),
       });
     }
 
@@ -360,6 +390,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         requestedElementCount,
         grantedElementCount: splatCount,
         droppedElementCount,
+        ...readAdditiveLadderDebugInfo(object.userData),
       });
     }
 
@@ -399,6 +430,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         requestedElementCount,
         grantedElementCount: segmentCount,
         droppedElementCount,
+        ...readAdditiveLadderDebugInfo(object.userData),
       });
     }
 
@@ -456,6 +488,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         flatNormal: hasDefine('LUXAR_MESH_FLAT_NORMAL'),
         alphaCutout: hasDefine('LUXAR_MESH_ALPHA_CUTOUT'),
         hasColormap: hasDefine('USE_COLORMAP'),
+        ...readAdditiveLadderDebugInfo(object.userData),
       });
     }
   });
