@@ -132,6 +132,7 @@ and re-chunking are a package.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
@@ -236,7 +237,55 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 
-def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
+def hidden_axis_stops(positions: Any, hidden_dims: Sequence[int]) -> int:
+    """How many slices a node splits into along its NON-DISPLAYED axes.
+
+    The viewer draws one hidden-axis coordinate at a time, so this is the divisor
+    between a node's total element count and the set actually resident at any
+    moment. Needed by :func:`stream_ladder`, whose first rung is a download
+    budget that must be spent on the RESIDENT slice rather than on the whole node
+    (see its docstring).
+
+    Counts distinct COMBINATIONS across all hidden columns, not the product of
+    each column's cardinality: a node stacked on time *and* channel is only
+    sliced by the pairs that actually occur, and on sparse data the product
+    massively overestimates.
+
+    Args:
+        positions: ``(N, d)`` element coordinates — the same array passed to
+            ``add_points`` / ``add_lines``.
+        hidden_dims: Column indices that are NOT displayed. Pass
+            ``dims.non_displayed`` rather than literals — demos do not agree on
+            where the hidden axis sits (the multiome demos put it at column
+            **0**, the timelapse demos put it last), so a hardcoded index is
+            wrong somewhere and silently: pointing it at a displayed spatial axis
+            counts thousands of distinct floats and inflates the count enormously.
+            Empty means the node is shown whole, which returns 1.
+
+    Returns:
+        The number of distinct hidden coordinates, at least 1.
+    """
+    import numpy as np
+
+    cols = [int(c) for c in hidden_dims]
+    if not cols:
+        return 1
+    arr = np.asarray(positions)
+    if arr.ndim != 2:
+        raise ValueError(f"positions must be 2-D (N, d); got shape {arr.shape}")
+    bad = [c for c in cols if not 0 <= c < arr.shape[1]]
+    if bad:
+        raise ValueError(
+            f"hidden_dims {bad} out of range for positions with {arr.shape[1]} columns"
+        )
+    if arr.shape[0] == 0:
+        return 1
+    return max(1, int(np.unique(arr[:, cols], axis=0).shape[0]))
+
+
+def stream_ladder(
+    n: int, *, geometry: str = "points", slices: int = 1
+) -> dict[str, Any]:
     """The additive ladder a Points/Lines leaf shown whole should carry.
 
     The Points/Lines counterpart of choosing ``stream`` above. Those adders take
@@ -267,6 +316,41 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
     capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``
     and would block the main thread on these leaves.
 
+    THE BUDGET IS PER RESIDENT SLICE, NOT PER NODE — PASS ``slices``
+    ---------------------------------------------------------------
+
+    The first rung is an ABSOLUTE count, but the viewer draws one hidden-axis
+    coordinate at a time. So on a sliced nD node a rung of 39,062 rows arrives as
+    39,062/S rows for the coordinate on screen, and first paint under-spends its
+    own budget by the slice count. Measured on the demos this laddered, per
+    resident slice:
+
+    ======================== ====== ============ ===========
+    demo                      slices rung 0/slice first paint
+    ======================== ====== ============ ===========
+    human_multiome_peak_umap      6        6,510      0.63 %
+    zebrahub_multiome_umap        7        5,580      0.87 %
+    cellxgene_census_umap         3       13,021      1.30 %
+    mouse_multiome_peak_umap      6        6,510      3.39 %
+    esm3_protein_landscape        2       19,531      3.39 %
+    ======================== ====== ============ ===========
+
+    So ``slices`` scales the first rung to ``first_chunk × S``, restoring the
+    intended semantics: 200 ms of download *for the slice being shown*. Derive it
+    with :func:`hidden_axis_stops` rather than hardcoding — a demo that gains a
+    dimension would otherwise silently regress.
+
+    **The fatal version of this is on a PLAYED axis, and it wants a different
+    ladder.** Under a playback frame budget the viewer commits level 0 only, so a
+    time-budget rung leaves each timepoint with a handful of elements — measured
+    on a published 500-timepoint gsplat demo, a median of 45 splats per
+    timepoint, which renders as nothing (#2374). An EQUAL-COUNT ladder
+    (``--n-lods L``) gives exactly ``1/L`` of the slice regardless of ``S`` or
+    ``n``, so it is the right shape for anything scrubbed or played. Do NOT reach
+    for it here: on a keypress-navigated categorical axis it would put ~40x the
+    200 ms budget into first paint and buy a slow opening frame these demos do
+    not need. Two regimes, two answers.
+
     LINES SPELL THIS DIFFERENTLY, AND THE UNITS DISAGREE
     ----------------------------------------------------
 
@@ -296,6 +380,10 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
             ``"lines"``.
         geometry: ``"points"`` or ``"lines"``. Selects the spelling, because the
             two are not interchangeable (above).
+        slices: Number of hidden-axis coordinates the node splits into, from
+            :func:`hidden_axis_stops`. Scales the first rung so the download
+            budget is spent on the resident slice. Leaving it at 1 on a sliced
+            node under-spends first paint by the slice count.
 
     Returns:
         A spec for ``additive_lod=`` on :meth:`Group.add_points` /
@@ -312,6 +400,11 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
         )
     if n < 1:
         raise ValueError(f"n must be >= 1; got {n}")
+    if slices < 1:
+        raise ValueError(
+            f"slices must be >= 1; got {slices} "
+            "(1 means the node is shown whole — see hidden_axis_stops)"
+        )
     from luxar.core.group.lod.group import (
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
         DEFAULT_LADDER_TARGET_MS,
@@ -322,7 +415,14 @@ def stream_ladder(n: int, *, geometry: str = "points") -> dict[str, Any]:
         streaming_chunk_splats,
     )
 
-    first_chunk = streaming_chunk_splats(
+    # The budget buys 200 ms of rows FOR THE SLICE ON SCREEN, so an absolute rung
+    # over a sliced node has to be scaled by the stop count. This targets the
+    # AVERAGE slice, not every slice: under a skewed hidden distribution the
+    # busiest coordinate receives more than the budget and the sparsest less.
+    # Guaranteeing the smallest would need n/n_min, which is unbounded in
+    # practice. `capped_stream_cuts` clamps the result to its own commit ceiling,
+    # so a large stop count cannot produce a main-thread-blocking first commit.
+    first_chunk = slices * streaming_chunk_splats(
         DEFAULT_LADDER_TARGET_MS,
         DEFAULT_BANDWIDTH_MBPS,
         DEFAULT_LADDER_BYTES_PER_ELEMENT,

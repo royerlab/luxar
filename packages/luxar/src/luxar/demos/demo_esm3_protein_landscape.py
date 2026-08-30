@@ -87,7 +87,7 @@ from luxar.demos import (
     stack_colorings,
     warn_if_quarantined,
 )
-from luxar.demos._lod_policy import stream_ladder
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -913,7 +913,10 @@ def generate_esm3_landscape(
                 labels=stacked.labels,
                 **link_attrs,
                 layer=True,
-                additive_lod=stream_ladder(len(stacked.positions)),
+                additive_lod=stream_ladder(
+                    len(stacked.positions),
+                    slices=hidden_axis_stops(stacked.positions, dims.non_displayed),
+                ),
             )
 
             scene.add_text(

@@ -24,6 +24,7 @@ from luxar.demos._lod_policy import (
     TOPOLOGY_PRESERVING_ADDERS,
     TREE_RECIPES,
     DemoRecipe,
+    hidden_axis_stops,
     save_with_lod,
     stream_ladder,
 )
@@ -830,3 +831,83 @@ class TestStreamLadder:
         # stream. NPC relies on this, since `_validate_counts` clamps the shared
         # spec to each part's own count.
         assert stream_ladder(1_000)["counts"] == [1_000]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# hidden_axis_stops + the per-slice first rung (#2374's authoring half)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestHiddenAxisStops:
+    """The divisor between a node's total and its resident slice."""
+
+    def test_counts_distinct_values_on_one_hidden_axis(self) -> None:
+        pos = np.array([[0, 0, 0, 5], [0, 0, 0, 7], [0, 0, 0, 7]], dtype=np.float32)
+        assert hidden_axis_stops(pos, [3]) == 2
+
+    def test_counts_OCCURRING_combinations_not_the_product(self) -> None:
+        # The distinction that matters on sparse data, and the one a
+        # product-of-cardinalities definition gets wrong: axis 2 has two values
+        # and axis 3 has two, so the product is 4 — but only 3 pairs occur, and
+        # only 3 slices exist to divide a rung between.
+        pos = np.array([[0, 0, 1, 1], [0, 0, 1, 2], [0, 0, 2, 1]], dtype=np.float32)
+        assert hidden_axis_stops(pos, [2, 3]) == 3
+
+    def test_no_hidden_axis_is_one_slice(self) -> None:
+        assert hidden_axis_stops(np.zeros((4, 3), dtype=np.float32), []) == 1
+
+    def test_empty_node_is_one_slice_not_zero(self) -> None:
+        # A zero would propagate into `slices=0` and raise from stream_ladder,
+        # turning an empty layer into a build failure.
+        assert hidden_axis_stops(np.zeros((0, 4), dtype=np.float32), [3]) == 1
+
+    def test_rejects_a_column_index_past_the_end(self) -> None:
+        with pytest.raises(ValueError, match="out of range"):
+            hidden_axis_stops(np.zeros((3, 4), dtype=np.float32), [9])
+
+    def test_rejects_non_2d_positions(self) -> None:
+        with pytest.raises(ValueError, match="must be 2-D"):
+            hidden_axis_stops(np.zeros(5, dtype=np.float32), [0])
+
+
+class TestFirstRungIsSizedPerResidentSlice:
+    """#2374: an absolute rung over a sliced node arrives divided by the stops."""
+
+    def test_the_first_rung_scales_with_the_slice_count(self) -> None:
+        whole = stream_ladder(1_000_000)["counts"][0]
+        sliced = stream_ladder(1_000_000, slices=6)["counts"][0]
+        assert sliced == 6 * whole
+
+    def test_per_slice_payload_matches_the_unsliced_budget(self) -> None:
+        # The property the fix exists for: what lands for the coordinate on
+        # screen equals what an unsliced node gets, rather than 1/S of it.
+        budget = stream_ladder(1_000_000)["counts"][0]
+        for stops in (2, 3, 6, 7):
+            rung0 = stream_ladder(1_000_000, slices=stops)["counts"][0]
+            assert rung0 / stops == pytest.approx(budget)
+
+    def test_default_is_unchanged_for_an_unsliced_node(self) -> None:
+        # Regression guard: every non-sliced caller must keep its ladder.
+        assert (
+            stream_ladder(1_000_000)["counts"]
+            == stream_ladder(1_000_000, slices=1)["counts"]
+        )
+
+    def test_lines_scales_the_string_form_too(self) -> None:
+        whole = stream_ladder(300_000, geometry="lines")["counts"]
+        sliced = stream_ladder(300_000, geometry="lines", slices=4)["counts"]
+        assert whole.startswith("stream:") and sliced.startswith("stream:")
+        assert int(sliced.split(":")[1]) == 4 * int(whole.split(":")[1])
+
+    def test_a_huge_stop_count_cannot_exceed_the_commit_ceiling(self) -> None:
+        # capped_stream_cuts clamps to its own ceiling, so a 500-stop node does
+        # not get a main-thread-blocking first commit.
+        from luxar.utils.lod_breakpoints import DEFAULT_MAX_ADDITIVE_COMMIT
+
+        counts = stream_ladder(50_000_000, slices=500)["counts"]
+        assert max(counts) <= 50_000_000
+        assert counts[0] <= DEFAULT_MAX_ADDITIVE_COMMIT
+
+    def test_rejects_a_slice_count_below_one(self) -> None:
+        with pytest.raises(ValueError, match="slices must be >= 1"):
+            stream_ladder(1_000, slices=0)

@@ -83,7 +83,7 @@ from luxar.demos import (
     parse_demo_flags,
     require_local_data,
 )
-from luxar.demos._lod_policy import stream_ladder
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._support._umap_utils import attribute_to_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -311,7 +311,10 @@ def build_scene(
                 # now. The baked appearance is unchanged because it was tuned on
                 # the finest level, which is what the opening pose showed then
                 # and shows now.
-                additive_lod=stream_ladder(len(positions)),
+                additive_lod=stream_ladder(
+                    len(positions),
+                    slices=hidden_axis_stops(positions, dims.non_displayed),
+                ),
             )
             for idx, (_, label) in enumerate(COLORINGS):
                 scene.add_text(
