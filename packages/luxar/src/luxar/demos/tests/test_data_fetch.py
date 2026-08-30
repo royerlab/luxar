@@ -288,7 +288,7 @@ def test_pending_upload_flag_matches_the_file_lists():
 
 
 def test_h2afva_has_light_default_and_full_variant():
-    """The 9.3 GB timelapse ships as an opt-in; the demo default is the light cut."""
+    """The 5.9 GB timelapse ships as an opt-in; the demo default is the light cut."""
     variants = load_manifest()["datasets"]["h2afva"]["variants"]
     assert set(variants) == {"51tp", "253tp"}
     assert variants["51tp"]["default"] is True
