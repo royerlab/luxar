@@ -889,19 +889,6 @@ Two regimes, and the ratio tells you which one you are in:
   `packages/luxar/src/luxar/demos/_lod_policy.py` is not a reusable sublinear
   node-to-request law: it compares a byte-bound leaf with a node-bound partition.
 
-  **Measured after re-tiling.** `codex_pancreas` was rebuilt at a 4x coarser
-  partition (172 parts -> 43) and taken through `optimise --profile archive`:
-
-      published (172 parts)   2,767 groups   10,320 arrays   10,320 chunks   1.00
-      rebuilt   ( 43 parts)     700 groups    2,580 arrays    2,828 chunks   1.10
-
-  a **3.65x reduction in the full-detail total**. Two cautions, both of which the
-  columns above exist to prevent: this is the whole-store figure, *not* the
-  converged eager load (published 3,440) nor first paint (published 860); and the
-  array count alone predicts 4.00x, so **extrapolating from groups or arrays
-  overstates the win** — the coarser partition made arrays ~4x larger as well as
-  ~4x fewer, moving the ratio 1.00 -> 1.10 toward byte-bound without leaving the
-  node-bound regime. Only re-running optimise gives the real number.
 - **Byte-bound (ratio >> 1).** Arrays span many chunks, so request count tracks
   total bytes and is nearly indifferent to node count. `cmu1`'s converged load
   fetches 508 chunks from 60 arrays, while its first rung fetches 127 from 15;
@@ -969,60 +956,26 @@ path.
 For a gallery tile that is the right trade. State it that way round: a ladder does
 not reduce total requests, it moves them after first paint.
 
-### 3.20 An automated reviewer that improves numbers will not converge on a document of numbers
-
-A runbook of measured figures has no completion point — there is always one more
-number to refine. Point a review pipeline that **pushes fixes** at it and the two
-never settle:
-
-    author appends a section  ->  review runs, pushes an improvement  ->  that push
-    resets the gate  ->  review runs again on the new head  ->  ...
-
-On PR #2298 this ran ~10 rounds. Confirmed from the dispatch logs, not inferred:
-
-    work-dispatcher.log    8x  dispatch fix-worker #2298 (gate=failure cifail=0)
-    review-dispatcher.log      re-review on each successive head
-
-**`cifail=0` every round is the tell: CI was never failing.** And critically, the
-review was not rejecting a broken thing — it was making *correct* improvements
-each pass (grounding ratios in published metadata, separating eager from
-full-detail counts, catching that 56 zero-shaped `array_ref` placeholders had been
-counted as real arrays). Good corrections, no fixed point.
-
-Three traps around it:
-
-- **Freezing the author is not enough.** With all author pushes stopped, the head
-  still moved three more times. The loop does not need the human in it.
-- **A fresh PR does not escape it.** Superseding the branch carries the same
-  document to the same reviewer. The branch was never the cause.
-- **Commit metadata cannot attribute the pushes.** This repo's commits alternate
-  between two configured identities belonging to the same person
-  (`Loic Royer <loic.royer@czbiohub.org>`, `royer <royerloic@gmail.com>`), and
-  rebases rewrite the committer. The dispatch logs are the only reliable source —
-  `git log` will mislead you into diagnosing a collision between authors.
-
-Two things that do work: **batch, land, open fresh** — treat a docs PR as a batch
-with a declared end rather than an inbox; and for a document the gate cannot
-converge on, **land it by hand** and let the next batch carry the improvements the
-reviewer would have made. #2298 was ultimately landed manually at a chosen head,
-which is what ended the loop.
-
-### 3.21 A pin audit is void the moment anything is uploaded, and a bad `hosted_sha256` hides until teardown
+### 3.20 A pin audit expires on the next upload, and local resolution can mask a bad hosted pin
 
 Two separate hazards that showed up together.
 
-#### The pin is never checked while an in-repo copy exists
+#### Local resolution does not prove the hosted pin
 
-`ensure_dataset` (`demos/_support/datasets/data_fetch.py`) resolves in a fixed
-order — verified local cache, then **in-repo git-LFS payload, then Zenodo** — and
-the in-repo payload validates against its own `sha256`. So `hosted_sha256` is
-never consulted until the payloads are `git rm`-ed — a wrong hosted pin passes every
-local run, every CI run and every demo build, then fires at teardown.
+Section 3.10 covers the fixed resolution order: verified local cache, then
+**in-repo git-LFS payload, then Zenodo**. The resolver considers
+`hosted_sha256` before `sha256`, but accepts either contract for cached and
+in-repo bytes. While the packaged payload matches `sha256`, the divergence notice
+looks the same whether the hosted pin is right or wrong; no hosted bytes were
+fetched, so an ordinary local run, CI run or demo build cannot distinguish them.
 
-Consequences: publishing a record alone is safe, publishing **and then** removing
-in-repo payloads is only safe if the pins are right, and the two steps are
-therefore jointly correct or not at all. The failure mode is at least a raised
-checksum rather than a silently wrong generation.
+Use the shipped cold-fetch harness before removal: `make check-cold-fetch` hides
+the in-repo payload directory, starts from an empty cache and verifies the record
+against the hosted contract. For teardown, run
+`hatch run python scripts/verify_cold_fetch.py --require-verified N` with the
+expected target count after the final upload, so a dormant or missed variant
+cannot turn an incomplete audit green. A digest mismatch aborts with a checksum
+error rather than accepting a silently wrong generation.
 
 #### An audit expires on the next write, not on a timer
 
@@ -1064,11 +1017,12 @@ So the rule is not "re-run before publish" — it is:
 
 #### A partial re-pin leaves the drafts and the manifest deliberately disagreeing
 
-PR #2333 resolved this for **five of the eight** hosted archives — `cmu1_ch0/1/2`,
-`cryoem_virus`, and the hosted-only `h2afva_51tp` (whose `sha256`/`bytes` moved in
-place, since with no in-repo payload a second contract would be ambiguous). Each
-moved file keeps its outgoing digest in `superseded_sha256`, so one previous cache
-generation reads as stale rather than corrupt.
+PR #2333 resolved this for **five of the eight restructured archives** —
+`cmu1_ch0/1/2`, `cryoem_virus`, and the hosted-only `h2afva_51tp` (whose
+`sha256`/`bytes` moved in place, since with no in-repo payload a second contract
+would be ambiguous). Each moved file keeps its outgoing digest in
+`superseded_sha256`, so one previous cache generation reads as stale rather than
+corrupt.
 
 The other three — `vh_head`, `ct_atlas`, `milkyway_dust` — were left on their
 previous pins **on purpose**, and that gap is itself a hazard to carry forward:
@@ -1084,16 +1038,13 @@ previous pins **on purpose**, and that gap is itself a hazard to carry forward:
 
 **The consequence is a publish-order constraint, not a to-do.** The drafts hold
 restructured files for all three, while the manifest pins the previous generation.
-Publishing a record in that state makes strict hosted verification fail and drops
-those demos onto their source-download/refit fallback. So either roll the draft
-files back to the pinned contracts before publishing, or land the paired sidecar
-migration first — and note that the live gallery tiles are indifferent either way,
-because they are served from already-derived scenes and never consult the pin
-(3.10).
-
-Related: a ranged GET of a zip's trailing ~2 MiB returns the central directory,
-which is enough to distinguish a flat leaf from a `kind=partition` — a topology
-check instead of a 9 GB download.
+After the in-repo payloads are removed, publishing a record in that state makes
+cold fetches and fresh installs abort with an uncaught checksum `ValueError`: the
+two affected demos catch `DatasetUnavailable`, not digest mismatches, so the
+source-download/refit fallback does not run. Either roll the draft files back to
+the pinned contracts before publishing, or land the paired sidecar migration
+first. The live gallery tiles are indifferent either way, because they serve
+already-derived scenes and never consult the pin (3.10).
 
 ## 4. Cloudflare configuration
 
@@ -1232,6 +1183,11 @@ Gallery framing lives in `scripts/gallery/manifest.json`; see
 Structure decisions get made from these numbers, so getting the accounting
 right matters more than it looks. Every rule below is here because assuming the
 obvious reading produced a wrong answer.
+
+For a remote zip, the central directory is enough to inspect its topology without
+downloading the full payload. Fetch it with zip-aware tooling or a progressively
+larger trailing byte range: the directory size scales with the entry count and can
+be several MiB, so a fixed tail length is not a reliable bound.
 
 ### 7.1 Substitutive levels are alternatives; additive rungs are deltas
 
