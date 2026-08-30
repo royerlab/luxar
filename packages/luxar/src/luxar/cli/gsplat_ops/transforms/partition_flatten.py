@@ -3,25 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterator, Literal, Optional
+from typing import Any, Dict, Iterator, Literal, Optional
 
 import typer
 from arbol import aprint, asection
 
 from ..encoding import _resolve_encoding_mode
-
-if TYPE_CHECKING:
-    from luxar.gsplats.tree import GSplatNode
-
-
-def _contains_partition(node: "GSplatNode") -> bool:
-    from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
-
-    if isinstance(node, GSplatPartition):
-        return True
-    if isinstance(node, GSplatLodGroup):
-        return any(_contains_partition(child) for child in node.children)
-    return False
 
 
 def _default_leaf_paths(group: Any, path: str = "") -> list[str]:

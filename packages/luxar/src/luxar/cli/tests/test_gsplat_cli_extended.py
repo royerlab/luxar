@@ -7576,6 +7576,26 @@ class TestFlattenCommand:
         assert root.attrs["ordering"] == "hilbert"
         assert root["chunk_bounds"].shape[0] >= 1
 
+    def test_flatten_rejects_whole_array_encoding_modes(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "flat.gsplats.zarr"
+        for mode in ("auto", "memory"):
+            result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "flatten",
+                    str(medium_gsplats),
+                    str(output),
+                    "--encoding",
+                    mode,
+                ],
+            )
+            assert result.exit_code == 1
+            assert "requires --encoding precision" in _plain(result.stdout)
+            assert not output.exists()
+
     @pytest.mark.parametrize(
         "lod_args",
         [
