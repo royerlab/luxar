@@ -150,9 +150,10 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
         --gpus 0 --jobs-per-gpu 2 \
         --merge-recipe stream --merge-target-ms 200
 
-    # 2. Cull to 96% of cumulative amplitude: 128,000,000 -> 83,221,420 splats.
-    luxar gsplat cull out/merged/final.gsplats.zarr culled.gsplats.zarr \
-        --method cumulative --retention 0.960
+    # 2. Apply the float64 amplitude cutoff recorded for the corrected rebuild:
+    #    128,000,000 -> 83,221,420 splats.
+    luxar gsplat filter out/merged/final.gsplats.zarr culled.gsplats.zarr \
+        --amplitude-min 33.40462112
 
     # 3. Physical microns. Time is left as an INTEGER FRAME INDEX on purpose —
     #    see `normalise_time_axis` below for why a scaled axis does not survive
@@ -176,9 +177,13 @@ ONCE across all 500 frames rather than per timepoint. That is what keeps the
 exposure from drifting as the embryo brightens, and it is why the appearance
 constants below are portable across the whole recording.
 
-Step 2 depends on the float64 cumulative-amplitude accumulator fixed in #2260
-(issue #2258). The current implementation is correct at this scale; older builds
-silently over-culled this archive to 12% instead of 65%.
+Step 2 records the fixed amplitude cutoff used to build the shipped archive after
+#2260 (issue #2258). Do not replace it with a fresh cumulative cull: that does not
+reproduce the published 83,221,420-splat artifact.
+
+The fit directory is preserved across recompute attempts so ``batch-fit run`` can
+resume completed timepoints. Only the derived filter, transform, and archive
+outputs are replaced on a retry.
 
 
 USAGE:
@@ -298,7 +303,9 @@ OVERLAP = 0
 #: The measured run converged by 1,500 iterations; 5,000 scored identically.
 PRESET = "standard"
 ITERS = 1500
-#: Per-timepoint operating point chosen from the calibration sweep.
+#: Per-timepoint operating point chosen from the calibration sweep. Because
+#: ``TILE_SIZE`` exceeds every spatial extent, each task has one tile and the
+#: whole-volume seed budget is not divided across tiles.
 SEEDS = 256_000
 #: One global fixed floor keeps exposure comparable across all 500 frames.
 FLOOR = 8
@@ -308,13 +315,13 @@ JOBS_PER_GPU = 2
 #: Progressive first-paint ladder produced during the streaming merge.
 MERGE_RECIPE = "stream"
 MERGE_TARGET_MS = 200
-#: Removes the dim fitted tail while retaining 96% of cumulative amplitude.
-CULL_RETENTION = 0.960
+#: Float64 cutoff recorded in the corrected published rebuild (83,221,420 kept).
+AMPLITUDE_MIN = 33.40462112
 #: Physical (z, y, x) microns; the stacked frame-index axis is unchanged here.
 VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
 #: One-megabyte chunks measured at two requests per timepoint step.
 CHUNK_PROFILE = "archive"
-#: Recorded topology/count contract from the corrected float64 cumulative cull.
+#: Recorded topology/count contract from the corrected fixed-cutoff rebuild.
 EXPECTED_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
 EXPECTED_SPLATS = 83_221_420
 EXPECTED_RUNGS = 14
@@ -332,6 +339,8 @@ def _open_source(path: Path) -> Iterator[Any]:
     zarr-python 3 does not infer :class:`ZipStore` from a ``.zip`` suffix. The
     explicit branch is required for the real 19.3 GB source; opening its path
     directly otherwise raises ``GroupNotFoundError`` for a valid recording.
+    Unlike the neuromast opener, this yields the root group so the named source
+    array and the available-array diagnostics can both be validated here.
     """
     import zarr
 
@@ -366,19 +375,23 @@ def _validate_source(path: Path) -> None:
     """Refuse a wrong or partial recording before starting the GPU fit."""
     with _open_source(path) as root:
         try:
-            array = root[SOURCE_ARRAY_KEY]
-        except Exception as exc:  # noqa: BLE001 - normalize zarr shape errors
-            available = ""
-            try:
-                available = ", ".join(sorted(root.array_keys())) or "(none)"
-            except Exception:  # noqa: BLE001 - a bare array has no array_keys
-                available = "(this store is a bare array, not a group)"
+            array_keys = tuple(root.array_keys())
+        except Exception as exc:  # noqa: BLE001 - a bare array has no array_keys
+            available = "(this store is a bare array, not a group)"
             raise ValueError(
                 f"{path.name} has no {SOURCE_ARRAY_KEY!r} array; found: {available}. "
                 f"Expected the DrosophilaHistone recording, a group whose "
                 f"{SOURCE_ARRAY_KEY!r} member is (time, z, y, x). Underlying error: "
                 f"{exc}"
             ) from exc
+        if SOURCE_ARRAY_KEY not in array_keys:
+            available = ", ".join(sorted(array_keys)) or "(none)"
+            raise ValueError(
+                f"{path.name} has no {SOURCE_ARRAY_KEY!r} array; found: {available}. "
+                f"Expected the DrosophilaHistone recording, a group whose "
+                f"{SOURCE_ARRAY_KEY!r} member is (time, z, y, x)."
+            )
+        array = root[SOURCE_ARRAY_KEY]
 
         shape = tuple(array.shape)
         dtype = np.dtype(array.dtype)
@@ -409,6 +422,20 @@ def _validate_rebuilt_archive(node: Any) -> int:
     return int(leaves[0].n_splats)
 
 
+def _validate_fitted_splat_count(node: Any) -> None:
+    """Reject an incomplete or misconfigured merged fit before filtering it."""
+    leaves = list(iter_leaves(node))
+    if len(leaves) != 1:
+        raise RuntimeError(f"fitted merge produced {len(leaves)} leaves, expected one")
+    got = int(leaves[0].n_splats)
+    if got != EXPECTED_FITTED_SPLATS:
+        raise RuntimeError(
+            f"fitted merge produced {got:,} splats, expected "
+            f"{EXPECTED_FITTED_SPLATS:,}; check the source, timepoints, and seed budget"
+        )
+    aprint(f"fitted merge validated: {got:,} splats")
+
+
 def _validate_splat_count(got: int) -> None:
     """Reject count drift large enough to indicate a changed recipe."""
     drift = abs(got - EXPECTED_SPLATS) / EXPECTED_SPLATS
@@ -434,13 +461,16 @@ def recompute_archive(work_dir: Path) -> Path:
             raise FileNotFoundError(f"--source does not exist: {source}")
         _validate_source(source)
 
-        if work_dir.exists():
-            shutil.rmtree(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         fit = work_dir / "fit"
         culled = work_dir / "culled.gsplats.zarr"
         scaled = work_dir / "um.gsplats.zarr"
         final = work_dir / REBUILT_FILENAME
+        for derived in (culled, scaled, final):
+            if derived.is_dir():
+                shutil.rmtree(derived)
+            else:
+                derived.unlink(missing_ok=True)
 
         run_luxar_cli(
             "gsplat",
@@ -475,15 +505,16 @@ def recompute_archive(work_dir: Path) -> Path:
             "--merge-target-ms",
             str(MERGE_TARGET_MS),
         )
+        merged = fit / "merged" / "final.gsplats.zarr"
+        fitted_node, _ = load_gsplat_node(merged)
+        _validate_fitted_splat_count(fitted_node)
         run_luxar_cli(
             "gsplat",
-            "cull",
-            str(fit / "merged" / "final.gsplats.zarr"),
+            "filter",
+            str(merged),
             str(culled),
-            "--method",
-            "cumulative",
-            "--retention",
-            f"{CULL_RETENTION:.3f}",
+            "--amplitude-min",
+            f"{AMPLITUDE_MIN:.8f}",
         )
         run_luxar_cli(
             "gsplat",

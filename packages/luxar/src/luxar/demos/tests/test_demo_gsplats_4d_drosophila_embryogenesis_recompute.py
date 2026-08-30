@@ -8,8 +8,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import zarr
+from typer.main import get_command
 from zarr.storage import ZipStore
 
+from luxar.cli.main import app
 from luxar.demos import demo_gsplats_4d_drosophila_embryogenesis as demo
 
 
@@ -53,6 +55,7 @@ def test_recorded_recipe_constants_match_the_source_and_published_run() -> None:
     assert demo.SOURCE_AXES == "time,z,y,x"
     assert demo.TILE_SIZE >= max(demo.SOURCE_SHAPE[1:])
     assert demo.EXPECTED_FITTED_SPLATS == 128_000_000
+    assert demo.AMPLITUDE_MIN == pytest.approx(33.40462112)
     assert demo.EXPECTED_SPLATS == 83_221_420
     assert demo.EXPECTED_RUNGS == 14
 
@@ -136,6 +139,17 @@ def test_validate_source_rejects_missing_array_and_invalid_stores(
         demo._validate_source(invalid_zip)
 
 
+def test_validate_source_rejects_multiscale_group_at_array_key(tmp_path: Path) -> None:
+    source = tmp_path / "multiscale.zarr"
+    root = zarr.open_group(str(source), mode="w")
+    root.create_group(demo.SOURCE_ARRAY_KEY).create_array(
+        "0", shape=demo.SOURCE_SHAPE, chunks=(1, 1, 1, 1), dtype="uint16"
+    )
+
+    with pytest.raises(ValueError, match="has no 'data' array"):
+        demo._validate_source(source)
+
+
 def test_rebuilt_archive_requires_one_leaf_and_the_recorded_rungs(monkeypatch) -> None:
     valid = SimpleNamespace(
         n_splats=demo.EXPECTED_SPLATS,
@@ -178,17 +192,31 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
 
     source = tmp_path / demo.SOURCE_FILENAME
     source.touch()
+    fit_marker = work_dir / "fit" / "tiles" / "completed.gsplats.zarr"
+    fit_marker.mkdir(parents=True)
+    for derived in (
+        work_dir / "culled.gsplats.zarr",
+        work_dir / "um.gsplats.zarr",
+    ):
+        derived.mkdir(parents=True)
+    (work_dir / demo.REBUILT_FILENAME).touch()
     calls: list[tuple[str, ...]] = []
     monkeypatch.setattr(demo, "SOURCE_ARG", source)
     monkeypatch.setattr(demo, "_validate_source", lambda _path: None)
     monkeypatch.setattr(demo, "run_luxar_cli", lambda *args: calls.append(args))
-    monkeypatch.setattr(demo, "load_gsplat_node", lambda _path: (object(), {}))
+    merged = work_dir / "fit" / "merged" / "final.gsplats.zarr"
+
+    def load(path: Path):
+        count = demo.EXPECTED_FITTED_SPLATS if path == merged else demo.EXPECTED_SPLATS
+        return SimpleNamespace(n_splats=count), {}
+
+    monkeypatch.setattr(demo, "load_gsplat_node", load)
     monkeypatch.setattr(
         demo,
         "iter_leaves",
-        lambda _node: [
+        lambda node: [
             SimpleNamespace(
-                n_splats=demo.EXPECTED_SPLATS,
+                n_splats=node.n_splats,
                 n_additive_sublods=demo.EXPECTED_RUNGS,
             )
         ],
@@ -201,6 +229,7 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
     scaled = work_dir / "um.gsplats.zarr"
     final = work_dir / demo.REBUILT_FILENAME
     assert result == final
+    assert fit_marker.is_dir()
     assert calls == [
         (
             "gsplat",
@@ -237,13 +266,11 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
         ),
         (
             "gsplat",
-            "cull",
+            "filter",
             str(fit / "merged" / "final.gsplats.zarr"),
             str(culled),
-            "--method",
-            "cumulative",
-            "--retention",
-            "0.960",
+            "--amplitude-min",
+            "33.40462112",
         ),
         (
             "gsplat",
@@ -261,6 +288,50 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
             "archive",
         ),
     ]
+
+    merged.mkdir(parents=True, exist_ok=True)
+    culled.mkdir()
+    scaled.mkdir()
+    root_command = get_command(app)
+    for argv in calls:
+        command = root_command
+        remaining = list(argv)
+        while hasattr(command, "commands"):
+            name = remaining.pop(0)
+            assert name in command.commands, f"unknown command path in {argv!r}"
+            command = command.commands[name]
+        command.make_context(command.name or "luxar", remaining)
+
+
+def test_recompute_rejects_wrong_fitted_count_before_filtering(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / demo.SOURCE_FILENAME
+    source.touch()
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(demo, "SOURCE_ARG", source)
+    monkeypatch.setattr(demo, "_validate_source", lambda _path: None)
+    monkeypatch.setattr(demo, "run_luxar_cli", lambda *args: calls.append(args))
+    monkeypatch.setattr(
+        demo,
+        "load_gsplat_node",
+        lambda _path: (SimpleNamespace(n_splats=demo.EXPECTED_FITTED_SPLATS - 1), {}),
+    )
+    monkeypatch.setattr(
+        demo,
+        "iter_leaves",
+        lambda node: [
+            SimpleNamespace(
+                n_splats=node.n_splats,
+                n_additive_sublods=demo.EXPECTED_RUNGS,
+            )
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="fitted"):
+        demo.recompute_archive(tmp_path / "recompute")
+
+    assert [call[:3] for call in calls] == [("gsplat", "batch-fit", "run")]
 
 
 def test_main_routes_recompute_output_into_the_scene(
