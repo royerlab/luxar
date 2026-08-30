@@ -2663,6 +2663,8 @@ def add_lod_tiles(
             blending_mode="normal",
             opacity=opacity,
             substitutive_lod=lod,
+            # The eager coarsest substitutive level paints first, so this
+            # additive ladder is only background refinement, not first paint.
             additive_lod=STREAM_LOD,
         )
 
@@ -2916,9 +2918,12 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # Points cap, 124x under it. A partition exists so the viewer can
                 # skip off-screen geometry; a 45,000-point marginal spread over a
                 # globe has nothing worth skipping, and each part costs a request
-                # to bootstrap. The additive ladder is what makes first paint
-                # cheap here.
-                additive_lod=STREAM_LOD,
+                # to bootstrap. The additive ladder gives first paint 1/8 of
+                # the stored frame here, rather than a whole-node byte budget.
+                additive_lod=stream_ladder(
+                    len(taxon_pos),
+                    slices=hidden_axis_stops(taxon_pos, dims.non_displayed),
+                ),
             )
 
             scene.add_lines(

@@ -77,6 +77,14 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
     ),
 }
 
+#: Sliced Points/Lines calls whose additive ladder does not paint first, and why.
+_SLICED_ADDITIVE_LOD_EXEMPTIONS = {
+    ("demo_biodiversity_planetary_scale.py", 2657): (
+        "the eager coarsest substitutive level paints first; the additive ladder "
+        "only refines that already-visible partition in the background"
+    ),
+}
+
 #: No fitting demo may be parked here instead of choosing a topology.
 #:
 #: This empty set is a tripwire: new fitting demos must route through the policy
@@ -100,6 +108,24 @@ def _stream_ladder_calls(src: str) -> list[ast.Call]:
         and isinstance(node.func, ast.Name)
         and node.func.id == "stream_ladder"
     ]
+
+
+def _additive_lod_calls(src: str) -> list[tuple[ast.Call, ast.expr]]:
+    """The ``add_points``/``add_lines`` calls with ``additive_lod=`` in *src*."""
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Attribute)
+            or node.func.attr not in ("add_points", "add_lines")
+        ):
+            continue
+        out.extend(
+            (node, keyword.value)
+            for keyword in node.keywords
+            if keyword.arg == "additive_lod"
+        )
+    return out
 
 
 def _declares_a_hidden_dimension(src: str) -> bool:
@@ -954,17 +980,41 @@ class TestASlicedNodeGetsAShareOfItsFrame:
             == stream_ladder(1_000_000, slices=1)["counts"]
         )
 
-    def test_every_sliced_demo_passes_its_slice_count(self) -> None:
+    def test_every_sliced_additive_ladder_uses_the_slice_policy(self) -> None:
         missing = []
+        seen_exemptions = set()
         for name, src in _demo_sources().items():
             if not _declares_a_hidden_dimension(src):
                 continue
-            for call in _stream_ladder_calls(src):
+            for call, additive_lod in _additive_lod_calls(src):
+                location = (name, call.lineno)
+                if location in _SLICED_ADDITIVE_LOD_EXEMPTIONS:
+                    seen_exemptions.add(location)
+                    if not any(
+                        keyword.arg == "substitutive_lod" for keyword in call.keywords
+                    ):
+                        missing.append(
+                            f"{name}:{call.lineno} is exempt but has no substitutive_lod="
+                        )
+                    continue
+                if not (
+                    isinstance(additive_lod, ast.Call)
+                    and isinstance(additive_lod.func, ast.Name)
+                    and additive_lod.func.id == "stream_ladder"
+                ):
+                    missing.append(
+                        f"{name}:{call.lineno} uses additive_lod="
+                        f"{ast.unparse(additive_lod)}"
+                    )
+                    continue
+                call = additive_lod
                 if not any(keyword.arg == "slices" for keyword in call.keywords):
                     missing.append(f"{name}:{call.lineno}")
+        stale_exemptions = set(_SLICED_ADDITIVE_LOD_EXEMPTIONS) - seen_exemptions
+        missing.extend(f"stale exemption {location}" for location in stale_exemptions)
         assert not missing, (
-            "stream_ladder calls in demos with hidden dimensions must pass slices=: "
-            f"{missing}"
+            "Points/Lines additive ladders in demos with hidden dimensions must use "
+            f"stream_ladder(..., slices=...) or an explicit exemption: {missing}"
         )
 
     def test_a_small_sliced_node_keeps_its_budget_ladder(self) -> None:

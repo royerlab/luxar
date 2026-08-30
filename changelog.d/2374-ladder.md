@@ -55,8 +55,9 @@ coordinate combinations, not the product of per-axis cardinalities: `taxon x
 period` on biodiversity is 126 of 140 populated, and drosophila declares 500 stops
 with data at 499, so a product overstates the divisor. Array-backed call sites
 pass `dims.non_displayed` rather than literal indices, because the hidden axis is
-column 0 in the multiome demos and last in the timelapse demos; the partitioned
-nuclear-pore demo uses its authoritative state count.
+column 0 in the multiome demos and last in the timelapse demos; biodiversity's
+occurrence points and migration ribbons use their `(taxon, period)` columns, and
+the partitioned nuclear-pore demo uses its authoritative state count.
 
 Authoring half of #2374; the viewer-side playback fix is separate. No published
 store changes occur in this patch; the new policy applies when those demos are
