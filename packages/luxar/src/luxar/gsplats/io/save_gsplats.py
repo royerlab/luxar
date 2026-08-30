@@ -844,12 +844,9 @@ def _resolve_streaming_barrier_offsets(
         n_splats += item.n_splats
         for value, count in zip(values, counts):
             key = tuple(float(component) for component in value)
-            totals[key] = totals.get(key, 0) + int(count)
-            if len(totals) > _DEFAULT_BARRIER_MAX_CARDINALITY:
-                raise ValueError(
-                    "streamed barrier values exceed the categorical cardinality "
-                    f"limit of {_DEFAULT_BARRIER_MAX_CARDINALITY}"
-                )
+            _add_streaming_barrier_total(
+                totals, key, int(count), _DEFAULT_BARRIER_MAX_CARDINALITY
+            )
     if not _barrier_axis_qualifies(
         n_splats, len(totals), _DEFAULT_BARRIER_MAX_CARDINALITY
     ):
@@ -863,6 +860,21 @@ def _resolve_streaming_barrier_offsets(
         offsets[key] = next_offset
         next_offset += totals[key]
     return offsets
+
+
+def _add_streaming_barrier_total(
+    totals: dict[tuple[float, ...], int],
+    key: tuple[float, ...],
+    count: int,
+    max_cardinality: int,
+) -> None:
+    """Accumulate one barrier run while enforcing the dictionary size bound."""
+    totals[key] = totals.get(key, 0) + count
+    if len(totals) > max_cardinality:
+        raise ValueError(
+            "streamed barrier values exceed the categorical cardinality "
+            f"limit of {max_cardinality}"
+        )
 
 
 def _normalize_stream_colors(
