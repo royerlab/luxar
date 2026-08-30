@@ -1041,6 +1041,8 @@ def main() -> int:
         "present but unreadable)",
     )
     args = ap.parse_args()
+    if args.archives_root and not args.refresh:
+        ap.error("--archives-root requires --refresh")
 
     manifest = json.loads(MANIFEST.read_text())
     if args.refresh:

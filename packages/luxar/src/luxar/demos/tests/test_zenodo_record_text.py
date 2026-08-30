@@ -1279,6 +1279,27 @@ def test_an_unzipped_archives_root_warning_explains_that_files_are_required(
     assert "unpacked .gsplats.zarr.zip/ directories are skipped" in output
 
 
+def test_archives_root_requires_refresh(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"datasets": {}, "records": {}}))
+    monkeypatch.setattr(gen, "MANIFEST", manifest_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["gen_zenodo_records.py", "--archives-root", str(tmp_path / "staged")],
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        gen.main()
+
+    assert "--archives-root requires --refresh" in capsys.readouterr().err
+
+
 def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:
     manifest = _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
 
