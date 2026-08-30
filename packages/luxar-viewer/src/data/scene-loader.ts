@@ -905,6 +905,10 @@ export class SceneLoader {
     });
   }
 
+  private visiblePartitionLoaders<TLoader>(loaders: Map<string, TLoader>): Map<string, TLoader> {
+    return new Map([...loaders].filter(([path]) => isPartitionPathVisible(this.rootGroup, path)));
+  }
+
   /**
    * Update all points and lines for a new view state.
    *
@@ -1325,7 +1329,7 @@ export class SceneLoader {
       await runGSplatsRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        gsplatLoaders: this.gsplatLoaders,
+        gsplatLoaders: this.visiblePartitionLoaders(this.gsplatLoaders),
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
         processGSplats: (path, data, viewState, session) =>
           this.processGSplatsData(path, data, viewState, session),
@@ -1342,7 +1346,7 @@ export class SceneLoader {
       await runPointsRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        pointsLoaders: this.loaders,
+        pointsLoaders: this.visiblePartitionLoaders(this.loaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         updatePointsGeometry: (path, data, session) =>
@@ -1359,7 +1363,7 @@ export class SceneLoader {
       await runLinesRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        linesLoaders: this.linesLoaders,
+        linesLoaders: this.visiblePartitionLoaders(this.linesLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processLines: (path, data, viewState, session) =>
@@ -1383,7 +1387,7 @@ export class SceneLoader {
       await runMeshRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        meshLoaders: this.meshLoaders,
+        meshLoaders: this.visiblePartitionLoaders(this.meshLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processMesh: (path, data, viewState, attrs) =>
