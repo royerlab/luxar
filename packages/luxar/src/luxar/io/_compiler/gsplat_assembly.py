@@ -608,12 +608,7 @@ def apply_gsplat_spatial_ordering(
             if colors.shape[0] > 1:
                 colors = colors[sort_indices]
 
-        from ...typing_utils import TARGET_CHUNK_BYTES
-
-        expected_k = n_dims * (n_dims + 1) // 2
-        bytes_per_splat = n_dims * 4 + 4 + expected_k * 4 + 16
-        chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
-        chunk_size = min(chunk_size, n_splats)
+        chunk_size = resolve_gsplat_chunk_size(n_splats, n_dims)
 
         centers_mode = (
             _resolve_centers_encoding_mode(
@@ -669,6 +664,15 @@ def apply_gsplat_spatial_ordering(
         ordering_data,
         centers_encoding_plan,
     )
+
+
+def resolve_gsplat_chunk_size(n_splats: int, n_dims: int) -> int:
+    """Return the canonical spatial-index chunk atom for one gsplat leaf."""
+    from ...typing_utils import TARGET_CHUNK_BYTES
+
+    expected_k = n_dims * (n_dims + 1) // 2
+    bytes_per_splat = n_dims * 4 + 4 + expected_k * 4 + 16
+    return min(max(1024, TARGET_CHUNK_BYTES // bytes_per_splat), n_splats)
 
 
 def compute_amplitude_mass_stats(

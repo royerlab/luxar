@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Iterator, Literal, Optional
+from typing import Any, Iterator, Literal, Optional, Sequence
 
 import typer
 from arbol import aprint, asection
@@ -25,6 +25,8 @@ def _default_leaf_paths(group: Any, path: str = "") -> list[str]:
         count = sum(1 for name in group if str(name).startswith("child_"))
         if count == 0:
             return []
+        # On-disk children are coarsest-first; the data-model default is the
+        # finest child, not the viewer's unrelated ``default_level`` load hint.
         child = f"child_{count - 1}"
         child_path = f"{path}/{child}" if path else child
         return _default_leaf_paths(group[child], child_path)
@@ -43,21 +45,35 @@ def _contains_partition_group(group: Any) -> bool:
     )
 
 
-def _root_stats(root: Any) -> Dict[str, Any]:
-    stats: Dict[str, Any] = {}
-    if "fitting" in root:
-        stats.update(dict(root["fitting"].attrs))
-    if "pipeline" in root:
-        for key, value in root["pipeline"].attrs.items():
-            stats.setdefault(key, value)
-    if "provenance" in root:
-        stats["provenance"] = dict(root["provenance"].attrs)
-    stats["format_version"] = root.attrs.get("format_version")
-    stats["timestamp"] = root.attrs.get("timestamp")
-    stats["luxar_gsplats_version"] = root.attrs.get("luxar_gsplats_version")
-    if "description" in root.attrs:
-        stats["description"] = root.attrs["description"]
-    return stats
+def _leaf_splat_groups(root: Any, leaf_path: str) -> list[Any]:
+    leaf = root[leaf_path] if leaf_path else root
+    count = int(leaf.attrs.get("n_additive_sublods", 1))
+    if count == 1 and "centers" in leaf:
+        return [leaf]
+    return [leaf[f"additive_{index}"] for index in range(count)]
+
+
+def _resolve_barrier_dims(
+    root: Any, leaf_paths: Sequence[str], stats: dict[str, Any]
+) -> Optional[tuple[int, ...]]:
+    splat_groups = [
+        group for path in leaf_paths for group in _leaf_splat_groups(root, path)
+    ]
+    if not splat_groups:
+        return None
+
+    coarsen_dims = stats.get("coarsen_dims")
+    if coarsen_dims is not None:
+        ndim = int(splat_groups[0].attrs["ndim"])
+        coarsen_set = {int(dim) for dim in coarsen_dims}
+        return tuple(dim for dim in range(ndim) if dim not in coarsen_set)
+
+    stamped: set[tuple[int, ...]] = set()
+    for group in splat_groups:
+        if "slice_dims" not in group.attrs:
+            return None
+        stamped.add(tuple(int(dim) for dim in group.attrs["slice_dims"]))
+    return next(iter(stamped)) if len(stamped) == 1 else None
 
 
 def run_partition_dataset(
@@ -171,6 +187,7 @@ def run_flatten_dataset(
         from luxar.gsplats.io._archive import resolve_store_path
         from luxar.gsplats.io.load_gsplats import (
             read_authored_appearance,
+            read_gsplat_root_stats,
         )
         from luxar.gsplats.io.save_gsplats import (
             split_fitting_info,
@@ -196,47 +213,36 @@ def run_flatten_dataset(
             zarr_path, temp_dir = resolve_store_path(input_path)
             try:
                 root = zc_open_group(str(zarr_path), mode="r")
+                stats = read_gsplat_root_stats(root)
                 leaf_paths = _default_leaf_paths(root)
                 if not leaf_paths:
                     aprint("❌ Error: input tree has no leaves")
                     raise typer.Exit(1)
 
-                centroids = []
-                for leaf_path in leaf_paths:
-                    group = root[leaf_path] if leaf_path else root
-                    bounds = group.attrs.get("center_bounds")
-                    if bounds is None:
-                        bounds = group.attrs.get("position_bounds")
-                    if bounds is None:
-                        raise ValueError(
-                            f"leaf {leaf_path or '/'} has no center/position bounds"
-                        )
-                    centroids.append(
-                        (
-                            np.asarray(bounds["min"], dtype=np.float32)
-                            + np.asarray(bounds["max"], dtype=np.float32)
-                        )
-                        * 0.5
-                    )
                 if len(leaf_paths) > 1:
+                    centroids = []
+                    for leaf_path in leaf_paths:
+                        group = root[leaf_path] if leaf_path else root
+                        bounds = group.attrs.get("center_bounds")
+                        if bounds is None:
+                            bounds = group.attrs.get("position_bounds")
+                        if bounds is None:
+                            raise ValueError(
+                                f"leaf {leaf_path or '/'} has no center/position bounds"
+                            )
+                        centroids.append(
+                            (
+                                np.asarray(bounds["min"], dtype=np.float32)
+                                + np.asarray(bounds["max"], dtype=np.float32)
+                            )
+                            * 0.5
+                        )
                     order, _ = sort_splats_spatial(
                         np.stack(centroids), method="hilbert"
                     )
                     leaf_paths = [leaf_paths[int(index)] for index in order]
 
-                slice_dims = {
-                    tuple(
-                        int(dim)
-                        for dim in (
-                            root[path].attrs.get("slice_dims", [])
-                            if path
-                            else root.attrs.get("slice_dims", [])
-                        )
-                    )
-                    for path in leaf_paths
-                }
-                barrier_dims = next(iter(slice_dims)) if len(slice_dims) == 1 else None
-                stats = _root_stats(root)
+                barrier_dims = _resolve_barrier_dims(root, leaf_paths, stats)
 
                 def splat_sets() -> Iterator[Any]:
                     for leaf_path in leaf_paths:

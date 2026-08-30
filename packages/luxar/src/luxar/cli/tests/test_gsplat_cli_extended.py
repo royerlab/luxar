@@ -7576,6 +7576,118 @@ class TestFlattenCommand:
         assert root.attrs["ordering"] == "hilbert"
         assert root["chunk_bounds"].shape[0] >= 1
 
+    def test_flatten_preserves_barrier_chunk_layout(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A partition of additive ladders keeps the stacked-time chunk barrier."""
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        rng = np.random.default_rng(17)
+        spatial = GSplatData(
+            centers=rng.normal(size=(100, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, 100).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (100, 1)
+            ),
+        )
+        stacked = GSplatData.combine_as_new_dimension(
+            [spatial, spatial, spatial, spatial],
+            values=[0.0, 1.0, 2.0, 3.0],
+            sigma=0.0,
+        )
+        source = tmp_path / "stacked.gsplats.zarr"
+        stacked.save(source)
+
+        tiled = tmp_path / "tiled.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(source),
+                str(tiled),
+                "--recipe",
+                "tiles",
+                "--max-elements",
+                "100",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+
+        node, _ = load_gsplat_node(tiled)
+        expected = GSplatData.from_default_selection(node).flattened()
+        expected_path = tmp_path / "expected.gsplats.zarr"
+        expected.save(
+            expected_path,
+            encoding_mode=EncodingMode.PRECISION,
+            barrier_dims=[3],
+        )
+
+        actual_path = tmp_path / "actual.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(tiled), str(actual_path)])
+        assert result.exit_code == 0, result.stdout
+
+        expected_root = zc_open_group(str(expected_path), mode="r")
+        actual_root = zc_open_group(str(actual_path), mode="r")
+        for key in ("slice_dims", "ordering_dims", "chunk_size"):
+            assert actual_root.attrs[key] == expected_root.attrs[key]
+        expected_bounds = np.asarray(expected_root["chunk_bounds"])
+        actual_bounds = np.asarray(actual_root["chunk_bounds"])
+        assert actual_bounds.shape == expected_bounds.shape
+        np.testing.assert_allclose(
+            actual_bounds[:, 3, 1] - actual_bounds[:, 3, 0],
+            expected_bounds[:, 3, 1] - expected_bounds[:, 3, 0],
+        )
+
+    def test_flatten_rejects_unsupported_format(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        import shutil
+
+        shutil.copytree(medium_gsplats, legacy)
+        zc_open_group(str(legacy), mode="a").attrs["format_version"] = "2.0"
+
+        output = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(legacy), str(output)])
+        assert result.exit_code == 1
+        assert "Unsupported format_version: '2.0'" in _plain(result.stdout)
+        assert "migrate-format" in _plain(result.stdout)
+        assert not output.exists()
+
+    def test_flatten_corrects_inherited_fitting_count(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        source_root = zc_open_group(str(medium_gsplats), mode="a")
+        source_root.require_group("fitting").attrs["n_splats"] = 32
+        ladder = tmp_path / "levels.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(ladder),
+                "--recipe",
+                "levels",
+                "-K",
+                "4",
+                "-L",
+                "2",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(ladder), str(flat)])
+        assert result.exit_code == 0, result.stdout
+        root = zc_open_group(str(flat), mode="r")
+        assert root["fitting"].attrs["n_splats"] == root.attrs["n_splats"]
+
     def test_flatten_rejects_whole_array_encoding_modes(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
     ) -> None:

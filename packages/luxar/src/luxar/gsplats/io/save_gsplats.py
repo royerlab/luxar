@@ -903,6 +903,7 @@ def write_flat_leaf_streaming(
     from luxar.io._compiler.gsplat_assembly import (
         apply_gsplat_group_attrs,
         apply_gsplat_spatial_ordering,
+        resolve_gsplat_chunk_size,
         write_gsplat_arrays,
     )
     from luxar.io._ordering.gsplats import compute_chunk_bounds_gsplats
@@ -1054,13 +1055,16 @@ def write_flat_leaf_streaming(
             if colors is not None:
                 colors.flush()
 
-            chunk_size = int(ordering_template["chunk_size"])
+            chunk_size = resolve_gsplat_chunk_size(n_splats, ndim)
             ordering_dims = list(ordering_template.get("ordering_dims", []))
+            ordering_bits_per_dim = (
+                min(21, 64 // len(ordering_dims)) if ordering_dims else 21
+            )
             ordering_data = {
                 "ordering": "hilbert",
                 "ordering_min": np.min(centers[:, ordering_dims], axis=0).tolist(),
                 "ordering_max": np.max(centers[:, ordering_dims], axis=0).tolist(),
-                "ordering_bits_per_dim": ordering_template["ordering_bits_per_dim"],
+                "ordering_bits_per_dim": ordering_bits_per_dim,
                 "chunk_size": chunk_size,
                 "slice_dims": list(ordering_template.get("slice_dims", [])),
                 "ordering_dims": ordering_dims,
@@ -1110,6 +1114,8 @@ def write_flat_leaf_streaming(
             if description:
                 root.attrs["description"] = description
             if fitting_info is not None:
+                if "n_splats" in fitting_info:
+                    fitting_info = {**fitting_info, "n_splats": n_splats}
                 fitting_group = root.create_group("fitting")
                 fitting_group.attrs.update(fitting_info)
                 if fitting_config is not None:

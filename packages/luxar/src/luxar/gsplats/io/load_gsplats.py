@@ -529,6 +529,43 @@ def agreed_authored_appearance(
     return carried
 
 
+def read_gsplat_root_stats(root: Any, *, include_stats: bool = True) -> Dict[str, Any]:
+    """Validate a standalone gsplat root and return its persisted statistics."""
+    format_type = root.attrs.get("format_type")
+    if format_type != "gsplats_zarr":
+        raise ValueError(f"Invalid format_type: {format_type}, expected 'gsplats_zarr'")
+
+    from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
+
+    format_version = root.attrs.get("format_version")
+    if format_version not in SUPPORTED_FORMAT_VERSIONS:
+        raise ValueError(
+            f"Unsupported format_version: {format_version!r} "
+            f"(expected one of {SUPPORTED_FORMAT_VERSIONS}). The on-disk "
+            f"format is a detached node-tree subtree. Convert legacy "
+            f"v1.x / v2.0 files (and old substitutive directories) with "
+            f"`luxar gsplat migrate-format <input> <output.gsplats.zarr>`."
+        )
+
+    if not include_stats:
+        return {}
+
+    stats: Dict[str, Any] = {}
+    if "fitting" in root:
+        stats.update(dict(root["fitting"].attrs))
+    if "pipeline" in root:
+        for key, value in root["pipeline"].attrs.items():
+            stats.setdefault(key, value)
+    if "provenance" in root:
+        stats["provenance"] = dict(root["provenance"].attrs)
+    stats["format_version"] = format_version
+    stats["timestamp"] = root.attrs.get("timestamp")
+    stats["luxar_gsplats_version"] = root.attrs.get("luxar_gsplats_version")
+    if "description" in root.attrs:
+        stats["description"] = root.attrs["description"]
+    return stats
+
+
 def load_gsplat_node(
     path: str | Path,
     include_stats: bool = False,
@@ -558,49 +595,12 @@ def load_gsplat_node(
         # Open zarr store
         root = zc_open_group(str(zarr_path), mode="r")
 
-        # Validate format
-        format_type = root.attrs.get("format_type")
-        if format_type != "gsplats_zarr":
-            raise ValueError(
-                f"Invalid format_type: {format_type}, expected 'gsplats_zarr'"
-            )
-
-        from luxar.gsplats.io.save_gsplats import SUPPORTED_FORMAT_VERSIONS
-
-        format_version = root.attrs.get("format_version")
-        if format_version not in SUPPORTED_FORMAT_VERSIONS:
-            raise ValueError(
-                f"Unsupported format_version: {format_version!r} "
-                f"(expected one of {SUPPORTED_FORMAT_VERSIONS}). The on-disk "
-                f"format is a detached node-tree subtree. Convert legacy "
-                f"v1.x / v2.0 files (and old substitutive directories) with "
-                f"`luxar gsplat migrate-format <input> <output.gsplats.zarr>`."
-            )
+        stats = read_gsplat_root_stats(root, include_stats=include_stats)
 
         # Read the node-tree subtree rooted at the file.
         from luxar.io._compiler.gsplat_tree import read_gsplat_node
 
         node = read_gsplat_node(root, root)
-
-        # Gather root-level stats (fitting / pipeline / provenance / header).
-        stats: Dict[str, Any] = {}
-        if include_stats:
-            if "fitting" in root:
-                for key, value in root["fitting"].attrs.items():
-                    stats[key] = value
-            if "pipeline" in root:
-                # Reduction/topology stats (lod_kind, method, coverage_inflation,
-                # refine, ...) — split_fitting_info's fourth bucket. setdefault:
-                # fitting/header keys keep precedence on any collision.
-                for key, value in root["pipeline"].attrs.items():
-                    stats.setdefault(key, value)
-            if "provenance" in root:
-                stats["provenance"] = dict(root["provenance"].attrs)
-            stats["format_version"] = format_version
-            stats["timestamp"] = root.attrs.get("timestamp")
-            stats["luxar_gsplats_version"] = root.attrs.get("luxar_gsplats_version")
-            if "description" in root.attrs:
-                stats["description"] = root.attrs["description"]
 
         return node, stats
 
