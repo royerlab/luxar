@@ -485,9 +485,9 @@ describe('PointsProgressiveLoader', () => {
       // every read so the deadline is past by level 1's loop-top check.
       let nowMs = 0;
       const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (nowMs += 100));
-      // A playback budget stops the pass at the LOD-0 first-paint floor. The
-      // level that actually holds this slice's points is the one still to
-      // come, so skipping prefetch would leave it cold — the flip side of the
+      // The moving clock exhausts the playback budget after LOD 0. The level
+      // that actually holds this slice's points is the one still to come, so
+      // skipping prefetch would leave it cold — the flip side of the
       // same wrong assumption.
       lodA.updateView.mockResolvedValue(makeLodData(0));
       await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
@@ -537,8 +537,8 @@ describe('PointsProgressiveLoader', () => {
       // below is timed honestly.
       let nowMs = 0;
       const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (nowMs += 100));
-      // A playback budget caps the pass at LOD 0 and stores that 1-level
-      // prefix. Scrubbing back restores it — and an empty restored LOD 0 is
+      // The moving clock expires after LOD 0 and stores that 1-level prefix.
+      // Scrubbing back restores it — and an empty restored LOD 0 is
       // exactly as uninformative as a freshly loaded one (#1456): the levels
       // the prefix never reached are disjoint increments that may well
       // intersect this slice, so the loop must resume at level 1. Concluding
@@ -1024,9 +1024,8 @@ describe('PointsProgressiveLoader', () => {
       // every read so the deadline is past by level 1's loop-top check.
       let nowMs = 0;
       const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (nowMs += 100));
-      // A playback budget caps the pass at the LOD-0 first-paint floor — the
-      // single-part state of every ladder. (It used to be provoked with an
-      // empty LOD 0, which no longer stops the loop: #1456.)
+      // The moving clock expires after the first level, preserving the
+      // single-part state of the ladder.
       const result = await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
       expect(loader.loadedLODCount).toBe(1);
       expect(result.pointCount).toBe(100);
