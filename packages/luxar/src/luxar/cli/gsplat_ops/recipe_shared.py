@@ -458,10 +458,17 @@ def survey_gsplat_streaming_layout(input_path: Path) -> tuple[int, int]:
                     else [group]
                 )
                 for level in levels:
-                    dims = tuple(int(d) for d in level.attrs.get("slice_dims", []))
-                    if not dims or "centers" not in level:
+                    if "centers" not in level:
                         continue
-                    columns = decode_coordinate_columns(level["centers"], dims)
+                    centers = level["centers"]
+                    dims = tuple(
+                        int(dim)
+                        for dim in level.attrs.get("slice_dims", [])
+                        if 3 <= int(dim) < centers.shape[1]
+                    )
+                    if not dims:
+                        continue
+                    columns = decode_coordinate_columns(centers, dims, root)
                     hidden_rows.update(tuple(row) for row in columns)
                 return 1
             children = [group[name] for name in group.group_keys()]

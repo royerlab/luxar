@@ -397,16 +397,65 @@ class TestMergeStreamingKnobs:
             leaf.attrs.update(
                 {"type": "gsplats", "n_splats": 3, "n_additive_sublods": 1}
             )
-            leaf.attrs["slice_dims"] = [1]
+            leaf.attrs["slice_dims"] = [3]
             leaf.create_array(
                 "centers",
                 data=np.asarray(
-                    [[part_index, 0], [part_index, 1], [part_index, 2]],
+                    [
+                        [part_index, 0, 0, 0],
+                        [part_index, 1, 0, 1],
+                        [part_index, 2, 0, 2],
+                    ],
                     dtype=np.uint16,
                 ),
             )
 
         assert survey_gsplat_streaming_layout(store_path) == (3, 2)
+
+    def test_store_survey_ignores_spatial_integer_barriers(self, tmp_path: Path) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "spatial-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [0, 1, 2],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0], [1, 2, 3], [2, 4, 6], [3, 6, 9]], dtype=np.uint16
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (1, 1)
+
+    def test_store_survey_counts_only_stacked_barrier_axes(self, tmp_path: Path) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "stacked-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [0, 1, 2, 3],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0, 0], [1, 2, 3, 0], [2, 4, 6, 1], [3, 6, 9, 1]],
+                dtype=np.uint16,
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (2, 1)
 
     def test_store_survey_decodes_each_rungs_coordinate_grid(
         self, tmp_path: Path
@@ -421,20 +470,54 @@ class TestMergeStreamingKnobs:
         for index, (low, rows) in enumerate(((10.0, [0, 1]), (12.0, [0, 1]))):
             rung = leaf.create_group(f"additive_{index}")
             rung.attrs.update(
-                {"type": "gsplats", "n_splats": 2, "slice_dims": [0]}
+                {"type": "gsplats", "n_splats": 2, "slice_dims": [3]}
             )
             centers = rung.create_array(
-                "centers", data=np.asarray(rows, dtype=np.uint16).reshape(-1, 1)
+                "centers",
+                data=np.column_stack(
+                    [
+                        np.zeros((2, 3), dtype=np.uint16),
+                        np.asarray(rows, dtype=np.uint16),
+                    ]
+                ),
             )
             centers.attrs["encoding"] = {
                 "name": "linear_perchannel_u16",
-                "col_lo": [low],
-                "col_hi": [low + 1.0],
+                "col_lo": [0.0, 0.0, 0.0, low],
+                "col_hi": [0.0, 0.0, 0.0, low + 1.0],
                 "bits": 16,
                 "original_dtype": "float32",
             }
 
         assert survey_gsplat_streaming_layout(store_path) == (4, 1)
+
+    def test_store_survey_decodes_lut_coordinates(self, tmp_path: Path) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "lut-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [3],
+            }
+        )
+        centers = leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 1]],
+                dtype=np.uint8,
+            ),
+        )
+        centers.attrs["encoding"] = {
+            "name": "lut_uint8",
+            "lut": [0.0, 4.0],
+            "original_dtype": "float32",
+        }
+
+        assert survey_gsplat_streaming_layout(store_path) == (2, 1)
 
     def test_store_survey_reads_zipped_store(self, tmp_path: Path) -> None:
         import shutil
@@ -448,11 +531,14 @@ class TestMergeStreamingKnobs:
                 "type": "gsplats",
                 "n_splats": 3,
                 "n_additive_sublods": 1,
-                "slice_dims": [0],
+                "slice_dims": [3],
             }
         )
         leaf.create_array(
-            "centers", data=np.asarray([[0], [1], [2]], dtype=np.float32)
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 2]], dtype=np.float32
+            ),
         )
         archive = Path(
             shutil.make_archive(str(store_path), "zip", root_dir=store_path)

@@ -303,7 +303,13 @@ class ArrayDecoder:
         return np.asarray(out, dtype=original_dtype)
 
     @staticmethod
-    def _perchannel_scales(data: np.ndarray, enc: dict, name: str) -> tuple:
+    def _perchannel_scales(
+        data: np.ndarray,
+        enc: dict,
+        name: str,
+        *,
+        column_count: Optional[int] = None,
+    ) -> tuple:
         """Validate + return ``(lo, hi, bits)`` for a per-channel dequant.
 
         Mirrors the finiteness/length rigor of the scalar decoders
@@ -333,7 +339,13 @@ class ArrayDecoder:
         # ``_encode_coordinate`` both take ``min/max`` over axis 0), so reading
         # its channel count off ``shape[-1]`` rejected every 1-D array the
         # writer can produce.
-        cols = data.shape[-1] if data.ndim >= 2 else 1
+        cols = (
+            column_count
+            if column_count is not None
+            else data.shape[-1]
+            if data.ndim >= 2
+            else 1
+        )
         if lo.shape[0] != cols:
             raise ValueError(
                 f"{name} expects {cols} per-column scales, got {lo.shape[0]}"
@@ -528,36 +540,30 @@ class ArrayDecoder:
 
 
 def decode_coordinate_columns(
-    zarr_array: zarr.Array, columns: Sequence[int]
+    zarr_array: zarr.Array,
+    columns: Sequence[int],
+    zarr_root: Optional[zarr.Group] = None,
 ) -> np.ndarray:
-    """Decode selected coordinate columns without reading the whole array."""
-    selected = np.asarray(zarr_array[:, list(columns)])
-    encoding = dict(zarr_array.attrs.get("encoding", {}))
-    name = encoding.get("name", "none")
+    """Decode selected coordinate columns, using a full decode when required."""
+    decoder = ArrayDecoder()
+    encoding = decoder._encoding_metadata(zarr_array)
+    name = encoding["name"]
+    selected_columns = list(columns)
     if name in ArrayDecoder.DIRECT_ENCODINGS:
-        return selected
+        return np.asarray(zarr_array[:, selected_columns])
     if name not in {"linear_perchannel_u8", "linear_perchannel_u16"}:
-        raise ValueError(f"unsupported coordinate encoding {name!r}")
+        return np.asarray(decoder.decode(zarr_array, zarr_root)[:, selected_columns])
 
-    low = np.asarray(encoding["col_lo"], dtype=np.float64)
-    high = np.asarray(encoding["col_hi"], dtype=np.float64)
-    bits = int(encoding["bits"])
+    selected = np.asarray(zarr_array[:, selected_columns])
     column_count = zarr_array.shape[-1] if zarr_array.ndim >= 2 else 1
-    if (
-        bits <= 0
-        or low.shape != high.shape
-        or low.ndim != 1
-        or low.shape[0] != column_count
-    ):
-        raise ValueError(f"malformed {name} coordinate encoding")
-    if not (
-        np.all(np.isfinite(low))
-        and np.all(np.isfinite(high))
-        and np.all(high >= low)
-    ):
-        raise ValueError(f"malformed {name} coordinate encoding")
-    selected_low = low[list(columns)]
-    selected_high = high[list(columns)]
+    low, high, bits = decoder._perchannel_scales(
+        selected,
+        encoding,
+        "linear_perchannel",
+        column_count=column_count,
+    )
+    selected_low = low[selected_columns]
+    selected_high = high[selected_columns]
     decoded = selected_low + selected.astype(np.float64) / ((1 << bits) - 1) * (
         selected_high - selected_low
     )

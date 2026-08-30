@@ -201,6 +201,31 @@ def test_partitioned_slice_survey_decodes_per_part_coordinate_grids(
     assert checker.sliced_first_rung_counts(root) == [("/", 1)]
 
 
+def test_slice_survey_decodes_lut_coordinate_array(tmp_path: Path) -> None:
+    root = zarr.open_group(tmp_path / "lut-encoded.zarr", mode="w")
+    leaf = root.create_group("leaf")
+    leaf.attrs.update({"type": "points", "n_points": 4, "n_additive_sublods": 2})
+    rung = leaf.create_group("additive_0")
+    rung.attrs.update({"type": "points", "n_points": 4, "slice_dims": [3]})
+    positions = rung.create_array(
+        "positions",
+        data=np.asarray(
+            [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 1]],
+            dtype=np.uint8,
+        ),
+    )
+    positions.attrs["encoding"] = {
+        "name": "lut_uint8",
+        "lut": [0.0, 7.0],
+        "original_dtype": "float32",
+    }
+    leaf.create_group("additive_1").attrs.update(
+        {"type": "points", "n_points": 0, "slice_dims": [3]}
+    )
+
+    assert checker.sliced_first_rung_counts(root) == [("/leaf", 2)]
+
+
 def test_scene_inventory_is_read_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

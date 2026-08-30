@@ -109,7 +109,9 @@ def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
         yield from walk_leaves(group[name], f"{path}/{name}")
 
 
-def _first_rung_histogram(leaf: Any) -> Counter[tuple[object, ...]] | None:
+def _first_rung_histogram(
+    leaf: Any, zarr_root: Any
+) -> Counter[tuple[object, ...]] | None:
     """Histogram one sliced leaf's rung 0 by decoded hidden coordinate."""
     attrs = dict(leaf.attrs)
     if int(attrs.get("n_additive_sublods", 1) or 1) <= 1:
@@ -128,23 +130,25 @@ def _first_rung_histogram(leaf: Any) -> Counter[tuple[object, ...]] | None:
     }[attrs["type"]]
     if coordinate_array not in rung:
         return Counter()
-    columns = decode_coordinate_columns(rung[coordinate_array], dims)
+    columns = decode_coordinate_columns(rung[coordinate_array], dims, zarr_root)
     counts: Counter[tuple[object, ...]] = Counter()
     counts.update(tuple(row) for row in columns)
     return counts
 
 
-def _node_slice_histogram(group: Any) -> Counter[tuple[object, ...]] | None:
+def _node_slice_histogram(
+    group: Any, zarr_root: Any
+) -> Counter[tuple[object, ...]] | None:
     """Reduce one geometry node: partition=sum, substitutive LOD=keywise max."""
     attrs = dict(group.attrs)
     if attrs.get("type") in ("points", "lines", "gsplats"):
-        return _first_rung_histogram(group)
+        return _first_rung_histogram(group, zarr_root)
 
     children = [group[name] for name in group.group_keys()]
     if attrs.get("kind") == "partition":
         combined: Counter[tuple[object, ...]] = Counter()
         for child in children:
-            child_histogram = _node_slice_histogram(child)
+            child_histogram = _node_slice_histogram(child, zarr_root)
             if child_histogram is not None:
                 combined += child_histogram
         return combined or None
@@ -152,7 +156,7 @@ def _node_slice_histogram(group: Any) -> Counter[tuple[object, ...]] | None:
         alternatives = [
             histogram
             for child in children
-            if (histogram := _node_slice_histogram(child)) is not None
+            if (histogram := _node_slice_histogram(child, zarr_root)) is not None
         ]
         if not alternatives:
             return None
@@ -163,15 +167,20 @@ def _node_slice_histogram(group: Any) -> Counter[tuple[object, ...]] | None:
     return None
 
 
-def sliced_first_rung_counts(root: Any, path: str = "") -> list[tuple[str, int]]:
+def sliced_first_rung_counts(
+    root: Any, path: str = "", zarr_root: Any = None
+) -> list[tuple[str, int]]:
     """Measure each sliced node's global per-slice rung-0 maximum."""
-    histogram = _node_slice_histogram(root)
+    zarr_root = root if zarr_root is None else zarr_root
+    histogram = _node_slice_histogram(root, zarr_root)
     if histogram is not None:
         return [(path or "/", max(histogram.values(), default=0))]
     return [
         result
         for name in root.group_keys()
-        for result in sliced_first_rung_counts(root[name], f"{path}/{name}")
+        for result in sliced_first_rung_counts(
+            root[name], f"{path}/{name}", zarr_root
+        )
     ]
 
 

@@ -5893,7 +5893,7 @@ class TestLODCommand:
         assert no_barrier.exit_code == 0, normalized_cli_output(no_barrier)
         assert "x 1 slice(s) / 1 part(s)" in normalized_cli_output(no_barrier)
 
-        zarr.open_group(sample_gsplats_4d, mode="a").attrs["slice_dims"] = [3]
+        zarr.open_group(sample_gsplats_4d, mode="a").attrs["slice_dims"] = [0, 1, 2, 3]
 
         partitioned = runner.invoke(
             app,
@@ -5912,6 +5912,28 @@ class TestLODCommand:
         )
         assert partitioned.exit_code == 0, normalized_cli_output(partitioned)
         assert "x 2 slice(s) / 2 part(s)" in normalized_cli_output(partitioned)
+
+    def test_lod_target_ms_ignores_3d_spatial_barrier(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        zarr.open_group(medium_gsplats, mode="a").attrs["slice_dims"] = [0, 1, 2]
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(tmp_path / "spatial-barrier.gsplats.zarr"),
+                "--recipe",
+                "stream",
+                "--target-ms",
+                "5",
+            ],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        assert "x 1 slice(s) / 1 part(s)" in normalized_cli_output(result)
 
     def test_lod_target_ms_uses_explicit_output_barrier(
         self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
