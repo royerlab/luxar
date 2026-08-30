@@ -464,7 +464,7 @@ def _sha256_of(path: Path) -> str:
 def _select_pinned_location(
     candidates: Iterator[Path], pinned_digest: Optional[str]
 ) -> tuple[Optional[Path], Optional[str]]:
-    """Prefer pinned bytes, falling back to the first existing candidate."""
+    """Prefer pinned bytes, falling back to the first hashable candidate."""
     fallback: tuple[Optional[Path], Optional[str]] = (None, None)
     for path in candidates:
         try:
