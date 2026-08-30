@@ -38,6 +38,7 @@ def test_default_cache_uses_the_manifest_resolved_path(
     calls: list[tuple[str, object]] = []
 
     monkeypatch.delenv("CENSUS_UMAP_CACHE", raising=False)
+    monkeypatch.delenv("CENSUS_UMAP_MAX_CELLS", raising=False)
     monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
     monkeypatch.setattr(
         _demo,
