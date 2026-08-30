@@ -243,9 +243,9 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
 #: viewer-side gate for #2374 — which fails a sliced node below **10%** of its
 #: frame, or below 1,000 elements at the 5th-percentile stop — with margin.
 #: :func:`stream_ladder` rejects a sliced leaf whose share would exceed the
-#: 900,000-element commit ceiling; partition that leaf rather than silently
-#: delivering less than this contract. Deepening this past 10 walks a sliced
-#: node into the failing band.
+#: 900,000-element commit ceiling; partition after moving any stacked axis last,
+#: or supply explicit capped cuts, rather than silently delivering less than
+#: this contract. Deepening this past 10 walks a sliced node into the failing band.
 #:
 #: THE 12.5% IS AN AGGREGATE, NOT A PER-STOP GUARANTEE. Rung 0 is a prefix of a
 #: global ordering, so it concentrates where the signal is rather than spreading

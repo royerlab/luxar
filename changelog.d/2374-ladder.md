@@ -45,9 +45,10 @@ for; a long timelapse wants its per-stop histogram checked instead.
 
 The 900,000-element commit ceiling is still authoritative. A sliced leaf above
 7.2 million elements cannot deliver a 12.5% first rung safely, so
-`stream_ladder` rejects it and asks the author to partition the leaf rather than
-silently clamping below the share. Lines use an uncapped vertex-count string, so
-their resolved doubling ladder is also checked against that ceiling.
+`stream_ladder` rejects it and asks the author to partition after moving any
+stacked axis last, or to supply explicit capped cuts, rather than silently
+clamping below the share. Lines use an uncapped vertex-count string, so their
+resolved doubling ladder is also checked against that ceiling.
 
 New `hidden_axis_stops(positions, hidden_dims)` counts distinct **occurring**
 coordinate combinations, not the product of per-axis cardinalities: `taxon x
