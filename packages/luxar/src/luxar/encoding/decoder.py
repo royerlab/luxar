@@ -542,7 +542,13 @@ def decode_coordinate_columns(
     low = np.asarray(encoding["col_lo"], dtype=np.float64)
     high = np.asarray(encoding["col_hi"], dtype=np.float64)
     bits = int(encoding["bits"])
-    if bits <= 0 or low.shape != high.shape or low.ndim != 1:
+    column_count = zarr_array.shape[-1] if zarr_array.ndim >= 2 else 1
+    if (
+        bits <= 0
+        or low.shape != high.shape
+        or low.ndim != 1
+        or low.shape[0] != column_count
+    ):
         raise ValueError(f"malformed {name} coordinate encoding")
     selected_low = low[list(columns)]
     selected_high = high[list(columns)]
@@ -552,6 +558,7 @@ def decode_coordinate_columns(
         and np.all(selected_high >= selected_low)
     ):
         raise ValueError(f"malformed {name} coordinate encoding")
-    return selected_low + selected.astype(np.float64) / ((1 << bits) - 1) * (
+    decoded = selected_low + selected.astype(np.float64) / ((1 << bits) - 1) * (
         selected_high - selected_low
     )
+    return np.asarray(decoded, dtype=np.dtype(encoding.get("original_dtype", "float32")))

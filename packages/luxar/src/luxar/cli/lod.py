@@ -761,45 +761,6 @@ def lod_recipe(
                         f"{target_volume_axes}"
                     )
 
-            # ── streaming breakpoints from --target-ms (measured B/splat) ──
-            if target_ms is not None:
-                stored_total = sum(
-                    data.at_substitutive(s).n_splats for s in range(data.n_substitutive)
-                )
-                store_bytes = measure_store_bytes(input_path)
-                measured = (
-                    store_bytes / stored_total
-                    if store_bytes > 0 and stored_total > 0
-                    else None
-                )
-                # The output is re-encoded per --encoding: when an explicit
-                # non-default mode differs from the input's stored encoding,
-                # the measured input bytes misstate the on-wire OUTPUT cost
-                # (e.g. u16 input + --encoding precision ≈ 2× the measured
-                # figure), so size against the analytic estimate for the
-                # target encoding instead.
-                if measured is not None and encoding != "auto":
-                    input_encoding = detect_store_encoding(input_path)
-                    if input_encoding != encoding:
-                        aprint(
-                            f"--encoding {encoding} re-encodes the output "
-                            f"(input store looks "
-                            f"{input_encoding or 'unknown'}-encoded); sizing "
-                            f"--target-ms from the analytic {encoding} "
-                            f"estimate instead of the measured input bytes"
-                        )
-                        measured = None
-                bp = resolve_streaming_breakpoints(
-                    target_ms,
-                    bandwidth_mbps,
-                    bytes_per_splat,
-                    measured_bps=measured,
-                    analytic_bps=estimate_bytes_per_splat(
-                        data.ndim, data.colors is not None, encoding=encoding
-                    ),
-                    slice_count=survey_gsplat_streaming_layout(input_path)[0],
-                )
-
             # ── scale-derived defaults (logged) ──
             eff_max_elements: Optional[int] = max_elements
             if recipe in ("tiles", "overview", "adaptive"):
@@ -881,6 +842,62 @@ def lod_recipe(
                 # ...and what the flag does beyond that, which differs by
                 # recipe — see `_COARSEN_STAMP_NOTES`.
                 aprint(_COARSEN_STAMP_NOTES[recipe])
+
+            # ── streaming breakpoints from --target-ms (measured B/splat) ──
+            if target_ms is not None:
+                stored_total = sum(
+                    data.at_substitutive(s).n_splats for s in range(data.n_substitutive)
+                )
+                store_bytes = measure_store_bytes(input_path)
+                measured = (
+                    store_bytes / stored_total
+                    if store_bytes > 0 and stored_total > 0
+                    else None
+                )
+                if measured is not None and encoding != "auto":
+                    input_encoding = detect_store_encoding(input_path)
+                    if input_encoding != encoding:
+                        aprint(
+                            f"--encoding {encoding} re-encodes the output "
+                            f"(input store looks "
+                            f"{input_encoding or 'unknown'}-encoded); sizing "
+                            f"--target-ms from the analytic {encoding} "
+                            f"estimate instead of the measured input bytes"
+                        )
+                        measured = None
+
+                partitioned = recipe in ("tiles", "overview", "adaptive")
+                part_count = (
+                    parts
+                    if partitioned and parts is not None
+                    else max(1, -(-data.n_splats // eff_max_elements))
+                    if partitioned and eff_max_elements is not None
+                    else 1
+                )
+                if recipe in ("levels", "overview", "adaptive"):
+                    import numpy as np
+
+                    hidden_dims = sorted(
+                        set(range(data.ndim)) - set(parsed_coarsen or range(data.ndim))
+                    )
+                    slice_count = (
+                        len(np.unique(data.centers[:, hidden_dims], axis=0))
+                        if hidden_dims
+                        else 1
+                    )
+                else:
+                    slice_count = survey_gsplat_streaming_layout(input_path)[0]
+                bp = resolve_streaming_breakpoints(
+                    target_ms,
+                    bandwidth_mbps,
+                    bytes_per_splat,
+                    measured_bps=measured,
+                    analytic_bps=estimate_bytes_per_splat(
+                        data.ndim, data.colors is not None, encoding=encoding
+                    ),
+                    slice_count=max(1, slice_count),
+                    part_count=part_count,
+                )
 
             params = RecipeParams(
                 n_lods=n_lods if n_lods is not None else 4,

@@ -1529,6 +1529,7 @@ def resolve_merge_recipe_args(
     merged_has_colors: bool = False,
     slice_count: int = 1,
     part_count: int = 1,
+    resolve_target_ms: bool = True,
 ) -> dict:
     """Validate the per-part merge recipe + knobs into the manifest dict.
 
@@ -1547,6 +1548,8 @@ def resolve_merge_recipe_args(
     multi-channel merge with channel colors). ``slice_count`` is the number of
     hidden time coordinates and ``part_count`` the spatial parts that render
     together; the stored per-part ``stream:<c>`` is scaled by their ratio.
+    ``resolve_target_ms=False`` performs the same validation without resolving
+    the size-dependent stream string, for the pre-discovery fail-fast pass.
     Returns ``{}`` when no recipe and no knobs are requested. Raises
     :class:`typer.BadParameter` on any problem.
     """
@@ -1633,7 +1636,7 @@ def resolve_merge_recipe_args(
         prefix="--merge-",
     )
     eff_breakpoints = merge.breakpoints
-    if merge.target_ms is not None:
+    if merge.target_ms is not None and resolve_target_ms:
         from luxar.cli.gsplat_ops.recipe_shared import (
             estimate_bytes_per_splat,
             resolve_streaming_breakpoints,
@@ -1908,6 +1911,8 @@ def plan_batch(
 
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
     _validate_content_fit_flags(tiling, fit_args)
+    if merge_recipe_args is None:
+        resolve_merge_recipe_args(merge, resolve_target_ms=False)
     denoised_zarr_path = None
     if denoise_mode == "preprocess":
         denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")

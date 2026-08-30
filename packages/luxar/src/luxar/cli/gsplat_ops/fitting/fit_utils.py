@@ -94,9 +94,6 @@ class FitPipelineCtx:
     recipe_n_lods: Optional[int]
     recipe_additive_method: Optional[str]
     recipe_breakpoints: Optional[str]
-    recipe_target_ms: Optional[float]
-    recipe_bandwidth_mbps: Optional[float]
-    recipe_bytes_per_splat: Optional[float]
     recipe_compression_factor: Optional[int]
     recipe_levels: Optional[int]
     recipe_substitutive_method: Optional[str]
@@ -227,9 +224,6 @@ def validate_and_build_recipe(
         n_lods=ctx.recipe_n_lods,
         additive_method=ctx.recipe_additive_method,
         breakpoints=ctx.recipe_breakpoints,
-        target_ms=ctx.recipe_target_ms,
-        bandwidth_mbps=ctx.recipe_bandwidth_mbps,
-        bytes_per_splat=ctx.recipe_bytes_per_splat,
         compression_factor=ctx.recipe_compression_factor,
         levels=ctx.recipe_levels,
         substitutive_method=ctx.recipe_substitutive_method,
@@ -1430,9 +1424,6 @@ def build_fit_recipe_params(
     n_lods: Optional[int],
     additive_method: Optional[str],
     breakpoints: Optional[str],
-    target_ms: Optional[float] = None,
-    bandwidth_mbps: Optional[float] = None,
-    bytes_per_splat: Optional[float] = None,
     compression_factor: Optional[int],
     levels: Optional[int],
     substitutive_method: Optional[str],
@@ -1449,9 +1440,6 @@ def build_fit_recipe_params(
         n_lods=n_lods,
         additive_method=additive_method,
         breakpoints=breakpoints,
-        target_ms=target_ms,
-        bandwidth_mbps=bandwidth_mbps,
-        bytes_per_splat=bytes_per_splat,
         compression_factor=compression_factor,
         levels=levels,
         substitutive_method=substitutive_method,

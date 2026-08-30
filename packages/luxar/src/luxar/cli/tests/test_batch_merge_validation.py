@@ -436,6 +436,30 @@ class TestMergeStreamingKnobs:
 
         assert survey_gsplat_streaming_layout(store_path) == (4, 1)
 
+    def test_store_survey_reads_zipped_store(self, tmp_path: Path) -> None:
+        import shutil
+
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "zipped-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 3,
+                "n_additive_sublods": 1,
+                "slice_dims": [0],
+            }
+        )
+        leaf.create_array(
+            "centers", data=np.asarray([[0], [1], [2]], dtype=np.float32)
+        )
+        archive = Path(
+            shutil.make_archive(str(store_path), "zip", root_dir=store_path)
+        )
+
+        assert survey_gsplat_streaming_layout(archive) == (3, 1)
+
     def test_stored_stream_string_reparses_at_merge_time(self) -> None:
         """The manifest round-trip: the stored string re-parses via
         parse_lod_breakpoints into the same deferred spec."""
@@ -793,6 +817,18 @@ class TestPlanTimeStreamingSizing:
         # The whole-node 20,833-splat budget is doubled for two hidden slices;
         # one partition part receives the resulting 41,666-splat first rung.
         assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:41666"
+
+    def test_invalid_merge_knobs_fail_before_plan_output(self, tmp_path: Path) -> None:
+        from luxar.cli.gsplat_ops.batch.planning import MergeConfig
+
+        with pytest.raises(typer.BadParameter, match="require a --merge-recipe"):
+            self._plan(
+                tmp_path,
+                (2, 8, 8, 8),
+                ["t", "z", "y", "x"],
+                MergeConfig(recipe=None, n_lods=6),
+            )
+        assert not (tmp_path / "out").exists()
 
     def test_single_timepoint_plans_3d_ladder(self, tmp_path: Path) -> None:
         from luxar.cli.gsplat_ops.batch.planning import MergeConfig

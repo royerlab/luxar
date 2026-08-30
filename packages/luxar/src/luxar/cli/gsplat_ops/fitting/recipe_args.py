@@ -13,9 +13,6 @@ def build_fit_recipe_params(
     n_lods: Optional[int],
     additive_method: Optional[str],
     breakpoints: Optional[str],
-    target_ms: Optional[float] = None,
-    bandwidth_mbps: Optional[float] = None,
-    bytes_per_splat: Optional[float] = None,
     compression_factor: Optional[int],
     levels: Optional[int],
     substitutive_method: Optional[str],
@@ -32,7 +29,6 @@ def build_fit_recipe_params(
         VALID_SUBSTITUTIVE_METHODS,
         parse_lod_breakpoints,
         validate_refine,
-        validate_streaming_knobs,
     )
     from luxar.gsplats.lod.recipes import (
         LEGACY_RECIPE_NAMES,
@@ -59,9 +55,6 @@ def build_fit_recipe_params(
         "--n-lods": n_lods,
         "--add-method": additive_method,
         "--breakpoints": breakpoints,
-        "--target-ms": target_ms,
-        "--bandwidth-mbps": bandwidth_mbps,
-        "--bytes-per-splat": bytes_per_splat,
     }
     substitutive_only = {
         "--compression-factor": compression_factor,
@@ -91,12 +84,6 @@ def build_fit_recipe_params(
         raise typer.BadParameter(
             f"--subst-method must be one of "
             f"{list(VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
-        )
-    validate_streaming_knobs(target_ms, bandwidth_mbps, bytes_per_splat, breakpoints)
-    if target_ms is not None:
-        raise typer.BadParameter(
-            "--target-ms cannot safely size a per-part fit before the final "
-            "non-empty part count is known; use --n-lods for partitioned output"
         )
     bp: Any = parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
 

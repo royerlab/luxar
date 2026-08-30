@@ -5872,6 +5872,70 @@ class TestLODCommand:
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         assert out.exists()
 
+    def test_lod_target_ms_uses_output_barrier_and_part_count(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        no_barrier = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(sample_gsplats_4d),
+                str(tmp_path / "levels.gsplats.zarr"),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+                "--target-ms",
+                "200",
+            ],
+        )
+        assert no_barrier.exit_code == 0, normalized_cli_output(no_barrier)
+        assert "x 1 slice(s) / 1 part(s)" in normalized_cli_output(no_barrier)
+
+        zarr.open_group(sample_gsplats_4d, mode="a").attrs["slice_dims"] = [3]
+
+        partitioned = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(sample_gsplats_4d),
+                str(tmp_path / "tiles.gsplats.zarr"),
+                "--recipe",
+                "tiles",
+                "--parts",
+                "2",
+                "--target-ms",
+                "200",
+            ],
+        )
+        assert partitioned.exit_code == 0, normalized_cli_output(partitioned)
+        assert "x 2 slice(s) / 2 part(s)" in normalized_cli_output(partitioned)
+
+    def test_lod_target_ms_uses_explicit_output_barrier(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(sample_gsplats_4d),
+                str(tmp_path / "barrier.gsplats.zarr"),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+                "--coarsen-dims",
+                "0,1,2",
+                "--target-ms",
+                "200",
+            ],
+        )
+        assert result.exit_code == 0, normalized_cli_output(result)
+        assert "x 2 slice(s) / 1 part(s)" in normalized_cli_output(result)
+
     def test_truncation_sigmas_passes_through_as_none_by_default(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path, monkeypatch
     ) -> None:

@@ -65,7 +65,6 @@ Inputs: `.npy`, `.npz`, `.tiff`/`.tif`, `.zarr`, `.zarr.zip` (TIFF/other need `p
 ### Per-part LOD at fit time (tiled partition only)
 `--recipe`/`-r` `stream` → `tiles` topology; `--recipe levels` → `adaptive`.
 Knobs mirror `lod`: `--n-lods`, `--add-method`/`-m`, `--breakpoints`/`-b`,
-`--target-ms`, `--bandwidth-mbps` (default 25), `--bytes-per-splat`,
 `--compression-factor`/`-K`, `--levels`/`-L`, `--subst-method`,
 `--coarsen-dims`, `--refine`, `--refine-iters`. LOD switch thresholds are
 auto-derived (`coverage_fraction`, no knob — see "LOD switch tuning" below).
