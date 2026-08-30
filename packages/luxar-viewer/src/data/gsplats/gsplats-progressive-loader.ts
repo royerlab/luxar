@@ -39,6 +39,7 @@ import { restoreLadder, storeLadder } from '../loaders/progressive/slice-cache-h
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
+import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
 
 /**
  * Concatenate multiple LoadedGSplatsData into one.
@@ -374,6 +375,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
+          totalLODCount: this.nLods,
         });
       }
       const restored = restoreLadder<LoadedGSplatsData>(
@@ -443,10 +445,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
         break;
       }
       const t0 = performance.now();
-      const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
-        viewState,
-        session,
-        signal
+      const { data: lodData, allResident } = await timeLodStageWithResult(
+        ({ allResident }) => `additive:gsplats:level:${level}:${allResident ? 'resident' : 'miss'}`,
+        () => this.lodLoaders[level].updateViewWithResidency(viewState, session, signal)
       );
       const elapsed = performance.now() - t0;
 
@@ -513,6 +514,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
         scan: this._frameBudgetMs !== null,
         pin: viewState.prefetch === true,
+        totalLODCount: this.nLods,
       });
     }
 

@@ -86,6 +86,7 @@ function makePorts(overrides: Partial<Parameters<typeof installDebugInterface>[0
   };
   const inputHandler = { id: 'input' };
   const renderingControls = { id: 'rendering' };
+  const adaptiveDPRManager = { getCurrentFPS: vi.fn(() => 60) };
   return {
     debug: true,
     app: { id: 'app', shortcutForAction: vi.fn().mockReturnValue('F1') } as never,
@@ -93,6 +94,7 @@ function makePorts(overrides: Partial<Parameters<typeof installDebugInterface>[0
     animationController: animationController as never,
     inputHandler: inputHandler as never,
     renderingControls: renderingControls as never,
+    adaptiveDPRManager: adaptiveDPRManager as never,
     recordingPanel: { id: 'recording' } as never,
     getPickingSystem: () => undefined,
     getOverlayManager: () => undefined,
@@ -301,6 +303,17 @@ describe('installDebugInterface', () => {
       const dbg = window.__luxarDebug!;
       const state = dbg.getState!() as { isAnimating?: boolean };
       expect(state.isAnimating).toBe(true);
+    });
+  });
+
+  describe('fps', () => {
+    it('exposes the sampled frame rate and omits an empty sample window', () => {
+      const getCurrentFPS = vi.fn(() => 144);
+      installDebugInterface(makePorts({ adaptiveDPRManager: { getCurrentFPS } as never }));
+
+      expect(window.__luxarDebug?.fps).toBe(144);
+      getCurrentFPS.mockReturnValue(0);
+      expect(window.__luxarDebug?.fps).toBeUndefined();
     });
   });
 

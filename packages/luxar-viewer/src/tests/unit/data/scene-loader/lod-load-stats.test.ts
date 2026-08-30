@@ -16,6 +16,7 @@ import {
   lodLoadStatsEnabled,
   recordLodLoadStage,
   timeLodStage,
+  timeLodStageWithResult,
   timeLodStageSync,
   snapshotLodLoadStats,
   resetLodLoadStats,
@@ -157,6 +158,30 @@ describe('timeLodStage (async)', () => {
     const result = await timeLodStage('disabled', async () => 42);
     expect(result).toBe(42);
     expect(snapshotLodLoadStats()).toEqual({});
+  });
+});
+
+describe('timeLodStageWithResult (async)', () => {
+  it('keys the sample from the resolved residency result', async () => {
+    setLodLoadStatsEnabled(true);
+    let t = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => {
+      const value = t;
+      t += 7;
+      return value;
+    });
+
+    const result = await timeLodStageWithResult(
+      (value: { allResident: boolean }) =>
+        `additive:gsplats:level:3:${value.allResident ? 'resident' : 'miss'}`,
+      async () => ({ allResident: false })
+    );
+
+    expect(result).toEqual({ allResident: false });
+    expect(snapshotLodLoadStats()['additive:gsplats:level:3:miss']).toMatchObject({
+      count: 1,
+      totalMs: 7,
+    });
   });
 });
 

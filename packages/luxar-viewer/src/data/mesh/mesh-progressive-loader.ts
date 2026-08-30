@@ -78,6 +78,7 @@ import { assertColorLayout } from '../loaders';
 import { MESH_DECODE_BUDGET_BYTES } from '../../config/constants';
 import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import { log, Modules, LogEmoji } from '../../utils/log';
+import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import type {
   LoaderMetrics,
@@ -348,6 +349,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
   private _concatCache: { lodCount: number; result: LoadedMeshData } | null = null;
   /** Per-pass playback budget from the CURRENT `updateView`; null outside playback. */
   private _frameBudgetMs: number | null = null;
+  private _lastAllResident = true;
   /** Monitor telemetry, rolled up over the levels — see the surface below. */
   private readonly monitor: ProgressiveMonitorAdapter;
   /**
@@ -385,6 +387,10 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
   get totalLODCount(): number {
     return this.nLods;
+  }
+
+  get lastAllResident(): boolean {
+    return this._lastAllResident;
   }
 
   /**
@@ -638,12 +644,12 @@ export class MeshProgressiveLoader implements MeshDataLoader {
         break;
       }
       const t0 = performance.now();
-      const { data: lodData, allResident } = await this.lodLoaders[level].updateViewWithResidency(
-        viewState,
-        session,
-        signal
+      const { data: lodData, allResident } = await timeLodStageWithResult(
+        ({ allResident }) => `additive:mesh:level:${level}:${allResident ? 'resident' : 'miss'}`,
+        () => this.lodLoaders[level].updateViewWithResidency(viewState, session, signal)
       );
       const elapsed = performance.now() - t0;
+      this._lastAllResident = allResident;
 
       // Re-checked after the await: a dispose() during the fetch cleared the
       // ladder, and pushing here would resurrect it on a dead loader (and pin

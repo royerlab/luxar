@@ -156,6 +156,28 @@ describe('SliceCache — scan-resistant eviction + thrash stats', () => {
   });
 });
 
+describe('SliceCache — ladder depth stats', () => {
+  it('reports prefix depths and full-ladder count without requiring metadata on every entry', () => {
+    const cache = new SliceCache({ maxSize: 1000 });
+    cache.set('plain', entry(100, 'plain'));
+    cache.set('prefix', {
+      ...entry(100, 'prefix'),
+      ladderDepth: 2,
+      totalLadderDepth: 5,
+    });
+    cache.set('full', {
+      ...entry(100, 'full'),
+      ladderDepth: 5,
+      totalLadderDepth: 5,
+    });
+
+    expect(cache.getStats()).toMatchObject({
+      fullLadderCount: 1,
+      ladderDepthHistogram: { '2/5': 1, '5/5': 1 },
+    });
+  });
+});
+
 describe('SliceCache — prefetch pin', () => {
   // The SlicePrefetcher stores a projected t+1 slice with `{ pin: true }`; it
   // lands as the MRU entry and, without protection, would be the first victim

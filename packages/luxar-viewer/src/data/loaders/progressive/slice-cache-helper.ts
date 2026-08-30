@@ -220,7 +220,7 @@ export function storeLadder<T extends object>(
   path: string,
   view: SliceViewLike,
   lods: readonly T[],
-  opts?: { scan?: boolean; pin?: boolean }
+  opts?: { scan?: boolean; pin?: boolean; totalLODCount?: number }
 ): void {
   if (!sliceCache || lods.length === 0 || !hasHiddenDims(view)) return;
   const key = SliceCache.makeKey(path, buildSliceViewSig(view));
@@ -249,5 +249,15 @@ export function storeLadder<T extends object>(
   // Re-check upgrade-if-longer against the (possibly trimmed) prefix length.
   if (existing && (existing.payload as unknown[]).length >= fit) return;
   const snapshot = fit < lods.length ? lods.slice(0, fit) : lods;
-  sliceCache.set(key, { payload: cloneLodSnapshot(snapshot), bytes }, opts);
+  const { totalLODCount, ...cacheOpts } = opts ?? {};
+  sliceCache.set(
+    key,
+    {
+      payload: cloneLodSnapshot(snapshot),
+      bytes,
+      ladderDepth: fit,
+      totalLadderDepth: totalLODCount ?? lods.length,
+    },
+    cacheOpts
+  );
 }

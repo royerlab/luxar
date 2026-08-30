@@ -650,6 +650,7 @@ export class LuxarApp {
       animationController: this.animationController,
       inputHandler: this.inputHandler,
       renderingControls: this.renderingControls,
+      adaptiveDPRManager: this.adaptiveDPRManager,
       recordingPanel: this.recordingPanel,
       getPickingSystem: () => this.pickingSystem,
       getOverlayManager: () => this.overlayManager,

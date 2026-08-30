@@ -56,6 +56,8 @@ declare global {
       animationController?: AnimationController;
       inputHandler?: InputHandler;
       renderingControls?: RenderingControls;
+      /** Presented-frame rate; undefined until the sampling window has enough frames. */
+      fps?: number;
       recordingPanel?: RecordingPanel;
       sceneDimsManager?: SceneDimsManager;
       runtimeReady?: boolean;
@@ -178,11 +180,11 @@ declare global {
       >;
 
       /**
-       * Per-stage timing snapshot for lazy LOD level loads
+       * Per-stage timing snapshot for lazy and additive LOD level loads
        * (`lazy:loadGSplats` / `lazy:process` / `lazy:commit` /
        * `lazy:release`), keyed by stage → {count, totalMs, avgMs, maxMs}.
-       * Fills the gap left by the UpdateProfiler, which does not see
-       * loads triggered by the per-frame LOD selector. Debug-only.
+       * Additive keys are bounded by geometry type × level × residency; they
+       * deliberately exclude slice/timepoint identifiers. Debug-only.
        */
       getLodLoadStats?: () => Record<
         string,

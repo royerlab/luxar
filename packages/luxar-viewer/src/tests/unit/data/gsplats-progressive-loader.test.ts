@@ -18,6 +18,11 @@ import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/consta
 import { SliceCache } from '../../../cache/slice-cache';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
+import {
+  resetLodLoadStats,
+  setLodLoadStatsEnabled,
+  snapshotLodLoadStats,
+} from '../../../data/scene-loader/lod-load-stats';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -136,6 +141,22 @@ describe('GSplatsProgressiveLoader', () => {
       const result = await loader.loadGSplats(baseViewState);
       // All 3 LODs are cache-hit fast (sync mock) → all loaded → 100+50+25 = 175.
       expect(result.splatCount).toBe(175);
+    });
+
+    it('records bounded per-level additive load timing with residency', async () => {
+      resetLodLoadStats();
+      setLodLoadStatsEnabled(true);
+      try {
+        await loader.loadGSplats(baseViewState);
+        expect(Object.keys(snapshotLodLoadStats())).toEqual([
+          'additive:gsplats:level:0:resident',
+          'additive:gsplats:level:1:resident',
+          'additive:gsplats:level:2:resident',
+        ]);
+      } finally {
+        setLodLoadStatsEnabled(false);
+        resetLodLoadStats();
+      }
     });
 
     it('exposes totalLODCount and loadedLODCount', async () => {

@@ -41,6 +41,7 @@ import type { AnimationController } from '../../../scene/animation/animation-con
 import type { InputHandler } from '../../../input';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../ui/recording-panel';
+import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
 import type { PickingSystem } from '../../../rendering/picking/picking-system';
 import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { LuxarApp } from '../../app';
@@ -63,6 +64,7 @@ export interface InstallDebugInterfacePorts {
   animationController: AnimationController;
   inputHandler: InputHandler;
   renderingControls: RenderingControls;
+  adaptiveDPRManager: AdaptiveDPRManager;
   recordingPanel: RecordingPanel | undefined;
   getPickingSystem: () => PickingSystem | undefined;
   getOverlayManager: () => OverlayManager | undefined;
@@ -111,6 +113,10 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     animationController: ports.animationController,
     inputHandler: ports.inputHandler,
     renderingControls: ports.renderingControls,
+    get fps() {
+      const fps = ports.adaptiveDPRManager.getCurrentFPS();
+      return fps > 0 ? fps : undefined;
+    },
     recordingPanel: ports.recordingPanel,
     sceneDimsManager: sceneDimsManager,
     app: ports.app,
