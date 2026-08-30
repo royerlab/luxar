@@ -1442,7 +1442,8 @@ class TestCheckExplainsAnAbsentFigure:
 #
 # Repo copies precede cache copies, but the repo frequently holds a pre-refit
 # generation while the cache holds the bytes a record serves. The pin wins when
-# present; without it, the first local copy remains useful before `--refresh`.
+# present; without it, the first readable local copy remains useful before
+# `--refresh`.
 # ---------------------------------------------------------------------------
 
 
