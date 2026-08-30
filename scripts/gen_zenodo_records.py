@@ -487,7 +487,7 @@ def _sha256_of(path: Path) -> str:
 def _select_pinned_location(
     candidates: Iterable[Path], pinned_digest: Optional[str]
 ) -> tuple[Optional[Path], Optional[str], tuple[Path, ...]]:
-    """Prefer pinned bytes and report candidates that could not be hashed."""
+    """Prefer pinned bytes, fall back to the first readable candidate, and report hash failures."""
     fallback: tuple[Optional[Path], Optional[str]] = (None, None)
     inaccessible: list[Path] = []
     for path in candidates:
@@ -625,11 +625,8 @@ def refresh_characteristics(
             key = _char_key(dataset, variant, spec["name"])
             seen.add(key)
             pinned_digests[key] = _pinned_digest(spec)
-            candidates = list(
-                _locate(dataset, entry, variant, spec["name"], extra_root)
-            )
             path, measured_sha256, hash_failures = _select_pinned_location(
-                candidates,
+                _locate(dataset, entry, variant, spec["name"], extra_root),
                 pinned_digests[key],
             )
             if extra_root is not None:
