@@ -1,6 +1,6 @@
 """Tests for the neuromast demo's per-channel recompute path.
 
-Three things here are worth pinning, each with a quiet failure mode:
+Four things here are worth pinning, each with a quiet failure mode:
 
 1. **The background subtraction.** A single measured floor per channel,
    subtracted with a clip at 0. Forgetting the clip leaves negative intensities,
