@@ -585,6 +585,9 @@ def refresh_characteristics(
     ``gen_data_manifest`` preserves committed file lists: a refresh run from a
     partial checkout would otherwise silently delete the measurements for every
     dataset it cannot see, and a partial checkout is the normal case now.
+
+    Pinned archives that are present but unreadable are also left intact on disk,
+    but are returned separately so the caller can fail after writing good reads.
     """
     existing = load_characteristics()
     measured: dict[str, Any] = {}

@@ -940,6 +940,24 @@ def test_refresh_writes_good_reads_before_reporting_a_pinned_unreadable_archive(
     assert archives[unreadable_key]["n_splats"] == 7
 
 
+def test_an_unpinned_unreadable_archive_does_not_fail_refresh(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "unreadable.gsplats.zarr.zip"
+    archive.write_bytes(b"unreadable")
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: {})
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+    monkeypatch.setattr(gen, "_sha256_of", lambda path: "local")
+    monkeypatch.setattr(gen, "_read_archive", lambda path: None)
+
+    result = gen.refresh_characteristics(
+        _fake_manifest([_entry(archive.name, "pinned")])
+    )
+
+    assert result.unreadable == ()
+
+
 def test_a_prefix_matching_cache_path_is_not_labelled_staged(
     gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
