@@ -1,6 +1,6 @@
 """Tests for the neuromast demo's per-channel recompute path.
 
-Three things here are worth pinning, each with a quiet failure mode:
+Four things here are worth pinning, each with a quiet failure mode:
 
 1. **The background subtraction.** A single measured floor per channel,
    subtracted with a clip at 0. Forgetting the clip leaves negative intensities,
@@ -12,6 +12,9 @@ Three things here are worth pinning, each with a quiet failure mode:
 3. **The recipe constants.** ``--jobs-per-gpu`` must not be ``auto``: on the
    acquisition box ``auto`` sized 100 concurrent workers for 100 tasks and every
    one was OOM-killed before a tile landed.
+4. **The upstream provenance.** The durable HPC directories, numeric TIFF order,
+   axis convention and floor measurement are the recipe for rebuilding the two
+   assembled arrays if the current copies disappear.
 """
 
 import numpy as np
@@ -19,6 +22,7 @@ import pytest
 
 from luxar._zarr_compat import open_group
 from luxar.demos import demo_gsplats_4d_neuromast_2ch as demo
+from luxar.gsplats.calibration.noise_floor import estimate_floor
 from luxar.gsplats.gsplat_data import AdditiveSubLOD
 from luxar.gsplats.tree import GSplatLeaf
 
@@ -189,6 +193,70 @@ class TestEmptyFitTilesSurviveTheCullStage:
 
 
 class TestTheRecipeConstantsMatchTheRecordedRun:
+    def test_the_per_timepoint_sources_are_recorded_outside_scratch(self):
+        source_dirs = {ch["name"]: ch["hpc_source_dir"] for ch in demo.CHANNELS}
+        root = (
+            "/hpc/projects/jacobo_group/Adrian/RU_Processed_Data/"
+            "No_Ablations_Aligned/"
+            "04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1"
+        )
+        assert source_dirs == {
+            "membranes": f"{root}/Membranes/Deconvolved",
+            "nuclei": f"{root}/Nuclei/Deconvolved",
+        }
+
+    def test_the_source_files_are_stacked_in_numeric_timepoint_order(self):
+        assert demo.SOURCE_TIMEPOINT_LABELS == tuple(range(1, REAL_SOURCE_SHAPE[0] + 1))
+        assert demo.SOURCE_FILE_PATTERN.format(timepoint=1).endswith("_t1.tiff")
+        assert demo.SOURCE_FILE_PATTERN.format(timepoint=100).endswith("_t100.tiff")
+
+    def test_the_assembly_axis_contract_is_recorded(self):
+        assert demo.SOURCE_FRAME_AXES == "z,y,x"
+        assert demo.SOURCE_AXES == "time,z,y,x"
+        assert demo.SOURCE_AXES == "time," + demo.SOURCE_FRAME_AXES
+
+    def test_the_background_floor_recipe_is_recorded(self):
+        assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == (
+            0,
+            11,
+            22,
+            33,
+            44,
+            55,
+            66,
+            77,
+            88,
+            99,
+        )
+        assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == tuple(
+            int(round(value)) for value in np.linspace(0, REAL_SOURCE_SHAPE[0] - 1, 10)
+        )
+        assert demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE == 95.0
+        assert demo.BACKGROUND_FLOOR_HISTOGRAM_BINS == 512
+        assert demo.BACKGROUND_FLOOR_REDUCTION == "median"
+        floors = {ch["name"]: ch["background_floor"] for ch in demo.CHANNELS}
+        assert floors == {
+            "membranes": 105.9911880493164,
+            "nuclei": 103.88801574707031,
+        }
+
+    def test_the_recorded_per_frame_recipe_matches_estimate_floor(self):
+        rng = np.random.default_rng(0)
+        frame = rng.normal(104.0, 2.0, (32, 32)).astype(np.float32)
+        frame[12:16, 12:16] += 400.0
+        assert np.all(frame > 0.0)
+        upper = np.percentile(frame, demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE)
+        background = frame[frame <= upper]
+        histogram, edges = np.histogram(
+            background.astype(np.float64),
+            bins=demo.BACKGROUND_FLOOR_HISTOGRAM_BINS,
+        )
+        peak = int(np.argmax(histogram))
+        recorded_floor = float(0.5 * (edges[peak] + edges[peak + 1]))
+
+        assert recorded_floor < float(np.median(frame))
+        assert estimate_floor(frame, method="mode") == recorded_floor
+
     def test_jobs_per_gpu_is_pinned_not_auto(self):
         """`auto` OOM-killed all 100 workers on the acquisition box."""
         assert demo.JOBS_PER_GPU == 12
