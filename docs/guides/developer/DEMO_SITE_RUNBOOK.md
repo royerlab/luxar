@@ -888,7 +888,6 @@ Two regimes, and the ratio tells you which one you are in:
   stacked-leaf versus 689-request partition measurement in
   `packages/luxar/src/luxar/demos/_lod_policy.py` is not a reusable sublinear
   node-to-request law: it compares a byte-bound leaf with a node-bound partition.
-
 - **Byte-bound (ratio >> 1).** Arrays span many chunks, so request count tracks
   total bytes and is nearly indifferent to node count. `cmu1`'s converged load
   fetches 508 chunks from 60 arrays, while its first rung fetches 127 from 15;
