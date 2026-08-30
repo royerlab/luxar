@@ -485,7 +485,7 @@ DATASETS: dict[str, dict] = {
         # agree splat-for-splat on the frames they share, where the previous
         # independent fits differed (2.50M vs 2.38M per timepoint at the finest
         # level). Shipped as the default because pulling ~1.1 GB is far easier
-        # than ~9.3 GB over Zenodo's best-effort bandwidth.
+        # than ~5.9 GB over Zenodo's best-effort bandwidth.
         variants={
             "51tp": dict(
                 default=True,
@@ -494,7 +494,7 @@ DATASETS: dict[str, dict] = {
             ),
             "253tp": dict(
                 default=False,
-                approx_bytes=9_253_211_541,
+                approx_bytes=5_871_976_827,
                 note="Full 253-timepoint timelapse — opt-in (large download).",
             ),
         },
@@ -787,8 +787,8 @@ def _refuse_invalid_repin_history(current: dict, committed: Optional[dict]) -> N
         old_entry = old_entries.get(identity)
         if not old_entry:
             continue
-        old_hosted = old_entry.get("hosted_sha256")
-        new_hosted = entry.get("hosted_sha256")
+        old_hosted = old_entry.get("hosted_sha256") or old_entry.get("sha256")
+        new_hosted = entry.get("hosted_sha256") or entry.get("sha256")
         if not old_hosted or not new_hosted or new_hosted == old_hosted:
             continue
         old_history = old_entry.get(_SUPERSEDED_KEY) or ()

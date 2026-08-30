@@ -244,6 +244,42 @@ def test_hosted_repin_rejects_missing_outgoing_digest() -> None:
         generator._refuse_invalid_repin_history(repinned, committed)
 
 
+def test_hosted_only_repin_rejects_missing_outgoing_digest() -> None:
+    generator = _load_generator()
+    committed = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "sha256": "a" * 64}]}}
+    }
+    repinned = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "sha256": "b" * 64}]}}
+    }
+
+    with pytest.raises(ValueError, match="outgoing hosted digest"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_hosted_only_repin_accepts_outgoing_digest() -> None:
+    generator = _load_generator()
+    outgoing = "a" * 64
+    committed = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "sha256": outgoing}]}}
+    }
+    repinned = {
+        "datasets": {
+            "toy": {
+                "files": [
+                    {
+                        "name": "fit.zip",
+                        "sha256": "b" * 64,
+                        "superseded_sha256": [outgoing],
+                    }
+                ]
+            }
+        }
+    }
+
+    generator._refuse_invalid_repin_history(repinned, committed)
+
+
 def test_hosted_repin_rejects_wrong_appended_digest() -> None:
     generator = _load_generator()
     committed = _manifest_entry("a" * 64, ["0" * 64])
