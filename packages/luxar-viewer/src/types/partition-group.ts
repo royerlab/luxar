@@ -6,8 +6,9 @@ import type { BlendingMode } from './blending';
  * a single large geometry node (10M+ elements) into multiple smaller
  * child nodes for per-child frustum culling, per-child LOD, etc. The
  * user does not see the decomposition: the layers panel presents one
- * logical layer of `display_type`. All children render simultaneously
- * (no per-frame selector — unlike `kind === 'lod'`).
+ * logical layer of `display_type`. A frustum-only selector hides spatial
+ * parts outside the camera while all in-frustum children render simultaneously;
+ * unlike `kind === 'lod'`, it never substitutes one child for another.
  *
  * @module types/partition-group
  */
