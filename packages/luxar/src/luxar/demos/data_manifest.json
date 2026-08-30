@@ -558,8 +558,8 @@
           "files": [
             {
               "name": "h2afva_253tp.gsplats.zarr.zip",
-              "sha256": "77d42e8478e6ac581c801915ef31c94eba736fe0560f60cf4356462c3eb2db35",
-              "bytes": 9253211541,
+              "sha256": "7dc107ec464d08628bf01c1ba6da943cab3729b99aa10b484920733d5a894765",
+              "bytes": 5871976827,
               "superseded_sha256": [
                 "46621b393d4a49421987ee400ce0be08b73d4da03441230bc6f59ff31917214e"
               ]
