@@ -7804,6 +7804,44 @@ class TestFlattenCommand:
         assert "at most 1024 values" in result.stdout
         assert not flat.exists()
 
+    def test_flatten_rejects_high_cardinality_detected_runs(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Rounded categories cannot hide unbounded exact lexsort runs."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(33)
+        n_splats = 1_100
+        centers = np.empty((n_splats, 4), dtype=np.float32)
+        centers[:, :3] = rng.uniform(0, 100, (n_splats, 3))
+        centers[:, 3] = np.linspace(-9e-4, 9e-4, n_splats, dtype=np.float32)
+        cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+        cholesky[:, [0, 2, 5, 9]] = 1.0
+        source = tmp_path / "source.gsplats.zarr"
+        GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=cholesky,
+        ).save(source)
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "partition", str(source), str(partition), "--parts", "4"],
+        )
+        assert result.exit_code == 0, result.stdout
+        partition_root = zc_open_group(str(partition), mode="a")
+        for name in partition_root:
+            if str(name).startswith("part_"):
+                partition_root[name].attrs["slice_dims"] = []
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(partition), str(flat)])
+        assert result.exit_code != 0
+        assert "auto-detected barrier axis 3 exceeds" in result.stdout
+        assert "coarsen_dims is absent" in result.stdout
+        assert not flat.exists()
+
     def test_flatten_preserves_barrier_chunk_layout(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
