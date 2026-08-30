@@ -54,6 +54,42 @@ def _leaf_splat_groups(root: Any, leaf_path: str) -> list[Any]:
     return [leaf[f"additive_{index}"] for index in range(count)]
 
 
+def _order_leaf_paths(root: Any, leaf_paths: Sequence[str]) -> list[str]:
+    from luxar.io.ordering import sort_splats_spatial
+
+    if len(leaf_paths) <= 1:
+        return list(leaf_paths)
+    centroids = []
+    for leaf_path in leaf_paths:
+        group = root[leaf_path] if leaf_path else root
+        bounds = group.attrs.get("center_bounds")
+        if bounds is None:
+            bounds = group.attrs.get("position_bounds")
+        if bounds is None:
+            raise ValueError(f"leaf {leaf_path or '/'} has no center/position bounds")
+        centroids.append(
+            (
+                np.asarray(bounds["min"], dtype=np.float32)
+                + np.asarray(bounds["max"], dtype=np.float32)
+            )
+            * 0.5
+        )
+    order, _ = sort_splats_spatial(np.stack(centroids), method="hilbert")
+    return [leaf_paths[int(index)] for index in order]
+
+
+def _iter_flatten_splat_sets(root: Any, leaf_paths: Sequence[str]) -> Iterator[Any]:
+    from luxar.gsplats.tree import GSplatLeaf
+    from luxar.io._compiler.gsplat_tree import read_gsplat_node
+
+    for leaf_path in leaf_paths:
+        group = root[leaf_path] if leaf_path else root
+        leaf = read_gsplat_node(group, root)
+        if not isinstance(leaf, GSplatLeaf):
+            raise ValueError(f"default leaf path {leaf_path or '/'} is not a leaf")
+        yield from (sublod for sublod in leaf.additive_sublods if sublod.n_splats > 0)
+
+
 def _resolve_barrier_dims(
     splat_groups: Sequence[Any], stats: dict[str, Any]
 ) -> Optional[tuple[int, ...]]:
@@ -71,7 +107,87 @@ def _resolve_barrier_dims(
         if "slice_dims" not in group.attrs:
             return None
         stamped.add(tuple(int(dim) for dim in group.attrs["slice_dims"]))
-    return next(iter(stamped)) if len(stamped) == 1 else None
+    if len(stamped) != 1:
+        return None
+    resolved = next(iter(stamped))
+    ndim = int(splat_groups[0].attrs["ndim"])
+    return None if not resolved and ndim > 3 else resolved
+
+
+def _detect_barrier_dims_across_groups(
+    splat_groups: Sequence[Any], root: Any, decoder: Any, max_cardinality: int = 1024
+) -> tuple[int, ...]:
+    ndim = int(splat_groups[0].attrs["ndim"])
+    integer_axes = [True] * ndim
+    distinct: list[set[float]] = [set() for _ in range(ndim)]
+    n_splats = 0
+    for group in splat_groups:
+        centers = np.asarray(decoder.decode(group["centers"], root))
+        n_splats += len(centers)
+        for dim in range(ndim):
+            if not integer_axes[dim]:
+                continue
+            rounded = np.rint(centers[:, dim])
+            if not np.allclose(centers[:, dim], rounded):
+                integer_axes[dim] = False
+                distinct[dim].clear()
+                continue
+            if len(distinct[dim]) <= max_cardinality:
+                distinct[dim].update(float(value) for value in np.unique(rounded))
+        del centers
+    return tuple(
+        dim
+        for dim in range(ndim)
+        if integer_axes[dim]
+        and len(distinct[dim]) <= max_cardinality
+        and len(distinct[dim]) * 4 <= n_splats
+    )
+
+
+def _stored_color_layout(group: Any) -> tuple[Optional[np.dtype[Any]], int]:
+    if "colors" not in group:
+        return None, 0
+    colors = group["colors"]
+    encoding = colors.attrs.get("encoding", {})
+    original_shape = encoding.get("original_shape")
+    if original_shape is not None and len(original_shape) > 1:
+        color_channels = int(original_shape[1])
+    elif len(colors.shape) > 1:
+        color_channels = int(colors.shape[1])
+    else:
+        raise ValueError("stored colors have no logical channel dimension")
+    return np.dtype(encoding.get("original_dtype", colors.dtype)), color_channels
+
+
+def _collect_streaming_metadata(
+    splat_groups: Sequence[Any], root: Any, decoder: Any, barrier_dims: Sequence[int]
+) -> list[Any]:
+    from luxar.gsplats.io.save_gsplats import StreamingSplatSetMetadata
+    from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
+    metadata = []
+    for group in splat_groups:
+        color_dtype, color_channels = _stored_color_layout(group)
+        barrier_values = None
+        barrier_counts = None
+        if barrier_dims:
+            centers = decoder.decode(group["centers"], root)
+            barrier_values, barrier_counts = _barrier_runs(centers, barrier_dims)
+            del centers
+        metadata.append(
+            StreamingSplatSetMetadata(
+                n_splats=int(group.attrs["n_splats"]),
+                ndim=int(group.attrs["ndim"]),
+                truncation_radius=float(
+                    group.attrs.get("truncation_radius", DEFAULT_TRUNCATION_RADIUS)
+                ),
+                color_channels=color_channels,
+                color_dtype=color_dtype,
+                barrier_values=barrier_values,
+                barrier_counts=barrier_counts,
+            )
+        )
+    return metadata
 
 
 def _barrier_runs(
@@ -204,14 +320,9 @@ def run_flatten_dataset(
             read_gsplat_root_stats,
         )
         from luxar.gsplats.io.save_gsplats import (
-            StreamingSplatSetMetadata,
             split_fitting_info,
             write_flat_leaf_streaming,
         )
-        from luxar.gsplats.tree import GSplatLeaf
-        from luxar.io._compiler.gsplat_tree import read_gsplat_node
-        from luxar.io.ordering import detect_barrier_dims, sort_splats_spatial
-        from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
         if output_path.exists() and not overwrite:
             aprint(f"❌ Error: {output_path} exists; pass --overwrite to replace it.")
@@ -235,28 +346,7 @@ def run_flatten_dataset(
                     aprint("❌ Error: input tree has no leaves")
                     raise typer.Exit(1)
 
-                if len(leaf_paths) > 1:
-                    centroids = []
-                    for leaf_path in leaf_paths:
-                        group = root[leaf_path] if leaf_path else root
-                        bounds = group.attrs.get("center_bounds")
-                        if bounds is None:
-                            bounds = group.attrs.get("position_bounds")
-                        if bounds is None:
-                            raise ValueError(
-                                f"leaf {leaf_path or '/'} has no center/position bounds"
-                            )
-                        centroids.append(
-                            (
-                                np.asarray(bounds["min"], dtype=np.float32)
-                                + np.asarray(bounds["max"], dtype=np.float32)
-                            )
-                            * 0.5
-                        )
-                    order, _ = sort_splats_spatial(
-                        np.stack(centroids), method="hilbert"
-                    )
-                    leaf_paths = [leaf_paths[int(index)] for index in order]
+                leaf_paths = _order_leaf_paths(root, leaf_paths)
 
                 splat_groups = [
                     group
@@ -265,62 +355,16 @@ def run_flatten_dataset(
                 ]
                 barrier_dims = _resolve_barrier_dims(splat_groups, stats)
                 decoder = ArrayDecoder()
-                first_centers = None
                 if barrier_dims is None:
-                    first_centers = decoder.decode(splat_groups[0]["centers"], root)
-                    barrier_dims = tuple(detect_barrier_dims(first_centers))
-                splat_set_metadata = []
-                for index, group in enumerate(splat_groups):
-                    color_dtype = None
-                    color_channels = 0
-                    if "colors" in group:
-                        colors = group["colors"]
-                        encoding = colors.attrs.get("encoding", {})
-                        color_dtype = np.dtype(
-                            encoding.get("original_dtype", colors.dtype)
-                        )
-                        color_channels = int(colors.shape[1])
-                    centers = (
-                        first_centers
-                        if index == 0 and first_centers is not None
-                        else decoder.decode(group["centers"], root)
+                    barrier_dims = _detect_barrier_dims_across_groups(
+                        splat_groups, root, decoder
                     )
-                    if index == 0:
-                        first_centers = None
-                    barrier_values = None
-                    barrier_counts = None
-                    if barrier_dims:
-                        barrier_values, barrier_counts = _barrier_runs(
-                            centers, barrier_dims
-                        )
-                    splat_set_metadata.append(
-                        StreamingSplatSetMetadata(
-                            n_splats=int(group.attrs["n_splats"]),
-                            ndim=int(group.attrs["ndim"]),
-                            truncation_radius=float(
-                                group.attrs.get(
-                                    "truncation_radius", DEFAULT_TRUNCATION_RADIUS
-                                )
-                            ),
-                            color_channels=color_channels,
-                            color_dtype=color_dtype,
-                            barrier_values=barrier_values,
-                            barrier_counts=barrier_counts,
-                        )
-                    )
-                    del centers
+                splat_set_metadata = _collect_streaming_metadata(
+                    splat_groups, root, decoder, barrier_dims
+                )
 
                 def splat_sets() -> Iterator[Any]:
-                    for leaf_path in leaf_paths:
-                        group = root[leaf_path] if leaf_path else root
-                        leaf = read_gsplat_node(group, root)
-                        if not isinstance(leaf, GSplatLeaf):
-                            raise ValueError(
-                                f"default leaf path {leaf_path or '/'} is not a leaf"
-                            )
-                        for sublod in leaf.additive_sublods:
-                            if sublod.n_splats > 0:
-                                yield sublod
+                    yield from _iter_flatten_splat_sets(root, leaf_paths)
 
                 carried_stats = stats_after_structure_change(stats)
                 if _contains_partition_group(root):

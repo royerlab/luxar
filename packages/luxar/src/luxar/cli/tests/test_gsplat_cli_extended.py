@@ -7531,11 +7531,24 @@ class TestFlattenCommand:
         load_module = importlib.import_module("luxar.gsplats.io.load_gsplats")
 
         source = GSplatData.load(medium_gsplats)
+        palette = np.array(
+            [
+                [255, 0, 0],
+                [0, 255, 0],
+                [0, 0, 255],
+                [255, 255, 0],
+                [255, 0, 255],
+                [0, 255, 255],
+                [128, 128, 128],
+                [255, 255, 255],
+            ],
+            dtype=np.uint8,
+        )
         colored = GSplatData(
             centers=source.centers,
             amplitudes=source.amplitudes,
             cholesky_factors=source.cholesky_factors,
-            colors=np.arange(source.n_splats * 3, dtype=np.uint8).reshape(-1, 3),
+            colors=palette[np.arange(source.n_splats) % len(palette)],
         )
         colored_path = tmp_path / "colored.gsplats.zarr"
         colored.save(colored_path)
@@ -7590,6 +7603,41 @@ class TestFlattenCommand:
         root = zc_open_group(str(flat), mode="r")
         assert root.attrs["ordering"] == "hilbert"
         assert root["chunk_bounds"].shape[0] >= 1
+
+    def test_flatten_roundtrips_lut_encoded_colors(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Palette colors use their encoded logical shape during metadata sizing."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(31)
+        n_splats = 3000
+        palette = rng.integers(0, 256, size=(8, 3), dtype=np.uint8)
+        source_data = GSplatData(
+            centers=rng.normal(size=(n_splats, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_splats, 1),
+            ),
+            colors=palette[np.arange(n_splats) % len(palette)],
+        )
+        source = tmp_path / "palette.gsplats.zarr"
+        source_data.save(source)
+        source_root = zc_open_group(str(source), mode="r")
+        assert source_root["colors"].ndim == 1
+        assert source_root["colors"].attrs["encoding"]["name"].startswith("lut_")
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(source), str(flat)])
+        assert result.exit_code == 0, result.stdout
+        expected = GSplatData.load(source)
+        actual = GSplatData.load(flat)
+        expected_order = np.lexsort(expected.centers.T[::-1])
+        actual_order = np.lexsort(actual.centers.T[::-1])
+        np.testing.assert_array_equal(
+            actual.colors[actual_order], expected.colors[expected_order]
+        )
 
     @pytest.mark.skipif(
         not Path("/proc/self/smaps_rollup").exists(),
@@ -7718,6 +7766,76 @@ class TestFlattenCommand:
         actual_bounds = np.asarray(actual_root["chunk_bounds"])
         assert len(expected_bounds) >= 4
         assert actual_bounds.shape == expected_bounds.shape
+        np.testing.assert_allclose(
+            actual_bounds[:, 3, 1] - actual_bounds[:, 3, 0],
+            expected_bounds[:, 3, 1] - expected_bounds[:, 3, 0],
+        )
+
+    def test_flatten_detects_barrier_across_small_partition_leaves(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Global detection recovers a barrier missed by undersized leaves."""
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        rng = np.random.default_rng(29)
+        n_spatial = 160
+        spatial = GSplatData(
+            centers=rng.normal(size=(n_spatial, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n_spatial).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_spatial, 1),
+            ),
+        )
+        stacked = GSplatData.combine_as_new_dimension(
+            [spatial] * 8,
+            values=list(range(8)),
+            sigma=0.0,
+        )
+        source = tmp_path / "stacked.gsplats.zarr"
+        stacked.save(source)
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "partition",
+                str(source),
+                str(partition),
+                "--parts",
+                "4",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        partition_root = zc_open_group(str(partition), mode="a")
+        part_names = [name for name in partition_root if str(name).startswith("part_")]
+        assert len(part_names) == 4
+        for name in part_names:
+            partition_root[name].attrs["slice_dims"] = []
+
+        node, _ = load_gsplat_node(partition)
+        expected = GSplatData.from_default_selection(node).flattened()
+        expected_path = tmp_path / "expected.gsplats.zarr"
+        expected.save(
+            expected_path,
+            encoding_mode=EncodingMode.PRECISION,
+            barrier_dims=[3],
+        )
+
+        actual_path = tmp_path / "actual.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "flatten", str(partition), str(actual_path)]
+        )
+        assert result.exit_code == 0, result.stdout
+
+        expected_root = zc_open_group(str(expected_path), mode="r")
+        actual_root = zc_open_group(str(actual_path), mode="r")
+        assert actual_root.attrs["slice_dims"] == [3]
+        expected_bounds = np.asarray(expected_root["chunk_bounds"])
+        actual_bounds = np.asarray(actual_root["chunk_bounds"])
         np.testing.assert_allclose(
             actual_bounds[:, 3, 1] - actual_bounds[:, 3, 0],
             expected_bounds[:, 3, 1] - expected_bounds[:, 3, 0],
