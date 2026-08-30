@@ -79,6 +79,16 @@ def test_validate_source_accepts_directory_and_zip_without_writing(
     assert archive.read_bytes() == archive_bytes
 
 
+def test_open_source_closes_its_zip_store(tmp_path: Path) -> None:
+    archive = tmp_path / demo.SOURCE_FILENAME
+    _write_zip_source(archive)
+
+    with demo._open_source(archive) as root:
+        store = root.store
+        assert store._is_open
+    assert not store._is_open
+
+
 @pytest.mark.parametrize(
     ("shape", "dtype", "message"),
     [
@@ -107,6 +117,11 @@ def test_validate_source_rejects_missing_array_and_invalid_stores(
     zarr.open_group(str(missing), mode="w")
     with pytest.raises(ValueError, match="has no 'data' array"):
         demo._validate_source(missing)
+
+    bare = tmp_path / "bare.zarr"
+    zarr.open_array(str(bare), mode="w", shape=demo.SOURCE_SHAPE, dtype="uint16")
+    with pytest.raises(ValueError, match="bare array, not a group"):
+        demo._validate_source(bare)
 
     invalid_directory = tmp_path / "not-zarr"
     invalid_directory.mkdir()
@@ -154,6 +169,10 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
     work_dir = tmp_path / "recompute"
     monkeypatch.setattr(demo, "SOURCE_ARG", None)
     with pytest.raises(SystemExit, match="--recompute needs --source PATH"):
+        demo.recompute_archive(work_dir)
+
+    monkeypatch.setattr(demo, "SOURCE_ARG", tmp_path / "missing.zarr")
+    with pytest.raises(FileNotFoundError, match="--source does not exist"):
         demo.recompute_archive(work_dir)
 
     source = tmp_path / demo.SOURCE_FILENAME
@@ -241,3 +260,32 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
             "archive",
         ),
     ]
+
+
+def test_main_routes_recompute_output_into_the_scene(
+    monkeypatch, tmp_path: Path
+) -> None:
+    rebuilt = tmp_path / "rebuilt.gsplats.zarr.zip"
+    scene = tmp_path / "scene.luxar.zarr"
+    calls: list[tuple[Path, Path]] = []
+
+    monkeypatch.setattr(demo, "RECOMPUTE", True)
+    monkeypatch.setattr(demo, "SERVE_ONLY", False)
+    monkeypatch.setattr(demo, "NO_SERVE", True)
+    monkeypatch.setattr(demo, "get_demos_output_dir", lambda: tmp_path)
+    monkeypatch.setattr(demo, "recompute_archive", lambda _work_dir: rebuilt)
+    monkeypatch.setattr(
+        demo,
+        "resolve_data",
+        lambda: pytest.fail("the hosted archive must not resolve during --recompute"),
+    )
+
+    def create(source: Path, output: Path) -> Path:
+        calls.append((source, output))
+        return scene
+
+    monkeypatch.setattr(demo, "create_luxar_scene", create)
+
+    demo.main()
+
+    assert calls == [(rebuilt, tmp_path / demo.SCENE_NAME)]

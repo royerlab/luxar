@@ -281,27 +281,41 @@ RECOMPUTE = FLAGS["recompute"]
 SOURCE_ARG = parse_path_arg("source")
 
 # ---- Recorded fit recipe ----------------------------------------------------
+#: Verified source name and group member on the acquisition box.
 SOURCE_FILENAME = "DrosophilaHistone.zarr.zip"
 SOURCE_ARRAY_KEY = "data"
+#: Full recording contract checked before a roughly 9.3-hour fit starts.
 SOURCE_SHAPE = (500, 108, 1352, 532)
 SOURCE_DTYPE = np.dtype("uint16")
+#: Explicit because a wrong time-axis label silently fits time as space.
 SOURCE_AXES = "time,z,y,x"
+#: Larger than every spatial extent, keeping each timepoint in one seam-free tile.
 TILE_SIZE = 1400
 OVERLAP = 0
+#: The measured run converged by 1,500 iterations; 5,000 scored identically.
 PRESET = "standard"
 ITERS = 1500
+#: Per-timepoint operating point chosen from the calibration sweep.
 SEEDS = 256_000
+#: One global fixed floor keeps exposure comparable across all 500 frames.
 FLOOR = 8
+#: Recorded acquisition-box scheduling; two workers kept the GPU occupied.
 GPUS = "0"
 JOBS_PER_GPU = 2
+#: Progressive first-paint ladder produced during the streaming merge.
 MERGE_RECIPE = "stream"
 MERGE_TARGET_MS = 200
+#: Removes the dim fitted tail while retaining 96% of cumulative amplitude.
 CULL_RETENTION = 0.960
+#: Physical (z, y, x) microns; the stacked frame-index axis is unchanged here.
 VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
+#: One-megabyte chunks measured at two requests per timepoint step.
 CHUNK_PROFILE = "archive"
+#: Recorded topology/count contract from the corrected float64 cumulative cull.
 EXPECTED_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
 EXPECTED_SPLATS = 83_221_420
 EXPECTED_RUNGS = 14
+#: Parallel fit reductions can move a threshold count, but not by recipe scale.
 SPLAT_COUNT_TOLERANCE = 0.01
 
 
