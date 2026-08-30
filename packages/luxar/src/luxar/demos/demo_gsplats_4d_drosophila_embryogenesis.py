@@ -235,9 +235,9 @@ DEMO_META = {
     "requirements": {
         # The largest payload in the corpus by some margin: 863,811,020 bytes
         # MEASURED on the shipped artifact, not projected. A one-time download,
-        # after which the viewer streams ~2 requests and under a megabyte per
-        # timepoint step (the store is re-chunked with `optimise --profile
-        # archive`, without which it would be 173 requests per step).
+        # after which advancing one timepoint costs 0-2.3 MB in 0-4 requests
+        # (the store is re-chunked with `optimise --profile archive`, without
+        # which it would be 173 requests per step).
         "download_mb": 824,
         # Not a fit — but the scene build loads ~82M splats into memory
         # (~3.6 GB) to stack and write them, which is not a laptop-idle task.
@@ -346,7 +346,7 @@ MERGE_TARGET_MS = 200
 AMPLITUDE_MIN = 33.40462112
 #: Physical (z, y, x) microns; the stacked frame-index axis is unchanged here.
 VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
-#: One-megabyte chunks measured at two requests per timepoint step.
+#: One-megabyte chunks measured at 0-2.3 MB in 0-4 requests per timepoint step.
 CHUNK_PROFILE = "archive"
 #: Nominal whole-recording seed budget; a refit may drift as dynamic ops run.
 NOMINAL_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS

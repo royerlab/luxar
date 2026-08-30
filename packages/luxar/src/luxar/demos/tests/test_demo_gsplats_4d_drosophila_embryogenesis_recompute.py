@@ -68,7 +68,7 @@ def test_docstring_records_the_measured_streaming_tradeoffs() -> None:
     assert "0-2.3 MB in 0-4 requests" in doc
     assert "18 MB / 68 requests" in doc
     assert "median 45 splats per timepoint" in doc
-    assert "~2 MB to first paint" not in doc
+    assert "does not survive the 25x scale-up" in doc
 
 
 def test_validate_source_accepts_directory_and_zip_without_writing(
