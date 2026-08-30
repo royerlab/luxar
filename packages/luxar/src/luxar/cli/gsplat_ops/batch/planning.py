@@ -1523,7 +1523,12 @@ def resolve_uniform_grid_scale(fit: FitConfig, ndim: int) -> Optional[List[float
 
 
 def resolve_merge_recipe_args(
-    merge: MergeConfig, *, merged_ndim: int = 4, merged_has_colors: bool = False
+    merge: MergeConfig,
+    *,
+    merged_ndim: int = 4,
+    merged_has_colors: bool = False,
+    slice_count: int = 1,
+    part_count: int = 1,
 ) -> dict:
     """Validate the per-part merge recipe + knobs into the manifest dict.
 
@@ -1638,6 +1643,8 @@ def resolve_merge_recipe_args(
             analytic_bps=estimate_bytes_per_splat(
                 merged_ndim, has_colors=merged_has_colors
             ),
+            slice_count=slice_count,
+            part_count=part_count,
         )
 
     args: dict = {}
@@ -1962,19 +1969,6 @@ def plan_batch(
         if timepoints_slice or channels_slice:
             aprint(f"Sliced: T={n_t} (of {n_t_full}), C={n_c} (of {n_c_full})")
 
-    # Resolve the merge recipe knobs now that the merged output's shape facts
-    # are known: the merge stacks timepoints onto an extra axis (so merged ndim
-    # is spatial + 1 only when T > 1) and writes per-splat colors only for a
-    # multi-channel merge with channel colors. Sizing --merge-target-ms here
-    # with the same inputs `batch-fit merge` uses guarantees plan-time and
-    # merge-time produce the SAME ladder for the same data.
-    if merge_recipe_args is None:
-        merge_recipe_args = resolve_merge_recipe_args(
-            merge,
-            merged_ndim=len(spatial) + (1 if n_t > 1 else 0),
-            merged_has_colors=bool(merge.channel_colors) and n_c > 1,
-        )
-
     _validate_merge_refine_source(merge, axes_list, n_t, n_c)
 
     # 3. Decompose the spatial volume into the slots fanned across (t, c).
@@ -2187,6 +2181,17 @@ def plan_batch(
         n_tiles = len(specs)
         needs_tiling = n_tiles > 1
         tile_voxels = tile_size ** len(spatial) if needs_tiling else total_voxels
+
+    # Resolve after decomposition: each partition part expands the stored
+    # stream:<c> independently, while only one hidden time slice is drawn.
+    if merge_recipe_args is None:
+        merge_recipe_args = resolve_merge_recipe_args(
+            merge,
+            merged_ndim=len(spatial) + (1 if n_t > 1 else 0),
+            merged_has_colors=bool(merge.channel_colors) and n_c > 1,
+            slice_count=max(1, n_t),
+            part_count=max(1, n_tiles),
+        )
 
     total_tasks = n_t * n_c * n_tiles
 

@@ -13,6 +13,7 @@ sub-command module to reach this shared validation surface.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import AbstractSet, Any, Mapping, Optional, Sequence
 
@@ -391,6 +392,8 @@ def resolve_streaming_breakpoints(
     measured_bps: Optional[float] = None,
     analytic_bps: Optional[float] = None,
     measured_label: str = "measured from input store",
+    slice_count: int = 1,
+    part_count: int = 1,
 ) -> str:
     """Resolve ``--target-ms``/``--bandwidth-mbps`` into a ``stream:<c>`` spec.
 
@@ -405,6 +408,7 @@ def resolve_streaming_breakpoints(
         DEFAULT_BANDWIDTH_MBPS,
         streaming_chunk_splats,
     )
+    from luxar.utils.lod_breakpoints import scaled_streaming_chunk
 
     bw = bandwidth_mbps if bandwidth_mbps is not None else DEFAULT_BANDWIDTH_MBPS
     if bytes_per_splat is not None:
@@ -418,15 +422,58 @@ def resolve_streaming_breakpoints(
             "--target-ms needs a bytes-per-splat figure; pass --bytes-per-splat"
         )
     try:
-        c = streaming_chunk_splats(target_ms, bw, bps)
+        whole_node_c = streaming_chunk_splats(target_ms, bw, bps)
+        c = scaled_streaming_chunk(
+            whole_node_c, slice_count=slice_count, part_count=part_count
+        )
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
     aprint(
         f"--target-ms {target_ms:g} @ {bw:g} Mbps, {bps:.1f} B/splat "
-        f"({source}) -> stream:{c} (first chunk ~{c:,} splats, "
+        f"({source}) x {slice_count} slice(s) / {part_count} part(s) "
+        f"-> stream:{c} (first chunk ~{c:,} splats/part, "
         f"~{c * bps / 1024:.0f} KB)"
     )
     return f"stream:{c}"
+
+
+def survey_gsplat_streaming_layout(input_path: Path) -> tuple[int, int]:
+    """Return ``(hidden slices, simultaneously drawn leaves)`` for a store."""
+    import numpy as np
+
+    from luxar._zarr_compat import open_group
+    from luxar.gsplats.io._archive import resolve_store_path
+
+    resolved, temp_dir = resolve_store_path(input_path)
+    try:
+        root = open_group(str(resolved), mode="r")
+        hidden_rows: set[tuple[object, ...]] = set()
+
+        def survey(group: Any) -> int:
+            attrs = dict(group.attrs)
+            if attrs.get("type") == "gsplats":
+                n_sub = int(attrs.get("n_additive_sublods", 1) or 1)
+                for index in range(n_sub):
+                    level = group[f"additive_{index}"]
+                    dims = tuple(int(d) for d in level.attrs.get("slice_dims", []))
+                    if not dims or "centers" not in level:
+                        continue
+                    columns = np.asarray(level["centers"][:, list(dims)])
+                    hidden_rows.update(tuple(row) for row in columns)
+                return 1
+            children = [group[name] for name in group.group_keys()]
+            if not children:
+                return 0
+            counts = [survey(child) for child in children]
+            if attrs.get("kind") == "partition":
+                return sum(counts)
+            return max(counts, default=0)
+
+        part_count = survey(root)
+        return max(1, len(hidden_rows)), max(1, part_count)
+    finally:
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 #: The post-merge refinement modes, in the order they trade time for fidelity.

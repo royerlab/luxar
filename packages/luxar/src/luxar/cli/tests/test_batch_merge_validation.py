@@ -367,6 +367,21 @@ class TestMergeStreamingKnobs:
         # amplitude u16, cholesky u8-certified) → 625000/30 = 20833.
         assert bp == "stream:20833"
 
+    def test_target_ms_scales_for_slices_and_partition_parts(self) -> None:
+        from luxar.cli.gsplat_ops.batch.planning import (
+            MergeConfig,
+            resolve_merge_recipe_args,
+        )
+
+        args = resolve_merge_recipe_args(
+            MergeConfig(recipe="stream", target_ms=200.0),
+            merged_ndim=4,
+            slice_count=6,
+            part_count=3,
+        )
+
+        assert args["breakpoints"] == "stream:41666"
+
     def test_stored_stream_string_reparses_at_merge_time(self) -> None:
         """The manifest round-trip: the stored string re-parses via
         parse_lod_breakpoints into the same deferred spec."""
@@ -721,10 +736,9 @@ class TestPlanTimeStreamingSizing:
             ["t", "z", "y", "x"],
             MergeConfig(recipe="stream", target_ms=200.0),
         )
-        # merged ndim = 3 spatial + stacked-timepoint axis = 4 → 30 B → 20833:
-        # exactly what `batch-fit merge --target-ms 200` derives from the
-        # manifest (len(spatial_shape) + (n_timepoints > 1)).
-        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:20833"
+        # The whole-node 20,833-splat budget is doubled for two hidden slices;
+        # one partition part receives the resulting 41,666-splat first rung.
+        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:41666"
 
     def test_single_timepoint_plans_3d_ladder(self, tmp_path: Path) -> None:
         from luxar.cli.gsplat_ops.batch.planning import MergeConfig

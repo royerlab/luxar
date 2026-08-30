@@ -67,6 +67,7 @@ def run_additive_dataset(
             measure_store_bytes,
             parse_lod_breakpoints,
             resolve_streaming_breakpoints,
+            survey_gsplat_streaming_layout,
             validate_streaming_knobs,
         )
         from luxar.gsplats.gsplat_data import GSplatData
@@ -137,6 +138,7 @@ def run_additive_dataset(
 
             # ── streaming breakpoints from --target-ms (measured B/splat) ──
             if target_ms is not None:
+                slice_count, part_count = survey_gsplat_streaming_layout(input_path)
                 store_bytes = measure_store_bytes(input_path)
                 measured = store_bytes / total_stored if store_bytes > 0 else None
                 # Mirror `gsplat lod`: an explicit non-default --encoding
@@ -162,6 +164,8 @@ def run_additive_dataset(
                     analytic_bps=estimate_bytes_per_splat(
                         node_ndim(node), has_colors, encoding=encoding_mode
                     ),
+                    slice_count=slice_count,
+                    part_count=part_count,
                 )
 
             with asection(f"Laddering {n_leaves} leaf/leaves"):

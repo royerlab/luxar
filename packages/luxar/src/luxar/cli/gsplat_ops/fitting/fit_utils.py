@@ -222,6 +222,11 @@ def validate_and_build_recipe(
         raise typer.BadParameter(
             "--recipe is incompatible with --plan-only / --plan-box."
         )
+    if ctx.recipe_target_ms is not None:
+        raise typer.BadParameter(
+            "--target-ms cannot safely size a per-part fit before the final "
+            "non-empty part count is known; use --n-lods for sliced/partitioned output"
+        )
     recipe_params = build_fit_recipe_params(
         ctx.recipe,
         n_lods=ctx.recipe_n_lods,

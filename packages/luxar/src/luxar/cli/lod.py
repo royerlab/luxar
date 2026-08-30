@@ -42,6 +42,7 @@ from .gsplat_ops.recipe_shared import (
     parse_lod_breakpoints,
     reject_irrelevant_recipe_options,
     resolve_streaming_breakpoints,
+    survey_gsplat_streaming_layout,
     validate_refine,
     validate_streaming_knobs,
 )
@@ -796,6 +797,7 @@ def lod_recipe(
                     analytic_bps=estimate_bytes_per_splat(
                         data.ndim, data.colors is not None, encoding=encoding
                     ),
+                    slice_count=survey_gsplat_streaming_layout(input_path)[0],
                 )
 
             # ── scale-derived defaults (logged) ──
