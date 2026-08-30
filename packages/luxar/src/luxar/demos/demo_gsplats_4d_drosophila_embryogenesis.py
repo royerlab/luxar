@@ -176,16 +176,15 @@ ONCE across all 500 frames rather than per timepoint. That is what keeps the
 exposure from drifting as the embryo brightens, and it is why the appearance
 constants below are portable across the whole recording.
 
-One caveat if you reproduce step 2 on an older build: ``cull --method
-cumulative`` accumulated its amplitude total in float32, which saturates on a
-set this large and silently over-culls — it returned 12% instead of 65% on this
-very archive. Fixed in #2260 (issue #2258). On a build without that fix, compute
-the amplitude threshold in float64 and use ``gsplat filter --amplitude-min``
-instead; for this archive the threshold is 33.40462112.
+Step 2 depends on the float64 cumulative-amplitude accumulator fixed in #2260
+(issue #2258). The current implementation is correct at this scale; older builds
+silently over-culled this archive to 12% instead of 65%.
 
 
 USAGE:
     python demo_gsplats_4d_drosophila_embryogenesis.py [--no-serve] [--serve-only]
+    python demo_gsplats_4d_drosophila_embryogenesis.py --recompute \
+        --source /path/to/DrosophilaHistone.zarr.zip
 
 OUTPUT:
     - Scene saved to:  datasets/demos/gsplats_4d_drosophila_embryogenesis.luxar.zarr
@@ -223,7 +222,10 @@ DEMO_META = {
     },
 }
 
+import shutil
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Iterator
 
 import numpy as np
 from arbol import aprint, asection
@@ -235,11 +237,13 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
     parse_demo_flags,
+    parse_path_arg,
+    run_luxar_cli,
 )
 from luxar.demos._cinematic_camera import VIEWER_DEFAULT_FOV_DEG, pull_in
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.io.load_gsplats import load_gsplat_node
-from luxar.gsplats.tree import center_bounds, is_matrix_shaped
+from luxar.gsplats.tree import center_bounds, is_matrix_shaped, iter_leaves
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -269,6 +273,221 @@ CAMERA_FRAME_FILL = 0.62
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
+RECOMPUTE = FLAGS["recompute"]
+
+#: ``--source PATH`` — the unpublished raw recording. The file name was checked
+#: against the copy on the acquisition box rather than inferred from the parent
+#: directory name ``DrosophilaHistoneRaw``.
+SOURCE_ARG = parse_path_arg("source")
+
+# ---- Recorded fit recipe ----------------------------------------------------
+SOURCE_FILENAME = "DrosophilaHistone.zarr.zip"
+SOURCE_ARRAY_KEY = "data"
+SOURCE_SHAPE = (500, 108, 1352, 532)
+SOURCE_DTYPE = np.dtype("uint16")
+SOURCE_AXES = "time,z,y,x"
+TILE_SIZE = 1400
+OVERLAP = 0
+PRESET = "standard"
+ITERS = 1500
+SEEDS = 256_000
+FLOOR = 8
+GPUS = "0"
+JOBS_PER_GPU = 2
+MERGE_RECIPE = "stream"
+MERGE_TARGET_MS = 200
+CULL_RETENTION = 0.960
+VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
+CHUNK_PROFILE = "archive"
+EXPECTED_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
+EXPECTED_SPLATS = 83_221_420
+EXPECTED_RUNGS = 14
+SPLAT_COUNT_TOLERANCE = 0.01
+
+
+# =============================================================================
+# Recompute recipe
+# =============================================================================
+@contextmanager
+def _open_source(path: Path) -> Iterator[Any]:
+    """Yield the source root and close a zip store after validation.
+
+    zarr-python 3 does not infer :class:`ZipStore` from a ``.zip`` suffix. The
+    explicit branch is required for the real 19.3 GB source; opening its path
+    directly otherwise raises ``GroupNotFoundError`` for a valid recording.
+    """
+    import zarr
+
+    store = None
+    try:
+        if path.suffix == ".zip":
+            from zarr.storage import ZipStore
+
+            try:
+                store = ZipStore(str(path), mode="r")
+                root = zarr.open(store=store, mode="r")
+            except Exception as exc:  # noqa: BLE001 - normalize storage errors
+                raise ValueError(
+                    f"Could not read {path.name} as a Zarr recording. Expected "
+                    f"the DrosophilaHistone recording. Underlying error: {exc}"
+                ) from exc
+        else:
+            try:
+                root = zarr.open(str(path), mode="r")
+            except Exception as exc:  # noqa: BLE001 - normalize zarr errors
+                raise ValueError(
+                    f"Could not read {path.name} as a Zarr recording. Expected "
+                    f"the DrosophilaHistone recording. Underlying error: {exc}"
+                ) from exc
+        yield root
+    finally:
+        if store is not None:
+            store.close()
+
+
+def _validate_source(path: Path) -> None:
+    """Refuse a wrong or partial recording before starting the GPU fit."""
+    with _open_source(path) as root:
+        try:
+            array = root[SOURCE_ARRAY_KEY]
+        except Exception as exc:  # noqa: BLE001 - normalize zarr shape errors
+            available = ""
+            try:
+                available = ", ".join(sorted(root.array_keys())) or "(none)"
+            except Exception:  # noqa: BLE001 - a bare array has no array_keys
+                available = "(this store is a bare array, not a group)"
+            raise ValueError(
+                f"{path.name} has no {SOURCE_ARRAY_KEY!r} array; found: {available}. "
+                f"Expected the DrosophilaHistone recording, a group whose "
+                f"{SOURCE_ARRAY_KEY!r} member is (time, z, y, x). Underlying error: "
+                f"{exc}"
+            ) from exc
+
+        shape = tuple(array.shape)
+        dtype = np.dtype(array.dtype)
+        aprint(f"source array [{SOURCE_ARRAY_KEY}]: {shape} {dtype}")
+        if shape != SOURCE_SHAPE:
+            raise ValueError(
+                f"{path.name} has shape {shape}, expected {SOURCE_SHAPE}. Refusing "
+                f"to fit a wrong or partial recording."
+            )
+        if dtype != SOURCE_DTYPE:
+            raise ValueError(
+                f"{path.name} has dtype {dtype}, expected {SOURCE_DTYPE}. Refusing "
+                f"to fit a converted source with a different intensity contract."
+            )
+    aprint(f"source validated: {SOURCE_SHAPE} {SOURCE_DTYPE}")
+
+
+def _validate_rebuilt_archive(node: Any) -> int:
+    """Validate the merged leaf count and progressive-rung contract."""
+    leaves = list(iter_leaves(node))
+    if len(leaves) != 1:
+        raise RuntimeError(f"rebuild produced {len(leaves)} leaves, expected one")
+    rungs = int(leaves[0].n_additive_sublods)
+    if rungs != EXPECTED_RUNGS:
+        raise RuntimeError(
+            f"rebuild produced {rungs} progressive rungs, expected {EXPECTED_RUNGS}"
+        )
+    return int(leaves[0].n_splats)
+
+
+def _validate_splat_count(got: int) -> None:
+    """Reject count drift large enough to indicate a changed recipe."""
+    drift = abs(got - EXPECTED_SPLATS) / EXPECTED_SPLATS
+    aprint(f"rebuilt {got:,} splats (recorded {EXPECTED_SPLATS:,}, {drift:.3%} drift)")
+    if drift >= SPLAT_COUNT_TOLERANCE:
+        raise RuntimeError(
+            f"rebuilt {got:,} splats against a recorded {EXPECTED_SPLATS:,} "
+            f"({drift:.2%} drift). Over 1% means the recipe changed, not cull "
+            f"noise -- check the source, fit settings, and cumulative retention."
+        )
+
+
+def recompute_archive(work_dir: Path) -> Path:
+    """Refit, cull, physically scale, and re-chunk the 500-frame archive."""
+    with asection("Recomputing the Drosophila embryogenesis archive"):
+        if SOURCE_ARG is None:
+            raise SystemExit(
+                "--recompute needs --source PATH pointing at the unpublished raw "
+                f"recording ({SOURCE_FILENAME})."
+            )
+        source = SOURCE_ARG.expanduser()
+        if not source.exists():
+            raise FileNotFoundError(f"--source does not exist: {source}")
+        _validate_source(source)
+
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        fit = work_dir / "fit"
+        culled = work_dir / "culled.gsplats.zarr"
+        scaled = work_dir / "um.gsplats.zarr"
+        final = work_dir / "drosophila_embryogenesis_500tp.gsplats.zarr.zip"
+
+        run_luxar_cli(
+            "gsplat",
+            "batch-fit",
+            "run",
+            str(source),
+            str(fit),
+            "--array-key",
+            SOURCE_ARRAY_KEY,
+            "--axes",
+            SOURCE_AXES,
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            str(TILE_SIZE),
+            "--overlap",
+            str(OVERLAP),
+            "--preset",
+            PRESET,
+            "--iters",
+            str(ITERS),
+            "--seeds",
+            str(SEEDS),
+            "--floor",
+            str(FLOOR),
+            "--gpus",
+            GPUS,
+            "--jobs-per-gpu",
+            str(JOBS_PER_GPU),
+            "--merge-recipe",
+            MERGE_RECIPE,
+            "--merge-target-ms",
+            str(MERGE_TARGET_MS),
+        )
+        run_luxar_cli(
+            "gsplat",
+            "cull",
+            str(fit / "merged" / "final.gsplats.zarr"),
+            str(culled),
+            "--method",
+            "cumulative",
+            "--retention",
+            f"{CULL_RETENTION:.3f}",
+        )
+        run_luxar_cli(
+            "gsplat",
+            "transform",
+            str(culled),
+            str(scaled),
+            "--scale",
+            ",".join(f"{value:g}" for value in VOXEL_SCALE),
+        )
+        run_luxar_cli(
+            "optimise",
+            str(scaled),
+            str(final),
+            "--profile",
+            CHUNK_PROFILE,
+        )
+
+        node, _ = load_gsplat_node(str(final))
+        _validate_splat_count(_validate_rebuilt_archive(node))
+        aprint(f"rebuilt: {final}")
+        return final
 
 
 # =============================================================================
@@ -513,7 +732,12 @@ def main() -> None:
             aprint(f"No scene at {output_path}. Run without --serve-only first.")
         return
 
-    data_path = resolve_data()
+    if RECOMPUTE:
+        data_path = recompute_archive(
+            get_demos_output_dir() / "_drosophila_embryogenesis_recompute"
+        )
+    else:
+        data_path = resolve_data()
     scene_path = create_luxar_scene(data_path, output_path)
 
     if not NO_SERVE:
