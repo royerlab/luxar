@@ -874,12 +874,19 @@ class TestHiddenAxisStops:
 class TestASlicedNodeGetsAShareOfItsFrame:
     """#2374: a sliced node's first rung is a share of the frame, not a budget."""
 
-    def test_first_paint_is_one_over_the_max_depth_of_the_resident_slice(
+    def test_mean_first_paint_is_one_over_the_max_depth_of_the_resident_slice(
         self,
     ) -> None:
         # The contract Loic ruled for. Checked as a SHARE, which is the quantity
         # that predicts whether the opening frame is recognisable — and which is
         # slice-invariant, so it holds at every stop count.
+        #
+        # MEAN, not per-stop: rung 0 is a prefix of a global ordering, so it
+        # concentrates where the signal is rather than spreading in proportion to
+        # slice size. `n / stops` below is the mean resident slice; on a
+        # non-uniform axis the sparsest stop gets less. That is why the shared
+        # helper hands back a histogram and why this bound is sized for the 2-7
+        # stop categorical axes these five have. See SLICED_LADDER_MAX_DEPTH.
         for total, stops in (
             (1_153_506, 6),  # mouse_multiome
             (1_151_006, 2),  # esm3

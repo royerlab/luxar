@@ -243,10 +243,18 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
 #: viewer-side gate for #2374 — which fails a sliced node below **10%** of its
 #: frame, or below 1,000 elements at the 5th-percentile stop — with margin, so
 #: the gate should not fire on anything authored through :func:`stream_ladder`.
+#: Deepening this past 10 walks a sliced node into the failing band.
 #:
-#: The 10% floor is not arbitrary either: measured against observed playback,
-#: 12.5% renders "soft but usable" and 2.4% has already lost its structure.
-#: Deepening this constant past 10 walks a sliced node into that band.
+#: THE 12.5% IS AN AGGREGATE, NOT A PER-STOP GUARANTEE. Rung 0 is a prefix of a
+#: global ordering, so it concentrates where the signal is rather than spreading
+#: over stops in proportion to slice size. On a non-uniform hidden axis the
+#: sparsest stops get less than `1/L` of their own already-small slice —
+#: measured on a published 500-timepoint demo, `additive_0` is a median of 45
+#: splats per timepoint but **p05 = 7, min = 1, and 30 stops under 10**, against
+#: 41.7 predicted by a uniform assumption. A categorical axis of 2-7 stops has
+#: little room to be non-uniform, which is the case this constant was sized for;
+#: a long timelapse over a growing specimen does not, and wants its per-stop
+#: histogram checked rather than this constant trusted.
 SLICED_LADDER_MAX_DEPTH = 8
 
 
@@ -350,16 +358,20 @@ def stream_ladder(
     Scaling the rung to ``budget × S`` would restore the intended *latency* — 200
     ms per slice — but Loic ruled for the **share** contract instead (2026-08-30),
     and the measurements are why: what predicts whether an opening frame is
-    recognisable is the share of the frame, not the bytes spent. Across three
-    orders of magnitude, predicted rung-0-per-slice against observed playback:
-    0.03% renders blank, 2.4% loses structure, 0.87% is thin, 12.5% is soft but
-    usable, 54% is fine *on only 1,735 absolute splats*. A budget contract would
-    have left four of the five demos above under 10% of their frame.
+    recognisable is the share of the frame, not the bytes spent. Predicted
+    rung-0-per-slice against observed render: **0.03% renders blank** (a
+    500-timepoint gsplat demo, decoded and confirmed against playback at 20-51
+    splats), **12.5% is soft but usable** (neuromast, 110,614 measured at rest
+    against a 113,947 metadata mean), and **54% is fine on only 1,735 absolute
+    elements** — which is what rules out an absolute floor. A budget contract
+    would have left four of the five demos above under 10% of their frame.
 
     So above one slice the first rung is floored at ``n /
-    SLICED_LADDER_MAX_DEPTH``, giving every sliced node ``1/L`` of its frame —
-    slice-invariant, so a demo that gains a dimension cannot silently regress.
-    Derive ``slices`` with :func:`hidden_axis_stops` rather than hardcoding.
+    SLICED_LADDER_MAX_DEPTH``, giving every sliced node ``1/L`` of its frame **on
+    average** — see that constant for why the sparsest stop can be worse, and why
+    that is acceptable on a 2-7 stop categorical axis but not on a long
+    timelapse. Slice-invariant, so a demo that gains a dimension cannot silently
+    regress. Derive ``slices`` with :func:`hidden_axis_stops`, not by hand.
 
     The cost is accepted rather than hidden: first paint on the five goes from
     ~200 ms to ~123-666 ms. Part of that is repaid in requests — hosted first
