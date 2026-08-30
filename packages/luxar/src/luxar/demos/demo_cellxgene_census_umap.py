@@ -33,12 +33,13 @@ the coarse levels were bytes nobody fetched. See ``_lod_policy`` for the rule.
 
 Scales (measured): the build is a write rather than a compute now that nothing is
 coarsened — no torch/scipy, no CPU/GPU split, runs anywhere. Generating the 10M
-scVI-UMAP *coords* still needs a GPU (cuML; see scripts). This demo ships a
-**1M-cell cache** (Git LFS) and builds a 3M-element scene by default. The viewer
-eagerly converges an additive ladder to 100% of the selected coloring, so keep
-``CENSUS_UMAP_MAX_CELLS`` at or below the portable 5,591,040-Point node cap;
-larger values are silently clamped on a 4096-class GPU after one console
-warning. Point ``CENSUS_UMAP_CACHE`` at another cache to rebuild from it.
+scVI-UMAP *coords* still needs a GPU (cuML; see scripts). This demo resolves a
+**1M-cell cache** through the checksum-verified dataset manifest and builds a
+3M-element scene by default. The viewer eagerly converges an additive ladder to
+100% of the selected coloring, so keep ``CENSUS_UMAP_MAX_CELLS`` at or below the
+portable 5,591,040-Point node cap; larger values are silently clamped on a
+4096-class GPU after one console warning. Point ``CENSUS_UMAP_CACHE`` at another
+cache to rebuild from it.
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ DEMO_META = {
         "gpu": "none",
         "local_data": "git-lfs",
     },
-    "caches": [],
+    "caches": ["census_umap_1m"],
     "outputs": ["cellxgene_census_umap"],
     "citation": {
         "short": "CZ CELLxGENE Discover (CZI Cell Science Program 2024)",
@@ -75,7 +76,9 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
+    DatasetUnavailable,
     add_demo_caption,
+    ensure_dataset,
     launch_viewer,
     parse_demo_flags,
     require_local_data,
@@ -90,9 +93,9 @@ COLORINGS = [
     ("tissue_general", "Tissue"),
     ("disease", "Disease"),
 ]
-# Shipped runnable default: a 1M-cell subsample (Git LFS). Override with the
-# CENSUS_UMAP_CACHE env var to point at a larger (e.g. 10M) regenerated cache.
-DEFAULT_CACHE = Path(__file__).parent / "data" / "census_umap_1m.npz"
+# Hosted runnable default: a 1M-cell subsample. Override with CENSUS_UMAP_CACHE
+# to point at a larger (e.g. 10M) regenerated cache.
+DATASET = "census_umap_1m"
 
 # Per-cell sphere radius in scene units, tied to the local cell spacing rather
 # than picked by eye: at NORM_SPAN the 1M-cell cloud has a median
@@ -138,8 +141,8 @@ def normalize_coords(coords: np.ndarray, span: float = NORM_SPAN) -> np.ndarray:
 
 def load_cache(path: Path):
     """Load the coords cache: returns (coords, per-coloring int codes, labels)."""
-    # Gate the shipped LFS npz so an unpulled pointer gives the "git lfs pull"
-    # message instead of a cryptic np.load zip error.
+    # Guard a user-supplied override from producing a cryptic np.load zip error
+    # when it is an unpulled LFS pointer.
     z = np.load(require_local_data(path), allow_pickle=False)
     labels = json.loads(str(z["labels_json"]))
     codes = {f"{c}": z[f"{c}_code"] for c, _ in COLORINGS}
@@ -341,17 +344,18 @@ def build_scene(
 def main() -> None:
     """Resolve the cache, build the scene, and optionally launch the viewer."""
     flags = parse_demo_flags()
-    cache = Path(os.environ.get("CENSUS_UMAP_CACHE", DEFAULT_CACHE))
-    if not cache.exists():
-        aprint(
-            f"⚠ coords cache not found at {cache}\n"
-            "  Generate it on a GPU box (see the module docstring / README):\n"
-            "    python scripts/gen_census_umap.py --n 10000000 --out <cache>.npz\n"
-            "  (needs cellxgene-census + cuml; ~96M primary human cells available),\n"
-            "  then point this demo at it via CENSUS_UMAP_CACHE=<cache>.npz.\n"
-            f"  Or pre-built scenes can be served directly with `luxar serve --viewer`."
-        )
-        return
+    override = os.environ.get("CENSUS_UMAP_CACHE")
+    if override:
+        cache = Path(override)
+        if not cache.exists():
+            _print_cache_guidance(f"coords cache not found at {cache}")
+            return
+    else:
+        try:
+            cache = ensure_dataset(DATASET)[0]
+        except DatasetUnavailable as exc:
+            _print_cache_guidance(f"default coords cache is unavailable: {exc}")
+            raise SystemExit(1) from exc
     output_path = get_demos_output_dir() / "cellxgene_census_umap.luxar.zarr"
     # No CPU/GPU split any more: the build no longer coarsens, so it is a write,
     # not a compute. CENSUS_UMAP_MAX_CELLS also keeps the selected coloring
@@ -361,6 +365,18 @@ def main() -> None:
     aprint(f"Built {n:,}-cell scene. To view: luxar serve --viewer {output_path}")
     if not flags.get("no_serve"):
         launch_viewer(output_path, open_browser=not flags.get("serve_only", False))
+
+
+def _print_cache_guidance(detail: str) -> None:
+    """Explain how to supply a regenerated Census UMAP cache."""
+    aprint(
+        f"⚠ {detail}\n"
+        "  Generate it on a GPU box (see the module docstring / README):\n"
+        "    python scripts/gen_census_umap.py --n 10000000 --out <cache>.npz\n"
+        "  (needs cellxgene-census + cuml; ~96M primary human cells available),\n"
+        "  then point this demo at it via CENSUS_UMAP_CACHE=<cache>.npz.\n"
+        "  Or pre-built scenes can be served directly with `luxar serve --viewer`."
+    )
 
 
 if __name__ == "__main__":

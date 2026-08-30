@@ -2,7 +2,7 @@
 """Self-Contained Demo: Mouse Multiome Peak 3D UMAP Visualization
 
 This demo demonstrates:
-- Loading biological data from local parquet file
+- Loading biological data from a manifest-resolved parquet file
 - 3D UMAP embedding of ~192k single-cell ATAC-seq peaks
 - Color-coded by cell type, lineage, timepoint, and other attributes
 - Navigation through categorical attributes
@@ -33,10 +33,10 @@ DEMO_META = {
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
-        "download_mb": 0,
+        "download_mb": 7,
         "compute": "light",
         "gpu": "none",
-        "local_data": "manual-file",
+        "local_data": "git-lfs",
     },
     "citation": {
         "short": "Argelaguet et al. 2022; peak-UMAP analysis Kim et al. 2024",
@@ -44,7 +44,7 @@ DEMO_META = {
         "doi": "10.1101/2022.06.15.496239",
         "license": "CC BY 4.0",
     },
-    "caches": [],
+    "caches": ["3d_umap_coords_mouse"],
     "outputs": ["mouse_multiome_peak_umap", "mouse_umap"],
 }
 
@@ -60,8 +60,8 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
 from luxar.demos import (
     add_demo_caption,
+    ensure_dataset,
     launch_viewer,
-    require_local_data,
 )
 from luxar.demos._lod_policy import stream_ladder
 from luxar.demos._support._umap_utils import (
@@ -71,14 +71,11 @@ from luxar.demos._support._umap_utils import (
 )
 from luxar.utils.paths import get_demos_output_dir
 
-
-def get_data_dir() -> Path:
-    """Get the data directory path."""
-    return Path(__file__).parent / "data"
+DATASET = "3d_umap_coords_mouse"
 
 
 def load_mouse_umap_data() -> tuple[np.ndarray, dict, dict]:
-    """Load 3D UMAP data from local parquet file.
+    """Load 3D UMAP data from the manifest-resolved parquet file.
 
     Returns:
         Tuple of (coordinates, attributes, category_maps) where:
@@ -87,7 +84,7 @@ def load_mouse_umap_data() -> tuple[np.ndarray, dict, dict]:
         - category_maps: dict of attribute name -> list of category labels
     """
     with asection("Loading Mouse 3D UMAP Data"):
-        data_path = require_local_data(get_data_dir() / "3d_umap_coords_mouse.parquet")
+        data_path = ensure_dataset(DATASET)[0]
         aprint(f"Loading from {data_path}...")
 
         df = pd.read_parquet(data_path)
@@ -379,7 +376,7 @@ def main() -> None:
     aprint("  - Navigate attributes to see different biological features")
     aprint("")
 
-    # Load data from local parquet
+    # Load data from the manifest-resolved parquet
     coordinates, attributes, category_maps = load_mouse_umap_data()
 
     # Generate legend images for all attributes
