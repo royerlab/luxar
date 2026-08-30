@@ -1094,8 +1094,8 @@ def main() -> int:
                     "(zip files — unpacked .gsplats.zarr.zip/ directories are skipped)"
                 )
         print(
-            f"skipped {len(result.unreadable)} pinned archive(s) that were present "
-            "but unreadable"
+            f"skipped {len(result.unreadable)} pinned fit archive(s) that matched "
+            "the manifest pin but could not be parsed"
         )
         print(
             f"skipped {len(result.inaccessible)} fit archive(s) with a candidate "

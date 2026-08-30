@@ -1269,7 +1269,8 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     assert "skipped 1 read(s) taken from bytes the manifest does not pin" in summary
     assert "kept 2 committed measurement(s) that outrank the local copy" in summary
     assert "preserved 3 committed measurement(s) without a fresh read" in summary
-    assert "skipped 0 pinned archive(s) that were present but unreadable" in summary
+    assert "skipped 0 pinned fit archive(s)" in summary
+    assert "matched the manifest pin but could not be parsed" in summary
     assert "skipped 0 fit archive(s) with a candidate" in summary
     assert "skipped 5 fit archive(s)" in summary
     assert "not the pinned bytes, and unreadable" in summary
@@ -1311,7 +1312,8 @@ def test_refresh_reports_each_unreadable_pinned_archive_and_exits_nonzero(
     output = capsys.readouterr().out
     assert f"matched the manifest pin but could not be parsed: {first}" in output
     assert f"matched the manifest pin but could not be parsed: {second}" in output
-    assert "skipped 2 pinned archive(s) that were present but unreadable" in output
+    assert "skipped 2 pinned fit archive(s)" in output
+    assert "matched the manifest pin but could not be parsed" in output
 
 
 def test_refresh_reports_inaccessible_archives_without_failing(
