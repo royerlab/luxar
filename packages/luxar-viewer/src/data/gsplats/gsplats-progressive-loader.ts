@@ -417,10 +417,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
 
     // Stream the LOD ladder under the shared streaming policy (see
-    // `streaming-policy.ts`): `playback` commits the cached prefix + a LOD-0
-    // first-paint floor and never blocks on fine levels; `prefetch` deepens
-    // toward the full decoded ladder (bounded by the pass budget + abort);
-    // `refine` streams resident levels and stops at the first cold/slow one.
+    // `streaming-policy.ts`): `playback` commits a restored prefix as-is, and
+    // otherwise streams cache-resident levels within the budget; `prefetch`
+    // deepens toward the full decoded ladder (bounded by the pass budget +
+    // abort); `refine` stops at the first cold/slow level.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this.loadedLODs.length;
 

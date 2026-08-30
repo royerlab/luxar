@@ -12,13 +12,28 @@
  * The three disciplines:
  *
  *  - `playback` — foreground, under a per-frame budget (a dimension is
- *    playing/scrubbing). Responsiveness dominates: commit the restored cached
- *    prefix as-is and, when nothing is cached, load only LOD 0 as a first-paint
- *    floor. NEVER synchronously decode further levels — even an L0-resident one
- *    still costs ~10-20ms of dequant+project per level, and a cold one costs
- *    hundreds of ms; either stalls the tick. Quality is deepened for later
- *    loops by the background `prefetch` pass, so each loop restores a deeper
- *    cached prefix and looks better while staying fast.
+ *    playing/scrubbing). Responsiveness dominates, so a cold level is never
+ *    worth blocking on. Two halves: a pass that RESTORED a cached prefix
+ *    commits it as-is (nothing is decoded — the prefix already shows something,
+ *    and deepening is the prefetch's job), while a pass that starts EMPTY
+ *    streams levels that come back CACHE-RESIDENT until the budget is spent,
+ *    stopping at the first cold or slow one exactly as `refine` does.
+ *
+ *    It used to load LOD 0 and nothing else, on the reasoning that even a
+ *    resident level costs ~10-20 ms of dequant+project. That is true, and the
+ *    budget deadline is what bounds it — but a level-1 gate is the wrong
+ *    instrument, because it assumes LOD 0 is a usable picture. On a node the
+ *    viewer SLICES it is not: an additive ladder's rungs are sized against the
+ *    WHOLE node, so on a 500-timepoint gsplat leaf LOD 0 is ~42 splats of a
+ *    166,443-splat frame and playback rendered an empty screen (#2374, #2376).
+ *    Streaming the resident levels costs approximately no network — the coarse
+ *    rungs of a sliced ladder are small enough to sit in ONE chunk each, so
+ *    they are fetched once and serve every slice — and the worst case is
+ *    unchanged at one cold load per pass, since the first cold level still
+ *    stops the loop.
+ *
+ *    Quality is still deepened for later loops by the background `prefetch`
+ *    pass; this only stops the foreground throwing away levels it already has.
  *  - `prefetch` — background shadow pass warming the next timepoint. No
  *    first-paint constraint, so it deepens toward the FULL decoded ladder (the
  *    only thing that yields the single-concat fast revisit); it never stops at
@@ -51,27 +66,47 @@ export function classifyStreamingPass(
 
 /**
  * Whether the streaming loop should load `level` this pass (evaluated at loop
- * top; a `false` breaks the loop). Only `playback` restricts loading — to the
- * first-paint floor (LOD 0 when the ladder starts empty). `prefetch`/`refine`
- * load every level and rely on {@link shouldStopAfterLevel} / the budget
- * deadline to bound the pass.
+ * top; a `false` breaks the loop).
+ *
+ * Only `playback` restricts loading, and only in ONE case: a pass that RESTORED
+ * a non-empty cached prefix commits it as-is and spends nothing on foreground
+ * decode — the prefix is already showable, and deepening it is the background
+ * `prefetch` pass's job.
+ *
+ * It used to also cap a pass that starts EMPTY at level 0. That is the half
+ * that was wrong: it assumes LOD 0 is a usable picture, and on a node the
+ * viewer SLICES it need not be. An additive ladder's rungs are sized against
+ * the WHOLE node, so a 500-timepoint gsplat leaf put ~42 splats of a
+ * 166,443-splat frame in LOD 0 and playback rendered an empty screen
+ * (#2374, #2376). A cold ladder now streams levels that come back
+ * CACHE-RESIDENT until the budget is spent or a cold one appears (see
+ * {@link shouldStopAfterLevel}) — approximately free, since the coarse rungs of
+ * a sliced ladder are small enough to sit in one chunk each and so are fetched
+ * once and serve every slice.
  */
 export function shouldLoadLevel(
   kind: StreamingPassKind,
-  level: number,
+  // Retained (unused) so the four loop-top call sites keep reading as "may I
+  // load THIS level?", and so a future per-level rule has a seam. The current
+  // rule depends only on whether the ladder started empty.
+  _level: number,
   startLevel: number
 ): boolean {
-  if (kind === 'playback') return level === 0 && startLevel === 0;
+  if (kind === 'playback' && startLevel > 0) return false;
   return true;
 }
 
 /**
- * Whether to stop the streaming loop AFTER loading `level`. Only `refine`
- * stops here — at the first cold (cache-miss) or slow level past the ≥1-level
- * first-paint floor — so the frame renders and a later pass continues.
- * `prefetch` deepens regardless of residency (bounded by budget + abort);
- * `playback` never reaches here for `level > 0` (it is gated by
- * {@link shouldLoadLevel}).
+ * Whether to stop the streaming loop AFTER loading `level`. `refine` and
+ * `playback` both stop here — at the first cold (cache-miss) or slow level past
+ * the >=1-level first-paint floor — so the frame renders and a later pass
+ * continues. For `playback` this is the ONLY brake besides the budget deadline,
+ * and it is the one that matters: a cold level costs hundreds of ms, a resident
+ * one ~10-20 ms, so residency (not level index) is what separates "affordable
+ * inside a tick" from "stalls the tick".
+ *
+ * `prefetch` deepens regardless of residency — warming cold levels is its whole
+ * job — and is bounded by the pass budget + abort instead.
  */
 export function shouldStopAfterLevel(
   kind: StreamingPassKind,
@@ -80,6 +115,6 @@ export function shouldStopAfterLevel(
   allResident: boolean,
   elapsedMs: number
 ): boolean {
-  if (kind !== 'refine') return false;
+  if (kind === 'prefetch') return false;
   return level > startLevel && (!allResident || elapsedMs > CACHE_HIT_THRESHOLD_MS);
 }

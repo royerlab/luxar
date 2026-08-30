@@ -404,10 +404,10 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     }
 
     // Stream under the shared streaming policy (see `streaming-policy.ts`):
-    // `playback` commits the cached prefix + a LOD-0 first-paint floor and
-    // never blocks on fine levels; `prefetch` deepens toward the full decoded
-    // ladder (abort-safe, stored per level); `refine` streams resident levels
-    // and stops at the first cold/slow one. Mirrors GSplatsProgressiveLoader.
+    // `playback` commits a restored prefix as-is, and otherwise streams
+    // cache-resident levels within the budget; `prefetch` deepens toward the
+    // full decoded ladder (abort-safe, stored per level); `refine` stops at the
+    // first cold/slow level. Mirrors GSplatsProgressiveLoader.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
     const startLevel = this.loadedLODs.length;
 
