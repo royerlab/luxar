@@ -52,6 +52,17 @@ def _published_lfs_assets() -> set[str]:
     return published
 
 
+def test_runbook_section_three_headings_are_sequential() -> None:
+    """Keep independently landed runbook additions in contiguous order."""
+    text = DEMO_SITE_RUNBOOK.read_text()
+    section_numbers = [
+        int(number)
+        for number in re.findall(r"^### 3\.(\d+)\b", text, re.MULTILINE)
+    ]
+
+    assert section_numbers == list(range(1, len(section_numbers) + 1))
+
+
 def test_runbook_archive_digest_prefixes_match_active_manifest_pins() -> None:
     """Runbook archive examples must name active manifest generations."""
     text = DEMO_SITE_RUNBOOK.read_text()
