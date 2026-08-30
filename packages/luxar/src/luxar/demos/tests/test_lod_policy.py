@@ -885,7 +885,7 @@ class TestStreamLadder:
 
 
 class TestHiddenAxisStops:
-    """The divisor between a node's total and its resident slice."""
+    """Counts hidden coordinate combinations used to detect sliced nodes."""
 
     def test_counts_distinct_values_on_one_hidden_axis(self) -> None:
         pos = np.array([[0, 0, 0, 5], [0, 0, 0, 7], [0, 0, 0, 7]], dtype=np.float32)
