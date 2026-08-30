@@ -1009,7 +1009,7 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
                 ("splats", row["splats"]),
                 ("compression", row["vs_raw"]),
             ]
-            if row["quality_quotable"] is not False:
+            if row["quality_quotable"] is not False and not row["caveat"]:
                 expected[1:1] = [
                     ("PSNR", row["psnr"]),
                     ("foreground PSNR", row["fg_psnr"]),

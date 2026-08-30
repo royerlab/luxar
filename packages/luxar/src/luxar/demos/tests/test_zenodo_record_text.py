@@ -481,6 +481,34 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         assert unread == []
         assert problems == ["movie/stack.gsplats.zarr.zip: no PSNR, foreground PSNR"]
 
+    def test_check_accepts_missing_scores_with_a_published_caveat(
+        self, gen: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = {
+            "bucket": "zenodo",
+            "dir": "movie",
+            "files": [{"name": "stack.gsplats.zarr.zip", "bytes": 1000}],
+        }
+        key = gen._char_key("movie", "", "stack.gsplats.zarr.zip")
+        monkeypatch.setattr(
+            gen,
+            "load_characteristics",
+            lambda: {
+                key: {
+                    "n_splats": 100,
+                    "source_bytes": 10_000,
+                    "psnr_db": None,
+                    "foreground_psnr_db": None,
+                    "quality_caveat": "A refit is required for an honest score.",
+                }
+            },
+        )
+
+        problems, unread = gen._gaps({"datasets": {"movie": entry}})
+
+        assert unread == []
+        assert problems == []
+
 
 class TestFiguresAreAbsentRatherThanInvented:
     def test_a_missing_number_renders_as_absent(self, gen: Any) -> None:
@@ -1438,6 +1466,22 @@ def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> N
     )
     assert "one 4D leaf" in info["quality_note"]
     assert "does not retain source_archive" in info["quality_note"]
+
+
+def test_h2afva_unscored_variants_publish_consistent_caveats(gen: Any) -> None:
+    chars = gen.load_characteristics()
+    full = chars["h2afva/253tp/h2afva_253tp.gsplats.zarr.zip"]
+    sliced = chars["h2afva/51tp/h2afva_51tp.gsplats.zarr.zip"]
+
+    assert full["n_splats"] == 602_580_152
+    assert full["measured_sha256"] is None
+    assert "does not claim the unpinned 5.87 GB restructure" in full["quality_note"]
+    for info in (full, sliced):
+        assert info["psnr_db"] is None
+        assert info["foreground_psnr_db"] is None
+        assert "isotropic grid" in info["quality_caveat"]
+        assert "requires a refit" in info["quality_caveat"]
+        assert "every-fifth-frame slice" in info["quality_caveat"]
 
 
 def test_milkyway_hosted_archive_keeps_the_levels_generation(gen: Any) -> None:
