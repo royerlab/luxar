@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -71,6 +72,7 @@ def run_additive_dataset(
             validate_streaming_knobs,
         )
         from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io._archive import resolve_store_path
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
         from luxar.gsplats.lod.additive import (
@@ -138,8 +140,15 @@ def run_additive_dataset(
 
             # ── streaming breakpoints from --target-ms (measured B/splat) ──
             if target_ms is not None:
-                slice_count, part_count = survey_gsplat_streaming_layout(input_path)
-                store_bytes = measure_store_bytes(input_path)
+                resolved_input, temp_dir = resolve_store_path(input_path)
+                try:
+                    slice_count, part_count = survey_gsplat_streaming_layout(
+                        resolved_input
+                    )
+                    store_bytes = measure_store_bytes(resolved_input)
+                finally:
+                    if temp_dir is not None:
+                        shutil.rmtree(temp_dir, ignore_errors=True)
                 measured = store_bytes / total_stored if store_bytes > 0 else None
                 # Mirror `gsplat lod`: an explicit non-default --encoding
                 # re-encodes the output, so measured INPUT bytes misstate the
@@ -196,8 +205,6 @@ def run_additive_dataset(
 
             with asection(f"Saving to {output_path.name}"):
                 if output_path.exists() and overwrite:
-                    import shutil
-
                     if output_path.is_dir():
                         shutil.rmtree(output_path)
                     else:

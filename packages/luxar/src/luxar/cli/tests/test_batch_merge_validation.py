@@ -408,6 +408,34 @@ class TestMergeStreamingKnobs:
 
         assert survey_gsplat_streaming_layout(store_path) == (3, 2)
 
+    def test_store_survey_decodes_each_rungs_coordinate_grid(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "encoded-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {"type": "gsplats", "n_splats": 4, "n_additive_sublods": 2}
+        )
+        for index, (low, rows) in enumerate(((10.0, [0, 1]), (12.0, [0, 1]))):
+            rung = leaf.create_group(f"additive_{index}")
+            rung.attrs.update(
+                {"type": "gsplats", "n_splats": 2, "slice_dims": [0]}
+            )
+            centers = rung.create_array(
+                "centers", data=np.asarray(rows, dtype=np.uint16).reshape(-1, 1)
+            )
+            centers.attrs["encoding"] = {
+                "name": "linear_perchannel_u16",
+                "col_lo": [low],
+                "col_hi": [low + 1.0],
+                "bits": 16,
+                "original_dtype": "float32",
+            }
+
+        assert survey_gsplat_streaming_layout(store_path) == (4, 1)
+
     def test_stored_stream_string_reparses_at_merge_time(self) -> None:
         """The manifest round-trip: the stored string re-parses via
         parse_lod_breakpoints into the same deferred spec."""

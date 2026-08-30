@@ -4,7 +4,7 @@ The decoder reads encoding metadata and applies appropriate decoding
 transformations to recover original data.
 """
 
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import zarr
@@ -525,3 +525,33 @@ class ArrayDecoder:
         # IMPORTANT: Recursively decode the target array
         # This handles cases where target is itself encoded (e.g., LUT)
         return self.decode(target_array, zarr_root)
+
+
+def decode_coordinate_columns(
+    zarr_array: zarr.Array, columns: Sequence[int]
+) -> np.ndarray:
+    """Decode selected coordinate columns without reading the whole array."""
+    selected = np.asarray(zarr_array[:, list(columns)])
+    encoding = dict(zarr_array.attrs.get("encoding", {}))
+    name = encoding.get("name", "none")
+    if name in ArrayDecoder.DIRECT_ENCODINGS:
+        return selected
+    if name not in {"linear_perchannel_u8", "linear_perchannel_u16"}:
+        raise ValueError(f"unsupported coordinate encoding {name!r}")
+
+    low = np.asarray(encoding["col_lo"], dtype=np.float64)
+    high = np.asarray(encoding["col_hi"], dtype=np.float64)
+    bits = int(encoding["bits"])
+    if bits <= 0 or low.shape != high.shape or low.ndim != 1:
+        raise ValueError(f"malformed {name} coordinate encoding")
+    selected_low = low[list(columns)]
+    selected_high = high[list(columns)]
+    if not (
+        np.all(np.isfinite(selected_low))
+        and np.all(np.isfinite(selected_high))
+        and np.all(selected_high >= selected_low)
+    ):
+        raise ValueError(f"malformed {name} coordinate encoding")
+    return selected_low + selected.astype(np.float64) / ((1 << bits) - 1) * (
+        selected_high - selected_low
+    )

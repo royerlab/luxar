@@ -141,18 +141,18 @@ def test_partitioned_slice_survey_reads_rung_zero_across_parts(tmp_path: Path) -
         )
         rung = leaf.create_group("additive_0")
         rung.attrs.update({"type": "points", "n_points": len(rows), "slice_dims": [0]})
-        rung.create_array("centers", data=rows)
+        rung.create_array("positions", data=rows)
         fine = leaf.create_group("additive_1")
         fine.attrs.update({"type": "points", "n_points": 0, "slice_dims": [0]})
 
-    assert checker.sliced_first_rung_counts(root) == [4]
+    assert checker.sliced_first_rung_counts(root) == [("/", 4)]
 
 
 def test_sliced_rung_with_no_centers_is_an_empty_measurement(tmp_path: Path) -> None:
     leaf = _make_leaf(tmp_path / "empty-survey.zarr", [1, 1])
     leaf["additive_0"].attrs["slice_dims"] = [0]
 
-    assert checker.sliced_first_rung_counts(leaf) == [0]
+    assert checker.sliced_first_rung_counts(leaf) == [("/", 0)]
 
 
 def test_substitutive_levels_are_alternatives_not_additive(tmp_path: Path) -> None:
@@ -165,11 +165,40 @@ def test_substitutive_levels_are_alternatives_not_additive(tmp_path: Path) -> No
         )
         rung = leaf.create_group("additive_0")
         rung.attrs.update({"type": "points", "n_points": count, "slice_dims": [0]})
-        rung.create_array("centers", data=np.zeros((count, 1), dtype=np.uint16))
+        rung.create_array("positions", data=np.zeros((count, 1), dtype=np.uint16))
         fine = leaf.create_group("additive_1")
         fine.attrs.update({"type": "points", "n_points": 0})
 
-    assert checker.sliced_first_rung_counts(root) == [5]
+    assert checker.sliced_first_rung_counts(root) == [("/", 5)]
+
+
+def test_partitioned_slice_survey_decodes_per_part_coordinate_grids(
+    tmp_path: Path,
+) -> None:
+    root = zarr.open_group(tmp_path / "partition-encoded.zarr", mode="w")
+    root.attrs["kind"] = "partition"
+    for index, (low, rows) in enumerate(((0.0, [0, 1]), (2.0, [0, 1]))):
+        leaf = root.create_group(f"part_{index}")
+        leaf.attrs.update(
+            {"type": "points", "n_points": 2, "n_additive_sublods": 2}
+        )
+        rung = leaf.create_group("additive_0")
+        rung.attrs.update({"type": "points", "n_points": 2, "slice_dims": [0]})
+        positions = rung.create_array(
+            "positions", data=np.asarray(rows, dtype=np.uint16).reshape(-1, 1)
+        )
+        positions.attrs["encoding"] = {
+            "name": "linear_perchannel_u16",
+            "col_lo": [low],
+            "col_hi": [low + 1.0],
+            "bits": 16,
+            "original_dtype": "float32",
+        }
+        leaf.create_group("additive_1").attrs.update(
+            {"type": "points", "n_points": 0, "slice_dims": [0]}
+        )
+
+    assert checker.sliced_first_rung_counts(root) == [("/", 1)]
 
 
 def test_scene_inventory_is_read_only(

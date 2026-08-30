@@ -439,9 +439,8 @@ def resolve_streaming_breakpoints(
 
 def survey_gsplat_streaming_layout(input_path: Path) -> tuple[int, int]:
     """Return ``(hidden slices, simultaneously drawn leaves)`` for a store."""
-    import numpy as np
-
     from luxar._zarr_compat import open_group
+    from luxar.encoding.decoder import decode_coordinate_columns
     from luxar.gsplats.io._archive import resolve_store_path
 
     resolved, temp_dir = resolve_store_path(input_path)
@@ -462,7 +461,7 @@ def survey_gsplat_streaming_layout(input_path: Path) -> tuple[int, int]:
                     dims = tuple(int(d) for d in level.attrs.get("slice_dims", []))
                     if not dims or "centers" not in level:
                         continue
-                    columns = np.asarray(level["centers"][:, list(dims)])
+                    columns = decode_coordinate_columns(level["centers"], dims)
                     hidden_rows.update(tuple(row) for row in columns)
                 return 1
             children = [group[name] for name in group.group_keys()]

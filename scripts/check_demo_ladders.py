@@ -47,6 +47,7 @@ from typing import Any
 import zarr
 from arbol import aprint, asection
 
+from luxar.encoding.decoder import decode_coordinate_columns
 from luxar.io.lod_screening import (
     DEFAULT_ASPECTS,
     DEFAULT_FIT_FOV,
@@ -55,7 +56,6 @@ from luxar.io.lod_screening import (
     print_screen_report,
     screen_stores,
 )
-from luxar.utils.lod_breakpoints import DEFAULT_CAPPED_FIRST_CHUNK
 
 #: The ``--screen-aspect`` default, rendered from :data:`DEFAULT_ASPECTS` so the
 #: help text and the measured aspects can never drift apart.
@@ -88,7 +88,7 @@ DEFAULT_MIN_SUBLODS = 3
 
 #: A sliced first rung below this absolute element count is visually empty in
 #: playback even when its share of the whole node looks structurally healthy.
-DEFAULT_MIN_SLICE_FIRST_RUNG = DEFAULT_CAPPED_FIRST_CHUNK
+DEFAULT_MIN_SLICE_FIRST_RUNG = 2_000
 
 
 def _element_count(attrs: dict[str, Any]) -> int:
@@ -121,9 +121,14 @@ def _first_rung_histogram(leaf: Any) -> Counter[tuple[object, ...]] | None:
     dims = [int(dim) for dim in rung.attrs.get("slice_dims", [])]
     if not dims:
         return None
-    if "centers" not in rung:
+    coordinate_array = {
+        "points": "positions",
+        "lines": "vertices",
+        "gsplats": "centers",
+    }[attrs["type"]]
+    if coordinate_array not in rung:
         return Counter()
-    columns = rung["centers"][:, dims]
+    columns = decode_coordinate_columns(rung[coordinate_array], dims)
     counts: Counter[tuple[object, ...]] = Counter()
     counts.update(tuple(row) for row in columns)
     return counts
@@ -158,15 +163,15 @@ def _node_slice_histogram(group: Any) -> Counter[tuple[object, ...]] | None:
     return None
 
 
-def sliced_first_rung_counts(root: Any) -> list[int]:
-    """Measure every sliced node alternative's global per-slice rung-0 maximum."""
+def sliced_first_rung_counts(root: Any, path: str = "") -> list[tuple[str, int]]:
+    """Measure each sliced node's global per-slice rung-0 maximum."""
     histogram = _node_slice_histogram(root)
     if histogram is not None:
-        return [max(histogram.values(), default=0)]
+        return [(path or "/", max(histogram.values(), default=0))]
     return [
-        count
+        result
         for name in root.group_keys()
-        for count in sliced_first_rung_counts(root[name])
+        for result in sliced_first_rung_counts(root[name], f"{path}/{name}")
     ]
 
 
@@ -179,8 +184,7 @@ def _record_sliced_verdicts(
     failures: list[str],
 ) -> None:
     """Append scene-level sliced-rung failures without inflating ``run_gate``."""
-    for index, count in enumerate(sliced_first_rung_counts(root)):
-        path = f"/sliced-node-{index}"
+    for path, count in sliced_first_rung_counts(root):
         if count <= 0:
             message = "empty rung-0 slice survey"
         elif count < min_first_rung:
@@ -406,7 +410,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
-    """The original streaming-ladder audit, unchanged. Returns its exit code."""
+    """Run the streaming-ladder and sliced-first-rung audits."""
     counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
     icons = {"ok": "✅", "warn": "⚠️ ", "fail": "❌", "skip": "· "}
     failures: list[str] = []
