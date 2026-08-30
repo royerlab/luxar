@@ -23,27 +23,32 @@ DATA SOURCE & CITATIONS:
     ``…/04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1/{Membranes,Nuclei}``.
 
 PIPELINE — reproducible per channel with ``--recompute``:
-    1. Assemble the channel's 100 deconvolved timepoints into one
-       ``time,z,y,x`` array, and subtract a single global background floor
-       measured once for that channel (105.991 membranes / 103.888 nuclei).
-       ``--recompute`` starts from the assembled array and does the
-       subtraction; assembling from the microscope's per-timepoint files is
-       upstream of this demo.
-    2. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
+    1. Read the channel's deconvolved TIFFs from ``HPC_SOURCE_ROOT`` using its
+       ``source_file_pattern``. Order ``t1`` through ``t100`` NUMERICALLY (not
+       lexicographically), treat each TIFF as ``z,y,x``, and stack them into one
+       ``time,z,y,x`` array. ``--source-*`` expects that assembled array, not
+       the per-timepoint directory.
+    2. Measure one background floor per channel: on the ten zero-based frames
+       in ``BACKGROUND_FLOOR_SAMPLE_INDICES``, take the mode of a 512-bin
+       histogram over values at or below that frame's 95th percentile, then
+       take the median of those ten modes. The recorded results are 105.991
+       (membranes) and 103.888 (nuclei). ``--recompute`` subtracts the pinned
+       value with a clip at zero; do not re-measure it during a rebuild.
+    3. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
        Recorded, not re-run: the sweep is hours and its answer is stable.
-    3. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
+    4. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
        64k seeds, ``--floor auto``, no fit-time cull.
-    4. Redundancy-cull every per-timepoint tile
+    5. Redundancy-cull every per-timepoint tile
        (``-m redundancy --redundancy-threshold 0.20``) → ~11% lighter at
        SSIM-flat quality. Per TILE, before the merge: culling the merged
        timelapse would need the whole 4D reconstruction in memory at once.
-    5. ``batch-fit merge --recipe stream`` over the culled tiles → ONE leaf with
+    6. ``batch-fit merge --recipe stream`` over the culled tiles → ONE leaf with
        an 8-rung progressive ladder. The stacked time axis is a hard coarsening
        barrier, so no rung blends two timepoints.
-    6. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
+    7. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
        → isotropic Z, amplitudes on a 0-1 scale.
 
-    Step 3 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
+    Step 4 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
     ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
     was OOM-killed (``exit -9``) before a single tile landed — an
     over-subscribed GPU here fails all-at-once rather than degrading.
@@ -135,6 +140,20 @@ DATA_DIR = Path(
 # Channel configuration — each becomes an independently-toggleable layer.
 # Named colormaps (not baked RGB) so the viewer applies the LUT at display
 # time and the Layers panel can switch it interactively.
+HPC_SOURCE_ROOT = (
+    "/hpc/projects/jacobo_group/Adrian/RU_Processed_Data/No_Ablations_Aligned/"
+    "04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1"
+)
+#: One TIFF per one-based acquisition timepoint, stacked in this numeric order.
+SOURCE_TIMEPOINTS = tuple(range(1, 101))
+#: Axis order of every deconvolved per-timepoint TIFF before stacking.
+SOURCE_FRAME_AXES = "z,y,x"
+#: Zero-based assembled frames used to measure one stable floor per channel.
+BACKGROUND_FLOOR_SAMPLE_INDICES = (0, 11, 22, 33, 44, 55, 66, 77, 88, 99)
+#: Per-frame mode measurement: histogram the low-intensity bulk through p95.
+BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE = 95.0
+BACKGROUND_FLOOR_HISTOGRAM_BINS = 512
+
 CHANNELS = [
     {
         "name": "membranes",
@@ -147,6 +166,9 @@ CHANNELS = [
         # ---- recompute recipe, per channel ----
         #: ``--source-<name> PATH``: the assembled (time, z, y, x) array.
         "source_flag": "source-membranes",
+        #: Durable upstream TIFF tree and the one-based timepoint filename form.
+        "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Membranes/Deconvolved",
+        "source_file_pattern": "*_w2iSIM561-605_s1_t{timepoint}.tiff",
         #: Global background floor, measured ONCE on this channel and recorded.
         #: Re-measuring would drift, and the fit's own `--floor auto` runs on top
         #: of the subtraction rather than replacing it.
@@ -162,6 +184,8 @@ CHANNELS = [
         "marker": "she:GFP (nuclei)",
         "opacity": 1.0,
         "source_flag": "source-nuclei",
+        "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
+        "source_file_pattern": "*_w1iSIM488-525_s1_t{timepoint}.tiff",
         "background_floor": 103.88801574707031,
         "expected_splats": 5_530_300,
     },

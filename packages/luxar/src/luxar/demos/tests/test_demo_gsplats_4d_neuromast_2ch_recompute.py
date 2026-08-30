@@ -189,6 +189,55 @@ class TestEmptyFitTilesSurviveTheCullStage:
 
 
 class TestTheRecipeConstantsMatchTheRecordedRun:
+    def test_the_per_timepoint_sources_are_recorded_outside_scratch(self):
+        source_dirs = {ch["name"]: ch["hpc_source_dir"] for ch in demo.CHANNELS}
+        root = (
+            "/hpc/projects/jacobo_group/Adrian/RU_Processed_Data/"
+            "No_Ablations_Aligned/"
+            "04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1"
+        )
+        assert source_dirs == {
+            "membranes": f"{root}/Membranes/Deconvolved",
+            "nuclei": f"{root}/Nuclei/Deconvolved",
+        }
+        assert all("_sandbox" not in path for path in source_dirs.values())
+
+    def test_the_source_files_are_stacked_in_numeric_timepoint_order(self):
+        assert demo.SOURCE_TIMEPOINTS == tuple(range(1, 101))
+        patterns = {ch["name"]: ch["source_file_pattern"] for ch in demo.CHANNELS}
+        assert patterns == {
+            "membranes": "*_w2iSIM561-605_s1_t{timepoint}.tiff",
+            "nuclei": "*_w1iSIM488-525_s1_t{timepoint}.tiff",
+        }
+        for pattern in patterns.values():
+            assert pattern.format(timepoint=1).endswith("_t1.tiff")
+            assert pattern.format(timepoint=100).endswith("_t100.tiff")
+
+    def test_the_assembly_axis_contract_is_recorded(self):
+        assert demo.SOURCE_FRAME_AXES == "z,y,x"
+        assert demo.SOURCE_AXES == "time,z,y,x"
+
+    def test_the_background_floor_measurement_is_reproducible(self):
+        assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == (
+            0,
+            11,
+            22,
+            33,
+            44,
+            55,
+            66,
+            77,
+            88,
+            99,
+        )
+        assert demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE == 95.0
+        assert demo.BACKGROUND_FLOOR_HISTOGRAM_BINS == 512
+        floors = {ch["name"]: ch["background_floor"] for ch in demo.CHANNELS}
+        assert floors == {
+            "membranes": 105.9911880493164,
+            "nuclei": 103.88801574707031,
+        }
+
     def test_jobs_per_gpu_is_pinned_not_auto(self):
         """`auto` OOM-killed all 100 workers on the acquisition box."""
         assert demo.JOBS_PER_GPU == 12
