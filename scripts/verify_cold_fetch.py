@@ -14,12 +14,12 @@ Why it has to exist
 -------------------
 The obvious safety net does not work here. ``DatasetUnavailable`` subclasses
 ``FileNotFoundError`` and **sixteen demos catch it deliberately**. Most fall back
-to refitting locally; the Census demo prints regeneration guidance instead. See
-the class docstring in
-``luxar.demos._support.datasets.data_fetch``. For the refitting fallbacks, that
-means a broken hosting configuration does not surface as a failure after the
-payloads are removed. It surfaces as a multi-minute GPU refit on a user's
-machine, from source data they do not have, and the process exit code stays 0.
+to refitting locally; the Census demo prints regeneration guidance and exits
+non-zero instead. For the refitting fallbacks, that means a broken hosting
+configuration does not surface as a failure after the payloads are removed. It
+surfaces as a multi-minute GPU refit on a user's machine, from source data they
+do not have, and the process exit code stays 0. See the class docstring in
+``luxar.demos._support.datasets.data_fetch``.
 
 So "did the demo run?" cannot be the check, and neither can any exit-code sweep
 downstream of it. The check has to happen while the in-repo copy still exists,
