@@ -63,7 +63,7 @@ from luxar.demos import (
     ensure_dataset,
     launch_viewer,
 )
-from luxar.demos._lod_policy import stream_ladder
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.demos._support._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -303,9 +303,12 @@ def create_mouse_scene(
                 # 20M) serving a framing the screen-area selector never picks —
                 # the finest level is anchored at half-screen occupancy and this
                 # demo opens auto-fitted, so they were bytes nobody fetched. The
-                # ladder also drops the store from 13 groups to 7, and hosted
+                # ladder also drops the store from 13 groups to 5, and hosted
                 # first paint costs roughly one request per node.
-                additive_lod=stream_ladder(len(positions_combined)),
+                additive_lod=stream_ladder(
+                    len(positions_combined),
+                    slices=hidden_axis_stops(positions_combined, dims.non_displayed),
+                ),
             )
 
             # --- Overlays ---

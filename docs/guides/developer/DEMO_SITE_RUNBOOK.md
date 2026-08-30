@@ -637,6 +637,10 @@ is another node, so the ladder costs requests without buying a faster first
 paint — the same accounting trap as counting nodes instead of bytes, one level
 down.
 
+These `stream:39062` measurements predate the sliced-node share floor. A node
+with hidden dimensions now starts at `max(39062, ceil(n / 8))`, so the six rows
+above rebuild with 5/5/7/6/9/9 groups respectively.
+
 ### 3.16 State the window before you read the number, and check it is longer than the phenomenon
 
 The most expensive error in this campaign was not a wrong mechanism. It was a

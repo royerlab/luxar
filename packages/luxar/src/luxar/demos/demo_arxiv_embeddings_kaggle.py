@@ -134,7 +134,7 @@ from luxar.demos import (
     require_module,
     stack_colorings,
 )
-from luxar.demos._lod_policy import stream_ladder
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -1263,7 +1263,7 @@ def generate_paper_landscape(
             # `coloring` axis, so the resident slice is 3,286,365 against a
             # 5,591,040 Points cap. The coarse levels served a framing the
             # screen-area selector never picks (finest anchored at half-screen
-            # occupancy; this demo opens auto-fitted): 18 groups -> 13.
+            # occupancy; this demo opens auto-fitted): 18 groups -> 9.
             #
             # NOTE for anyone tempted to add `partition=` here instead: the
             # hidden `coloring` dim is FIRST in this scene, so displayDims is
@@ -1288,7 +1288,10 @@ def generate_paper_landscape(
                 labels=stacked.labels,
                 **link_attrs,
                 layer=True,
-                additive_lod=stream_ladder(len(stacked.positions)),
+                additive_lod=stream_ladder(
+                    len(stacked.positions),
+                    slices=hidden_axis_stops(stacked.positions, dims.non_displayed),
+                ),
             )
 
             # --- Overlays ---

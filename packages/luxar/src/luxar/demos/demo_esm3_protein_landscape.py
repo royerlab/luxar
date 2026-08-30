@@ -87,7 +87,7 @@ from luxar.demos import (
     stack_colorings,
     warn_if_quarantined,
 )
-from luxar.demos._lod_policy import stream_ladder
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -895,7 +895,7 @@ def generate_esm3_landscape(
             # points against a 5,591,040 Points cap, ~10x under it. The coarse
             # levels served a framing the screen-area selector never picks (the
             # finest is anchored at half-screen occupancy and this demo opens
-            # auto-fitted), and cost four levels of nodes: 13 groups -> 7.
+            # auto-fitted), and cost four levels of nodes: 13 groups -> 5.
             #
             # It also retires the substitutive_lod_or_flat gate here. That gate
             # existed because the coarsening write path imports torch+scipy,
@@ -913,7 +913,10 @@ def generate_esm3_landscape(
                 labels=stacked.labels,
                 **link_attrs,
                 layer=True,
-                additive_lod=stream_ladder(len(stacked.positions)),
+                additive_lod=stream_ladder(
+                    len(stacked.positions),
+                    slices=hidden_axis_stops(stacked.positions, dims.non_displayed),
+                ),
             )
 
             scene.add_text(
