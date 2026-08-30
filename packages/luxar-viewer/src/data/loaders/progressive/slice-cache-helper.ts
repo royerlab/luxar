@@ -255,9 +255,7 @@ export function storeLadder<T extends object>(
     {
       payload: cloneLodSnapshot(snapshot),
       bytes,
-      ...(totalLODCount === undefined
-        ? {}
-        : { ladderDepth: fit, totalLadderDepth: totalLODCount }),
+      ...(totalLODCount === undefined ? {} : { ladderDepth: fit, totalLadderDepth: totalLODCount }),
     },
     cacheOpts
   );
