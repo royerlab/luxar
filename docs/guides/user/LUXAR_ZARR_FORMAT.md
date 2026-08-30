@@ -499,8 +499,9 @@ children for per-child frustum culling and per-child LOD. The user
 adds one node; the writer partitions it via recursive BSP at
 compile time (balanced **median** split by default; `midpoint` and
 `sah` rules are also available). The viewer renders all children
-simultaneously (no per-frame selector — THREE's per-mesh frustum
-culling does the per-part culling).
+that intersect the camera frustum simultaneously. A frustum-only
+per-frame selector also gates fetch and eviction for off-screen parts;
+unlike an LOD selector, it never substitutes one child for another.
 
 Children are **homogeneous**: every child's resolved `display_type`
 must match the wrapper's (you cannot decompose a single logical

@@ -21,11 +21,12 @@ numbers stay honest and its tree reads clearly:
   provider reports `loaded / total` levels, a refining flag, and the
   last-load cache-residency.
 - **Partition** (`kind=partition` groups): N disjoint BSP parts, all
-  rendered. The converter tags `kind='partition'` + `partCount`; totals
-  sum across parts (correct — parts are disjoint). Partition groups are
-  static (no per-frame selector), so `monitor-wiring.ts` snapshots their
-  `{ path, partCount }` once at wire-time and feeds them to the
-  LOD-progress provider, which surfaces them as `kind:'partition'` states.
+  eligible to render together when in the camera frustum. The converter tags
+  `kind='partition'` + `partCount`; totals sum across parts (correct — parts
+  are disjoint). The structural `{ path, partCount }` does not change as the
+  frustum selector hides and reveals parts, so `monitor-wiring.ts` snapshots it
+  once at wire-time and feeds it to the LOD-progress provider, which surfaces
+  the group as a `kind:'partition'` state.
 
 `visible-counts.ts` prunes hidden subtrees so inactive LOD levels (and
 toggled-off layers) don't double-count toward the visible HUD totals.

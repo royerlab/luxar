@@ -91,6 +91,10 @@ export interface LODGroupRegistryOwner {
   readonly gpuBufferPool: GPUBufferPool | null;
   /** Current archive fault latched by the owning loader, if any. */
   readonly archiveFault: ArchiveFaultError | null;
+  /** Re-run the owning loader's current view state. */
+  requestReprocess(): void;
+  /** Whether the owning loader currently has an update or refinement pass in flight. */
+  isUpdateInProgress(): boolean;
 }
 
 /**
@@ -163,7 +167,11 @@ import {
 } from './scene-loader/lifecycle/retry';
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
 import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
-import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
+import {
+  filterPartitionVisibleLoaders,
+  isPartitionPathVisible,
+  runLoaderUpdates as runLoaderUpdatesHelper,
+} from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/monitor/visible-counts';
 import { disposeSceneLoader } from './scene-loader/lifecycle/dispose';
 import type { SceneIdentityWatchdog } from './scene-identity-watchdog';
@@ -898,7 +906,13 @@ export class SceneLoader {
       viewStateQueue: this.viewStateQueue,
       registry: this.registry,
       onArchiveFault,
+      shouldUpdatePath: (path) => isPartitionPathVisible(this.rootGroup, path),
     });
+  }
+
+  /** Re-run the current view state without blocking the caller. */
+  requestReprocess(): void {
+    void this.updateView({});
   }
 
   /**
@@ -1321,7 +1335,7 @@ export class SceneLoader {
       await runGSplatsRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        gsplatLoaders: this.gsplatLoaders,
+        gsplatLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.gsplatLoaders),
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
         processGSplats: (path, data, viewState, session) =>
           this.processGSplatsData(path, data, viewState, session),
@@ -1338,7 +1352,7 @@ export class SceneLoader {
       await runPointsRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        pointsLoaders: this.loaders,
+        pointsLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.loaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         updatePointsGeometry: (path, data, session) =>
@@ -1355,7 +1369,7 @@ export class SceneLoader {
       await runLinesRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        linesLoaders: this.linesLoaders,
+        linesLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.linesLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processLines: (path, data, viewState, session) =>
@@ -1379,7 +1393,7 @@ export class SceneLoader {
       await runMeshRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        meshLoaders: this.meshLoaders,
+        meshLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.meshLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processMesh: (path, data, viewState, attrs) =>

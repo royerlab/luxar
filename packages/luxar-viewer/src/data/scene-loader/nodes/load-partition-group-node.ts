@@ -9,9 +9,8 @@
  *      for layers-panel use (currently the layer-state walker pulls
  *      these directly; this loader doesn't need to expose anything).
  *   2. Recurses each child via `loadSceneNodes` so the children's own
- *      type-specific loaders run. **All children stay visible** — no
- *      LOD-style selector — relying on THREE's per-mesh frustum culling
- *      for the per-part culling benefit.
+ *      type-specific loaders run, then registers validated per-part bounds
+ *      for frustum-only visibility and fetch gating.
  *   3. Validates a stored `bsp_tree` before exposing it to depth sorting;
  *      malformed or geometrically unsound trees fall back to centroid order.
  *
@@ -30,6 +29,7 @@ import { log, Modules } from '../../../utils/log';
 import type { SceneNode } from '../../data-loader-types';
 import type { BspTreeNode, PartitionGroupMetadata } from '../../../types/partition-group';
 import type { NodeBuildCtx } from './build-ctx';
+import type { PartitionGroupChild } from '../../../scene/lod-group-registry';
 import { loadChildrenConcurrently, type LoadSceneChildren } from './load-children-concurrently';
 
 interface PositionBounds {
@@ -265,9 +265,10 @@ function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeValidati
  * dep-cruiser check rejects static back-references. Same pattern as
  * ``load-children-concurrently.ts``.
  *
- * No registry needed — Partition has no per-frame decision to make. THREE's
- * per-mesh frustum culling handles per-part culling automatically once
- * the children attach.
+ * Partition selection is frustum-only: every intersecting part remains
+ * visible, while off-frustum parts are hidden so their registered loaders can
+ * skip slice updates. No LOD coverage, hysteresis, or level substitution is
+ * involved because hiding an in-frustum spatial part would delete geometry.
  */
 export async function loadPartitionGroupNode(
   node: SceneNode,
@@ -308,6 +309,41 @@ export async function loadPartitionGroupNode(
       object.userData.partIndex = partIndexForChild(child, index);
     },
   });
+
+  const partBounds = indexedPartBounds(sceneChildren);
+  if (ctx.lodGroupRegistry) {
+    if (!partBounds) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Partition frustum selection disabled for ${node.path}: part bounds are missing, invalid, or inconsistent`
+      );
+    } else {
+      const registryChildren: Array<PartitionGroupChild | undefined> = new Array(
+        sceneChildren.length
+      ).fill(undefined);
+      for (let loadIndex = 0; loadIndex < sceneChildren.length; loadIndex++) {
+        const partIndex = partIndexForChild(sceneChildren[loadIndex], loadIndex);
+        const object = partitionGroup.children.find(
+          (candidate) => candidate.userData.partIndex === partIndex
+        );
+        if (object) {
+          registryChildren[partIndex] = { object, positionBounds: partBounds[partIndex] };
+        }
+      }
+      if (registryChildren.every((child) => child !== undefined)) {
+        ctx.lodGroupRegistry.registerPartition({
+          path: node.path,
+          groupObject: partitionGroup,
+          children: registryChildren as PartitionGroupChild[],
+        });
+      } else {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Partition frustum selection disabled for ${node.path}: one or more parts produced no scene object`
+        );
+      }
+    }
+  }
 
   // Stash the BSP split-plane tree (when present) for the coordinator's exact
   // back-to-front part ordering; absent for streamed grid/content merges, where

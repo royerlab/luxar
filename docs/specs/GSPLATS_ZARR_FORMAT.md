@@ -370,9 +370,10 @@ fitted.gsplats.zarr/
     └── …
 ```
 
-The viewer renders ALL parts simultaneously; THREE.js per-mesh frustum culling
-selects visible parts. The partition writer uses recursive BSP (`median`,
-`midpoint`, or `sah` rule) to build spatially balanced parts.
+The viewer renders every part that intersects the camera frustum simultaneously.
+Its frustum-only partition selector also gates fetch and eviction for off-screen
+parts; it does not perform LOD substitution. The partition writer uses recursive
+BSP (`median`, `midpoint`, or `sah` rule) to build spatially balanced parts.
 
 **`bsp_tree` (optional).** When the parts came from a recursive axis-aligned
 decomposition, the root additionally carries that decomposition's split-plane
