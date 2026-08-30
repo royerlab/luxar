@@ -714,8 +714,8 @@ export interface LODGroupRegistryDeps {
 }
 
 /**
- * Tracks all loaded ``lod_group`` nodes in a scene; evaluates per-frame
- * to pick which child renders.
+ * Tracks loaded ``lod_group`` and ``kind=partition`` nodes in a scene;
+ * evaluates per-frame to pick the active LOD and frustum-visible parts.
  */
 export class LODGroupRegistry {
   private entries: Map<string, LODGroupEntry> = new Map();

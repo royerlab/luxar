@@ -32,6 +32,13 @@ export function isPartitionPathVisible(root: THREE.Object3D | null, path: string
   return true;
 }
 
+export function filterPartitionVisibleLoaders<TLoader>(
+  root: THREE.Object3D | null,
+  loaders: Map<string, TLoader>
+): Map<string, TLoader> {
+  return new Map([...loaders].filter(([path]) => isPartitionPathVisible(root, path)));
+}
+
 /**
  * Run a per-loader update task for every entry in `loaders`, recording
  * failures into `failedLoaders` and forgetting the predictive-prefetch

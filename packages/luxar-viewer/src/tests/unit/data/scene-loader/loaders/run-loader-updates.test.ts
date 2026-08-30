@@ -14,6 +14,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
+  filterPartitionVisibleLoaders,
   isPartitionPathVisible,
   runLoaderUpdates,
 } from '../../../../../data/scene-loader/loaders/run-loader-updates';
@@ -160,5 +161,27 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(isPartitionPathVisible(root, leaf.name)).toBe(true);
     part.userData.partitionFrustumVisible = false;
     expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
+  });
+
+  it('removes culled partition loaders from progressive refinement maps', () => {
+    const root = new THREE.Group();
+    const visible = new THREE.Group();
+    visible.name = '/partition/part_0';
+    const culled = new THREE.Group();
+    culled.name = '/partition/part_1';
+    culled.userData.partitionFrustumVisible = false;
+    root.add(visible, culled);
+    const visibleLoader = {};
+    const culledLoader = {};
+
+    const filtered = filterPartitionVisibleLoaders(
+      root,
+      new Map([
+        [visible.name, visibleLoader],
+        [culled.name, culledLoader],
+      ])
+    );
+
+    expect([...filtered]).toEqual([[visible.name, visibleLoader]]);
   });
 });

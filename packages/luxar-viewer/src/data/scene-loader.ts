@@ -164,6 +164,7 @@ import {
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
 import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
 import {
+  filterPartitionVisibleLoaders,
   isPartitionPathVisible,
   runLoaderUpdates as runLoaderUpdatesHelper,
 } from './scene-loader/loaders/run-loader-updates';
@@ -905,10 +906,6 @@ export class SceneLoader {
     });
   }
 
-  private visiblePartitionLoaders<TLoader>(loaders: Map<string, TLoader>): Map<string, TLoader> {
-    return new Map([...loaders].filter(([path]) => isPartitionPathVisible(this.rootGroup, path)));
-  }
-
   /**
    * Update all points and lines for a new view state.
    *
@@ -1329,7 +1326,7 @@ export class SceneLoader {
       await runGSplatsRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        gsplatLoaders: this.visiblePartitionLoaders(this.gsplatLoaders),
+        gsplatLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.gsplatLoaders),
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
         processGSplats: (path, data, viewState, session) =>
           this.processGSplatsData(path, data, viewState, session),
@@ -1346,7 +1343,7 @@ export class SceneLoader {
       await runPointsRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        pointsLoaders: this.visiblePartitionLoaders(this.loaders),
+        pointsLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.loaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         updatePointsGeometry: (path, data, session) =>
@@ -1363,7 +1360,7 @@ export class SceneLoader {
       await runLinesRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        linesLoaders: this.visiblePartitionLoaders(this.linesLoaders),
+        linesLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.linesLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processLines: (path, data, viewState, session) =>
@@ -1387,7 +1384,7 @@ export class SceneLoader {
       await runMeshRefinement({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
-        meshLoaders: this.visiblePartitionLoaders(this.meshLoaders),
+        meshLoaders: filterPartitionVisibleLoaders(this.rootGroup, this.meshLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
         processMesh: (path, data, viewState, attrs) =>
