@@ -588,7 +588,7 @@
       "quality_quotable": null,
       "measured_from": "staged",
       "measured_sha256": "7dc107ec464d08628bf01c1ba6da943cab3729b99aa10b484920733d5a894765",
-      "quality_caveat": "No reconstruction quality was recorded at fit time. The archive retains source provenance attributes, but its fitting/ and pipeline/ groups contain no metrics, so the missing PSNR values cannot be recovered from the archive alone. A refit against the source volume would stamp them."
+      "quality_caveat": "No reconstruction quality was recorded at fit time. The archive retains source provenance attributes, but its per-part fitting/ and pipeline/ groups carry no fit-time quality stamps, so the missing PSNR values cannot be recovered from the archive alone. A refit against the source volume would stamp them."
     },
     "h2afva/51tp/h2afva_51tp.gsplats.zarr.zip": {
       "n_splats": 121163285,
