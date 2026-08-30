@@ -436,6 +436,31 @@ class TestMergeStreamingKnobs:
 
         assert survey_gsplat_streaming_layout(store_path) == (1, 1)
 
+    def test_store_survey_ignores_partial_spatial_integer_barriers(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "partial-spatial-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [0, 1],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0.1], [0, 1, 0.2], [1, 0, 0.3], [1, 1, 0.4]],
+                dtype=np.float32,
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (1, 1)
+
     def test_store_survey_counts_2d_stacked_barrier_axis(self, tmp_path: Path) -> None:
         from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
 
@@ -478,6 +503,36 @@ class TestMergeStreamingKnobs:
             data=np.asarray(
                 [[0, 0, 0, 0], [1, 2, 3, 0], [2, 4, 6, 1], [3, 6, 9, 1]],
                 dtype=np.uint16,
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (2, 1)
+
+    def test_store_survey_excludes_spatial_axis_from_partial_barrier(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "partial-stacked-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [2, 3],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [
+                    [0.1, 0.2, 0, 0],
+                    [0.3, 0.4, 1, 0],
+                    [0.5, 0.6, 0, 1],
+                    [0.7, 0.8, 1, 1],
+                ],
+                dtype=np.float32,
             ),
         )
 

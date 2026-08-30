@@ -466,11 +466,13 @@ def survey_gsplat_streaming_layout(input_path: Path) -> tuple[int, int]:
                         for dim in level.attrs.get("slice_dims", [])
                         if 0 <= int(dim) < centers.shape[1]
                     ]
-                    dims = tuple(
-                        slice_dims
-                        if len(slice_dims) < centers.shape[1]
-                        else (dim for dim in slice_dims if dim >= 3)
-                    )
+                    if len(slice_dims) >= centers.shape[1]:
+                        dims = tuple(dim for dim in slice_dims if dim >= 3)
+                    else:
+                        first_hidden_dim = 2 if centers.shape[1] == 3 else 3
+                        dims = tuple(
+                            dim for dim in slice_dims if dim >= first_hidden_dim
+                        )
                     if not dims:
                         continue
                     columns = decode_coordinate_columns(centers, dims, root)

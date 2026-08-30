@@ -5967,6 +5967,47 @@ class TestLODCommand:
         assert result.exit_code == 0, normalized_cli_output(result)
         assert "x 1 slice(s) / 1 part(s)" in normalized_cli_output(result)
 
+    def test_lod_target_ms_ignores_partial_spatial_barrier(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        x, y = np.meshgrid(np.arange(4), np.arange(4), indexing="ij")
+        centers = np.column_stack(
+            [
+                np.tile(x.ravel(), 2),
+                np.tile(y.ravel(), 2),
+                np.linspace(0.1, 3.2, 32),
+            ]
+        ).astype(np.float32)
+        data = GSplatData(
+            centers=centers,
+            amplitudes=np.ones(32, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (32, 1)
+            ),
+        )
+        input_path = tmp_path / "partial-spatial.gsplats.zarr"
+        data.save(input_path)
+        assert zarr.open_group(input_path, mode="r").attrs["slice_dims"] == [0, 1]
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(input_path),
+                str(tmp_path / "partial-spatial-lod.gsplats.zarr"),
+                "--recipe",
+                "stream",
+                "--target-ms",
+                "5",
+            ],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        assert "x 1 slice(s) / 1 part(s)" in normalized_cli_output(result)
+
     def test_lod_target_ms_counts_2d_stacked_barrier(
         self, runner: CliRunner, sample_gsplats_2d_stacked: Path, tmp_path: Path
     ) -> None:
