@@ -787,8 +787,11 @@ def _refuse_invalid_repin_history(current: dict, committed: Optional[dict]) -> N
         old_entry = old_entries.get(identity)
         if not old_entry:
             continue
-        old_hosted = old_entry.get("hosted_sha256") or old_entry.get("sha256")
-        new_hosted = entry.get("hosted_sha256") or entry.get("sha256")
+        old_hosted = old_entry.get("hosted_sha256")
+        new_hosted = entry.get("hosted_sha256")
+        if old_hosted is None and new_hosted is None:
+            old_hosted = old_entry.get("sha256")
+            new_hosted = entry.get("sha256")
         if not old_hosted or not new_hosted or new_hosted == old_hosted:
             continue
         old_history = old_entry.get(_SUPERSEDED_KEY) or ()

@@ -280,6 +280,29 @@ def test_hosted_only_repin_accepts_outgoing_digest() -> None:
     generator._refuse_invalid_repin_history(repinned, committed)
 
 
+def test_first_hosted_stamp_does_not_require_repo_digest_history() -> None:
+    generator = _load_generator()
+    repo_digest = "a" * 64
+    committed = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "sha256": repo_digest}]}}
+    }
+    stamped = {
+        "datasets": {
+            "toy": {
+                "files": [
+                    {
+                        "name": "fit.zip",
+                        "sha256": repo_digest,
+                        "hosted_sha256": "b" * 64,
+                    }
+                ]
+            }
+        }
+    }
+
+    generator._refuse_invalid_repin_history(stamped, committed)
+
+
 def test_hosted_repin_rejects_wrong_appended_digest() -> None:
     generator = _load_generator()
     committed = _manifest_entry("a" * 64, ["0" * 64])
