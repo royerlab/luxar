@@ -392,7 +392,7 @@ def _locate(
     for base, subdir in roots:
         parts = [p for p in (subdir, variant, file_name) if p]
         candidate = base.joinpath(*parts)
-        if candidate.exists():
+        if candidate.is_file():
             yield candidate
 
 
@@ -467,7 +467,10 @@ def _select_pinned_location(
     """Prefer pinned bytes, falling back to the first existing candidate."""
     fallback: tuple[Optional[Path], Optional[str]] = (None, None)
     for path in candidates:
-        digest = _sha256_of(path)
+        try:
+            digest = _sha256_of(path)
+        except OSError:
+            continue
         if fallback[0] is None:
             fallback = (path, digest)
         if digest == pinned_digest:

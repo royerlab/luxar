@@ -644,6 +644,47 @@ class TestAnUnreadableFitIsNotCalledANonFit:
             "an archive that was never read owes no stamps yet"
         )
 
+    def test_check_treats_an_archive_directory_as_absent(
+        self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        archive = tmp_path / "repo" / "d" / "absent.gsplats.zarr.zip"
+        archive.mkdir(parents=True)
+
+        assert gen._run_check({"datasets": {"nope": self.ENTRY}}) == 0
+        assert "not on this machine" in capsys.readouterr().out
+
+    def test_check_skips_an_unhashable_candidate(
+        self,
+        gen: Any,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo_archive = tmp_path / "repo" / "d" / "absent.gsplats.zarr.zip"
+        repo_archive.parent.mkdir(parents=True)
+        repo_archive.write_bytes(b"cannot be opened")
+        pinned_archive = tmp_path / "cache" / "nope" / "absent.gsplats.zarr.zip"
+        pinned_archive.parent.mkdir(parents=True)
+        pinned_archive.write_bytes(b"the pinned bytes are unreadable")
+        pinned_digest = gen._sha256_of(pinned_archive)
+        real_sha256 = gen._sha256_of
+
+        def hash_readable_archive(path: Path) -> str:
+            if path == repo_archive:
+                raise PermissionError(path)
+            return real_sha256(path)
+
+        monkeypatch.setattr(gen, "_sha256_of", hash_readable_archive)
+        entry = dict(
+            self.ENTRY,
+            files=[{**self.ENTRY["files"][0], "sha256": pinned_digest}],
+        )
+
+        assert gen._run_check({"datasets": {"nope": entry}}) == 1
+        output = capsys.readouterr().out
+        assert "present but unreadable" in output
+        assert str(pinned_archive) in output
+
     def test_check_fails_for_a_pinned_present_unreadable_fit(
         self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
