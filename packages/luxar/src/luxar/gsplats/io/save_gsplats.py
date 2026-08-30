@@ -6,10 +6,10 @@ single shared authoring path
 scene compiler uses for its gsplats leaves, so there is no parallel writer and
 standalone leaves are byte-identical to scene leaves.
 
-This module is the thin standalone wrapper: it builds the zarr store (handling
-optional ``.zip`` / ``.tar.gz`` compression), writes the self-identifying root
-header (``format_version`` = :data:`FORMAT_VERSION`), hands
-the node tree to the shared walker, attaches optional ``fitting/`` /
+This module provides the standalone tree writer plus streaming partition and
+flat-leaf entry points. It builds the zarr store (handling optional ``.zip`` /
+``.tar.gz`` compression), writes the self-identifying root header
+(``format_version`` = :data:`FORMAT_VERSION`), attaches optional ``fitting/`` /
 ``provenance/`` / ``pipeline/`` groups (``pipeline/`` = reduction/topology
 stats; see :func:`split_fitting_info`), and consolidates metadata.
 """
@@ -21,6 +21,7 @@ import os
 import shutil
 import tempfile
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -32,6 +33,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    cast,
 )
 
 import numpy as np
@@ -40,6 +42,7 @@ import zarr
 from luxar._zarr_compat import consolidate, create_root_group, open_store
 
 if TYPE_CHECKING:
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
     from luxar.gsplats.tree import GSplatNode
 
 from luxar.core.group.compositing import WRITER_STAMPED_APPEARANCE_DEFAULTS
@@ -61,6 +64,42 @@ from luxar.typing_utils._format_contract import (
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.utils.arbol_warnings import arbol_warnings
 from luxar.utils.paths import normalize_zarr_path
+
+_MAX_STREAMING_BARRIER_RUNS = 1_000_000
+
+
+@dataclass(frozen=True)
+class StreamingSplatSetMetadata:
+    """Metadata needed to size a streamed flat-leaf write without decoding it."""
+
+    n_splats: int
+    ndim: int
+    truncation_radius: float
+    color_channels: int = 0
+    color_dtype: Optional[np.dtype[Any]] = None
+    barrier_values: Optional[np.ndarray] = None
+    barrier_counts: Optional[np.ndarray] = None
+
+
+@dataclass(frozen=True)
+class _StreamingLayout:
+    n_splats: int
+    ndim: int
+    truncation_radius: float
+    color_channels: int
+    color_dtype: np.dtype[Any]
+    any_colors: bool
+    preserve_integer_colors: bool
+
+
+@dataclass
+class _StreamingWriteState:
+    offset: int = 0
+    ordering_template: Optional[Dict[str, Any]] = None
+    ordering_min: Optional[np.ndarray] = None
+    ordering_max: Optional[np.ndarray] = None
+    cholesky_reference: Optional[np.ndarray] = None
+    cholesky_is_uniform: bool = True
 
 
 # Get luxar.gsplats version — the subpackage has no own __version__, so fall
@@ -615,52 +654,20 @@ def write_gsplats_tree(
             warn_on_missing_tone_mapping=False,
         )
 
-        # Self-identifying v3.0 header (the node's own type/kind/position_bounds attrs
-        # were written onto root by the walker; these header keys are disjoint).
-        root.attrs["format_version"] = FORMAT_VERSION
-        root.attrs["format_type"] = "gsplats_zarr"
-        root.attrs["timestamp"] = datetime.datetime.now(
-            datetime.timezone.utc
-        ).isoformat()
-        root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
-        # A standalone file opened directly (?src=…gsplats.zarr) is the whole layer,
-        # so expose the root in the viewer's Layers panel (the scene-embed graft uses
-        # the scene builders instead and does not carry this root attr). The value
-        # is single-sourced with the READER that has to recognise it as a stamp
-        # rather than as an authored choice (`agreed_authored_appearance`).
-        root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
-        if description:
-            root.attrs["description"] = description
+        artifact_n_splats = None
+        if fitting_info is not None and "n_splats" in fitting_info:
+            from luxar.gsplats.tree import total_splats
 
-        if fitting_info is not None:
-            # `n_splats` denotes the count of splats in THIS artifact (see
-            # fitting/results.py). Stats are inherited from the source fit, so for
-            # count-changing operations (substitutive / multiscale LOD synthesise
-            # extra representative splats) the inherited value is stale and would
-            # contradict the file's own leaf arrays. Correct it to the true total.
-            if "n_splats" in fitting_info:
-                from luxar.gsplats.tree import total_splats
-
-                fitting_info = {**fitting_info, "n_splats": int(total_splats(node))}
-            fitting_group = root.create_group("fitting")
-            fitting_group.attrs.update(fitting_info)
-            if fitting_config is not None:
-                fitting_group.create_group("config").attrs.update(fitting_config)
-        if provenance_info is not None:
-            root.create_group("provenance").attrs.update(provenance_info)
-        if pipeline_info:
-            # Reduction/topology stats (lod_kind, method, compression_factor,
-            # coverage_inflation, refine, ...) — everything split_fitting_info's
-            # other buckets do not consume. Optional group: absent for plain fits.
-            root.create_group("pipeline").attrs.update(pipeline_info)
-
-        # One colormap window per gsplat structure (#1691) — before the hash so
-        # the stamp covers the corrected attrs.
-        harmonize_gsplat_amplitude_windows(root)
-
-        # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
-        _stamp_content_hash(root)
-        consolidate(root)
+            artifact_n_splats = int(total_splats(node))
+        _finalize_gsplat_root(
+            root,
+            artifact_n_splats=artifact_n_splats,
+            fitting_info=fitting_info,
+            fitting_config=fitting_config,
+            provenance_info=provenance_info,
+            pipeline_info=pipeline_info,
+            description=description,
+        )
 
         if compress:
             _compress_zarr(zarr_path, path, compress, zip_deflate, temp_dir)
@@ -696,6 +703,318 @@ def _resolve_metadata_provider(
     value: Optional[Dict[str, Any] | Callable[[], Optional[Dict[str, Any]]]],
 ) -> Optional[Dict[str, Any]]:
     return value() if callable(value) else value
+
+
+def _finalize_gsplat_root(
+    root: zarr.Group,
+    *,
+    artifact_n_splats: Optional[int],
+    fitting_info: Optional[
+        Dict[str, Any] | Callable[[], Optional[Dict[str, Any]]]
+    ] = None,
+    fitting_config: Optional[Dict[str, Any]] = None,
+    provenance_info: Optional[Dict[str, Any]] = None,
+    pipeline_info: Optional[Dict[str, Any]] = None,
+    description: Optional[str] = None,
+) -> None:
+    """Attach root metadata, then hash and consolidate in contract order.
+
+    Appearance harmonization must precede the content hash, and the hash must
+    precede consolidation so corrected attrs and the hash itself land in the
+    consolidated metadata used by every standalone writer.
+    """
+    # Self-identifying v3.0 header (disjoint from the node's structural attrs).
+    root.attrs["format_version"] = FORMAT_VERSION
+    root.attrs["format_type"] = "gsplats_zarr"
+    root.attrs["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
+    # A standalone file opened directly is the whole layer, so expose its root
+    # in the Layers panel. Single-source the value with the reader that must
+    # distinguish this writer stamp from an authored choice.
+    root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
+    if description:
+        root.attrs["description"] = description
+
+    resolved_fitting_info = _resolve_metadata_provider(fitting_info)
+    if resolved_fitting_info is not None:
+        # `n_splats` is the count in THIS artifact (see fitting/results.py).
+        # Count-changing LOD inherits a stale source-fit value unless corrected.
+        if artifact_n_splats is not None and "n_splats" in resolved_fitting_info:
+            resolved_fitting_info = {
+                **resolved_fitting_info,
+                "n_splats": artifact_n_splats,
+            }
+        fitting_group = root.create_group("fitting")
+        fitting_group.attrs.update(resolved_fitting_info)
+        if fitting_config is not None:
+            fitting_group.create_group("config").attrs.update(fitting_config)
+    if provenance_info is not None:
+        root.create_group("provenance").attrs.update(provenance_info)
+    if pipeline_info:
+        # Reduction/topology stats: everything split_fitting_info's other
+        # buckets do not consume. Optional group: absent for plain fits.
+        root.create_group("pipeline").attrs.update(pipeline_info)
+
+    # One colormap window per gsplat structure (#1691) — before the hash so
+    # the stamp covers the corrected attrs.
+    harmonize_gsplat_amplitude_windows(root)
+
+    # Stamp BEFORE consolidating so the hash lands in `.zmetadata` too.
+    _stamp_content_hash(root)
+    consolidate(root)
+
+
+def _resolve_streaming_layout(
+    metadata: Sequence[StreamingSplatSetMetadata],
+) -> _StreamingLayout:
+    n_splats = 0
+    ndim: Optional[int] = None
+    truncation_radius: Optional[float] = None
+    color_channels = 0
+    color_dtypes: set[np.dtype[Any]] = set()
+    any_colors = False
+    any_missing_colors = False
+    for item in metadata:
+        if ndim is None:
+            ndim = item.ndim
+            truncation_radius = float(item.truncation_radius)
+        elif item.ndim != ndim:
+            raise ValueError(
+                f"streamed splat sets must share one dimensionality; got {ndim}D "
+                f"and {item.ndim}D"
+            )
+        elif float(item.truncation_radius) != truncation_radius:
+            raise ValueError(
+                "streamed splat sets must share one truncation_radius; got "
+                f"{truncation_radius} and {item.truncation_radius}"
+            )
+        n_splats += item.n_splats
+        if item.color_dtype is None:
+            any_missing_colors = True
+        else:
+            any_colors = True
+            color_channels = max(color_channels, item.color_channels)
+            color_dtypes.add(item.color_dtype)
+    if ndim is None or truncation_radius is None or n_splats == 0:
+        raise ValueError("write_flat_leaf_streaming: no non-empty splat sets to write")
+    preserve_integer_colors = (
+        not any_missing_colors
+        and len(color_dtypes) == 1
+        and np.issubdtype(next(iter(color_dtypes)), np.integer)
+    )
+    color_dtype = (
+        next(iter(color_dtypes)) if preserve_integer_colors else np.dtype(np.float32)
+    )
+    return _StreamingLayout(
+        n_splats=n_splats,
+        ndim=ndim,
+        truncation_radius=truncation_radius,
+        color_channels=color_channels,
+        color_dtype=color_dtype,
+        any_colors=any_colors,
+        preserve_integer_colors=preserve_integer_colors,
+    )
+
+
+def _resolve_streaming_barrier_offsets(
+    metadata: Sequence[StreamingSplatSetMetadata], barrier_dims: Sequence[int]
+) -> Optional[dict[tuple[float, ...], int]]:
+    """Map exact barrier tuples, ordered by sorted barrier dimensions, to offsets."""
+    if not barrier_dims:
+        return None
+    totals: dict[tuple[float, ...], int] = {}
+    for item in metadata:
+        values = item.barrier_values
+        counts = item.barrier_counts
+        if values is None or counts is None:
+            raise ValueError(
+                "barrier_values and barrier_counts are required when barrier_dims "
+                "are non-empty"
+            )
+        if values.ndim != 2 or values.shape[1] != len(barrier_dims):
+            raise ValueError("streamed barrier values do not match barrier_dims")
+        if counts.shape != (len(values),):
+            raise ValueError("streamed barrier counts do not match barrier values")
+        if int(np.sum(counts)) != item.n_splats:
+            raise ValueError("streamed barrier counts do not match n_splats")
+        for value, count in zip(values, counts):
+            key = tuple(float(component) for component in value)
+            _add_streaming_barrier_total(
+                totals, key, int(count), _MAX_STREAMING_BARRIER_RUNS
+            )
+    offsets = {}
+    next_offset = 0
+    for key in sorted(totals):
+        offsets[key] = next_offset
+        next_offset += totals[key]
+    return offsets
+
+
+def _add_streaming_barrier_total(
+    totals: dict[tuple[float, ...], int],
+    key: tuple[float, ...],
+    count: int,
+    max_runs: int,
+) -> None:
+    """Accumulate one barrier run while enforcing the dictionary size bound."""
+    totals[key] = totals.get(key, 0) + count
+    if len(totals) > max_runs:
+        raise ValueError(
+            "streamed barrier values exceed the allocation limit of "
+            f"{max_runs} exact value tuples"
+        )
+
+
+def _normalize_stream_colors(
+    colors: Optional[np.ndarray],
+    *,
+    n_splats: int,
+    color_channels: int,
+    preserve_integer: bool,
+) -> np.ndarray:
+    from luxar.gsplats.gsplat_data import widen_colors_to_rgba
+
+    if colors is None:
+        return np.ones((n_splats, color_channels), dtype=np.float32)
+    normalized = np.asarray(colors)
+    if not preserve_integer:
+        if np.issubdtype(normalized.dtype, np.integer):
+            integer_max = np.iinfo(cast(Any, normalized.dtype)).max
+            normalized = normalized.astype(np.float32) / np.float32(integer_max)
+        else:
+            normalized = normalized.astype(np.float32, copy=False)
+    if color_channels == 4 and normalized.shape[1] == 3:
+        normalized = widen_colors_to_rgba(normalized)
+    return normalized
+
+
+def _stream_destinations(
+    metadata: StreamingSplatSetMetadata,
+    barrier_offsets: Optional[dict[tuple[float, ...], int]],
+    offset: int,
+) -> list[tuple[int, int, int]]:
+    """Map sorted source runs to barrier-major output ranges.
+
+    Metadata run order must match ``_compound_sort``'s lexsort key order.
+    """
+    if barrier_offsets is None:
+        return [(offset, 0, metadata.n_splats)]
+    assert metadata.barrier_values is not None
+    assert metadata.barrier_counts is not None
+    destinations = []
+    source_start = 0
+    for value, count in zip(metadata.barrier_values, metadata.barrier_counts):
+        key = tuple(float(component) for component in value)
+        destination_start = barrier_offsets[key]
+        source_stop = source_start + int(count)
+        destinations.append((destination_start, source_start, source_stop))
+        barrier_offsets[key] += int(count)
+        source_start = source_stop
+    if source_start != metadata.n_splats:
+        raise ValueError("streamed barrier runs do not cover the splat set")
+    return destinations
+
+
+def _cholesky_is_uniform(cholesky: np.ndarray, reference: np.ndarray) -> bool:
+    return all(
+        np.all(cholesky[start : start + 65_536] == reference)
+        for start in range(0, len(cholesky), 65_536)
+    )
+
+
+def _write_streamed_splat_set(
+    sublod: "AdditiveSubLOD",
+    metadata: StreamingSplatSetMetadata,
+    *,
+    state: _StreamingWriteState,
+    barrier_dims: Sequence[int],
+    barrier_offsets: Optional[dict[tuple[float, ...], int]],
+    layout: _StreamingLayout,
+    centers: np.ndarray,
+    amplitudes: np.ndarray,
+    cholesky: np.ndarray,
+    colors: Optional[np.ndarray],
+) -> None:
+    from luxar.io.ordering import sort_splats_spatial
+
+    if (
+        sublod.n_splats != metadata.n_splats
+        or sublod.ndim != metadata.ndim
+        or float(sublod.truncation_radius) != metadata.truncation_radius
+    ):
+        raise ValueError("streamed splat set does not match its metadata")
+    sort_indices, ordering = sort_splats_spatial(
+        sublod.centers,
+        method="hilbert",
+        slice_dims=barrier_dims,
+    )
+    part_centers = sublod.centers[sort_indices]
+    part_amplitudes = sublod.amplitudes[sort_indices]
+    part_cholesky = sublod.cholesky_factors[sort_indices]
+    part_colors = sublod.colors[sort_indices] if sublod.colors is not None else None
+    normalized = None
+    if colors is not None:
+        normalized = _normalize_stream_colors(
+            part_colors,
+            n_splats=sublod.n_splats,
+            color_channels=layout.color_channels,
+            preserve_integer=layout.preserve_integer_colors,
+        )
+    for destination_start, source_start, source_stop in _stream_destinations(
+        metadata, barrier_offsets, state.offset
+    ):
+        destination_stop = destination_start + source_stop - source_start
+        centers[destination_start:destination_stop] = part_centers[
+            source_start:source_stop
+        ]
+        amplitudes[destination_start:destination_stop] = part_amplitudes[
+            source_start:source_stop
+        ]
+        cholesky[destination_start:destination_stop] = part_cholesky[
+            source_start:source_stop
+        ]
+        if colors is not None and normalized is not None:
+            colors[destination_start:destination_stop] = normalized[
+                source_start:source_stop
+            ]
+
+    if state.ordering_template is None:
+        state.ordering_template = ordering
+        ordering_dims = list(ordering.get("ordering_dims", []))
+        state.ordering_min = np.full(len(ordering_dims), np.inf)
+        state.ordering_max = np.full(len(ordering_dims), -np.inf)
+    ordering_dims = list(state.ordering_template.get("ordering_dims", []))
+    assert state.ordering_min is not None and state.ordering_max is not None
+    for index, dim in enumerate(ordering_dims):
+        state.ordering_min[index] = min(
+            state.ordering_min[index], float(np.min(part_centers[:, dim]))
+        )
+        state.ordering_max[index] = max(
+            state.ordering_max[index], float(np.max(part_centers[:, dim]))
+        )
+
+    if state.cholesky_reference is None:
+        state.cholesky_reference = part_cholesky[0].copy()
+    if state.cholesky_is_uniform:
+        state.cholesky_is_uniform = _cholesky_is_uniform(
+            part_cholesky, state.cholesky_reference
+        )
+    state.offset += sublod.n_splats
+
+
+def _next_streamed_splat_set(stream: Iterator["AdditiveSubLOD"]) -> "AdditiveSubLOD":
+    try:
+        return next(stream)
+    except StopIteration as exc:
+        raise ValueError("splat_sets ended before splat_set_metadata") from exc
+
+
+def _require_stream_exhausted(stream: Iterator["AdditiveSubLOD"]) -> None:
+    try:
+        next(stream)
+    except StopIteration:
+        return
+    raise ValueError("splat_sets yielded more entries than its metadata")
 
 
 def write_partition_streaming(
@@ -822,35 +1141,15 @@ def write_partition_streaming(
         # loop above has just finished determining.
         _stamp_optional_bsp_tree(root, bsp_tree)
 
-        # Self-identifying v3.0 header (disjoint from the node's structural attrs).
-        root.attrs["format_version"] = FORMAT_VERSION
-        root.attrs["format_type"] = "gsplats_zarr"
-        root.attrs["timestamp"] = datetime.datetime.now(
-            datetime.timezone.utc
-        ).isoformat()
-        root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
-        root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
-        if description:
-            root.attrs["description"] = description
-
-        resolved_fitting_info = _resolve_metadata_provider(fitting_info)
-        if resolved_fitting_info is not None:
-            fitting_group = root.create_group("fitting")
-            fitting_group.attrs.update(resolved_fitting_info)
-            if fitting_config is not None:
-                fitting_group.create_group("config").attrs.update(fitting_config)
-        if provenance_info is not None:
-            root.create_group("provenance").attrs.update(provenance_info)
-        if pipeline_info:
-            root.create_group("pipeline").attrs.update(pipeline_info)
-
-        # One colormap window per gsplat structure (#1691) — before the hash so
-        # the stamp covers the corrected attrs.
-        harmonize_gsplat_amplitude_windows(root)
-
-        # Stamp BEFORE consolidating so the hash lands in ``.zmetadata`` too.
-        _stamp_content_hash(root)
-        consolidate(root)
+        _finalize_gsplat_root(
+            root,
+            artifact_n_splats=None,
+            fitting_info=fitting_info,
+            fitting_config=fitting_config,
+            provenance_info=provenance_info,
+            pipeline_info=pipeline_info,
+            description=description,
+        )
     except BaseException:
         # Includes the n_written == 0 ValueError above — no partial root is
         # left behind either way; the destination stays untouched.
@@ -858,6 +1157,202 @@ def write_partition_streaming(
         raise
     _atomic_finalize(tmp, path)
     return n_written
+
+
+def write_flat_leaf_streaming(
+    path: str | Path,
+    splat_sets: Callable[[], Iterator["AdditiveSubLOD"]],
+    *,
+    splat_set_metadata: Sequence[StreamingSplatSetMetadata],
+    encoding_mode: EncodingMode = EncodingMode.PRECISION,
+    fitting_info: Optional[Dict[str, Any]] = None,
+    fitting_config: Optional[Dict[str, Any]] = None,
+    provenance_info: Optional[Dict[str, Any]] = None,
+    pipeline_info: Optional[Dict[str, Any]] = None,
+    description: Optional[str] = None,
+    compressor: Optional[Any] = DEFAULT_COMP,
+    barrier_dims: Sequence[int],
+    root_attrs: Optional[Dict[str, Any]] = None,
+    compress: Optional[Literal["zip", "tar.gz"]] = None,
+    zip_deflate: bool = False,
+) -> int:
+    """Write one flat leaf from a stream, holding one decoded leaf in memory.
+
+    The decoded source sets are spatially ordered independently and written into
+    disk-backed staging arrays. Barrier values are grouped globally while each
+    value retains a piecewise Hilbert order, avoiding the whole-array permutation
+    required by the regular writer. The canonical array writer still owns the
+    on-disk encoding, chunk layout, metadata, appearance defaults, and format
+    stamps.
+
+    ``splat_set_metadata`` sizes the staging arrays without decoding source data;
+    ``splat_sets`` is consumed exactly once to populate them. Streaming currently
+    requires precision encoding; auto/memory need whole-array encoding analysis
+    and would defeat the memory bound this entry point exists to provide.
+    """
+    if encoding_mode != EncodingMode.PRECISION:
+        raise ValueError(
+            "write_flat_leaf_streaming requires encoding_mode='precision'; "
+            "auto/memory encoding needs whole-array analysis"
+        )
+
+    from luxar.gsplats.utils.trils import tril_size
+    from luxar.io._compiler.gsplat_assembly import (
+        apply_gsplat_group_attrs,
+        resolve_gsplat_chunk_size,
+        write_gsplat_arrays,
+    )
+    from luxar.io._ordering.gsplats import compute_chunk_bounds_gsplats
+
+    layout = _resolve_streaming_layout(splat_set_metadata)
+    n_splats = layout.n_splats
+    ndim = layout.ndim
+    truncation_radius = layout.truncation_radius
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_dir, zarr_path = _resolve_zarr_path(path, compress)
+    if temp_dir is None:
+        zarr_path = _tmp_sibling(path)
+    stage_parent = path.parent
+
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="luxar_gsplat_flatten_", dir=stage_parent
+        ) as stage:
+            stage_path = Path(stage)
+            centers = np.memmap(
+                stage_path / "centers.dat",
+                mode="w+",
+                dtype=np.float32,
+                shape=(n_splats, ndim),
+            )
+            amplitudes = np.memmap(
+                stage_path / "amplitudes.dat",
+                mode="w+",
+                dtype=np.float32,
+                shape=(n_splats,),
+            )
+            cholesky = np.memmap(
+                stage_path / "cholesky.dat",
+                mode="w+",
+                dtype=np.float32,
+                shape=(n_splats, tril_size(ndim)),
+            )
+            colors = (
+                np.memmap(
+                    stage_path / "colors.dat",
+                    mode="w+",
+                    dtype=layout.color_dtype,
+                    shape=(n_splats, layout.color_channels),
+                )
+                if layout.any_colors
+                else None
+            )
+
+            dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
+            chunk_size = resolve_gsplat_chunk_size(n_splats, ndim)
+            resolved_slice_dims = list(barrier_dims)
+            barrier_offsets = _resolve_streaming_barrier_offsets(
+                splat_set_metadata, resolved_slice_dims
+            )
+
+            state = _StreamingWriteState()
+            stream = iter(splat_sets())
+            for stream_metadata in splat_set_metadata:
+                sublod = _next_streamed_splat_set(stream)
+                _write_streamed_splat_set(
+                    sublod,
+                    stream_metadata,
+                    state=state,
+                    barrier_dims=resolved_slice_dims,
+                    barrier_offsets=barrier_offsets,
+                    layout=layout,
+                    centers=centers,
+                    amplitudes=amplitudes,
+                    cholesky=cholesky,
+                    colors=colors,
+                )
+
+            _require_stream_exhausted(stream)
+
+            assert state.ordering_template is not None
+            assert state.ordering_min is not None and state.ordering_max is not None
+            centers.flush()
+            amplitudes.flush()
+            cholesky.flush()
+            if colors is not None:
+                colors.flush()
+
+            chunk_bounds = compute_chunk_bounds_gsplats(
+                centers,
+                cholesky,
+                chunk_size,
+                coverage_sigma=float(truncation_radius),
+                slice_dims=resolved_slice_dims,
+            )
+
+            ordering_dims = list(state.ordering_template.get("ordering_dims", []))
+            ordering_data = {
+                "ordering": state.ordering_template["ordering"],
+                "ordering_min": state.ordering_min.tolist(),
+                "ordering_max": state.ordering_max.tolist(),
+                "ordering_bits_per_dim": state.ordering_template[
+                    "ordering_bits_per_dim"
+                ],
+                "chunk_size": chunk_size,
+                "slice_dims": list(resolved_slice_dims),
+                "ordering_dims": ordering_dims,
+                "chunk_bounds": chunk_bounds,
+            }
+
+            store = open_store(zarr_path, mode="w")
+            root = create_root_group(store, overwrite=True)
+            metadata = write_gsplat_arrays(
+                root,
+                centers,
+                amplitudes,
+                cholesky,
+                colors,
+                n_splats,
+                ndim,
+                state.cholesky_is_uniform,
+                ordering_data,
+                None,
+                dataset_ctx,
+            )
+            attrs = dict(root_attrs or {})
+            attrs.setdefault("truncation_radius", float(truncation_radius))
+            apply_gsplat_group_attrs(
+                root,
+                metadata,
+                attrs,
+                root,
+                scene_tone_mapping=None,
+                lut_tone_mapping_warned=False,
+                warn_on_missing_tone_mapping=False,
+            )
+            _finalize_gsplat_root(
+                root,
+                artifact_n_splats=n_splats,
+                fitting_info=fitting_info,
+                fitting_config=fitting_config,
+                provenance_info=provenance_info,
+                pipeline_info=pipeline_info,
+                description=description,
+            )
+
+        if compress:
+            _compress_zarr(zarr_path, path, compress, zip_deflate, temp_dir)
+        else:
+            _atomic_finalize(zarr_path, path)
+        return n_splats
+    except BaseException:
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        else:
+            shutil.rmtree(zarr_path, ignore_errors=True)
+        raise
 
 
 @arbol_warnings()

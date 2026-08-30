@@ -474,7 +474,7 @@ class BaseEncoderMixin:
         create_array(
             zarr_group,
             name,
-            data=data.astype(target_dtype),
+            data=data.astype(target_dtype, copy=False),
             chunks=chunks,
             compressor=resolve_compressor(compressor, target_dtype),
             overwrite=True,

@@ -684,7 +684,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
             # and float16 was already refuted 4x worse for wide-range
             # positives). PRECISION stays float32.
             if mode == EncodingMode.PRECISION or data.ndim != 2:
-                encoded_data = data.astype(np.float32)
+                encoded_data = data.astype(np.float32, copy=False)
                 encoder_name = "float32"
             elif mode in (EncodingMode.AUTO, EncodingMode.MEMORY):
                 self._encode_geolog_perchannel(
@@ -701,7 +701,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         elif color_mode == "sdr":
             # SDR colors: can quantize
             if mode == EncodingMode.PRECISION:
-                encoded_data = data.astype(np.float32)
+                encoded_data = data.astype(np.float32, copy=False)
                 encoder_name = "float32"
             elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
                 # Quantize to uint8: [0, 1] → [0, 255]
@@ -773,7 +773,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
         # Select encoding based on mode
         if mode == EncodingMode.PRECISION:
             # No quantization
-            encoded_data = data.astype(np.float32)
+            encoded_data = data.astype(np.float32, copy=False)
             encoder_name = "float32"
             metadata = {"name": encoder_name, "original_dtype": original_dtype}
         elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:

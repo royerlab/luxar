@@ -6,7 +6,8 @@ or nested LOD stores. `partition`, `cull`, `filter`, `slice`, `decimate`, and
 `merge` require a flat (matrix-shaped) store; run `luxar gsplat flatten` first
 for partition or nested inputs. These write-output commands take `--encoding`/`-e`
 (`auto`/`precision`/`memory`, default `auto`): `transform`, `slice`, `filter`,
-`cull`, `merge`, `partition`, `flatten`, `additive`, `convert`. All of those
+`cull`, `merge`, `partition`, `additive`, `convert`. `flatten` is precision-only.
+All of those
 except `convert` also take `--compress` (`zip`/`tar.gz`). `reencode` takes
 `--encoding` too but defaults to `memory`. `migrate-format`, `annotate-quality`,
 `denoise`, and the inspection commands have neither. NOTE: the old `split`
@@ -90,6 +91,9 @@ Collapse any gsplat tree (leaf, LOD/matrix-shaped tree, partition, or nested
 partition/LOD) into one flat matrix-shaped leaf. Use it when a downstream tool
 expects a flat `.gsplats.zarr`, or to rebuild a fresh global LOD after tiled or
 partitioned fitting. Options: `--overwrite`, `--encoding`/`-e`, `--compress`.
+Flatten drops additive ladders; rebuild one with `lod --recipe stream`. Its
+disk-backed staging lives beside the destination and temporarily needs roughly
+one uncompressed flat payload of free space.
 
 ## convert IN.gsplats.zarr OUT.luxar.zarr
 Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
