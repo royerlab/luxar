@@ -1021,6 +1021,28 @@ def test_a_pinned_non_fit_file_does_not_fail_refresh(
     assert gen.main() == 0
 
 
+def test_an_unhashable_non_fit_file_is_ignored(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "coords.npz"
+    archive.write_bytes(b"inaccessible coordinate array")
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: {})
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+    monkeypatch.setattr(
+        gen,
+        "_sha256_of",
+        lambda path: (_ for _ in ()).throw(PermissionError(path)),
+    )
+
+    result = gen.refresh_characteristics(
+        _fake_manifest([_entry(archive.name, "pinned")])
+    )
+
+    assert result.inaccessible == ()
+    assert result.preserved == 0
+
+
 def test_locate_ignores_an_unzipped_archive_directory(
     gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1260,7 +1282,7 @@ def test_refresh_reports_inaccessible_archives_without_failing(
     assert gen.main() == 0
 
     output = capsys.readouterr().out
-    assert "archive is on this machine but could not be read" in output
+    assert "fit archive is on this machine but could not be read" in output
     assert "check permissions" in output
     assert str(archive) in output
     assert "preserved 0 not on this machine" in output

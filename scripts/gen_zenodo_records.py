@@ -590,6 +590,21 @@ def _retain_preferred_measurements(
     return retained, rejected
 
 
+def _record_unselected_archive(
+    key: str,
+    file_name: str,
+    candidates: list[Path],
+    absent: set[str],
+    inaccessible: list[Path],
+) -> None:
+    """Separate absent archives from fit candidates that could not be hashed."""
+    if candidates:
+        if _is_fit(file_name):
+            inaccessible.extend(candidates)
+    else:
+        absent.add(key)
+
+
 def refresh_characteristics(
     manifest: dict[str, Any], extra_root: Optional[Path] = None
 ) -> RefreshResult:
@@ -629,10 +644,9 @@ def refresh_characteristics(
                 pinned_digests[key],
             )
             if path is None:
-                if candidates:
-                    inaccessible.extend(candidates)
-                else:
-                    absent.add(key)
+                _record_unselected_archive(
+                    key, spec["name"], candidates, absent, inaccessible
+                )
                 continue
             root = (
                 "staged"
@@ -1071,7 +1085,7 @@ def main() -> int:
             print(f"ERROR: pinned archive is present but unreadable: {path}")
         for path in result.inaccessible:
             print(
-                "WARNING: archive is on this machine but could not be read "
+                "WARNING: fit archive is on this machine but could not be read "
                 f"(check permissions): {path}"
             )
         if args.archives_root:
@@ -1090,8 +1104,8 @@ def main() -> int:
             "but unreadable"
         )
         print(
-            f"skipped {len(result.inaccessible)} archive candidate(s) that were on "
-            "this machine but could not be read"
+            f"skipped {len(result.inaccessible)} fit archive candidate(s) that were "
+            "on this machine but could not be read"
         )
         print(
             f"skipped {result.unpinned_unreadable} fit archive(s) that were present "
