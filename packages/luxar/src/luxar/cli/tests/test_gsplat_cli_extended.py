@@ -7515,6 +7515,652 @@ class TestFlattenCommand:
         assert loaded.n_splats == n0  # count conserved
         assert loaded.n_substitutive == 1  # a single flat leaf (no LOD/partition)
 
+    def test_flatten_streams_one_default_leaf_at_a_time(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The partition root is never materialized; each selected leaf is read alone."""
+        import importlib
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.io._compiler import gsplat_tree
+
+        load_module = importlib.import_module("luxar.gsplats.io.load_gsplats")
+
+        source = GSplatData.load(medium_gsplats)
+        palette = np.array(
+            [
+                [255, 0, 0],
+                [0, 255, 0],
+                [0, 0, 255],
+                [255, 255, 0],
+                [255, 0, 255],
+                [0, 255, 255],
+                [128, 128, 128],
+                [255, 255, 255],
+            ],
+            dtype=np.uint8,
+        )
+        colored = GSplatData(
+            centers=source.centers,
+            amplitudes=source.amplitudes,
+            cholesky_factors=source.cholesky_factors,
+            colors=palette[np.arange(source.n_splats) % len(palette)],
+        )
+        colored_path = tmp_path / "colored.gsplats.zarr"
+        colored.save(colored_path)
+        part = tmp_path / "part.gsplats.zarr"
+        total = self._make_partition(runner, colored_path, part)
+        expected_node, _ = load_module.load_gsplat_node(part)
+        expected = GSplatData.from_default_selection(expected_node).flattened()
+
+        real_load_node = load_module.load_gsplat_node
+        monkeypatch.setattr(
+            load_module,
+            "load_gsplat_node",
+            lambda *args, **kwargs: pytest.fail("flatten materialized the whole tree"),
+        )
+        real_read = gsplat_tree.read_gsplat_node
+        largest_read = 0
+        total_read = 0
+
+        def tracked_read(*args: Any, **kwargs: Any) -> Any:
+            nonlocal largest_read, total_read
+            node = real_read(*args, **kwargs)
+            largest_read = max(largest_read, node.n_splats)
+            total_read += node.n_splats
+            return node
+
+        monkeypatch.setattr(gsplat_tree, "read_gsplat_node", tracked_read)
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(part), str(flat)])
+        assert result.exit_code == 0, result.stdout
+        assert largest_read < total
+        assert total_read == total
+        monkeypatch.setattr(load_module, "load_gsplat_node", real_load_node)
+
+        actual = GSplatData.load(flat)
+        assert actual.n_splats == total
+        expected_order = np.lexsort(expected.centers.T[::-1])
+        actual_order = np.lexsort(actual.centers.T[::-1])
+        np.testing.assert_allclose(
+            actual.centers[actual_order], expected.centers[expected_order]
+        )
+        np.testing.assert_allclose(
+            actual.amplitudes[actual_order], expected.amplitudes[expected_order]
+        )
+        np.testing.assert_allclose(
+            actual.cholesky_factors[actual_order],
+            expected.cholesky_factors[expected_order],
+        )
+        np.testing.assert_array_equal(
+            actual.colors[actual_order], expected.colors[expected_order]
+        )
+        root = zc_open_group(str(flat), mode="r")
+        assert root.attrs["ordering"] == "hilbert"
+        assert root["chunk_bounds"].shape[0] >= 1
+
+    def test_flatten_roundtrips_lut_encoded_colors(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Palette colors use their encoded logical shape during metadata sizing."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(31)
+        n_splats = 3000
+        palette = rng.integers(0, 256, size=(8, 3), dtype=np.uint8)
+        source_data = GSplatData(
+            centers=rng.normal(size=(n_splats, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_splats, 1),
+            ),
+            colors=palette[np.arange(n_splats) % len(palette)],
+        )
+        source = tmp_path / "palette.gsplats.zarr"
+        source_data.save(source)
+        source_root = zc_open_group(str(source), mode="r")
+        assert source_root["colors"].ndim == 1
+        assert source_root["colors"].attrs["encoding"]["name"].startswith("lut_")
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(source), str(flat)])
+        assert result.exit_code == 0, result.stdout
+        expected = GSplatData.load(source)
+        actual = GSplatData.load(flat)
+        expected_order = np.lexsort(expected.centers.T[::-1])
+        actual_order = np.lexsort(actual.centers.T[::-1])
+        np.testing.assert_array_equal(
+            actual.colors[actual_order], expected.colors[expected_order]
+        )
+
+    @pytest.mark.skipif(
+        not Path("/proc/self/smaps_rollup").exists(),
+        reason="anonymous-memory accounting requires Linux procfs",
+    )
+    def test_flatten_peak_anonymous_memory_is_bounded(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Flatten stays well below the resident cost of a whole-tree concat."""
+        import subprocess
+        import sys
+        import textwrap
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(23)
+        n_splats = 1_000_000
+        source = tmp_path / "source.gsplats.zarr"
+        GSplatData(
+            centers=rng.normal(size=(n_splats, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_splats, 1),
+            ),
+        ).save(source)
+        partition = tmp_path / "partition.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "partition", str(source), str(partition), "--parts", "8"],
+        )
+        assert result.exit_code == 0, result.stdout
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        script = textwrap.dedent(
+            """
+            import gc
+            import threading
+            from pathlib import Path
+
+            from typer.testing import CliRunner
+            from luxar._zarr_compat import open_group
+            from luxar.cli import app
+            from luxar.cli.gsplat_ops.transforms.partition_flatten import (
+                _default_leaf_paths,
+                _iter_flatten_splat_sets,
+            )
+            from luxar.io.ordering import sort_splats_spatial
+
+            def anonymous_bytes():
+                for line in Path('/proc/self/smaps_rollup').read_text().splitlines():
+                    if line.startswith('Anonymous:'):
+                        return int(line.split()[1]) * 1024
+                raise RuntimeError('Anonymous total missing from smaps_rollup')
+
+            root = open_group(__import__('sys').argv[1], mode='r')
+            first = next(_iter_flatten_splat_sets(root, _default_leaf_paths(root)[:1]))
+            sort_splats_spatial(first.centers, method='hilbert')
+            del first, root
+            gc.collect()
+            baseline = anonymous_bytes()
+            samples = [baseline]
+            stop = threading.Event()
+
+            def sample_memory():
+                while not stop.wait(0.01):
+                    samples.append(anonymous_bytes())
+
+            sampler = threading.Thread(target=sample_memory, daemon=True)
+            sampler.start()
+            try:
+                result = CliRunner().invoke(
+                    app, ['gsplat', 'flatten', __import__('sys').argv[1], __import__('sys').argv[2]]
+                )
+            finally:
+                stop.set()
+                sampler.join()
+            if result.exit_code != 0:
+                raise RuntimeError(result.stdout) from result.exception
+            print(f'PEAK_DELTA={max(samples) - baseline}')
+            """
+        )
+        measured = subprocess.run(
+            [sys.executable, "-c", script, str(partition), str(flat)],
+            capture_output=True,
+            text=True,
+        )
+        assert measured.returncode == 0, measured.stderr
+
+        flat_payload_bytes = n_splats * (3 * 4 + 4 + 6 * 4)
+        peak_delta = int(measured.stdout.rsplit("PEAK_DELTA=", 1)[1].splitlines()[0])
+        assert peak_delta < flat_payload_bytes * 2.5
+
+    def test_flatten_does_not_invent_large_offset_barrier(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Streaming fallback matches canonical detection at large offsets."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(31)
+        n_splats = 4_000
+        centers = np.empty((n_splats, 4), dtype=np.float32)
+        centers[:, :3] = rng.uniform(0, 100, (n_splats, 3))
+        centers[:, 3] = rng.uniform(100_000, 100_600, n_splats)
+        cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+        cholesky[:, [0, 2, 5, 9]] = 3.0
+        source = tmp_path / "source.gsplats.zarr"
+        GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=cholesky,
+        ).save(source)
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "partition", str(source), str(partition), "--parts", "4"],
+        )
+        assert result.exit_code == 0, result.stdout
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(partition), str(flat)])
+        assert result.exit_code == 0, result.stdout
+
+        expected = zc_open_group(str(source), mode="r")
+        actual = zc_open_group(str(flat), mode="r")
+        assert actual.attrs["slice_dims"] == expected.attrs["slice_dims"] == []
+        assert (
+            actual.attrs["ordering_dims"]
+            == expected.attrs["ordering_dims"]
+            == [
+                0,
+                1,
+                2,
+                3,
+            ]
+        )
+
+    def test_flatten_rejects_high_cardinality_coarsen_barrier(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A continuous axis stamped as a barrier fails before run expansion."""
+        from luxar.cli.gsplat_ops.transforms import partition_flatten
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        monkeypatch.setattr(partition_flatten, "_MAX_STREAMING_BARRIER_RUNS", 128)
+        rng = np.random.default_rng(32)
+        n_splats = 1_100
+        centers = rng.uniform(0, 100, (n_splats, 3)).astype(np.float32)
+        centers[:, 2] = np.arange(n_splats, dtype=np.float32)
+        source = tmp_path / "source.gsplats.zarr"
+        GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_splats, 1),
+            ),
+            stats={"coarsen_dims": [0, 1]},
+        ).save(source)
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(source), str(flat)])
+        assert result.exit_code != 0
+        assert "barrier axes [2] derived from coarsen_dims [0, 1]" in result.stdout
+        assert "streaming limit is 128 exact value tuples" in result.stdout
+        assert not flat.exists()
+
+    def test_flatten_rejects_high_cardinality_detected_runs(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rounded categories cannot hide unbounded exact lexsort runs."""
+        from luxar.cli.gsplat_ops.transforms import partition_flatten
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        monkeypatch.setattr(partition_flatten, "_MAX_STREAMING_BARRIER_RUNS", 128)
+        rng = np.random.default_rng(33)
+        n_splats = 1_100
+        centers = np.empty((n_splats, 4), dtype=np.float32)
+        centers[:, :3] = rng.uniform(0, 100, (n_splats, 3))
+        centers[:, 3] = np.linspace(-9e-4, 9e-4, n_splats, dtype=np.float32)
+        cholesky = np.zeros((n_splats, 10), dtype=np.float32)
+        cholesky[:, [0, 2, 5, 9]] = 1.0
+        source = tmp_path / "source.gsplats.zarr"
+        GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=cholesky,
+        ).save(source)
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "partition", str(source), str(partition), "--parts", "4"],
+        )
+        assert result.exit_code == 0, result.stdout
+        partition_root = zc_open_group(str(partition), mode="a")
+        for name in partition_root:
+            if str(name).startswith("part_"):
+                partition_root[name].attrs["slice_dims"] = []
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(partition), str(flat)])
+        assert result.exit_code != 0
+        assert (
+            "auto-detected barrier axis 3 exceeds the streaming limit of 128"
+            in result.stdout
+        )
+        assert "coarsen_dims is absent" in result.stdout
+        assert not flat.exists()
+
+    @pytest.mark.parametrize(
+        ("barrier_shape", "splats_per_value"),
+        [((1_100,), 6), ((40, 30), 8)],
+    )
+    def test_flatten_preserves_large_explicit_barrier_layout(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        barrier_shape: tuple[int, ...],
+        splats_per_value: int,
+    ) -> None:
+        """Explicit stacked axes may exceed the fallback detection heuristic."""
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(34)
+        barrier_values = np.indices(barrier_shape).reshape(len(barrier_shape), -1).T
+        barrier_values = np.repeat(barrier_values, splats_per_value, axis=0)
+        n_splats = len(barrier_values)
+        ndim = 3 + len(barrier_shape)
+        centers = np.empty((n_splats, ndim), dtype=np.float32)
+        centers[:, :3] = rng.uniform(0, 100, (n_splats, 3))
+        centers[:, 3:] = barrier_values
+        cholesky = np.zeros((n_splats, ndim * (ndim + 1) // 2), dtype=np.float32)
+        cholesky[:, np.cumsum(np.arange(1, ndim + 1)) - 1] = 1.0
+        data = GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=cholesky,
+            stats={"coarsen_dims": [0, 1, 2]},
+        )
+        source = tmp_path / "source.gsplats.zarr"
+        data.save(source)
+
+        expected_path = tmp_path / "expected.gsplats.zarr"
+        data.save(
+            expected_path,
+            encoding_mode=EncodingMode.PRECISION,
+            barrier_dims=list(range(3, ndim)),
+        )
+        actual_path = tmp_path / "actual.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "flatten", str(source), str(actual_path)]
+        )
+        assert result.exit_code == 0, result.stdout
+
+        expected_root = zc_open_group(str(expected_path), mode="r")
+        actual_root = zc_open_group(str(actual_path), mode="r")
+        for key in (
+            "slice_dims",
+            "ordering_dims",
+            "chunk_size",
+            "ordering_bits_per_dim",
+        ):
+            assert actual_root.attrs[key] == expected_root.attrs[key]
+        expected_bounds = np.asarray(expected_root["chunk_bounds"])
+        actual_bounds = np.asarray(actual_root["chunk_bounds"])
+        assert actual_bounds.shape == expected_bounds.shape
+        for dim in range(3, ndim):
+            np.testing.assert_allclose(
+                actual_bounds[:, dim, 1] - actual_bounds[:, dim, 0],
+                expected_bounds[:, dim, 1] - expected_bounds[:, dim, 0],
+            )
+
+    def test_flatten_preserves_barrier_chunk_layout(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A partition of additive ladders keeps the stacked-time chunk barrier."""
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        rng = np.random.default_rng(17)
+        n_spatial = 600
+        spatial = GSplatData(
+            centers=rng.normal(size=(n_spatial, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n_spatial).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_spatial, 1),
+            ),
+        )
+        stacked = GSplatData.combine_as_new_dimension(
+            [spatial] * 8,
+            values=list(range(8)),
+            sigma=0.0,
+        )
+        source = tmp_path / "stacked.gsplats.zarr"
+        stacked.save(source)
+
+        tiled = tmp_path / "tiled.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(source),
+                str(tiled),
+                "--recipe",
+                "tiles",
+                "--max-elements",
+                "1200",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+
+        node, _ = load_gsplat_node(tiled)
+        expected = GSplatData.from_default_selection(node).flattened()
+        expected_path = tmp_path / "expected.gsplats.zarr"
+        expected.save(
+            expected_path,
+            encoding_mode=EncodingMode.PRECISION,
+            barrier_dims=[3],
+        )
+
+        actual_path = tmp_path / "actual.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(tiled), str(actual_path)])
+        assert result.exit_code == 0, result.stdout
+
+        expected_root = zc_open_group(str(expected_path), mode="r")
+        actual_root = zc_open_group(str(actual_path), mode="r")
+        for key in ("slice_dims", "ordering_dims", "chunk_size"):
+            assert actual_root.attrs[key] == expected_root.attrs[key]
+        expected_bounds = np.asarray(expected_root["chunk_bounds"])
+        actual_bounds = np.asarray(actual_root["chunk_bounds"])
+        assert len(expected_bounds) >= 4
+        assert actual_bounds.shape == expected_bounds.shape
+        np.testing.assert_allclose(
+            actual_bounds[:, 3, 1] - actual_bounds[:, 3, 0],
+            expected_bounds[:, 3, 1] - expected_bounds[:, 3, 0],
+        )
+
+    def test_flatten_detects_barrier_across_stale_empty_stamps(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Global detection recovers a barrier from stale per-leaf empty stamps."""
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+
+        rng = np.random.default_rng(29)
+        n_spatial = 160
+        spatial = GSplatData(
+            centers=rng.normal(size=(n_spatial, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n_spatial).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_spatial, 1),
+            ),
+        )
+        stacked = GSplatData.combine_as_new_dimension(
+            [spatial] * 8,
+            values=list(range(8)),
+            sigma=0.0,
+        )
+        source = tmp_path / "stacked.gsplats.zarr"
+        stacked.save(source)
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "partition",
+                str(source),
+                str(partition),
+                "--parts",
+                "4",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        partition_root = zc_open_group(str(partition), mode="a")
+        part_names = [name for name in partition_root if str(name).startswith("part_")]
+        assert len(part_names) == 4
+        for name in part_names:
+            partition_root[name].attrs["slice_dims"] = []
+
+        node, _ = load_gsplat_node(partition)
+        expected = GSplatData.from_default_selection(node).flattened()
+        expected_path = tmp_path / "expected.gsplats.zarr"
+        expected.save(
+            expected_path,
+            encoding_mode=EncodingMode.PRECISION,
+            barrier_dims=[3],
+        )
+
+        actual_path = tmp_path / "actual.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "flatten", str(partition), str(actual_path)]
+        )
+        assert result.exit_code == 0, result.stdout
+
+        expected_root = zc_open_group(str(expected_path), mode="r")
+        actual_root = zc_open_group(str(actual_path), mode="r")
+        assert actual_root.attrs["slice_dims"] == [3]
+        expected_bounds = np.asarray(expected_root["chunk_bounds"])
+        actual_bounds = np.asarray(actual_root["chunk_bounds"])
+        np.testing.assert_allclose(
+            actual_bounds[:, 3, 1] - actual_bounds[:, 3, 0],
+            expected_bounds[:, 3, 1] - expected_bounds[:, 3, 0],
+        )
+
+    def test_flatten_rejects_unsupported_format(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        import shutil
+
+        shutil.copytree(medium_gsplats, legacy)
+        zc_open_group(str(legacy), mode="a").attrs["format_version"] = "2.0"
+
+        output = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(legacy), str(output)])
+        assert result.exit_code == 1
+        assert "Unsupported format_version: '2.0'" in _plain(result.stdout)
+        assert "migrate-format" in _plain(result.stdout)
+        assert not output.exists()
+
+    def test_flatten_subtree_error_names_store_root(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        partition = tmp_path / "partition.gsplats.zarr"
+        self._make_partition(runner, medium_gsplats, partition)
+
+        output = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "flatten", str(partition / "part_0"), str(output)]
+        )
+        assert result.exit_code == 1
+        message = _plain(result.stdout)
+        assert "node-tree subtree" in message
+        assert ".gsplats.zarr store root" in message
+        assert not output.exists()
+
+    def test_flatten_creates_output_parent_and_stores_zip(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        import zipfile
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        self._make_partition(runner, medium_gsplats, partition)
+        output = tmp_path / "nested" / "flat.gsplats.zarr.zip"
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "flatten",
+                str(partition),
+                str(output),
+                "--compress",
+                "zip",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        with zipfile.ZipFile(output) as archive:
+            assert archive.infolist()
+            assert {entry.compress_type for entry in archive.infolist()} == {
+                zipfile.ZIP_STORED
+            }
+
+    def test_flatten_corrects_inherited_fitting_count(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        source_root = zc_open_group(str(medium_gsplats), mode="a")
+        source_root.require_group("fitting").attrs["n_splats"] = 32
+        ladder = tmp_path / "levels.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(ladder),
+                "--recipe",
+                "levels",
+                "-K",
+                "4",
+                "-L",
+                "2",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(ladder), str(flat)])
+        assert result.exit_code == 0, result.stdout
+        root = zc_open_group(str(flat), mode="r")
+        assert root["fitting"].attrs["n_splats"] == root.attrs["n_splats"]
+
+    def test_flatten_rejects_whole_array_encoding_modes(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "flat.gsplats.zarr"
+        for mode in ("auto", "memory"):
+            result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "flatten",
+                    str(medium_gsplats),
+                    str(output),
+                    "--encoding",
+                    mode,
+                ],
+            )
+            assert result.exit_code == 1
+            assert "requires --encoding precision" in _plain(result.stdout)
+            assert not output.exists()
+
     @pytest.mark.parametrize(
         "lod_args",
         [

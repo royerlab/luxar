@@ -19,31 +19,45 @@ and share one 4D coordinate space).
 
 DATA SOURCE & CITATIONS:
     Adrian Jacobo lab (CZ Biohub / Rockefeller). iSIM, Richardson–Lucy
-    deconvolved, motion-aligned. Original volumes on the CZ Biohub HPC:
-    ``…/04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1/{Membranes,Nuclei}``.
+    deconvolved, motion-aligned. Original volumes are under ``HPC_SOURCE_ROOT``
+    in each channel's recorded ``hpc_source_dir``.
 
 PIPELINE — reproducible per channel with ``--recompute``:
-    1. Assemble the channel's 100 deconvolved timepoints into one
-       ``time,z,y,x`` array, and subtract a single global background floor
-       measured once for that channel (105.991 membranes / 103.888 nuclei).
-       ``--recompute`` starts from the assembled array and does the
-       subtraction; assembling from the microscope's per-timepoint files is
-       upstream of this demo.
-    2. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
+    1. To rebuild either channel, read its deconvolved TIFFs from the channel's
+       ``hpc_source_dir`` using ``SOURCE_FILE_PATTERN`` and
+       ``SOURCE_TIMEPOINT_LABELS``. Order ``t1`` through ``t100`` NUMERICALLY
+       (not lexicographically), treat each TIFF as ``z,y,x``, and stack them
+       into one ``time,z,y,x`` array. The nuclei array used for the recorded run
+       was assembled this way; the membranes array in hand ships as a single
+       zipped array. ``--source-*`` expects either assembled array, not the
+       per-timepoint directory.
+    2. Measure one background floor per channel: on the ten zero-based frames
+       in ``BACKGROUND_FLOOR_SAMPLE_INDICES``, take the centre of the peak bin
+       in a 512-bin histogram over values at or below that frame's 95th
+       percentile, then take the median of those ten modes. The per-frame step
+       matches ``estimate_floor(frame, method="mode")`` in
+       ``luxar.gsplats.calibration.noise_floor``; that helper additionally
+       excludes exact zeros and caps at the frame median, neither of which
+       affected these frames. The recorded results are 105.991 (membranes) and
+       103.888 (nuclei); expect reproduction within one float32 ulp, while the
+       pinned literals are the values used for subtraction. ``--recompute``
+       subtracts each pinned value with a clip at zero; do not re-measure it
+       during a rebuild.
+    3. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
        Recorded, not re-run: the sweep is hours and its answer is stable.
-    3. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
+    4. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
        64k seeds, ``--floor auto``, no fit-time cull.
-    4. Redundancy-cull every per-timepoint tile
+    5. Redundancy-cull every per-timepoint tile
        (``-m redundancy --redundancy-threshold 0.20``) → ~11% lighter at
        SSIM-flat quality. Per TILE, before the merge: culling the merged
        timelapse would need the whole 4D reconstruction in memory at once.
-    5. ``batch-fit merge --recipe stream`` over the culled tiles → ONE leaf with
+    6. ``batch-fit merge --recipe stream`` over the culled tiles → ONE leaf with
        an 8-rung progressive ladder. The stacked time axis is a hard coarsening
        barrier, so no rung blends two timepoints.
-    6. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
+    7. ``gsplat transform --scale 2.5,1,1,1 --normalize-intensity 1.0``
        → isotropic Z, amplitudes on a 0-1 scale.
 
-    Step 3 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
+    Step 4 must be run with ``--jobs-per-gpu 12``, not ``auto``. On this box
     ``auto`` sized 100 concurrent workers for 100 tasks and every one of them
     was OOM-killed (``exit -9``) before a single tile landed — an
     over-subscribed GPU here fails all-at-once rather than degrading.
@@ -132,6 +146,22 @@ DATA_DIR = Path(
     )
 )
 
+HPC_SOURCE_ROOT = (
+    "/hpc/projects/jacobo_group/Adrian/RU_Processed_Data/No_Ablations_Aligned/"
+    "04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1"
+)
+#: Applied inside each channel directory for every recorded timepoint label.
+SOURCE_FILE_PATTERN = "*_t{timepoint}.tiff"
+#: Axis order of every deconvolved per-timepoint TIFF before stacking.
+SOURCE_FRAME_AXES = "z,y,x"
+#: Ten evenly spaced zero-based frames (rounded linspace 0..99) used for floors.
+BACKGROUND_FLOOR_SAMPLE_INDICES = (0, 11, 22, 33, 44, 55, 66, 77, 88, 99)
+#: Per-frame mode measurement: histogram the low-intensity bulk through p95.
+BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE = 95.0
+BACKGROUND_FLOOR_HISTOGRAM_BINS = 512
+#: Combine the ten per-frame modes into the one floor pinned per channel.
+BACKGROUND_FLOOR_REDUCTION = "median"
+
 # Channel configuration — each becomes an independently-toggleable layer.
 # Named colormaps (not baked RGB) so the viewer applies the LUT at display
 # time and the Layers panel can switch it interactively.
@@ -147,6 +177,8 @@ CHANNELS = [
         # ---- recompute recipe, per channel ----
         #: ``--source-<name> PATH``: the assembled (time, z, y, x) array.
         "source_flag": "source-membranes",
+        #: Durable upstream TIFF tree.
+        "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Membranes/Deconvolved",
         #: Global background floor, measured ONCE on this channel and recorded.
         #: Re-measuring would drift, and the fit's own `--floor auto` runs on top
         #: of the subtraction rather than replacing it.
@@ -162,6 +194,7 @@ CHANNELS = [
         "marker": "she:GFP (nuclei)",
         "opacity": 1.0,
         "source_flag": "source-nuclei",
+        "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
         "background_floor": 103.88801574707031,
         "expected_splats": 5_530_300,
     },
@@ -183,6 +216,8 @@ SCENE_NAME = "gsplats_4d_neuromast_2ch.luxar.zarr"
 SOURCE_AXES = "time,z,y,x"
 #: Full extent both channels must have; asserted before the GPU is touched.
 SOURCE_SHAPE = (100, 84, 580, 576)
+#: One TIFF per one-based acquisition timepoint, stacked in this numeric order.
+SOURCE_TIMEPOINT_LABELS = tuple(range(1, SOURCE_SHAPE[0] + 1))
 #: Calibrated splat budget per timepoint (Noise2Self blind-spot sweep).
 SEEDS = 64_000
 #: Fitting preset. `n2s` is the noise-aware one that pairs with the calibration.

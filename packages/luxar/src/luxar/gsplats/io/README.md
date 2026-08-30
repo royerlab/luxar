@@ -44,6 +44,11 @@ save_gsplats(
 )
 ```
 
+**`write_flat_leaf_streaming()`** writes one flat leaf from metadata plus a
+single-pass stream of decoded splat sets, using disk-backed staging so only one
+decoded leaf (all its additive rungs) plus one set's local ordering copy are
+resident.
+
 **`load_gsplats()` / `load_default_gsplats()`** - Load splats from .gsplats.zarr
 
 Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.

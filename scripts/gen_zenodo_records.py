@@ -23,9 +23,10 @@ retain their own provenance note after a later pinned archive read supplies that
 digest.
 
 ``quality_note`` is internal provenance and is never rendered. ``quality_caveat``
-is reader-facing text rendered next to an absent figure. ``unmeasured_reason`` is
-written by ``--refresh`` when a local file exists but is not the pinned artifact
-and no committed measurement survives that rejected read.
+is reader-facing text rendered next to an absent quality figure and tells
+``--check`` that the absence is explained. ``unmeasured_reason`` is written by
+``--refresh`` when a local file exists but is not the pinned artifact and no
+committed measurement survives that rejected read.
 
 This script NEVER talks to Zenodo. It writes markdown for a human to paste into
 a draft, and publication stays a manual act.
@@ -34,7 +35,7 @@ a draft, and publication stays a manual act.
     python scripts/gen_zenodo_records.py --record cc-by  # just one
     python scripts/gen_zenodo_records.py --outdir docs/zenodo/
     python scripts/gen_zenodo_records.py --check         # report gaps, exit 1
-    python scripts/gen_zenodo_records.py --refresh       # re-measure; exit 1 on unreadable pinned fits
+    python scripts/gen_zenodo_records.py --refresh       # exit 1 when a pinned fit hashes but cannot be parsed
     python scripts/gen_zenodo_records.py --refresh --archives-root STAGING/
                                                         # prefer namespaced staged archives
 """
@@ -46,7 +47,7 @@ import io
 import json
 import sys
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
@@ -69,8 +70,10 @@ class RefreshResult(NamedTuple):
     rejected: int
     preserved: int
     unreadable: tuple[Path, ...]
+    inaccessible: tuple[Path, ...]
     unpinned_unreadable: int
     staged_selected: int
+    staged_hash_failures: int
 
 
 # ---------------------------------------------------------------------------
@@ -483,20 +486,27 @@ def _sha256_of(path: Path) -> str:
 
 
 def _select_pinned_location(
-    candidates: Iterator[Path], pinned_digest: Optional[str]
-) -> tuple[Optional[Path], Optional[str]]:
-    """Prefer pinned bytes, falling back to the first readable candidate."""
+    candidates: Iterable[Path], pinned_digest: Optional[str]
+) -> tuple[Optional[Path], Optional[str], tuple[Path, ...]]:
+    """Prefer pinned bytes, fall back to the first readable candidate, and report hash failures."""
     fallback: tuple[Optional[Path], Optional[str]] = (None, None)
+    inaccessible: list[Path] = []
     for path in candidates:
         try:
             digest = _sha256_of(path)
         except OSError:
+            inaccessible.append(path)
             continue
         if fallback[0] is None:
             fallback = (path, digest)
         if digest == pinned_digest:
-            return path, digest
-    return fallback
+            return path, digest, tuple(inaccessible)
+    return fallback[0], fallback[1], tuple(inaccessible)
+
+
+def _count_paths_under(paths: Iterable[Path], root: Optional[Path]) -> int:
+    """Count *paths* below *root*, or zero when no root was supplied."""
+    return 0 if root is None else sum(path.is_relative_to(root) for path in paths)
 
 
 def _retain_preferred_measurements(
@@ -594,22 +604,26 @@ def refresh_characteristics(
 ) -> RefreshResult:
     """Re-measure archives and report how every local candidate was handled.
 
-    PRESERVES entries whose archive is not on this machine, for the same reason
+    PRESERVES entries whose archive cannot be freshly read, for the same reason
     ``gen_data_manifest`` preserves committed file lists: a refresh run from a
-    partial checkout would otherwise silently delete the measurements for every
-    dataset it cannot see, and a partial checkout is the normal case now.
+    partial checkout or with an unreadable local copy would otherwise silently
+    delete measurements it could not re-take.
 
-    Pinned archives that are present but unreadable are also left intact on disk,
-    but are returned separately so the caller can fail after writing good reads.
+    Pinned archives that hash successfully but cannot be parsed are returned
+    separately so the caller can fail after writing good reads.
+    Fit candidates that cannot be hashed are returned separately from absent
+    archives, without failing because their bytes cannot be verified against the
+    pin.
     """
     existing = load_characteristics()
     measured: dict[str, Any] = {}
     pinned_digests: dict[str, Optional[str]] = {}
     seen: set[str] = set()
-    absent: set[str] = set()
     unreadable: list[Path] = []
+    inaccessible: list[Path] = []
     unpinned_unreadable = 0
     staged_selected = 0
+    staged_hash_failures = 0
     for dataset, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
@@ -617,12 +631,14 @@ def refresh_characteristics(
             key = _char_key(dataset, variant, spec["name"])
             seen.add(key)
             pinned_digests[key] = _pinned_digest(spec)
-            path, measured_sha256 = _select_pinned_location(
+            path, measured_sha256, hash_failures = _select_pinned_location(
                 _locate(dataset, entry, variant, spec["name"], extra_root),
                 pinned_digests[key],
             )
+            staged_hash_failures += _count_paths_under(hash_failures, extra_root)
+            if hash_failures and _is_fit(spec["name"]):
+                inaccessible.append(hash_failures[0])
             if path is None:
-                absent.add(key)
                 continue
             root = (
                 "staged"
@@ -681,8 +697,9 @@ def refresh_characteristics(
                     "a later pinned archive read may supply the digest while "
                     "retaining those source-derived figures. "
                     "quality_note is internal provenance; quality_caveat is "
-                    "published beside an absent figure. unmeasured_reason records "
-                    "why refresh deliberately withheld measurements."
+                    "published beside an absent quality figure and tells --check "
+                    "that the absence is explained. unmeasured_reason records why "
+                    "refresh deliberately withheld measurements."
                 ),
                 "archives": archives,
             },
@@ -694,10 +711,12 @@ def refresh_characteristics(
         read=read,
         retained=retained,
         rejected=rejected,
-        preserved=sum(key in absent for key in preserved_entries),
+        preserved=len(preserved_entries),
         unreadable=tuple(unreadable),
+        inaccessible=tuple(inaccessible),
         unpinned_unreadable=unpinned_unreadable,
         staged_selected=staged_selected,
+        staged_hash_failures=staged_hash_failures,
     )
 
 
@@ -791,7 +810,7 @@ def _dataset_rows(
         # rest, and the only way to explain a gap is to widen it.
         if info is not None and "measured_sha256" not in info:
             pinned = _pinned_digest(spec)
-            path, digest = _select_pinned_location(
+            path, digest, _ = _select_pinned_location(
                 _locate(dataset, entry, variant, spec["name"]),
                 pinned,
             )
@@ -803,7 +822,7 @@ def _dataset_rows(
         elif info is None:
             # Unlike a note, a wholly unmeasured row may use unpinned local bytes
             # so a fresh fit remains renderable before its first refresh.
-            path, _ = _select_pinned_location(
+            path, _, _ = _select_pinned_location(
                 _locate(dataset, entry, variant, spec["name"]),
                 _pinned_digest(spec),
             )
@@ -985,15 +1004,51 @@ def _why_absent(row: dict[str, Any], chars: dict[str, Any]) -> str:
     )
 
 
-def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Figures a record would print as absent, and the rows nothing was read for."""
+class GapResult(NamedTuple):
+    """Incomplete rows and archives that were absent, inaccessible, or unreadable."""
+
+    problems: list[str]
+    unread: list[str]
+    unreadable: list[tuple[str, Path]]
+    inaccessible: list[tuple[str, tuple[Path, ...]]]
+
+
+def _record_unread_fit(
+    name: str,
+    entry: dict[str, Any],
+    variant: str,
+    spec: dict[str, Any],
+    row: dict[str, Any],
+    unread: list[str],
+    unreadable: list[tuple[str, Path]],
+    inaccessible: list[tuple[str, tuple[Path, ...]]],
+) -> None:
+    """Classify a declared fit whose archive metadata could not be read."""
+    item = f"{name}/{row['file']}"
+    pinned = _pinned_digest(spec)
+    candidates = _locate(name, entry, variant, spec["name"])
+    path, digest, hash_failures = _select_pinned_location(candidates, pinned)
+    if path is not None and digest == pinned and _read_archive(path) is None:
+        unreadable.append((item, path))
+    elif hash_failures:
+        inaccessible.append((item, hash_failures))
+    else:
+        unread.append(item)
+
+
+def _gaps(manifest: dict[str, Any]) -> GapResult:
+    """Figures a record would print as absent, plus archives not successfully read."""
     problems: list[str] = []
     unread: list[str] = []
+    unreadable: list[tuple[str, Path]] = []
+    inaccessible: list[tuple[str, tuple[Path, ...]]] = []
     chars = load_characteristics()
     for name, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
-        for row in _dataset_rows(name, entry, chars):
+        files = _files_of(entry)
+        rows = _dataset_rows(name, entry, chars)
+        for row, (variant, spec) in zip(rows, files, strict=True):
             # Companion sidecars (label maps, colour arrays) and the tabular /
             # point-cloud datasets are not fits, so they owe no splat count or
             # reconstruction quality. Demanding one would make this list
@@ -1003,13 +1058,23 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
                 # examined. Dropping it silently would let the count below read
                 # as completeness while a dozen rows went unchecked.
                 if row["is_fit"]:
-                    unread.append(f"{name}/{row['file']}")
+                    _record_unread_fit(
+                        name,
+                        entry,
+                        variant,
+                        spec,
+                        row,
+                        unread,
+                        unreadable,
+                        inaccessible,
+                    )
                 continue
             expected = [
                 ("splats", row["splats"]),
                 ("compression", row["vs_raw"]),
             ]
-            if row["quality_quotable"] is not False:
+            # A published caveat explains absent quality figures, not other gaps.
+            if row["quality_quotable"] is not False and not row["caveat"]:
                 expected[1:1] = [
                     ("PSNR", row["psnr"]),
                     ("foreground PSNR", row["fg_psnr"]),
@@ -1020,9 +1085,9 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
                     f"{name}/{row['file']}: no {', '.join(missing)}"
                     + _why_absent(row, chars)
                 )
-        if not _files_of(entry):
+        if not files:
             problems.append(f"{name}: no files uploaded")
-    return problems, unread
+    return GapResult(problems, unread, unreadable, inaccessible)
 
 
 def main() -> int:
@@ -1032,7 +1097,8 @@ def main() -> int:
     ap.add_argument(
         "--check",
         action="store_true",
-        help="list characteristics that are not yet stamped, and exit 1 if any",
+        help="list characteristics that are not yet stamped or stale, fail on "
+        "pinned fits that cannot be read, and exit 1 if any",
     )
     ap.add_argument(
         "--archives-root",
@@ -1046,8 +1112,9 @@ def main() -> int:
         action="store_true",
         help="re-measure every archive present on this machine and rewrite "
         "scripts/demo_archive_characteristics.json (preserves entries whose "
-        "archive is absent here; exits 1 after writing if a pinned fit is "
-        "present but unreadable)",
+        "archive cannot be freshly read; exits 1 after writing if a pinned fit "
+        "hashes but cannot be parsed; an archive that cannot be opened for "
+        "hashing is warned and retained without failing)",
     )
     args = ap.parse_args()
     if args.archives_root and not args.refresh:
@@ -1057,21 +1124,34 @@ def main() -> int:
     if args.refresh:
         result = refresh_characteristics(manifest, args.archives_root)
         for path in result.unreadable:
-            print(f"ERROR: pinned archive is present but unreadable: {path}")
+            print(
+                "ERROR: pinned fit archive matched the manifest pin but could "
+                f"not be parsed: {path}"
+            )
+        for path in result.inaccessible:
+            print(
+                "WARNING: fit archive could not be opened for hashing (check "
+                "permissions); unread bytes cannot be checked against the pin: "
+                f"{path}"
+            )
         if args.archives_root:
             print(
                 f"selected {result.staged_selected} archive(s) under --archives-root "
                 f"{args.archives_root}"
             )
-            if result.staged_selected == 0:
+            if result.staged_selected == 0 and result.staged_hash_failures == 0:
                 print(
                     "WARNING: --archives-root matched no archives; "
                     "expected layout: <root>/<dataset>/[<variant>/]<file> "
                     "(zip files — unpacked .gsplats.zarr.zip/ directories are skipped)"
                 )
         print(
-            f"skipped {len(result.unreadable)} pinned archive(s) that were present "
-            "but unreadable"
+            f"skipped {len(result.unreadable)} pinned fit archive(s) that matched "
+            "the manifest pin but could not be parsed"
+        )
+        print(
+            f"warned about {len(result.inaccessible)} fit archive(s) with a candidate "
+            "that could not be opened for hashing"
         )
         print(
             f"skipped {result.unpinned_unreadable} fit archive(s) that were present "
@@ -1081,7 +1161,8 @@ def main() -> int:
             f"read {result.read} archive(s) here, skipped {result.rejected} read(s) "
             f"taken from bytes the manifest does not pin, kept {result.retained} "
             "committed measurement(s) that outrank the local copy, preserved "
-            f"{result.preserved} not on this machine -> "
+            f"{result.preserved} committed measurement(s) without a fresh "
+            "read -> "
             f"{CHARACTERISTICS.relative_to(REPO_ROOT)}"
         )
         return 1 if result.unreadable else 0
@@ -1091,8 +1172,8 @@ def main() -> int:
 
 
 def _run_check(manifest: dict[str, Any]) -> int:
-    """``--check``: report figures a record would print as absent, or as stale."""
-    problems, unread = _gaps(manifest)
+    """Report absent or stale figures and pinned fits that cannot be read."""
+    problems, unread, unreadable, inaccessible = _gaps(manifest)
     for problem in problems:
         print(problem)
     print(f"\n{len(problems)} archive(s) would publish an incomplete row.")
@@ -1115,7 +1196,23 @@ def _run_check(manifest: dict[str, Any]) -> int:
         )
         for item in unread:
             print(f"  {item}")
-    return 1 if problems or stale else 0
+    if inaccessible:
+        print(
+            f"{len(inaccessible)} fit archive(s) had a candidate that could not "
+            "be opened for hashing (check permissions); unread bytes cannot be "
+            "checked against the pin:"
+        )
+        for item, paths in inaccessible:
+            print(f"  {item} ({', '.join(map(str, paths))})")
+    if unreadable:
+        print(
+            f"{len(unreadable)} pinned fit archive(s) are present but unreadable "
+            "(the pinned bytes are on disk; re-fetch or re-upload the artifact and "
+            "re-pin it — `git lfs pull` will not help):"
+        )
+        for item, path in unreadable:
+            print(f"  {item} ({path})")
+    return 1 if problems or stale or unreadable else 0
 
 
 def _run_render(manifest: dict[str, Any], args: argparse.Namespace) -> int:

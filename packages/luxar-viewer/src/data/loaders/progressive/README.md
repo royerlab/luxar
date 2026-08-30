@@ -97,9 +97,9 @@ export const CACHE_HIT_THRESHOLD_MS = 15;
 
 The time threshold (ms) below which a LOD load is treated as a likely
 cache hit. It is consumed by `streaming-policy.ts` (below) — the `refine`
-pass keeps streaming while levels load faster than this and stops at the
-first slower/cold one. Deliberately a single cross-geometry threshold, not
-a per-geometry tuning knob.
+and `playback` passes keep streaming while levels load faster than this and
+stop at the first slower/cold one. Deliberately a single cross-geometry
+threshold, not a per-geometry tuning knob.
 
 ### `streaming-policy.ts`
 
@@ -107,18 +107,18 @@ Pure decisions that drive each progressive loader's LOD streaming loop, so
 the three loops stay identical by construction. A pass is classified from
 two facts (is a per-frame budget active? is this a background prefetch?):
 
-| Pass       | When                            | Behavior                                                                                                         |
-| ---------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `playback` | foreground, budgeted (playing)  | Commit the restored cached prefix + a **LOD-0 first-paint floor**; never block on fine levels — stay responsive. |
-| `prefetch` | background shadow pass          | **Deepen toward the full ladder** — never stop on a cache miss; bounded by the pass budget + abort.              |
-| `refine`   | foreground, unbudgeted (paused) | Stream cache-resident levels; stop at the first cold/slow one (the `CACHE_HIT_THRESHOLD_MS` rule).               |
+| Pass       | When                            | Behavior                                                                                                                                     |
+| ---------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `playback` | foreground, budgeted (playing)  | Commit a restored cached prefix as-is; from an empty ladder, stream cache-resident levels within budget and stop at the first cold/slow one. |
+| `prefetch` | background shadow pass          | **Deepen toward the full ladder** — never stop on a cache miss; bounded by the pass budget + abort.                                          |
+| `refine`   | foreground, unbudgeted (paused) | Stream cache-resident levels; stop at the first cold/slow one (the `CACHE_HIT_THRESHOLD_MS` rule).                                           |
 
 ```typescript
 const pass = classifyStreamingPass(budgetDeadline !== null, viewState.prefetch === true);
 for (let level = startLevel; level < nLods; level++) {
-  if (!shouldLoadLevel(pass, level, startLevel)) break; // playback floor
+  if (!shouldLoadLevel(pass, level, startLevel)) break; // playback: restored prefix commits as-is
   // ... load level ...
-  if (shouldStopAfterLevel(pass, level, startLevel, allResident, elapsed)) break; // refine stop
+  if (shouldStopAfterLevel(pass, level, startLevel, allResident, elapsed)) break; // playback/refine cold-or-slow stop
 }
 ```
 

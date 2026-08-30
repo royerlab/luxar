@@ -53,9 +53,9 @@ export async function loadSceneNodes(
     );
   } else if (node.type === 'group' && node.attrs.kind === 'partition') {
     // A kind=partition Group is a specialized container that recurses into
-    // children itself. No per-frame selector — all children render
-    // simultaneously and THREE's per-mesh frustum culling does the
-    // per-part culling. Same error-capture wrapping as above.
+    // children itself. Its registry entry frustum-gates spatial parts without
+    // selecting among them: every in-frustum child renders simultaneously.
+    // Same error-capture wrapping as above.
     await loadLeafNode(
       () => loadPartitionGroupNode(node, parentThree, parentLoc, ctx, loadSceneNodes),
       node.path
