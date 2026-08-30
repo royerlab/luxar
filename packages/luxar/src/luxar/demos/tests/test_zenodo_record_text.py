@@ -2173,6 +2173,27 @@ class TestTheStoreRootIsFoundFromFormatMetadata:
         assert info["ndim"] == 4
         assert info["psnr_db"] == 38.25
 
+    @pytest.mark.parametrize(
+        "prefix",
+        ("", "x.gsplats.zarr/"),
+        ids=("root-store", "wrapped-store"),
+    )
+    def test_a_conventional_root_accepts_the_legacy_type_marker(
+        self, gen: Any, tmp_path: Path, prefix: str
+    ) -> None:
+        path = tmp_path / "legacy-marker.gsplats.zarr.zip"
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr(f"{prefix}.zgroup", json.dumps({"zarr_format": 2}))
+            zf.writestr(
+                f"{prefix}.zattrs",
+                json.dumps({"type": "gsplats", "n_splats": 2468}),
+            )
+
+        info = gen._read_archive(path)
+
+        assert info is not None
+        assert info["n_splats"] == 2468
+
     def test_a_root_level_store_is_read_not_skipped(
         self, gen: Any, tmp_path: Path
     ) -> None:
