@@ -301,6 +301,8 @@ def run_batch_merge_cmd(
                 analytic_bps=estimate_bytes_per_splat(
                     merged_ndim, has_colors=merged_has_colors
                 ),
+                slice_count=max(1, manifest.n_timepoints),
+                part_count=max(1, manifest.n_tiles),
             )
 
         recipe_params = None

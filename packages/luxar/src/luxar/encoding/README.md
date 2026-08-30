@@ -261,6 +261,7 @@ print(f"Radii: {radii.shape}, {radii.dtype}")
 
 **Methods:**
 - `decode(zarr_array, zarr_root)` - Decode array based on metadata
+- `decode_coordinate_columns(zarr_array, columns, zarr_root)` - Decode selected coordinate columns, using the full decoder when the encoding requires it
 
 **Supports:**
 - Broadcasting (expansion)
