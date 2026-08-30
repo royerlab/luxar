@@ -478,7 +478,7 @@ Collapse **any** gsplat tree (leaf, LOD/matrix tree, partition, nested) into one
 luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
 ```
 
-**Options**: `--encoding/-e` (auto/precision/memory), `--compress/-c` (zip/tar.gz), `--overwrite`.
+**Options**: `--encoding/-e precision` (the required default), `--compress/-c` (zip/tar.gz), `--overwrite`. Streaming flatten rejects `auto`/`memory` because their whole-array analysis defeats the memory bound. Precision stores float32 centers and Cholesky factors, so expect a materially larger archive than auto-encoded output; disk staging is created beside the destination and temporarily needs roughly one uncompressed flat payload of free space.
 
 #### `luxar gsplat annotate-quality`
 Retrofit Q·e quality stamps onto an **existing** `.gsplats.zarr`, in place (no refit / re-ladder): the cumulative energy fraction `e(k)` per additive sub-LOD plus a reference energy `w` per leaf (cheap O(N); enables the viewer's early energy-threshold LOD upgrades on legacy datasets). The root `content_hash` is re-stamped so viewer caches invalidate automatically. Directory stores only — unpack `.zip`/`.tar.gz` first. New builds stamp by default.

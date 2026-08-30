@@ -6,10 +6,10 @@ single shared authoring path
 scene compiler uses for its gsplats leaves, so there is no parallel writer and
 standalone leaves are byte-identical to scene leaves.
 
-This module is the thin standalone wrapper: it builds the zarr store (handling
-optional ``.zip`` / ``.tar.gz`` compression), writes the self-identifying root
-header (``format_version`` = :data:`FORMAT_VERSION`), hands
-the node tree to the shared walker, attaches optional ``fitting/`` /
+This module provides the standalone tree writer plus streaming partition and
+flat-leaf entry points. It builds the zarr store (handling optional ``.zip`` /
+``.tar.gz`` compression), writes the self-identifying root header
+(``format_version`` = :data:`FORMAT_VERSION`), attaches optional ``fitting/`` /
 ``provenance/`` / ``pipeline/`` groups (``pipeline/`` = reduction/topology
 stats; see :func:`split_fitting_info`), and consolidates metadata.
 """

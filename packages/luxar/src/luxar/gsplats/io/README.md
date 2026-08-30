@@ -21,6 +21,10 @@ This package provides functions to save and load fitted Gaussian splat results w
 
 **`save_gsplats()`** - Save splats to .gsplats.zarr
 
+**`write_flat_leaf_streaming()`** writes one flat leaf from metadata plus a
+single-pass stream of decoded splat sets, using disk-backed staging so only one
+set and its local ordering copy are resident.
+
 ```python
 from luxar.gsplats.io import save_gsplats
 from luxar.encoding import EncodingMode
