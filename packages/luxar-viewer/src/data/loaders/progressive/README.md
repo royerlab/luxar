@@ -97,9 +97,9 @@ export const CACHE_HIT_THRESHOLD_MS = 15;
 
 The time threshold (ms) below which a LOD load is treated as a likely
 cache hit. It is consumed by `streaming-policy.ts` (below) — the `refine`
-pass keeps streaming while levels load faster than this and stops at the
-first slower/cold one. Deliberately a single cross-geometry threshold, not
-a per-geometry tuning knob.
+and `playback` passes keep streaming while levels load faster than this and
+stop at the first slower/cold one. Deliberately a single cross-geometry
+threshold, not a per-geometry tuning knob.
 
 ### `streaming-policy.ts`
 
