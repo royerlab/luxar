@@ -471,6 +471,66 @@ describe('computeDebugState', () => {
     });
   });
 
+  it('surfaces additive ladder state on every geometry node type', () => {
+    const scene = new THREE.Scene();
+    const nodes = [makePointCloud(10), makeGSplatMesh(20), makeLineMesh(30), makeMeshNode(4, 8)];
+    for (const node of nodes) {
+      Object.assign(node.userData, {
+        committedLadderComplete: false,
+        committedEnergyFraction: 0.625,
+        loader: {
+          loadedLODCount: 3,
+          totalLODCount: 8,
+          lastAllResident: false,
+        },
+      });
+      scene.add(node);
+    }
+
+    const state = computeDebugState(makeContext(scene));
+    for (const info of [
+      state.pointClouds[0],
+      state.gsplatMeshes[0],
+      state.lineMeshes[0],
+      state.meshNodes[0],
+    ]) {
+      expect(info).toMatchObject({
+        committedLadderComplete: false,
+        committedEnergyFraction: 0.625,
+        loadedLODCount: 3,
+        totalLODCount: 8,
+        lastAllResident: false,
+      });
+    }
+    expect(state.lodGroups).toEqual([]);
+  });
+
+  it('omits additive ladder fields when the loader has only one level', () => {
+    const scene = new THREE.Scene();
+    const node = makePointCloud(10);
+    Object.assign(node.userData, {
+      committedLadderComplete: true,
+      committedEnergyFraction: 1,
+      loader: {
+        loadedLODCount: 1,
+        totalLODCount: 1,
+        lastAllResident: true,
+      },
+    });
+    scene.add(node);
+
+    const info = computeDebugState(makeContext(scene)).pointClouds[0];
+    for (const field of [
+      'committedLadderComplete',
+      'committedEnergyFraction',
+      'loadedLODCount',
+      'totalLODCount',
+      'lastAllResident',
+    ]) {
+      expect(info).not.toHaveProperty(field);
+    }
+  });
+
   describe('line mesh counting (core.md G17 three-geometry symmetry)', () => {
     // Lines must be counted the same way Points and GSplats are
     // (per-instance from InstancedBufferGeometry.instanceCount). A

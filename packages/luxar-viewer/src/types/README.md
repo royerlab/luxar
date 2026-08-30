@@ -621,13 +621,13 @@ Population happens in two stages:
 
 Notable members on `window.__luxarDebug`:
 
-- Runtime objects: `app`, `scene`, `camera`, `renderer` (typed as `unknown` -- may be `THREE.WebGLRenderer` or `WebGPURenderer` when opted in via `?renderer=webgpu`), `controls`, `postProcessing`, `animationController`, `inputHandler`, `renderingControls`, `recordingPanel`, `sceneDimsManager`.
+- Runtime objects: `app`, `scene`, `camera`, `renderer` (typed as `unknown` -- may be `THREE.WebGLRenderer` or `WebGPURenderer` when opted in via `?renderer=webgpu`), `controls`, `postProcessing`, `animationController`, `inputHandler`, `renderingControls`, `fps`, `fpsSamplingEnabled`, `recordingPanel`, `sceneDimsManager`.
 - Helpers for interactive debugging and Playwright agents: `getState()`, `renderOnce()`, `getSceneLoader()`, `getPickingSystem()`, `getOverlayManager()`, `showError(message)`.
 - `cache` -- `getStats()`, `listDatasets()`, `clearL0/L1/L2/All()`.
 - `workers` -- `getQueueDepth()`, `getStats()` for worker-pool diagnostics.
 - `lastExportedState` -- last viewer state exported via the keyboard shortcut handler.
 - `injectSyntheticScene(spec)` -- debug/perf-bench-only synthetic Points/Lines/GSplats scene injection (only attached to `__luxarDebug` under `?debug`, and its generator chunk is never loaded otherwise); resolves to the discriminated union `{type, elementCount, <per-type count>, mesh}` (capacity-clamped `elementCount` plus a per-type count alias). The full spec/return signature is documented in and kept in sync with `window.d.ts`.
-- `getLodLoadStats()` / `resetLodLoadStats()` -- per-stage timing snapshot (`lazy:loadGSplats` / `lazy:process` / `lazy:commit` / `lazy:release`) for lazy LOD level loads triggered by the per-frame selector, which the UpdateProfiler does not see. Debug-only.
+- `getLodLoadStats()` / `resetLodLoadStats()` -- timing snapshot for lazy LOD level-load stages (`lazy:loadGSplats` / `lazy:process` / `lazy:commit` / `lazy:release`) and additive ladder levels (`additive:<geometry>:level:<n>:resident|miss|aborted`), which the UpdateProfiler does not see. Debug-only.
 
 Return shapes for the helpers are intentionally dynamic and typed as `unknown` so callers must narrow before reading.
 

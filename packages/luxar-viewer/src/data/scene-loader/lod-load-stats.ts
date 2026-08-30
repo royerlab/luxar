@@ -1,14 +1,13 @@
 /**
- * Debug-only per-stage timing for lazy LOD level loads.
+ * Debug-only per-stage timing for lazy and additive LOD level loads.
  *
  * The per-frame LOD selector and its lazy `ensureLoaded` loads run
  * OUTSIDE any `updateView` cycle, so the `UpdateProfiler` /
  * data-loading-monitor never sees them — during pure camera navigation
  * the monitor shows nothing. This standalone accumulator fills that gap:
  * it records the wall-clock cost of each stage of a lazy level load
- * (fetch/decode, projection+pack, GPU commit, release) so we can find
- * which stage — if any — causes navigation hitches before deciding to
- * move work onto a worker.
+ * (fetch/decode, projection+pack, GPU commit, release), plus each additive
+ * ladder level load keyed by geometry type, level index, and residency.
  *
  * Disabled by default (zero cost). Enabled only under `?debug` by
  * `installDebugInterface`, which also exposes
@@ -65,6 +64,24 @@ export async function timeLodStage<T>(stage: string, fn: () => Promise<T>): Prom
     return await fn();
   } finally {
     recordLodLoadStage(stage, performance.now() - t0);
+  }
+}
+
+/** Time an async stage whose bounded key depends on the resolved result. */
+export async function timeLodStageWithResult<T>(
+  stageForResult: (result: T) => string,
+  abortedStage: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  if (!enabled) return fn();
+  const t0 = performance.now();
+  try {
+    const result = await fn();
+    recordLodLoadStage(stageForResult(result), performance.now() - t0);
+    return result;
+  } catch (error) {
+    recordLodLoadStage(abortedStage, performance.now() - t0);
+    throw error;
   }
 }
 

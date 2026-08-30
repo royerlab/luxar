@@ -41,6 +41,7 @@ import type { AnimationController } from '../../../scene/animation/animation-con
 import type { InputHandler } from '../../../input';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../ui/recording-panel';
+import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
 import type { PickingSystem } from '../../../rendering/picking/picking-system';
 import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { LuxarApp } from '../../app';
@@ -63,6 +64,7 @@ export interface InstallDebugInterfacePorts {
   animationController: AnimationController;
   inputHandler: InputHandler;
   renderingControls: RenderingControls;
+  adaptiveDPRManager: AdaptiveDPRManager;
   recordingPanel: RecordingPanel | undefined;
   getPickingSystem: () => PickingSystem | undefined;
   getOverlayManager: () => OverlayManager | undefined;
@@ -76,10 +78,11 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
 
   log.info(Modules.LUXAR, 'Extending debug interface with runtime components');
 
-  // Enable lazy-LOD-load per-stage timing under ?debug only. The lazy
-  // ensureLoaded loads run outside any updateView cycle, so the
-  // UpdateProfiler never captures them — this fills that gap for
-  // navigation-cost diagnosis. Snapshot via __luxarDebug.getLodLoadStats().
+  // Enable lazy-LOD-load per-stage timing plus additive per-level ladder
+  // timing under ?debug only. The lazy ensureLoaded loads run outside any
+  // updateView cycle, so the UpdateProfiler never captures them — this fills
+  // that gap for navigation-cost diagnosis. Snapshot via
+  // __luxarDebug.getLodLoadStats().
   setLodLoadStatsEnabled(true);
 
   // Extend whatever bootstrap seeded (app/consoleInterceptor/version). When
@@ -111,6 +114,13 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     animationController: ports.animationController,
     inputHandler: ports.inputHandler,
     renderingControls: ports.renderingControls,
+    get fps() {
+      const fps = ports.adaptiveDPRManager.getCurrentFPS();
+      return fps > 0 ? fps : undefined;
+    },
+    get fpsSamplingEnabled() {
+      return ports.adaptiveDPRManager.getState().enabled;
+    },
     recordingPanel: ports.recordingPanel,
     sceneDimsManager: sceneDimsManager,
     app: ports.app,
@@ -423,8 +433,9 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     },
 
     // Per-stage timing for lazy LOD level loads (fetch/decode, process,
-    // commit, release). Reset before a measurement drive, snapshot after.
-    // See data/scene-loader/lod-load-stats.ts. Only meaningful under ?debug.
+    // commit, release), plus additive per-level ladder keys. Reset before a
+    // measurement drive, snapshot after. See
+    // data/scene-loader/lod-load-stats.ts. Only meaningful under ?debug.
     getLodLoadStats: () => snapshotLodLoadStats(),
     resetLodLoadStats: () => resetLodLoadStats(),
 

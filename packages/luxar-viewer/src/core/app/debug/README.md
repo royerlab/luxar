@@ -54,10 +54,11 @@ falls back to a fresh stub.
 
 On entry it calls `setLodLoadStatsEnabled(true)` (from
 `data/scene-loader/lod-load-stats`) so per-stage timing for lazy LOD level
-loads is captured under `?debug` only. Those lazy `ensureLoaded` loads run
-outside any `updateView` cycle, so the `UpdateProfiler` never sees them — this
-fills the gap. The captured stats are reachable as
-`__luxarDebug.getLodLoadStats()` (snapshot) and `resetLodLoadStats()`.
+loads and additive per-level ladder loads is captured under `?debug` only.
+Those lazy `ensureLoaded` loads run outside any `updateView` cycle, so the
+`UpdateProfiler` never sees them — this fills the gap. The captured stats are
+reachable as `__luxarDebug.getLodLoadStats()` (snapshot) and
+`resetLodLoadStats()`.
 
 `injectSyntheticScene`'s body is wrapped in try/catch: on failure it logs via
 `log.error` and surfaces the message through the user-facing error overlay
@@ -92,6 +93,16 @@ defaults to `Infinity`) — the draw range is precisely what the nD slice
 compaction narrows, so the index length alone would report the whole surface
 regardless of slice position — and read the live shader variant flags off the
 material's `defines`.
+
+Every per-node geometry entry also exposes additive-ladder state when its live
+loader has more than one level: `loadedLODCount`, `totalLODCount`,
+`lastAllResident`, and the commit-time `committedLadderComplete` /
+`committedEnergyFraction` stamps. This is how an additive-only leaf advertises
+that it is laddered; `lodGroups[]` remains reserved for substitutive
+`kind=lod` containers.
+
+Mesh reveal ladders do not use `SliceCache`, so they contribute additive timing
+and per-node residency state but never appear in `ladderDepthHistogram`.
 
 The same traversal also summarises specialized-group containers by their
 `userData.kind`: `kind=lod` groups become `lodGroups[]` (level count + the
@@ -246,6 +257,7 @@ Available once `installDebugInterface` runs (after `LuxarApp.init()`):
 | `animationController` / `inputHandler` / `renderingControls` / `recordingPanel`                | ports                                                                | Subsystem handles                                                                                                                                                                                                                                                                                     |
 | `sceneDimsManager`                                                                             | singleton                                                            | nD dimension state                                                                                                                                                                                                                                                                                    |
 | `workers.getQueueDepth()` / `workers.getStats()`                                               | `getWorkerPool()`                                                    | Backpressure diagnostic                                                                                                                                                                                                                                                                               |
+| `fps` / `fpsSamplingEnabled`                                                                   | `AdaptiveDPRManager`                                                 | Healthy-cadence estimate plus whether sampling is active. `fps` is `undefined` until at least two samples exist and deliberately rejects isolated stalls as outliers; it is not perceived frame rate. `renderer.info.render.frame` is a render-pass counter, not an FPS reading.                      |
 | `getState()`                                                                                   | `computeDebugState` + `SceneLoaderManager.isAnyLoadPassInProgress()` | JSON-serialisable scene snapshot, including the `isLoading` flag the E2E data-wait helpers poll                                                                                                                                                                                                       |
 | `getDrawOrder()`                                                                               | `computeDrawOrder`                                                   | Per-mesh blending bucket, depthWrite, renderOrder and element count, in draw order                                                                                                                                                                                                                    |
 | `renderOnce()`                                                                                 | `animationController.startAnimation()`                               | Kick a frame for stable screenshots                                                                                                                                                                                                                                                                   |
@@ -254,7 +266,7 @@ Available once `installDebugInterface` runs (after `LuxarApp.init()`):
 | `cache.getStats()` / `listDatasets()` / `clearL0()` / `clearL1()` / `clearL2()` / `clearAll()` | `buildDebugCacheHelpers`                                             | Cache tier control                                                                                                                                                                                                                                                                                    |
 | `showError(message)`                                                                           | `ui/error-overlay`                                                   | Render the error dialog directly (visual-regression hook)                                                                                                                                                                                                                                             |
 | `injectSyntheticScene({type, count, bounds?, seed?, clusters?, blending?})`                    | dynamic import                                                       | Perf-bench injector — builds a Points, Lines, or GSplats payload and wires it through `materialManager` + the node-factory pipeline; resolves to the discriminated union `{type, elementCount, <per-type count>, mesh}` (capacity-clamped `elementCount`; per-type alias carries the requested count) |
-| `getLodLoadStats()` / `resetLodLoadStats()`                                                    | `data/scene-loader/lod-load-stats`                                   | Per-stage timing for lazy LOD level loads (fetch/decode, process, commit, release)                                                                                                                                                                                                                    |
+| `getLodLoadStats()` / `resetLodLoadStats()`                                                    | `data/scene-loader/lod-load-stats`                                   | Per-stage timing for lazy loads plus additive per-level loads, keyed by geometry, level, and residency, with an `:aborted` key when a level load is cancelled. Additive nodes of the same geometry type share keys; node paths are deliberately excluded.                                             |
 | `runtimeReady`                                                                                 | `true`                                                               | Sentinel flag for E2E waits                                                                                                                                                                                                                                                                           |
 
 `injectSyntheticScene` dynamically imports `scene/synthetic-scene` so the

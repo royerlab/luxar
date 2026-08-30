@@ -55,12 +55,16 @@ export interface SliceCacheEntry {
   payload: unknown;
   /** Total retained bytes (sum of the snapshot's typed-array byteLengths). */
   bytes: number;
+  /** Stored additive prefix depth, when the entry represents a ladder. */
+  ladderDepth?: number;
+  /** Total additive ladder depth for the node that produced this entry. */
+  totalLadderDepth?: number;
 }
 
 /**
- * Cache statistics for the data-loading monitor. Mirrors
+ * Cache statistics for the data-loading monitor. The common fields mirror
  * {@link DecompressedChunkCacheStats} so the aggregator/UI can treat both
- * tiers uniformly.
+ * tiers uniformly; ladder-depth fields are optional SliceCache-only detail.
  */
 export interface SliceCacheStats {
   /** Current cache size in bytes. */
@@ -89,6 +93,10 @@ export interface SliceCacheStats {
    * {@link DecompressedChunkCacheStats.maxSize}.
    */
   maxSize?: number;
+  /** Number of ladder entries whose stored prefix is complete. */
+  fullLadderCount?: number;
+  /** Cached ladder counts keyed by `storedDepth/totalDepth`. */
+  ladderDepthHistogram?: Record<string, number>;
 }
 
 /** Configuration options for the SliceCache. */
@@ -140,6 +148,7 @@ export class SliceCache {
   // bounded FIFO so a long session can't grow it unboundedly. Same discipline
   // as `tombstones`.
   private readonly oversizedWarned = new Set<string>();
+  private readonly ladderDepths = new Map<string, { depth: number; totalDepth: number }>();
 
   constructor(options?: SliceCacheOptions) {
     const maxSize = options?.maxSize ?? SliceCache.defaultMaxSize();
@@ -151,7 +160,7 @@ export class SliceCache {
     this.cache = new LRUCache<SliceCacheEntry>(
       maxSize,
       (entry) => entry.bytes,
-      (key) => this.recordTombstone(key)
+      (key) => this.recordEviction(key)
     );
 
     if (this.debug) {
@@ -212,6 +221,20 @@ export class SliceCache {
    */
   set(key: string, entry: SliceCacheEntry, opts?: { scan?: boolean; pin?: boolean }): void {
     this.cache.set(key, entry, { evictMostRecent: opts?.scan });
+    if (this.cache.peek(key) === entry) {
+      if (
+        entry.ladderDepth !== undefined &&
+        entry.totalLadderDepth !== undefined &&
+        entry.totalLadderDepth > 0
+      ) {
+        this.ladderDepths.set(key, {
+          depth: entry.ladderDepth,
+          totalDepth: entry.totalLadderDepth,
+        });
+      } else {
+        this.ladderDepths.delete(key);
+      }
+    }
     if (opts?.pin) this.cache.pin(key);
     // Freshly cached: a later miss on this key is only thrash if it gets
     // evicted AGAIN (recordTombstone re-adds it then).
@@ -272,6 +295,7 @@ export class SliceCache {
     this.cache.clear(); // fires onEvict per entry — reset tombstones AFTER
     this.tombstones.clear();
     this.oversizedWarned.clear();
+    this.ladderDepths.clear();
     this.thrashMisses = 0;
     if (this.debug) {
       log.custom(LogEmoji.CACHE, Modules.CACHE, 'SliceCache cleared');
@@ -288,6 +312,13 @@ export class SliceCache {
     const hits = this.cache.hitCount;
     const misses = this.cache.missCount;
     const total = hits + misses;
+    const ladderDepthHistogram: Record<string, number> = {};
+    let fullLadderCount = 0;
+    for (const { depth, totalDepth } of this.ladderDepths.values()) {
+      const bucket = `${depth}/${totalDepth}`;
+      ladderDepthHistogram[bucket] = (ladderDepthHistogram[bucket] ?? 0) + 1;
+      if (depth === totalDepth) fullLadderCount++;
+    }
     return {
       size: this.cache.size,
       count: this.cache.count,
@@ -297,7 +328,14 @@ export class SliceCache {
       hitRate: total > 0 ? hits / total : 0,
       thrashMisses: this.thrashMisses,
       maxSize: this.maxSize,
+      fullLadderCount,
+      ladderDepthHistogram,
     };
+  }
+
+  private recordEviction(key: string): void {
+    this.ladderDepths.delete(key);
+    this.recordTombstone(key);
   }
 
   /** Record an evicted key as a tombstone (bounded FIFO). */
