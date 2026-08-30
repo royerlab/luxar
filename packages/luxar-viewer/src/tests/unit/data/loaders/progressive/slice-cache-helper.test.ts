@@ -60,6 +60,14 @@ describe('slice-cache-helper — prefix ladders', () => {
     expect(restored!.length).toBe(3);
   });
 
+  it('stamps stored prefix depth against the node total for cache stats', () => {
+    storeLadder(sc, PATH, view, [makeLod(10), makeLod(5)], { totalLODCount: 4 });
+    expect(sc.getStats()).toMatchObject({
+      fullLadderCount: 0,
+      ladderDepthHistogram: { '2/4': 1 },
+    });
+  });
+
   it('upgrade-if-longer: a longer snapshot replaces, with exact byte accounting', () => {
     storeLadder(sc, PATH, view, [makeLod(10)]);
     const key = SliceCache.makeKey(PATH, buildSliceViewSig(view));

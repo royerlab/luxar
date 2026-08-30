@@ -62,9 +62,9 @@ export interface SliceCacheEntry {
 }
 
 /**
- * Cache statistics for the data-loading monitor. Mirrors
+ * Cache statistics for the data-loading monitor. The common fields mirror
  * {@link DecompressedChunkCacheStats} so the aggregator/UI can treat both
- * tiers uniformly.
+ * tiers uniformly; ladder-depth fields are optional SliceCache-only detail.
  */
 export interface SliceCacheStats {
   /** Current cache size in bytes. */
