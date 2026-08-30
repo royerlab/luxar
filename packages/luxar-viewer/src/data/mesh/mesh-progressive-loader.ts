@@ -646,6 +646,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
       const t0 = performance.now();
       const { data: lodData, allResident } = await timeLodStageWithResult(
         ({ allResident }) => `additive:mesh:level:${level}:${allResident ? 'resident' : 'miss'}`,
+        `additive:mesh:level:${level}:aborted`,
         () => this.lodLoaders[level].updateViewWithResidency(viewState, session, signal)
       );
       const elapsed = performance.now() - t0;

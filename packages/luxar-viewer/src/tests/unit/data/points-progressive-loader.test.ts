@@ -17,6 +17,11 @@ import { SliceCache } from '../../../cache/slice-cache';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
 import { log } from '../../../utils/log';
+import {
+  resetLodLoadStats,
+  setLodLoadStatsEnabled,
+  snapshotLodLoadStats,
+} from '../../../data/scene-loader/lod-load-stats';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -268,6 +273,22 @@ describe('PointsProgressiveLoader', () => {
       const result = await loader.loadPoints(baseViewState);
       // All 3 LODs are cache-hit fast (sync mock) → all loaded → 100+50+25 = 175.
       expect(result.pointCount).toBe(175);
+    });
+
+    it('records points additive load timing keys', async () => {
+      resetLodLoadStats();
+      setLodLoadStatsEnabled(true);
+      try {
+        await loader.loadPoints(baseViewState);
+        expect(Object.keys(snapshotLodLoadStats())).toEqual([
+          'additive:points:level:0:resident',
+          'additive:points:level:1:resident',
+          'additive:points:level:2:resident',
+        ]);
+      } finally {
+        setLodLoadStatsEnabled(false);
+        resetLodLoadStats();
+      }
     });
 
     it('exposes totalLODCount and loadedLODCount', async () => {

@@ -447,6 +447,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       const t0 = performance.now();
       const { data: lodData, allResident } = await timeLodStageWithResult(
         ({ allResident }) => `additive:gsplats:level:${level}:${allResident ? 'resident' : 'miss'}`,
+        `additive:gsplats:level:${level}:aborted`,
         () => this.lodLoaders[level].updateViewWithResidency(viewState, session, signal)
       );
       const elapsed = performance.now() - t0;

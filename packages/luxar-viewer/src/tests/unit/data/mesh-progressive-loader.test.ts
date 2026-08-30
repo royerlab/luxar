@@ -26,6 +26,11 @@ import { MESH_DECODE_BUDGET_BYTES } from '../../../config/constants';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import type { LoadedMeshData, MeshViewState } from '../../../types/mesh';
 import type { MeshWholeNodeLoader } from '../../../data/mesh/mesh-whole-node-loader';
+import {
+  resetLodLoadStats,
+  setLodLoadStatsEnabled,
+  snapshotLodLoadStats,
+} from '../../../data/scene-loader/lod-load-stats';
 
 // ============================================================================
 // Fixtures
@@ -238,6 +243,24 @@ describe('MeshProgressiveLoader', () => {
     const subs = levels.map((d) => subLoader(d, opts));
     return { loader: new MeshProgressiveLoader(subs, levels.length, '/surf'), subs };
   }
+
+  it('records mesh additive load timing keys', async () => {
+    resetLodLoadStats();
+    setLodLoadStatsEnabled(true);
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0);
+    try {
+      const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
+      await loader.updateView(VIEW);
+      expect(Object.keys(snapshotLodLoadStats())).toEqual([
+        'additive:mesh:level:0:resident',
+        'additive:mesh:level:1:resident',
+      ]);
+    } finally {
+      nowSpy.mockRestore();
+      setLodLoadStatsEnabled(false);
+      resetLodLoadStats();
+    }
+  });
 
   it('streams every level on a refine pass and reports completion', async () => {
     // The clock is PINNED for this one test, and the reason is the assertion

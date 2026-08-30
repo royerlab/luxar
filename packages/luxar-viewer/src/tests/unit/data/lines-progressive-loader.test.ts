@@ -21,6 +21,11 @@ import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/consta
 import { SliceCache } from '../../../cache/slice-cache';
 import { buildSliceViewSig } from '../../../data/loaders/progressive/slice-cache-helper';
 import { getPrefixParent } from '../../../types/prefix-lineage';
+import {
+  resetLodLoadStats,
+  setLodLoadStatsEnabled,
+  snapshotLodLoadStats,
+} from '../../../data/scene-loader/lod-load-stats';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
@@ -234,6 +239,22 @@ describe('LinesProgressiveLoader', () => {
       // All cache-hit fast → all 3 loaded → 10+5+2 = 17 segments, 20+10+4 = 34 verts.
       expect(result.segmentCount).toBe(17);
       expect(result.vertexCount).toBe(34);
+    });
+
+    it('records lines additive load timing keys', async () => {
+      resetLodLoadStats();
+      setLodLoadStatsEnabled(true);
+      try {
+        await loader.loadLines(baseViewState);
+        expect(Object.keys(snapshotLodLoadStats())).toEqual([
+          'additive:lines:level:0:resident',
+          'additive:lines:level:1:resident',
+          'additive:lines:level:2:resident',
+        ]);
+      } finally {
+        setLodLoadStatsEnabled(false);
+        resetLodLoadStats();
+      }
     });
 
     it('exposes totalLODCount and loadedLODCount', async () => {

@@ -70,13 +70,19 @@ export async function timeLodStage<T>(stage: string, fn: () => Promise<T>): Prom
 /** Time an async stage whose bounded key depends on the resolved result. */
 export async function timeLodStageWithResult<T>(
   stageForResult: (result: T) => string,
+  abortedStage: string,
   fn: () => Promise<T>
 ): Promise<T> {
   if (!enabled) return fn();
   const t0 = performance.now();
-  const result = await fn();
-  recordLodLoadStage(stageForResult(result), performance.now() - t0);
-  return result;
+  try {
+    const result = await fn();
+    recordLodLoadStage(stageForResult(result), performance.now() - t0);
+    return result;
+  } catch (error) {
+    recordLodLoadStage(abortedStage, performance.now() - t0);
+    throw error;
+  }
 }
 
 /** Time a synchronous stage; passthrough (no timing) when disabled. */
