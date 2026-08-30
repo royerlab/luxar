@@ -1438,6 +1438,70 @@ class TestCheckExplainsAnAbsentFigure:
 
 
 # ---------------------------------------------------------------------------
+# An unmeasured row prefers the pinned archive without requiring it.
+#
+# Repo copies precede cache copies, but the repo frequently holds a pre-refit
+# generation while the cache holds the bytes a record serves. The pin wins when
+# present; without it, the first local copy remains useful before `--refresh`.
+# ---------------------------------------------------------------------------
+
+
+class TestUnmeasuredRowsPreferPinnedArchives:
+    def _paths(
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[Path, Path]:
+        monkeypatch.setattr(gen, "DATA_DIR", tmp_path / "repo")
+        monkeypatch.setattr(gen, "CACHE_DIR", tmp_path / "cache")
+        name = "movie.gsplats.zarr.zip"
+        repo = gen.DATA_DIR / "ds" / name
+        cache = gen.CACHE_DIR / "ds" / name
+        repo.parent.mkdir(parents=True)
+        cache.parent.mkdir(parents=True)
+        return repo, cache
+
+    def _row(self, gen: Any, pinned: str) -> dict[str, Any]:
+        manifest = _fake_manifest([_entry("movie.gsplats.zarr.zip", pinned)])
+        (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], {})
+        return row
+
+    def test_a_readable_pinned_copy_outranks_an_older_readable_copy(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        older, pinned = self._paths(gen, tmp_path, monkeypatch)
+        _write_frame(older, n_splats=10)
+        _write_frame(pinned, n_splats=20)
+
+        row = self._row(gen, gen._sha256_of(pinned))
+
+        assert row["splats"] == "20"
+
+    def test_a_readable_pinned_copy_is_not_hidden_by_an_unreadable_copy(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        unreadable, pinned = self._paths(gen, tmp_path, monkeypatch)
+        unreadable.write_bytes(b"not a zip archive")
+        _write_frame(pinned, n_splats=20)
+
+        row = self._row(gen, gen._sha256_of(pinned))
+
+        assert row["splats"] == "20"
+
+    def test_the_first_readable_copy_remains_the_fallback_without_pinned_bytes(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first, second = self._paths(gen, tmp_path, monkeypatch)
+        _write_frame(first, n_splats=10)
+        _write_frame(second, n_splats=20)
+
+        row = self._row(gen, "f" * 64)
+
+        assert row["splats"] == "10"
+
+
+# ---------------------------------------------------------------------------
 # Who wrote the sidecar entry decides whether the archive is consulted.
 #
 # Both arms of this matter, and they pull in opposite directions:
@@ -1449,56 +1513,6 @@ class TestCheckExplainsAnAbsentFigure:
 # Keying on "any null" conflates them, and I shipped that conflation for long
 # enough to watch six tests catch it.
 # ---------------------------------------------------------------------------
-
-
-class TestUnmeasuredRowsPreferPinnedArchives:
-    def _row(
-        self,
-        gen: Any,
-        monkeypatch: pytest.MonkeyPatch,
-        candidates: tuple[Path, ...],
-        pinned: str,
-    ) -> dict[str, Any]:
-        monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter(candidates))
-        manifest = _fake_manifest([_entry("movie.gsplats.zarr.zip", pinned)])
-        (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], {})
-        return row
-
-    def test_a_readable_pinned_copy_outranks_an_older_readable_copy(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        older = tmp_path / "older.gsplats.zarr.zip"
-        pinned = tmp_path / "pinned.gsplats.zarr.zip"
-        _write_frame(older, n_splats=10)
-        _write_frame(pinned, n_splats=20)
-
-        row = self._row(gen, monkeypatch, (older, pinned), gen._sha256_of(pinned))
-
-        assert row["splats"] == "20"
-
-    def test_a_readable_pinned_copy_is_not_hidden_by_an_unreadable_copy(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        unreadable = tmp_path / "unreadable.gsplats.zarr.zip"
-        pinned = tmp_path / "pinned.gsplats.zarr.zip"
-        unreadable.write_bytes(b"not a zip archive")
-        _write_frame(pinned, n_splats=20)
-
-        row = self._row(gen, monkeypatch, (unreadable, pinned), gen._sha256_of(pinned))
-
-        assert row["splats"] == "20"
-
-    def test_the_first_readable_copy_remains_the_fallback_without_pinned_bytes(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        first = tmp_path / "first.gsplats.zarr.zip"
-        second = tmp_path / "second.gsplats.zarr.zip"
-        _write_frame(first, n_splats=10)
-        _write_frame(second, n_splats=20)
-
-        row = self._row(gen, monkeypatch, (first, second), "f" * 64)
-
-        assert row["splats"] == "10"
 
 
 class TestWhoWroteTheEntryDecides:
