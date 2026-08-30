@@ -34,7 +34,9 @@ a draft, and publication stays a manual act.
     python scripts/gen_zenodo_records.py --record cc-by  # just one
     python scripts/gen_zenodo_records.py --outdir docs/zenodo/
     python scripts/gen_zenodo_records.py --check         # report gaps, exit 1
-    python scripts/gen_zenodo_records.py --refresh       # re-measure the archives
+    python scripts/gen_zenodo_records.py --refresh       # re-measure; exit 1 on unreadable pinned fits
+    python scripts/gen_zenodo_records.py --refresh --archives-root STAGING/
+                                                        # prefer namespaced staged archives
 """
 
 from __future__ import annotations
@@ -46,7 +48,7 @@ import sys
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
@@ -57,6 +59,18 @@ CACHE_DIR = Path.home() / ".cache/luxar"
 CHARACTERISTICS = REPO_ROOT / "scripts/demo_archive_characteristics.json"
 
 _ABSENT = "—"
+
+
+class RefreshResult(NamedTuple):
+    """Outcome of one characteristics refresh."""
+
+    read: int
+    retained: int
+    rejected: int
+    preserved: int
+    unreadable: tuple[Path, ...]
+    unpinned_unreadable: int
+    staged_selected: int
 
 
 # ---------------------------------------------------------------------------
@@ -385,14 +399,16 @@ def _locate(
     dataset the refit campaign touched — measuring those gives figures that are
     stale or absent (8 of 27 local archives carry a PSNR, none carry a foreground
     PSNR) while the artifacts the records actually serve are fully stamped. Point
-    it at the staging tree holding the uploaded generation.
+    it at the staging tree holding the uploaded generation. Candidates must be
+    files: hashing happens before reporting, and ``_read_archive`` opens zip files,
+    so accepting an unpacked directory would fail before it could be diagnosed.
     """
     roots = [(extra_root, dataset)] if extra_root else []
     roots += [(DATA_DIR, entry.get("dir", dataset)), (CACHE_DIR, dataset)]
     for base, subdir in roots:
         parts = [p for p in (subdir, variant, file_name) if p]
         candidate = base.joinpath(*parts)
-        if candidate.exists():
+        if candidate.is_file():
             yield candidate
 
 
@@ -417,6 +433,11 @@ def _locate(
 def _char_key(dataset: str, variant: str, file_name: str) -> str:
     """Stable identity for one archive: ``dataset[/variant]/file``."""
     return "/".join(p for p in (dataset, variant, file_name) if p)
+
+
+def _is_fit(file_name: str) -> bool:
+    """Whether a manifest file owes gsplat measurements."""
+    return file_name.endswith(".gsplats.zarr.zip")
 
 
 def load_characteristics() -> dict[str, Any]:
@@ -567,18 +588,25 @@ def _retain_preferred_measurements(
 
 def refresh_characteristics(
     manifest: dict[str, Any], extra_root: Optional[Path] = None
-) -> tuple[int, int, int, int]:
-    """Re-measure archives; returns (read, retained, rejected, preserved).
+) -> RefreshResult:
+    """Re-measure archives and report how every local candidate was handled.
 
     PRESERVES entries whose archive is not on this machine, for the same reason
     ``gen_data_manifest`` preserves committed file lists: a refresh run from a
     partial checkout would otherwise silently delete the measurements for every
     dataset it cannot see, and a partial checkout is the normal case now.
+
+    Pinned archives that are present but unreadable are also left intact on disk,
+    but are returned separately so the caller can fail after writing good reads.
     """
     existing = load_characteristics()
     measured: dict[str, Any] = {}
     pinned_digests: dict[str, Optional[str]] = {}
     seen: set[str] = set()
+    absent: set[str] = set()
+    unreadable: list[Path] = []
+    unpinned_unreadable = 0
+    staged_selected = 0
     for dataset, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
@@ -590,15 +618,27 @@ def refresh_characteristics(
                 _locate(dataset, entry, variant, spec["name"], extra_root),
                 pinned_digests[key],
             )
-            info = _read_archive(path) if path else None
-            if info is None:
+            if path is None:
+                absent.add(key)
                 continue
-            if extra_root and path.is_relative_to(extra_root):
-                root = "staged"
-            elif path.is_relative_to(DATA_DIR):
-                root = "repo"
-            else:
-                root = "cache"
+            root = (
+                "staged"
+                if extra_root is not None and path.is_relative_to(extra_root)
+                else "repo"
+                if path.is_relative_to(DATA_DIR)
+                else "cache"
+            )
+            if root == "staged":
+                staged_selected += 1
+            info = _read_archive(path)
+            if info is None:
+                if not _is_fit(spec["name"]):
+                    continue
+                if measured_sha256 == pinned_digests[key]:
+                    unreadable.append(path)
+                else:
+                    unpinned_unreadable += 1
+                continue
             measured[key] = {
                 **info,
                 # Which copy was read, and what it hashed to. Without the digest a
@@ -617,8 +657,10 @@ def refresh_characteristics(
     retained, rejected = _retain_preferred_measurements(
         measured, existing, pinned_digests
     )
-    preserved = {k: v for k, v in existing.items() if k in seen and k not in measured}
-    archives = dict(sorted({**preserved, **measured}.items()))
+    preserved_entries = {
+        k: v for k, v in existing.items() if k in seen and k not in measured
+    }
+    archives = dict(sorted({**preserved_entries, **measured}.items()))
     CHARACTERISTICS.write_text(
         json.dumps(
             {
@@ -645,7 +687,15 @@ def refresh_characteristics(
         )
         + "\n"
     )
-    return read, retained, rejected, len(preserved)
+    return RefreshResult(
+        read=read,
+        retained=retained,
+        rejected=rejected,
+        preserved=sum(key in absent for key in preserved_entries),
+        unreadable=tuple(unreadable),
+        unpinned_unreadable=unpinned_unreadable,
+        staged_selected=staged_selected,
+    )
 
 
 def _stale_characteristics(manifest: dict[str, Any]) -> list[str]:
@@ -760,7 +810,7 @@ def _dataset_rows(
                 # LFS file, an archive not fetched yet) must not be mistaken for
                 # "this is not a fit": it belongs in the splat table with its
                 # figures absent, and `--check` has to say it went unexamined.
-                "is_fit": spec["name"].endswith(".gsplats.zarr.zip"),
+                "is_fit": _is_fit(spec["name"]),
                 "file": name,
                 "splats": f"{info['n_splats']:,}"
                 if info and isinstance(info.get("n_splats"), int)
@@ -987,22 +1037,45 @@ def main() -> int:
         action="store_true",
         help="re-measure every archive present on this machine and rewrite "
         "scripts/demo_archive_characteristics.json (preserves entries whose "
-        "archive is absent here)",
+        "archive is absent here; exits 1 after writing if a pinned fit is "
+        "present but unreadable)",
     )
     args = ap.parse_args()
+    if args.archives_root and not args.refresh:
+        ap.error("--archives-root requires --refresh")
 
     manifest = json.loads(MANIFEST.read_text())
     if args.refresh:
-        read, retained, rejected, preserved = refresh_characteristics(
-            manifest, args.archives_root
+        result = refresh_characteristics(manifest, args.archives_root)
+        for path in result.unreadable:
+            print(f"ERROR: pinned archive is present but unreadable: {path}")
+        if args.archives_root:
+            print(
+                f"selected {result.staged_selected} archive(s) under --archives-root "
+                f"{args.archives_root}"
+            )
+            if result.staged_selected == 0:
+                print(
+                    "WARNING: --archives-root matched no archives; "
+                    "expected layout: <root>/<dataset>/[<variant>/]<file> "
+                    "(zip files — unpacked .gsplats.zarr.zip/ directories are skipped)"
+                )
+        print(
+            f"skipped {len(result.unreadable)} pinned archive(s) that were present "
+            "but unreadable"
         )
         print(
-            f"read {read} archive(s) here, skipped {rejected} read(s) taken from "
-            f"bytes the manifest does not pin, kept {retained} committed "
-            f"measurement(s) that outrank the local copy, preserved {preserved} "
-            f"not on this machine -> {CHARACTERISTICS.relative_to(REPO_ROOT)}"
+            f"skipped {result.unpinned_unreadable} fit archive(s) that were present "
+            "but not the pinned bytes, and unreadable"
         )
-        return 0
+        print(
+            f"read {result.read} archive(s) here, skipped {result.rejected} read(s) "
+            f"taken from bytes the manifest does not pin, kept {result.retained} "
+            "committed measurement(s) that outrank the local copy, preserved "
+            f"{result.preserved} not on this machine -> "
+            f"{CHARACTERISTICS.relative_to(REPO_ROOT)}"
+        )
+        return 1 if result.unreadable else 0
     if args.check:
         return _run_check(manifest)
     return _run_render(manifest, args)
