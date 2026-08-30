@@ -1097,6 +1097,7 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     manifest_path = tmp_path / "manifest.json"
+    staged_root = tmp_path / "staged"
     manifest_path.write_text(json.dumps({"datasets": {}}))
     monkeypatch.setattr(gen, "MANIFEST", manifest_path)
     monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
@@ -1104,9 +1105,18 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     monkeypatch.setattr(
         gen,
         "refresh_characteristics",
-        lambda manifest, extra_root: gen.RefreshResult(4, 2, 1, 3, (), 0),
+        lambda manifest, extra_root: gen.RefreshResult(4, 2, 1, 3, (), 2),
     )
-    monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "gen_zenodo_records.py",
+            "--refresh",
+            "--archives-root",
+            str(staged_root),
+        ],
+    )
 
     assert gen.main() == 0
 
@@ -1115,6 +1125,8 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     assert "skipped 1 read(s) taken from bytes the manifest does not pin" in summary
     assert "kept 2 committed measurement(s) that outrank the local copy" in summary
     assert "preserved 3 not on this machine" in summary
+    assert f"read 2 archive(s) from --archives-root {staged_root}" in summary
+    assert "WARNING" not in summary
 
 
 def test_refresh_reports_each_unreadable_pinned_archive_and_exits_nonzero(
