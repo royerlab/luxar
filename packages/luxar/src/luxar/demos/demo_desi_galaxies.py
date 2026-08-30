@@ -949,7 +949,7 @@ def main() -> None:
             warn_if_scene_is_stale(output_path)
         else:
             aprint(
-                f"Precomputed scene not available from the manifest: {unavailable_reason}. "
+                f"Precomputed scene not available from the manifest: {unavailable_reason}\n"
                 "Falling back to download + build (one-time; result is cached)."
             )
             positions, redshift, tracer_ids = _load_or_build_or_exit()
