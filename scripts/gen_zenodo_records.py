@@ -1040,6 +1040,10 @@ def main() -> int:
                     "expected layout: <root>/<dataset>/[<variant>/]<file>"
                 )
         print(
+            f"skipped {len(result.unreadable)} pinned archive(s) that were present "
+            "but unreadable"
+        )
+        print(
             f"read {result.read} archive(s) here, skipped {result.rejected} read(s) "
             f"taken from bytes the manifest does not pin, kept {result.retained} "
             "committed measurement(s) that outrank the local copy, preserved "

@@ -1125,6 +1125,7 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     assert "skipped 1 read(s) taken from bytes the manifest does not pin" in summary
     assert "kept 2 committed measurement(s) that outrank the local copy" in summary
     assert "preserved 3 not on this machine" in summary
+    assert "skipped 0 pinned archive(s) that were present but unreadable" in summary
     assert f"read 2 archive(s) from --archives-root {staged_root}" in summary
     assert "WARNING" not in summary
 
@@ -1154,6 +1155,7 @@ def test_refresh_reports_each_unreadable_pinned_archive_and_exits_nonzero(
     output = capsys.readouterr().out
     assert f"pinned archive is present but unreadable: {first}" in output
     assert f"pinned archive is present but unreadable: {second}" in output
+    assert "skipped 2 pinned archive(s) that were present but unreadable" in output
 
 
 def test_a_flat_archives_root_warns_with_the_expected_layout(
