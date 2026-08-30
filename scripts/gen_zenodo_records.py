@@ -1002,15 +1002,51 @@ def _why_absent(row: dict[str, Any], chars: dict[str, Any]) -> str:
     )
 
 
-def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Figures a record would print as absent, and the rows nothing was read for."""
+class GapResult(NamedTuple):
+    """Incomplete rows and archives that were absent, inaccessible, or unreadable."""
+
+    problems: list[str]
+    unread: list[str]
+    unreadable: list[tuple[str, Path]]
+    inaccessible: list[tuple[str, tuple[Path, ...]]]
+
+
+def _record_unread_fit(
+    name: str,
+    entry: dict[str, Any],
+    variant: str,
+    spec: dict[str, Any],
+    row: dict[str, Any],
+    unread: list[str],
+    unreadable: list[tuple[str, Path]],
+    inaccessible: list[tuple[str, tuple[Path, ...]]],
+) -> None:
+    """Classify a declared fit whose archive metadata could not be read."""
+    item = f"{name}/{row['file']}"
+    pinned = _pinned_digest(spec)
+    candidates = _locate(name, entry, variant, spec["name"])
+    path, digest, hash_failures = _select_pinned_location(candidates, pinned)
+    if path is not None and digest == pinned and _read_archive(path) is None:
+        unreadable.append((item, path))
+    elif hash_failures:
+        inaccessible.append((item, hash_failures))
+    else:
+        unread.append(item)
+
+
+def _gaps(manifest: dict[str, Any]) -> GapResult:
+    """Figures a record would print as absent, plus archives not successfully read."""
     problems: list[str] = []
     unread: list[str] = []
+    unreadable: list[tuple[str, Path]] = []
+    inaccessible: list[tuple[str, tuple[Path, ...]]] = []
     chars = load_characteristics()
     for name, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
-        for row in _dataset_rows(name, entry, chars):
+        files = _files_of(entry)
+        rows = _dataset_rows(name, entry, chars)
+        for row, (variant, spec) in zip(rows, files, strict=True):
             # Companion sidecars (label maps, colour arrays) and the tabular /
             # point-cloud datasets are not fits, so they owe no splat count or
             # reconstruction quality. Demanding one would make this list
@@ -1020,7 +1056,16 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
                 # examined. Dropping it silently would let the count below read
                 # as completeness while a dozen rows went unchecked.
                 if row["is_fit"]:
-                    unread.append(f"{name}/{row['file']}")
+                    _record_unread_fit(
+                        name,
+                        entry,
+                        variant,
+                        spec,
+                        row,
+                        unread,
+                        unreadable,
+                        inaccessible,
+                    )
                 continue
             expected = [
                 ("splats", row["splats"]),
@@ -1037,9 +1082,9 @@ def _gaps(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
                     f"{name}/{row['file']}: no {', '.join(missing)}"
                     + _why_absent(row, chars)
                 )
-        if not _files_of(entry):
+        if not files:
             problems.append(f"{name}: no files uploaded")
-    return problems, unread
+    return GapResult(problems, unread, unreadable, inaccessible)
 
 
 def main() -> int:
@@ -1049,7 +1094,8 @@ def main() -> int:
     ap.add_argument(
         "--check",
         action="store_true",
-        help="list characteristics that are not yet stamped, and exit 1 if any",
+        help="list characteristics that are not yet stamped or stale, fail on "
+        "pinned fits that cannot be read, and exit 1 if any",
     )
     ap.add_argument(
         "--archives-root",
@@ -1123,8 +1169,8 @@ def main() -> int:
 
 
 def _run_check(manifest: dict[str, Any]) -> int:
-    """``--check``: report figures a record would print as absent, or as stale."""
-    problems, unread = _gaps(manifest)
+    """Report absent or stale figures and pinned fits that cannot be read."""
+    problems, unread, unreadable, inaccessible = _gaps(manifest)
     for problem in problems:
         print(problem)
     print(f"\n{len(problems)} archive(s) would publish an incomplete row.")
@@ -1147,7 +1193,23 @@ def _run_check(manifest: dict[str, Any]) -> int:
         )
         for item in unread:
             print(f"  {item}")
-    return 1 if problems or stale else 0
+    if inaccessible:
+        print(
+            f"{len(inaccessible)} fit archive(s) had a candidate that could not "
+            "be opened for hashing (check permissions); unread bytes cannot be "
+            "checked against the pin:"
+        )
+        for item, paths in inaccessible:
+            print(f"  {item} ({', '.join(map(str, paths))})")
+    if unreadable:
+        print(
+            f"{len(unreadable)} pinned fit archive(s) are present but unreadable "
+            "(the pinned bytes are on disk; re-fetch or re-upload the artifact and "
+            "re-pin it — `git lfs pull` will not help):"
+        )
+        for item, path in unreadable:
+            print(f"  {item} ({path})")
+    return 1 if problems or stale or unreadable else 0
 
 
 def _run_render(manifest: dict[str, Any], args: argparse.Namespace) -> int:
