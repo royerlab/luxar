@@ -684,10 +684,9 @@ describe('LinesProgressiveLoader', () => {
 
     it('background prefetch deepens a capped ladder loop-over-loop; playback restores it responsively', async () => {
       // Mirrors gsplats-progressive-loader.test.ts (three-geometry symmetry).
-      // Foreground PLAYBACK ticks commit only the cached prefix (never block on
-      // fine levels); background PREFETCH passes deepen the SAME slice +1 level,
-      // so a later playback tick restores a DEEPER prefix — higher quality,
-      // still instant.
+      // Background PREFETCH deepens the SAME slice's cached ladder +1 level at
+      // a time. A later PLAYBACK tick restores that deeper prefix, then spends
+      // only its remaining foreground budget on resident detail.
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const l = new LinesProgressiveLoader(
         [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
@@ -819,7 +818,7 @@ describe('LinesProgressiveLoader', () => {
       // only handoff to the foreground is the shared S-cache: the shadow
       // deepens view B's ladder while the foreground displays A; the real
       // PLAYBACK tick at B then restores that cached prefix (no level-0
-      // re-stream) and commits it responsively.
+      // re-stream) and spends its remaining budget on resident detail.
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const shadow = new LinesProgressiveLoader(
         [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],

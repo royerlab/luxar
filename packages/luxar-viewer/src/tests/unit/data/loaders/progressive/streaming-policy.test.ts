@@ -17,7 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyStreamingPass,
-  shouldLoadLevel,
+  shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../../../../../data/loaders/progressive/streaming-policy';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../../../data/loaders/progressive/constants';
@@ -37,12 +37,22 @@ describe('classifyStreamingPass', () => {
   });
 });
 
-describe('shouldLoadLevel', () => {
-  it('all passes permit loading after an empty or restored prefix', () => {
-    expect(shouldLoadLevel('playback', 4, 3)).toBe(true);
-    expect(shouldLoadLevel('playback', 5, 0)).toBe(true);
-    expect(shouldLoadLevel('prefetch', 5, 2)).toBe(true);
-    expect(shouldLoadLevel('refine', 5, 2)).toBe(true);
+describe('shouldStopBeforeLevel', () => {
+  it('keeps the first level of an empty playback ladder despite an expired budget', () => {
+    expect(shouldStopBeforeLevel('playback', 0, 0, 11, 10)).toBe(false);
+    expect(shouldStopBeforeLevel('playback', 1, 0, 11, 10)).toBe(true);
+  });
+
+  it('stops before extending a restored playback prefix after its budget expires', () => {
+    expect(shouldStopBeforeLevel('playback', 3, 3, 11, 10)).toBe(true);
+    expect(shouldStopBeforeLevel('playback', 3, 3, 10, 10)).toBe(false);
+  });
+
+  it('keeps one-level progress for prefetch and refine after restoring a prefix', () => {
+    expect(shouldStopBeforeLevel('prefetch', 3, 3, 11, 10)).toBe(false);
+    expect(shouldStopBeforeLevel('prefetch', 4, 3, 11, 10)).toBe(true);
+    expect(shouldStopBeforeLevel('refine', 3, 3, 11, 10)).toBe(false);
+    expect(shouldStopBeforeLevel('refine', 4, 3, 11, 10)).toBe(true);
   });
 });
 

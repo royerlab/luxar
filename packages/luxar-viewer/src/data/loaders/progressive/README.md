@@ -116,8 +116,11 @@ two facts (is a per-frame budget active? is this a background prefetch?):
 ```typescript
 const pass = classifyStreamingPass(budgetDeadline !== null, viewState.prefetch === true);
 for (let level = startLevel; level < nLods; level++) {
-  if (!shouldLoadLevel(pass, level, startLevel)) break;
-  if (deadline && (level > startLevel || startLevel > 0) && now() > deadline) break;
+  if (
+    budgetDeadline !== null &&
+    shouldStopBeforeLevel(pass, level, startLevel, now(), budgetDeadline)
+  )
+    break;
   // ... load level ...
   if (shouldStopAfterLevel(pass, level, startLevel, allResident, elapsed)) break; // playback/refine cold-or-slow stop
 }

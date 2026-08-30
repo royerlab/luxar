@@ -4,7 +4,7 @@
  *
  * A progressive loader streams an additive LOD ladder coarse→fine. HOW MANY
  * levels a single `updateView` pass loads — and when it stops — depends on why
- * the pass is running. Encoding that decision as three pure functions keeps the
+ * the pass is running. Encoding that decision as pure functions keeps the
  * geometry loaders' streaming loops identical by construction (they share
  * this module rather than each re-deriving the rule), and makes the policy
  * unit-testable in isolation.
@@ -64,33 +64,43 @@ export function classifyStreamingPass(
 }
 
 /**
- * Whether the streaming loop should load `level` this pass (evaluated at loop
- * top; a `false` breaks the loop).
- *
- * All pass kinds may load every level. Playback responsiveness is enforced by
- * the loop's budget deadline and {@link shouldStopAfterLevel}; keeping that
- * decision out of this gate makes an empty ladder and an identical restored
- * prefix spend the same remaining foreground budget (#2379).
+ * Whether `level` is past this pass's guaranteed-progress floor.
  */
-export function shouldLoadLevel(
-  _kind: StreamingPassKind,
-  // Retained (unused) so the four loop-top call sites keep reading as "may I
-  // load THIS level?", and so a future per-level rule has a seam.
-  _level: number,
-  _startLevel: number
+function isPastGuaranteedProgressFloor(
+  kind: StreamingPassKind,
+  level: number,
+  startLevel: number
 ): boolean {
-  return true;
+  return level > startLevel || (kind === 'playback' && startLevel > 0);
+}
+
+/**
+ * Whether to stop BEFORE loading `level` because the pass budget is spent.
+ *
+ * Playback only guarantees a level when the ladder starts empty; a restored
+ * prefix is already showable. Prefetch and refine retain one guaranteed new
+ * level even after restoring a prefix, preserving background progress and
+ * refine's first-paint behavior.
+ */
+export function shouldStopBeforeLevel(
+  kind: StreamingPassKind,
+  level: number,
+  startLevel: number,
+  nowMs: number,
+  deadlineMs: number
+): boolean {
+  return isPastGuaranteedProgressFloor(kind, level, startLevel) && nowMs > deadlineMs;
 }
 
 /**
  * Whether to stop the streaming loop AFTER loading `level`. `refine` and
  * `playback` both stop here — at the first cold (cache-miss) or slow level past
- * the >=1-level first-paint floor. That floor applies only when the ladder
- * started empty; a restored prefix is already showable. For `playback` this is
- * the ONLY brake besides the budget deadline, and it is the one that matters:
- * a cold level costs hundreds of ms, a resident one ~10-20 ms, so residency
- * (not level index) is what separates "affordable inside a tick" from "stalls
- * the tick".
+ * the >=1-level first-paint floor. Playback's floor applies only when the
+ * ladder started empty; a restored prefix is already showable. For `playback`
+ * this is the ONLY brake besides the budget deadline, and it is the one that
+ * matters: a cold level costs hundreds of ms, a resident one ~10-20 ms, so
+ * residency (not level index) is what separates "affordable inside a tick"
+ * from "stalls the tick".
  *
  * `prefetch` deepens regardless of residency — warming cold levels is its whole
  * job — and is bounded by the pass budget + abort instead.
@@ -103,6 +113,8 @@ export function shouldStopAfterLevel(
   elapsedMs: number
 ): boolean {
   if (kind === 'prefetch') return false;
-  const pastFirstPaintFloor = level > startLevel || (kind === 'playback' && startLevel > 0);
-  return pastFirstPaintFloor && (!allResident || elapsedMs > CACHE_HIT_THRESHOLD_MS);
+  return (
+    isPastGuaranteedProgressFloor(kind, level, startLevel) &&
+    (!allResident || elapsedMs > CACHE_HIT_THRESHOLD_MS)
+  );
 }
