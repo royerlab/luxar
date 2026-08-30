@@ -99,17 +99,6 @@ def _demo_sources() -> dict[str, str]:
     }
 
 
-def _stream_ladder_calls(src: str) -> list[ast.Call]:
-    """The direct ``stream_ladder(...)`` calls in *src*."""
-    return [
-        node
-        for node in ast.walk(ast.parse(src))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "stream_ladder"
-    ]
-
-
 def _additive_lod_calls(src: str) -> list[tuple[ast.Call, ast.expr]]:
     """The ``add_points``/``add_lines`` calls with ``additive_lod=`` in *src*."""
     out = []
