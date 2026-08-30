@@ -513,6 +513,34 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         assert problems == []
         assert gen._run_check(manifest) == 0
 
+    def test_a_quality_caveat_does_not_exempt_other_missing_figures(
+        self, gen: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = {
+            "bucket": "zenodo",
+            "dir": "movie",
+            "files": [{"name": "stack.gsplats.zarr.zip", "bytes": 1000}],
+        }
+        key = gen._char_key("movie", "", "stack.gsplats.zarr.zip")
+        monkeypatch.setattr(
+            gen,
+            "load_characteristics",
+            lambda: {
+                key: {
+                    "psnr_db": None,
+                    "foreground_psnr_db": None,
+                    "quality_caveat": "A refit is required for an honest score.",
+                }
+            },
+        )
+
+        manifest = {"datasets": {"movie": entry}}
+        problems, unread = gen._gaps(manifest)
+
+        assert unread == []
+        assert problems == ["movie/stack.gsplats.zarr.zip: no splats, compression"]
+        assert gen._run_check(manifest) == 1
+
 
 class TestFiguresAreAbsentRatherThanInvented:
     def test_a_missing_number_renders_as_absent(self, gen: Any) -> None:
@@ -1478,7 +1506,8 @@ def test_h2afva_unscored_variants_publish_consistent_caveats(gen: Any) -> None:
     sliced = chars["h2afva/51tp/h2afva_51tp.gsplats.zarr.zip"]
 
     assert full["n_splats"] == 602_580_152
-    assert full["measured_sha256"] is None
+    assert "measured_sha256" not in full
+    assert "sum of the pinned store's finest per-part levels" in full["quality_note"]
     assert "does not claim the unpinned 5.87 GB restructure" in full["quality_note"]
     for info in (full, sliced):
         assert info["psnr_db"] is None
