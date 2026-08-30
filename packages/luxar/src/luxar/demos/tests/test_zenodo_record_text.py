@@ -443,9 +443,10 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
             },
         )
 
-        problems, unread = gen._gaps({"datasets": {"movie": entry}})
+        problems, unread, unreadable = gen._gaps({"datasets": {"movie": entry}})
 
         assert unread == []
+        assert unreadable == []
         assert problems == []
 
     @pytest.mark.parametrize(
@@ -475,9 +476,10 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
             characteristics["quality_quotable"] = True
         monkeypatch.setattr(gen, "load_characteristics", lambda: {key: characteristics})
 
-        problems, unread = gen._gaps({"datasets": {"movie": entry}})
+        problems, unread, unreadable = gen._gaps({"datasets": {"movie": entry}})
 
         assert unread == []
+        assert unreadable == []
         assert problems == ["movie/stack.gsplats.zarr.zip: no PSNR, foreground PSNR"]
 
 
@@ -584,7 +586,7 @@ class TestSizeVariantsAreDescribed:
         assert "the lighter fit" in text and "every timepoint" in text
 
     def test_a_declared_variant_is_not_reported_as_no_files(self, gen: Any) -> None:
-        problems, _ = gen._gaps({"datasets": {"movie": self.ENTRY}})
+        problems, *_ = gen._gaps({"datasets": {"movie": self.ENTRY}})
         assert "movie: no files uploaded" not in problems
 
     def test_the_cache_namespaces_by_dataset_name_and_variant(
@@ -635,16 +637,56 @@ class TestAnUnreadableFitIsNotCalledANonFit:
         assert "| Splats |" in text, "a fit with unknown figures is still a fit"
 
     def test_check_says_it_read_nothing(self, gen: Any) -> None:
-        problems, unread = gen._gaps({"datasets": {"nope": self.ENTRY}})
+        problems, unread, unreadable = gen._gaps({"datasets": {"nope": self.ENTRY}})
         assert unread == ["nope/absent.gsplats.zarr.zip"]
+        assert unreadable == []
         assert not [p for p in problems if "absent" in p], (
             "an archive that was never read owes no stamps yet"
         )
 
+    def test_check_fails_for_a_pinned_present_unreadable_fit(
+        self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        archive = tmp_path / "repo" / "d" / "absent.gsplats.zarr.zip"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(b"these are the pinned bytes, but not a readable zip")
+        entry = dict(
+            self.ENTRY,
+            files=[
+                {
+                    **self.ENTRY["files"][0],
+                    "sha256": gen._sha256_of(archive),
+                }
+            ],
+        )
+
+        assert gen._run_check({"datasets": {"nope": entry}}) == 1
+        output = capsys.readouterr().out
+        assert "present but unreadable" in output
+        assert "nope/absent.gsplats.zarr.zip" in output
+        assert "not on this machine" not in output
+
+    def test_check_does_not_fail_for_unreadable_unpinned_bytes(
+        self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        archive = tmp_path / "repo" / "d" / "absent.gsplats.zarr.zip"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(b"a local stub or stale generation")
+        entry = dict(
+            self.ENTRY,
+            files=[{**self.ENTRY["files"][0], "sha256": "a" * 64}],
+        )
+
+        assert gen._run_check({"datasets": {"nope": entry}}) == 0
+        output = capsys.readouterr().out
+        assert "present but unreadable" not in output
+        assert "not on this machine" in output
+
     def test_a_real_sidecar_is_still_not_a_fit(self, gen: Any) -> None:
         entry = dict(self.ENTRY, files=[{"name": "labels.npz", "bytes": 12}])
-        problems, unread = gen._gaps({"datasets": {"side": entry}})
+        problems, unread, unreadable = gen._gaps({"datasets": {"side": entry}})
         assert unread == []
+        assert unreadable == []
         assert problems == []
 
 
