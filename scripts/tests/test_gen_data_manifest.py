@@ -235,6 +235,23 @@ def test_combined_repin_keeps_outgoing_local_digest_in_runtime_slot() -> None:
         generator._refuse_invalid_repin_history(repinned, committed)
 
 
+def test_local_repin_carries_outgoing_digest_into_runtime_slot() -> None:
+    generator = _load_generator()
+    committed_entry = {
+        "name": "fit.zip",
+        "sha256": "0" * 64,
+        "superseded_sha256": ["9" * 64],
+    }
+    (repinned_entry,) = generator._carry_hosted(
+        [{"name": "fit.zip", "sha256": "1" * 64}], [committed_entry]
+    )
+    committed = {"datasets": {"toy": {"files": [committed_entry]}}}
+    repinned = {"datasets": {"toy": {"files": [repinned_entry]}}}
+
+    assert repinned_entry["superseded_sha256"] == ["9" * 64, "0" * 64]
+    generator._refuse_invalid_repin_history(repinned, committed)
+
+
 def test_hosted_repin_rejects_missing_outgoing_digest() -> None:
     generator = _load_generator()
     committed = _manifest_entry("a" * 64, ["0" * 64])
@@ -242,6 +259,65 @@ def test_hosted_repin_rejects_missing_outgoing_digest() -> None:
 
     with pytest.raises(ValueError, match="outgoing hosted digest"):
         generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_hosted_only_repin_rejects_missing_outgoing_digest() -> None:
+    generator = _load_generator()
+    committed = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "sha256": "a" * 64}]}}
+    }
+    repinned = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "sha256": "b" * 64}]}}
+    }
+
+    with pytest.raises(ValueError, match="outgoing hosted digest"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_hosted_only_repin_accepts_outgoing_digest() -> None:
+    generator = _load_generator()
+    outgoing = "a" * 64
+    committed = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "sha256": outgoing}]}}
+    }
+    repinned = {
+        "datasets": {
+            "toy": {
+                "files": [
+                    {
+                        "name": "fit.zip",
+                        "sha256": "b" * 64,
+                        "superseded_sha256": [outgoing],
+                    }
+                ]
+            }
+        }
+    }
+
+    generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_first_hosted_stamp_does_not_require_repo_digest_history() -> None:
+    generator = _load_generator()
+    repo_digest = "a" * 64
+    committed = {
+        "datasets": {"toy": {"files": [{"name": "fit.zip", "sha256": repo_digest}]}}
+    }
+    stamped = {
+        "datasets": {
+            "toy": {
+                "files": [
+                    {
+                        "name": "fit.zip",
+                        "sha256": repo_digest,
+                        "hosted_sha256": "b" * 64,
+                    }
+                ]
+            }
+        }
+    }
+
+    generator._refuse_invalid_repin_history(stamped, committed)
 
 
 def test_hosted_repin_rejects_wrong_appended_digest() -> None:

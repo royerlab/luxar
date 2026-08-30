@@ -68,7 +68,7 @@ ANISOTROPY AND UNITS:
 PIPELINE — reproducible with ``--recompute``:
     1. Fit the full 253-timepoint ``h2afva/fused`` timelapse and scale it
        isotropic: ``h2afva_253tp.gsplats.zarr``, which this demo takes as its
-       PARENT (``--parent PATH``) rather than refitting. That fit is 9.25 GB and
+       PARENT (``--parent PATH``) rather than refitting. That fit is 5.87 GB and
        hours of GPU; re-deriving the 51-frame variant from it is minutes of CPU.
     2. ``restride_stacked_axis(stride=5)`` — keep original timepoints
        0, 5, ... 250 and renumber them to 0..50, preserving the parent's tree
@@ -85,7 +85,7 @@ PIPELINE — reproducible with ``--recompute``:
     at 115 GB. Striding first cuts it to 121M before anything loads flat.
 
     The 51-frame variant is the manifest's default precisely because the
-    253-frame one is 9.25 GB; this is the same recording at an eighth of the
+    253-frame one is 5.87 GB; this is the same recording at about a fifth of the
     download.
 
 USAGE:
