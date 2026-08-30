@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 import zarr
 
+from luxar.demos import demo_cellxgene_census_umap as _demo
 from luxar.demos.demo_cellxgene_census_umap import build_scene
 
 #: The appearance baked in `scene.add_points("cells", ...)` after #1375.
@@ -28,6 +29,151 @@ EXPECTED_INTENSITY = 4.52
 # it and its own self-screening S(tau)=0.36 ate most of its emission, so
 # the cloud read as a screened shell rather than depth-ordered structure.
 EXPECTED_ABSORPTION = 2.12
+
+
+def test_default_cache_uses_the_manifest_resolved_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    resolved = tmp_path / "resolved.npz"
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.delenv("CENSUS_UMAP_CACHE", raising=False)
+    monkeypatch.delenv("CENSUS_UMAP_MAX_CELLS", raising=False)
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: calls.append(("ensure", name)) or [resolved],
+    )
+    monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda cache, output, *, max_cells: (
+            calls.append(("build", (cache, output, max_cells))) or 7
+        ),
+    )
+
+    _demo.main()
+
+    assert calls == [
+        ("ensure", "census_umap_1m"),
+        (
+            "build",
+            (
+                resolved,
+                tmp_path / "cellxgene_census_umap.luxar.zarr",
+                1_000_000,
+            ),
+        ),
+    ]
+
+
+def test_explicit_cache_override_bypasses_the_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    override = tmp_path / "custom.npz"
+    override.write_bytes(b"custom")
+    seen: list[Path] = []
+
+    monkeypatch.setenv("CENSUS_UMAP_CACHE", str(override))
+    monkeypatch.delenv("CENSUS_UMAP_MAX_CELLS", raising=False)
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: pytest.fail(f"unexpected manifest lookup for {name}"),
+    )
+    monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda cache, output, *, max_cells: seen.append(cache) or 7,
+    )
+
+    _demo.main()
+
+    assert seen == [override]
+
+
+def test_missing_explicit_cache_keeps_generation_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing = tmp_path / "missing.npz"
+
+    monkeypatch.setenv("CENSUS_UMAP_CACHE", str(missing))
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: pytest.fail(f"unexpected manifest lookup for {name}"),
+    )
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda *args, **kwargs: pytest.fail("missing override must not build"),
+    )
+
+    _demo.main()
+
+    output = capsys.readouterr().out
+    assert str(missing) in output
+    assert "scripts/gen_census_umap.py" in output
+    assert "CENSUS_UMAP_CACHE=<cache>.npz" in output
+
+
+def test_missing_default_cache_exits_after_generation_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("CENSUS_UMAP_CACHE", raising=False)
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: (_ for _ in ()).throw(
+            _demo.DatasetUnavailable(f"no usable payload for {name}")
+        ),
+    )
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda *args, **kwargs: pytest.fail("missing default cache must not build"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        _demo.main()
+
+    assert exc_info.value.code == 1
+    output = capsys.readouterr().out
+    assert "no usable payload for census_umap_1m" in output
+    assert "scripts/gen_census_umap.py" in output
+    assert "CENSUS_UMAP_CACHE=<cache>.npz" in output
+
+
+def test_manifest_payload_fault_does_not_recommend_regeneration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("CENSUS_UMAP_CACHE", raising=False)
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: (_ for _ in ()).throw(
+            FileNotFoundError(f"bad in-repo payload for {name}")
+        ),
+    )
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda *args, **kwargs: pytest.fail("payload faults must not build"),
+    )
+
+    with pytest.raises(FileNotFoundError, match="bad in-repo payload"):
+        _demo.main()
 
 
 def _write_synthetic_cache(path: Path, n: int = 200) -> Path:

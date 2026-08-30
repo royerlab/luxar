@@ -34,14 +34,13 @@ a manual-file / Kaggle demo (or an LFS demo whose payload is absent) also lands
 in the soft bucket rather than returning 1 — its error tail is still printed, so
 it stays visible. And a ``timeout``, a
 ``no-output`` (exit 0 having written nothing) or a death by signal (a negative
-return code: the OOM killer, a segfault) stays HARD even for them. Two real cases
-remain unrescued: ``arxiv_papers_kaggle`` needs no credentials to start and
+return code: the OOM killer, a segfault) stays HARD even for them. One real case
+remains unrescued: ``arxiv_papers_kaggle`` needs no credentials to start and
 declares a ~30 GB download, so on a cold machine it can exhaust
-``GEN_TIMEOUT_S`` and land in ``timeout``; and ``cellxgene_census_umap`` declares
-no cache key, so its LFS payload cannot be probed and a positive exit stays hard.
-Fixing the former by skipping large downloads would stop regenerating the tile
-on a machine whose cache is warm; guessing at payloads for the latter would
-weaken the observed-state rule.
+``GEN_TIMEOUT_S`` and land in ``timeout``. ``cellxgene_census_umap`` is now
+probeable through its manifest cache and can be demoted when its LFS payload is
+missing. Skipping large downloads would stop regenerating the arXiv tile on a
+machine whose cache is warm.
 
 Usage::
 

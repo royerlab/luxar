@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from luxar._zarr_compat import consolidate, create_array, open_group
+from luxar.demos import is_lfs_pointer
 from luxar.typing_utils.constants import MAX_POINTS_PER_POINTS_NODE
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_desi_galaxies.py"
@@ -683,7 +684,7 @@ class TestSceneRowBudget:
         import zipfile
 
         scene_zip = _demo.SCENE_ZIP_SHIPPED
-        if not scene_zip.exists() or _demo.is_lfs_pointer(scene_zip):
+        if not scene_zip.exists() or is_lfs_pointer(scene_zip):
             pytest.skip("DESI Git LFS scene is not available")
 
         with zipfile.ZipFile(scene_zip) as archive:
@@ -878,6 +879,151 @@ class TestEnsureOriginFraming:
 
 
 class TestMainSceneReuse:
+    def test_cold_scene_uses_the_manifest_resolved_archive(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        resolved = tmp_path / "resolved-scene.zip"
+        resolved.write_bytes(b"manifest-resolved")
+        packaged = tmp_path / "packaged-scene.zip"
+        packaged.write_bytes(b"packaged-decoy")
+        calls: list[tuple[str, object]] = []
+
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            _demo,
+            "SCENE_ZIP_SHIPPED",
+            packaged,
+        )
+        monkeypatch.setattr(
+            _demo,
+            "ensure_dataset",
+            lambda name: calls.append(("ensure", name)) or [resolved],
+        )
+        monkeypatch.setattr(
+            _demo,
+            "extract_shipped_scene",
+            lambda source, output: calls.append(("extract", (source, output))),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "ensure_origin_framing",
+            lambda path: calls.append(("frame", path)),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "warn_if_scene_is_stale",
+            lambda path: calls.append(("warn", path)),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "_load_or_build_or_exit",
+            lambda: pytest.fail("manifest archive should avoid the compute fallback"),
+        )
+
+        _demo.main()
+
+        output = tmp_path / "desi_galaxies.luxar.zarr"
+        assert calls == [
+            ("ensure", _demo.DEMO_NAME),
+            ("extract", (resolved, output)),
+            ("frame", output),
+            ("warn", output),
+        ]
+
+    def test_unavailable_manifest_scene_falls_back_to_catalog_build(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from luxar.demos import DatasetUnavailable
+
+        output = tmp_path / "desi_galaxies.luxar.zarr"
+        arrays = (
+            np.zeros((2, 3), dtype=np.float32),
+            np.zeros(2, dtype=np.float32),
+            np.zeros(2, dtype=np.uint8),
+        )
+        calls: list[tuple[str, object]] = []
+
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "NO_SERVE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            _demo,
+            "ensure_dataset",
+            lambda name: (_ for _ in ()).throw(
+                DatasetUnavailable(f"{name} unavailable; run `git lfs pull`")
+            ),
+        )
+        monkeypatch.setattr(_demo, "_load_or_build_or_exit", lambda: arrays)
+        monkeypatch.setattr(
+            _demo,
+            "create_scene",
+            lambda positions, redshift, tracers, path: calls.append(
+                ("build", (positions, redshift, tracers, path))
+            ),
+        )
+
+        _demo.main()
+
+        assert len(calls) == 1
+        assert calls[0][0] == "build"
+        positions, redshift, tracers, path = calls[0][1]
+        assert positions is arrays[0]
+        assert redshift is arrays[1]
+        assert tracers is arrays[2]
+        assert path == output
+        assert (
+            "desi_galaxies unavailable; run `git lfs pull`" in capsys.readouterr().out
+        )
+
+    def test_manifest_integrity_fault_does_not_trigger_catalog_build(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            _demo,
+            "ensure_dataset",
+            lambda name: (_ for _ in ()).throw(RuntimeError(f"bad cache for {name}")),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "_load_or_build_or_exit",
+            lambda: pytest.fail("integrity faults must not route to catalog rebuild"),
+        )
+
+        with pytest.raises(RuntimeError, match="bad cache"):
+            _demo.main()
+
+    def test_missing_manifest_payload_fault_does_not_trigger_catalog_build(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            _demo,
+            "ensure_dataset",
+            lambda name: (_ for _ in ()).throw(
+                FileNotFoundError(f"bad in-repo payload for {name}")
+            ),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "_load_or_build_or_exit",
+            lambda: pytest.fail("payload faults must not route to catalog rebuild"),
+        )
+
+        with pytest.raises(FileNotFoundError, match="bad in-repo payload"):
+            _demo.main()
+
     def test_serve_only_checks_staleness_before_launch(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

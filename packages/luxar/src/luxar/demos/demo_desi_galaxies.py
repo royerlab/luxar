@@ -39,16 +39,18 @@ DESI Collaboration (2025), "Data Release 1 of the Dark Energy Spectroscopic
 SELF-CONTAINED / CACHING
 ------------------------
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a fully-built scene (both LOD colorings, ~73 MB) shipped via
-     Git LFS (``demos/data/desi_galaxies/``); it is unzipped once into the demos
-     output dir and loads instantly — no per-launch LOD build.
-  2. If that asset isn't pulled, ``--recompute`` (or a missing asset)
+  1. Fast path: a fully-built scene (both LOD colorings, ~73 MB) resolved through
+     the checksum-verified dataset manifest from cache, Git LFS, or Zenodo; it is
+     unzipped once into the demos output dir and loads instantly — no per-launch
+     LOD build.
+  2. If that asset is unavailable, ``--recompute`` (or a missing asset)
      AUTOMATICALLY downloads the ~1 GB of DR1 LSS catalogs to
      ``~/.cache/luxar/desi_galaxies/`` (resumable), reads them with ``astropy``,
      converts (RA, Dec, z) → comoving Mpc, keeps every row, and builds the
      substitutive LOD (GPU-accelerated but slow on CPU-only machines — which is
-     exactly why the built scene ships precomputed). If the DESI host is
-     unavailable, ``git lfs pull`` restores the no-download fast path.
+     exactly why the built scene is hosted precomputed).
+     If the DESI host is unavailable, ``git lfs pull`` restores the no-download
+     fast path from a source checkout.
 
 USAGE
 -----
@@ -95,8 +97,9 @@ from luxar import (
 )
 from luxar._zarr_compat import consolidate, open_group
 from luxar.demos import (
+    DatasetUnavailable,
     add_demo_caption,
-    is_lfs_pointer,
+    ensure_dataset,
     launch_viewer,
     parse_demo_flags,
     substitutive_lod_or_flat,
@@ -546,7 +549,7 @@ def extract_shipped_scene(zip_path: Path, output_path: Path) -> None:
     import shutil
     import zipfile
 
-    with asection("Unpacking precomputed scene (Git LFS)"):
+    with asection("Unpacking precomputed scene"):
         aprint(f"Source: {zip_path.name} ({zip_path.stat().st_size / 1e6:.0f} MB)")
         staging = output_path.parent / (output_path.name + ".part")
         shutil.rmtree(staging, ignore_errors=True)
@@ -934,14 +937,19 @@ def main() -> None:
         aprint(f"Points: {len(positions):,}")
         create_scene(positions, redshift, tracer_ids, output_path)
     elif not output_path.exists():
-        # Fast path: unzip the shipped, fully-built scene (instant, no LOD build).
-        if SCENE_ZIP_SHIPPED.exists() and not is_lfs_pointer(SCENE_ZIP_SHIPPED):
-            extract_shipped_scene(SCENE_ZIP_SHIPPED, output_path)
+        # Fast path: resolve and unzip the fully-built scene (instant, no LOD build).
+        try:
+            scene_zip = ensure_dataset(DEMO_NAME)[0]
+        except DatasetUnavailable as exc:
+            scene_zip = None
+            unavailable_reason = str(exc)
+        if scene_zip is not None:
+            extract_shipped_scene(scene_zip, output_path)
             ensure_origin_framing(output_path)
             warn_if_scene_is_stale(output_path)
         else:
             aprint(
-                "Precomputed scene not available (Git LFS asset not pulled). "
+                f"Precomputed scene not available from the manifest: {unavailable_reason}\n"
                 "Falling back to download + build (one-time; result is cached)."
             )
             positions, redshift, tracer_ids = _load_or_build_or_exit()
