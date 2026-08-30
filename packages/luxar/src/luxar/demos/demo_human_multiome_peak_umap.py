@@ -306,7 +306,7 @@ def create_human_scene(
                 # The coarse levels were 19.7% of the store (196K + 2.1M + 16M of
                 # 111M) serving a framing the screen-area selector never picks:
                 # the finest level is anchored at half-screen occupancy and this
-                # demo opens auto-fitted. 17 groups -> 13, and hosted first paint
+                # demo opens auto-fitted. 17 groups -> 9, and hosted first paint
                 # costs roughly one request per node.
                 additive_lod=stream_ladder(
                     len(positions_combined),

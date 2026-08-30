@@ -1143,7 +1143,7 @@ def add_npc_node(scene, states: List[Dict[str, Any]]) -> Tuple[int, int]:
         # `_validate_counts`, which clamps a cumulative list to each part's own
         # count, so a ~308k part gets the geometric head and stops. Sized for the
         # PART, which is the unit the ladder is applied to, not the 9.87M node.
-        additive_lod=stream_ladder(MAX_ELEMENTS_PER_PART),
+        additive_lod=stream_ladder(MAX_ELEMENTS_PER_PART, slices=len(states)),
     )
     return len(positions), 1
 

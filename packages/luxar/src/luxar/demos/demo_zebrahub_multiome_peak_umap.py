@@ -342,7 +342,7 @@ def create_zebrahub_scene(
                 # RESIDENT against a 5,591,040 Points cap — 8.7x under it. The
                 # coarse levels served a framing the screen-area selector never
                 # picks (finest anchored at half-screen occupancy, and this demo
-                # opens auto-fitted). 17 groups -> 11. Same wiring as the census
+                # opens auto-fitted). 17 groups -> 7. Same wiring as the census
                 # demo.
                 additive_lod=stream_ladder(
                     len(positions_combined),

@@ -303,7 +303,7 @@ def create_mouse_scene(
                 # 20M) serving a framing the screen-area selector never picks —
                 # the finest level is anchored at half-screen occupancy and this
                 # demo opens auto-fitted, so they were bytes nobody fetched. The
-                # ladder also drops the store from 13 groups to 7, and hosted
+                # ladder also drops the store from 13 groups to 5, and hosted
                 # first paint costs roughly one request per node.
                 additive_lod=stream_ladder(
                     len(positions_combined),

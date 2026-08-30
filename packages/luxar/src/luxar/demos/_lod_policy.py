@@ -241,9 +241,11 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
 #:
 #: `1/8` = 12.5% of the resident slice in the first rung. Sized to clear the
 #: viewer-side gate for #2374 — which fails a sliced node below **10%** of its
-#: frame, or below 1,000 elements at the 5th-percentile stop — with margin, so
-#: the gate should not fire on anything authored through :func:`stream_ladder`.
-#: Deepening this past 10 walks a sliced node into the failing band.
+#: frame, or below 1,000 elements at the 5th-percentile stop — with margin.
+#: :func:`stream_ladder` rejects a sliced leaf whose share would exceed the
+#: 900,000-element commit ceiling; partition that leaf rather than silently
+#: delivering less than this contract. Deepening this past 10 walks a sliced
+#: node into the failing band.
 #:
 #: THE 12.5% IS AN AGGREGATE, NOT A PER-STOP GUARANTEE. Rung 0 is a prefix of a
 #: global ordering, so it concentrates where the signal is rather than spreading
@@ -263,9 +265,9 @@ def hidden_axis_stops(positions: Any, hidden_dims: Sequence[int]) -> int:
 
     The viewer draws one hidden-axis coordinate at a time, so this is the divisor
     between a node's total element count and the set actually resident at any
-    moment. Needed by :func:`stream_ladder`, whose first rung is a download
-    budget that must be spent on the RESIDENT slice rather than on the whole node
-    (see its docstring).
+    moment. Needed by :func:`stream_ladder`, whose first rung must represent a
+    usable share of the RESIDENT slice rather than a budget applied to the whole
+    node (see its docstring).
 
     Counts distinct COMBINATIONS across all hidden columns, not the product of
     each column's cardinality: a node stacked on time *and* channel is only
@@ -301,6 +303,8 @@ def hidden_axis_stops(positions: Any, hidden_dims: Sequence[int]) -> int:
         )
     if arr.shape[0] == 0:
         return 1
+    if len(cols) == 1:
+        return max(1, int(np.unique(arr[:, cols[0]]).shape[0]))
     return max(1, int(np.unique(arr[:, cols], axis=0).shape[0]))
 
 
@@ -329,9 +333,10 @@ def stream_ladder(
     runbook table — mouse, ESM3, zebrahub, cellxgene, human and arxiv — measured
     group counts (wrapper + rungs) at 2,000 are 12/12/15/14/17/18 against
     13/13/17/18/17/18 today, so there is no reduction at all. At the budget
-    chunk they are **7/7/11/9/13/13**, because every rung saved is a node saved,
-    and on the published, post-``optimise --profile archive`` store, hosted
-    first paint costs roughly one request per node.
+    chunk they are **7/7/11/9/13/13** unsliced and **5/5/7/6/9/9** with the
+    sliced share floor, because every rung saved is a node saved, and on the
+    published, post-``optimise --profile archive`` store, hosted first paint
+    costs roughly one request per node.
 
     **Capped increments**, via :func:`~luxar.utils.lod_breakpoints.
     capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``
@@ -410,9 +415,9 @@ def stream_ladder(
     So for ``geometry="lines"`` this returns the STRING form, which is the one
     whose unit matches the ``n`` a caller naturally has. The cost is that the
     string form is a plain doubling ladder — its last increment approaches ``n/2``
-    rather than being capped. The largest increment first exceeds the 900,000
-    ceiling at 2,149,985 vertices, and both Lines demos using this are far below
-    that; a larger Lines leaf needs capped cuts expressed in polylines instead.
+    rather than being capped. The resolved ladder is checked against the 900,000
+    ceiling because the crossing point depends on the effective first chunk;
+    a larger Lines leaf needs capped cuts expressed in polylines instead.
 
     Args:
         n: Element count of the leaf — points for ``"points"``, VERTICES for
@@ -451,7 +456,9 @@ def stream_ladder(
     )
     from luxar.utils.lod_breakpoints import (
         DEFAULT_BANDWIDTH_MBPS,
+        DEFAULT_MAX_ADDITIVE_COMMIT,
         capped_stream_cuts,
+        stream_cuts,
         streaming_chunk_splats,
     )
 
@@ -472,13 +479,27 @@ def stream_ladder(
         # so the arithmetic is slice-independent and `slices` only decides
         # WHETHER the floor applies — an unsliced node keeps its budget ladder
         # untouched, which is why no existing unsliced caller moves.
-        first_chunk = max(first_chunk, -(-n // SLICED_LADDER_MAX_DEPTH))
-    if geometry == "lines" and n >= 2_149_985:
-        raise ValueError(
-            "Lines streaming ladders exceed the 900,000-vertex commit ceiling "
-            f"at n >= 2,149,985; got {n:,}. Supply capped polyline-count cuts "
-            "for this leaf instead."
+        share_chunk = -(-n // SLICED_LADDER_MAX_DEPTH)
+        if share_chunk > DEFAULT_MAX_ADDITIVE_COMMIT:
+            raise ValueError(
+                f"Sliced node with {n:,} elements cannot deliver its 12.5% first "
+                f"rung within the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit "
+                "ceiling. Partition this leaf before applying stream_ladder."
+            )
+        first_chunk = max(first_chunk, share_chunk)
+    if geometry == "lines":
+        cuts = stream_cuts(int(n), first_chunk)
+        largest_commit = max(
+            (cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts)),
+            default=0,
         )
+        if largest_commit > DEFAULT_MAX_ADDITIVE_COMMIT:
+            raise ValueError(
+                "Lines streaming ladder with resolved chunk "
+                f"{first_chunk:,} exceeds the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-vertex "
+                f"commit ceiling (largest commit {largest_commit:,}) for n={n:,}. "
+                "Supply capped polyline-count cuts for this leaf instead."
+            )
     counts: Any = (
         f"stream:{first_chunk}"
         if geometry == "lines"

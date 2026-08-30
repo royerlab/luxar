@@ -374,7 +374,7 @@ from luxar.demos._globe_common import (
     blue_marble_basemap,
     build_earth,
 )
-from luxar.demos._lod_policy import stream_ladder
+from luxar.demos._lod_policy import hidden_axis_stops, stream_ladder
 from luxar.encoding import EncodingMode
 from luxar.utils.paths import get_demos_output_dir
 
@@ -2984,7 +2984,11 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 # `counts` LIST is in POLYLINES while `stream:<c>` is in VERTICES,
                 # and a vertex-sized list here would clamp to the polyline count
                 # and write NO rungs, silently. See `stream_ladder`.
-                additive_lod=stream_ladder(int(track_pos.shape[0]), geometry="lines"),
+                additive_lod=stream_ladder(
+                    int(track_pos.shape[0]),
+                    geometry="lines",
+                    slices=hidden_axis_stops(track_pos, dims.non_displayed),
+                ),
             )
 
             _add_overlays(scene, sample, tracks)

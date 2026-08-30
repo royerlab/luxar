@@ -90,6 +90,33 @@ def _demo_sources() -> dict[str, str]:
     }
 
 
+def _stream_ladder_calls(src: str) -> list[ast.Call]:
+    """The direct ``stream_ladder(...)`` calls in *src*."""
+    return [
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "stream_ladder"
+    ]
+
+
+def _declares_a_hidden_dimension(src: str) -> bool:
+    """Whether *src* declares a ``Dimension(..., display=False)``."""
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Dimension"
+        and any(
+            keyword.arg == "display"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in node.keywords
+        )
+        for node in ast.walk(ast.parse(src))
+    )
+
+
 def _fitting_demos() -> dict[str, str]:
     """Demo file name -> source, for demos that call a fitter."""
     out = {}
@@ -802,7 +829,9 @@ class TestStreamLadder:
         assert isinstance(spec["counts"], str)
 
     def test_lines_refuse_the_first_size_whose_increment_breaks_the_cap(self) -> None:
-        with pytest.raises(ValueError, match="n >= 2,149,985"):
+        with pytest.raises(
+            ValueError, match="resolved chunk 39,062 exceeds the 900,000-vertex"
+        ):
             stream_ladder(2_149_985, geometry="lines")
 
         assert stream_ladder(2_149_984, geometry="lines")["counts"] == "stream:39062"
@@ -884,9 +913,9 @@ class TestASlicedNodeGetsAShareOfItsFrame:
         # MEAN, not per-stop: rung 0 is a prefix of a global ordering, so it
         # concentrates where the signal is rather than spreading in proportion to
         # slice size. `n / stops` below is the mean resident slice; on a
-        # non-uniform axis the sparsest stop gets less. That is why the shared
-        # helper hands back a histogram and why this bound is sized for the 2-7
-        # stop categorical axes these five have. See SLICED_LADDER_MAX_DEPTH.
+        # non-uniform axis the sparsest stop gets less. This bound is sized for
+        # the 2-7 stop categorical axes these demos have; longer axes need their
+        # per-stop histogram checked. See SLICED_LADDER_MAX_DEPTH.
         for total, stops in (
             (1_153_506, 6),  # mouse_multiome
             (1_151_006, 2),  # esm3
@@ -923,6 +952,19 @@ class TestASlicedNodeGetsAShareOfItsFrame:
             == stream_ladder(1_000_000, slices=1)["counts"]
         )
 
+    def test_every_sliced_demo_passes_its_slice_count(self) -> None:
+        missing = []
+        for name, src in _demo_sources().items():
+            if not _declares_a_hidden_dimension(src):
+                continue
+            for call in _stream_ladder_calls(src):
+                if not any(keyword.arg == "slices" for keyword in call.keywords):
+                    missing.append(f"{name}:{call.lineno}")
+        assert not missing, (
+            "stream_ladder calls in demos with hidden dimensions must pass slices=: "
+            f"{missing}"
+        )
+
     def test_a_small_sliced_node_keeps_its_budget_ladder(self) -> None:
         # The floor is a max(), so a node whose budget rung already exceeds
         # n/L keeps the finer ladder rather than being coarsened to meet a share
@@ -932,22 +974,21 @@ class TestASlicedNodeGetsAShareOfItsFrame:
             == stream_ladder(200_000)["counts"]
         )
 
-    def test_lines_floors_the_string_form_too(self) -> None:
-        whole = int(stream_ladder(2_000_000, geometry="lines")["counts"].split(":")[1])
+    def test_lines_floors_a_safe_string_form_too(self) -> None:
+        whole = int(stream_ladder(1_800_001, geometry="lines")["counts"].split(":")[1])
         sliced = int(
-            stream_ladder(2_000_000, geometry="lines", slices=4)["counts"].split(":")[1]
+            stream_ladder(1_800_001, geometry="lines", slices=4)["counts"].split(":")[1]
         )
         assert sliced > whole
-        assert sliced == -(-2_000_000 // SLICED_LADDER_MAX_DEPTH)
+        assert sliced == -(-1_800_001 // SLICED_LADDER_MAX_DEPTH)
 
-    def test_a_huge_stop_count_cannot_exceed_the_commit_ceiling(self) -> None:
-        # capped_stream_cuts clamps to its own ceiling, so a 500-stop node does
-        # not get a main-thread-blocking first commit.
-        from luxar.utils.lod_breakpoints import DEFAULT_MAX_ADDITIVE_COMMIT
+    def test_lines_reject_a_resolved_ladder_over_the_commit_ceiling(self) -> None:
+        with pytest.raises(ValueError, match="900,000-vertex commit ceiling"):
+            stream_ladder(2_000_000, geometry="lines", slices=4)
 
-        counts = stream_ladder(50_000_000, slices=500)["counts"]
-        assert max(counts) <= 50_000_000
-        assert counts[0] <= DEFAULT_MAX_ADDITIVE_COMMIT
+    def test_rejects_a_sliced_node_too_large_to_deliver_the_share(self) -> None:
+        with pytest.raises(ValueError, match="cannot deliver its 12.5% first rung"):
+            stream_ladder(50_000_000, slices=500)
 
     def test_rejects_a_slice_count_below_one(self) -> None:
         with pytest.raises(ValueError, match="slices must be >= 1"):

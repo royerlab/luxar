@@ -303,7 +303,7 @@ def build_scene(
                 # levels served a framing the screen-area selector never picks
                 # (finest anchored at half-screen occupancy; this demo opens
                 # auto-fitted), and cost four extra levels of nodes: 18 groups
-                # -> 9.
+                # -> 6.
                 #
                 # This also un-mixes the ladder. The absorption note above
                 # explains that one kappa had to serve BOTH families because the
