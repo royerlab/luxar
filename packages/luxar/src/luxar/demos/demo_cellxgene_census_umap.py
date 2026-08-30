@@ -141,8 +141,8 @@ def normalize_coords(coords: np.ndarray, span: float = NORM_SPAN) -> np.ndarray:
 
 def load_cache(path: Path):
     """Load the coords cache: returns (coords, per-coloring int codes, labels)."""
-    # Gate the shipped LFS npz so an unpulled pointer gives the "git lfs pull"
-    # message instead of a cryptic np.load zip error.
+    # Guard a user-supplied override from producing a cryptic np.load zip error
+    # when it is an unpulled LFS pointer.
     z = np.load(require_local_data(path), allow_pickle=False)
     labels = json.loads(str(z["labels_json"]))
     codes = {f"{c}": z[f"{c}_code"] for c, _ in COLORINGS}
@@ -355,7 +355,7 @@ def main() -> None:
             cache = ensure_dataset(DATASET)[0]
         except DatasetUnavailable as exc:
             _print_cache_guidance(f"default coords cache is unavailable: {exc}")
-            return
+            raise SystemExit(1) from exc
     output_path = get_demos_output_dir() / "cellxgene_census_umap.luxar.zarr"
     # No CPU/GPU split any more: the build no longer coarsens, so it is a write,
     # not a compute. CENSUS_UMAP_MAX_CELLS also keeps the selected coloring

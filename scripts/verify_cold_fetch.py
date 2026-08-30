@@ -13,8 +13,9 @@ Run it BEFORE ``git rm``-ing a dataset's payloads, never after.
 Why it has to exist
 -------------------
 The obvious safety net does not work here. ``DatasetUnavailable`` subclasses
-``FileNotFoundError`` and **thirteen demos catch it deliberately** and fall back
-to refitting locally — see the class docstring in
+``FileNotFoundError`` and **sixteen demos catch it deliberately**. Most fall back
+to refitting locally; the Census demo prints regeneration guidance instead. See
+the class docstring in
 ``luxar.demos._support.datasets.data_fetch``. That is a good design, but it means
 that after the payloads are removed a broken hosting configuration does not
 surface as a failure. It surfaces as a multi-minute GPU refit on a user's

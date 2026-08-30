@@ -124,6 +124,35 @@ def test_missing_explicit_cache_keeps_generation_guidance(
     assert "CENSUS_UMAP_CACHE=<cache>.npz" in output
 
 
+def test_missing_default_cache_exits_after_generation_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("CENSUS_UMAP_CACHE", raising=False)
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: (_ for _ in ()).throw(
+            _demo.DatasetUnavailable(f"no usable payload for {name}")
+        ),
+    )
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda *args, **kwargs: pytest.fail("missing default cache must not build"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        _demo.main()
+
+    assert exc_info.value.code == 1
+    output = capsys.readouterr().out
+    assert "no usable payload for census_umap_1m" in output
+    assert "scripts/gen_census_umap.py" in output
+    assert "CENSUS_UMAP_CACHE=<cache>.npz" in output
+
+
 def test_manifest_payload_fault_does_not_recommend_regeneration(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -1,9 +1,10 @@
 """Tests for ``scripts/verify_cold_fetch.py``.
 
 Every test here asserts the harness goes **red**. That is the point of it: it is
-the only gate standing between "the hosting is broken" and "thirteen demos
-silently start a multi-minute GPU refit and the exit code stays 0". A gate that
-cannot fail would be worse than no gate, because it would be believed.
+the only gate standing between "the hosting is broken" and "sixteen demos
+catch the failure, most silently starting a multi-minute GPU refit; Census
+instead prints regeneration guidance". A gate that cannot fail would be worse
+than no gate, because it would be believed.
 
 The origins are real local HTTP servers rather than mocks, because two of the
 three failure modes are properties of an HTTP response — a soft-404 that
