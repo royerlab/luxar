@@ -100,6 +100,12 @@ def _iter_flatten_splat_sets(root: Any, leaf_paths: Sequence[str]) -> Iterator[A
 def _resolve_barrier_dims(
     splat_groups: Sequence[Any], stats: dict[str, Any]
 ) -> Optional[tuple[int, ...]]:
+    """Resolve explicit barriers, preserving ``None`` for required detection.
+
+    ``None`` means the streaming path must inspect centers; ``()`` explicitly
+    requests pure spatial ordering. Empty stamps on nD data are treated as
+    unknown because older stores omitted their categorical axes.
+    """
     if not splat_groups:
         return None
 
@@ -123,6 +129,13 @@ def _resolve_barrier_dims(
 
 @dataclass
 class _BarrierAxisAccumulator:
+    """Track rounded qualification separately from exact-value run reuse.
+
+    Rounded integer-grid values decide whether an axis is categorical. Exact
+    values preserve the canonical lexsort runs, but crossing their cardinality
+    cap disables reuse without changing the axis qualification result.
+    """
+
     max_cardinality: int
     rounded_values: set[int] = field(default_factory=set)
     exact_values: Optional[set[float]] = field(default_factory=set)
@@ -318,6 +331,7 @@ def _barrier_runs(
     max_cardinality: int = _DEFAULT_BARRIER_MAX_CARDINALITY,
     coarsen_dims: Optional[Sequence[int]] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Count exact barrier tuples without allowing unbounded run cardinality."""
     counts: dict[tuple[float, ...], int] = {}
     for start in range(0, len(centers), 65_536):
         block = np.asarray(centers[start : start + 65_536])[:, barrier_dims]
@@ -347,6 +361,7 @@ def _raise_barrier_cardinality_error(
     n_splats: int,
     max_cardinality: int,
 ) -> None:
+    """Raise the actionable CLI error for a non-categorical barrier stamp."""
     source = (
         f"coarsen_dims {list(coarsen_dims)}"
         if coarsen_dims is not None

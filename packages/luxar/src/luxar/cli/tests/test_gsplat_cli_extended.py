@@ -7722,10 +7722,10 @@ class TestFlattenCommand:
         )
         measured = subprocess.run(
             [sys.executable, "-c", script, str(partition), str(flat)],
-            check=True,
             capture_output=True,
             text=True,
         )
+        assert measured.returncode == 0, measured.stderr
 
         flat_payload_bytes = n_splats * (3 * 4 + 4 + 6 * 4)
         peak_delta = int(measured.stdout.rsplit("PEAK_DELTA=", 1)[1].splitlines()[0])

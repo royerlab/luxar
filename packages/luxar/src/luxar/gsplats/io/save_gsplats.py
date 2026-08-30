@@ -715,16 +715,28 @@ def _finalize_gsplat_root(
     pipeline_info: Optional[Dict[str, Any]] = None,
     description: Optional[str] = None,
 ) -> None:
+    """Attach root metadata, then hash and consolidate in contract order.
+
+    Appearance harmonization must precede the content hash, and the hash must
+    precede consolidation so corrected attrs and the hash itself land in the
+    consolidated metadata used by every standalone writer.
+    """
+    # Self-identifying v3.0 header (disjoint from the node's structural attrs).
     root.attrs["format_version"] = FORMAT_VERSION
     root.attrs["format_type"] = "gsplats_zarr"
     root.attrs["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
+    # A standalone file opened directly is the whole layer, so expose its root
+    # in the Layers panel. Single-source the value with the reader that must
+    # distinguish this writer stamp from an authored choice.
     root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
     if description:
         root.attrs["description"] = description
 
     resolved_fitting_info = _resolve_metadata_provider(fitting_info)
     if resolved_fitting_info is not None:
+        # `n_splats` is the count in THIS artifact (see fitting/results.py).
+        # Count-changing LOD inherits a stale source-fit value unless corrected.
         if artifact_n_splats is not None and "n_splats" in resolved_fitting_info:
             resolved_fitting_info = {
                 **resolved_fitting_info,
@@ -737,9 +749,15 @@ def _finalize_gsplat_root(
     if provenance_info is not None:
         root.create_group("provenance").attrs.update(provenance_info)
     if pipeline_info:
+        # Reduction/topology stats: everything split_fitting_info's other
+        # buckets do not consume. Optional group: absent for plain fits.
         root.create_group("pipeline").attrs.update(pipeline_info)
 
+    # One colormap window per gsplat structure (#1691) — before the hash so
+    # the stamp covers the corrected attrs.
     harmonize_gsplat_amplitude_windows(root)
+
+    # Stamp BEFORE consolidating so the hash lands in `.zmetadata` too.
     _stamp_content_hash(root)
     consolidate(root)
 
@@ -799,6 +817,7 @@ def _resolve_streaming_layout(
 def _resolve_streaming_barrier_offsets(
     metadata: Sequence[StreamingSplatSetMetadata], barrier_dims: Sequence[int]
 ) -> Optional[dict[tuple[float, ...], int]]:
+    """Map exact barrier tuples, ordered by sorted barrier dimensions, to offsets."""
     from luxar.io._ordering.compound import (
         _DEFAULT_BARRIER_MAX_CARDINALITY,
         _barrier_axis_qualifies,
@@ -874,6 +893,10 @@ def _stream_destinations(
     barrier_offsets: Optional[dict[tuple[float, ...], int]],
     offset: int,
 ) -> list[tuple[int, int, int]]:
+    """Map sorted source runs to barrier-major output ranges.
+
+    Metadata run order must match ``_compound_sort``'s lexsort key order.
+    """
     if barrier_offsets is None:
         return [(offset, 0, metadata.n_splats)]
     assert metadata.barrier_values is not None
