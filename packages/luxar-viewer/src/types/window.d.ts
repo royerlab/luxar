@@ -185,14 +185,15 @@ declare global {
        * Per-stage timing snapshot for lazy and additive LOD level loads
        * (`lazy:loadGSplats` / `lazy:process` / `lazy:commit` /
        * `lazy:release`), keyed by stage → {count, totalMs, avgMs, maxMs}.
-       * Additive keys are bounded by geometry type × level × residency; they
-       * deliberately exclude slice/timepoint identifiers. Debug-only.
+       * Additive keys are bounded by geometry type × level × residency, plus
+       * an `:aborted` key when the level load is cancelled; they deliberately
+       * exclude slice/timepoint identifiers. Debug-only.
        */
       getLodLoadStats?: () => Record<
         string,
         { count: number; totalMs: number; avgMs: number; maxMs: number }
       >;
-      /** Clear the lazy-LOD-load timing accumulator (debug-only). */
+      /** Clear the lazy and additive LOD-load timing accumulator (debug-only). */
       resetLodLoadStats?: () => void;
     };
   }

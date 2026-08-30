@@ -41,8 +41,9 @@ file sits directly under `scene-loader/`:
 
 - **`lod-load-stats.ts`** — debug-only per-stage timing accumulator for
   lazy LOD level loads (fetch/decode, projection+pack, GPU commit,
-  release). These loads run outside any `updateView` cycle, so the
-  `UpdateProfiler` / data-loading-monitor never sees them; this fills
+  release) and additive ladder levels keyed by geometry, level, and
+  residency or abort. These loads run outside any `updateView` cycle, so
+  the `UpdateProfiler` / data-loading-monitor never sees them; this fills
   the gap. Disabled by default (zero cost), enabled under `?debug` by
   `installDebugInterface`, which also exposes
   `window.__luxarDebug.getLodLoadStats()` / `resetLodLoadStats()`.
