@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,7 @@ from typing import Any
 import zarr
 from arbol import aprint, asection
 
+from luxar.encoding.decoder import decode_coordinate_columns
 from luxar.io.lod_screening import (
     DEFAULT_ASPECTS,
     DEFAULT_FIT_FOV,
@@ -84,6 +86,10 @@ DEFAULT_MAX_LEVEL_ELEMENTS = 1_000_000
 #: Fewer levels than this cannot stream across more than one refinement pass.
 DEFAULT_MIN_SUBLODS = 3
 
+#: A sliced first rung below this absolute element count is visually empty in
+#: playback even when its share of the whole node looks structurally healthy.
+DEFAULT_MIN_SLICE_FIRST_RUNG = 2_000
+
 
 def _element_count(attrs: dict[str, Any]) -> int:
     for key in ("n_points", "n_vertices", "n_splats"):
@@ -101,6 +107,103 @@ def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
         return  # additive_<i> subgroups are internal to the leaf
     for name in group.group_keys():
         yield from walk_leaves(group[name], f"{path}/{name}")
+
+
+def _first_rung_histogram(
+    leaf: Any, zarr_root: Any
+) -> Counter[tuple[object, ...]] | None:
+    """Histogram one sliced leaf's rung 0 by decoded hidden coordinate."""
+    attrs = dict(leaf.attrs)
+    if int(attrs.get("n_additive_sublods", 1) or 1) <= 1:
+        return None
+    try:
+        rung = leaf["additive_0"]
+    except KeyError:
+        return Counter()
+    dims = [int(dim) for dim in rung.attrs.get("slice_dims", [])]
+    if not dims:
+        return None
+    coordinate_array = {
+        "points": "positions",
+        "lines": "vertices",
+        "gsplats": "centers",
+    }[attrs["type"]]
+    if coordinate_array not in rung:
+        return Counter()
+    columns = decode_coordinate_columns(rung[coordinate_array], dims, zarr_root)
+    counts: Counter[tuple[object, ...]] = Counter()
+    counts.update(tuple(row) for row in columns)
+    return counts
+
+
+def _node_slice_histogram(
+    group: Any, zarr_root: Any
+) -> Counter[tuple[object, ...]] | None:
+    """Reduce one geometry node: partition=sum, substitutive LOD=keywise max."""
+    attrs = dict(group.attrs)
+    if attrs.get("type") in ("points", "lines", "gsplats"):
+        return _first_rung_histogram(group, zarr_root)
+
+    children = [group[name] for name in group.group_keys()]
+    if attrs.get("kind") == "partition":
+        combined: Counter[tuple[object, ...]] = Counter()
+        for child in children:
+            child_histogram = _node_slice_histogram(child, zarr_root)
+            if child_histogram is not None:
+                combined += child_histogram
+        return combined or None
+    if attrs.get("kind") == "lod":
+        alternatives = [
+            histogram
+            for child in children
+            if (histogram := _node_slice_histogram(child, zarr_root)) is not None
+        ]
+        if not alternatives:
+            return None
+        keys = set().union(*(histogram.keys() for histogram in alternatives))
+        return Counter(
+            {key: max(histogram[key] for histogram in alternatives) for key in keys}
+        )
+    return None
+
+
+def sliced_first_rung_counts(
+    root: Any, path: str = "", zarr_root: Any = None
+) -> list[tuple[str, int]]:
+    """Measure each sliced node's global per-slice rung-0 maximum."""
+    zarr_root = root if zarr_root is None else zarr_root
+    histogram = _node_slice_histogram(root, zarr_root)
+    if histogram is not None:
+        return [(path or "/", max(histogram.values(), default=0))]
+    return [
+        result
+        for name in root.group_keys()
+        for result in sliced_first_rung_counts(root[name], f"{path}/{name}", zarr_root)
+    ]
+
+
+def _record_sliced_verdicts(
+    root: Any,
+    scene_name: str,
+    min_first_rung: int,
+    results: list[tuple[str, str, str]],
+    counts: dict[str, int],
+    failures: list[str],
+) -> None:
+    """Append scene-level sliced-rung failures without inflating ``run_gate``."""
+    for path, count in sliced_first_rung_counts(root):
+        if count <= 0:
+            message = "empty rung-0 slice survey"
+        elif count < min_first_rung:
+            message = (
+                f"largest rung-0 slice has {count:,} elements, below the "
+                f"{min_first_rung:,} absolute first-paint floor"
+            )
+        else:
+            continue
+        results.append((path, "fail", message))
+        counts["fail"] += 1
+        failures.append(f"{scene_name}{path}")
 
 
 def check_leaf(
@@ -241,6 +344,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--min-sublods", type=int, default=DEFAULT_MIN_SUBLODS)
     parser.add_argument(
+        "--min-slice-first-rung",
+        type=int,
+        default=DEFAULT_MIN_SLICE_FIRST_RUNG,
+    )
+    parser.add_argument(
         "--quiet", action="store_true", help="only print warnings and failures"
     )
     screen = parser.add_argument_group(
@@ -309,7 +417,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
-    """The original streaming-ladder audit, unchanged. Returns its exit code."""
+    """Run the streaming-ladder and sliced-first-rung audits."""
     counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
     icons = {"ok": "✅", "warn": "⚠️ ", "fail": "❌", "skip": "· "}
     failures: list[str] = []
@@ -336,6 +444,15 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             counts[status] += 1
             if status == "fail":
                 failures.append(f"{scene.name}{leaf_path}")
+
+        _record_sliced_verdicts(
+            root,
+            scene.name,
+            args.min_slice_first_rung,
+            results,
+            counts,
+            failures,
+        )
 
         visible_results = [
             result

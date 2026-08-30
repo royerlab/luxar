@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import typer
+import zarr
 from typer.testing import CliRunner
 
 from luxar.cli.gsplat_commands import app_gsplat
@@ -367,6 +369,258 @@ class TestMergeStreamingKnobs:
         # amplitude u16, cholesky u8-certified) → 625000/30 = 20833.
         assert bp == "stream:20833"
 
+    def test_target_ms_scales_for_slices_and_partition_parts(self) -> None:
+        from luxar.cli.gsplat_ops.batch.planning import (
+            MergeConfig,
+            resolve_merge_recipe_args,
+        )
+
+        args = resolve_merge_recipe_args(
+            MergeConfig(recipe="stream", target_ms=200.0),
+            merged_ndim=4,
+            slice_count=6,
+            part_count=3,
+        )
+
+        assert args["breakpoints"] == "stream:41666"
+
+    def test_store_survey_counts_hidden_coordinates_and_partition_parts(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "layout.gsplats.zarr"
+        root = zarr.open_group(store_path, mode="w")
+        root.attrs["kind"] = "partition"
+        for part_index in range(2):
+            leaf = root.create_group(f"part_{part_index}")
+            leaf.attrs.update(
+                {"type": "gsplats", "n_splats": 3, "n_additive_sublods": 1}
+            )
+            leaf.attrs["slice_dims"] = [3]
+            leaf.create_array(
+                "centers",
+                data=np.asarray(
+                    [
+                        [part_index, 0, 0, 0],
+                        [part_index, 1, 0, 1],
+                        [part_index, 2, 0, 2],
+                    ],
+                    dtype=np.uint16,
+                ),
+            )
+
+        assert survey_gsplat_streaming_layout(store_path) == (3, 2)
+
+    def test_store_survey_ignores_spatial_integer_barriers(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "spatial-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [0, 1, 2],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0], [1, 2, 3], [2, 4, 6], [3, 6, 9]], dtype=np.uint16
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (1, 1)
+
+    def test_store_survey_ignores_partial_spatial_integer_barriers(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "partial-spatial-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [0, 1],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0.1], [0, 1, 0.2], [1, 0, 0.3], [1, 1, 0.4]],
+                dtype=np.float32,
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (1, 1)
+
+    def test_store_survey_counts_2d_stacked_barrier_axis(self, tmp_path: Path) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "stacked-2d-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [2],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0], [1, 2, 0], [2, 4, 1], [3, 6, 1]], dtype=np.uint16
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (2, 1)
+
+    def test_store_survey_counts_only_stacked_barrier_axes(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "stacked-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [0, 1, 2, 3],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0, 0], [1, 2, 3, 0], [2, 4, 6, 1], [3, 6, 9, 1]],
+                dtype=np.uint16,
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (2, 1)
+
+    def test_store_survey_excludes_spatial_axis_from_partial_barrier(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "partial-stacked-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [2, 3],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [
+                    [0.1, 0.2, 0, 0],
+                    [0.3, 0.4, 1, 0],
+                    [0.5, 0.6, 0, 1],
+                    [0.7, 0.8, 1, 1],
+                ],
+                dtype=np.float32,
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (2, 1)
+
+    def test_store_survey_decodes_each_rungs_coordinate_grid(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "encoded-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update({"type": "gsplats", "n_splats": 4, "n_additive_sublods": 2})
+        for index, (low, rows) in enumerate(((10.0, [0, 1]), (12.0, [0, 1]))):
+            rung = leaf.create_group(f"additive_{index}")
+            rung.attrs.update({"type": "gsplats", "n_splats": 2, "slice_dims": [3]})
+            centers = rung.create_array(
+                "centers",
+                data=np.column_stack(
+                    [
+                        np.zeros((2, 3), dtype=np.uint16),
+                        np.asarray(rows, dtype=np.uint16),
+                    ]
+                ),
+            )
+            centers.attrs["encoding"] = {
+                "name": "linear_perchannel_u16",
+                "col_lo": [0.0, 0.0, 0.0, low],
+                "col_hi": [0.0, 0.0, 0.0, low + 1.0],
+                "bits": 16,
+                "original_dtype": "float32",
+            }
+
+        assert survey_gsplat_streaming_layout(store_path) == (4, 1)
+
+    def test_store_survey_decodes_lut_coordinates(self, tmp_path: Path) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "lut-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [3],
+            }
+        )
+        centers = leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 1]],
+                dtype=np.uint8,
+            ),
+        )
+        centers.attrs["encoding"] = {
+            "name": "lut_uint8",
+            "lut": [0.0, 4.0],
+            "original_dtype": "float32",
+        }
+
+        assert survey_gsplat_streaming_layout(store_path) == (2, 1)
+
+    def test_store_survey_reads_zipped_store(self, tmp_path: Path) -> None:
+        import shutil
+
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "zipped-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 3,
+                "n_additive_sublods": 1,
+                "slice_dims": [3],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 2]], dtype=np.float32
+            ),
+        )
+        archive = Path(shutil.make_archive(str(store_path), "zip", root_dir=store_path))
+
+        assert survey_gsplat_streaming_layout(archive) == (3, 1)
+
     def test_stored_stream_string_reparses_at_merge_time(self) -> None:
         """The manifest round-trip: the stored string re-parses via
         parse_lod_breakpoints into the same deferred spec."""
@@ -721,10 +975,21 @@ class TestPlanTimeStreamingSizing:
             ["t", "z", "y", "x"],
             MergeConfig(recipe="stream", target_ms=200.0),
         )
-        # merged ndim = 3 spatial + stacked-timepoint axis = 4 → 30 B → 20833:
-        # exactly what `batch-fit merge --target-ms 200` derives from the
-        # manifest (len(spatial_shape) + (n_timepoints > 1)).
-        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:20833"
+        # The whole-node 20,833-splat budget is doubled for two hidden slices;
+        # one partition part receives the resulting 41,666-splat first rung.
+        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:41666"
+
+    def test_invalid_merge_knobs_fail_before_plan_output(self, tmp_path: Path) -> None:
+        from luxar.cli.gsplat_ops.batch.planning import MergeConfig
+
+        with pytest.raises(typer.BadParameter, match="require a --merge-recipe"):
+            self._plan(
+                tmp_path,
+                (2, 8, 8, 8),
+                ["t", "z", "y", "x"],
+                MergeConfig(recipe=None, n_lods=6),
+            )
+        assert not (tmp_path / "out").exists()
 
     def test_single_timepoint_plans_3d_ladder(self, tmp_path: Path) -> None:
         from luxar.cli.gsplat_ops.batch.planning import MergeConfig
@@ -751,8 +1016,9 @@ class TestPlanTimeStreamingSizing:
                 channel_colors="#ff0080,#00ff00",
             ),
         )
-        # Colors will be written per-splat → 34 B → 18382 (pre-fix: 20833).
-        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:18382"
+        # Colors will be written per-splat → 34 B → 18,382 for the whole node,
+        # then doubled for the two hidden time slices.
+        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:36764"
 
 
 # ── merge-time --target-ms: measured from completed tiles, analytic fallback ─

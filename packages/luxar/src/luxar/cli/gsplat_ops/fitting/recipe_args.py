@@ -13,9 +13,6 @@ def build_fit_recipe_params(
     n_lods: Optional[int],
     additive_method: Optional[str],
     breakpoints: Optional[str],
-    target_ms: Optional[float] = None,
-    bandwidth_mbps: Optional[float] = None,
-    bytes_per_splat: Optional[float] = None,
     compression_factor: Optional[int],
     levels: Optional[int],
     substitutive_method: Optional[str],
@@ -30,11 +27,8 @@ def build_fit_recipe_params(
     from luxar.cli.gsplat_ops.recipe_shared import (
         VALID_ADDITIVE_METHODS,
         VALID_SUBSTITUTIVE_METHODS,
-        estimate_bytes_per_splat,
         parse_lod_breakpoints,
-        resolve_streaming_breakpoints,
         validate_refine,
-        validate_streaming_knobs,
     )
     from luxar.gsplats.lod.recipes import (
         LEGACY_RECIPE_NAMES,
@@ -61,9 +55,6 @@ def build_fit_recipe_params(
         "--n-lods": n_lods,
         "--add-method": additive_method,
         "--breakpoints": breakpoints,
-        "--target-ms": target_ms,
-        "--bandwidth-mbps": bandwidth_mbps,
-        "--bytes-per-splat": bytes_per_splat,
     }
     substitutive_only = {
         "--compression-factor": compression_factor,
@@ -94,16 +85,7 @@ def build_fit_recipe_params(
             f"--subst-method must be one of "
             f"{list(VALID_SUBSTITUTIVE_METHODS)}; got {substitutive_method!r}"
         )
-    validate_streaming_knobs(target_ms, bandwidth_mbps, bytes_per_splat, breakpoints)
-    if target_ms is not None:
-        bp: Any = resolve_streaming_breakpoints(
-            target_ms,
-            bandwidth_mbps,
-            bytes_per_splat,
-            analytic_bps=estimate_bytes_per_splat(volume_ndim),
-        )
-    else:
-        bp = parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
+    bp: Any = parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
 
     parsed_coarsen: Optional[tuple] = None
     if coarsen_dims is not None:

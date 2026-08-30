@@ -15,7 +15,7 @@ import pytest
 from luxar._zarr_compat import create_array, memory_group
 from luxar.encoding._encoders.perchannel import COORDINATE_LEVELS, gridded_axis_step
 from luxar.encoding._encoders.structural import LUT_SCALAR_MAX_DISTINCT
-from luxar.encoding.decoder import ArrayDecoder
+from luxar.encoding.decoder import ArrayDecoder, decode_coordinate_columns
 from luxar.encoding.encoder import ArrayEncoder
 from luxar.encoding.modes import EncodingMode
 from luxar.encoding.semantic_types import SemanticType
@@ -217,6 +217,27 @@ class TestGenericLinearPerchannel:
         decoded = ArrayDecoder().decode(g["a"], g)
         assert decoded.dtype == np.float32
         np.testing.assert_allclose(decoded, vals, atol=float(rngv.max()) / levels * 2)
+
+    def test_coordinate_column_fallback_resolves_array_reference_to_lut(self):
+        group = memory_group()
+        target = create_array(
+            group,
+            "target",
+            data=np.asarray([[0, 1, 0, 1], [1, 0, 1, 0]], dtype=np.uint8),
+        )
+        target.attrs["encoding"] = {
+            "name": "lut_uint8",
+            "lut": [10.0, 20.0],
+            "original_dtype": "float32",
+        }
+        reference = create_array(
+            group, "reference", data=np.empty((0, 4), dtype=np.uint8)
+        )
+        reference.attrs["encoding"] = {"name": "array_ref", "target": "target"}
+
+        decoded = decode_coordinate_columns(reference, [3], group)
+
+        np.testing.assert_array_equal(decoded, [[20.0], [10.0]])
 
     def test_decoder_rejects_non_finite_scales(self):
         rng = np.random.default_rng(12)

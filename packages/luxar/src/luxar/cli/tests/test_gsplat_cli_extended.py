@@ -114,6 +114,38 @@ def sample_gsplats_4d(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def sample_gsplats_2d_stacked(tmp_path: Path) -> Path:
+    """A 2D spatial store with a trailing stacked time coordinate."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    centers = np.array(
+        [[1.0, 2.0], [4.0, -5.0], [-7.0, 8.0], [10.0, 11.0]],
+        dtype=np.float32,
+    )
+    identity_chol = np.tile(np.array([1.0, 0, 1.0], dtype=np.float32), (4, 1))
+
+    def _make_timepoint(amplitudes: list[float]) -> GSplatData:
+        return GSplatData(
+            centers=centers.copy(),
+            amplitudes=np.array(amplitudes, dtype=np.float32),
+            cholesky_factors=identity_chol.copy(),
+        )
+
+    combined = GSplatData.combine_as_new_dimension(
+        [
+            _make_timepoint([0.1, 0.2, 0.3, 0.4]),
+            _make_timepoint([0.5, 0.6, 0.7, 0.8]),
+        ],
+        values=[0.0, 7.0],
+        sigma=0.0,
+    )
+    out = tmp_path / "test2d-stacked.gsplats.zarr"
+    combined.save(out)
+    assert zarr.open_group(out, mode="r").attrs["slice_dims"] == [2]
+    return out
+
+
+@pytest.fixture
 def small_volume_npy(tmp_path: Path) -> Path:
     """Create a small 16^3 .npy volume for testing."""
     volume = np.random.rand(16, 16, 16).astype(np.float32) * 0.5
@@ -5871,6 +5903,153 @@ class TestLODCommand:
         )
         assert result.exit_code == 0, f"failed:\n{result.stdout}"
         assert out.exists()
+
+    def test_lod_target_ms_uses_output_barrier_and_part_count(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        no_barrier = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(sample_gsplats_4d),
+                str(tmp_path / "levels.gsplats.zarr"),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+                "--target-ms",
+                "200",
+            ],
+        )
+        assert no_barrier.exit_code == 0, normalized_cli_output(no_barrier)
+        assert "x 1 slice(s) / 1 part(s)" in normalized_cli_output(no_barrier)
+
+        zarr.open_group(sample_gsplats_4d, mode="a").attrs["slice_dims"] = [0, 1, 2, 3]
+
+        partitioned = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(sample_gsplats_4d),
+                str(tmp_path / "tiles.gsplats.zarr"),
+                "--recipe",
+                "tiles",
+                "--parts",
+                "2",
+                "--target-ms",
+                "200",
+            ],
+        )
+        assert partitioned.exit_code == 0, normalized_cli_output(partitioned)
+        assert "x 2 slice(s) / 2 part(s)" in normalized_cli_output(partitioned)
+
+    def test_lod_target_ms_ignores_3d_spatial_barrier(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        zarr.open_group(medium_gsplats, mode="a").attrs["slice_dims"] = [0, 1, 2]
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(medium_gsplats),
+                str(tmp_path / "spatial-barrier.gsplats.zarr"),
+                "--recipe",
+                "stream",
+                "--target-ms",
+                "5",
+            ],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        assert "x 1 slice(s) / 1 part(s)" in normalized_cli_output(result)
+
+    def test_lod_target_ms_ignores_partial_spatial_barrier(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        x, y = np.meshgrid(np.arange(4), np.arange(4), indexing="ij")
+        centers = np.column_stack(
+            [
+                np.tile(x.ravel(), 2),
+                np.tile(y.ravel(), 2),
+                np.linspace(0.1, 3.2, 32),
+            ]
+        ).astype(np.float32)
+        data = GSplatData(
+            centers=centers,
+            amplitudes=np.ones(32, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (32, 1)
+            ),
+        )
+        input_path = tmp_path / "partial-spatial.gsplats.zarr"
+        data.save(input_path)
+        assert zarr.open_group(input_path, mode="r").attrs["slice_dims"] == [0, 1]
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(input_path),
+                str(tmp_path / "partial-spatial-lod.gsplats.zarr"),
+                "--recipe",
+                "stream",
+                "--target-ms",
+                "5",
+            ],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        assert "x 1 slice(s) / 1 part(s)" in normalized_cli_output(result)
+
+    def test_lod_target_ms_counts_2d_stacked_barrier(
+        self, runner: CliRunner, sample_gsplats_2d_stacked: Path, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(sample_gsplats_2d_stacked),
+                str(tmp_path / "stacked-2d.gsplats.zarr"),
+                "--recipe",
+                "stream",
+                "--target-ms",
+                "200",
+            ],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        assert "x 2 slice(s) / 1 part(s)" in normalized_cli_output(result)
+
+    def test_lod_target_ms_uses_explicit_output_barrier(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(sample_gsplats_4d),
+                str(tmp_path / "barrier.gsplats.zarr"),
+                "--recipe",
+                "levels",
+                "-L",
+                "1",
+                "--coarsen-dims",
+                "0,1,2",
+                "--target-ms",
+                "200",
+            ],
+        )
+        assert result.exit_code == 0, normalized_cli_output(result)
+        assert "x 2 slice(s) / 1 part(s)" in normalized_cli_output(result)
 
     def test_truncation_sigmas_passes_through_as_none_by_default(
         self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path, monkeypatch

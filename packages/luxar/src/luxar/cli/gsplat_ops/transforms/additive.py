@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -41,6 +42,23 @@ def _merged_leaf_meta(src_meta: dict, new_meta: dict) -> dict:
     return merged
 
 
+def _measure_streaming_input(input_path: Path) -> tuple[int, int, int]:
+    """Return slice count, part count, and bytes with one archive extraction."""
+    from luxar.cli.gsplat_ops.recipe_shared import (
+        measure_store_bytes,
+        survey_gsplat_streaming_layout,
+    )
+    from luxar.gsplats.io._archive import resolve_store_path
+
+    resolved_input, temp_dir = resolve_store_path(input_path)
+    try:
+        slice_count, part_count = survey_gsplat_streaming_layout(resolved_input)
+        return slice_count, part_count, measure_store_bytes(resolved_input)
+    finally:
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def run_additive_dataset(
     *,
     input_path: Path,
@@ -64,7 +82,6 @@ def run_additive_dataset(
             carried_appearance,
             detect_store_encoding,
             estimate_bytes_per_splat,
-            measure_store_bytes,
             parse_lod_breakpoints,
             resolve_streaming_breakpoints,
             validate_streaming_knobs,
@@ -137,7 +154,9 @@ def run_additive_dataset(
 
             # ── streaming breakpoints from --target-ms (measured B/splat) ──
             if target_ms is not None:
-                store_bytes = measure_store_bytes(input_path)
+                slice_count, part_count, store_bytes = _measure_streaming_input(
+                    input_path
+                )
                 measured = store_bytes / total_stored if store_bytes > 0 else None
                 # Mirror `gsplat lod`: an explicit non-default --encoding
                 # re-encodes the output, so measured INPUT bytes misstate the
@@ -162,6 +181,8 @@ def run_additive_dataset(
                     analytic_bps=estimate_bytes_per_splat(
                         node_ndim(node), has_colors, encoding=encoding_mode
                     ),
+                    slice_count=slice_count,
+                    part_count=part_count,
                 )
 
             with asection(f"Laddering {n_leaves} leaf/leaves"):
@@ -192,8 +213,6 @@ def run_additive_dataset(
 
             with asection(f"Saving to {output_path.name}"):
                 if output_path.exists() and overwrite:
-                    import shutil
-
                     if output_path.is_dir():
                         shutil.rmtree(output_path)
                     else:

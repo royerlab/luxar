@@ -309,32 +309,6 @@ def run_fit_volume(
         "'counts:500,2000,...' or 'energy:0.5,0.9,...'.",
         rich_help_panel="Per-part LOD",
     ),
-    recipe_target_ms: Optional[float] = typer.Option(
-        None,
-        "--target-ms",
-        min=1.0,
-        help="[--recipe stream] streaming sizing: derive 'stream:<c>' "
-        "breakpoints so each part's first additive chunk downloads in ~this "
-        "many ms at --bandwidth-mbps (analytic bytes/splat estimate; override "
-        "with --bytes-per-splat). Mutually exclusive with --breakpoints.",
-        rich_help_panel="Per-part LOD",
-    ),
-    recipe_bandwidth_mbps: Optional[float] = typer.Option(
-        None,
-        "--bandwidth-mbps",
-        min=0.1,
-        help="[--recipe stream] assumed downlink for --target-ms sizing "
-        "(default 25, a typical broadband connection).",
-        rich_help_panel="Per-part LOD",
-    ),
-    recipe_bytes_per_splat: Optional[float] = typer.Option(
-        None,
-        "--bytes-per-splat",
-        min=0.1,
-        help="[--recipe stream] override the on-wire bytes/splat used by "
-        "--target-ms sizing (default: analytic estimate).",
-        rich_help_panel="Per-part LOD",
-    ),
     recipe_compression_factor: Optional[int] = typer.Option(
         None,
         "-K",
@@ -684,9 +658,6 @@ def run_fit_volume(
                 recipe_n_lods=recipe_n_lods,
                 recipe_additive_method=recipe_additive_method,
                 recipe_breakpoints=recipe_breakpoints,
-                recipe_target_ms=recipe_target_ms,
-                recipe_bandwidth_mbps=recipe_bandwidth_mbps,
-                recipe_bytes_per_splat=recipe_bytes_per_splat,
                 recipe_compression_factor=recipe_compression_factor,
                 recipe_levels=recipe_levels,
                 recipe_substitutive_method=recipe_substitutive_method,

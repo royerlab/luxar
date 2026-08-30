@@ -1523,7 +1523,13 @@ def resolve_uniform_grid_scale(fit: FitConfig, ndim: int) -> Optional[List[float
 
 
 def resolve_merge_recipe_args(
-    merge: MergeConfig, *, merged_ndim: int = 4, merged_has_colors: bool = False
+    merge: MergeConfig,
+    *,
+    merged_ndim: int = 4,
+    merged_has_colors: bool = False,
+    slice_count: int = 1,
+    part_count: int = 1,
+    resolve_target_ms: bool = True,
 ) -> dict:
     """Validate the per-part merge recipe + knobs into the manifest dict.
 
@@ -1539,8 +1545,13 @@ def resolve_merge_recipe_args(
     merge itself will compute — ``len(spatial_shape) + (n_timepoints > 1)`` — so
     plan-time and merge-time size the SAME ladder for the same data.
     ``merged_has_colors`` marks a merge that will write per-splat colors (a
-    multi-channel merge with channel colors). Returns ``{}`` when no recipe and
-    no knobs are requested. Raises :class:`typer.BadParameter` on any problem.
+    multi-channel merge with channel colors). ``slice_count`` is the number of
+    hidden time coordinates and ``part_count`` the spatial parts that render
+    together; the stored per-part ``stream:<c>`` is scaled by their ratio.
+    ``resolve_target_ms=False`` performs the same validation without resolving
+    the size-dependent stream string, for the pre-discovery fail-fast pass.
+    Returns ``{}`` when no recipe and no knobs are requested. Raises
+    :class:`typer.BadParameter` on any problem.
     """
     if merge.recipe is None:
         # A merge knob without a recipe is a silent no-op — reject it loudly so
@@ -1625,7 +1636,7 @@ def resolve_merge_recipe_args(
         prefix="--merge-",
     )
     eff_breakpoints = merge.breakpoints
-    if merge.target_ms is not None:
+    if merge.target_ms is not None and resolve_target_ms:
         from luxar.cli.gsplat_ops.recipe_shared import (
             estimate_bytes_per_splat,
             resolve_streaming_breakpoints,
@@ -1638,6 +1649,8 @@ def resolve_merge_recipe_args(
             analytic_bps=estimate_bytes_per_splat(
                 merged_ndim, has_colors=merged_has_colors
             ),
+            slice_count=slice_count,
+            part_count=part_count,
         )
 
     args: dict = {}
@@ -1833,6 +1846,14 @@ def _validate_worker_axes(axes_list: Optional[List[str]]) -> None:
         )
 
 
+def _validate_merge_recipe_before_planning(
+    merge: MergeConfig, merge_recipe_args: Optional[dict]
+) -> None:
+    """Run size-independent merge validation before discovery side effects."""
+    if merge_recipe_args is None:
+        resolve_merge_recipe_args(merge, resolve_target_ms=False)
+
+
 def plan_batch(
     *,
     input_path: Path,
@@ -1863,10 +1884,10 @@ def plan_batch(
     ----------
     merge_recipe_args
         Pre-resolved manifest dict (tests). Default ``None`` resolves ``merge``
-        via :func:`resolve_merge_recipe_args` HERE, after shape discovery — so
-        ``--merge-target-ms`` is sized with the true merged ndim
-        (``len(spatial) + (n_t > 1)``) and color-carrying multi-channel merges,
-        exactly matching what ``batch-fit merge`` computes at merge time.
+        via :func:`resolve_merge_recipe_args` after decomposition, once the
+        planned part count is known. Size-independent validation runs before
+        discovery; final sizing uses the true merged ndim, slice count, and
+        planned part count, matching what ``batch-fit merge`` computes.
     max_shape
         GPU-profile "largest shape that fits" (uniform auto tile-size). ``None``
         in content mode, or locally without a benchmark profile — then an explicit
@@ -1898,6 +1919,7 @@ def plan_batch(
 
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
     _validate_content_fit_flags(tiling, fit_args)
+    _validate_merge_recipe_before_planning(merge, merge_recipe_args)
     denoised_zarr_path = None
     if denoise_mode == "preprocess":
         denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")
@@ -1961,19 +1983,6 @@ def plan_batch(
         n_c = len(c_indices)
         if timepoints_slice or channels_slice:
             aprint(f"Sliced: T={n_t} (of {n_t_full}), C={n_c} (of {n_c_full})")
-
-    # Resolve the merge recipe knobs now that the merged output's shape facts
-    # are known: the merge stacks timepoints onto an extra axis (so merged ndim
-    # is spatial + 1 only when T > 1) and writes per-splat colors only for a
-    # multi-channel merge with channel colors. Sizing --merge-target-ms here
-    # with the same inputs `batch-fit merge` uses guarantees plan-time and
-    # merge-time produce the SAME ladder for the same data.
-    if merge_recipe_args is None:
-        merge_recipe_args = resolve_merge_recipe_args(
-            merge,
-            merged_ndim=len(spatial) + (1 if n_t > 1 else 0),
-            merged_has_colors=bool(merge.channel_colors) and n_c > 1,
-        )
 
     _validate_merge_refine_source(merge, axes_list, n_t, n_c)
 
@@ -2187,6 +2196,17 @@ def plan_batch(
         n_tiles = len(specs)
         needs_tiling = n_tiles > 1
         tile_voxels = tile_size ** len(spatial) if needs_tiling else total_voxels
+
+    # Resolve after decomposition: each partition part expands the stored
+    # stream:<c> independently, while only one hidden time slice is drawn.
+    if merge_recipe_args is None:
+        merge_recipe_args = resolve_merge_recipe_args(
+            merge,
+            merged_ndim=len(spatial) + (1 if n_t > 1 else 0),
+            merged_has_colors=bool(merge.channel_colors) and n_c > 1,
+            slice_count=max(1, n_t),
+            part_count=max(1, n_tiles),
+        )
 
     total_tasks = n_t * n_c * n_tiles
 

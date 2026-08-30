@@ -83,6 +83,25 @@ def streaming_chunk_splats(
     )
 
 
+def scaled_streaming_chunk(
+    first_chunk: int, *, slice_count: int = 1, part_count: int = 1
+) -> int:
+    """Scale a whole-node first chunk to the viewer's resident slice.
+
+    A sliced node exposes one of ``slice_count`` hidden coordinates at a time,
+    while every child of a partition is drawn. Since ``stream:<c>`` is expanded
+    independently per part, each part receives ``c`` elements. The per-part
+    chunk is therefore ``first_chunk * slice_count / part_count``.
+    """
+    if first_chunk < 1:
+        raise ValueError(f"first_chunk must be >= 1; got {first_chunk}")
+    if slice_count < 1:
+        raise ValueError(f"slice_count must be >= 1; got {slice_count}")
+    if part_count < 1:
+        raise ValueError(f"part_count must be >= 1; got {part_count}")
+    return max(1, round(first_chunk * slice_count / part_count))
+
+
 def parse_stream_chunk(spec: str) -> int:
     """Extract ``c`` from a ``"stream:<c>"`` spec, validating it is >= 1."""
     body = spec[len("stream:") :]

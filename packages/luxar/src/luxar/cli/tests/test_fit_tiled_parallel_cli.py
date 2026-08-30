@@ -377,6 +377,16 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
     assert "--n-lods" in output and "not used" in output.lower()
 
 
+def test_fit_help_does_not_advertise_unsupported_stream_sizing() -> None:
+    result = runner.invoke(app, ["gsplat", "fit", "--help"])
+
+    assert result.exit_code == 0
+    output = normalized_cli_output(result)
+    assert "--target-ms" not in output
+    assert "--bandwidth-mbps" not in output
+    assert "--bytes-per-splat" not in output
+
+
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
 def test_refine_volume_rejects_downscale(tmp_path: Path) -> None:
     """`--refine volume` crops the volume to each tile, which only holds while the

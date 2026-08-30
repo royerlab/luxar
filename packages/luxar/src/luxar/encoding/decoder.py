@@ -4,7 +4,7 @@ The decoder reads encoding metadata and applies appropriate decoding
 transformations to recover original data.
 """
 
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import zarr
@@ -303,7 +303,13 @@ class ArrayDecoder:
         return np.asarray(out, dtype=original_dtype)
 
     @staticmethod
-    def _perchannel_scales(data: np.ndarray, enc: dict, name: str) -> tuple:
+    def _perchannel_scales(
+        data: np.ndarray,
+        enc: dict,
+        name: str,
+        *,
+        column_count: Optional[int] = None,
+    ) -> tuple:
         """Validate + return ``(lo, hi, bits)`` for a per-channel dequant.
 
         Mirrors the finiteness/length rigor of the scalar decoders
@@ -333,7 +339,13 @@ class ArrayDecoder:
         # ``_encode_coordinate`` both take ``min/max`` over axis 0), so reading
         # its channel count off ``shape[-1]`` rejected every 1-D array the
         # writer can produce.
-        cols = data.shape[-1] if data.ndim >= 2 else 1
+        cols = (
+            column_count
+            if column_count is not None
+            else data.shape[-1]
+            if data.ndim >= 2
+            else 1
+        )
         if lo.shape[0] != cols:
             raise ValueError(
                 f"{name} expects {cols} per-column scales, got {lo.shape[0]}"
@@ -525,3 +537,36 @@ class ArrayDecoder:
         # IMPORTANT: Recursively decode the target array
         # This handles cases where target is itself encoded (e.g., LUT)
         return self.decode(target_array, zarr_root)
+
+
+def decode_coordinate_columns(
+    zarr_array: zarr.Array,
+    columns: Sequence[int],
+    zarr_root: Optional[zarr.Group] = None,
+) -> np.ndarray:
+    """Decode selected coordinate columns, using a full decode when required."""
+    decoder = ArrayDecoder()
+    encoding = decoder._encoding_metadata(zarr_array)
+    name = encoding["name"]
+    selected_columns = list(columns)
+    if name in ArrayDecoder.DIRECT_ENCODINGS:
+        return np.asarray(zarr_array[:, selected_columns])
+    if name not in {"linear_perchannel_u8", "linear_perchannel_u16"}:
+        return np.asarray(decoder.decode(zarr_array, zarr_root)[:, selected_columns])
+
+    selected = np.asarray(zarr_array[:, selected_columns])
+    column_count = zarr_array.shape[-1] if zarr_array.ndim >= 2 else 1
+    low, high, bits = decoder._perchannel_scales(
+        selected,
+        encoding,
+        "linear_perchannel",
+        column_count=column_count,
+    )
+    selected_low = low[selected_columns]
+    selected_high = high[selected_columns]
+    decoded = selected_low + selected.astype(np.float64) / ((1 << bits) - 1) * (
+        selected_high - selected_low
+    )
+    return np.asarray(
+        decoded, dtype=np.dtype(encoding.get("original_dtype", "float32"))
+    )
