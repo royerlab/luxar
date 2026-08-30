@@ -791,8 +791,8 @@ export class LODGroupRegistry {
    * byte-identical (no material writes, no subtree traversal).
    */
   private fadeWasManaged = false;
-  /** Coalesced partition rising edge waiting for the current loader pass to finish. */
-  private partitionResyncPending = false;
+  /** Partition rising edges waiting for their wrapper to be visible and the loader to be idle. */
+  private readonly partitionResyncPending = new Set<string>();
 
   constructor(private deps: LODGroupRegistryDeps) {}
 
@@ -845,6 +845,7 @@ export class LODGroupRegistry {
   unregister(path: string): void {
     const partition = this.partitionEntries.get(path);
     if (partition) this.restorePartitionChildren(partition);
+    this.partitionResyncPending.delete(path);
     this.entries.delete(path);
     this.caches.delete(path);
     this.partitionEntries.delete(path);
@@ -868,7 +869,7 @@ export class LODGroupRegistry {
     this.warnedNoReadyChild.clear();
     this.warnedEmptyLevel.clear();
     this.fadeWasManaged = false;
-    this.partitionResyncPending = false;
+    this.partitionResyncPending.clear();
   }
 
   private restorePartitionChildren(entry: PartitionGroupEntry): void {
@@ -1190,15 +1191,26 @@ export class LODGroupRegistry {
       if (!isEffectivelyVisible(entry.groupObject)) continue;
       const result = this.evaluatePartitionEntry(entry, displayDims, PARTITION_FRUSTUM_SCRATCH);
       if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) changed = true;
-      if ((result & PARTITION_BECAME_VISIBLE) !== 0) this.partitionResyncPending = true;
+      if ((result & PARTITION_BECAME_VISIBLE) !== 0) {
+        this.partitionResyncPending.add(entry.path);
+      }
     }
     if (
-      this.partitionResyncPending &&
+      this.partitionResyncPending.size > 0 &&
       this.deps.requestReprocess &&
       this.deps.isUpdateInProgress?.() !== true
     ) {
-      this.partitionResyncPending = false;
-      this.deps.requestReprocess();
+      let shouldResync = false;
+      for (const path of this.partitionResyncPending) {
+        const entry = this.partitionEntries.get(path);
+        if (!entry) {
+          this.partitionResyncPending.delete(path);
+        } else if (isEffectivelyVisible(entry.groupObject)) {
+          this.partitionResyncPending.delete(path);
+          shouldResync = true;
+        }
+      }
+      if (shouldResync) this.deps.requestReprocess();
     }
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, camera, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
