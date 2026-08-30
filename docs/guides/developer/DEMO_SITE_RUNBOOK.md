@@ -981,7 +981,8 @@ error rather than accepting a silently wrong generation.
 `gsplats_cmu1_pathology` pinned `hosted_bytes` 84,492,218 / 93,189,978 /
 100,336,780 against a draft holding 45,697,890 / 50,699,910 / 53,698,264, and
 `git log --all -S'45697890' -- packages/luxar/src/luxar/demos/data_manifest.json`
-returned **nothing**.
+returned **nothing at the time**. The pins later entered history in `c5cb10207`
+and `77d98994e`, so the same query is no longer empty.
 
 **Read that result carefully — but do not over-read it.** It does not mean nobody
 had pinned the draft: the correct values existed at that moment as an *uncommitted
