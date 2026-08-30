@@ -1,5 +1,5 @@
 /**
- * Shared scaffolding for the per-geometry update loops in `updateView`.
+ * Partition visibility helpers and per-geometry update-loop scaffolding.
  *
  * Points / Lines / GSplats branches differ only in the type-specific
  * work (deriveNodeViewState, call loader.updateView, post-process,
@@ -23,6 +23,7 @@ const NOOP_SESSION: UpdateSession = {
   markSkipped: () => {},
 };
 
+/** Whether a loader path and every ancestor partition part are frustum-visible. */
 export function isPartitionPathVisible(root: THREE.Object3D | null, path: string): boolean {
   let object: THREE.Object3D | null | undefined = root?.getObjectByName(path);
   while (object) {
@@ -32,6 +33,7 @@ export function isPartitionPathVisible(root: THREE.Object3D | null, path: string
   return true;
 }
 
+/** Copy loaders whose paths are not nested below a culled partition part. */
 export function filterPartitionVisibleLoaders<TLoader>(
   root: THREE.Object3D | null,
   loaders: Map<string, TLoader>

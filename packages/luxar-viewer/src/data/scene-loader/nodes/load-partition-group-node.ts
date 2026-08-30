@@ -311,25 +311,37 @@ export async function loadPartitionGroupNode(
   });
 
   const partBounds = indexedPartBounds(sceneChildren);
-  if (ctx.lodGroupRegistry && partBounds) {
-    const registryChildren: Array<PartitionGroupChild | undefined> = new Array(
-      sceneChildren.length
-    ).fill(undefined);
-    for (let loadIndex = 0; loadIndex < sceneChildren.length; loadIndex++) {
-      const partIndex = partIndexForChild(sceneChildren[loadIndex], loadIndex);
-      const object = partitionGroup.children.find(
-        (candidate) => candidate.userData.partIndex === partIndex
+  if (ctx.lodGroupRegistry) {
+    if (!partBounds) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Partition frustum selection disabled for ${node.path}: part bounds are missing, invalid, or inconsistent`
       );
-      if (object) {
-        registryChildren[partIndex] = { object, positionBounds: partBounds[partIndex] };
+    } else {
+      const registryChildren: Array<PartitionGroupChild | undefined> = new Array(
+        sceneChildren.length
+      ).fill(undefined);
+      for (let loadIndex = 0; loadIndex < sceneChildren.length; loadIndex++) {
+        const partIndex = partIndexForChild(sceneChildren[loadIndex], loadIndex);
+        const object = partitionGroup.children.find(
+          (candidate) => candidate.userData.partIndex === partIndex
+        );
+        if (object) {
+          registryChildren[partIndex] = { object, positionBounds: partBounds[partIndex] };
+        }
       }
-    }
-    if (registryChildren.every((child) => child !== undefined)) {
-      ctx.lodGroupRegistry.registerPartition({
-        path: node.path,
-        groupObject: partitionGroup,
-        children: registryChildren as PartitionGroupChild[],
-      });
+      if (registryChildren.every((child) => child !== undefined)) {
+        ctx.lodGroupRegistry.registerPartition({
+          path: node.path,
+          groupObject: partitionGroup,
+          children: registryChildren as PartitionGroupChild[],
+        });
+      } else {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Partition frustum selection disabled for ${node.path}: one or more parts produced no scene object`
+        );
+      }
     }
   }
 

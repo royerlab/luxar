@@ -99,8 +99,8 @@ export function createLODProgressProvider(deps: LODProgressProviderDeps): LODPro
         }
       }
 
-      // Partition groups: static spatial subdivisions (all parts render at
-      // once). A one-time snapshot of part counts — no per-frame state.
+      // Partition groups: the structural part count is static even though
+      // per-frame frustum selection may hide individual parts.
       for (const part of deps.partitionGroups ?? []) {
         out.set(part.path, { kind: 'partition', partCount: part.partCount });
       }

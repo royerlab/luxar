@@ -227,6 +227,7 @@ describe('loadPartitionGroupNode', () => {
 
   it('skips registry attachment when a part produces no scene object', async () => {
     const registerPartition = vi.fn();
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
     const children = [
       makePartNode('/partition/part_0', 'points', {
         child_index: 0,
@@ -254,6 +255,37 @@ describe('loadPartitionGroupNode', () => {
     );
 
     expect(registerPartition).not.toHaveBeenCalled();
+    expect(warningSpy).toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      expect.stringContaining('/partition: one or more parts produced no scene object')
+    );
+  });
+
+  it('warns when invalid part bounds disable frustum selection', async () => {
+    attachStubChildren();
+    const registerPartition = vi.fn();
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const children = [
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [0, 0], max: [1, 1] },
+      }),
+      makePartNode('/partition/part_1', 'points', { child_index: 1 }),
+    ];
+
+    await loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeRegistryCtx(registerPartition),
+      loadSceneNodesMock
+    );
+
+    expect(registerPartition).not.toHaveBeenCalled();
+    expect(warningSpy).toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      expect.stringContaining('/partition: part bounds are missing, invalid, or inconsistent')
+    );
   });
 
   it('loads parts with bounded concurrency while preserving authored order and indices', async () => {
