@@ -938,6 +938,28 @@ class GapResult(NamedTuple):
     inaccessible: list[tuple[str, tuple[Path, ...]]]
 
 
+def _record_unread_fit(
+    name: str,
+    entry: dict[str, Any],
+    variant: str,
+    spec: dict[str, Any],
+    row: dict[str, Any],
+    unread: list[str],
+    unreadable: list[tuple[str, Path]],
+    inaccessible: list[tuple[str, tuple[Path, ...]]],
+) -> None:
+    item = f"{name}/{row['file']}"
+    pinned = _pinned_digest(spec)
+    candidates = tuple(_locate(name, entry, variant, spec["name"]))
+    path, digest = _select_pinned_location(iter(candidates), pinned)
+    if path is not None and digest == pinned and _read_archive(path) is None:
+        unreadable.append((item, path))
+    elif path is None and candidates:
+        inaccessible.append((item, candidates))
+    else:
+        unread.append(item)
+
+
 def _gaps(manifest: dict[str, Any]) -> GapResult:
     """Figures a record would print as absent, plus archives not successfully read."""
     problems: list[str] = []
@@ -960,20 +982,16 @@ def _gaps(manifest: dict[str, Any]) -> GapResult:
                 # examined. Dropping it silently would let the count below read
                 # as completeness while a dozen rows went unchecked.
                 if row["is_fit"]:
-                    item = f"{name}/{row['file']}"
-                    pinned = _pinned_digest(spec)
-                    candidates = tuple(_locate(name, entry, variant, spec["name"]))
-                    path, digest = _select_pinned_location(iter(candidates), pinned)
-                    if (
-                        path is not None
-                        and digest == pinned
-                        and _read_archive(path) is None
-                    ):
-                        unreadable.append((item, path))
-                    elif path is None and candidates:
-                        inaccessible.append((item, candidates))
-                    else:
-                        unread.append(item)
+                    _record_unread_fit(
+                        name,
+                        entry,
+                        variant,
+                        spec,
+                        row,
+                        unread,
+                        unreadable,
+                        inaccessible,
+                    )
                 continue
             expected = [
                 ("splats", row["splats"]),
