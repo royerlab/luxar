@@ -171,10 +171,8 @@ describe('SliceCache — ladder depth stats', () => {
       totalLadderDepth: 5,
     });
 
-    expect(cache.getStats()).toMatchObject({
-      fullLadderCount: 1,
-      ladderDepthHistogram: { '2/5': 1, '5/5': 1 },
-    });
+    expect(cache.getStats().fullLadderCount).toBe(1);
+    expect(cache.getStats().ladderDepthHistogram).toEqual({ '2/5': 1, '5/5': 1 });
   });
 });
 

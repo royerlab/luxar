@@ -62,10 +62,15 @@ describe('slice-cache-helper — prefix ladders', () => {
 
   it('stamps stored prefix depth against the node total for cache stats', () => {
     storeLadder(sc, PATH, view, [makeLod(10), makeLod(5)], { totalLODCount: 4 });
-    expect(sc.getStats()).toMatchObject({
-      fullLadderCount: 0,
-      ladderDepthHistogram: { '2/4': 1 },
-    });
+    expect(sc.getStats().fullLadderCount).toBe(0);
+    expect(sc.getStats().ladderDepthHistogram).toEqual({ '2/4': 1 });
+  });
+
+  it('does not classify a plain one-result store as an additive ladder', () => {
+    storeLadder(sc, PATH, view, [makeLod(10)]);
+
+    expect(sc.getStats().fullLadderCount).toBe(0);
+    expect(sc.getStats().ladderDepthHistogram).toEqual({});
   });
 
   it('upgrade-if-longer: a longer snapshot replaces, with exact byte accounting', () => {
@@ -150,9 +155,9 @@ describe('slice-cache-helper — prefix ladders', () => {
     storeLadder(sc, PATH, view, [makeLod(10)], { scan: true });
     expect(setSpy.mock.calls[0][2]).toEqual({ scan: true });
 
-    // Longer ladder (passes upgrade-if-longer) without the opt: undefined.
+    // Longer ladder (passes upgrade-if-longer) without the opt: no scan flag.
     storeLadder(sc, PATH, view, [makeLod(10), makeLod(5)]);
-    expect(setSpy.mock.calls[1][2]).toBeUndefined();
+    expect(setSpy.mock.calls[1][2]).toEqual({});
     setSpy.mockRestore();
   });
 
