@@ -1489,6 +1489,17 @@ class TestUnmeasuredRowsPreferPinnedArchives:
 
         assert row["splats"] == "20"
 
+    def test_a_directory_candidate_does_not_hide_a_readable_pinned_copy(
+        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        directory, pinned = self._paths(gen, tmp_path, monkeypatch)
+        directory.mkdir()
+        _write_frame(pinned, n_splats=20)
+
+        row = self._row(gen, gen._sha256_of(pinned))
+
+        assert row["splats"] == "20"
+
     def test_the_first_readable_copy_remains_the_fallback_without_pinned_bytes(
         self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
