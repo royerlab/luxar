@@ -72,6 +72,7 @@ class RefreshResult(NamedTuple):
     inaccessible: tuple[Path, ...]
     unpinned_unreadable: int
     staged_selected: int
+    staged_hash_failures: int
 
 
 # ---------------------------------------------------------------------------
@@ -616,6 +617,7 @@ def refresh_characteristics(
     inaccessible: list[Path] = []
     unpinned_unreadable = 0
     staged_selected = 0
+    staged_hash_failures = 0
     for dataset, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
@@ -630,6 +632,10 @@ def refresh_characteristics(
                 candidates,
                 pinned_digests[key],
             )
+            if extra_root is not None:
+                staged_hash_failures += sum(
+                    failed.is_relative_to(extra_root) for failed in hash_failures
+                )
             if hash_failures and _is_fit(spec["name"]):
                 inaccessible.append(hash_failures[0])
             if path is None:
@@ -709,6 +715,7 @@ def refresh_characteristics(
         inaccessible=tuple(inaccessible),
         unpinned_unreadable=unpinned_unreadable,
         staged_selected=staged_selected,
+        staged_hash_failures=staged_hash_failures,
     )
 
 
@@ -1084,10 +1091,7 @@ def main() -> int:
                 f"selected {result.staged_selected} archive(s) under --archives-root "
                 f"{args.archives_root}"
             )
-            staged_inaccessible = any(
-                path.is_relative_to(args.archives_root) for path in result.inaccessible
-            )
-            if result.staged_selected == 0 and not staged_inaccessible:
+            if result.staged_selected == 0 and result.staged_hash_failures == 0:
                 print(
                     "WARNING: --archives-root matched no archives; "
                     "expected layout: <root>/<dataset>/[<variant>/]<file> "

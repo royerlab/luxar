@@ -1082,6 +1082,45 @@ def test_an_unhashable_non_fit_file_is_ignored(
     }
 
 
+def test_an_unhashable_staged_non_fit_file_proves_the_archives_root_layout(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    staged_root = tmp_path / "staged"
+    archive = staged_root / "ds" / "coords.npz"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"inaccessible coordinate array")
+    key = f"ds/{archive.name}"
+    manifest = _fake_manifest([_entry(archive.name, "pinned")])
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(gen, "MANIFEST", manifest_path)
+    monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gen, "DATA_DIR", tmp_path / "repo")
+    monkeypatch.setattr(gen, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: {key: {"n_splats": 7}})
+    monkeypatch.setattr(
+        gen,
+        "_sha256_of",
+        lambda path: (_ for _ in ()).throw(PermissionError(path)),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["gen_zenodo_records.py", "--refresh", "--archives-root", str(staged_root)],
+    )
+
+    assert gen.main() == 0
+
+    output = capsys.readouterr().out
+    assert "selected 0 archive(s) under --archives-root" in output
+    assert "matched no archives" not in output
+    assert "fit archive could not be opened for hashing" not in output
+
+
 def test_locate_ignores_an_unzipped_archive_directory(
     gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1249,6 +1288,7 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
             inaccessible=(),
             unpinned_unreadable=5,
             staged_selected=2,
+            staged_hash_failures=0,
         ),
     )
     monkeypatch.setattr(
@@ -1303,6 +1343,7 @@ def test_refresh_reports_each_unreadable_pinned_archive_and_exits_nonzero(
             inaccessible=(),
             unpinned_unreadable=0,
             staged_selected=0,
+            staged_hash_failures=0,
         ),
     )
     monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
@@ -1341,6 +1382,7 @@ def test_refresh_reports_inaccessible_archives_without_failing(
             inaccessible=(archive,),
             unpinned_unreadable=0,
             staged_selected=0,
+            staged_hash_failures=1,
         ),
     )
     monkeypatch.setattr(
