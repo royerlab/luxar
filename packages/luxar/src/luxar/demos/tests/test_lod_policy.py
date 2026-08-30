@@ -17,13 +17,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import luxar.demos._lod_policy as lod_policy
 from luxar.demos import registry
 from luxar.demos._lod_policy import (
     _RECIPE_DEFAULTS,
     SCENE_TOPOLOGY_RECIPES,
+    SLICED_LADDER_MAX_DEPTH,
     TOPOLOGY_PRESERVING_ADDERS,
     TREE_RECIPES,
     DemoRecipe,
+    hidden_axis_stops,
     save_with_lod,
     stream_ladder,
 )
@@ -74,6 +77,14 @@ _CHOOSES_OUTSIDE_THE_POLICY = {
     ),
 }
 
+#: Sliced Points/Lines calls whose additive ladder does not paint first, and why.
+_SLICED_ADDITIVE_LOD_EXEMPTIONS = {
+    ("demo_biodiversity_planetary_scale.py", 2657): (
+        "the eager coarsest substitutive level paints first; the additive ladder "
+        "only refines that already-visible partition in the background"
+    ),
+}
+
 #: No fitting demo may be parked here instead of choosing a topology.
 #:
 #: This empty set is a tripwire: new fitting demos must route through the policy
@@ -86,6 +97,40 @@ def _demo_sources() -> dict[str, str]:
     return {
         p.name: p.read_text() for p in sorted(registry._DEMOS_DIR.glob("demo_*.py"))
     }
+
+
+def _additive_lod_calls(src: str) -> list[tuple[ast.Call, ast.expr]]:
+    """The ``add_points``/``add_lines`` calls with ``additive_lod=`` in *src*."""
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Attribute)
+            or node.func.attr not in ("add_points", "add_lines")
+        ):
+            continue
+        out.extend(
+            (node, keyword.value)
+            for keyword in node.keywords
+            if keyword.arg == "additive_lod"
+        )
+    return out
+
+
+def _declares_a_hidden_dimension(src: str) -> bool:
+    """Whether *src* declares a ``Dimension(..., display=False)``."""
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Dimension"
+        and any(
+            keyword.arg == "display"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in node.keywords
+        )
+        for node in ast.walk(ast.parse(src))
+    )
 
 
 def _fitting_demos() -> dict[str, str]:
@@ -800,7 +845,9 @@ class TestStreamLadder:
         assert isinstance(spec["counts"], str)
 
     def test_lines_refuse_the_first_size_whose_increment_breaks_the_cap(self) -> None:
-        with pytest.raises(ValueError, match="n >= 2,149,985"):
+        with pytest.raises(
+            ValueError, match="resolved chunk 39,062 exceeds the 900,000-vertex"
+        ):
             stream_ladder(2_149_985, geometry="lines")
 
         assert stream_ladder(2_149_984, geometry="lines")["counts"] == "stream:39062"
@@ -830,3 +877,174 @@ class TestStreamLadder:
         # stream. NPC relies on this, since `_validate_counts` clamps the shared
         # spec to each part's own count.
         assert stream_ladder(1_000)["counts"] == [1_000]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# hidden_axis_stops + the per-slice first rung (#2374's authoring half)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestHiddenAxisStops:
+    """Counts hidden coordinate combinations used to detect sliced nodes."""
+
+    def test_counts_distinct_values_on_one_hidden_axis(self) -> None:
+        pos = np.array([[0, 0, 0, 5], [0, 0, 0, 7], [0, 0, 0, 7]], dtype=np.float32)
+        assert hidden_axis_stops(pos, [3]) == 2
+
+    def test_counts_OCCURRING_combinations_not_the_product(self) -> None:
+        # The distinction that matters on sparse data, and the one a
+        # product-of-cardinalities definition gets wrong: axis 2 has two values
+        # and axis 3 has two, so the product is 4 — but only 3 pairs occur, and
+        # only 3 slices exist to divide a rung between.
+        pos = np.array([[0, 0, 1, 1], [0, 0, 1, 2], [0, 0, 2, 1]], dtype=np.float32)
+        assert hidden_axis_stops(pos, [2, 3]) == 3
+
+    def test_no_hidden_axis_is_one_slice(self) -> None:
+        assert hidden_axis_stops(np.zeros((4, 3), dtype=np.float32), []) == 1
+
+    def test_empty_node_is_one_slice_not_zero(self) -> None:
+        # A zero would propagate into `slices=0` and raise from stream_ladder,
+        # turning an empty layer into a build failure.
+        assert hidden_axis_stops(np.zeros((0, 4), dtype=np.float32), [3]) == 1
+
+    def test_rejects_a_column_index_past_the_end(self) -> None:
+        with pytest.raises(ValueError, match="out of range"):
+            hidden_axis_stops(np.zeros((3, 4), dtype=np.float32), [9])
+
+    def test_rejects_non_2d_positions(self) -> None:
+        with pytest.raises(ValueError, match="must be 2-D"):
+            hidden_axis_stops(np.zeros(5, dtype=np.float32), [0])
+
+
+class TestASlicedNodeGetsAShareOfItsFrame:
+    """#2374: a sliced node's first rung is a share of the frame, not a budget."""
+
+    def test_mean_first_paint_is_one_over_the_max_depth_of_the_resident_slice(
+        self,
+    ) -> None:
+        # The contract Loic ruled for. Checked as a SHARE, which is the quantity
+        # that predicts whether the opening frame is recognisable — and which is
+        # slice-invariant, so it holds at every stop count.
+        #
+        # MEAN, not per-stop: rung 0 is a prefix of a global ordering, so it
+        # concentrates where the signal is rather than spreading in proportion to
+        # slice size. `n / stops` below is the mean resident slice; on a
+        # non-uniform axis the sparsest stop gets less. This bound is sized for
+        # the 2-7 stop categorical axes these demos have; longer axes need their
+        # per-stop histogram checked. See SLICED_LADDER_MAX_DEPTH.
+        for total, stops in (
+            (1_153_506, 6),  # mouse_multiome
+            (1_151_006, 2),  # esm3
+            (4_485_810, 7),  # zebrahub
+            (3_000_000, 3),  # cellxgene
+            (6_248_730, 6),  # human_multiome
+            (6_572_730, 2),  # arxiv
+        ):
+            rung0 = stream_ladder(total, slices=stops)["counts"][0]
+            resident = total / stops
+            assert rung0 / stops / resident == pytest.approx(
+                1 / SLICED_LADDER_MAX_DEPTH, rel=1e-3
+            )
+
+    def test_the_share_clears_the_viewer_side_floor_with_margin(self) -> None:
+        # The gate for #2374 fails a sliced node below 10% of its frame. Authored
+        # ladders must not sit on that boundary.
+        rung0 = stream_ladder(6_248_730, slices=6)["counts"][0]
+        assert rung0 / 6_248_730 > 0.10
+
+    def test_the_floor_needs_no_slice_term(self) -> None:
+        # `first_chunk/S >= share * (n/S)` cancels to `first_chunk >= share * n`,
+        # so the same total yields the same rung 0 at every stop count. This is
+        # why a demo gaining a dimension cannot regress its first paint.
+        counts = {
+            stream_ladder(4_485_810, slices=s)["counts"][0] for s in (2, 3, 6, 7, 50)
+        }
+        assert len(counts) == 1
+
+    def test_default_is_unchanged_for_an_unsliced_node(self) -> None:
+        # Regression guard: every non-sliced caller must keep its ladder, so the
+        # ruling costs nothing on demos that are shown whole.
+        assert (
+            stream_ladder(1_000_000)["counts"]
+            == stream_ladder(1_000_000, slices=1)["counts"]
+        )
+
+    def test_every_sliced_additive_ladder_uses_the_slice_policy(self) -> None:
+        missing = []
+        seen_exemptions = set()
+        for name, src in _demo_sources().items():
+            if not _declares_a_hidden_dimension(src):
+                continue
+            for call, additive_lod in _additive_lod_calls(src):
+                location = (name, call.lineno)
+                if location in _SLICED_ADDITIVE_LOD_EXEMPTIONS:
+                    seen_exemptions.add(location)
+                    if not any(
+                        keyword.arg == "substitutive_lod" for keyword in call.keywords
+                    ):
+                        missing.append(
+                            f"{name}:{call.lineno} is exempt but has no substitutive_lod="
+                        )
+                    continue
+                if not (
+                    isinstance(additive_lod, ast.Call)
+                    and isinstance(additive_lod.func, ast.Name)
+                    and additive_lod.func.id == "stream_ladder"
+                ):
+                    missing.append(
+                        f"{name}:{call.lineno} uses additive_lod="
+                        f"{ast.unparse(additive_lod)}"
+                    )
+                    continue
+                call = additive_lod
+                if not any(keyword.arg == "slices" for keyword in call.keywords):
+                    missing.append(f"{name}:{call.lineno}")
+        stale_exemptions = set(_SLICED_ADDITIVE_LOD_EXEMPTIONS) - seen_exemptions
+        missing.extend(f"stale exemption {location}" for location in stale_exemptions)
+        assert not missing, (
+            "Points/Lines additive ladders in demos with hidden dimensions must use "
+            f"stream_ladder(..., slices=...) or an explicit exemption: {missing}"
+        )
+
+    def test_a_small_sliced_node_keeps_its_budget_ladder(self) -> None:
+        # The floor is a max(), so a node whose budget rung already exceeds
+        # n/L keeps the finer ladder rather than being coarsened to meet a share
+        # it already clears.
+        assert (
+            stream_ladder(200_000, slices=3)["counts"]
+            == stream_ladder(200_000)["counts"]
+        )
+
+    def test_lines_floors_a_safe_string_form_too(self) -> None:
+        whole = int(stream_ladder(1_800_001, geometry="lines")["counts"].split(":")[1])
+        sliced = int(
+            stream_ladder(1_800_001, geometry="lines", slices=4)["counts"].split(":")[1]
+        )
+        assert sliced > whole
+        assert sliced == -(-1_800_001 // SLICED_LADDER_MAX_DEPTH)
+
+    def test_lines_reject_a_resolved_ladder_over_the_commit_ceiling(self) -> None:
+        with pytest.raises(ValueError, match="900,000-vertex commit ceiling"):
+            stream_ladder(1_800_005, geometry="lines", slices=4)
+
+        assert (
+            stream_ladder(1_800_004, geometry="lines", slices=4)["counts"]
+            == "stream:225001"
+        )
+
+    def test_rejects_a_sliced_node_too_large_to_deliver_the_share(self) -> None:
+        with pytest.raises(ValueError, match="cannot deliver its 12.5% first rung"):
+            stream_ladder(7_200_001, slices=2)
+
+        assert stream_ladder(7_200_000, slices=2)["counts"][0] == 900_000
+
+    def test_the_rejection_reports_the_configured_share(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(lod_policy, "SLICED_LADDER_MAX_DEPTH", 10)
+        with pytest.raises(ValueError, match="cannot deliver its 10% first rung"):
+            stream_ladder(9_000_001, slices=2)
+
+    def test_rejects_a_slice_count_below_one(self) -> None:
+        with pytest.raises(ValueError, match="slices must be >= 1"):
+            stream_ladder(1_000, slices=0)
