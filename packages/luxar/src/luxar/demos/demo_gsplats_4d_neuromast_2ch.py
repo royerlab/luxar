@@ -39,8 +39,10 @@ PIPELINE — reproducible per channel with ``--recompute``:
        ``luxar.gsplats.calibration.noise_floor``; that helper additionally
        excludes exact zeros and caps at the frame median, neither of which
        affected these frames. The recorded results are 105.991 (membranes) and
-       103.888 (nuclei). ``--recompute`` subtracts the pinned value with a clip
-       at zero; do not re-measure it during a rebuild.
+       103.888 (nuclei); expect reproduction within one float32 ulp, while the
+       pinned literals are the values used for subtraction. ``--recompute``
+       subtracts each pinned value with a clip at zero; do not re-measure it
+       during a rebuild.
     3. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
        Recorded, not re-run: the sweep is hours and its answer is stable.
     4. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
