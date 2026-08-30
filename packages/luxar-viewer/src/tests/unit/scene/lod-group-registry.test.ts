@@ -469,7 +469,8 @@ function makeRegistry(
   requestRender?: () => void,
   now?: () => number,
   hasArchiveFault?: () => boolean,
-  requestReprocess?: () => void
+  requestReprocess?: () => void,
+  isUpdateInProgress?: () => boolean
 ) {
   const camera = new THREE.Camera();
   camera.matrixWorldInverse.identity();
@@ -483,6 +484,7 @@ function makeRegistry(
     ...(now != null ? { now } : {}),
     ...(hasArchiveFault != null ? { hasArchiveFault } : {}),
     ...(requestReprocess != null ? { requestReprocess } : {}),
+    ...(isUpdateInProgress != null ? { isUpdateInProgress } : {}),
     ...(residentByteBudget != null
       ? {
           getResidentByteBudget: () => residentByteBudget,
@@ -638,6 +640,24 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(culled.visible).toBe(false);
   });
 
+  it('preloads a cold part just outside the exact frustum', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        { object: child, positionBounds: { min: [1.05, -0.1, -0.1], max: [1.2, 0.1, 0.1] } },
+      ],
+    });
+
+    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(child.visible).toBe(true);
+    expect(child.userData.partitionFrustumVisible).toBe(true);
+  });
+
   it('requests a view resync when a culled part becomes visible again', () => {
     const requestReprocess = vi.fn();
     const reg = makeRegistry(
@@ -669,6 +689,80 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(requestReprocess).toHaveBeenCalledOnce();
   });
 
+  it('coalesces rising-edge resyncs until the active update finishes', () => {
+    let updateInProgress = true;
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess,
+      () => updateInProgress
+    );
+    const groupObject = new THREE.Group();
+    const first = new THREE.Group();
+    const second = new THREE.Group();
+    groupObject.add(first, second);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        { object: first, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } },
+        { object: second, positionBounds: { min: [4, 0, 0], max: [5, 0.5, 0.5] } },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5;
+    reg.evaluatePerFrame();
+    groupObject.position.x = -4.5;
+    reg.evaluatePerFrame();
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    updateInProgress = false;
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledOnce();
+  });
+
+  it('does not evaluate or resync a partition under a hidden wrapper', () => {
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess
+    );
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [{ object: child, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } }],
+    });
+
+    reg.evaluatePerFrame();
+    expect(child.visible).toBe(false);
+    groupObject.visible = false;
+    groupObject.position.x = -2.5;
+    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(child.visible).toBe(false);
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    groupObject.visible = true;
+    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(requestReprocess).toHaveBeenCalledOnce();
+  });
+
   it('unregister removes partition entries and their per-frame visibility writes', () => {
     const reg = makeRegistry();
     const groupObject = new THREE.Group();
@@ -680,10 +774,30 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       children: [{ object: child, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } }],
     });
 
+    reg.evaluatePerFrame();
+    expect(child.visible).toBe(false);
     reg.unregister('/partition');
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(child.visible).toBe(true);
-    expect(child.userData.partitionFrustumVisible).toBe(true);
+    expect(child.userData.partitionFrustumVisible).toBeUndefined();
+  });
+
+  it('clear restores culled partition children before dropping registry state', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [{ object: child, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } }],
+    });
+
+    reg.evaluatePerFrame();
+    expect(child.visible).toBe(false);
+    reg.clear();
+    expect(child.visible).toBe(true);
+    expect(child.userData.partitionFrustumVisible).toBeUndefined();
   });
 });
 

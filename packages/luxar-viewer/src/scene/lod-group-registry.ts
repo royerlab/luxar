@@ -605,6 +605,14 @@ interface LODGroupEntryCache {
  */
 const FRUSTUM_SCRATCH = new THREE.Frustum();
 const FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
+const PARTITION_FRUSTUM_SCRATCH = new THREE.Frustum();
+const PARTITION_FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
+const PARTITION_FRUSTUM_MARGIN = 0.1;
+const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4().makeScale(
+  1 / (1 + PARTITION_FRUSTUM_MARGIN),
+  1 / (1 + PARTITION_FRUSTUM_MARGIN),
+  1
+);
 const WORLD_BOX3_SCRATCH = new THREE.Box3();
 const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
 const PARTITION_VISIBILITY_CHANGED = 1;
@@ -670,6 +678,8 @@ export interface LODGroupRegistryDeps {
    * edge must resync any geometry that missed the latest view state.
    */
   requestReprocess?: () => void;
+  /** Whether the owning loader currently has an update or refinement pass in flight. */
+  isUpdateInProgress?: () => boolean;
   /**
    * Whether the LOD cross-fade is enabled (ON by default; `?no-lod-fade`
    * disables). When true and a blendable (additive/luminous/volumetric — see
@@ -781,6 +791,8 @@ export class LODGroupRegistry {
    * byte-identical (no material writes, no subtree traversal).
    */
   private fadeWasManaged = false;
+  /** Coalesced partition rising edge waiting for the current loader pass to finish. */
+  private partitionResyncPending = false;
 
   constructor(private deps: LODGroupRegistryDeps) {}
 
@@ -831,6 +843,8 @@ export class LODGroupRegistry {
 
   /** Drop an lod_group from the registry (called on scene teardown). */
   unregister(path: string): void {
+    const partition = this.partitionEntries.get(path);
+    if (partition) this.restorePartitionChildren(partition);
     this.entries.delete(path);
     this.caches.delete(path);
     this.partitionEntries.delete(path);
@@ -841,6 +855,9 @@ export class LODGroupRegistry {
 
   /** Clear all entries (called on full scene tear-down). */
   clear(): void {
+    for (const partition of this.partitionEntries.values()) {
+      this.restorePartitionChildren(partition);
+    }
     this.entries.clear();
     this.caches.clear();
     this.partitionEntries.clear();
@@ -851,6 +868,14 @@ export class LODGroupRegistry {
     this.warnedNoReadyChild.clear();
     this.warnedEmptyLevel.clear();
     this.fadeWasManaged = false;
+    this.partitionResyncPending = false;
+  }
+
+  private restorePartitionChildren(entry: PartitionGroupEntry): void {
+    for (const child of entry.children) {
+      child.object.visible = true;
+      delete child.object.userData.partitionFrustumVisible;
+    }
   }
 
   /** Number of registered lod_groups (mainly for tests / diagnostics). */
@@ -1146,6 +1171,10 @@ export class LODGroupRegistry {
     // into ``projectBoxDiagonalPx`` so the per-group pixel-diagonal reuses it.
     FRUSTUM_MATRIX_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     FRUSTUM_SCRATCH.setFromProjectionMatrix(FRUSTUM_MATRIX_SCRATCH);
+    PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(FRUSTUM_MATRIX_SCRATCH).premultiply(
+      PARTITION_FRUSTUM_SCALE
+    );
+    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
 
     // Track whether the (global) view version has settled, to gate deferred
     // fine-level reloads (see ``evaluateEntry``). ``undefined`` view version
@@ -1157,13 +1186,20 @@ export class LODGroupRegistry {
 
     let changed = false;
     let anyLoading = false;
-    let partitionBecameVisible = false;
     for (const entry of this.partitionEntries.values()) {
-      const result = this.evaluatePartitionEntry(entry, displayDims, FRUSTUM_SCRATCH);
+      if (!isEffectivelyVisible(entry.groupObject)) continue;
+      const result = this.evaluatePartitionEntry(entry, displayDims, PARTITION_FRUSTUM_SCRATCH);
       if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) changed = true;
-      if ((result & PARTITION_BECAME_VISIBLE) !== 0) partitionBecameVisible = true;
+      if ((result & PARTITION_BECAME_VISIBLE) !== 0) this.partitionResyncPending = true;
     }
-    if (partitionBecameVisible) this.deps.requestReprocess?.();
+    if (
+      this.partitionResyncPending &&
+      this.deps.requestReprocess &&
+      this.deps.isUpdateInProgress?.() !== true
+    ) {
+      this.partitionResyncPending = false;
+      this.deps.requestReprocess();
+    }
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, camera, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
         changed = true;

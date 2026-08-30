@@ -93,6 +93,8 @@ export interface LODGroupRegistryOwner {
   readonly archiveFault: ArchiveFaultError | null;
   /** Re-run the owning loader's current view state. */
   requestReprocess(): void;
+  /** Whether the owning loader currently has an update or refinement pass in flight. */
+  isUpdateInProgress(): boolean;
 }
 
 /**

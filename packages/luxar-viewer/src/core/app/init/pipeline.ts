@@ -219,6 +219,7 @@ export async function runInitPipeline(
       getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
       hasArchiveFault: () => owner.archiveFault !== null,
       requestReprocess: () => owner.requestReprocess(),
+      isUpdateInProgress: () => owner.isUpdateInProgress(),
       // Resident-byte budget for loaded LOD geometry = the single,
       // adaptive GPU-geometry budget shared with the buffer pool (one VRAM
       // authority). Read dynamically so context-loss backoff applies live.

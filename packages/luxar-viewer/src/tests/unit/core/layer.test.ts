@@ -302,11 +302,13 @@ describe('LuxarLayer', () => {
         deps: Record<string, unknown>;
       };
       const requestReprocess = vi.fn();
+      const isUpdateInProgress = vi.fn(() => true);
       const { deps } = factory({
         currentViewVersion: 1,
         gpuBufferPool: undefined,
         archiveFault: null,
         requestReprocess,
+        isUpdateInProgress,
       });
 
       expect(Object.keys(deps).sort()).toEqual(
@@ -317,6 +319,7 @@ describe('LuxarLayer', () => {
           'getEnergyCompEnabled',
           'getForceFinestLOD',
           'hasArchiveFault',
+          'isUpdateInProgress',
           'getResidentByteBudget',
           'getResidentBytes',
           'getViewVersion',
@@ -328,6 +331,8 @@ describe('LuxarLayer', () => {
       );
       (deps.requestReprocess as () => void)();
       expect(requestReprocess).toHaveBeenCalledOnce();
+      expect((deps.isUpdateInProgress as () => boolean)()).toBe(true);
+      expect(isUpdateInProgress).toHaveBeenCalledOnce();
     });
 
     it('reports no resident bytes rather than throwing when the pool is absent', () => {
