@@ -930,11 +930,12 @@ def _why_absent(row: dict[str, Any], chars: dict[str, Any]) -> str:
 
 
 class GapResult(NamedTuple):
-    """Incomplete rows, absent archives, and pinned archives that could not be read."""
+    """Incomplete rows and archives that were absent, inaccessible, or unreadable."""
 
     problems: list[str]
     unread: list[str]
     unreadable: list[tuple[str, Path]]
+    inaccessible: list[tuple[str, tuple[Path, ...]]]
 
 
 def _gaps(manifest: dict[str, Any]) -> GapResult:
@@ -942,6 +943,7 @@ def _gaps(manifest: dict[str, Any]) -> GapResult:
     problems: list[str] = []
     unread: list[str] = []
     unreadable: list[tuple[str, Path]] = []
+    inaccessible: list[tuple[str, tuple[Path, ...]]] = []
     chars = load_characteristics()
     for name, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
@@ -960,15 +962,16 @@ def _gaps(manifest: dict[str, Any]) -> GapResult:
                 if row["is_fit"]:
                     item = f"{name}/{row['file']}"
                     pinned = _pinned_digest(spec)
-                    path, digest = _select_pinned_location(
-                        _locate(name, entry, variant, spec["name"]), pinned
-                    )
+                    candidates = tuple(_locate(name, entry, variant, spec["name"]))
+                    path, digest = _select_pinned_location(iter(candidates), pinned)
                     if (
                         path is not None
                         and digest == pinned
                         and _read_archive(path) is None
                     ):
                         unreadable.append((item, path))
+                    elif path is None and candidates:
+                        inaccessible.append((item, candidates))
                     else:
                         unread.append(item)
                 continue
@@ -989,7 +992,7 @@ def _gaps(manifest: dict[str, Any]) -> GapResult:
                 )
         if not files:
             problems.append(f"{name}: no files uploaded")
-    return GapResult(problems, unread, unreadable)
+    return GapResult(problems, unread, unreadable, inaccessible)
 
 
 def main() -> int:
@@ -1037,7 +1040,7 @@ def main() -> int:
 
 def _run_check(manifest: dict[str, Any]) -> int:
     """Report absent or stale figures and pinned fits that cannot be read."""
-    problems, unread, unreadable = _gaps(manifest)
+    problems, unread, unreadable, inaccessible = _gaps(manifest)
     for problem in problems:
         print(problem)
     print(f"\n{len(problems)} archive(s) would publish an incomplete row.")
@@ -1060,6 +1063,13 @@ def _run_check(manifest: dict[str, Any]) -> int:
         )
         for item in unread:
             print(f"  {item}")
+    if inaccessible:
+        print(
+            f"{len(inaccessible)} declared archive(s) are on this machine but "
+            "could not be read (check permissions):"
+        )
+        for item, paths in inaccessible:
+            print(f"  {item} ({', '.join(map(str, paths))})")
     if unreadable:
         print(
             f"{len(unreadable)} pinned fit archive(s) are present but unreadable "
