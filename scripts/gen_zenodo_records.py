@@ -34,7 +34,9 @@ a draft, and publication stays a manual act.
     python scripts/gen_zenodo_records.py --record cc-by  # just one
     python scripts/gen_zenodo_records.py --outdir docs/zenodo/
     python scripts/gen_zenodo_records.py --check         # report gaps, exit 1
-    python scripts/gen_zenodo_records.py --refresh       # re-measure the archives
+    python scripts/gen_zenodo_records.py --refresh       # re-measure; exit 1 on unreadable pinned fits
+    python scripts/gen_zenodo_records.py --refresh --archives-root STAGING/
+                                                        # prefer namespaced staged archives
 """
 
 from __future__ import annotations
@@ -1033,7 +1035,8 @@ def main() -> int:
         action="store_true",
         help="re-measure every archive present on this machine and rewrite "
         "scripts/demo_archive_characteristics.json (preserves entries whose "
-        "archive is absent here)",
+        "archive is absent here; exits 1 after writing if a pinned fit is "
+        "present but unreadable)",
     )
     args = ap.parse_args()
 
