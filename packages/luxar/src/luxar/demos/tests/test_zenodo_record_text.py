@@ -23,6 +23,7 @@ import pytest
 
 #: .../packages/luxar/src/luxar/demos/tests/this_file.py -> repo root is 6 up.
 _SCRIPT = Path(__file__).resolve().parents[6] / "scripts" / "gen_zenodo_records.py"
+_ArchiveLayout = Literal["wrapped", "root"]
 _FrameWriter = Callable[..., None]
 
 
@@ -61,7 +62,7 @@ def _write_frame(
     gsplats: bool = True,
     kind: str | None = None,
     part_provenance: list[dict[str, Any]] | None = None,
-    layout: Literal["wrapped", "root"] = "wrapped",
+    layout: _ArchiveLayout = "wrapped",
 ) -> None:
     """One single-store `.gsplats.zarr.zip`, as a bundle's frames are."""
     prefix = f"{path.name.split('.')[0]}.gsplats.zarr/" if layout == "wrapped" else ""
@@ -86,8 +87,14 @@ def _write_frame(
 
 
 @pytest.fixture(params=("wrapped", "root"), ids=("wrapped-store", "root-store"))
-def write_frame(request: pytest.FixtureRequest) -> _FrameWriter:
-    return partial(_write_frame, layout=request.param)
+def archive_layout(request: pytest.FixtureRequest) -> _ArchiveLayout:
+    assert request.param in ("wrapped", "root")
+    return request.param
+
+
+@pytest.fixture
+def write_frame(archive_layout: _ArchiveLayout) -> _FrameWriter:
+    return partial(_write_frame, layout=archive_layout)
 
 
 def _write_bundle(
@@ -2182,10 +2189,22 @@ class TestTheStoreRootIsFoundFromFormatMetadata:
         assert info["n_splats"] == 8_823_953, "read a child group as the root"
 
     def test_the_shared_store_fixture_reads_both_layouts(
-        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+        self,
+        gen: Any,
+        tmp_path: Path,
+        archive_layout: _ArchiveLayout,
+        write_frame: _FrameWriter,
     ) -> None:
         path = tmp_path / "fixture.gsplats.zarr.zip"
         write_frame(path, n_splats=1234, psnr=39.0)
+
+        with zipfile.ZipFile(path) as zf:
+            root_attrs = (
+                ".zattrs"
+                if archive_layout == "root"
+                else "fixture.gsplats.zarr/.zattrs"
+            )
+            assert root_attrs in zf.namelist()
 
         info = gen._read_archive(path)
 
