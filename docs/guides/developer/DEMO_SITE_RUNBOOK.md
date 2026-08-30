@@ -955,7 +955,101 @@ path.
 For a gallery tile that is the right trade. State it that way round: a ladder does
 not reduce total requests, it moves them after first paint.
 
-### 3.22 Guard the artefact you ship, not only the inputs you fed it
+### 3.20 A pin audit expires on the next upload, and local resolution can mask a bad hosted pin
+
+Two separate hazards that showed up together.
+
+#### Local resolution does not prove the hosted pin
+
+Section 3.10 covers the fixed resolution order: verified local cache, then
+**in-repo git-LFS payload, then Zenodo**. The resolver considers
+`hosted_sha256` before `sha256`, but accepts either contract for cached and
+in-repo bytes. While the packaged payload matches `sha256`, the divergence notice
+looks the same whether the hosted pin is right or wrong; no hosted bytes were
+fetched, so an ordinary local run, CI run or demo build cannot distinguish them.
+
+Use the shipped cold-fetch harness before removal: `make check-cold-fetch` hides
+the in-repo payload directory, starts from an empty cache and verifies the record
+against the hosted contract. For teardown, run
+`hatch run python scripts/verify_cold_fetch.py --require-verified N` with the
+expected target count after the final upload, so a dormant or missed variant
+cannot turn an incomplete audit green. A digest mismatch aborts with a checksum
+error rather than accepting a silently wrong generation.
+
+#### An audit expires on the next write, not on a timer
+
+`gsplats_cmu1_pathology` pinned `hosted_bytes` 84,492,218 / 93,189,978 /
+100,336,780 against a draft holding 45,697,890 / 50,699,910 / 53,698,264, and
+`git log --all -S'45697890' -- packages/luxar/src/luxar/demos/data_manifest.json`
+returned **nothing at the time**. The pins later entered history in `c5cb10207`
+and `77d98994e`, so the same query is no longer empty.
+
+**Read that result carefully — but do not over-read it.** It does not mean nobody
+had pinned the draft: the correct values existed at that moment as an *uncommitted
+edit in another worktree*.
+
+Both halves were true and it is worth keeping them apart:
+
+- **Every committed manifest was stale**, the one that ships included. Only
+  committed pins ship, so the publish-time failure was entirely real for as long as
+  the right values lived nowhere durable.
+- **The uncommitted edit explains why the risk existed, not why it was absent.**
+  Work in a worktree protects nobody — the same "unpublished work is invisible"
+  shape as a store built but never uploaded.
+
+What the query genuinely cannot do is tell those apart: `git log --all -S<value>`
+returning empty means *"nothing has **committed** this value"*, which reads
+identically for "wrong everywhere" and "right but not yet durable". Reach for a
+second signal before naming the defect. Run `make check-zenodo-live` first: its
+audit prints `PROBABLY THE WRONG MANIFEST, NOT BROKEN RECORDS` when at least 66%
+of the pins disagree, before listing the full-path `git log` check.
+
+The audit that had cleared the manifest read 35 match / 0 differ / **7 not in any
+draft**; those 7 were uploaded afterwards. And the session doing the uploading went
+green → red **inside one sitting**: upload four archives, audit green, upload three
+more, audit red with *"description says 278.0 MB, actually 150.1 MB"*.
+
+So the rule is not "re-run before publish" — it is:
+
+- **Treat any audit older than the last write as void.** A green is a statement
+  about the instant it ran.
+- **Write pins after the upload they describe**, and commit them immediately; a pin
+  in a worktree protects nobody.
+- **Re-check the record's prose too.** Descriptions carry sizes and part counts and
+  go stale with the same write.
+
+#### A partial re-pin leaves the drafts and the manifest deliberately disagreeing
+
+PR #2333 resolved this for **five of the eight restructured archives** —
+`cmu1_ch0/1/2`, `cryoem_virus`, and the hosted-only `h2afva_51tp` (whose
+`sha256`/`bytes` moved in place, since with no in-repo payload a second contract
+would be ambiguous). Each moved file keeps its outgoing digest in
+`superseded_sha256`, so one previous cache generation reads as stale rather than
+corrupt.
+
+The other three — `vh_head`, `ct_atlas`, `milkyway_dust` — were left on their
+previous pins **on purpose**, and that gap is itself a hazard to carry forward:
+
+- `vh_head` and `ct_atlas` each ship a **positionally indexed sidecar**
+  (`vh_head_colors.npz`, `ct_atlas_labels.npz`). Row *i* of the sidecar describes
+  element *i* of the archive, so a restructure that reorders elements silently
+  mismatches colours or labels unless both move together. #2334 tracks that paired
+  migration.
+- `milkyway_dust` keeps its levels-preserving generation because its coarse levels
+  are what get selected when the galaxy is orbited at range; a flat streaming
+  ladder would regress the zoomed-out view (3.14).
+
+**The consequence is a publish-order constraint, not a to-do.** The drafts hold
+restructured files for all three, while the manifest pins the previous generation.
+After the in-repo payloads are removed, publishing a record in that state makes
+cold fetches and fresh installs abort with an uncaught checksum `ValueError`: the
+three affected demos catch `DatasetUnavailable`, not digest mismatches, so the
+source-download/refit fallback does not run. Either roll the draft files back to
+the pinned contracts before publishing, or land the paired sidecar migration
+first. The live gallery tiles are indifferent either way, because they serve
+already-derived scenes and never consult the pin (3.10).
+
+### 3.21 Guard the artefact you ship, not only the inputs you fed it
 
 A publish deployed a gallery page carrying **9 tiles instead of 85**, and every
 guard passed. They were all reasonable guards — and all of them checked *inputs*:
@@ -1138,6 +1232,11 @@ Gallery framing lives in `scripts/gallery/manifest.json`; see
 Structure decisions get made from these numbers, so getting the accounting
 right matters more than it looks. Every rule below is here because assuming the
 obvious reading produced a wrong answer.
+
+For a remote zip, the central directory is enough to inspect its topology without
+downloading the full payload. Fetch it with zip-aware tooling or a progressively
+larger trailing byte range: the directory size scales with the entry count and can
+be several MiB, so a fixed tail length is not a reliable bound.
 
 ### 7.1 Substitutive levels are alternatives; additive rungs are deltas
 
