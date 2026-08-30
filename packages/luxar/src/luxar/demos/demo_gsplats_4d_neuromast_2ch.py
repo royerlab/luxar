@@ -23,8 +23,8 @@ DATA SOURCE & CITATIONS:
     ``…/04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1/{Membranes,Nuclei}``.
 
 PIPELINE — reproducible per channel with ``--recompute``:
-    1. Read the channel's deconvolved TIFFs from ``HPC_SOURCE_ROOT`` using its
-       ``source_file_pattern``. Order ``t1`` through ``t100`` NUMERICALLY (not
+    1. Read the channel's deconvolved TIFFs from ``HPC_SOURCE_ROOT`` using
+       ``SOURCE_FILE_PATTERN``. Order ``t1`` through ``t100`` NUMERICALLY (not
        lexicographically), treat each TIFF as ``z,y,x``, and stack them into one
        ``time,z,y,x`` array. ``--source-*`` expects that assembled array, not
        the per-timepoint directory.
@@ -146,6 +146,8 @@ HPC_SOURCE_ROOT = (
 )
 #: One TIFF per one-based acquisition timepoint, stacked in this numeric order.
 SOURCE_TIMEPOINTS = tuple(range(1, 101))
+#: Applied inside each channel directory for every value in ``SOURCE_TIMEPOINTS``.
+SOURCE_FILE_PATTERN = "*_t{timepoint}.tiff"
 #: Axis order of every deconvolved per-timepoint TIFF before stacking.
 SOURCE_FRAME_AXES = "z,y,x"
 #: Zero-based assembled frames used to measure one stable floor per channel.
@@ -153,6 +155,8 @@ BACKGROUND_FLOOR_SAMPLE_INDICES = (0, 11, 22, 33, 44, 55, 66, 77, 88, 99)
 #: Per-frame mode measurement: histogram the low-intensity bulk through p95.
 BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE = 95.0
 BACKGROUND_FLOOR_HISTOGRAM_BINS = 512
+#: Combine the ten per-frame modes into the one floor pinned per channel.
+BACKGROUND_FLOOR_REDUCTION = "median"
 
 CHANNELS = [
     {
@@ -166,9 +170,8 @@ CHANNELS = [
         # ---- recompute recipe, per channel ----
         #: ``--source-<name> PATH``: the assembled (time, z, y, x) array.
         "source_flag": "source-membranes",
-        #: Durable upstream TIFF tree and the one-based timepoint filename form.
+        #: Durable upstream TIFF tree.
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Membranes/Deconvolved",
-        "source_file_pattern": "*_w2iSIM561-605_s1_t{timepoint}.tiff",
         #: Global background floor, measured ONCE on this channel and recorded.
         #: Re-measuring would drift, and the fit's own `--floor auto` runs on top
         #: of the subtraction rather than replacing it.
@@ -185,7 +188,6 @@ CHANNELS = [
         "opacity": 1.0,
         "source_flag": "source-nuclei",
         "hpc_source_dir": f"{HPC_SOURCE_ROOT}/Nuclei/Deconvolved",
-        "source_file_pattern": "*_w1iSIM488-525_s1_t{timepoint}.tiff",
         "background_floor": 103.88801574707031,
         "expected_splats": 5_530_300,
     },

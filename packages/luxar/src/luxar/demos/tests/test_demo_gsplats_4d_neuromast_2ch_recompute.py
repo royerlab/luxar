@@ -12,6 +12,9 @@ Three things here are worth pinning, each with a quiet failure mode:
 3. **The recipe constants.** ``--jobs-per-gpu`` must not be ``auto``: on the
    acquisition box ``auto`` sized 100 concurrent workers for 100 tasks and every
    one was OOM-killed before a tile landed.
+4. **The upstream provenance.** The durable HPC directories, numeric TIFF order,
+   axis convention and floor measurement are the recipe for rebuilding the two
+   assembled arrays if the current copies disappear.
 """
 
 import numpy as np
@@ -204,14 +207,8 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
 
     def test_the_source_files_are_stacked_in_numeric_timepoint_order(self):
         assert demo.SOURCE_TIMEPOINTS == tuple(range(1, 101))
-        patterns = {ch["name"]: ch["source_file_pattern"] for ch in demo.CHANNELS}
-        assert patterns == {
-            "membranes": "*_w2iSIM561-605_s1_t{timepoint}.tiff",
-            "nuclei": "*_w1iSIM488-525_s1_t{timepoint}.tiff",
-        }
-        for pattern in patterns.values():
-            assert pattern.format(timepoint=1).endswith("_t1.tiff")
-            assert pattern.format(timepoint=100).endswith("_t100.tiff")
+        assert demo.SOURCE_FILE_PATTERN.format(timepoint=1).endswith("_t1.tiff")
+        assert demo.SOURCE_FILE_PATTERN.format(timepoint=100).endswith("_t100.tiff")
 
     def test_the_assembly_axis_contract_is_recorded(self):
         assert demo.SOURCE_FRAME_AXES == "z,y,x"
@@ -232,6 +229,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         )
         assert demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE == 95.0
         assert demo.BACKGROUND_FLOOR_HISTOGRAM_BINS == 512
+        assert demo.BACKGROUND_FLOOR_REDUCTION == "median"
         floors = {ch["name"]: ch["background_floor"] for ch in demo.CHANNELS}
         assert floors == {
             "membranes": 105.9911880493164,
