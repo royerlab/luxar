@@ -410,10 +410,10 @@ def test_the_child_command_contract(tmp_path, monkeypatch) -> None:
 def test_a_local_input_demo_that_succeeds_is_generated(
     tmp_path, monkeypatch, capsys
 ) -> None:
-    # The maintainer's machine DOES have the inputs, and two of the five
-    # manual-file manifest entries (`gsplats_4d_neuromast_2ch`,
-    # `human_multiome_peak_umap`) have committed media proving they build there.
-    # Demotion must never cost them their tile.
+    # The maintainer's machine DOES have the inputs, and both manual-file
+    # (`gsplats_4d_neuromast_2ch`) and git-lfs (`human_multiome_peak_umap`)
+    # entries have committed media proving they build there. Demotion must never
+    # cost them their tile.
     calls = _setup(tmp_path, monkeypatch, [("needs_input", "manual-file", "ok")])
 
     code = _run_main(monkeypatch)
