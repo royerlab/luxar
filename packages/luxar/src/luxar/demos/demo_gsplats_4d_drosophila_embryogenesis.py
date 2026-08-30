@@ -45,9 +45,15 @@ The payoff is not tidiness, it is streaming. The writer treats a categorical
 centre column as an ordering BARRIER: splats are lexsorted by time first and the
 Hilbert curve is computed over the three spatial columns only, so a chunk never
 straddles two timepoints. The viewer's spatial index then fetches only the
-chunks whose bounds intersect the current slice. Measured in a real browser on
-the 20-frame pilot of this dataset: **~2 MB to first paint, and 0.06-0.56 MB to
-advance one timepoint**, against an 81 MB store — well under 1% per frame.
+chunks whose bounds intersect the current slice.
+
+Measured in a real browser on the shipped 500-frame store on 2026-08-30,
+advancing one timepoint costs **0-2.3 MB in 0-4 requests**. First paint does not
+share that locality: it costs **47 MB in 115 requests** for a timepoint that
+needs 3.16 MB, a 15x read amplification from the 1 MB archive chunks. At this
+length every coarse LOD level holds all 500 timepoints in one chunk, so drawing
+one frame downloads the whole level. An earlier 20-frame pilot measured about
+2 MB to first paint; that result does not survive the 25x scale-up. See #2374.
 
 A consequence worth knowing: the writer warns that this node holds more splats
 than a single gsplats node can render on a 4096-class GPU. That warning is
@@ -70,21 +76,30 @@ forced the zebrafish demo to round. And the build asserts every stored timepoint
 lands on the grid rather than trusting that it does.
 
 ================================================================================
-CULLING: WHY THIS SHIPS AT 65% OF WHAT WAS FITTED
+CULLING: WHY THE SHIPPED ARCHIVE USES A FIXED AMPLITUDE CUTOFF
 ================================================================================
 
-The fit produces 256,000 splats per frame — 128 million in total, about 1.19 GB.
-It ships at **cumulative-amplitude retention 0.960**, which keeps the brightest
-splats accounting for 96% of the total light and discards the rest.
+The fit uses a nominal seed budget of 256,000 splats per frame — 128 million in
+total — but dynamic fit operations and the preset's post-fit cull make the real
+output count data-dependent. The shipped archive contains 83,221,420 splats and
+was filtered at the recorded raw-amplitude cutoff **33.40462112**.
 
 That is not a quality compromise so much as a haze removal. Amplitude in a
 fitted light-sheet stack is heavily right-skewed: a minority of splats sit on
 nuclei and carry most of the signal, while a long tail of dim, diffuse splats
-models background and out-of-focus glow. Cumulative culling removes that tail
-first, in amplitude order, which is very nearly "least visible first". The level
-was chosen by flicker test on the companion ``gsplats_3d_culling_study`` demo,
-which puts ten retention levels of this same specimen on one selector at a fixed
-camera — the only way differences this subtle are actually visible.
+models background and out-of-focus glow. Removing that tail in amplitude order
+is very nearly "least visible first". The operating point was chosen by flicker
+test on the companion ``gsplats_3d_culling_study`` demo, which puts ten retention
+levels of this same specimen on one selector at a fixed camera — the only way
+differences this subtle are actually visible.
+
+The original operation was intended as cumulative-amplitude retention 0.960.
+The pre-#2260 float32 accumulator silently kept only 12.4% at the 128M scale;
+the corrected float64 implementation keeps 55.3% on the same fit. The published
+archive was rebuilt with the fixed cutoff above, so rerunning the current
+cumulative cull would not reproduce its recorded count. Keep the distinction:
+the cutoff reproduces this artifact; cumulative retention expresses the original
+quality choice.
 
 WHERE THE DATA COMES FROM
 ================================================================================
@@ -150,8 +165,8 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
         --gpus 0 --jobs-per-gpu 2 \
         --merge-recipe stream --merge-target-ms 200
 
-    # 2. Apply the float64 amplitude cutoff recorded for the corrected rebuild:
-    #    128,000,000 -> 83,221,420 splats.
+    # 2. Apply the amplitude cutoff recorded for the corrected rebuild:
+    #    nominal 128,000,000-seed budget -> 83,221,420 shipped splats.
     luxar gsplat filter out/merged/final.gsplats.zarr culled.gsplats.zarr \
         --amplitude-min 33.40462112
 
@@ -161,12 +176,14 @@ Every step is a stock ``luxar`` command; there are no private scripts. Given
     luxar gsplat transform culled.gsplats.zarr um.gsplats.zarr \
         --scale 1.93,0.40625,0.40625,1
 
-    # 4. Re-chunk for streaming. Measured on this store: 173 -> 2 requests per
-    #    timepoint step, and a 7.7% smaller zip.
+    # 4. Re-chunk for streaming. Measured on this store: 173 -> about 3 requests
+    #    per timepoint step, and a 7.7% smaller zip. The tradeoff at 500 frames
+    #    is 47 MB / 115 requests for first paint; `--profile hosting` measures
+    #    18 MB / 68 requests instead, but about 12 requests per timepoint step.
     luxar optimise um.gsplats.zarr \
         drosophila_embryogenesis_500tp.gsplats.zarr.zip --profile archive
 
-Two choices in there are measured rather than conventional:
+Three choices in there are measured rather than conventional:
 
 ``--iters 1500`` — 5,000 iterations scores identically on this data (41.8 /
 37.2 dB foreground either way; the loss is flat past ~1,000). Iterations are not
@@ -177,13 +194,22 @@ ONCE across all 500 frames rather than per timepoint. That is what keeps the
 exposure from drifting as the embryo brightens, and it is why the appearance
 constants below are portable across the whole recording.
 
+``--merge-target-ms 200`` reproduces the shipped 14-rung ladder, but the target
+is sized against the whole node rather than the displayed time slice. Its first
+rung therefore contains a median 45 splats per timepoint (p05 7; one timepoint
+empty), not 200 ms worth of the visible frame. Prefer ``--merge-n-lods 4`` for a
+new sliced archive; keep the target only when reproducing this artifact. See
+#2374 and #2376.
+
 Step 2 records the fixed amplitude cutoff used to build the shipped archive after
 #2260 (issue #2258). Do not replace it with a fresh cumulative cull: that does not
 reproduce the published 83,221,420-splat artifact.
 
 The fit directory is preserved across recompute attempts so ``batch-fit run`` can
 resume completed timepoints. Only the derived filter, transform, and archive
-outputs are replaced on a retry.
+outputs are replaced on a retry. Delete ``fit/`` manually after changing fit
+constants such as ``ITERS``; otherwise the default resume path can reuse the old
+tiles and merged output.
 
 
 USAGE:
@@ -321,8 +347,8 @@ AMPLITUDE_MIN = 33.40462112
 VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
 #: One-megabyte chunks measured at two requests per timepoint step.
 CHUNK_PROFILE = "archive"
-#: Recorded topology/count contract from the corrected fixed-cutoff rebuild.
-EXPECTED_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
+#: Nominal whole-recording seed budget; a refit may drift as dynamic ops run.
+NOMINAL_FITTED_SPLATS = SOURCE_SHAPE[0] * SEEDS
 EXPECTED_SPLATS = 83_221_420
 EXPECTED_RUNGS = 14
 #: Parallel fit reductions can move a threshold count, but not by recipe scale.
@@ -376,6 +402,7 @@ def _validate_source(path: Path) -> None:
     with _open_source(path) as root:
         try:
             array_keys = tuple(root.array_keys())
+            group_keys = tuple(root.group_keys())
         except Exception as exc:  # noqa: BLE001 - a bare array has no array_keys
             available = "(this store is a bare array, not a group)"
             raise ValueError(
@@ -385,9 +412,11 @@ def _validate_source(path: Path) -> None:
                 f"{exc}"
             ) from exc
         if SOURCE_ARRAY_KEY not in array_keys:
-            available = ", ".join(sorted(array_keys)) or "(none)"
+            arrays = ", ".join(sorted(array_keys)) or "(none)"
+            groups = ", ".join(sorted(group_keys)) or "(none)"
             raise ValueError(
-                f"{path.name} has no {SOURCE_ARRAY_KEY!r} array; found: {available}. "
+                f"{path.name} has no {SOURCE_ARRAY_KEY!r} array; arrays: {arrays}; "
+                f"groups: {groups}. "
                 f"Expected the DrosophilaHistone recording, a group whose "
                 f"{SOURCE_ARRAY_KEY!r} member is (time, z, y, x)."
             )
@@ -409,31 +438,40 @@ def _validate_source(path: Path) -> None:
     aprint(f"source validated: {SOURCE_SHAPE} {SOURCE_DTYPE}")
 
 
-def _validate_rebuilt_archive(node: Any) -> int:
-    """Validate the merged leaf count and progressive-rung contract."""
+def _only_leaf(node: Any, label: str) -> Any:
+    """Return the sole leaf or reject an unexpected tree topology."""
     leaves = list(iter_leaves(node))
     if len(leaves) != 1:
-        raise RuntimeError(f"rebuild produced {len(leaves)} leaves, expected one")
-    rungs = int(leaves[0].n_additive_sublods)
+        raise RuntimeError(f"{label} produced {len(leaves)} leaves, expected one")
+    return leaves[0]
+
+
+def _validate_rebuilt_archive(node: Any) -> int:
+    """Validate the merged leaf count and progressive-rung contract."""
+    leaf = _only_leaf(node, "rebuild")
+    rungs = int(leaf.n_additive_sublods)
     if rungs != EXPECTED_RUNGS:
         raise RuntimeError(
             f"rebuild produced {rungs} progressive rungs, expected {EXPECTED_RUNGS}"
         )
-    return int(leaves[0].n_splats)
+    return int(leaf.n_splats)
 
 
 def _validate_fitted_splat_count(node: Any) -> None:
     """Reject an incomplete or misconfigured merged fit before filtering it."""
-    leaves = list(iter_leaves(node))
-    if len(leaves) != 1:
-        raise RuntimeError(f"fitted merge produced {len(leaves)} leaves, expected one")
-    got = int(leaves[0].n_splats)
-    if got != EXPECTED_FITTED_SPLATS:
+    got = int(_only_leaf(node, "fitted merge").n_splats)
+    drift = abs(got - NOMINAL_FITTED_SPLATS) / NOMINAL_FITTED_SPLATS
+    if drift >= SPLAT_COUNT_TOLERANCE:
         raise RuntimeError(
-            f"fitted merge produced {got:,} splats, expected "
-            f"{EXPECTED_FITTED_SPLATS:,}; check the source, timepoints, and seed budget"
+            f"fitted merge produced {got:,} splats against the nominal "
+            f"{NOMINAL_FITTED_SPLATS:,}-splat seed budget ({drift:.2%} drift). "
+            f"Over 1% means the fit recipe changed -- check the source, "
+            f"timepoints, and fit settings."
         )
-    aprint(f"fitted merge validated: {got:,} splats")
+    aprint(
+        f"fitted merge validated: {got:,} splats "
+        f"(nominal {NOMINAL_FITTED_SPLATS:,}, {drift:.3%} drift)"
+    )
 
 
 def _validate_splat_count(got: int) -> None:
@@ -508,6 +546,7 @@ def recompute_archive(work_dir: Path) -> Path:
         merged = fit / "merged" / "final.gsplats.zarr"
         fitted_node, _ = load_gsplat_node(merged)
         _validate_fitted_splat_count(fitted_node)
+        del fitted_node
         run_luxar_cli(
             "gsplat",
             "filter",

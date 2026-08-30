@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -54,10 +56,19 @@ def test_recorded_recipe_constants_match_the_source_and_published_run() -> None:
     assert demo.SOURCE_DTYPE == np.dtype("uint16")
     assert demo.SOURCE_AXES == "time,z,y,x"
     assert demo.TILE_SIZE >= max(demo.SOURCE_SHAPE[1:])
-    assert demo.EXPECTED_FITTED_SPLATS == 128_000_000
+    assert demo.NOMINAL_FITTED_SPLATS == 128_000_000
     assert demo.AMPLITUDE_MIN == pytest.approx(33.40462112)
     assert demo.EXPECTED_SPLATS == 83_221_420
     assert demo.EXPECTED_RUNGS == 14
+
+
+def test_docstring_records_the_measured_streaming_tradeoffs() -> None:
+    doc = demo.__doc__ or ""
+    assert "47 MB in 115 requests" in doc
+    assert "0-2.3 MB in 0-4 requests" in doc
+    assert "18 MB / 68 requests" in doc
+    assert "median 45 splats per timepoint" in doc
+    assert "~2 MB to first paint" not in doc
 
 
 def test_validate_source_accepts_directory_and_zip_without_writing(
@@ -146,7 +157,10 @@ def test_validate_source_rejects_multiscale_group_at_array_key(tmp_path: Path) -
         "0", shape=demo.SOURCE_SHAPE, chunks=(1, 1, 1, 1), dtype="uint16"
     )
 
-    with pytest.raises(ValueError, match="has no 'data' array"):
+    with pytest.raises(
+        ValueError,
+        match=r"has no 'data' array; arrays: \(none\); groups: data",
+    ):
         demo._validate_source(source)
 
 
@@ -169,6 +183,31 @@ def test_rebuilt_archive_requires_one_leaf_and_the_recorded_rungs(monkeypatch) -
     monkeypatch.setattr(demo, "iter_leaves", lambda _node: [invalid_rungs])
     with pytest.raises(RuntimeError, match="progressive rungs"):
         demo._validate_rebuilt_archive(object())
+
+
+def test_fitted_archive_requires_one_leaf_and_uses_a_one_percent_tolerance(
+    monkeypatch,
+) -> None:
+    within_tolerance = SimpleNamespace(
+        n_splats=round(demo.NOMINAL_FITTED_SPLATS * 0.991)
+    )
+    monkeypatch.setattr(demo, "iter_leaves", lambda _node: [within_tolerance])
+    demo._validate_fitted_splat_count(object())
+
+    monkeypatch.setattr(
+        demo,
+        "iter_leaves",
+        lambda _node: [within_tolerance, within_tolerance],
+    )
+    with pytest.raises(RuntimeError, match="2 leaves, expected one"):
+        demo._validate_fitted_splat_count(object())
+
+    outside_tolerance = SimpleNamespace(
+        n_splats=round(demo.NOMINAL_FITTED_SPLATS * 0.989)
+    )
+    monkeypatch.setattr(demo, "iter_leaves", lambda _node: [outside_tolerance])
+    with pytest.raises(RuntimeError, match="Over 1% means the fit recipe changed"):
+        demo._validate_fitted_splat_count(object())
 
 
 def test_splat_count_uses_a_one_percent_tolerance() -> None:
@@ -201,15 +240,31 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
         derived.mkdir(parents=True)
     (work_dir / demo.REBUILT_FILENAME).touch()
     calls: list[tuple[str, ...]] = []
+    fitted_ref: weakref.ReferenceType[object] | None = None
     monkeypatch.setattr(demo, "SOURCE_ARG", source)
     monkeypatch.setattr(demo, "_validate_source", lambda _path: None)
-    monkeypatch.setattr(demo, "run_luxar_cli", lambda *args: calls.append(args))
     merged = work_dir / "fit" / "merged" / "final.gsplats.zarr"
 
-    def load(path: Path):
-        count = demo.EXPECTED_FITTED_SPLATS if path == merged else demo.EXPECTED_SPLATS
-        return SimpleNamespace(n_splats=count), {}
+    class LoadedNode:
+        def __init__(self, n_splats: int) -> None:
+            self.n_splats = n_splats
 
+    def run(*args: str) -> None:
+        if args[:2] == ("gsplat", "filter"):
+            gc.collect()
+            assert fitted_ref is not None
+            assert fitted_ref() is None
+        calls.append(args)
+
+    def load(path: Path):
+        nonlocal fitted_ref
+        count = demo.NOMINAL_FITTED_SPLATS if path == merged else demo.EXPECTED_SPLATS
+        node = LoadedNode(count)
+        if path == merged:
+            fitted_ref = weakref.ref(node)
+        return node, {}
+
+    monkeypatch.setattr(demo, "run_luxar_cli", run)
     monkeypatch.setattr(demo, "load_gsplat_node", load)
     monkeypatch.setattr(
         demo,
@@ -318,7 +373,10 @@ def test_recompute_rejects_wrong_fitted_count_before_filtering(
     monkeypatch.setattr(
         demo,
         "load_gsplat_node",
-        lambda _path: (SimpleNamespace(n_splats=demo.EXPECTED_FITTED_SPLATS - 1), {}),
+        lambda _path: (
+            SimpleNamespace(n_splats=round(demo.NOMINAL_FITTED_SPLATS * 0.989)),
+            {},
+        ),
     )
     monkeypatch.setattr(
         demo,
