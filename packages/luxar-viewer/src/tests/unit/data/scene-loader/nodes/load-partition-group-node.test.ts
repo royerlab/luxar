@@ -2,9 +2,9 @@
  * Tests for ``loadPartitionGroupNode``.
  *
  * Strategy: the Partition loader recurses children through ``loadSceneNodes``
- * but has no per-frame state to register (no LOD-style selector). We
- * mock ``loadSceneNodes`` to attach a stub mesh per child, then assert
- * on the THREE-tree shape.
+ * and registers validated child bounds for frustum-only selection. We mock
+ * ``loadSceneNodes`` to attach a stub mesh per child, then assert on the
+ * THREE-tree shape and registry entry.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -372,7 +372,7 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([7, 7, 3, 3]);
   });
 
-  it('all children stay visible after load (no LOD-style selector)', async () => {
+  it('all children start visible before the first frustum evaluation', async () => {
     attachStubChildren();
     const ctx = makeCtx();
     const node = makePartitionGroupNode([
