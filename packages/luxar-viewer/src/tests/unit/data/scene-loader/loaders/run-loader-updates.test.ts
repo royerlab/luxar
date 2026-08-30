@@ -12,7 +12,11 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { runLoaderUpdates } from '../../../../../data/scene-loader/loaders/run-loader-updates';
+import * as THREE from 'three';
+import {
+  isPartitionPathVisible,
+  runLoaderUpdates,
+} from '../../../../../data/scene-loader/loaders/run-loader-updates';
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
 import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 import { ArchiveFaultError } from '../../../../../cache/chunk-source';
@@ -123,5 +127,38 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
 
     expect(results[0].staged).toEqual({ path: '/scene/points' });
     expect(ctx.failedLoaders.size).toBe(0);
+  });
+
+  it('does not invoke loaders excluded by the visibility gate', async () => {
+    const ctx = makeCtx();
+    const loaders = new Map<string, object>([
+      ['/scene/visible', {}],
+      ['/scene/culled', {}],
+    ]);
+    const update = vi.fn((path: string) => Promise.resolve({ path }));
+
+    const results = await runLoaderUpdates(loaders, 'Points', update, {
+      ...ctx,
+      shouldUpdatePath: (path) => path !== '/scene/culled',
+    });
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledWith('/scene/visible', {}, expect.anything());
+    expect(results.map(({ staged }) => staged)).toEqual([{ path: '/scene/visible' }, null]);
+  });
+
+  it('finds a culled partition marker anywhere in the loader ancestor chain', () => {
+    const root = new THREE.Group();
+    const part = new THREE.Group();
+    const nestedLod = new THREE.Group();
+    const leaf = new THREE.Group();
+    leaf.name = '/partition/part_4/level_2';
+    root.add(part);
+    part.add(nestedLod);
+    nestedLod.add(leaf);
+
+    expect(isPartitionPathVisible(root, leaf.name)).toBe(true);
+    part.userData.partitionFrustumVisible = false;
+    expect(isPartitionPathVisible(root, leaf.name)).toBe(false);
   });
 });

@@ -163,7 +163,10 @@ import {
 } from './scene-loader/lifecycle/retry';
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/view-state/derive-node-view-state';
 import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
-import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
+import {
+  isPartitionPathVisible,
+  runLoaderUpdates as runLoaderUpdatesHelper,
+} from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/monitor/visible-counts';
 import { disposeSceneLoader } from './scene-loader/lifecycle/dispose';
 import type { SceneIdentityWatchdog } from './scene-identity-watchdog';
@@ -898,6 +901,7 @@ export class SceneLoader {
       viewStateQueue: this.viewStateQueue,
       registry: this.registry,
       onArchiveFault,
+      shouldUpdatePath: (path) => isPartitionPathVisible(this.rootGroup, path),
     });
   }
 

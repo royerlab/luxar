@@ -556,6 +556,17 @@ export interface LODGroupEntry {
   desiredChildIndex?: number;
 }
 
+export interface PartitionGroupChild {
+  object: THREE.Object3D;
+  positionBounds: { min: readonly number[]; max: readonly number[] };
+}
+
+export interface PartitionGroupEntry {
+  path: string;
+  groupObject: THREE.Object3D;
+  children: PartitionGroupChild[];
+}
+
 /**
  * Internal per-entry cache populated by ``register()``. Lets
  * ``evaluateEntry`` run without allocating on the hot path: the
@@ -580,6 +591,13 @@ interface LODGroupEntryCache {
   /** Whether any child needs the optional robust-bounds metric fold. */
   hasLodBounds: boolean;
   localBoxScratch: BoundingBox;
+}
+
+interface PartitionGroupEntryCache {
+  children: Array<{
+    source: PartitionGroupEntry;
+    localBoxScratch: BoundingBox;
+  }>;
 }
 
 /**
@@ -701,6 +719,8 @@ export interface LODGroupRegistryDeps {
  */
 export class LODGroupRegistry {
   private entries: Map<string, LODGroupEntry> = new Map();
+  private partitionEntries: Map<string, PartitionGroupEntry> = new Map();
+  private partitionCaches: Map<string, PartitionGroupEntryCache> = new Map();
   /**
    * Per-entry register-time cache (parallel to ``entries`` by path).
    * Populated by :meth:`register`. Stored on the side so the public
@@ -784,6 +804,21 @@ export class LODGroupRegistry {
     entry.heldDisplayChildIndex = entry.activeChildIndex;
   }
 
+  /** Register a partition whose children are independently frustum-gated. */
+  registerPartition(entry: PartitionGroupEntry): void {
+    this.partitionEntries.set(entry.path, entry);
+    this.partitionCaches.set(entry.path, {
+      children: entry.children.map((child) => ({
+        source: { path: entry.path, groupObject: entry.groupObject, children: [child] },
+        localBoxScratch: {
+          min: { x: 0, y: 0, z: 0 },
+          max: { x: 0, y: 0, z: 0 },
+        },
+      })),
+    });
+    for (const child of entry.children) child.object.userData.partitionFrustumVisible = true;
+  }
+
   /** Drop an lod_group from the registry (called on scene teardown). */
   unregister(path: string): void {
     this.entries.delete(path);
@@ -796,6 +831,8 @@ export class LODGroupRegistry {
   clear(): void {
     this.entries.clear();
     this.caches.clear();
+    this.partitionEntries.clear();
+    this.partitionCaches.clear();
     // Reset the monotonic tick so a reused registry (shared-registry
     // refactor) starts cold rather than inheriting stale LRU ordering.
     this.tick = 0;
@@ -1079,7 +1116,7 @@ export class LODGroupRegistry {
    * keeps the per-frame cost to the projection math alone.
    */
   evaluatePerFrame(): boolean {
-    if (this.entries.size === 0) return false;
+    if (this.entries.size === 0 && this.partitionEntries.size === 0) return false;
     const camera = this.deps.getCamera();
     const viewport = this.deps.getViewportSize();
     const displayDims = this.deps.getDisplayDims();
@@ -1108,6 +1145,9 @@ export class LODGroupRegistry {
 
     let changed = false;
     let anyLoading = false;
+    for (const entry of this.partitionEntries.values()) {
+      if (this.evaluatePartitionEntry(entry, displayDims, FRUSTUM_SCRATCH)) changed = true;
+    }
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, camera, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
         changed = true;
@@ -1140,6 +1180,38 @@ export class LODGroupRegistry {
     // hidden-layer (undrawable) first, then off-screen / furthest-from-camera —
     // so no per-swap release, hence no reload churn.
     this.enforceByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
+    return changed;
+  }
+
+  private evaluatePartitionEntry(
+    entry: PartitionGroupEntry,
+    displayDims: readonly number[],
+    frustum: THREE.Frustum
+  ): boolean {
+    const cache = this.partitionCaches.get(entry.path);
+    if (!cache) return false;
+    let changed = false;
+    for (let index = 0; index < entry.children.length; index++) {
+      const child = entry.children[index];
+      const childCache = cache.children[index];
+      const worldBox = computeEntryWorldBox(
+        childCache.source,
+        displayDims,
+        childCache.localBoxScratch,
+        this.matrixScratch
+      );
+      let visible = true;
+      if (worldBox) {
+        WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
+        WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
+        visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
+      }
+      child.object.userData.partitionFrustumVisible = visible;
+      if (child.object.visible !== visible) {
+        child.object.visible = visible;
+        changed = true;
+      }
+    }
     return changed;
   }
 

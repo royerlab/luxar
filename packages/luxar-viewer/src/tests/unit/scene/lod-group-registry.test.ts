@@ -29,6 +29,7 @@ import {
   SCREEN_FILL_DIAGONAL_RATIO,
   type LODGroupChild,
   type LODGroupEntry,
+  type PartitionGroupEntry,
 } from '../../../scene/lod-group-registry';
 import { DEGENERATE_RECT_HALF_EXTENT } from '../../../scene/lod-selector-math';
 import {
@@ -550,6 +551,54 @@ describe('LODGroupRegistry — registration', () => {
         .map((e) => e.path)
         .sort()
     ).toEqual(['/g0', '/g1']);
+  });
+});
+
+describe('LODGroupRegistry — partition frustum selection', () => {
+  it('hides only parts outside the frustum using mapped 2D display dimensions', () => {
+    const reg = makeRegistry([1, 3]);
+    const groupObject = new THREE.Group();
+    const visible = new THREE.Group();
+    const culled = new THREE.Group();
+    groupObject.add(visible, culled);
+    const entry: PartitionGroupEntry = {
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          object: visible,
+          positionBounds: { min: [20, -0.5, 30, -0.5], max: [21, 0.5, 31, 0.5] },
+        },
+        {
+          object: culled,
+          positionBounds: { min: [-0.5, 2, -0.5, 2], max: [0.5, 3, 0.5, 3] },
+        },
+      ],
+    };
+
+    reg.registerPartition(entry);
+    expect(reg.evaluatePerFrame()).toBe(true);
+
+    expect(visible.visible).toBe(true);
+    expect(visible.userData.partitionFrustumVisible).toBe(true);
+    expect(culled.visible).toBe(false);
+    expect(culled.userData.partitionFrustumVisible).toBe(false);
+  });
+
+  it('keeps a part visible when its bounds cannot be projected safely', () => {
+    const reg = makeRegistry([0, 1]);
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [{ object: child, positionBounds: { min: [], max: [] } }],
+    });
+
+    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(child.visible).toBe(true);
+    expect(child.userData.partitionFrustumVisible).toBe(true);
   });
 });
 

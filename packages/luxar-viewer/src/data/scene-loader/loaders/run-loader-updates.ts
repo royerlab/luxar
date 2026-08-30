@@ -14,6 +14,7 @@ import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { LoaderRegistry } from './loader-registry';
 import { isAbortError } from '../../loaders/abort-error';
 import { archiveFaultFrom, type ArchiveFaultError } from '../../../cache/chunk-source';
+import type * as THREE from 'three';
 
 const NOOP_SESSION: UpdateSession = {
   begin: () => NOOP_SESSION,
@@ -21,6 +22,15 @@ const NOOP_SESSION: UpdateSession = {
   setMetadata: () => {},
   markSkipped: () => {},
 };
+
+export function isPartitionPathVisible(root: THREE.Object3D | null, path: string): boolean {
+  let object: THREE.Object3D | null | undefined = root?.getObjectByName(path);
+  while (object) {
+    if (object.userData.partitionFrustumVisible === false) return false;
+    object = object.parent;
+  }
+  return true;
+}
 
 /**
  * Run a per-loader update task for every entry in `loaders`, recording
@@ -36,6 +46,7 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     profiler: UpdateProfiler | null;
     viewStateQueue: ViewStateQueue;
     registry: Pick<LoaderRegistry, 'failedLoaders' | 'recordFailure'>;
+    shouldUpdatePath?: (path: string) => boolean;
     /** Called at most once per sweep, after Promise.all, with the first archive fault. */
     onArchiveFault: (fault: ArchiveFaultError) => void;
   }
@@ -49,6 +60,10 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     const session = ctx.profiler
       ? ctx.profiler.beginTopLevel(`${loaderType} (${path})`)
       : NOOP_SESSION;
+    if (ctx.shouldUpdatePath?.(path) === false) {
+      session.markSkipped('partition part outside camera frustum');
+      return { staged: null, session };
+    }
     try {
       const staged = await updateFn(path, loader, session);
       return { staged, session };

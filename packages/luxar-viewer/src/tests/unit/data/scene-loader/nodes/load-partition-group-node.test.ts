@@ -82,6 +82,13 @@ function makeCtx(): NodeBuildCtx {
   return makeTestNodeBuildCtx({ nodeFactory });
 }
 
+function makeRegistryCtx(registerPartition: ReturnType<typeof vi.fn>): NodeBuildCtx {
+  return makeTestNodeBuildCtx({
+    nodeFactory: { applyTransform: vi.fn() } as unknown as NodeBuildCtx['nodeFactory'],
+    lodGroupRegistry: { registerPartition } as unknown as NodeBuildCtx['lodGroupRegistry'],
+  });
+}
+
 function makeStubLoc() {
   return { resolve: (_p: string) => ({ resolve: () => ({}) }) } as any;
 }
@@ -179,6 +186,43 @@ describe('loadPartitionGroupNode', () => {
       '/partition/part_1',
       '/partition/part_2',
     ]);
+  });
+
+  it('registers validated part bounds by child_index for frustum selection', async () => {
+    attachStubChildren();
+    const registerPartition = vi.fn();
+    const children = [
+      makePartNode('/partition/part_1', 'points', {
+        child_index: 1,
+        position_bounds: { min: [10, 20], max: [11, 21] },
+      }),
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [0, 1], max: [2, 3] },
+      }),
+    ];
+
+    const wrapper = await loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeRegistryCtx(registerPartition),
+      loadSceneNodesMock
+    );
+
+    expect(registerPartition).toHaveBeenCalledOnce();
+    const entry = registerPartition.mock.calls[0][0];
+    expect(entry.path).toBe('/partition');
+    expect(entry.groupObject).toBe(wrapper);
+    expect(
+      entry.children.map((child: { positionBounds: unknown }) => child.positionBounds)
+    ).toEqual([
+      { min: [0, 1], max: [2, 3] },
+      { min: [10, 20], max: [11, 21] },
+    ]);
+    expect(
+      entry.children.map((child: { object: THREE.Object3D }) => child.object.userData.partIndex)
+    ).toEqual([0, 1]);
   });
 
   it('loads parts with bounded concurrency while preserving authored order and indices', async () => {
