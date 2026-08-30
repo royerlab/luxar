@@ -922,6 +922,7 @@ class TestASlicedNodeGetsAShareOfItsFrame:
             (4_485_810, 7),  # zebrahub
             (3_000_000, 3),  # cellxgene
             (6_248_730, 6),  # human_multiome
+            (6_572_730, 2),  # arxiv
         ):
             rung0 = stream_ladder(total, slices=stops)["counts"][0]
             resident = total / stops
@@ -984,11 +985,18 @@ class TestASlicedNodeGetsAShareOfItsFrame:
 
     def test_lines_reject_a_resolved_ladder_over_the_commit_ceiling(self) -> None:
         with pytest.raises(ValueError, match="900,000-vertex commit ceiling"):
-            stream_ladder(2_000_000, geometry="lines", slices=4)
+            stream_ladder(1_800_005, geometry="lines", slices=4)
+
+        assert (
+            stream_ladder(1_800_004, geometry="lines", slices=4)["counts"]
+            == "stream:225001"
+        )
 
     def test_rejects_a_sliced_node_too_large_to_deliver_the_share(self) -> None:
         with pytest.raises(ValueError, match="cannot deliver its 12.5% first rung"):
-            stream_ladder(50_000_000, slices=500)
+            stream_ladder(7_200_001, slices=2)
+
+        assert stream_ladder(7_200_000, slices=2)["counts"][0] == 900_000
 
     def test_rejects_a_slice_count_below_one(self) -> None:
         with pytest.raises(ValueError, match="slices must be >= 1"):

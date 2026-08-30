@@ -358,6 +358,7 @@ def stream_ladder(
     cellxgene_census_umap         3       13,021      1.30 %
     mouse_multiome_peak_umap      6        6,510      3.39 %
     esm3_protein_landscape        2       19,531      3.39 %
+    arxiv_papers_kaggle           2       19,531      0.59 %
     ======================== ====== ============ ===========
 
     Scaling the rung to ``budget × S`` would restore the intended *latency* — 200
@@ -369,7 +370,7 @@ def stream_ladder(
     splats), **12.5% is soft but usable** (neuromast, 110,614 measured at rest
     against a 113,947 metadata mean), and **54% is fine on only 1,735 absolute
     elements** — which is what rules out an absolute floor. A budget contract
-    would have left four of the five demos above under 10% of their frame.
+    would have left five of the six demos above under 10% of their frame.
 
     So above one slice the first rung is floored at ``n /
     SLICED_LADDER_MAX_DEPTH``, giving every sliced node ``1/L`` of its frame **on
@@ -378,7 +379,7 @@ def stream_ladder(
     timelapse. Slice-invariant, so a demo that gains a dimension cannot silently
     regress. Derive ``slices`` with :func:`hidden_axis_stops`, not by hand.
 
-    The cost is accepted rather than hidden: first paint on the five goes from
+    The cost is accepted rather than hidden: first paint on these demos goes from
     ~200 ms to ~123-666 ms. Part of that is repaid in requests — hosted first
     paint is dominated by request COUNT, and fewer, fatter rungs mean fewer nodes
     to fetch, so the wall-clock penalty is smaller than the byte arithmetic
@@ -436,6 +437,7 @@ def stream_ladder(
 
     Raises:
         ValueError: ``geometry`` is neither ``"points"`` nor ``"lines"``, or a
+            sliced leaf cannot deliver its share within the commit ceiling, or a
             Lines leaf is too large for the uncapped vertex-count string form.
     """
     if geometry not in ("points", "lines"):

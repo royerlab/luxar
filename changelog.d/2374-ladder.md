@@ -5,10 +5,11 @@ for 200 ms at 25 Mbps — and applied it to the node's TOTAL element count. But 
 viewer draws one hidden-axis coordinate at a time, so on a sliced nD node that
 rung arrives divided by the number of stops. Measured per resident slice:
 human_multiome 6,510 of 1,041,455 (0.63%), zebrahub 5,580 of 640,830 (0.87%),
-cellxgene 1.30%, mouse and ESM3 3.39%.
+cellxgene 1.30%, mouse and ESM3 3.39%, and arxiv 0.59%.
 
 Above one slice the first rung is now floored at `n / SLICED_LADDER_MAX_DEPTH`,
-giving every sliced node **12.5% of its mean resident slice** at first paint:
+giving every accepted sliced leaf **12.5% of its mean resident slice** at first
+paint:
 
 | demo | slices | before | after |
 |---|---|---|---|
@@ -17,6 +18,7 @@ giving every sliced node **12.5% of its mean resident slice** at first paint:
 | cellxgene_census | 3 | 1.30% | 12.50% |
 | mouse_multiome | 6 | 3.39% | 12.50% |
 | esm3_protein | 2 | 3.39% | 12.50% |
+| arxiv_papers | 2 | 0.59% | 12.50% |
 
 A share rather than a byte budget because a share is what predicts whether the
 opening frame is recognisable: 0.03% renders blank (a 500-timepoint demo, decoded
@@ -41,13 +43,20 @@ non-uniform hidden axis the sparsest stops get less. Measured on a published
 categorical axis has little room to be non-uniform, which is what this was sized
 for; a long timelapse wants its per-stop histogram checked instead.
 
+The 900,000-element commit ceiling is still authoritative. A sliced leaf above
+7.2 million elements cannot deliver a 12.5% first rung safely, so
+`stream_ladder` rejects it and asks the author to partition the leaf rather than
+silently clamping below the share. Lines use an uncapped vertex-count string, so
+their resolved doubling ladder is also checked against that ceiling.
+
 New `hidden_axis_stops(positions, hidden_dims)` counts distinct **occurring**
 coordinate combinations, not the product of per-axis cardinalities: `taxon x
 period` on biodiversity is 126 of 140 populated, and drosophila declares 500 stops
-with data at 499, so a product overstates the divisor. Call sites pass
-`dims.non_displayed` rather than literal indices, because the hidden axis is
-column 0 in the multiome demos and last in the timelapse demos.
+with data at 499, so a product overstates the divisor. Array-backed call sites
+pass `dims.non_displayed` rather than literal indices, because the hidden axis is
+column 0 in the multiome demos and last in the timelapse demos; the partitioned
+nuclear-pore demo uses its authoritative state count.
 
 Authoring half of #2374; the viewer-side playback fix is separate. No published
-store changes — the five were measured to be on the `refine` path, which already
-streams every cache-resident level, so their bytes needed no rebuild.
+store changes occur in this patch; the new policy applies when those demos are
+rebuilt.
