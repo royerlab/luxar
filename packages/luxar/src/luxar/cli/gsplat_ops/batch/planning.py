@@ -1884,10 +1884,10 @@ def plan_batch(
     ----------
     merge_recipe_args
         Pre-resolved manifest dict (tests). Default ``None`` resolves ``merge``
-        via :func:`resolve_merge_recipe_args` HERE, after shape discovery — so
-        ``--merge-target-ms`` is sized with the true merged ndim
-        (``len(spatial) + (n_t > 1)``) and color-carrying multi-channel merges,
-        exactly matching what ``batch-fit merge`` computes at merge time.
+        via :func:`resolve_merge_recipe_args` after decomposition, once the
+        planned part count is known. Size-independent validation runs before
+        discovery; final sizing uses the true merged ndim, slice count, and
+        planned part count, matching what ``batch-fit merge`` computes.
     max_shape
         GPU-profile "largest shape that fits" (uniform auto tile-size). ``None``
         in content mode, or locally without a benchmark profile — then an explicit

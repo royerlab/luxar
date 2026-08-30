@@ -567,4 +567,6 @@ def decode_coordinate_columns(
     decoded = selected_low + selected.astype(np.float64) / ((1 << bits) - 1) * (
         selected_high - selected_low
     )
-    return np.asarray(decoded, dtype=np.dtype(encoding.get("original_dtype", "float32")))
+    return np.asarray(
+        decoded, dtype=np.dtype(encoding.get("original_dtype", "float32"))
+    )

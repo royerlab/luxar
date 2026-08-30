@@ -412,7 +412,9 @@ class TestMergeStreamingKnobs:
 
         assert survey_gsplat_streaming_layout(store_path) == (3, 2)
 
-    def test_store_survey_ignores_spatial_integer_barriers(self, tmp_path: Path) -> None:
+    def test_store_survey_ignores_spatial_integer_barriers(
+        self, tmp_path: Path
+    ) -> None:
         from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
 
         store_path = tmp_path / "spatial-layout.gsplats.zarr"
@@ -434,7 +436,9 @@ class TestMergeStreamingKnobs:
 
         assert survey_gsplat_streaming_layout(store_path) == (1, 1)
 
-    def test_store_survey_counts_only_stacked_barrier_axes(self, tmp_path: Path) -> None:
+    def test_store_survey_counts_only_stacked_barrier_axes(
+        self, tmp_path: Path
+    ) -> None:
         from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
 
         store_path = tmp_path / "stacked-layout.gsplats.zarr"
@@ -464,14 +468,10 @@ class TestMergeStreamingKnobs:
 
         store_path = tmp_path / "encoded-layout.gsplats.zarr"
         leaf = zarr.open_group(store_path, mode="w")
-        leaf.attrs.update(
-            {"type": "gsplats", "n_splats": 4, "n_additive_sublods": 2}
-        )
+        leaf.attrs.update({"type": "gsplats", "n_splats": 4, "n_additive_sublods": 2})
         for index, (low, rows) in enumerate(((10.0, [0, 1]), (12.0, [0, 1]))):
             rung = leaf.create_group(f"additive_{index}")
-            rung.attrs.update(
-                {"type": "gsplats", "n_splats": 2, "slice_dims": [3]}
-            )
+            rung.attrs.update({"type": "gsplats", "n_splats": 2, "slice_dims": [3]})
             centers = rung.create_array(
                 "centers",
                 data=np.column_stack(
@@ -540,9 +540,7 @@ class TestMergeStreamingKnobs:
                 [[0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 2]], dtype=np.float32
             ),
         )
-        archive = Path(
-            shutil.make_archive(str(store_path), "zip", root_dir=store_path)
-        )
+        archive = Path(shutil.make_archive(str(store_path), "zip", root_dir=store_path))
 
         assert survey_gsplat_streaming_layout(archive) == (3, 1)
 

@@ -78,6 +78,7 @@ _COARSEN_STAMP_NOTES = {
         "reduction, but the chunk layout is still guessed per level."
     ),
 }
+_COARSEN_STAMP_NOTES["adaptive"] = _COARSEN_STAMP_NOTES["overview"]
 
 
 def _resolve_lod_streaming_breakpoints(
@@ -97,8 +98,7 @@ def _resolve_lod_streaming_breakpoints(
     import numpy as np
 
     stored_total = sum(
-        data.at_substitutive(index).n_splats
-        for index in range(data.n_substitutive)
+        data.at_substitutive(index).n_splats for index in range(data.n_substitutive)
     )
     store_bytes = measure_store_bytes(input_path)
     measured = (
@@ -145,7 +145,7 @@ def _resolve_lod_streaming_breakpoints(
         slice_count=max(1, slice_count),
         part_count=part_count,
     )
-_COARSEN_STAMP_NOTES["adaptive"] = _COARSEN_STAMP_NOTES["overview"]
+
 
 # Per-recipe relevance tokens. Each tuning option belongs to a token group; a
 # recipe only accepts options whose token is in its allowed set. ``--levels`` is

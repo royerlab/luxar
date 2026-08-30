@@ -179,9 +179,7 @@ def test_partitioned_slice_survey_decodes_per_part_coordinate_grids(
     root.attrs["kind"] = "partition"
     for index, (low, rows) in enumerate(((0.0, [0, 1]), (2.0, [0, 1]))):
         leaf = root.create_group(f"part_{index}")
-        leaf.attrs.update(
-            {"type": "points", "n_points": 2, "n_additive_sublods": 2}
-        )
+        leaf.attrs.update({"type": "points", "n_points": 2, "n_additive_sublods": 2})
         rung = leaf.create_group("additive_0")
         rung.attrs.update({"type": "points", "n_points": 2, "slice_dims": [0]})
         positions = rung.create_array(

@@ -178,9 +178,7 @@ def sliced_first_rung_counts(
     return [
         result
         for name in root.group_keys()
-        for result in sliced_first_rung_counts(
-            root[name], f"{path}/{name}", zarr_root
-        )
+        for result in sliced_first_rung_counts(root[name], f"{path}/{name}", zarr_root)
     ]
 
 
