@@ -20,6 +20,8 @@ import {
 // Dataset served from Python HTTP server on port 9000
 // Use build_example_structured - it's 3D with guaranteed visible points
 const DATASET_URL = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
+const LADDER_URL =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_mesh_reveal_ladder.luxar.zarr';
 
 test.describe('Data Loading Monitor Metrics', () => {
   test.beforeEach(async ({ page }) => {
@@ -67,6 +69,53 @@ test.describe('Data Loading Monitor Metrics', () => {
       expect(ratio).toBeGreaterThan(0.8);
       expect(ratio).toBeLessThan(1.25);
     }
+  });
+
+  test('debug surface wires live FPS sampling and additive ladder state', async ({ page }) => {
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      debug.app.adaptiveDPRManager.setEnabled(true);
+      debug.renderOnce();
+    });
+    await page.waitForFunction(
+      () => {
+        const debug = (window as unknown as { __luxarDebug?: Record<string, unknown> })
+          .__luxarDebug;
+        return debug?.fpsSamplingEnabled === true && typeof debug.fps === 'number';
+      },
+      undefined,
+      { timeout: 15000 }
+    );
+
+    await page.goto(`/?src=${LADDER_URL}&debug`);
+    await waitForLuxarReady(page);
+    await page.waitForFunction(
+      () => {
+        const debug = (
+          window as unknown as {
+            __luxarDebug?: { getState?: () => { meshNodes?: Array<Record<string, unknown>> } };
+          }
+        ).__luxarDebug;
+        return debug
+          ?.getState?.()
+          .meshNodes?.some(
+            (node) =>
+              typeof node.totalLODCount === 'number' &&
+              node.totalLODCount > 1 &&
+              typeof node.committedLadderComplete === 'boolean'
+          );
+      },
+      undefined,
+      { timeout: 60000 }
+    );
+
+    const ladder = await page.evaluate(() => {
+      const state = (window as any).__luxarDebug.getState();
+      return state.meshNodes.find((node: any) => node.totalLODCount > 1);
+    });
+    expect(ladder.loadedLODCount).toBeGreaterThan(0);
+    expect(ladder.totalLODCount).toBe(4);
+    expect(typeof ladder.lastAllResident).toBe('boolean');
   });
 
   test('should show monitor UI via M key press', async ({ page }) => {

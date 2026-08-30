@@ -56,8 +56,10 @@ declare global {
       animationController?: AnimationController;
       inputHandler?: InputHandler;
       renderingControls?: RenderingControls;
-      /** Presented-frame rate; undefined until the sampling window has enough frames. */
+      /** Healthy-cadence estimate; undefined until the sampling window has enough frames. */
       fps?: number;
+      /** Whether adaptive-DPR frame sampling is currently active. */
+      fpsSamplingEnabled?: boolean;
       recordingPanel?: RecordingPanel;
       sceneDimsManager?: SceneDimsManager;
       runtimeReady?: boolean;

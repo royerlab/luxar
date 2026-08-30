@@ -117,6 +117,9 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
       const fps = ports.adaptiveDPRManager.getCurrentFPS();
       return fps > 0 ? fps : undefined;
     },
+    get fpsSamplingEnabled() {
+      return ports.adaptiveDPRManager.getState().enabled;
+    },
     recordingPanel: ports.recordingPanel,
     sceneDimsManager: sceneDimsManager,
     app: ports.app,

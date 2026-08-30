@@ -86,7 +86,10 @@ function makePorts(overrides: Partial<Parameters<typeof installDebugInterface>[0
   };
   const inputHandler = { id: 'input' };
   const renderingControls = { id: 'rendering' };
-  const adaptiveDPRManager = { getCurrentFPS: vi.fn(() => 60) };
+  const adaptiveDPRManager = {
+    getCurrentFPS: vi.fn(() => 60),
+    getState: vi.fn(() => ({ enabled: true })),
+  };
   return {
     debug: true,
     app: { id: 'app', shortcutForAction: vi.fn().mockReturnValue('F1') } as never,
@@ -307,13 +310,19 @@ describe('installDebugInterface', () => {
   });
 
   describe('fps', () => {
-    it('exposes the sampled frame rate and omits an empty sample window', () => {
+    it('exposes frame cadence, sampling state, and an empty window distinctly', () => {
       const getCurrentFPS = vi.fn(() => 144);
-      installDebugInterface(makePorts({ adaptiveDPRManager: { getCurrentFPS } as never }));
+      const getState = vi.fn(() => ({ enabled: true }));
+      installDebugInterface(
+        makePorts({ adaptiveDPRManager: { getCurrentFPS, getState } as never })
+      );
 
       expect(window.__luxarDebug?.fps).toBe(144);
+      expect(window.__luxarDebug?.fpsSamplingEnabled).toBe(true);
       getCurrentFPS.mockReturnValue(0);
       expect(window.__luxarDebug?.fps).toBeUndefined();
+      getState.mockReturnValue({ enabled: false });
+      expect(window.__luxarDebug?.fpsSamplingEnabled).toBe(false);
     });
   });
 
