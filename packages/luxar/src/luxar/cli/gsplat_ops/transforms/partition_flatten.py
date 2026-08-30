@@ -31,6 +31,18 @@ def _default_leaf_paths(group: Any, path: str = "") -> list[str]:
     return [path]
 
 
+def _contains_partition_group(group: Any) -> bool:
+    kind = group.attrs.get("kind")
+    if kind == "partition":
+        return True
+    if kind != "lod":
+        return False
+    count = sum(1 for name in group if str(name).startswith("child_"))
+    return any(
+        _contains_partition_group(group[f"child_{index}"]) for index in range(count)
+    )
+
+
 def _root_stats(root: Any) -> Dict[str, Any]:
     stats: Dict[str, Any] = {}
     if "fitting" in root:
@@ -164,6 +176,7 @@ def run_flatten_dataset(
             split_fitting_info,
             write_flat_leaf_streaming,
         )
+        from luxar.gsplats.tree import GSplatLeaf
         from luxar.io._compiler.gsplat_tree import read_gsplat_node
         from luxar.io.ordering import sort_splats_spatial
 
@@ -229,12 +242,16 @@ def run_flatten_dataset(
                     for leaf_path in leaf_paths:
                         group = root[leaf_path] if leaf_path else root
                         leaf = read_gsplat_node(group, root)
+                        if not isinstance(leaf, GSplatLeaf):
+                            raise ValueError(
+                                f"default leaf path {leaf_path or '/'} is not a leaf"
+                            )
                         for sublod in leaf.additive_sublods:
                             if sublod.n_splats > 0:
                                 yield sublod
 
                 carried_stats = stats_after_structure_change(stats)
-                if root.attrs.get("kind") == "partition":
+                if _contains_partition_group(root):
                     carried_stats.pop("part_provenance", None)
                 fitting, config, provenance, pipeline = split_fitting_info(
                     carried_stats, include_fitting_info=True

@@ -32,6 +32,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    cast,
 )
 
 import numpy as np
@@ -897,8 +898,7 @@ def write_flat_leaf_streaming(
             "auto/memory encoding needs whole-array analysis"
         )
 
-    from luxar.gsplats._data.base import _merge_lod_colors
-    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.gsplat_data import widen_colors_to_rgba
     from luxar.gsplats.utils.trils import tril_size
     from luxar.io._compiler.gsplat_assembly import (
         apply_gsplat_group_attrs,
@@ -938,6 +938,7 @@ def write_flat_leaf_streaming(
 
     if ndim is None or n_splats == 0:
         raise ValueError("write_flat_leaf_streaming: no non-empty splat sets to write")
+    assert truncation_radius is not None
 
     path = Path(path)
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
@@ -1013,23 +1014,22 @@ def write_flat_leaf_streaming(
                 amplitudes[offset:stop] = part_amplitudes
                 cholesky[offset:stop] = part_cholesky
                 if colors is not None:
-                    normalized = _merge_lod_colors(
-                        [
-                            AdditiveSubLOD(
-                                centers=part_centers,
-                                amplitudes=part_amplitudes,
-                                cholesky_factors=part_cholesky,
-                                colors=part_colors,
-                                truncation_radius=float(sublod.truncation_radius),
-                            )
-                        ],
-                        channels=color_channels,
-                        allow_integer=preserve_integer_colors,
-                    )
-                    if normalized is None:
+                    if part_colors is None:
                         normalized = np.ones(
                             (sublod.n_splats, color_channels), dtype=np.float32
                         )
+                    else:
+                        normalized = np.asarray(part_colors)
+                        if not preserve_integer_colors:
+                            if np.issubdtype(normalized.dtype, np.integer):
+                                integer_max = np.iinfo(cast(Any, normalized.dtype)).max
+                                normalized = normalized.astype(np.float32) / np.float32(
+                                    integer_max
+                                )
+                            else:
+                                normalized = normalized.astype(np.float32, copy=False)
+                        if color_channels == 4 and normalized.shape[1] == 3:
+                            normalized = widen_colors_to_rgba(normalized)
                     colors[offset:stop] = normalized
                 if meta is not None:
                     if ordering_template is None:
@@ -1043,6 +1043,9 @@ def write_flat_leaf_streaming(
                             "streamed splat sets resolved inconsistent ordering axes"
                         )
                 offset = stop
+                del sublod, part_centers, part_amplitudes, part_cholesky, part_colors
+                if colors is not None:
+                    del normalized
 
             assert ordering_template is not None
             centers.flush()
