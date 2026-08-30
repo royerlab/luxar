@@ -51,6 +51,7 @@ import difflib
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -64,7 +65,7 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 # The record ids and DOIs below are REAL and final: Zenodo reserves a DOI at
 # deposition time and the deposition id becomes the record id on publication, so
 # `https://zenodo.org/records/<id>/...` is already the right URL. What is not yet
-# true is that the records are PUBLIC — all three are still unsubmitted drafts,
+# true is that the records are PUBLIC — all of them are still unsubmitted drafts,
 # and a file URL into a draft 404s for everyone.
 #
 # `zenodo_doi` is that reserved DOI, i.e. the VERSION DOI of this deposition —
@@ -73,7 +74,7 @@ MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 #
 # Hence `published`: while it is false the fetch helper builds no URL at all, so
 # the Zenodo leg stays dormant exactly as it did when the ids were null, and
-# demos keep resolving cache -> in-repo LFS. Flipping the three flags at
+# demos keep resolving cache -> in-repo LFS. Flipping those flags at
 # publication time is what activates fetching, and it is the only edit needed.
 # Recording the ids now (rather than at publish time) means the manifest, the
 # record descriptions and the reserved DOIs cannot drift apart in the meantime.
@@ -753,7 +754,91 @@ _HOSTED_KEYS = ("hosted_sha256", "hosted_bytes")
 #: Unbounded and ordered newest-last: a flat list of 64-char hashes is a few
 #: hundred bytes even after many re-pins. Reverting a pin moves that digest to
 #: the end so the runtime's one-generation fallback remains correct.
+#: For an uncommitted hosted re-pin, the generator can require the previously
+#: pinned digest to appear in the new history and preserve every older entry.
+#: The runtime accepts only the LAST superseded digest. A hosted-only re-pin
+#: therefore leaves the outgoing hosted digest last; when the in-repo bytes move
+#: in the same edit, `_carry_hosted` leaves the outgoing local digest last instead.
+#: One slot cannot keep both contracts readable; this preserves the generator's
+#: existing local-fallback policy when both move.
+#: It cannot prove that separately staged fit and sidecar bytes are aligned;
+#: that requires the deep positional-pair check described in data/README.md.
 _SUPERSEDED_KEY = "superseded_sha256"
+
+
+def _manifest_file_entries(manifest: dict) -> dict[tuple[str, str, str], dict]:
+    """Index manifest file entries by dataset, variant, and filename."""
+    entries = {}
+    for dataset_name, dataset in manifest.get("datasets", {}).items():
+        for entry in dataset.get("files", ()):
+            entries[(dataset_name, "", entry["name"])] = entry
+        for variant_name, variant in dataset.get("variants", {}).items():
+            for entry in variant.get("files", ()):
+                entries[(dataset_name, variant_name, entry["name"])] = entry
+    return entries
+
+
+def _refuse_invalid_repin_history(current: dict, committed: Optional[dict]) -> None:
+    """Reject uncommitted hosted re-pins that lose cache history."""
+    if not committed:
+        return
+    old_entries = _manifest_file_entries(committed)
+    for identity, entry in _manifest_file_entries(current).items():
+        old_entry = old_entries.get(identity)
+        if not old_entry:
+            continue
+        old_hosted = old_entry.get("hosted_sha256")
+        new_hosted = entry.get("hosted_sha256")
+        if not old_hosted or not new_hosted or new_hosted == old_hosted:
+            continue
+        old_history = old_entry.get(_SUPERSEDED_KEY) or ()
+        new_history = entry.get(_SUPERSEDED_KEY) or ()
+        dataset, variant, filename = identity
+        location = "/".join(part for part in (dataset, variant, filename) if part)
+        if old_hosted not in new_history:
+            raise ValueError(
+                f"hosted re-pin for {location} must record the outgoing hosted "
+                f"digest in {_SUPERSEDED_KEY}"
+            )
+        missing = [digest for digest in old_history if digest not in new_history]
+        if missing:
+            raise ValueError(
+                f"hosted re-pin for {location} drops {len(missing)} previously "
+                f"recorded {_SUPERSEDED_KEY} entr{'y' if len(missing) == 1 else 'ies'}"
+            )
+        old_local = old_entry.get("sha256")
+        new_local = entry.get("sha256")
+        local_moved = bool(old_local and new_local and new_local != old_local)
+        expected_fallback = old_local if local_moved else old_hosted
+        if not new_history or new_history[-1] != expected_fallback:
+            kind = "local" if local_moved else "hosted"
+            raise ValueError(
+                f"hosted re-pin for {location} must leave the outgoing {kind} "
+                f"digest last in {_SUPERSEDED_KEY}; the runtime accepts only that entry"
+            )
+
+
+def _head_manifest() -> Optional[dict]:
+    """Read HEAD for the optional uncommitted-edit guard, else return ``None``."""
+    relative = MANIFEST.relative_to(REPO_ROOT).as_posix()
+    try:
+        text = subprocess.run(
+            ["git", "show", f"HEAD:{relative}"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=10,
+        ).stdout
+        manifest = json.loads(text)
+        return manifest if isinstance(manifest, dict) else None
+    except (
+        OSError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ):
+        return None
 
 
 def _carry_hosted(found: list[dict], committed: list[dict]) -> list[dict]:
@@ -942,7 +1027,12 @@ def main() -> int:
         print(f"error: cannot read {MANIFEST}: {exc}", file=sys.stderr)
         return 2
 
-    manifest = build(previous, prune=args.prune)
+    try:
+        manifest = build(previous, prune=args.prune)
+        _refuse_invalid_repin_history(manifest, _head_manifest())
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     text = json.dumps(manifest, indent=2) + "\n"
 
     if args.check:
