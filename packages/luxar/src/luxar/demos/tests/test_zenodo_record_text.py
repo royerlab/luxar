@@ -297,10 +297,11 @@ class TestABundleIsDescribedWhole:
             [_entry("movie.gsplats.zarr.zip", gen._sha256_of(archive))]
         )
 
-        gen.refresh_characteristics(manifest, tmp_path)
+        result = gen.refresh_characteristics(manifest, tmp_path)
         chars = gen.load_characteristics()
         (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], chars)
 
+        assert result.staged_reads == 1
         assert row["file"] == "movie.gsplats.zarr.zip (3 frames)"
         assert row["psnr"] == "31.2–54.9"
 
@@ -739,7 +740,10 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
         _fake_manifest([_entry("a.gsplats.zarr.zip", pinned_sha)])
     )
 
-    assert counts == (1, 1, 0, 0)
+    assert counts.read == 1
+    assert counts.retained == 1
+    assert counts.rejected == 0
+    assert counts.preserved == 0
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert written["measured_from"] == "staged", "a local read outranked the staged one"
     assert written["foreground_psnr_db"] == 30.6
@@ -773,7 +777,10 @@ def test_refresh_uses_a_pinned_cache_copy_over_an_unpinned_repo_copy(
         )
     )
 
-    assert counts == (1, 0, 0, 0)
+    assert counts.read == 1
+    assert counts.retained == 0
+    assert counts.rejected == 0
+    assert counts.preserved == 0
     written = gen.load_characteristics()[f"ds/{file_name}"]
     assert written["measured_from"] == "cache"
     assert written["measured_sha256"] == pinned_sha
@@ -816,7 +823,10 @@ def test_an_unpinned_local_measurement_cannot_replace_an_absent_figure(
 
     counts = gen.refresh_characteristics(manifest)
 
-    assert counts == (1, 0, 1, 0)
+    assert counts.read == 1
+    assert counts.retained == 0
+    assert counts.rejected == 1
+    assert counts.preserved == 0
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert written == {
         **absent[key],
@@ -846,7 +856,10 @@ def test_a_current_local_measurement_replaces_a_stale_staged_one(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])
     )
 
-    assert counts == (1, 0, 0, 0)
+    assert counts.read == 1
+    assert counts.retained == 0
+    assert counts.rejected == 0
+    assert counts.preserved == 0
     written = json.loads((tmp_path / "chars.json").read_text())["archives"][key]
     assert written["measured_sha256"] == "p" * 64
     assert written["n_splats"] == 111
@@ -867,15 +880,64 @@ def test_refresh_preserves_entries_whose_archive_is_absent(
     )
     monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter(()))
 
-    read, retained, rejected, preserved = gen.refresh_characteristics(
+    result = gen.refresh_characteristics(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "a" * 64)])
     )
 
-    assert (read, retained, rejected, preserved) == (0, 0, 0, 1)
+    assert result.read == 0
+    assert result.retained == 0
+    assert result.rejected == 0
+    assert result.preserved == 1
     assert (
         json.loads((tmp_path / "chars.json").read_text())["archives"][key]["n_splats"]
         == 7
     )
+
+
+def test_refresh_writes_good_reads_before_reporting_a_pinned_unreadable_archive(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    good = tmp_path / "good.gsplats.zarr.zip"
+    unreadable = tmp_path / "unreadable.gsplats.zarr.zip"
+    good.write_bytes(b"good")
+    unreadable.write_bytes(b"unreadable")
+    good_key = f"ds/{good.name}"
+    unreadable_key = f"ds/{unreadable.name}"
+    digests = {good: "g" * 64, unreadable: "u" * 64}
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "load_characteristics",
+        lambda: {unreadable_key: {"n_splats": 7, "psnr_db": 1.0}},
+    )
+    monkeypatch.setattr(
+        gen,
+        "_locate",
+        lambda dataset, entry, variant, name, extra_root=None: iter(
+            (good if name == good.name else unreadable,)
+        ),
+    )
+    monkeypatch.setattr(gen, "_sha256_of", digests.__getitem__)
+    monkeypatch.setattr(
+        gen,
+        "_read_archive",
+        lambda path: {"n_splats": 11} if path == good else None,
+    )
+
+    result = gen.refresh_characteristics(
+        _fake_manifest(
+            [
+                _entry(good.name, digests[good]),
+                _entry(unreadable.name, digests[unreadable]),
+            ]
+        )
+    )
+
+    assert result.unreadable == (unreadable,)
+    assert result.preserved == 0
+    archives = json.loads((tmp_path / "chars.json").read_text())["archives"]
+    assert archives[good_key]["n_splats"] == 11
+    assert archives[unreadable_key]["n_splats"] == 7
 
 
 def test_a_prefix_matching_cache_path_is_not_labelled_staged(
@@ -912,7 +974,10 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
         _fake_manifest([_entry("a.gsplats.zarr.zip", "p" * 64)])
     )
 
-    assert counts == (1, 0, 1, 0)
+    assert counts.read == 1
+    assert counts.retained == 0
+    assert counts.rejected == 1
+    assert counts.preserved == 0
     archives = json.loads((tmp_path / "chars.json").read_text())["archives"]
     assert archives[key] == {
         "n_splats": None,
@@ -1019,7 +1084,9 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(
-        gen, "refresh_characteristics", lambda manifest, extra_root: (4, 2, 1, 3)
+        gen,
+        "refresh_characteristics",
+        lambda manifest, extra_root: gen.RefreshResult(4, 2, 1, 3, (), 0),
     )
     monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
 
@@ -1030,6 +1097,70 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     assert "skipped 1 read(s) taken from bytes the manifest does not pin" in summary
     assert "kept 2 committed measurement(s) that outrank the local copy" in summary
     assert "preserved 3 not on this machine" in summary
+
+
+def test_refresh_reports_each_unreadable_pinned_archive_and_exits_nonzero(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"datasets": {}}))
+    first = tmp_path / "first.gsplats.zarr.zip"
+    second = tmp_path / "second.gsplats.zarr.zip"
+    monkeypatch.setattr(gen, "MANIFEST", manifest_path)
+    monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "refresh_characteristics",
+        lambda manifest, extra_root: gen.RefreshResult(2, 0, 0, 0, (first, second), 0),
+    )
+    monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
+
+    assert gen.main() == 1
+
+    output = capsys.readouterr().out
+    assert f"pinned archive is present but unreadable: {first}" in output
+    assert f"pinned archive is present but unreadable: {second}" in output
+
+
+def test_a_flat_archives_root_warns_with_the_expected_layout(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    file_name = "a.gsplats.zarr.zip"
+    staged_root = tmp_path / "staged"
+    staged_root.mkdir()
+    (staged_root / file_name).write_bytes(b"flat, not namespaced")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(_fake_manifest([_entry(file_name, "a" * 64)])))
+    monkeypatch.setattr(gen, "MANIFEST", manifest_path)
+    monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gen, "DATA_DIR", tmp_path / "repo")
+    monkeypatch.setattr(gen, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "gen_zenodo_records.py",
+            "--refresh",
+            "--archives-root",
+            str(staged_root),
+        ],
+    )
+
+    assert gen.main() == 0
+
+    output = capsys.readouterr().out
+    assert "WARNING" in output
+    assert "read 0 archive(s) from --archives-root" in output
+    assert str(staged_root) in output
+    assert "<root>/<dataset>/[<variant>/]<file>" in output
 
 
 def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:

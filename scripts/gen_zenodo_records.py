@@ -46,7 +46,7 @@ import sys
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
@@ -57,6 +57,17 @@ CACHE_DIR = Path.home() / ".cache/luxar"
 CHARACTERISTICS = REPO_ROOT / "scripts/demo_archive_characteristics.json"
 
 _ABSENT = "—"
+
+
+class RefreshResult(NamedTuple):
+    """Outcome of one characteristics refresh."""
+
+    read: int
+    retained: int
+    rejected: int
+    preserved: int
+    unreadable: tuple[Path, ...]
+    staged_reads: int
 
 
 # ---------------------------------------------------------------------------
@@ -567,8 +578,8 @@ def _retain_preferred_measurements(
 
 def refresh_characteristics(
     manifest: dict[str, Any], extra_root: Optional[Path] = None
-) -> tuple[int, int, int, int]:
-    """Re-measure archives; returns (read, retained, rejected, preserved).
+) -> RefreshResult:
+    """Re-measure archives and report how every local candidate was handled.
 
     PRESERVES entries whose archive is not on this machine, for the same reason
     ``gen_data_manifest`` preserves committed file lists: a refresh run from a
@@ -579,6 +590,9 @@ def refresh_characteristics(
     measured: dict[str, Any] = {}
     pinned_digests: dict[str, Optional[str]] = {}
     seen: set[str] = set()
+    absent: set[str] = set()
+    unreadable: list[Path] = []
+    staged_reads = 0
     for dataset, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
@@ -590,8 +604,15 @@ def refresh_characteristics(
                 _locate(dataset, entry, variant, spec["name"], extra_root),
                 pinned_digests[key],
             )
-            info = _read_archive(path) if path else None
+            if path is None:
+                absent.add(key)
+                continue
+            if extra_root and path.is_relative_to(extra_root):
+                staged_reads += 1
+            info = _read_archive(path)
             if info is None:
+                if measured_sha256 == pinned_digests[key]:
+                    unreadable.append(path)
                 continue
             if extra_root and path.is_relative_to(extra_root):
                 root = "staged"
@@ -617,8 +638,10 @@ def refresh_characteristics(
     retained, rejected = _retain_preferred_measurements(
         measured, existing, pinned_digests
     )
-    preserved = {k: v for k, v in existing.items() if k in seen and k not in measured}
-    archives = dict(sorted({**preserved, **measured}.items()))
+    preserved_entries = {
+        k: v for k, v in existing.items() if k in seen and k not in measured
+    }
+    archives = dict(sorted({**preserved_entries, **measured}.items()))
     CHARACTERISTICS.write_text(
         json.dumps(
             {
@@ -645,7 +668,14 @@ def refresh_characteristics(
         )
         + "\n"
     )
-    return read, retained, rejected, len(preserved)
+    return RefreshResult(
+        read=read,
+        retained=retained,
+        rejected=rejected,
+        preserved=sum(key in absent for key in preserved_entries),
+        unreadable=tuple(unreadable),
+        staged_reads=staged_reads,
+    )
 
 
 def _stale_characteristics(manifest: dict[str, Any]) -> list[str]:
@@ -993,16 +1023,27 @@ def main() -> int:
 
     manifest = json.loads(MANIFEST.read_text())
     if args.refresh:
-        read, retained, rejected, preserved = refresh_characteristics(
-            manifest, args.archives_root
-        )
+        result = refresh_characteristics(manifest, args.archives_root)
+        for path in result.unreadable:
+            print(f"ERROR: pinned archive is present but unreadable: {path}")
+        if args.archives_root:
+            print(
+                f"read {result.staged_reads} archive(s) from --archives-root "
+                f"{args.archives_root}"
+            )
+            if result.staged_reads == 0:
+                print(
+                    "WARNING: --archives-root contributed no archive reads; "
+                    "expected layout: <root>/<dataset>/[<variant>/]<file>"
+                )
         print(
-            f"read {read} archive(s) here, skipped {rejected} read(s) taken from "
-            f"bytes the manifest does not pin, kept {retained} committed "
-            f"measurement(s) that outrank the local copy, preserved {preserved} "
-            f"not on this machine -> {CHARACTERISTICS.relative_to(REPO_ROOT)}"
+            f"read {result.read} archive(s) here, skipped {result.rejected} read(s) "
+            f"taken from bytes the manifest does not pin, kept {result.retained} "
+            "committed measurement(s) that outrank the local copy, preserved "
+            f"{result.preserved} not on this machine -> "
+            f"{CHARACTERISTICS.relative_to(REPO_ROOT)}"
         )
-        return 0
+        return 1 if result.unreadable else 0
     if args.check:
         return _run_check(manifest)
     return _run_render(manifest, args)
