@@ -2173,14 +2173,10 @@ class TestTheStoreRootIsFoundFromFormatMetadata:
         assert info["ndim"] == 4
         assert info["psnr_db"] == 38.25
 
-    @pytest.mark.parametrize(
-        "prefix",
-        ("", "x.gsplats.zarr/"),
-        ids=("root-store", "wrapped-store"),
-    )
     def test_a_conventional_root_accepts_the_legacy_type_marker(
-        self, gen: Any, tmp_path: Path, prefix: str
+        self, gen: Any, tmp_path: Path, archive_layout: _ArchiveLayout
     ) -> None:
+        prefix = "" if archive_layout == "root" else "x.gsplats.zarr/"
         path = tmp_path / "legacy-marker.gsplats.zarr.zip"
         with zipfile.ZipFile(path, "w") as zf:
             zf.writestr(f"{prefix}.zgroup", json.dumps({"zarr_format": 2}))
