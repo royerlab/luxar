@@ -7515,6 +7515,67 @@ class TestFlattenCommand:
         assert loaded.n_splats == n0  # count conserved
         assert loaded.n_substitutive == 1  # a single flat leaf (no LOD/partition)
 
+    def test_flatten_streams_one_default_leaf_at_a_time(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The partition root is never materialized; each selected leaf is read alone."""
+        import importlib
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.io._compiler import gsplat_tree
+
+        load_module = importlib.import_module("luxar.gsplats.io.load_gsplats")
+
+        part = tmp_path / "part.gsplats.zarr"
+        total = self._make_partition(runner, medium_gsplats, part)
+        expected_node, _ = load_module.load_gsplat_node(part)
+        expected = GSplatData.from_default_selection(expected_node).flattened()
+
+        real_load_node = load_module.load_gsplat_node
+        monkeypatch.setattr(
+            load_module,
+            "load_gsplat_node",
+            lambda *args, **kwargs: pytest.fail("flatten materialized the whole tree"),
+        )
+        real_read = gsplat_tree.read_gsplat_node
+        largest_read = 0
+
+        def tracked_read(*args: Any, **kwargs: Any) -> Any:
+            nonlocal largest_read
+            node = real_read(*args, **kwargs)
+            largest_read = max(largest_read, node.n_splats)
+            return node
+
+        monkeypatch.setattr(gsplat_tree, "read_gsplat_node", tracked_read)
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(part), str(flat)])
+        assert result.exit_code == 0, result.stdout
+        assert largest_read < total
+        monkeypatch.setattr(load_module, "load_gsplat_node", real_load_node)
+
+        actual = GSplatData.load(flat)
+        assert actual.n_splats == total
+        expected_order = np.lexsort(expected.centers.T[::-1])
+        actual_order = np.lexsort(actual.centers.T[::-1])
+        np.testing.assert_allclose(
+            actual.centers[actual_order], expected.centers[expected_order]
+        )
+        np.testing.assert_allclose(
+            actual.amplitudes[actual_order], expected.amplitudes[expected_order]
+        )
+        np.testing.assert_allclose(
+            actual.cholesky_factors[actual_order],
+            expected.cholesky_factors[expected_order],
+        )
+        root = zc_open_group(str(flat), mode="r")
+        assert root.attrs["ordering"] == "hilbert"
+        assert root["chunk_bounds"].shape[0] >= 1
+
     @pytest.mark.parametrize(
         "lod_args",
         [

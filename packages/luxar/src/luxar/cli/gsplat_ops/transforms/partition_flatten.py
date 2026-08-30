@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -22,6 +22,43 @@ def _contains_partition(node: "GSplatNode") -> bool:
     if isinstance(node, GSplatLodGroup):
         return any(_contains_partition(child) for child in node.children)
     return False
+
+
+def _default_leaf_paths(group: Any, path: str = "") -> list[str]:
+    kind = group.attrs.get("kind")
+    if kind == "partition":
+        count = sum(1 for name in group if str(name).startswith("part_"))
+        paths: list[str] = []
+        for index in range(count):
+            child = f"part_{index}"
+            child_path = f"{path}/{child}" if path else child
+            paths.extend(_default_leaf_paths(group[child], child_path))
+        return paths
+    if kind == "lod":
+        count = sum(1 for name in group if str(name).startswith("child_"))
+        if count == 0:
+            return []
+        child = f"child_{count - 1}"
+        child_path = f"{path}/{child}" if path else child
+        return _default_leaf_paths(group[child], child_path)
+    return [path]
+
+
+def _root_stats(root: Any) -> Dict[str, Any]:
+    stats: Dict[str, Any] = {}
+    if "fitting" in root:
+        stats.update(dict(root["fitting"].attrs))
+    if "pipeline" in root:
+        for key, value in root["pipeline"].attrs.items():
+            stats.setdefault(key, value)
+    if "provenance" in root:
+        stats["provenance"] = dict(root["provenance"].attrs)
+    stats["format_version"] = root.attrs.get("format_version")
+    stats["timestamp"] = root.attrs.get("timestamp")
+    stats["luxar_gsplats_version"] = root.attrs.get("luxar_gsplats_version")
+    if "description" in root.attrs:
+        stats["description"] = root.attrs["description"]
+    return stats
 
 
 def run_partition_dataset(
@@ -126,68 +163,113 @@ def run_flatten_dataset(
 ) -> None:
     """Run flatten command implementation."""
     try:
-        from luxar.gsplats.gsplat_data import (
-            GSplatData,
-            stats_after_structure_change,
-        )
+        import shutil
+
+        import numpy as np
+
+        from luxar._zarr_compat import open_group as zc_open_group
+        from luxar.gsplats.gsplat_data import stats_after_structure_change
+        from luxar.gsplats.io._archive import resolve_store_path
         from luxar.gsplats.io.load_gsplats import (
-            load_gsplat_node,
             read_authored_appearance,
         )
-        from luxar.gsplats.tree import iter_default_leaves
+        from luxar.gsplats.io.save_gsplats import (
+            split_fitting_info,
+            write_flat_leaf_streaming,
+        )
+        from luxar.io._compiler.gsplat_tree import read_gsplat_node
+        from luxar.io.ordering import sort_splats_spatial
 
         if output_path.exists() and not overwrite:
             aprint(f"❌ Error: {output_path} exists; pass --overwrite to replace it.")
             raise typer.Exit(1)
 
         encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
+        if encoding_mode_obj.value != "precision":
+            aprint(
+                "❌ Error: streaming flatten currently requires "
+                "--encoding precision; auto/memory need whole-array analysis."
+            )
+            raise typer.Exit(1)
 
         with asection(f"Flattening: {input_path.name}"):
-            with asection("Loading tree"):
-                node, stats = load_gsplat_node(input_path, include_stats=True)
+            zarr_path, temp_dir = resolve_store_path(input_path)
+            try:
+                root = zc_open_group(str(zarr_path), mode="r")
+                leaf_paths = _default_leaf_paths(root)
+                if not leaf_paths:
+                    aprint("❌ Error: input tree has no leaves")
+                    raise typer.Exit(1)
 
-            leaves = list(iter_default_leaves(node))
-            if not leaves:
-                aprint("❌ Error: input tree has no leaves")
-                raise typer.Exit(1)
+                centroids = []
+                for leaf_path in leaf_paths:
+                    group = root[leaf_path] if leaf_path else root
+                    bounds = group.attrs.get("center_bounds")
+                    if bounds is None:
+                        bounds = group.attrs.get("position_bounds")
+                    if bounds is None:
+                        raise ValueError(
+                            f"leaf {leaf_path or '/'} has no center/position bounds"
+                        )
+                    centroids.append(
+                        (
+                            np.asarray(bounds["min"], dtype=np.float32)
+                            + np.asarray(bounds["max"], dtype=np.float32)
+                        )
+                        * 0.5
+                    )
+                if len(leaf_paths) > 1:
+                    order, _ = sort_splats_spatial(
+                        np.stack(centroids), method="hilbert"
+                    )
+                    leaf_paths = [leaf_paths[int(index)] for index in order]
 
-            flat = GSplatData.from_default_selection(node).flattened()
-            # The default-selection factory may preserve a matrix-shaped input's
-            # stats; keep the root-level provenance/fitting stats from the source
-            # tree — minus its TOPOLOGY record, which this command has just
-            # invalidated: the output is one flat leaf, so an inherited
-            # `lod_kind: substitutive` / `n_substitutive_levels: 4` /
-            # `lod_cutpoints: [...]` describes a tree that no longer exists (#1600).
-            if stats:
+                slice_dims = {
+                    tuple(
+                        int(dim)
+                        for dim in (
+                            root[path].attrs.get("slice_dims", [])
+                            if path
+                            else root.attrs.get("slice_dims", [])
+                        )
+                    )
+                    for path in leaf_paths
+                }
+                barrier_dims = next(iter(slice_dims)) if len(slice_dims) == 1 else None
+                stats = _root_stats(root)
+
+                def splat_sets() -> Iterator[Any]:
+                    for leaf_path in leaf_paths:
+                        group = root[leaf_path] if leaf_path else root
+                        leaf = read_gsplat_node(group, root)
+                        for sublod in leaf.additive_sublods:
+                            if sublod.n_splats > 0:
+                                yield sublod
+
                 carried_stats = stats_after_structure_change(stats)
-                if _contains_partition(node):
-                    # Batch-merge coordinates identify spatial slots. Flattening
-                    # removes those slots, so their provenance is no longer valid.
+                if root.attrs.get("kind") == "partition":
                     carried_stats.pop("part_provenance", None)
-                flat = GSplatData.from_additive_sublods(
-                    list(flat.additive_sublods),
-                    stats=carried_stats,
+                fitting, config, provenance, pipeline = split_fitting_info(
+                    carried_stats, include_fitting_info=True
                 )
-            aprint(
-                f"Flattened {len(leaves)} leaf/leaves → {flat.n_splats:,} splats "
-                f"({flat.ndim}D, single matrix-shaped leaf)"
-            )
 
-            with asection(f"Saving to {output_path.name}"):
-                if output_path.exists() and overwrite:
-                    import shutil
-
-                    if output_path.is_dir():
-                        shutil.rmtree(output_path)
-                    else:
-                        output_path.unlink()
-                flat.save(
-                    output_path,
-                    encoding_mode=encoding_mode_obj,
-                    compress=compress,
-                    root_attrs=read_authored_appearance(input_path),
-                )
-                aprint(f"  Saved flat file: {output_path} ({flat.n_splats:,} splats)")
+                with asection(f"Saving to {output_path.name}"):
+                    n_splats = write_flat_leaf_streaming(
+                        output_path,
+                        splat_sets,
+                        encoding_mode=encoding_mode_obj,
+                        compress=compress,
+                        fitting_info=fitting,
+                        fitting_config=config,
+                        provenance_info=provenance,
+                        pipeline_info=pipeline,
+                        root_attrs=read_authored_appearance(input_path),
+                        barrier_dims=barrier_dims,
+                    )
+                    aprint(f"  Saved flat file: {output_path} ({n_splats:,} splats)")
+            finally:
+                if temp_dir is not None and temp_dir.exists():
+                    shutil.rmtree(temp_dir, ignore_errors=True)
 
     except typer.Exit:
         raise

@@ -40,6 +40,7 @@ import zarr
 from luxar._zarr_compat import consolidate, create_root_group, open_store
 
 if TYPE_CHECKING:
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
     from luxar.gsplats.tree import GSplatNode
 
 from luxar.core.group.compositing import WRITER_STAMPED_APPEARANCE_DEFAULTS
@@ -858,6 +859,277 @@ def write_partition_streaming(
         raise
     _atomic_finalize(tmp, path)
     return n_written
+
+
+def write_flat_leaf_streaming(
+    path: str | Path,
+    splat_sets: Callable[[], Iterator["AdditiveSubLOD"]],
+    *,
+    encoding_mode: EncodingMode = EncodingMode.PRECISION,
+    fitting_info: Optional[Dict[str, Any]] = None,
+    fitting_config: Optional[Dict[str, Any]] = None,
+    provenance_info: Optional[Dict[str, Any]] = None,
+    pipeline_info: Optional[Dict[str, Any]] = None,
+    description: Optional[str] = None,
+    compressor: Optional[Any] = DEFAULT_COMP,
+    barrier_dims: Optional[Sequence[int]] = None,
+    root_attrs: Optional[Dict[str, Any]] = None,
+    compress: Optional[Literal["zip", "tar.gz"]] = None,
+    zip_deflate: bool = True,
+) -> int:
+    """Write one flat leaf from a replayable stream, holding one set in memory.
+
+    The decoded source sets are spatially ordered independently and concatenated
+    into disk-backed staging arrays. The final leaf therefore has a piecewise
+    Hilbert order without the whole-array permutation required by the regular
+    writer. The canonical array writer still owns the on-disk encoding, chunk
+    layout, metadata, appearance defaults, and format stamps.
+
+    ``splat_sets`` is consumed twice: once to validate the flat-shape contract
+    and size the staging arrays, then once to populate them. Callers must return
+    a fresh iterator each time. Streaming currently requires precision encoding;
+    auto/memory need whole-array encoding analysis and would defeat the memory
+    bound this entry point exists to provide.
+    """
+    if encoding_mode != EncodingMode.PRECISION:
+        raise ValueError(
+            "write_flat_leaf_streaming requires encoding_mode='precision'; "
+            "auto/memory encoding needs whole-array analysis"
+        )
+
+    from luxar.gsplats._data.base import _merge_lod_colors
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.utils.trils import tril_size
+    from luxar.io._compiler.gsplat_assembly import (
+        apply_gsplat_group_attrs,
+        apply_gsplat_spatial_ordering,
+        write_gsplat_arrays,
+    )
+    from luxar.io._ordering.gsplats import compute_chunk_bounds_gsplats
+
+    n_splats = 0
+    ndim: Optional[int] = None
+    truncation_radius: Optional[float] = None
+    color_channels = 0
+    color_dtypes: set[np.dtype[Any]] = set()
+    any_colors = False
+    any_missing_colors = False
+    for sublod in splat_sets():
+        if ndim is None:
+            ndim = sublod.ndim
+            truncation_radius = float(sublod.truncation_radius)
+        elif sublod.ndim != ndim:
+            raise ValueError(
+                f"streamed splat sets must share one dimensionality; got {ndim}D "
+                f"and {sublod.ndim}D"
+            )
+        elif float(sublod.truncation_radius) != truncation_radius:
+            raise ValueError(
+                "streamed splat sets must share one truncation_radius; got "
+                f"{truncation_radius} and {sublod.truncation_radius}"
+            )
+        n_splats += sublod.n_splats
+        if sublod.colors is None:
+            any_missing_colors = True
+        else:
+            any_colors = True
+            color_channels = max(color_channels, int(sublod.colors.shape[1]))
+            color_dtypes.add(sublod.colors.dtype)
+
+    if ndim is None or n_splats == 0:
+        raise ValueError("write_flat_leaf_streaming: no non-empty splat sets to write")
+
+    path = Path(path)
+    temp_dir, zarr_path = _resolve_zarr_path(path, compress)
+    if temp_dir is None:
+        zarr_path = _tmp_sibling(path)
+    stage_parent = temp_dir if temp_dir is not None else path.parent
+
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="luxar_gsplat_flatten_", dir=stage_parent
+        ) as stage:
+            stage_path = Path(stage)
+            centers = np.memmap(
+                stage_path / "centers.dat",
+                mode="w+",
+                dtype=np.float32,
+                shape=(n_splats, ndim),
+            )
+            amplitudes = np.memmap(
+                stage_path / "amplitudes.dat",
+                mode="w+",
+                dtype=np.float32,
+                shape=(n_splats,),
+            )
+            cholesky = np.memmap(
+                stage_path / "cholesky.dat",
+                mode="w+",
+                dtype=np.float32,
+                shape=(n_splats, tril_size(ndim)),
+            )
+            preserve_integer_colors = (
+                not any_missing_colors
+                and len(color_dtypes) == 1
+                and np.issubdtype(next(iter(color_dtypes)), np.integer)
+            )
+            color_dtype = (
+                next(iter(color_dtypes)) if preserve_integer_colors else np.float32
+            )
+            colors = (
+                np.memmap(
+                    stage_path / "colors.dat",
+                    mode="w+",
+                    dtype=color_dtype,
+                    shape=(n_splats, color_channels),
+                )
+                if any_colors
+                else None
+            )
+
+            dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
+            ordering_ctx = make_ordering_ctx("hilbert")
+            offset = 0
+            ordering_template: Optional[Dict[str, Any]] = None
+            for sublod in splat_sets():
+                ordered = apply_gsplat_spatial_ordering(
+                    sublod.centers,
+                    sublod.amplitudes,
+                    sublod.cholesky_factors,
+                    sublod.colors,
+                    sublod.n_splats,
+                    sublod.ndim,
+                    False,
+                    ordering_ctx,
+                    coverage_sigma=float(sublod.truncation_radius),
+                    barrier_dims=barrier_dims,
+                    dataset_ctx=dataset_ctx,
+                )
+                part_centers, part_amplitudes, part_cholesky, part_colors, meta, _ = (
+                    ordered
+                )
+                stop = offset + sublod.n_splats
+                centers[offset:stop] = part_centers
+                amplitudes[offset:stop] = part_amplitudes
+                cholesky[offset:stop] = part_cholesky
+                if colors is not None:
+                    normalized = _merge_lod_colors(
+                        [
+                            AdditiveSubLOD(
+                                centers=part_centers,
+                                amplitudes=part_amplitudes,
+                                cholesky_factors=part_cholesky,
+                                colors=part_colors,
+                                truncation_radius=float(sublod.truncation_radius),
+                            )
+                        ],
+                        channels=color_channels,
+                        allow_integer=preserve_integer_colors,
+                    )
+                    if normalized is None:
+                        normalized = np.ones(
+                            (sublod.n_splats, color_channels), dtype=np.float32
+                        )
+                    colors[offset:stop] = normalized
+                if meta is not None:
+                    if ordering_template is None:
+                        ordering_template = meta
+                    elif meta.get("slice_dims") != ordering_template.get(
+                        "slice_dims"
+                    ) or meta.get("ordering_dims") != ordering_template.get(
+                        "ordering_dims"
+                    ):
+                        raise ValueError(
+                            "streamed splat sets resolved inconsistent ordering axes"
+                        )
+                offset = stop
+
+            assert ordering_template is not None
+            centers.flush()
+            amplitudes.flush()
+            cholesky.flush()
+            if colors is not None:
+                colors.flush()
+
+            chunk_size = int(ordering_template["chunk_size"])
+            ordering_dims = list(ordering_template.get("ordering_dims", []))
+            ordering_data = {
+                "ordering": "hilbert",
+                "ordering_min": np.min(centers[:, ordering_dims], axis=0).tolist(),
+                "ordering_max": np.max(centers[:, ordering_dims], axis=0).tolist(),
+                "ordering_bits_per_dim": ordering_template["ordering_bits_per_dim"],
+                "chunk_size": chunk_size,
+                "slice_dims": list(ordering_template.get("slice_dims", [])),
+                "ordering_dims": ordering_dims,
+                "chunk_bounds": compute_chunk_bounds_gsplats(
+                    centers,
+                    cholesky,
+                    chunk_size,
+                    coverage_sigma=float(truncation_radius),
+                    slice_dims=ordering_template.get("slice_dims", []),
+                ),
+            }
+
+            store = open_store(zarr_path, mode="w")
+            root = create_root_group(store, overwrite=True)
+            cholesky_is_uniform = bool(np.all(cholesky == cholesky[0]))
+            metadata = write_gsplat_arrays(
+                root,
+                centers,
+                amplitudes,
+                cholesky,
+                colors,
+                n_splats,
+                ndim,
+                cholesky_is_uniform,
+                ordering_data,
+                None,
+                dataset_ctx,
+            )
+            attrs = dict(root_attrs or {})
+            attrs.setdefault("truncation_radius", float(truncation_radius))
+            apply_gsplat_group_attrs(
+                root,
+                metadata,
+                attrs,
+                root,
+                scene_tone_mapping=None,
+                lut_tone_mapping_warned=False,
+                warn_on_missing_tone_mapping=False,
+            )
+            root.attrs["format_version"] = FORMAT_VERSION
+            root.attrs["format_type"] = "gsplats_zarr"
+            root.attrs["timestamp"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat()
+            root.attrs["luxar_gsplats_version"] = GSPLATS_VERSION
+            root.attrs.setdefault("layer", WRITER_STAMPED_APPEARANCE_DEFAULTS["layer"])
+            if description:
+                root.attrs["description"] = description
+            if fitting_info is not None:
+                fitting_group = root.create_group("fitting")
+                fitting_group.attrs.update(fitting_info)
+                if fitting_config is not None:
+                    fitting_group.create_group("config").attrs.update(fitting_config)
+            if provenance_info is not None:
+                root.create_group("provenance").attrs.update(provenance_info)
+            if pipeline_info:
+                root.create_group("pipeline").attrs.update(pipeline_info)
+            harmonize_gsplat_amplitude_windows(root)
+            _stamp_content_hash(root)
+            consolidate(root)
+
+        if compress:
+            _compress_zarr(zarr_path, path, compress, zip_deflate, temp_dir)
+        else:
+            _atomic_finalize(zarr_path, path)
+        return n_splats
+    except BaseException:
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        else:
+            shutil.rmtree(zarr_path, ignore_errors=True)
+        raise
 
 
 @arbol_warnings()
