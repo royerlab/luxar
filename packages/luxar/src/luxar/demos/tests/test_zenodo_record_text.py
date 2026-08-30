@@ -1311,7 +1311,7 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     assert "preserved 3 committed measurement(s) without a fresh read" in summary
     assert "skipped 0 pinned fit archive(s)" in summary
     assert "matched the manifest pin but could not be parsed" in summary
-    assert "skipped 0 fit archive(s) with a candidate" in summary
+    assert "warned about 0 fit archive(s) with a candidate" in summary
     assert "skipped 5 fit archive(s)" in summary
     assert "not the pinned bytes, and unreadable" in summary
     assert f"selected 2 archive(s) under --archives-root {staged_root}" in summary
@@ -1403,7 +1403,7 @@ def test_refresh_reports_inaccessible_archives_without_failing(
     assert "check permissions" in output
     assert str(archive) in output
     assert "unread bytes cannot be checked against the pin" in output
-    assert "skipped 1 fit archive(s) with a candidate" in output
+    assert "warned about 1 fit archive(s) with a candidate" in output
     assert "preserved 1" in output
     assert "matched no archives" not in output
 
@@ -1499,6 +1499,19 @@ def test_archives_root_requires_refresh(
         gen.main()
 
     assert "--archives-root requires --refresh" in capsys.readouterr().err
+
+
+def test_help_distinguishes_unhashable_from_unparsable_pinned_fits(
+    gen: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--help"])
+
+    with pytest.raises(SystemExit, match="0"):
+        gen.main()
+
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "exit 1 when a pinned fit hashes but cannot be parsed" in help_text
+    assert "exit 1 on unreadable pinned fits" not in help_text
 
 
 def test_a_partial_sidecar_entry_renders_absent_fields(gen: Any) -> None:

@@ -34,7 +34,7 @@ a draft, and publication stays a manual act.
     python scripts/gen_zenodo_records.py --record cc-by  # just one
     python scripts/gen_zenodo_records.py --outdir docs/zenodo/
     python scripts/gen_zenodo_records.py --check         # report gaps, exit 1
-    python scripts/gen_zenodo_records.py --refresh       # re-measure; exit 1 on unreadable pinned fits
+    python scripts/gen_zenodo_records.py --refresh       # exit 1 when a pinned fit hashes but cannot be parsed
     python scripts/gen_zenodo_records.py --refresh --archives-root STAGING/
                                                         # prefer namespaced staged archives
 """
@@ -1102,7 +1102,7 @@ def main() -> int:
             "the manifest pin but could not be parsed"
         )
         print(
-            f"skipped {len(result.inaccessible)} fit archive(s) with a candidate "
+            f"warned about {len(result.inaccessible)} fit archive(s) with a candidate "
             "that could not be opened for hashing"
         )
         print(
