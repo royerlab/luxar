@@ -808,6 +808,32 @@ class TestAnUnreadableFitIsNotCalledANonFit:
         assert "present but unreadable" not in output
         assert "not on this machine" in output
 
+    def test_check_fails_for_a_pinned_unreadable_variant_fit(
+        self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        archive = tmp_path / "repo" / "d" / "51tp" / "variant.gsplats.zarr.zip"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(b"these pinned variant bytes are not a readable zip")
+        entry = {key: value for key, value in self.ENTRY.items() if key != "files"}
+        entry["variants"] = {
+            "51tp": {
+                "files": [
+                    {
+                        "name": archive.name,
+                        "bytes": archive.stat().st_size,
+                        "sha256": gen._sha256_of(archive),
+                    }
+                ]
+            }
+        }
+
+        assert gen._run_check({"datasets": {"nope": entry}}) == 1
+        output = capsys.readouterr().out
+        assert "present but unreadable" in output
+        assert "nope/51tp/variant.gsplats.zarr.zip" in output
+        assert str(archive) in output
+        assert "not on this machine" not in output
+
     def test_a_real_sidecar_is_still_not_a_fit(self, gen: Any) -> None:
         entry = dict(self.ENTRY, files=[{"name": "labels.npz", "bytes": 12}])
         problems, unread, unreadable, inaccessible = gen._gaps(

@@ -948,6 +948,7 @@ def _record_unread_fit(
     unreadable: list[tuple[str, Path]],
     inaccessible: list[tuple[str, tuple[Path, ...]]],
 ) -> None:
+    """Classify a declared fit whose archive metadata could not be read."""
     item = f"{name}/{row['file']}"
     pinned = _pinned_digest(spec)
     candidates = tuple(_locate(name, entry, variant, spec["name"]))
