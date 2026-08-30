@@ -955,6 +955,52 @@ path.
 For a gallery tile that is the right trade. State it that way round: a ladder does
 not reduce total requests, it moves them after first paint.
 
+### 3.22 Guard the artefact you ship, not only the inputs you fed it
+
+A publish deployed a gallery page carrying **9 tiles instead of 85**, and every
+guard passed. They were all reasonable guards — and all of them checked *inputs*:
+
+    store-count parity on R2      85 == 85     PASS
+    chromatrace leakage           0            PASS
+    media staged / oversize       180 / 0      PASS
+    relative /data/ URLs          0            PASS
+    tiles on the rendered page    (not checked)
+
+Cause: `build_gallery_data.py` skips any demo whose store is absent from the stage
+directory —
+
+    if not hosted.is_dir():
+        continue
+
+— and the stage held only the nine stores this wave re-chunked. Earlier waves
+re-chunked everything, so the stage was incidentally complete and the gap never
+showed. **The data was correct throughout**: all 85 stores were at the new prefix
+and parity confirmed it. Only the page was wrong, and the page is what a visitor
+sees.
+
+Two guards, and the pairing is the point:
+
+- **Stage completeness, before the page is built.** Count store directories (or
+  symlinks — `is_dir()` follows them) in the stage and require it to equal what
+  the prefix serves. This one says *why*.
+- **Tile count, after the render.** Count `href="/viewer/index.html?src="`
+  occurrences and require one per store; separately require every tile to
+  reference the *new* prefix, since a stale-prefix tile passes a bare count. This
+  one says *that*, and is the last line before deploy.
+
+Verify a new guard against the broken artefact, not only the fixed one. Both were
+run against the page that actually deployed: 9 vs 85, abort. A guard only tested
+on a good input is an assumption.
+
+The general rule: **a green pipeline over correct inputs does not imply a correct
+output.** Ask what a visitor receives and assert that directly. Every other check
+here is a proxy for it.
+
+Recovery, for the record: layered symlinks into the stage (full base wave, then
+each later wave's overrides, newest winning so per-store byte counts stay
+accurate), rebuild, re-render, redeploy — one changed file. Roughly four minutes
+degraded.
+
 ## 4. Cloudflare configuration
 
 ### 4.1 Cache rule on the data subdomain
