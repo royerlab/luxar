@@ -617,7 +617,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     const footprintGeometry = new THREE.BufferGeometry();
     footprintGeometry.boundingBox = new THREE.Box3(
       new THREE.Vector3(0.9, -0.1, -0.1),
-      new THREE.Vector3(1.2, 0.1, 0.1)
+      new THREE.Vector3(1.3, 0.1, 0.1)
     );
     const footprintVisible = new THREE.Mesh(footprintGeometry);
     const culled = new THREE.Group();
@@ -628,7 +628,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       children: [
         {
           object: footprintVisible,
-          positionBounds: { min: [1.1, -0.1, -0.1], max: [1.2, 0.1, 0.1] },
+          positionBounds: { min: [1.2, -0.1, -0.1], max: [1.3, 0.1, 0.1] },
         },
         { object: culled, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } },
       ],
@@ -727,6 +727,38 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     reg.evaluatePerFrame();
     expect(requestReprocess).toHaveBeenCalledOnce();
+  });
+
+  it('keeps requesting frames while a rising-edge resync is pending', () => {
+    const requestRender = vi.fn();
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      requestRender,
+      undefined,
+      undefined,
+      requestReprocess,
+      () => true
+    );
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [{ object: child, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } }],
+    });
+
+    reg.evaluatePerFrame();
+    groupObject.position.x = -2.5;
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+
+    expect(requestReprocess).not.toHaveBeenCalled();
+    expect(requestRender).toHaveBeenCalledTimes(2);
   });
 
   it('defers a pending resync while its partition wrapper is hidden', () => {

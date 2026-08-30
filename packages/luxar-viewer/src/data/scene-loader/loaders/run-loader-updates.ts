@@ -71,6 +71,7 @@ export async function runLoaderUpdates<TLoader, TStaged>(
       : NOOP_SESSION;
     if (ctx.shouldUpdatePath?.(path) === false) {
       session.markSkipped('partition part outside camera frustum');
+      ctx.viewStateQueue.forgetPath(path);
       return { staged: null, session };
     }
     try {

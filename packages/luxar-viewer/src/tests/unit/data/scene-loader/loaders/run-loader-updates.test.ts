@@ -146,6 +146,8 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect(update).toHaveBeenCalledOnce();
     expect(update).toHaveBeenCalledWith('/scene/visible', {}, expect.anything());
     expect(results.map(({ staged }) => staged)).toEqual([{ path: '/scene/visible' }, null]);
+    expect(ctx.forgetPath).toHaveBeenCalledOnce();
+    expect(ctx.forgetPath).toHaveBeenCalledWith('/scene/culled');
   });
 
   it('finds a culled partition marker anywhere in the loader ancestor chain', () => {

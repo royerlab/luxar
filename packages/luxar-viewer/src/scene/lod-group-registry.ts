@@ -599,14 +599,19 @@ interface LODGroupEntryCache {
  * so these are safe to share across all entries within one frame:
  *   - ``FRUSTUM_SCRATCH`` — rebuilt once per frame from the camera.
  *   - ``FRUSTUM_MATRIX_SCRATCH`` — projection × view product feeding it.
+ *   - ``PARTITION_FRUSTUM_SCRATCH`` — partition fetch frustum with screen margin.
+ *   - ``PARTITION_FRUSTUM_MATRIX_SCRATCH`` — padded projection × view product.
  *   - ``WORLD_BOX3_SCRATCH`` — a ``THREE.Box3`` view of a group's world bbox
  *     for ``frustum.intersectsBox`` (our ``BoundingBox`` is a plain object).
+ *   - ``FOOTPRINT_BOX3_SCRATCH`` — loaded geometry footprint unioned into part bounds.
  * (The eviction pass keeps its own scratches in ``lod-eviction.ts``.)
  */
 const FRUSTUM_SCRATCH = new THREE.Frustum();
 const FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
 const PARTITION_FRUSTUM_SCRATCH = new THREE.Frustum();
 const PARTITION_FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
+// Cold parts have no loaded footprint to union, so pad x/y symmetrically to
+// preload them before entry and keep entry/exit behavior from becoming asymmetric.
 const PARTITION_FRUSTUM_MARGIN = 0.1;
 const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4().makeScale(
   1 / (1 + PARTITION_FRUSTUM_MARGIN),
@@ -615,6 +620,7 @@ const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4().makeScale(
 );
 const WORLD_BOX3_SCRATCH = new THREE.Box3();
 const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
+// Bit flags returned by evaluatePartitionEntry so one child scan reports both effects.
 const PARTITION_VISIBILITY_CHANGED = 1;
 const PARTITION_BECAME_VISIBLE = 2;
 
@@ -1212,6 +1218,7 @@ export class LODGroupRegistry {
       }
       if (shouldResync) this.deps.requestReprocess();
     }
+    if (this.partitionResyncPending.size > 0) this.deps.requestRender?.();
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, camera, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
         changed = true;
