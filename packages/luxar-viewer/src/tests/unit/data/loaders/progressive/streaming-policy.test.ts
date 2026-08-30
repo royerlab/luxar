@@ -38,12 +38,9 @@ describe('classifyStreamingPass', () => {
 });
 
 describe('shouldLoadLevel', () => {
-  it('playback commits a restored prefix as-is but streams from an empty ladder', () => {
-    expect(shouldLoadLevel('playback', 4, 3)).toBe(false);
+  it('all passes permit loading after an empty or restored prefix', () => {
+    expect(shouldLoadLevel('playback', 4, 3)).toBe(true);
     expect(shouldLoadLevel('playback', 5, 0)).toBe(true);
-  });
-
-  it('prefetch and refine load every level', () => {
     expect(shouldLoadLevel('prefetch', 5, 2)).toBe(true);
     expect(shouldLoadLevel('refine', 5, 2)).toBe(true);
   });
@@ -73,11 +70,13 @@ describe('shouldStopAfterLevel', () => {
   // separates "affordable inside a tick" from "stalls the tick" (#2374/#2376).
   it('playback stops at the first cold level past the floor', () => {
     expect(shouldStopAfterLevel('playback', 1, 0, false, fast)).toBe(true);
+    expect(shouldStopAfterLevel('playback', 3, 3, false, fast)).toBe(true);
     expect(shouldStopAfterLevel('playback', 7, 3, false, fast)).toBe(true);
   });
 
   it('playback stops at the first slow level past the floor, even when resident', () => {
     expect(shouldStopAfterLevel('playback', 1, 0, true, slow)).toBe(true);
+    expect(shouldStopAfterLevel('playback', 3, 3, true, slow)).toBe(true);
   });
 
   it('playback KEEPS STREAMING while levels are resident and fast', () => {
@@ -89,10 +88,10 @@ describe('shouldStopAfterLevel', () => {
     }
   });
 
-  it('playback never abandons the >=1-level first-paint floor', () => {
-    // level === startLevel is the floor: it must load even when cold AND slow,
-    // otherwise a cold slice commits nothing at all.
+  it('playback keeps the >=1-level first-paint floor only for an empty ladder', () => {
+    // A cold/slow first level is kept when the ladder starts empty; a restored
+    // prefix is already showable, so its first new level may stop the pass.
     expect(shouldStopAfterLevel('playback', 0, 0, false, slow)).toBe(false);
-    expect(shouldStopAfterLevel('playback', 4, 4, false, slow)).toBe(false);
+    expect(shouldStopAfterLevel('playback', 4, 4, false, slow)).toBe(true);
   });
 });

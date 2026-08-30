@@ -632,9 +632,14 @@ export class MeshProgressiveLoader implements MeshDataLoader {
       // failure. Stop streaming instead.
       if (this._disposed) break;
       if (!shouldLoadLevel(pass, level, startLevel)) break;
-      // Playback frame budget: stop once the tick's time is spent (≥1 level
-      // always loads — the `level > startLevel` guard).
-      if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
+      // Playback frame budget: only an empty ladder gets the ≥1-level
+      // first-paint floor. A restored prefix is already showable, so even its
+      // first new level must fit the remaining tick budget (#2379).
+      if (
+        budgetDeadline !== null &&
+        (level > startLevel || startLevel > 0) &&
+        performance.now() > budgetDeadline
+      ) {
         break;
       }
       const t0 = performance.now();

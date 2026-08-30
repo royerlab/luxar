@@ -530,8 +530,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
 
     // Stream under the shared streaming policy (see `streaming-policy.ts`):
-    // `playback` commits a restored prefix as-is, and otherwise streams
-    // cache-resident levels within the budget; `prefetch` deepens toward the
+    // `playback` streams cache-resident levels after an empty or restored
+    // prefix while budget remains; `prefetch` deepens toward the
     // full decoded ladder (abort-safe, stored per level); `refine` stops at the
     // first cold/slow level. Mirrors GSplatsProgressiveLoader.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
@@ -548,9 +548,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       if (!shouldLoadLevel(pass, level, startLevel)) {
         break;
       }
-      // Playback frame budget: stop as soon as the tick's time is spent
-      // (≥1 level always loads — `level > startLevel` guard).
-      if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
+      // Playback frame budget: only an empty ladder gets the ≥1-level
+      // first-paint floor. A restored prefix is already showable, so even its
+      // first new level must fit the remaining tick budget (#2379).
+      if (
+        budgetDeadline !== null &&
+        (level > startLevel || startLevel > 0) &&
+        performance.now() > budgetDeadline
+      ) {
         break;
       }
       const t0 = performance.now();

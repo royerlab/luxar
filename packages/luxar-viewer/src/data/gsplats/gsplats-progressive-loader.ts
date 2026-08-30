@@ -417,8 +417,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
 
     // Stream the LOD ladder under the shared streaming policy (see
-    // `streaming-policy.ts`): `playback` commits a restored prefix as-is, and
-    // otherwise streams cache-resident levels within the budget; `prefetch`
+    // `streaming-policy.ts`): `playback` streams cache-resident levels after an
+    // empty or restored prefix while budget remains; `prefetch`
     // deepens toward the full decoded ladder (bounded by the pass budget +
     // abort); `refine` stops at the first cold/slow level.
     const pass = classifyStreamingPass(budgetDeadline !== null, isPrefetch);
@@ -435,11 +435,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       if (!shouldLoadLevel(pass, level, startLevel)) {
         break;
       }
-      // Frame-budget guard: stop as soon as the pass's time is spent — whether
-      // many fast levels consumed it or one slow level did. The
-      // `level > startLevel` guard keeps the ≥1-level first-paint floor even
-      // under tiny budgets.
-      if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
+      // Frame-budget guard: only an empty ladder gets the ≥1-level first-paint
+      // floor. A restored prefix is already showable, so even its first new
+      // level must fit the remaining tick budget (#2379).
+      if (
+        budgetDeadline !== null &&
+        (level > startLevel || startLevel > 0) &&
+        performance.now() > budgetDeadline
+      ) {
         break;
       }
       const t0 = performance.now();
