@@ -726,9 +726,6 @@ def _dataset_rows(
     rows = []
     for variant, spec in _files_of(entry):
         info = chars.get(_char_key(dataset, variant, spec["name"]))
-        path = None
-        digest = None
-        read_failed = False
         # An entry that `refresh` wrote is authoritative INCLUDING its nulls: an
         # all-null one is its verdict that the local copy's bytes are not the
         # pinned artifact, so reading that copy would publish figures describing
@@ -747,15 +744,11 @@ def _dataset_rows(
             if digest != pinned:
                 path = None
             read = _read_archive(path) if path else None
-            read_failed = path is not None and read is None
             if read is not None:
                 info = {**read, **{k: v for k, v in info.items() if v is not None}}
         elif info is None:
             path = next(_locate(dataset, entry, variant, spec["name"]), None)
             info = _read_archive(path) if path else None
-            read_failed = path is not None and info is None
-            if read_failed:
-                digest = _sha256_of(path)
         stored = hosted_size(spec)
         name = f"{variant}/{spec['name']}" if variant else spec["name"]
         if info and info.get("frames"):
@@ -768,12 +761,6 @@ def _dataset_rows(
                 # "this is not a fit": it belongs in the splat table with its
                 # figures absent, and `--check` has to say it went unexamined.
                 "is_fit": spec["name"].endswith(".gsplats.zarr.zip"),
-                # A located file is only an unreadable pinned fit when its bytes
-                # match the manifest. This keeps LFS pointer stubs and stale local
-                # generations in the ordinary "not read" bucket.
-                "is_pinned_unreadable": (
-                    read_failed and digest == _pinned_digest(spec)
-                ),
                 "file": name,
                 "splats": f"{info['n_splats']:,}"
                 if info and isinstance(info.get("n_splats"), int)
@@ -956,7 +943,9 @@ def _gaps(manifest: dict[str, Any]) -> GapResult:
     for name, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
-        for row in _dataset_rows(name, entry, chars):
+        files = _files_of(entry)
+        rows = _dataset_rows(name, entry, chars)
+        for row, (variant, spec) in zip(rows, files, strict=True):
             # Companion sidecars (label maps, colour arrays) and the tabular /
             # point-cloud datasets are not fits, so they owe no splat count or
             # reconstruction quality. Demanding one would make this list
@@ -967,7 +956,13 @@ def _gaps(manifest: dict[str, Any]) -> GapResult:
                 # as completeness while a dozen rows went unchecked.
                 if row["is_fit"]:
                     item = f"{name}/{row['file']}"
-                    if row["is_pinned_unreadable"]:
+                    path = next(_locate(name, entry, variant, spec["name"]), None)
+                    pinned = _pinned_digest(spec)
+                    if (
+                        path is not None
+                        and path.is_file()
+                        and _sha256_of(path) == pinned
+                    ):
                         unreadable.append(item)
                     else:
                         unread.append(item)
