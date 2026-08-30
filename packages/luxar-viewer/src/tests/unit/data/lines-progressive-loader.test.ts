@@ -845,8 +845,8 @@ describe('LinesProgressiveLoader', () => {
       lodB.updateViewWithResidency.mockClear();
       lodC.updateViewWithResidency.mockClear();
 
-      // Real PLAYBACK tick at B: level 0 comes from the SHADOW's cache entry —
-      // no LOD loader runs (restored, not re-streamed).
+      // Real PLAYBACK tick at B: level 0 comes from the SHADOW's cache entry,
+      // then the foreground budget deepens the restored prefix by one level.
       await foreground.updateView({ ...viewB, frameBudgetMs: 20 });
       expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
       expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);

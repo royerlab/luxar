@@ -822,8 +822,7 @@ describe('GSplatsProgressiveLoader', () => {
       // only handoff to the foreground is the shared S-cache: the shadow
       // deepens view B's ladder while the foreground displays A; the real
       // PLAYBACK tick at B then restores that cached prefix (no level-0
-      // re-stream) and commits it responsively (the floor gate blocks any
-      // foreground decode).
+      // re-stream) and spends its remaining budget on the next resident level.
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const shadow = new GSplatsProgressiveLoader(
         [lodA, lodB, lodC] as unknown as GSplatsSpatialIndexLoader[],
@@ -849,8 +848,8 @@ describe('GSplatsProgressiveLoader', () => {
       lodB.updateViewWithResidency.mockClear();
       lodC.updateViewWithResidency.mockClear();
 
-      // Real PLAYBACK tick at B: level 0 comes from the SHADOW's cache entry —
-      // no LOD loader runs (restored, not re-streamed).
+      // Real PLAYBACK tick at B: level 0 comes from the SHADOW's cache entry,
+      // then the foreground budget deepens the restored prefix by one level.
       await foreground.updateView({ ...viewB, frameBudgetMs: 20 });
       expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
       expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
