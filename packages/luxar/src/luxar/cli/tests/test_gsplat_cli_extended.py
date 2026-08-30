@@ -114,6 +114,38 @@ def sample_gsplats_4d(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def sample_gsplats_2d_stacked(tmp_path: Path) -> Path:
+    """A 2D spatial store with a trailing stacked time coordinate."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    centers = np.array(
+        [[1.0, 2.0], [4.0, -5.0], [-7.0, 8.0], [10.0, 11.0]],
+        dtype=np.float32,
+    )
+    identity_chol = np.tile(np.array([1.0, 0, 1.0], dtype=np.float32), (4, 1))
+
+    def _make_timepoint(amplitudes: list[float]) -> GSplatData:
+        return GSplatData(
+            centers=centers.copy(),
+            amplitudes=np.array(amplitudes, dtype=np.float32),
+            cholesky_factors=identity_chol.copy(),
+        )
+
+    combined = GSplatData.combine_as_new_dimension(
+        [
+            _make_timepoint([0.1, 0.2, 0.3, 0.4]),
+            _make_timepoint([0.5, 0.6, 0.7, 0.8]),
+        ],
+        values=[0.0, 7.0],
+        sigma=0.0,
+    )
+    out = tmp_path / "test2d-stacked.gsplats.zarr"
+    combined.save(out)
+    assert zarr.open_group(out, mode="r").attrs["slice_dims"] == [2]
+    return out
+
+
+@pytest.fixture
 def small_volume_npy(tmp_path: Path) -> Path:
     """Create a small 16^3 .npy volume for testing."""
     volume = np.random.rand(16, 16, 16).astype(np.float32) * 0.5
@@ -5934,6 +5966,26 @@ class TestLODCommand:
 
         assert result.exit_code == 0, normalized_cli_output(result)
         assert "x 1 slice(s) / 1 part(s)" in normalized_cli_output(result)
+
+    def test_lod_target_ms_counts_2d_stacked_barrier(
+        self, runner: CliRunner, sample_gsplats_2d_stacked: Path, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                str(sample_gsplats_2d_stacked),
+                str(tmp_path / "stacked-2d.gsplats.zarr"),
+                "--recipe",
+                "stream",
+                "--target-ms",
+                "200",
+            ],
+        )
+
+        assert result.exit_code == 0, normalized_cli_output(result)
+        assert "x 2 slice(s) / 1 part(s)" in normalized_cli_output(result)
 
     def test_lod_target_ms_uses_explicit_output_barrier(
         self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path

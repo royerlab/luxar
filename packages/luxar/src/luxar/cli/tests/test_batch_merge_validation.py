@@ -436,6 +436,28 @@ class TestMergeStreamingKnobs:
 
         assert survey_gsplat_streaming_layout(store_path) == (1, 1)
 
+    def test_store_survey_counts_2d_stacked_barrier_axis(self, tmp_path: Path) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "stacked-2d-layout.gsplats.zarr"
+        leaf = zarr.open_group(store_path, mode="w")
+        leaf.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": 4,
+                "n_additive_sublods": 1,
+                "slice_dims": [2],
+            }
+        )
+        leaf.create_array(
+            "centers",
+            data=np.asarray(
+                [[0, 0, 0], [1, 2, 0], [2, 4, 1], [3, 6, 1]], dtype=np.uint16
+            ),
+        )
+
+        assert survey_gsplat_streaming_layout(store_path) == (2, 1)
+
     def test_store_survey_counts_only_stacked_barrier_axes(
         self, tmp_path: Path
     ) -> None:

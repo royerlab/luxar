@@ -461,10 +461,15 @@ def survey_gsplat_streaming_layout(input_path: Path) -> tuple[int, int]:
                     if "centers" not in level:
                         continue
                     centers = level["centers"]
-                    dims = tuple(
+                    slice_dims = [
                         int(dim)
                         for dim in level.attrs.get("slice_dims", [])
-                        if 3 <= int(dim) < centers.shape[1]
+                        if 0 <= int(dim) < centers.shape[1]
+                    ]
+                    dims = tuple(
+                        slice_dims
+                        if len(slice_dims) < centers.shape[1]
+                        else (dim for dim in slice_dims if dim >= 3)
                     )
                     if not dims:
                         continue

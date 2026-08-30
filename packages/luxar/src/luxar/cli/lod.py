@@ -131,9 +131,7 @@ def _resolve_lod_streaming_breakpoints(
             len(np.unique(data.centers[:, hidden_dims], axis=0)) if hidden_dims else 1
         )
     else:
-        slice_count = (
-            survey_gsplat_streaming_layout(input_path)[0] if data.ndim > 3 else 1
-        )
+        slice_count = survey_gsplat_streaming_layout(input_path)[0]
     return resolve_streaming_breakpoints(
         target_ms,
         bandwidth_mbps,
