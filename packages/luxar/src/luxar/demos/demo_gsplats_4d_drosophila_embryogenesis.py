@@ -284,6 +284,9 @@ SOURCE_ARG = parse_path_arg("source")
 #: Verified source name and group member on the acquisition box.
 SOURCE_FILENAME = "DrosophilaHistone.zarr.zip"
 SOURCE_ARRAY_KEY = "data"
+#: Deliberately differs from the manifest-pinned download name: a local rebuild
+#: must never squat the checksum-owned fetch path or be quarantined next launch.
+REBUILT_FILENAME = "drosophila_embryogenesis_500tp_rebuilt.gsplats.zarr.zip"
 #: Full recording contract checked before a roughly 9.3-hour fit starts.
 SOURCE_SHAPE = (500, 108, 1352, 532)
 SOURCE_DTYPE = np.dtype("uint16")
@@ -437,7 +440,7 @@ def recompute_archive(work_dir: Path) -> Path:
         fit = work_dir / "fit"
         culled = work_dir / "culled.gsplats.zarr"
         scaled = work_dir / "um.gsplats.zarr"
-        final = work_dir / "drosophila_embryogenesis_500tp.gsplats.zarr.zip"
+        final = work_dir / REBUILT_FILENAME
 
         run_luxar_cli(
             "gsplat",

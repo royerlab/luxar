@@ -47,6 +47,7 @@ def _write_zip_source(
 def test_recorded_recipe_constants_match_the_source_and_published_run() -> None:
     assert demo.SOURCE_FILENAME == "DrosophilaHistone.zarr.zip"
     assert demo.SOURCE_ARRAY_KEY == "data"
+    assert demo.REBUILT_FILENAME.endswith("_rebuilt.gsplats.zarr.zip")
     assert demo.SOURCE_SHAPE == (500, 108, 1352, 532)
     assert demo.SOURCE_DTYPE == np.dtype("uint16")
     assert demo.SOURCE_AXES == "time,z,y,x"
@@ -198,7 +199,7 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
     fit = work_dir / "fit"
     culled = work_dir / "culled.gsplats.zarr"
     scaled = work_dir / "um.gsplats.zarr"
-    final = work_dir / "drosophila_embryogenesis_500tp.gsplats.zarr.zip"
+    final = work_dir / demo.REBUILT_FILENAME
     assert result == final
     assert calls == [
         (
