@@ -16,7 +16,7 @@ import sys
 import zipfile
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast, get_args
 
 import pytest
 
@@ -99,7 +99,7 @@ def _write_frame(
         zf.writestr(f"{prefix}fitting/.zattrs", json.dumps(fitting))
 
 
-@pytest.fixture(params=("wrapped", "root"), ids=("wrapped-store", "root-store"))
+@pytest.fixture(params=get_args(_ArchiveLayout), ids=lambda layout: f"{layout}-store")
 def archive_layout(request: pytest.FixtureRequest) -> _ArchiveLayout:
     return cast(_ArchiveLayout, request.param)
 
