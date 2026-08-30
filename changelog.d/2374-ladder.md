@@ -26,9 +26,9 @@ and confirmed against playback at 20-51 splats), 12.5% is soft but usable
 (neuromast, 110,614 measured at rest against a 113,947 metadata mean), and 54% is
 fine on only 1,735 absolute elements — which is what rules out an absolute floor.
 The latency cost is accepted rather than hidden:
-first paint moves from ~200 ms to ~123-666 ms, part of which is repaid in
-requests, since hosted first paint is dominated by request count and fewer, fatter
-rungs mean fewer nodes to fetch.
+first paint moves from ~200 ms to ~123-2,100 ms, with the upper end from arxiv's
+two-stop shape. Part of that is repaid in requests, since hosted first paint is
+dominated by request count and fewer, fatter rungs mean fewer nodes to fetch.
 
 Three properties worth knowing. The floor needs no slice term — requiring
 `rung0/S >= share * (n/S)` cancels to `rung0 >= share * n` — so it is

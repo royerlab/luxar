@@ -263,11 +263,10 @@ SLICED_LADDER_MAX_DEPTH = 8
 def hidden_axis_stops(positions: Any, hidden_dims: Sequence[int]) -> int:
     """How many slices a node splits into along its NON-DISPLAYED axes.
 
-    The viewer draws one hidden-axis coordinate at a time, so this is the divisor
-    between a node's total element count and the set actually resident at any
-    moment. Needed by :func:`stream_ladder`, whose first rung must represent a
-    usable share of the RESIDENT slice rather than a budget applied to the whole
-    node (see its docstring).
+    This is an upper bound on the number of resident selections: exact when each
+    element belongs to one hidden coordinate, and an over-count when pooled or
+    marginal layouts duplicate elements across selections. :func:`stream_ladder`
+    only needs the ``> 1`` predicate, so that over-count is safe there.
 
     Counts distinct COMBINATIONS across all hidden columns, not the product of
     each column's cardinality: a node stacked on time *and* channel is only
@@ -370,7 +369,7 @@ def stream_ladder(
     splats), **12.5% is soft but usable** (neuromast, 110,614 measured at rest
     against a 113,947 metadata mean), and **54% is fine on only 1,735 absolute
     elements** — which is what rules out an absolute floor. A budget contract
-    would have left five of the six demos above under 10% of their frame.
+    would have left all six demos above under 10% of their frame.
 
     So above one slice the first rung is floored at ``n /
     SLICED_LADDER_MAX_DEPTH``, giving every sliced node ``1/L`` of its frame **on
@@ -380,10 +379,10 @@ def stream_ladder(
     regress. Derive ``slices`` with :func:`hidden_axis_stops`, not by hand.
 
     The cost is accepted rather than hidden: first paint on these demos goes from
-    ~200 ms to ~123-666 ms. Part of that is repaid in requests — hosted first
-    paint is dominated by request COUNT, and fewer, fatter rungs mean fewer nodes
-    to fetch, so the wall-clock penalty is smaller than the byte arithmetic
-    suggests.
+    ~200 ms to ~123-2,100 ms, with the upper end from arxiv's two-stop shape.
+    Part of that is repaid in requests — hosted first paint is dominated by
+    request COUNT, and fewer, fatter rungs mean fewer nodes to fetch, so the
+    wall-clock penalty is smaller than the byte arithmetic suggests.
 
     **The fatal version of this is on a PLAYED axis, and it wants a different
     ladder.** Under a playback frame budget the viewer commits level 0 only, so a
@@ -484,9 +483,11 @@ def stream_ladder(
         share_chunk = -(-n // SLICED_LADDER_MAX_DEPTH)
         if share_chunk > DEFAULT_MAX_ADDITIVE_COMMIT:
             raise ValueError(
-                f"Sliced node with {n:,} elements cannot deliver its 12.5% first "
+                f"Sliced node with {n:,} elements cannot deliver its "
+                f"{100 / SLICED_LADDER_MAX_DEPTH:g}% first "
                 f"rung within the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit "
-                "ceiling. Partition this leaf before applying stream_ladder."
+                "ceiling. Partition this leaf after moving any stacked axis last, "
+                "or supply explicit capped cuts instead of stream_ladder."
             )
         first_chunk = max(first_chunk, share_chunk)
     if geometry == "lines":

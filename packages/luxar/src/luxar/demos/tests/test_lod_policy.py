@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import luxar.demos._lod_policy as lod_policy
 from luxar.demos import registry
 from luxar.demos._lod_policy import (
     _RECIPE_DEFAULTS,
@@ -997,6 +998,13 @@ class TestASlicedNodeGetsAShareOfItsFrame:
             stream_ladder(7_200_001, slices=2)
 
         assert stream_ladder(7_200_000, slices=2)["counts"][0] == 900_000
+
+    def test_the_rejection_reports_the_configured_share(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(lod_policy, "SLICED_LADDER_MAX_DEPTH", 10)
+        with pytest.raises(ValueError, match="cannot deliver its 10% first rung"):
+            stream_ladder(9_000_001, slices=2)
 
     def test_rejects_a_slice_count_below_one(self) -> None:
         with pytest.raises(ValueError, match="slices must be >= 1"):
