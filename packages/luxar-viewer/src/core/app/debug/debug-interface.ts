@@ -78,10 +78,11 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
 
   log.info(Modules.LUXAR, 'Extending debug interface with runtime components');
 
-  // Enable lazy-LOD-load per-stage timing under ?debug only. The lazy
-  // ensureLoaded loads run outside any updateView cycle, so the
-  // UpdateProfiler never captures them — this fills that gap for
-  // navigation-cost diagnosis. Snapshot via __luxarDebug.getLodLoadStats().
+  // Enable lazy-LOD-load per-stage timing plus additive per-level ladder
+  // timing under ?debug only. The lazy ensureLoaded loads run outside any
+  // updateView cycle, so the UpdateProfiler never captures them — this fills
+  // that gap for navigation-cost diagnosis. Snapshot via
+  // __luxarDebug.getLodLoadStats().
   setLodLoadStatsEnabled(true);
 
   // Extend whatever bootstrap seeded (app/consoleInterceptor/version). When
@@ -432,8 +433,9 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     },
 
     // Per-stage timing for lazy LOD level loads (fetch/decode, process,
-    // commit, release). Reset before a measurement drive, snapshot after.
-    // See data/scene-loader/lod-load-stats.ts. Only meaningful under ?debug.
+    // commit, release), plus additive per-level ladder keys. Reset before a
+    // measurement drive, snapshot after. See
+    // data/scene-loader/lod-load-stats.ts. Only meaningful under ?debug.
     getLodLoadStats: () => snapshotLodLoadStats(),
     resetLodLoadStats: () => resetLodLoadStats(),
 
