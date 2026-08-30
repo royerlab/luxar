@@ -664,7 +664,57 @@ class TestAnUnreadableFitIsNotCalledANonFit:
         output = capsys.readouterr().out
         assert "present but unreadable" in output
         assert "nope/absent.gsplats.zarr.zip" in output
+        assert str(archive) in output
+        assert "`git lfs pull` will not help" in output
         assert "not on this machine" not in output
+
+    def test_check_resolves_the_pinned_copy_before_classifying_it(
+        self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        repo_archive = tmp_path / "repo" / "d" / "absent.gsplats.zarr.zip"
+        repo_archive.parent.mkdir(parents=True)
+        repo_archive.write_bytes(b"an unreadable pre-refit generation")
+        pinned_archive = tmp_path / "cache" / "nope" / "absent.gsplats.zarr.zip"
+        pinned_archive.parent.mkdir(parents=True)
+        pinned_archive.write_bytes(b"the pinned bytes are also unreadable")
+        entry = dict(
+            self.ENTRY,
+            files=[
+                {
+                    **self.ENTRY["files"][0],
+                    "sha256": gen._sha256_of(pinned_archive),
+                }
+            ],
+        )
+
+        assert gen._run_check({"datasets": {"nope": entry}}) == 1
+        output = capsys.readouterr().out
+        assert "present but unreadable" in output
+        assert str(pinned_archive) in output
+        assert "not on this machine" not in output
+
+    def test_check_does_not_inherit_unreadability_from_an_unpinned_copy(
+        self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        repo_archive = tmp_path / "repo" / "d" / "absent.gsplats.zarr.zip"
+        repo_archive.parent.mkdir(parents=True)
+        repo_archive.write_bytes(b"an unreadable pre-refit generation")
+        pinned_archive = tmp_path / "cache" / "nope" / "absent.gsplats.zarr.zip"
+        pinned_archive.parent.mkdir(parents=True)
+        _write_frame(pinned_archive)
+        entry = dict(
+            self.ENTRY,
+            files=[
+                {
+                    **self.ENTRY["files"][0],
+                    "sha256": gen._sha256_of(pinned_archive),
+                }
+            ],
+        )
+
+        assert gen._run_check({"datasets": {"nope": entry}}) == 0
+        output = capsys.readouterr().out
+        assert "present but unreadable" not in output
 
     def test_check_does_not_fail_for_unreadable_unpinned_bytes(
         self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
