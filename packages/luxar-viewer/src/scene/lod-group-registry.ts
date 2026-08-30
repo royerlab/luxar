@@ -593,13 +593,6 @@ interface LODGroupEntryCache {
   localBoxScratch: BoundingBox;
 }
 
-interface PartitionGroupEntryCache {
-  children: Array<{
-    source: PartitionGroupEntry;
-    localBoxScratch: BoundingBox;
-  }>;
-}
-
 /**
  * Module-scope scratch for the per-frame frustum gate.
  * ``evaluatePerFrame`` is the single per-frame entry point (no re-entrancy),
@@ -613,6 +606,9 @@ interface PartitionGroupEntryCache {
 const FRUSTUM_SCRATCH = new THREE.Frustum();
 const FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
 const WORLD_BOX3_SCRATCH = new THREE.Box3();
+const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
+const PARTITION_VISIBILITY_CHANGED = 1;
+const PARTITION_BECAME_VISIBLE = 2;
 
 /**
  * Injected view-state accessors. Lets the registry stay test-friendly
@@ -669,6 +665,12 @@ export interface LODGroupRegistryDeps {
    */
   requestRender?: () => void;
   /**
+   * Re-run the current view update after a partition child re-enters the
+   * frustum. Culled children skip event-driven slice updates, so the rising
+   * edge must resync any geometry that missed the latest view state.
+   */
+  requestReprocess?: () => void;
+  /**
    * Whether the LOD cross-fade is enabled (ON by default; `?no-lod-fade`
    * disables). When true and a blendable (additive/luminous/volumetric — see
    * `BLENDABLE_MODES` in `scene/lod-fade.ts`) group is zooming across a LOD
@@ -720,7 +722,15 @@ export interface LODGroupRegistryDeps {
 export class LODGroupRegistry {
   private entries: Map<string, LODGroupEntry> = new Map();
   private partitionEntries: Map<string, PartitionGroupEntry> = new Map();
-  private partitionCaches: Map<string, PartitionGroupEntryCache> = new Map();
+  private partitionCaches: Map<
+    string,
+    {
+      children: Array<{
+        source: PartitionGroupEntry;
+        localBoxScratch: BoundingBox;
+      }>;
+    }
+  > = new Map();
   /**
    * Per-entry register-time cache (parallel to ``entries`` by path).
    * Populated by :meth:`register`. Stored on the side so the public
@@ -823,6 +833,8 @@ export class LODGroupRegistry {
   unregister(path: string): void {
     this.entries.delete(path);
     this.caches.delete(path);
+    this.partitionEntries.delete(path);
+    this.partitionCaches.delete(path);
     this.warnedNoReadyChild.delete(path);
     this.warnedEmptyLevel.delete(path);
   }
@@ -1145,9 +1157,13 @@ export class LODGroupRegistry {
 
     let changed = false;
     let anyLoading = false;
+    let partitionBecameVisible = false;
     for (const entry of this.partitionEntries.values()) {
-      if (this.evaluatePartitionEntry(entry, displayDims, FRUSTUM_SCRATCH)) changed = true;
+      const result = this.evaluatePartitionEntry(entry, displayDims, FRUSTUM_SCRATCH);
+      if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) changed = true;
+      if ((result & PARTITION_BECAME_VISIBLE) !== 0) partitionBecameVisible = true;
     }
+    if (partitionBecameVisible) this.deps.requestReprocess?.();
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, camera, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
         changed = true;
@@ -1187,10 +1203,10 @@ export class LODGroupRegistry {
     entry: PartitionGroupEntry,
     displayDims: readonly number[],
     frustum: THREE.Frustum
-  ): boolean {
+  ): number {
     const cache = this.partitionCaches.get(entry.path);
-    if (!cache) return false;
-    let changed = false;
+    if (!cache) return 0;
+    let result = 0;
     for (let index = 0; index < entry.children.length; index++) {
       const child = entry.children[index];
       const childCache = cache.children[index];
@@ -1204,15 +1220,21 @@ export class LODGroupRegistry {
       if (worldBox) {
         WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
         WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
+        FOOTPRINT_BOX3_SCRATCH.setFromObject(child.object);
+        if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) {
+          WORLD_BOX3_SCRATCH.union(FOOTPRINT_BOX3_SCRATCH);
+        }
         visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
       }
+      const wasVisible = child.object.userData.partitionFrustumVisible !== false;
       child.object.userData.partitionFrustumVisible = visible;
       if (child.object.visible !== visible) {
         child.object.visible = visible;
-        changed = true;
+        result |= PARTITION_VISIBILITY_CHANGED;
       }
+      if (visible && !wasVisible) result |= PARTITION_BECAME_VISIBLE;
     }
-    return changed;
+    return result;
   }
 
   /** Returns ``true`` if this entry's displayed child changed. */

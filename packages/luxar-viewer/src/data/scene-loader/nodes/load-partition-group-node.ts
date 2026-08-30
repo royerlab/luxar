@@ -314,7 +314,7 @@ export async function loadPartitionGroupNode(
   if (ctx.lodGroupRegistry && partBounds) {
     const registryChildren: Array<PartitionGroupChild | undefined> = new Array(
       sceneChildren.length
-    );
+    ).fill(undefined);
     for (let loadIndex = 0; loadIndex < sceneChildren.length; loadIndex++) {
       const partIndex = partIndexForChild(sceneChildren[loadIndex], loadIndex);
       const object = partitionGroup.children.find(

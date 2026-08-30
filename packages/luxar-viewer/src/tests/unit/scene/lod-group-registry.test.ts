@@ -468,7 +468,8 @@ function makeRegistry(
   getViewVersion?: () => number,
   requestRender?: () => void,
   now?: () => number,
-  hasArchiveFault?: () => boolean
+  hasArchiveFault?: () => boolean,
+  requestReprocess?: () => void
 ) {
   const camera = new THREE.Camera();
   camera.matrixWorldInverse.identity();
@@ -481,6 +482,7 @@ function makeRegistry(
     ...(requestRender != null ? { requestRender } : {}),
     ...(now != null ? { now } : {}),
     ...(hasArchiveFault != null ? { hasArchiveFault } : {}),
+    ...(requestReprocess != null ? { requestReprocess } : {}),
     ...(residentByteBudget != null
       ? {
           getResidentByteBudget: () => residentByteBudget,
@@ -588,14 +590,97 @@ describe('LODGroupRegistry — partition frustum selection', () => {
   it('keeps a part visible when its bounds cannot be projected safely', () => {
     const reg = makeRegistry([0, 1]);
     const groupObject = new THREE.Group();
+    const culled = new THREE.Group();
+    const unprojectable = new THREE.Group();
+    groupObject.add(culled, unprojectable);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        { object: culled, positionBounds: { min: [2, 2], max: [3, 3] } },
+        { object: unprojectable, positionBounds: { min: [], max: [] } },
+      ],
+    });
+
+    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(culled.visible).toBe(false);
+    expect(culled.userData.partitionFrustumVisible).toBe(false);
+    expect(unprojectable.visible).toBe(true);
+    expect(unprojectable.userData.partitionFrustumVisible).toBe(true);
+  });
+
+  it('keeps a part visible when its rendered footprint intersects the frustum', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const footprintGeometry = new THREE.BufferGeometry();
+    footprintGeometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(0.9, -0.1, -0.1),
+      new THREE.Vector3(1.2, 0.1, 0.1)
+    );
+    const footprintVisible = new THREE.Mesh(footprintGeometry);
+    const culled = new THREE.Group();
+    groupObject.add(footprintVisible, culled);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          object: footprintVisible,
+          positionBounds: { min: [1.1, -0.1, -0.1], max: [1.2, 0.1, 0.1] },
+        },
+        { object: culled, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } },
+      ],
+    });
+
+    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(footprintVisible.visible).toBe(true);
+    expect(footprintVisible.userData.partitionFrustumVisible).toBe(true);
+    expect(culled.visible).toBe(false);
+  });
+
+  it('requests a view resync when a culled part becomes visible again', () => {
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess
+    );
+    const groupObject = new THREE.Group();
     const child = new THREE.Group();
     groupObject.add(child);
     reg.registerPartition({
       path: '/partition',
       groupObject,
-      children: [{ object: child, positionBounds: { min: [], max: [] } }],
+      children: [{ object: child, positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] } }],
     });
 
+    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(child.visible).toBe(false);
+    expect(requestReprocess).not.toHaveBeenCalled();
+
+    groupObject.position.x = -2.5;
+    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(child.visible).toBe(true);
+    expect(requestReprocess).toHaveBeenCalledOnce();
+  });
+
+  it('unregister removes partition entries and their per-frame visibility writes', () => {
+    const reg = makeRegistry();
+    const groupObject = new THREE.Group();
+    const child = new THREE.Group();
+    groupObject.add(child);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [{ object: child, positionBounds: { min: [2, 2, 2], max: [3, 3, 3] } }],
+    });
+
+    reg.unregister('/partition');
     expect(reg.evaluatePerFrame()).toBe(false);
     expect(child.visible).toBe(true);
     expect(child.userData.partitionFrustumVisible).toBe(true);

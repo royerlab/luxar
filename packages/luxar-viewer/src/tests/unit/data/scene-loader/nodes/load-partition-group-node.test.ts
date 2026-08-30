@@ -225,6 +225,37 @@ describe('loadPartitionGroupNode', () => {
     ).toEqual([0, 1]);
   });
 
+  it('skips registry attachment when a part produces no scene object', async () => {
+    const registerPartition = vi.fn();
+    const children = [
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [0, 0], max: [1, 1] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        child_index: 1,
+        position_bounds: { min: [2, 2], max: [3, 3] },
+      }),
+    ];
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      if (child === children[0]) {
+        const object = new THREE.Group();
+        object.name = child.path;
+        parentThree.add(object);
+      }
+    });
+
+    await loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeRegistryCtx(registerPartition),
+      loadSceneNodesMock
+    );
+
+    expect(registerPartition).not.toHaveBeenCalled();
+  });
+
   it('loads parts with bounded concurrency while preserving authored order and indices', async () => {
     const children = Array.from({ length: 10 }, (_, index) =>
       makePartNode(`/partition/part_${index}`, 'points', { child_index: index })

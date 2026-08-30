@@ -91,6 +91,8 @@ export interface LODGroupRegistryOwner {
   readonly gpuBufferPool: GPUBufferPool | null;
   /** Current archive fault latched by the owning loader, if any. */
   readonly archiveFault: ArchiveFaultError | null;
+  /** Re-run the owning loader's current view state. */
+  requestReprocess(): void;
 }
 
 /**
@@ -904,6 +906,11 @@ export class SceneLoader {
       onArchiveFault,
       shouldUpdatePath: (path) => isPartitionPathVisible(this.rootGroup, path),
     });
+  }
+
+  /** Re-run the current view state without blocking the caller. */
+  requestReprocess(): void {
+    void this.updateView({});
   }
 
   /**
