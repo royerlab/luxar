@@ -599,7 +599,9 @@ luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4              #
 # Collapse ANY gsplat tree (leaf, LOD/matrix tree, partition, nested) into one
 # flat matrix-shaped leaf. Use for compatibility with tools that expect a flat
 # .gsplats.zarr, or before rebuilding a new global LOD from a tiled/partitioned
-# result.
+# result. Precision-only; additive ladders are dropped (rebuild with
+# `lod --recipe stream`), and staging beside the destination needs roughly one
+# uncompressed flat payload of temporary free space.
 luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
 
 # tiles / overview (the large-data topologies): each tile carries its own

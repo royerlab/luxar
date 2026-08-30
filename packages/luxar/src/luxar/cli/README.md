@@ -473,12 +473,12 @@ luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4         # clas
 **Options**: `--n-lods` (default 4, equal-count), `--add-method/-m` (auto/greedy/self_energy/mass/amplitude/spectral/random/radial ordering; `radial` reveals outward from the bbox centre and carries no energy stamps), `--breakpoints/-b` (`equal-count` | `stream:C` | explicit `counts:`/`energy:` lists), `--target-ms` (+ `--bandwidth-mbps`, default 25; `--bytes-per-splat` override) to size the first chunk from a download budget, `--encoding/-e`, `--compress/-c`, `--overwrite`.
 
 #### `luxar gsplat flatten`
-Collapse **any** gsplat tree (leaf, LOD/matrix tree, partition, nested) into one flat matrix-shaped leaf. Use for compatibility with tools that expect a flat `.gsplats.zarr`, or before rebuilding a new global LOD from a tiled/partitioned result.
+Collapse **any** gsplat tree (leaf, LOD/matrix tree, partition, nested) into one flat matrix-shaped leaf. Use for compatibility with tools that expect a flat `.gsplats.zarr`, or before rebuilding a new global LOD from a tiled/partitioned result. Flatten retains every default-selected splat but drops additive ladder structure; run `gsplat lod --recipe stream` on the result to build a new global ladder.
 ```bash
 luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
 ```
 
-**Options**: `--encoding/-e` (auto/precision/memory), `--compress/-c` (zip/tar.gz), `--overwrite`.
+**Options**: `--encoding/-e precision` (the required default), `--compress/-c` (zip/tar.gz), `--overwrite`. Streaming flatten rejects `auto`/`memory` because their whole-array analysis defeats the memory bound. Precision stores float32 centers and Cholesky factors, so expect a materially larger archive than auto-encoded output; disk staging is created beside the destination and temporarily needs roughly one uncompressed flat payload of free space.
 
 #### `luxar gsplat annotate-quality`
 Retrofit Q·e quality stamps onto an **existing** `.gsplats.zarr`, in place (no refit / re-ladder): the cumulative energy fraction `e(k)` per additive sub-LOD plus a reference energy `w` per leaf (cheap O(N); enables the viewer's early energy-threshold LOD upgrades on legacy datasets). The root `content_hash` is re-stamped so viewer caches invalidate automatically. Directory stores only — unpack `.zip`/`.tar.gz` first. New builds stamp by default.

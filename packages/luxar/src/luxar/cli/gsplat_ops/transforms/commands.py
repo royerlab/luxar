@@ -492,7 +492,10 @@ def flatten_dataset(
         ..., help="Output .gsplats.zarr (a single flat, matrix-shaped leaf)"
     ),
     encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
-        "auto", "--encoding", "-e", help="Encoding mode for output"
+        "precision",
+        "--encoding",
+        "-e",
+        help="Output encoding (streaming flatten currently requires precision)",
     ),
     compress: Optional[Literal["zip", "tar.gz"]] = typer.Option(
         None, "--compress", "-c", help="Compress output as .zip or .tar.gz"
@@ -512,7 +515,9 @@ def flatten_dataset(
     accept.
 
     A leaf or matrix-shaped lod group flattens to its full finest splat set; a
-    partition (or partitioned/mosaic topology) is merged across all parts.
+    partition (or partitioned/mosaic topology) is merged across all parts. Any
+    additive ladder is dropped while its splats are retained; run ``gsplat lod
+    --recipe stream`` on the flat result to build a new global ladder.
 
     Examples:
         # Tiled batch-fit merge → flat → overview LOD
