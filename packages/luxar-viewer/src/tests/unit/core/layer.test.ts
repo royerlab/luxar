@@ -301,7 +301,13 @@ describe('LuxarLayer', () => {
       const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
         deps: Record<string, unknown>;
       };
-      const { deps } = factory({ currentViewVersion: 1, gpuBufferPool: undefined });
+      const requestReprocess = vi.fn();
+      const { deps } = factory({
+        currentViewVersion: 1,
+        gpuBufferPool: undefined,
+        archiveFault: null,
+        requestReprocess,
+      });
 
       expect(Object.keys(deps).sort()).toEqual(
         [
@@ -317,8 +323,11 @@ describe('LuxarLayer', () => {
           'getViewportSize',
           'registerMaterial',
           'requestRender',
+          'requestReprocess',
         ].sort()
       );
+      (deps.requestReprocess as () => void)();
+      expect(requestReprocess).toHaveBeenCalledOnce();
     });
 
     it('reports no resident bytes rather than throwing when the pool is absent', () => {
