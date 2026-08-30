@@ -128,34 +128,45 @@ def _first_rung_histogram(leaf: Any) -> Counter[tuple[object, ...]] | None:
     return counts
 
 
-def _node_slice_histograms(group: Any) -> list[Counter[tuple[object, ...]]]:
-    """Return alternative first-rung histograms with partition parts summed."""
+def _node_slice_histogram(group: Any) -> Counter[tuple[object, ...]] | None:
+    """Reduce one geometry node: partition=sum, substitutive LOD=keywise max."""
     attrs = dict(group.attrs)
     if attrs.get("type") in ("points", "lines", "gsplats"):
-        histogram = _first_rung_histogram(group)
-        return [] if histogram is None else [histogram]
+        return _first_rung_histogram(group)
 
     children = [group[name] for name in group.group_keys()]
     if attrs.get("kind") == "partition":
-        alternatives = [Counter()]
+        combined: Counter[tuple[object, ...]] = Counter()
         for child in children:
-            child_alternatives = _node_slice_histograms(child)
-            if not child_alternatives:
-                continue
-            alternatives = [
-                left + right
-                for left in alternatives
-                for right in child_alternatives
-            ]
-        return alternatives if any(alternatives) else []
+            child_histogram = _node_slice_histogram(child)
+            if child_histogram is not None:
+                combined += child_histogram
+        return combined or None
     if attrs.get("kind") == "lod":
-        return [hist for child in children for hist in _node_slice_histograms(child)]
-    return [hist for child in children for hist in _node_slice_histograms(child)]
+        alternatives = [
+            histogram
+            for child in children
+            if (histogram := _node_slice_histogram(child)) is not None
+        ]
+        if not alternatives:
+            return None
+        keys = set().union(*(histogram.keys() for histogram in alternatives))
+        return Counter(
+            {key: max(histogram[key] for histogram in alternatives) for key in keys}
+        )
+    return None
 
 
 def sliced_first_rung_counts(root: Any) -> list[int]:
     """Measure every sliced node alternative's global per-slice rung-0 maximum."""
-    return [max(hist.values(), default=0) for hist in _node_slice_histograms(root)]
+    histogram = _node_slice_histogram(root)
+    if histogram is not None:
+        return [max(histogram.values(), default=0)]
+    return [
+        count
+        for name in root.group_keys()
+        for count in sliced_first_rung_counts(root[name])
+    ]
 
 
 def check_leaf(
@@ -400,7 +411,9 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
         sliced_counts = sliced_first_rung_counts(root)
         for index, count in enumerate(sliced_counts):
             if count <= 0:
-                results.append((f"/sliced-node-{index}", "fail", "empty rung-0 slice survey"))
+                results.append(
+                    (f"/sliced-node-{index}", "fail", "empty rung-0 slice survey")
+                )
                 counts["fail"] += 1
                 failures.append(f"{scene.name}/sliced-node-{index}")
             elif count < args.min_slice_first_rung:

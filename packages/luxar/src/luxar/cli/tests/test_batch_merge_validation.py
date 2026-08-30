@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import typer
+import zarr
 from typer.testing import CliRunner
 
 from luxar.cli.gsplat_commands import app_gsplat
@@ -381,6 +383,30 @@ class TestMergeStreamingKnobs:
         )
 
         assert args["breakpoints"] == "stream:41666"
+
+    def test_store_survey_counts_hidden_coordinates_and_partition_parts(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.cli.gsplat_ops.recipe_shared import survey_gsplat_streaming_layout
+
+        store_path = tmp_path / "layout.gsplats.zarr"
+        root = zarr.open_group(store_path, mode="w")
+        root.attrs["kind"] = "partition"
+        for part_index in range(2):
+            leaf = root.create_group(f"part_{part_index}")
+            leaf.attrs.update(
+                {"type": "gsplats", "n_splats": 3, "n_additive_sublods": 1}
+            )
+            leaf.attrs["slice_dims"] = [1]
+            leaf.create_array(
+                "centers",
+                data=np.asarray(
+                    [[part_index, 0], [part_index, 1], [part_index, 2]],
+                    dtype=np.uint16,
+                ),
+            )
+
+        assert survey_gsplat_streaming_layout(store_path) == (3, 2)
 
     def test_stored_stream_string_reparses_at_merge_time(self) -> None:
         """The manifest round-trip: the stored string re-parses via
@@ -765,8 +791,9 @@ class TestPlanTimeStreamingSizing:
                 channel_colors="#ff0080,#00ff00",
             ),
         )
-        # Colors will be written per-splat → 34 B → 18382 (pre-fix: 20833).
-        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:18382"
+        # Colors will be written per-splat → 34 B → 18,382 for the whole node,
+        # then doubled for the two hidden time slices.
+        assert plan.manifest.merge_recipe_args["breakpoints"] == "stream:36764"
 
 
 # ── merge-time --target-ms: measured from completed tiles, analytic fallback ─

@@ -352,6 +352,39 @@ def test_recipe_rejects_cross_recipe_knobs(tmp_path: Path) -> None:
     assert "--compression-factor" in output and "not used" in output.lower()
     assert not out.exists()
 
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_recipe_target_ms_refuses_unknown_final_part_count(tmp_path: Path) -> None:
+    vol = tmp_path / "vol.npy"
+    _make_volume(vol)
+    out = tmp_path / "x.gsplats.zarr"
+
+    result = runner.invoke(
+        app,
+        [
+            "gsplat",
+            "fit",
+            str(vol),
+            str(out),
+            "--tiling",
+            "uniform",
+            "--tile-size",
+            "24",
+            "--recipe",
+            "stream",
+            "--target-ms",
+            "200",
+            "--device",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code != 0
+    output = normalized_cli_output(result)
+    assert "final non-empty part count" in output
+    assert "--n-lods" in output
+    assert not out.exists()
+
     # substitutive recipe + an additive-only knob → rejected
     res2 = runner.invoke(
         app,

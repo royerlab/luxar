@@ -30,9 +30,7 @@ def build_fit_recipe_params(
     from luxar.cli.gsplat_ops.recipe_shared import (
         VALID_ADDITIVE_METHODS,
         VALID_SUBSTITUTIVE_METHODS,
-        estimate_bytes_per_splat,
         parse_lod_breakpoints,
-        resolve_streaming_breakpoints,
         validate_refine,
         validate_streaming_knobs,
     )
@@ -96,14 +94,11 @@ def build_fit_recipe_params(
         )
     validate_streaming_knobs(target_ms, bandwidth_mbps, bytes_per_splat, breakpoints)
     if target_ms is not None:
-        bp: Any = resolve_streaming_breakpoints(
-            target_ms,
-            bandwidth_mbps,
-            bytes_per_splat,
-            analytic_bps=estimate_bytes_per_splat(volume_ndim),
+        raise typer.BadParameter(
+            "--target-ms cannot safely size a per-part fit before the final "
+            "non-empty part count is known; use --n-lods for partitioned output"
         )
-    else:
-        bp = parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
+    bp: Any = parse_lod_breakpoints(breakpoints) if breakpoints else "equal-count"
 
     parsed_coarsen: Optional[tuple] = None
     if coarsen_dims is not None:

@@ -1544,8 +1544,11 @@ def resolve_merge_recipe_args(
     merge itself will compute — ``len(spatial_shape) + (n_timepoints > 1)`` — so
     plan-time and merge-time size the SAME ladder for the same data.
     ``merged_has_colors`` marks a merge that will write per-splat colors (a
-    multi-channel merge with channel colors). Returns ``{}`` when no recipe and
-    no knobs are requested. Raises :class:`typer.BadParameter` on any problem.
+    multi-channel merge with channel colors). ``slice_count`` is the number of
+    hidden time coordinates and ``part_count`` the spatial parts that render
+    together; the stored per-part ``stream:<c>`` is scaled by their ratio.
+    Returns ``{}`` when no recipe and no knobs are requested. Raises
+    :class:`typer.BadParameter` on any problem.
     """
     if merge.recipe is None:
         # A merge knob without a recipe is a silent no-op — reject it loudly so

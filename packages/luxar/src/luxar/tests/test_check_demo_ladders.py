@@ -140,9 +140,7 @@ def test_partitioned_slice_survey_reads_rung_zero_across_parts(tmp_path: Path) -
             {"type": "points", "n_points": len(rows), "n_additive_sublods": 2}
         )
         rung = leaf.create_group("additive_0")
-        rung.attrs.update(
-            {"type": "points", "n_points": len(rows), "slice_dims": [0]}
-        )
+        rung.attrs.update({"type": "points", "n_points": len(rows), "slice_dims": [0]})
         rung.create_array("centers", data=rows)
         fine = leaf.create_group("additive_1")
         fine.attrs.update({"type": "points", "n_points": 0, "slice_dims": [0]})
@@ -155,6 +153,23 @@ def test_sliced_rung_with_no_centers_is_an_empty_measurement(tmp_path: Path) -> 
     leaf["additive_0"].attrs["slice_dims"] = [0]
 
     assert checker.sliced_first_rung_counts(leaf) == [0]
+
+
+def test_substitutive_levels_are_alternatives_not_additive(tmp_path: Path) -> None:
+    root = zarr.open_group(tmp_path / "lod.zarr", mode="w")
+    root.attrs["kind"] = "lod"
+    for index, count in enumerate((3, 5)):
+        leaf = root.create_group(f"child_{index}")
+        leaf.attrs.update(
+            {"type": "points", "n_points": count, "n_additive_sublods": 2}
+        )
+        rung = leaf.create_group("additive_0")
+        rung.attrs.update({"type": "points", "n_points": count, "slice_dims": [0]})
+        rung.create_array("centers", data=np.zeros((count, 1), dtype=np.uint16))
+        fine = leaf.create_group("additive_1")
+        fine.attrs.update({"type": "points", "n_points": 0})
+
+    assert checker.sliced_first_rung_counts(root) == [5]
 
 
 def test_scene_inventory_is_read_only(

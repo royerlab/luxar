@@ -453,8 +453,12 @@ def survey_gsplat_streaming_layout(input_path: Path) -> tuple[int, int]:
             attrs = dict(group.attrs)
             if attrs.get("type") == "gsplats":
                 n_sub = int(attrs.get("n_additive_sublods", 1) or 1)
-                for index in range(n_sub):
-                    level = group[f"additive_{index}"]
+                levels = (
+                    [group[f"additive_{index}"] for index in range(n_sub)]
+                    if "additive_0" in group
+                    else [group]
+                )
+                for level in levels:
                     dims = tuple(int(d) for d in level.attrs.get("slice_dims", []))
                     if not dims or "centers" not in level:
                         continue
