@@ -421,10 +421,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       }
       // Pass-budget guard: playback only guarantees a level for an empty
       // ladder; prefetch retains one-level progress after a restore (#2379).
-      if (
-        budgetDeadline !== null &&
-        shouldStopBeforeLevel(pass, level, startLevel, performance.now(), budgetDeadline)
-      ) {
+      if (shouldStopBeforeLevel(pass, level, startLevel, performance.now(), budgetDeadline)) {
         break;
       }
       const t0 = performance.now();

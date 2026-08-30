@@ -87,9 +87,13 @@ export function shouldStopBeforeLevel(
   level: number,
   startLevel: number,
   nowMs: number,
-  deadlineMs: number
+  deadlineMs: number | null
 ): boolean {
-  return isPastGuaranteedProgressFloor(kind, level, startLevel) && nowMs > deadlineMs;
+  return (
+    deadlineMs !== null &&
+    isPastGuaranteedProgressFloor(kind, level, startLevel) &&
+    nowMs > deadlineMs
+  );
 }
 
 /**

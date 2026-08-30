@@ -364,7 +364,7 @@ describe('MeshProgressiveLoader', () => {
       expect(loader.loadedLODCount).toBe(1); // empty-ladder first-paint floor
 
       await loader.updateView({ ...VIEW, frameBudgetMs: 0 });
-      expect(loader.loadedLODCount).toBe(1); // restored prefix has no floor
+      expect(loader.loadedLODCount).toBe(1); // non-empty ladder has no floor
       expect(subs[1].calls).toBe(0);
 
       nowSpy.mockImplementation(() => now);

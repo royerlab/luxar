@@ -682,6 +682,34 @@ describe('LinesProgressiveLoader', () => {
       expect(loader.loadedLODCount).toBe(1);
     });
 
+    it('a restored prefetch prefix still deepens one level after its budget expires', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const l = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      nowSpy.mockImplementation(() => (now += 5));
+
+      await l.updateView({ ...viewA, frameBudgetMs: 0, prefetch: true });
+
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.loadedLODCount).toBe(2);
+    });
+
     it('background prefetch deepens a capped ladder loop-over-loop; playback restores it responsively', async () => {
       // Mirrors gsplats-progressive-loader.test.ts (three-geometry symmetry).
       // Background PREFETCH deepens the SAME slice's cached ladder +1 level at

@@ -38,6 +38,10 @@ describe('classifyStreamingPass', () => {
 });
 
 describe('shouldStopBeforeLevel', () => {
+  it('never stops before a level when the pass has no deadline', () => {
+    expect(shouldStopBeforeLevel('refine', 4, 3, 100, null)).toBe(false);
+  });
+
   it('keeps the first level of an empty playback ladder despite an expired budget', () => {
     expect(shouldStopBeforeLevel('playback', 0, 0, 11, 10)).toBe(false);
     expect(shouldStopBeforeLevel('playback', 1, 0, 11, 10)).toBe(true);

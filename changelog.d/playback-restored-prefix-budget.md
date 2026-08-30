@@ -7,5 +7,6 @@ restored path committed its cached prefix unchanged, so a shallow cache entry
 could render less detail than having no entry at all.
 
 Only an empty ladder keeps the unconditional first-level floor. A restored
-prefix is already showable, so a zero-budget tick performs no extra decode and
-cannot reintroduce the playback stall that the old guard prevented.
+prefix is already showable, so a zero-budget tick performs no extra decode. If
+budget remains, the worst case is one cold load before the residency result is
+known — the same bound as the empty path already had.
