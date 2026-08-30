@@ -386,7 +386,7 @@ def main() -> None:
     aprint("  - Navigate attributes to see different biological features")
     aprint("")
 
-    # Load data from local parquet
+    # Load data from the manifest-resolved parquet
     coordinates, attributes, category_maps = load_human_umap_data()
 
     # Generate legend images for all attributes
