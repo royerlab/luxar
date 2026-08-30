@@ -71,7 +71,7 @@ import type { UpdateSession } from '../../profiling/update-profiler';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
   classifyStreamingPass,
-  shouldLoadLevel,
+  shouldStopBeforeLevel,
   shouldStopAfterLevel,
 } from '../loaders/progressive/streaming-policy';
 import { assertColorLayout } from '../loaders';
@@ -631,10 +631,9 @@ export class MeshProgressiveLoader implements MeshDataLoader {
       // next iteration would TypeError — a teardown mis-counted as a refinement
       // failure. Stop streaming instead.
       if (this._disposed) break;
-      if (!shouldLoadLevel(pass, level, startLevel)) break;
-      // Playback frame budget: stop once the tick's time is spent (≥1 level
-      // always loads — the `level > startLevel` guard).
-      if (budgetDeadline !== null && level > startLevel && performance.now() > budgetDeadline) {
+      // Pass-budget guard: playback only guarantees a level for an empty
+      // ladder; prefetch retains one-level progress after a restore (#2379).
+      if (shouldStopBeforeLevel(pass, level, startLevel, performance.now(), budgetDeadline)) {
         break;
       }
       const t0 = performance.now();
