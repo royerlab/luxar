@@ -789,6 +789,8 @@ def _refuse_invalid_repin_history(current: dict, committed: Optional[dict]) -> N
             continue
         old_hosted = old_entry.get("hosted_sha256")
         new_hosted = entry.get("hosted_sha256")
+        # Fall back only when neither generation has a hosted pin; mixed pins
+        # represent a first hosted stamp, not a re-pin of the repository bytes.
         if old_hosted is None and new_hosted is None:
             old_hosted = old_entry.get("sha256")
             new_hosted = entry.get("sha256")

@@ -235,6 +235,23 @@ def test_combined_repin_keeps_outgoing_local_digest_in_runtime_slot() -> None:
         generator._refuse_invalid_repin_history(repinned, committed)
 
 
+def test_local_repin_carries_outgoing_digest_into_runtime_slot() -> None:
+    generator = _load_generator()
+    committed_entry = {
+        "name": "fit.zip",
+        "sha256": "0" * 64,
+        "superseded_sha256": ["9" * 64],
+    }
+    (repinned_entry,) = generator._carry_hosted(
+        [{"name": "fit.zip", "sha256": "1" * 64}], [committed_entry]
+    )
+    committed = {"datasets": {"toy": {"files": [committed_entry]}}}
+    repinned = {"datasets": {"toy": {"files": [repinned_entry]}}}
+
+    assert repinned_entry["superseded_sha256"] == ["9" * 64, "0" * 64]
+    generator._refuse_invalid_repin_history(repinned, committed)
+
+
 def test_hosted_repin_rejects_missing_outgoing_digest() -> None:
     generator = _load_generator()
     committed = _manifest_entry("a" * 64, ["0" * 64])
