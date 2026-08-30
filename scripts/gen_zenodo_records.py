@@ -46,7 +46,7 @@ import io
 import json
 import sys
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
@@ -484,20 +484,22 @@ def _sha256_of(path: Path) -> str:
 
 
 def _select_pinned_location(
-    candidates: Iterator[Path], pinned_digest: Optional[str]
-) -> tuple[Optional[Path], Optional[str]]:
-    """Prefer pinned bytes, falling back to the first readable candidate."""
+    candidates: Iterable[Path], pinned_digest: Optional[str]
+) -> tuple[Optional[Path], Optional[str], tuple[Path, ...]]:
+    """Prefer pinned bytes and report candidates that could not be hashed."""
     fallback: tuple[Optional[Path], Optional[str]] = (None, None)
+    inaccessible: list[Path] = []
     for path in candidates:
         try:
             digest = _sha256_of(path)
         except OSError:
+            inaccessible.append(path)
             continue
         if fallback[0] is None:
             fallback = (path, digest)
         if digest == pinned_digest:
-            return path, digest
-    return fallback
+            return path, digest, tuple(inaccessible)
+    return fallback[0], fallback[1], tuple(inaccessible)
 
 
 def _retain_preferred_measurements(
@@ -590,41 +592,26 @@ def _retain_preferred_measurements(
     return retained, rejected
 
 
-def _record_unselected_archive(
-    key: str,
-    file_name: str,
-    candidates: list[Path],
-    absent: set[str],
-    inaccessible: list[Path],
-) -> None:
-    """Separate absent archives from fit candidates that could not be hashed."""
-    if candidates:
-        if _is_fit(file_name):
-            inaccessible.extend(candidates)
-    else:
-        absent.add(key)
-
-
 def refresh_characteristics(
     manifest: dict[str, Any], extra_root: Optional[Path] = None
 ) -> RefreshResult:
     """Re-measure archives and report how every local candidate was handled.
 
-    PRESERVES entries whose archive is not on this machine, for the same reason
+    PRESERVES entries whose archive cannot be freshly read, for the same reason
     ``gen_data_manifest`` preserves committed file lists: a refresh run from a
-    partial checkout would otherwise silently delete the measurements for every
-    dataset it cannot see, and a partial checkout is the normal case now.
+    partial checkout or with an unreadable local copy would otherwise silently
+    delete measurements it could not re-take.
 
-    Pinned archives that are present but unreadable are also left intact on disk,
-    but are returned separately so the caller can fail after writing good reads.
-    Candidates that cannot be hashed are returned separately from absent archives,
-    without failing because their bytes cannot be verified against the pin.
+    Pinned archives that hash successfully but cannot be parsed are returned
+    separately so the caller can fail after writing good reads.
+    Fit candidates that cannot be hashed are returned separately from absent
+    archives, without failing because their bytes cannot be verified against the
+    pin.
     """
     existing = load_characteristics()
     measured: dict[str, Any] = {}
     pinned_digests: dict[str, Optional[str]] = {}
     seen: set[str] = set()
-    absent: set[str] = set()
     unreadable: list[Path] = []
     inaccessible: list[Path] = []
     unpinned_unreadable = 0
@@ -639,14 +626,13 @@ def refresh_characteristics(
             candidates = list(
                 _locate(dataset, entry, variant, spec["name"], extra_root)
             )
-            path, measured_sha256 = _select_pinned_location(
-                iter(candidates),
+            path, measured_sha256, hash_failures = _select_pinned_location(
+                candidates,
                 pinned_digests[key],
             )
+            if hash_failures and _is_fit(spec["name"]):
+                inaccessible.append(hash_failures[0])
             if path is None:
-                _record_unselected_archive(
-                    key, spec["name"], candidates, absent, inaccessible
-                )
                 continue
             root = (
                 "staged"
@@ -718,7 +704,7 @@ def refresh_characteristics(
         read=read,
         retained=retained,
         rejected=rejected,
-        preserved=sum(key in absent for key in preserved_entries),
+        preserved=len(preserved_entries),
         unreadable=tuple(unreadable),
         inaccessible=tuple(inaccessible),
         unpinned_unreadable=unpinned_unreadable,
@@ -816,7 +802,7 @@ def _dataset_rows(
         # rest, and the only way to explain a gap is to widen it.
         if info is not None and "measured_sha256" not in info:
             pinned = _pinned_digest(spec)
-            path, digest = _select_pinned_location(
+            path, digest, _ = _select_pinned_location(
                 _locate(dataset, entry, variant, spec["name"]),
                 pinned,
             )
@@ -828,7 +814,7 @@ def _dataset_rows(
         elif info is None:
             # Unlike a note, a wholly unmeasured row may use unpinned local bytes
             # so a fresh fit remains renderable before its first refresh.
-            path, _ = _select_pinned_location(
+            path, _, _ = _select_pinned_location(
                 _locate(dataset, entry, variant, spec["name"]),
                 _pinned_digest(spec),
             )
@@ -1071,8 +1057,9 @@ def main() -> int:
         action="store_true",
         help="re-measure every archive present on this machine and rewrite "
         "scripts/demo_archive_characteristics.json (preserves entries whose "
-        "archive is absent here; exits 1 after writing if a pinned fit is "
-        "present but unreadable)",
+        "archive cannot be freshly read; exits 1 after writing if a pinned fit "
+        "hashes but cannot be parsed; an archive that cannot be opened for "
+        "hashing is warned and retained without failing)",
     )
     args = ap.parse_args()
     if args.archives_root and not args.refresh:
@@ -1082,18 +1069,25 @@ def main() -> int:
     if args.refresh:
         result = refresh_characteristics(manifest, args.archives_root)
         for path in result.unreadable:
-            print(f"ERROR: pinned archive is present but unreadable: {path}")
+            print(
+                "ERROR: pinned fit archive matched the manifest pin but could "
+                f"not be parsed: {path}"
+            )
         for path in result.inaccessible:
             print(
-                "WARNING: fit archive is on this machine but could not be read "
-                f"(check permissions): {path}"
+                "WARNING: fit archive could not be opened for hashing (check "
+                "permissions); unread bytes cannot be checked against the pin: "
+                f"{path}"
             )
         if args.archives_root:
             print(
                 f"selected {result.staged_selected} archive(s) under --archives-root "
                 f"{args.archives_root}"
             )
-            if result.staged_selected == 0:
+            staged_inaccessible = any(
+                path.is_relative_to(args.archives_root) for path in result.inaccessible
+            )
+            if result.staged_selected == 0 and not staged_inaccessible:
                 print(
                     "WARNING: --archives-root matched no archives; "
                     "expected layout: <root>/<dataset>/[<variant>/]<file> "
@@ -1104,8 +1098,8 @@ def main() -> int:
             "but unreadable"
         )
         print(
-            f"skipped {len(result.inaccessible)} fit archive candidate(s) that were "
-            "on this machine but could not be read"
+            f"skipped {len(result.inaccessible)} fit archive(s) with a candidate "
+            "that could not be opened for hashing"
         )
         print(
             f"skipped {result.unpinned_unreadable} fit archive(s) that were present "
@@ -1115,7 +1109,8 @@ def main() -> int:
             f"read {result.read} archive(s) here, skipped {result.rejected} read(s) "
             f"taken from bytes the manifest does not pin, kept {result.retained} "
             "committed measurement(s) that outrank the local copy, preserved "
-            f"{result.preserved} not on this machine -> "
+            f"{result.preserved} committed measurement(s) without a fresh "
+            "read -> "
             f"{CHARACTERISTICS.relative_to(REPO_ROOT)}"
         )
         return 1 if result.unreadable else 0
