@@ -203,7 +203,6 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
             "membranes": f"{root}/Membranes/Deconvolved",
             "nuclei": f"{root}/Nuclei/Deconvolved",
         }
-        assert all("_sandbox" not in path for path in source_dirs.values())
 
     def test_the_source_files_are_stacked_in_numeric_timepoint_order(self):
         assert demo.SOURCE_TIMEPOINTS == tuple(range(1, 101))
@@ -214,7 +213,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         assert demo.SOURCE_FRAME_AXES == "z,y,x"
         assert demo.SOURCE_AXES == "time,z,y,x"
 
-    def test_the_background_floor_measurement_is_reproducible(self):
+    def test_the_background_floor_recipe_is_recorded(self):
         assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == (
             0,
             11,

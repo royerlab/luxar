@@ -19,21 +19,27 @@ and share one 4D coordinate space).
 
 DATA SOURCE & CITATIONS:
     Adrian Jacobo lab (CZ Biohub / Rockefeller). iSIM, Richardson–Lucy
-    deconvolved, motion-aligned. Original volumes on the CZ Biohub HPC:
-    ``…/04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1/{Membranes,Nuclei}``.
+    deconvolved, motion-aligned. Original volumes are under ``HPC_SOURCE_ROOT``
+    in each channel's recorded ``hpc_source_dir``.
 
 PIPELINE — reproducible per channel with ``--recompute``:
-    1. Read the channel's deconvolved TIFFs from ``HPC_SOURCE_ROOT`` using
-       ``SOURCE_FILE_PATTERN``. Order ``t1`` through ``t100`` NUMERICALLY (not
-       lexicographically), treat each TIFF as ``z,y,x``, and stack them into one
-       ``time,z,y,x`` array. ``--source-*`` expects that assembled array, not
-       the per-timepoint directory.
+    1. To rebuild either channel, read its deconvolved TIFFs from the channel's
+       ``hpc_source_dir`` using ``SOURCE_FILE_PATTERN``. Order ``t1`` through
+       ``t100`` NUMERICALLY (not lexicographically), treat each TIFF as
+       ``z,y,x``, and stack them into one ``time,z,y,x`` array. The nuclei array
+       used for the recorded run was assembled this way; the membranes array in
+       hand ships as a single zipped array. ``--source-*`` expects either
+       assembled array, not the per-timepoint directory.
     2. Measure one background floor per channel: on the ten zero-based frames
-       in ``BACKGROUND_FLOOR_SAMPLE_INDICES``, take the mode of a 512-bin
-       histogram over values at or below that frame's 95th percentile, then
-       take the median of those ten modes. The recorded results are 105.991
-       (membranes) and 103.888 (nuclei). ``--recompute`` subtracts the pinned
-       value with a clip at zero; do not re-measure it during a rebuild.
+       in ``BACKGROUND_FLOOR_SAMPLE_INDICES``, take the centre of the peak bin
+       in a 512-bin histogram over values at or below that frame's 95th
+       percentile, then take the median of those ten modes. The per-frame step
+       matches ``estimate_floor(frame, method="mode")`` in
+       ``luxar.gsplats.calibration.noise_floor``; that helper additionally
+       excludes exact zeros and caps at the frame median, neither of which
+       affected these frames. The recorded results are 105.991 (membranes) and
+       103.888 (nuclei). ``--recompute`` subtracts the pinned value with a clip
+       at zero; do not re-measure it during a rebuild.
     3. Calibrate K* per channel (Noise2Self blind-spot sweep) → K* = 64,000.
        Recorded, not re-run: the sweep is hours and its answer is stable.
     4. ``batch-fit run``: 100 timepoints, one uniform tile each, ``n2s`` preset,
@@ -137,9 +143,6 @@ DATA_DIR = Path(
     )
 )
 
-# Channel configuration — each becomes an independently-toggleable layer.
-# Named colormaps (not baked RGB) so the viewer applies the LUT at display
-# time and the Layers panel can switch it interactively.
 HPC_SOURCE_ROOT = (
     "/hpc/projects/jacobo_group/Adrian/RU_Processed_Data/No_Ablations_Aligned/"
     "04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1"
@@ -150,7 +153,7 @@ SOURCE_TIMEPOINTS = tuple(range(1, 101))
 SOURCE_FILE_PATTERN = "*_t{timepoint}.tiff"
 #: Axis order of every deconvolved per-timepoint TIFF before stacking.
 SOURCE_FRAME_AXES = "z,y,x"
-#: Zero-based assembled frames used to measure one stable floor per channel.
+#: Ten evenly spaced zero-based frames (rounded linspace 0..99) used for floors.
 BACKGROUND_FLOOR_SAMPLE_INDICES = (0, 11, 22, 33, 44, 55, 66, 77, 88, 99)
 #: Per-frame mode measurement: histogram the low-intensity bulk through p95.
 BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE = 95.0
@@ -158,6 +161,9 @@ BACKGROUND_FLOOR_HISTOGRAM_BINS = 512
 #: Combine the ten per-frame modes into the one floor pinned per channel.
 BACKGROUND_FLOOR_REDUCTION = "median"
 
+# Channel configuration — each becomes an independently-toggleable layer.
+# Named colormaps (not baked RGB) so the viewer applies the LUT at display
+# time and the Layers panel can switch it interactively.
 CHANNELS = [
     {
         "name": "membranes",
