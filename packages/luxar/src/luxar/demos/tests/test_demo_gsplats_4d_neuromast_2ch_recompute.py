@@ -205,13 +205,16 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         }
 
     def test_the_source_files_are_stacked_in_numeric_timepoint_order(self):
-        assert demo.SOURCE_TIMEPOINTS == tuple(range(1, 101))
+        assert demo.SOURCE_TIMEPOINT_LABELS == tuple(
+            range(1, REAL_SOURCE_SHAPE[0] + 1)
+        )
         assert demo.SOURCE_FILE_PATTERN.format(timepoint=1).endswith("_t1.tiff")
         assert demo.SOURCE_FILE_PATTERN.format(timepoint=100).endswith("_t100.tiff")
 
     def test_the_assembly_axis_contract_is_recorded(self):
         assert demo.SOURCE_FRAME_AXES == "z,y,x"
         assert demo.SOURCE_AXES == "time,z,y,x"
+        assert demo.SOURCE_AXES == "time," + demo.SOURCE_FRAME_AXES
 
     def test_the_background_floor_recipe_is_recorded(self):
         assert demo.BACKGROUND_FLOOR_SAMPLE_INDICES == (

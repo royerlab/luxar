@@ -24,12 +24,13 @@ DATA SOURCE & CITATIONS:
 
 PIPELINE — reproducible per channel with ``--recompute``:
     1. To rebuild either channel, read its deconvolved TIFFs from the channel's
-       ``hpc_source_dir`` using ``SOURCE_FILE_PATTERN``. Order ``t1`` through
-       ``t100`` NUMERICALLY (not lexicographically), treat each TIFF as
-       ``z,y,x``, and stack them into one ``time,z,y,x`` array. The nuclei array
-       used for the recorded run was assembled this way; the membranes array in
-       hand ships as a single zipped array. ``--source-*`` expects either
-       assembled array, not the per-timepoint directory.
+       ``hpc_source_dir`` using ``SOURCE_FILE_PATTERN`` and
+       ``SOURCE_TIMEPOINT_LABELS``. Order ``t1`` through ``t100`` NUMERICALLY
+       (not lexicographically), treat each TIFF as ``z,y,x``, and stack them
+       into one ``time,z,y,x`` array. The nuclei array used for the recorded run
+       was assembled this way; the membranes array in hand ships as a single
+       zipped array. ``--source-*`` expects either assembled array, not the
+       per-timepoint directory.
     2. Measure one background floor per channel: on the ten zero-based frames
        in ``BACKGROUND_FLOOR_SAMPLE_INDICES``, take the centre of the peak bin
        in a 512-bin histogram over values at or below that frame's 95th
@@ -147,9 +148,7 @@ HPC_SOURCE_ROOT = (
     "/hpc/projects/jacobo_group/Adrian/RU_Processed_Data/No_Ablations_Aligned/"
     "04192022_she_gfp_cldn_mscarlet_Timelapse3_3dpf/S1"
 )
-#: One TIFF per one-based acquisition timepoint, stacked in this numeric order.
-SOURCE_TIMEPOINTS = tuple(range(1, 101))
-#: Applied inside each channel directory for every value in ``SOURCE_TIMEPOINTS``.
+#: Applied inside each channel directory for every recorded timepoint label.
 SOURCE_FILE_PATTERN = "*_t{timepoint}.tiff"
 #: Axis order of every deconvolved per-timepoint TIFF before stacking.
 SOURCE_FRAME_AXES = "z,y,x"
@@ -215,6 +214,8 @@ SCENE_NAME = "gsplats_4d_neuromast_2ch.luxar.zarr"
 SOURCE_AXES = "time,z,y,x"
 #: Full extent both channels must have; asserted before the GPU is touched.
 SOURCE_SHAPE = (100, 84, 580, 576)
+#: One TIFF per one-based acquisition timepoint, stacked in this numeric order.
+SOURCE_TIMEPOINT_LABELS = tuple(range(1, SOURCE_SHAPE[0] + 1))
 #: Calibrated splat budget per timepoint (Noise2Self blind-spot sweep).
 SEEDS = 64_000
 #: Fitting preset. `n2s` is the noise-aware one that pairs with the calibration.
