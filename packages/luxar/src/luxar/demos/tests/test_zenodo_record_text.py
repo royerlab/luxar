@@ -54,6 +54,7 @@ def _write_frame(
     *,
     n_splats: int = 100,
     psnr: float | None = 40.0,
+    foreground_psnr: float | None = None,
     source_bytes: int | None = 1_000_000,
     gsplats: bool = True,
     kind: str | None = None,
@@ -74,6 +75,8 @@ def _write_frame(
         fitting = {}
         if psnr is not None:
             fitting["psnr_db"] = psnr
+        if foreground_psnr is not None:
+            fitting["foreground_psnr_db"] = foreground_psnr
         if source_bytes is not None:
             fitting["source_bytes"] = source_bytes
         if part_provenance is not None:
@@ -778,7 +781,9 @@ class TestAnUnreadableFitIsNotCalledANonFit:
         repo_archive.write_bytes(b"an unreadable pre-refit generation")
         pinned_archive = tmp_path / "cache" / "nope" / "absent.gsplats.zarr.zip"
         pinned_archive.parent.mkdir(parents=True)
-        _write_frame(pinned_archive)
+        # Fully stamped, so a non-zero exit could only come from the unpinned
+        # copy's unreadability — which is exactly what must not happen.
+        _write_frame(pinned_archive, foreground_psnr=30.0)
         entry = dict(
             self.ENTRY,
             files=[
@@ -792,6 +797,9 @@ class TestAnUnreadableFitIsNotCalledANonFit:
         assert gen._run_check({"datasets": {"nope": entry}}) == 0
         output = capsys.readouterr().out
         assert "present but unreadable" not in output
+        assert "not on this machine" not in output, (
+            "the pinned copy is readable, so its figures are the ones measured"
+        )
 
     def test_check_does_not_fail_for_unreadable_unpinned_bytes(
         self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
