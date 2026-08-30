@@ -14,17 +14,30 @@ import importlib.util
 import json
 import sys
 import zipfile
-from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, cast
 
 import pytest
 
 #: .../packages/luxar/src/luxar/demos/tests/this_file.py -> repo root is 6 up.
 _SCRIPT = Path(__file__).resolve().parents[6] / "scripts" / "gen_zenodo_records.py"
+# "wrapped" is zipped from outside the store directory; "root" from inside it.
 _ArchiveLayout = Literal["wrapped", "root"]
-_FrameWriter = Callable[..., None]
+
+
+class _FrameWriter(Protocol):
+    def __call__(
+        self,
+        path: Path,
+        *,
+        n_splats: int = 100,
+        psnr: float | None = 40.0,
+        source_bytes: int | None = 1_000_000,
+        gsplats: bool = True,
+        kind: str | None = None,
+        part_provenance: list[dict[str, Any]] | None = None,
+    ) -> None: ...
 
 
 def _load_module() -> Any:
@@ -62,9 +75,9 @@ def _write_frame(
     gsplats: bool = True,
     kind: str | None = None,
     part_provenance: list[dict[str, Any]] | None = None,
-    layout: _ArchiveLayout = "wrapped",
+    layout: _ArchiveLayout,
 ) -> None:
-    """One single-store `.gsplats.zarr.zip`, as a bundle's frames are."""
+    """Write a store zipped from outside its directory or from inside it."""
     prefix = f"{path.name.split('.')[0]}.gsplats.zarr/" if layout == "wrapped" else ""
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr(f"{prefix}.zgroup", json.dumps({"zarr_format": 2}))
@@ -88,8 +101,7 @@ def _write_frame(
 
 @pytest.fixture(params=("wrapped", "root"), ids=("wrapped-store", "root-store"))
 def archive_layout(request: pytest.FixtureRequest) -> _ArchiveLayout:
-    assert request.param in ("wrapped", "root")
-    return request.param
+    return cast(_ArchiveLayout, request.param)
 
 
 @pytest.fixture
