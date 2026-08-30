@@ -980,7 +980,8 @@ error rather than accepting a silently wrong generation.
 
 `gsplats_cmu1_pathology` pinned `hosted_bytes` 84,492,218 / 93,189,978 /
 100,336,780 against a draft holding 45,697,890 / 50,699,910 / 53,698,264, and
-`git log --all -S'45697890' -- data_manifest.json` returned **nothing**.
+`git log --all -S'45697890' -- packages/luxar/src/luxar/demos/data_manifest.json`
+returned **nothing**.
 
 **Read that result carefully — but do not over-read it.** It does not mean nobody
 had pinned the draft: the correct values existed at that moment as an *uncommitted
@@ -998,7 +999,9 @@ Both halves were true and it is worth keeping them apart:
 What the query genuinely cannot do is tell those apart: `git log --all -S<value>`
 returning empty means *"nothing has **committed** this value"*, which reads
 identically for "wrong everywhere" and "right but not yet durable". Reach for a
-second signal before naming the defect.
+second signal before naming the defect. Run `make check-zenodo-live` first: its
+audit prints `PROBABLY THE WRONG MANIFEST, NOT BROKEN RECORDS` when at least 66%
+of the pins disagree, before listing the full-path `git log` check.
 
 The audit that had cleared the manifest read 35 match / 0 differ / **7 not in any
 draft**; those 7 were uploaded afterwards. And the session doing the uploading went
@@ -1039,7 +1042,7 @@ previous pins **on purpose**, and that gap is itself a hazard to carry forward:
 restructured files for all three, while the manifest pins the previous generation.
 After the in-repo payloads are removed, publishing a record in that state makes
 cold fetches and fresh installs abort with an uncaught checksum `ValueError`: the
-two affected demos catch `DatasetUnavailable`, not digest mismatches, so the
+three affected demos catch `DatasetUnavailable`, not digest mismatches, so the
 source-download/refit fallback does not run. Either roll the draft files back to
 the pinned contracts before publishing, or land the paired sidecar migration
 first. The live gallery tiles are indifferent either way, because they serve
