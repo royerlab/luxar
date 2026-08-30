@@ -7777,11 +7777,13 @@ class TestFlattenCommand:
         )
 
     def test_flatten_rejects_high_cardinality_coarsen_barrier(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A continuous axis stamped as a barrier fails before run expansion."""
+        from luxar.cli.gsplat_ops.transforms import partition_flatten
         from luxar.gsplats.gsplat_data import GSplatData
 
+        monkeypatch.setattr(partition_flatten, "_MAX_STREAMING_BARRIER_RUNS", 128)
         rng = np.random.default_rng(32)
         n_splats = 1_100
         centers = rng.uniform(0, 100, (n_splats, 3)).astype(np.float32)
@@ -7801,15 +7803,17 @@ class TestFlattenCommand:
         result = runner.invoke(app, ["gsplat", "flatten", str(source), str(flat)])
         assert result.exit_code != 0
         assert "barrier axes [2] derived from coarsen_dims [0, 1]" in result.stdout
-        assert "at most 1024 values" in result.stdout
+        assert "streaming limit is 128 exact value tuples" in result.stdout
         assert not flat.exists()
 
     def test_flatten_rejects_high_cardinality_detected_runs(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Rounded categories cannot hide unbounded exact lexsort runs."""
+        from luxar.cli.gsplat_ops.transforms import partition_flatten
         from luxar.gsplats.gsplat_data import GSplatData
 
+        monkeypatch.setattr(partition_flatten, "_MAX_STREAMING_BARRIER_RUNS", 128)
         rng = np.random.default_rng(33)
         n_splats = 1_100
         centers = np.empty((n_splats, 4), dtype=np.float32)
@@ -7838,9 +7842,76 @@ class TestFlattenCommand:
         flat = tmp_path / "flat.gsplats.zarr"
         result = runner.invoke(app, ["gsplat", "flatten", str(partition), str(flat)])
         assert result.exit_code != 0
-        assert "auto-detected barrier axis 3 exceeds" in result.stdout
+        assert (
+            "auto-detected barrier axis 3 exceeds the streaming limit of 128"
+            in result.stdout
+        )
         assert "coarsen_dims is absent" in result.stdout
         assert not flat.exists()
+
+    @pytest.mark.parametrize(
+        ("barrier_shape", "splats_per_value"),
+        [((1_100,), 6), ((40, 30), 8)],
+    )
+    def test_flatten_preserves_large_explicit_barrier_layout(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        barrier_shape: tuple[int, ...],
+        splats_per_value: int,
+    ) -> None:
+        """Explicit stacked axes may exceed the fallback detection heuristic."""
+        from luxar.encoding import EncodingMode
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(34)
+        barrier_values = np.indices(barrier_shape).reshape(len(barrier_shape), -1).T
+        barrier_values = np.repeat(barrier_values, splats_per_value, axis=0)
+        n_splats = len(barrier_values)
+        ndim = 3 + len(barrier_shape)
+        centers = np.empty((n_splats, ndim), dtype=np.float32)
+        centers[:, :3] = rng.uniform(0, 100, (n_splats, 3))
+        centers[:, 3:] = barrier_values
+        cholesky = np.zeros((n_splats, ndim * (ndim + 1) // 2), dtype=np.float32)
+        cholesky[:, np.cumsum(np.arange(1, ndim + 1)) - 1] = 1.0
+        data = GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=cholesky,
+            stats={"coarsen_dims": [0, 1, 2]},
+        )
+        source = tmp_path / "source.gsplats.zarr"
+        data.save(source)
+
+        expected_path = tmp_path / "expected.gsplats.zarr"
+        data.save(
+            expected_path,
+            encoding_mode=EncodingMode.PRECISION,
+            barrier_dims=list(range(3, ndim)),
+        )
+        actual_path = tmp_path / "actual.gsplats.zarr"
+        result = runner.invoke(
+            app, ["gsplat", "flatten", str(source), str(actual_path)]
+        )
+        assert result.exit_code == 0, result.stdout
+
+        expected_root = zc_open_group(str(expected_path), mode="r")
+        actual_root = zc_open_group(str(actual_path), mode="r")
+        for key in (
+            "slice_dims",
+            "ordering_dims",
+            "chunk_size",
+            "ordering_bits_per_dim",
+        ):
+            assert actual_root.attrs[key] == expected_root.attrs[key]
+        expected_bounds = np.asarray(expected_root["chunk_bounds"])
+        actual_bounds = np.asarray(actual_root["chunk_bounds"])
+        assert actual_bounds.shape == expected_bounds.shape
+        for dim in range(3, ndim):
+            np.testing.assert_allclose(
+                actual_bounds[:, dim, 1] - actual_bounds[:, dim, 0],
+                expected_bounds[:, dim, 1] - expected_bounds[:, dim, 0],
+            )
 
     def test_flatten_preserves_barrier_chunk_layout(
         self, runner: CliRunner, tmp_path: Path

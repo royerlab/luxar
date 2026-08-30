@@ -10,6 +10,7 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
+from luxar.gsplats.io.save_gsplats import _MAX_STREAMING_BARRIER_RUNS
 from luxar.io._ordering.compound import (
     _DEFAULT_BARRIER_MAX_CARDINALITY,
     _barrier_axis_qualifies,
@@ -137,6 +138,7 @@ class _BarrierAxisAccumulator:
     """
 
     max_cardinality: int
+    max_runs: int
     rounded_values: set[int] = field(default_factory=set)
     exact_values: Optional[set[float]] = field(default_factory=set)
     counts_by_group: Optional[list[dict[float, int]]] = field(default_factory=list)
@@ -159,7 +161,7 @@ class _BarrierAxisAccumulator:
         unique, counts = np.unique(values, return_counts=True)
         assert self.exact_values is not None
         self.exact_values.update(float(value) for value in unique)
-        if len(self.exact_values) > self.max_cardinality:
+        if len(self.exact_values) > self.max_runs:
             self.exact_values = None
             self.counts_by_group = None
             self.current_counts.clear()
@@ -207,9 +209,14 @@ def _detect_barrier_dims_across_groups(
     root: Any,
     decoder: Any,
     max_cardinality: int = _DEFAULT_BARRIER_MAX_CARDINALITY,
+    max_runs: Optional[int] = None,
 ) -> tuple[tuple[int, ...], Optional[list[tuple[np.ndarray, np.ndarray]]]]:
+    if max_runs is None:
+        max_runs = _MAX_STREAMING_BARRIER_RUNS
     ndim = int(splat_groups[0].attrs["ndim"])
-    accumulators = [_BarrierAxisAccumulator(max_cardinality) for _ in range(ndim)]
+    accumulators = [
+        _BarrierAxisAccumulator(max_cardinality, max_runs) for _ in range(ndim)
+    ]
     n_splats = 0
     for group in splat_groups:
         centers = np.asarray(decoder.decode(group["centers"], root))
@@ -232,7 +239,8 @@ def _detect_barrier_dims_across_groups(
     if runs is None:
         raise ValueError(
             f"auto-detected barrier axis {barrier_dims[0]} exceeds the "
-            f"{max_cardinality}-value streaming limit; coarsen_dims is absent"
+            f"streaming limit of {max_runs} exact value tuples; "
+            "coarsen_dims is absent"
         )
     return barrier_dims, runs
 
@@ -287,13 +295,13 @@ def _collect_streaming_metadata(
                 tuple(float(component) for component in value)
                 for value in barrier_values
             )
-            if len(barrier_values_seen) > _DEFAULT_BARRIER_MAX_CARDINALITY:
-                _raise_barrier_cardinality_error(
+            if len(barrier_values_seen) > _MAX_STREAMING_BARRIER_RUNS:
+                _raise_barrier_run_limit_error(
                     barrier_dims,
                     coarsen_dims,
                     len(barrier_values_seen),
                     n_splats + int(group.attrs["n_splats"]),
-                    _DEFAULT_BARRIER_MAX_CARDINALITY,
+                    _MAX_STREAMING_BARRIER_RUNS,
                 )
         n_splats += int(group.attrs["n_splats"])
         metadata.append(
@@ -309,18 +317,6 @@ def _collect_streaming_metadata(
                 barrier_counts=barrier_counts,
             )
         )
-    if barrier_dims and not _barrier_axis_qualifies(
-        n_splats,
-        len(barrier_values_seen),
-        _DEFAULT_BARRIER_MAX_CARDINALITY,
-    ):
-        _raise_barrier_cardinality_error(
-            barrier_dims,
-            coarsen_dims,
-            len(barrier_values_seen),
-            n_splats,
-            _DEFAULT_BARRIER_MAX_CARDINALITY,
-        )
     return metadata
 
 
@@ -328,10 +324,12 @@ def _barrier_runs(
     centers: Any,
     barrier_dims: Sequence[int],
     *,
-    max_cardinality: int = _DEFAULT_BARRIER_MAX_CARDINALITY,
+    max_runs: Optional[int] = None,
     coarsen_dims: Optional[Sequence[int]] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Count exact barrier tuples without allowing unbounded run cardinality."""
+    if max_runs is None:
+        max_runs = _MAX_STREAMING_BARRIER_RUNS
     counts: dict[tuple[float, ...], int] = {}
     for start in range(0, len(centers), 65_536):
         block = np.asarray(centers[start : start + 65_536])[:, barrier_dims]
@@ -339,13 +337,13 @@ def _barrier_runs(
         for value, count in zip(values, block_counts):
             key = tuple(float(component) for component in value)
             counts[key] = counts.get(key, 0) + int(count)
-            if len(counts) > max_cardinality:
-                _raise_barrier_cardinality_error(
+            if len(counts) > max_runs:
+                _raise_barrier_run_limit_error(
                     barrier_dims,
                     coarsen_dims,
                     len(counts),
                     len(centers),
-                    max_cardinality,
+                    max_runs,
                 )
     ordered = sorted(counts)
     return (
@@ -354,14 +352,14 @@ def _barrier_runs(
     )
 
 
-def _raise_barrier_cardinality_error(
+def _raise_barrier_run_limit_error(
     barrier_dims: Sequence[int],
     coarsen_dims: Optional[Sequence[int]],
     n_unique: int,
     n_splats: int,
-    max_cardinality: int,
+    max_runs: int,
 ) -> None:
-    """Raise the actionable CLI error for a non-categorical barrier stamp."""
+    """Raise the actionable CLI error for an unsafe barrier run allocation."""
     source = (
         f"coarsen_dims {list(coarsen_dims)}"
         if coarsen_dims is not None
@@ -369,8 +367,8 @@ def _raise_barrier_cardinality_error(
     )
     raise ValueError(
         f"barrier axes {list(barrier_dims)} derived from {source} have {n_unique} "
-        f"distinct value tuples across {n_splats} splats; categorical barriers must "
-        f"have at most {max_cardinality} values and at least four splats per value"
+        f"distinct value tuples across {n_splats} splats; the streaming limit is "
+        f"{max_runs} exact value tuples"
     )
 
 
