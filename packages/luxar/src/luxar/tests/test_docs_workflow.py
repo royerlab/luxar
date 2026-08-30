@@ -56,10 +56,10 @@ def test_runbook_section_three_headings_are_sequential() -> None:
     """Keep independently landed runbook additions in contiguous order."""
     text = DEMO_SITE_RUNBOOK.read_text()
     section_numbers = [
-        int(number)
-        for number in re.findall(r"^### 3\.(\d+)\b", text, re.MULTILINE)
+        int(number) for number in re.findall(r"^### 3\.(\d+)\b", text, re.MULTILINE)
     ]
 
+    assert section_numbers, "no '### 3.x' headings found in the runbook"
     assert section_numbers == list(range(1, len(section_numbers) + 1))
 
 
