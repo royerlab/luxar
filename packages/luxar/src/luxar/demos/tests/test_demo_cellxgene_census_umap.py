@@ -77,6 +77,7 @@ def test_explicit_cache_override_bypasses_the_manifest(
     seen: list[Path] = []
 
     monkeypatch.setenv("CENSUS_UMAP_CACHE", str(override))
+    monkeypatch.delenv("CENSUS_UMAP_MAX_CELLS", raising=False)
     monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
     monkeypatch.setattr(
         _demo,
