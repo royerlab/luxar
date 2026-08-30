@@ -237,6 +237,19 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 
 
+#: Deepest additive ladder a SLICED node may carry, as a share of its frame.
+#:
+#: `1/8` = 12.5% of the resident slice in the first rung. Sized to clear the
+#: viewer-side gate for #2374 — which fails a sliced node below **10%** of its
+#: frame, or below 1,000 elements at the 5th-percentile stop — with margin, so
+#: the gate should not fire on anything authored through :func:`stream_ladder`.
+#:
+#: The 10% floor is not arbitrary either: measured against observed playback,
+#: 12.5% renders "soft but usable" and 2.4% has already lost its structure.
+#: Deepening this constant past 10 walks a sliced node into that band.
+SLICED_LADDER_MAX_DEPTH = 8
+
+
 def hidden_axis_stops(positions: Any, hidden_dims: Sequence[int]) -> int:
     """How many slices a node splits into along its NON-DISPLAYED axes.
 
@@ -316,14 +329,13 @@ def stream_ladder(
     capped_stream_cuts` — a plain doubling ladder's last commit grows with ``n``
     and would block the main thread on these leaves.
 
-    THE BUDGET IS PER RESIDENT SLICE, NOT PER NODE — PASS ``slices``
-    ---------------------------------------------------------------
+    A SLICED NODE WANTS A SHARE, NOT A BUDGET — PASS ``slices``
+    -----------------------------------------------------------
 
     The first rung is an ABSOLUTE count, but the viewer draws one hidden-axis
     coordinate at a time. So on a sliced nD node a rung of 39,062 rows arrives as
-    39,062/S rows for the coordinate on screen, and first paint under-spends its
-    own budget by the slice count. Measured on the demos this laddered, per
-    resident slice:
+    39,062/S rows for the coordinate on screen. Measured on the demos this
+    laddered, per resident slice:
 
     ======================== ====== ============ ===========
     demo                      slices rung 0/slice first paint
@@ -335,10 +347,25 @@ def stream_ladder(
     esm3_protein_landscape        2       19,531      3.39 %
     ======================== ====== ============ ===========
 
-    So ``slices`` scales the first rung to ``first_chunk × S``, restoring the
-    intended semantics: 200 ms of download *for the slice being shown*. Derive it
-    with :func:`hidden_axis_stops` rather than hardcoding — a demo that gains a
-    dimension would otherwise silently regress.
+    Scaling the rung to ``budget × S`` would restore the intended *latency* — 200
+    ms per slice — but Loic ruled for the **share** contract instead (2026-08-30),
+    and the measurements are why: what predicts whether an opening frame is
+    recognisable is the share of the frame, not the bytes spent. Across three
+    orders of magnitude, predicted rung-0-per-slice against observed playback:
+    0.03% renders blank, 2.4% loses structure, 0.87% is thin, 12.5% is soft but
+    usable, 54% is fine *on only 1,735 absolute splats*. A budget contract would
+    have left four of the five demos above under 10% of their frame.
+
+    So above one slice the first rung is floored at ``n /
+    SLICED_LADDER_MAX_DEPTH``, giving every sliced node ``1/L`` of its frame —
+    slice-invariant, so a demo that gains a dimension cannot silently regress.
+    Derive ``slices`` with :func:`hidden_axis_stops` rather than hardcoding.
+
+    The cost is accepted rather than hidden: first paint on the five goes from
+    ~200 ms to ~123-666 ms. Part of that is repaid in requests — hosted first
+    paint is dominated by request COUNT, and fewer, fatter rungs mean fewer nodes
+    to fetch, so the wall-clock penalty is smaller than the byte arithmetic
+    suggests.
 
     **The fatal version of this is on a PLAYED axis, and it wants a different
     ladder.** Under a playback frame budget the viewer commits level 0 only, so a
@@ -381,9 +408,10 @@ def stream_ladder(
         geometry: ``"points"`` or ``"lines"``. Selects the spelling, because the
             two are not interchangeable (above).
         slices: Number of hidden-axis coordinates the node splits into, from
-            :func:`hidden_axis_stops`. Scales the first rung so the download
-            budget is spent on the resident slice. Leaving it at 1 on a sliced
-            node under-spends first paint by the slice count.
+            :func:`hidden_axis_stops`. Above 1, the first rung is floored at
+            ``n / SLICED_LADDER_MAX_DEPTH`` so first paint is a usable SHARE of
+            the resident slice. Leaving it at 1 on a sliced node leaves that node
+            with a first paint of ``budget / slices`` elements.
 
     Returns:
         A spec for ``additive_lod=`` on :meth:`Group.add_points` /
@@ -415,18 +443,24 @@ def stream_ladder(
         streaming_chunk_splats,
     )
 
-    # The budget buys 200 ms of rows FOR THE SLICE ON SCREEN, so an absolute rung
-    # over a sliced node has to be scaled by the stop count. This targets the
-    # AVERAGE slice, not every slice: under a skewed hidden distribution the
-    # busiest coordinate receives more than the budget and the sparsest less.
-    # Guaranteeing the smallest would need n/n_min, which is unbounded in
-    # practice. `capped_stream_cuts` clamps the result to its own commit ceiling,
-    # so a large stop count cannot produce a main-thread-blocking first commit.
-    first_chunk = slices * streaming_chunk_splats(
+    first_chunk = streaming_chunk_splats(
         DEFAULT_LADDER_TARGET_MS,
         DEFAULT_BANDWIDTH_MBPS,
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
     )
+    if slices > 1:
+        # Loic's ruling, 2026-08-30: on a sliced node the contract is a SHARE of
+        # the frame, not a download budget. A share is what tracks whether the
+        # opening frame is recognisable (measured: 0.03% blank, 0.87% thin, 12.5%
+        # soft-but-usable, 54% fine), and `1/L` is slice-invariant by
+        # construction, so it cannot regress when a demo gains a dimension.
+        #
+        # Note the floor needs no `slices` term. Requiring
+        # `first_chunk/S >= share * (n/S)` cancels to `first_chunk >= share * n`,
+        # so the arithmetic is slice-independent and `slices` only decides
+        # WHETHER the floor applies — an unsliced node keeps its budget ladder
+        # untouched, which is why no existing unsliced caller moves.
+        first_chunk = max(first_chunk, -(-n // SLICED_LADDER_MAX_DEPTH))
     if geometry == "lines" and n >= 2_149_985:
         raise ValueError(
             "Lines streaming ladders exceed the 900,000-vertex commit ceiling "

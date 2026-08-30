@@ -21,6 +21,7 @@ from luxar.demos import registry
 from luxar.demos._lod_policy import (
     _RECIPE_DEFAULTS,
     SCENE_TOPOLOGY_RECIPES,
+    SLICED_LADDER_MAX_DEPTH,
     TOPOLOGY_PRESERVING_ADDERS,
     TREE_RECIPES,
     DemoRecipe,
@@ -870,34 +871,67 @@ class TestHiddenAxisStops:
             hidden_axis_stops(np.zeros(5, dtype=np.float32), [0])
 
 
-class TestFirstRungIsSizedPerResidentSlice:
-    """#2374: an absolute rung over a sliced node arrives divided by the stops."""
+class TestASlicedNodeGetsAShareOfItsFrame:
+    """#2374: a sliced node's first rung is a share of the frame, not a budget."""
 
-    def test_the_first_rung_scales_with_the_slice_count(self) -> None:
-        whole = stream_ladder(1_000_000)["counts"][0]
-        sliced = stream_ladder(1_000_000, slices=6)["counts"][0]
-        assert sliced == 6 * whole
+    def test_first_paint_is_one_over_the_max_depth_of_the_resident_slice(
+        self,
+    ) -> None:
+        # The contract Loic ruled for. Checked as a SHARE, which is the quantity
+        # that predicts whether the opening frame is recognisable — and which is
+        # slice-invariant, so it holds at every stop count.
+        for total, stops in (
+            (1_153_506, 6),  # mouse_multiome
+            (1_151_006, 2),  # esm3
+            (4_485_810, 7),  # zebrahub
+            (3_000_000, 3),  # cellxgene
+            (6_248_730, 6),  # human_multiome
+        ):
+            rung0 = stream_ladder(total, slices=stops)["counts"][0]
+            resident = total / stops
+            assert rung0 / stops / resident == pytest.approx(
+                1 / SLICED_LADDER_MAX_DEPTH, rel=1e-3
+            )
 
-    def test_per_slice_payload_matches_the_unsliced_budget(self) -> None:
-        # The property the fix exists for: what lands for the coordinate on
-        # screen equals what an unsliced node gets, rather than 1/S of it.
-        budget = stream_ladder(1_000_000)["counts"][0]
-        for stops in (2, 3, 6, 7):
-            rung0 = stream_ladder(1_000_000, slices=stops)["counts"][0]
-            assert rung0 / stops == pytest.approx(budget)
+    def test_the_share_clears_the_viewer_side_floor_with_margin(self) -> None:
+        # The gate for #2374 fails a sliced node below 10% of its frame. Authored
+        # ladders must not sit on that boundary.
+        rung0 = stream_ladder(6_248_730, slices=6)["counts"][0]
+        assert rung0 / 6_248_730 > 0.10
+
+    def test_the_floor_needs_no_slice_term(self) -> None:
+        # `first_chunk/S >= share * (n/S)` cancels to `first_chunk >= share * n`,
+        # so the same total yields the same rung 0 at every stop count. This is
+        # why a demo gaining a dimension cannot regress its first paint.
+        counts = {
+            stream_ladder(4_485_810, slices=s)["counts"][0] for s in (2, 3, 6, 7, 50)
+        }
+        assert len(counts) == 1
 
     def test_default_is_unchanged_for_an_unsliced_node(self) -> None:
-        # Regression guard: every non-sliced caller must keep its ladder.
+        # Regression guard: every non-sliced caller must keep its ladder, so the
+        # ruling costs nothing on demos that are shown whole.
         assert (
             stream_ladder(1_000_000)["counts"]
             == stream_ladder(1_000_000, slices=1)["counts"]
         )
 
-    def test_lines_scales_the_string_form_too(self) -> None:
-        whole = stream_ladder(300_000, geometry="lines")["counts"]
-        sliced = stream_ladder(300_000, geometry="lines", slices=4)["counts"]
-        assert whole.startswith("stream:") and sliced.startswith("stream:")
-        assert int(sliced.split(":")[1]) == 4 * int(whole.split(":")[1])
+    def test_a_small_sliced_node_keeps_its_budget_ladder(self) -> None:
+        # The floor is a max(), so a node whose budget rung already exceeds
+        # n/L keeps the finer ladder rather than being coarsened to meet a share
+        # it already clears.
+        assert (
+            stream_ladder(200_000, slices=3)["counts"]
+            == stream_ladder(200_000)["counts"]
+        )
+
+    def test_lines_floors_the_string_form_too(self) -> None:
+        whole = int(stream_ladder(2_000_000, geometry="lines")["counts"].split(":")[1])
+        sliced = int(
+            stream_ladder(2_000_000, geometry="lines", slices=4)["counts"].split(":")[1]
+        )
+        assert sliced > whole
+        assert sliced == -(-2_000_000 // SLICED_LADDER_MAX_DEPTH)
 
     def test_a_huge_stop_count_cannot_exceed_the_commit_ceiling(self) -> None:
         # capped_stream_cuts clamps to its own ceiling, so a 500-stop node does
