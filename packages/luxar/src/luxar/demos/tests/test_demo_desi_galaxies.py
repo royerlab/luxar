@@ -1001,6 +1001,28 @@ class TestMainSceneReuse:
         with pytest.raises(RuntimeError, match="bad cache"):
             _demo.main()
 
+    def test_missing_manifest_payload_fault_does_not_trigger_catalog_build(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", False)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            _demo,
+            "ensure_dataset",
+            lambda name: (_ for _ in ()).throw(
+                FileNotFoundError(f"bad in-repo payload for {name}")
+            ),
+        )
+        monkeypatch.setattr(
+            _demo,
+            "_load_or_build_or_exit",
+            lambda: pytest.fail("payload faults must not route to catalog rebuild"),
+        )
+
+        with pytest.raises(FileNotFoundError, match="bad in-repo payload"):
+            _demo.main()
+
     def test_serve_only_checks_staleness_before_launch(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

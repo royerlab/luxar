@@ -124,6 +124,29 @@ def test_missing_explicit_cache_keeps_generation_guidance(
     assert "CENSUS_UMAP_CACHE=<cache>.npz" in output
 
 
+def test_manifest_payload_fault_does_not_recommend_regeneration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("CENSUS_UMAP_CACHE", raising=False)
+    monkeypatch.setattr(_demo, "parse_demo_flags", lambda: {"no_serve": True})
+    monkeypatch.setattr(
+        _demo,
+        "ensure_dataset",
+        lambda name: (_ for _ in ()).throw(
+            FileNotFoundError(f"bad in-repo payload for {name}")
+        ),
+    )
+    monkeypatch.setattr(
+        _demo,
+        "build_scene",
+        lambda *args, **kwargs: pytest.fail("payload faults must not build"),
+    )
+
+    with pytest.raises(FileNotFoundError, match="bad in-repo payload"):
+        _demo.main()
+
+
 def _write_synthetic_cache(path: Path, n: int = 200) -> Path:
     """Write an npz with exactly the keys ``load_cache`` reads.
 
