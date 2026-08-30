@@ -884,6 +884,8 @@ class TestMainSceneReuse:
     ) -> None:
         resolved = tmp_path / "resolved-scene.zip"
         resolved.write_bytes(b"manifest-resolved")
+        packaged = tmp_path / "packaged-scene.zip"
+        packaged.write_bytes(b"packaged-decoy")
         calls: list[tuple[str, object]] = []
 
         monkeypatch.setattr(_demo, "SERVE_ONLY", False)
@@ -893,13 +895,12 @@ class TestMainSceneReuse:
         monkeypatch.setattr(
             _demo,
             "SCENE_ZIP_SHIPPED",
-            tmp_path / "packaged-scene.zip",
+            packaged,
         )
         monkeypatch.setattr(
             _demo,
             "ensure_dataset",
             lambda name: calls.append(("ensure", name)) or [resolved],
-            raising=False,
         )
         monkeypatch.setattr(
             _demo,
