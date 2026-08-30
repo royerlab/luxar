@@ -476,10 +476,12 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
             characteristics["quality_quotable"] = True
         monkeypatch.setattr(gen, "load_characteristics", lambda: {key: characteristics})
 
-        problems, unread = gen._gaps({"datasets": {"movie": entry}})
+        manifest = {"datasets": {"movie": entry}}
+        problems, unread = gen._gaps(manifest)
 
         assert unread == []
         assert problems == ["movie/stack.gsplats.zarr.zip: no PSNR, foreground PSNR"]
+        assert gen._run_check(manifest) == 1
 
     def test_check_accepts_missing_scores_with_a_published_caveat(
         self, gen: Any, monkeypatch: pytest.MonkeyPatch
@@ -504,10 +506,12 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
             },
         )
 
-        problems, unread = gen._gaps({"datasets": {"movie": entry}})
+        manifest = {"datasets": {"movie": entry}}
+        problems, unread = gen._gaps(manifest)
 
         assert unread == []
         assert problems == []
+        assert gen._run_check(manifest) == 0
 
 
 class TestFiguresAreAbsentRatherThanInvented:
