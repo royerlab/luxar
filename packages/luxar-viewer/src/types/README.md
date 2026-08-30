@@ -521,7 +521,7 @@ import { type LODGroupMetadata, type LODGroupSelectorMode } from '../types/lod-g
 
 ### Partition Groups (`partition-group.ts`)
 
-A `Group` whose `kind === 'partition'` is a compile-time decomposition of one large geometry node (10M+ elements) into multiple smaller children for per-child frustum culling and per-child LOD. Unlike `kind === 'lod'`, **all children render simultaneously** (no per-frame selector), and all must resolve to the same `display_type` (homogeneity is mandatory).
+A `Group` whose `kind === 'partition'` is a compile-time decomposition of one large geometry node (10M+ elements) into multiple smaller children for per-child frustum culling and per-child LOD. A frustum-only selector hides spatial parts outside the camera, while **all in-frustum children render simultaneously**; unlike `kind === 'lod'`, it never substitutes one child for another. All children must resolve to the same `display_type` (homogeneity is mandatory).
 
 - **`PartitionGroupMetadata`** -- `{ type: 'group', kind: 'partition', display_type, max_elements, position_bounds?, ... }`. `position_bounds` is the union of the children's bounds so picking / framing / the scene-bounds cache can treat the layer as one entity. The loader matches the shape inline (`attrs.type === 'group' && attrs.kind === 'partition'`).
 

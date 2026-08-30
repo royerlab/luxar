@@ -1,5 +1,5 @@
 /**
- * Shared scaffolding for the per-geometry update loops in `updateView`.
+ * Partition visibility helpers and per-geometry update-loop scaffolding.
  *
  * Points / Lines / GSplats branches differ only in the type-specific
  * work (deriveNodeViewState, call loader.updateView, post-process,
@@ -14,6 +14,7 @@ import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { LoaderRegistry } from './loader-registry';
 import { isAbortError } from '../../loaders/abort-error';
 import { archiveFaultFrom, type ArchiveFaultError } from '../../../cache/chunk-source';
+import type * as THREE from 'three';
 
 const NOOP_SESSION: UpdateSession = {
   begin: () => NOOP_SESSION,
@@ -22,11 +23,29 @@ const NOOP_SESSION: UpdateSession = {
   markSkipped: () => {},
 };
 
+/** Whether a loader path and every ancestor partition part are frustum-visible. */
+export function isPartitionPathVisible(root: THREE.Object3D | null, path: string): boolean {
+  let object: THREE.Object3D | null | undefined = root?.getObjectByName(path);
+  while (object) {
+    if (object.userData.partitionFrustumVisible === false) return false;
+    object = object.parent;
+  }
+  return true;
+}
+
+/** Copy loaders whose paths are not nested below a culled partition part. */
+export function filterPartitionVisibleLoaders<TLoader>(
+  root: THREE.Object3D | null,
+  loaders: Map<string, TLoader>
+): Map<string, TLoader> {
+  return new Map([...loaders].filter(([path]) => isPartitionPathVisible(root, path)));
+}
+
 /**
  * Run a per-loader update task for every entry in `loaders`, recording
  * failures into `failedLoaders` and forgetting the predictive-prefetch
- * baseline for failed paths. Archive faults are excluded from that bookkeeping
- * and reported once after every task has settled.
+ * baseline for failed or frustum-skipped paths. Archive faults are excluded
+ * from that bookkeeping and reported once after every task has settled.
  */
 export async function runLoaderUpdates<TLoader, TStaged>(
   loaders: Map<string, TLoader>,
@@ -36,6 +55,7 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     profiler: UpdateProfiler | null;
     viewStateQueue: ViewStateQueue;
     registry: Pick<LoaderRegistry, 'failedLoaders' | 'recordFailure'>;
+    shouldUpdatePath?: (path: string) => boolean;
     /** Called at most once per sweep, after Promise.all, with the first archive fault. */
     onArchiveFault: (fault: ArchiveFaultError) => void;
   }
@@ -49,6 +69,11 @@ export async function runLoaderUpdates<TLoader, TStaged>(
     const session = ctx.profiler
       ? ctx.profiler.beginTopLevel(`${loaderType} (${path})`)
       : NOOP_SESSION;
+    if (ctx.shouldUpdatePath?.(path) === false) {
+      session.markSkipped('partition part outside camera frustum');
+      ctx.viewStateQueue.forgetPath(path);
+      return { staged: null, session };
+    }
     try {
       const staged = await updateFn(path, loader, session);
       return { staged, session };

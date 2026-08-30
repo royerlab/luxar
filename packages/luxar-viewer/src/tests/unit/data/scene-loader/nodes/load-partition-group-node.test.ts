@@ -2,9 +2,9 @@
  * Tests for ``loadPartitionGroupNode``.
  *
  * Strategy: the Partition loader recurses children through ``loadSceneNodes``
- * but has no per-frame state to register (no LOD-style selector). We
- * mock ``loadSceneNodes`` to attach a stub mesh per child, then assert
- * on the THREE-tree shape.
+ * and registers validated child bounds for frustum-only selection. We mock
+ * ``loadSceneNodes`` to attach a stub mesh per child, then assert on the
+ * THREE-tree shape and registry entry.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -80,6 +80,13 @@ function makeCtx(): NodeBuildCtx {
   // reads it (a partition group has no per-frame level selection to make), so
   // there is no registry path here either to exercise or to stub.
   return makeTestNodeBuildCtx({ nodeFactory });
+}
+
+function makeRegistryCtx(registerPartition: ReturnType<typeof vi.fn>): NodeBuildCtx {
+  return makeTestNodeBuildCtx({
+    nodeFactory: { applyTransform: vi.fn() } as unknown as NodeBuildCtx['nodeFactory'],
+    lodGroupRegistry: { registerPartition } as unknown as NodeBuildCtx['lodGroupRegistry'],
+  });
 }
 
 function makeStubLoc() {
@@ -179,6 +186,106 @@ describe('loadPartitionGroupNode', () => {
       '/partition/part_1',
       '/partition/part_2',
     ]);
+  });
+
+  it('registers validated part bounds by child_index for frustum selection', async () => {
+    attachStubChildren();
+    const registerPartition = vi.fn();
+    const children = [
+      makePartNode('/partition/part_1', 'points', {
+        child_index: 1,
+        position_bounds: { min: [10, 20], max: [11, 21] },
+      }),
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [0, 1], max: [2, 3] },
+      }),
+    ];
+
+    const wrapper = await loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeRegistryCtx(registerPartition),
+      loadSceneNodesMock
+    );
+
+    expect(registerPartition).toHaveBeenCalledOnce();
+    const entry = registerPartition.mock.calls[0][0];
+    expect(entry.path).toBe('/partition');
+    expect(entry.groupObject).toBe(wrapper);
+    expect(
+      entry.children.map((child: { positionBounds: unknown }) => child.positionBounds)
+    ).toEqual([
+      { min: [0, 1], max: [2, 3] },
+      { min: [10, 20], max: [11, 21] },
+    ]);
+    expect(
+      entry.children.map((child: { object: THREE.Object3D }) => child.object.userData.partIndex)
+    ).toEqual([0, 1]);
+  });
+
+  it('skips registry attachment when a part produces no scene object', async () => {
+    const registerPartition = vi.fn();
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const children = [
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [0, 0], max: [1, 1] },
+      }),
+      makePartNode('/partition/part_1', 'points', {
+        child_index: 1,
+        position_bounds: { min: [2, 2], max: [3, 3] },
+      }),
+    ];
+    loadSceneNodesMock.mockImplementation(async (child: SceneNode, parentThree: THREE.Object3D) => {
+      if (child === children[0]) {
+        const object = new THREE.Group();
+        object.name = child.path;
+        parentThree.add(object);
+      }
+    });
+
+    await loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeRegistryCtx(registerPartition),
+      loadSceneNodesMock
+    );
+
+    expect(registerPartition).not.toHaveBeenCalled();
+    expect(warningSpy).toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      expect.stringContaining('/partition: one or more parts produced no scene object')
+    );
+  });
+
+  it('warns when invalid part bounds disable frustum selection', async () => {
+    attachStubChildren();
+    const registerPartition = vi.fn();
+    const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const children = [
+      makePartNode('/partition/part_0', 'points', {
+        child_index: 0,
+        position_bounds: { min: [0, 0], max: [1, 1] },
+      }),
+      makePartNode('/partition/part_1', 'points', { child_index: 1 }),
+    ];
+
+    await loadPartitionGroupNode(
+      makePartitionGroupNode(children),
+      new THREE.Group(),
+      makeStubLoc(),
+      makeRegistryCtx(registerPartition),
+      loadSceneNodesMock
+    );
+
+    expect(registerPartition).not.toHaveBeenCalled();
+    expect(warningSpy).toHaveBeenCalledWith(
+      Modules.SCENE_LOADER,
+      expect.stringContaining('/partition: part bounds are missing, invalid, or inconsistent')
+    );
   });
 
   it('loads parts with bounded concurrency while preserving authored order and indices', async () => {
@@ -297,7 +404,7 @@ describe('loadPartitionGroupNode', () => {
     expect(wrapper.children.map((child) => child.userData.partIndex)).toEqual([7, 7, 3, 3]);
   });
 
-  it('all children stay visible after load (no LOD-style selector)', async () => {
+  it('all children start visible before the first frustum evaluation', async () => {
     attachStubChildren();
     const ctx = makeCtx();
     const node = makePartitionGroupNode([

@@ -41,10 +41,10 @@ export interface LODProgressProviderDeps {
   lodGroupRegistry: LODGroupRegistry | null;
   /**
    * Snapshot of partition groups (`{ path, partCount }`) captured at scene
-   * build. Partition groups are static `THREE.Group`s with no per-frame
-   * selector, so a one-time snapshot is sufficient — they surface in the
-   * monitor's scene-graph summary as `kind:'partition'` states. Empty/omitted
-   * for scenes without partitions.
+   * build. A partition's frustum selector changes child visibility, not its
+   * structural part count, so a one-time snapshot is sufficient — groups
+   * surface in the monitor's scene-graph summary as `kind:'partition'` states.
+   * Empty/omitted for scenes without partitions.
    */
   partitionGroups?: ReadonlyArray<{ path: string; partCount: number }>;
 }
@@ -99,8 +99,8 @@ export function createLODProgressProvider(deps: LODProgressProviderDeps): LODPro
         }
       }
 
-      // Partition groups: static spatial subdivisions (all parts render at
-      // once). A one-time snapshot of part counts — no per-frame state.
+      // Partition groups: the structural part count is static even though
+      // per-frame frustum selection may hide individual parts.
       for (const part of deps.partitionGroups ?? []) {
         out.set(part.path, { kind: 'partition', partCount: part.partCount });
       }
