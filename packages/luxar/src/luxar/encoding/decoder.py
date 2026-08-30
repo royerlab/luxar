@@ -550,14 +550,14 @@ def decode_coordinate_columns(
         or low.shape[0] != column_count
     ):
         raise ValueError(f"malformed {name} coordinate encoding")
-    selected_low = low[list(columns)]
-    selected_high = high[list(columns)]
     if not (
-        np.all(np.isfinite(selected_low))
-        and np.all(np.isfinite(selected_high))
-        and np.all(selected_high >= selected_low)
+        np.all(np.isfinite(low))
+        and np.all(np.isfinite(high))
+        and np.all(high >= low)
     ):
         raise ValueError(f"malformed {name} coordinate encoding")
+    selected_low = low[list(columns)]
+    selected_high = high[list(columns)]
     decoded = selected_low + selected.astype(np.float64) / ((1 << bits) - 1) * (
         selected_high - selected_low
     )

@@ -1846,6 +1846,14 @@ def _validate_worker_axes(axes_list: Optional[List[str]]) -> None:
         )
 
 
+def _validate_merge_recipe_before_planning(
+    merge: MergeConfig, merge_recipe_args: Optional[dict]
+) -> None:
+    """Run size-independent merge validation before discovery side effects."""
+    if merge_recipe_args is None:
+        resolve_merge_recipe_args(merge, resolve_target_ms=False)
+
+
 def plan_batch(
     *,
     input_path: Path,
@@ -1911,8 +1919,7 @@ def plan_batch(
 
     fit_args, denoise_mode, _ = _assemble_fit_args(fit, denoise)
     _validate_content_fit_flags(tiling, fit_args)
-    if merge_recipe_args is None:
-        resolve_merge_recipe_args(merge, resolve_target_ms=False)
+    _validate_merge_recipe_before_planning(merge, merge_recipe_args)
     denoised_zarr_path = None
     if denoise_mode == "preprocess":
         denoised_zarr_path = str(output_dir.resolve() / "denoised.zarr")

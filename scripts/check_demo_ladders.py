@@ -110,7 +110,7 @@ def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
 
 
 def _first_rung_histogram(leaf: Any) -> Counter[tuple[object, ...]] | None:
-    """Histogram one sliced leaf's rung 0 by encoded hidden coordinate."""
+    """Histogram one sliced leaf's rung 0 by decoded hidden coordinate."""
     attrs = dict(leaf.attrs)
     if int(attrs.get("n_additive_sublods", 1) or 1) <= 1:
         return None
