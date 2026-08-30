@@ -244,6 +244,7 @@ class TestTheRecipeConstantsMatchTheRecordedRun:
         rng = np.random.default_rng(0)
         frame = rng.normal(104.0, 2.0, (32, 32)).astype(np.float32)
         frame[12:16, 12:16] += 400.0
+        assert np.all(frame > 0.0)
         upper = np.percentile(frame, demo.BACKGROUND_FLOOR_HISTOGRAM_PERCENTILE)
         background = frame[frame <= upper]
         histogram, edges = np.histogram(
