@@ -7530,8 +7530,17 @@ class TestFlattenCommand:
 
         load_module = importlib.import_module("luxar.gsplats.io.load_gsplats")
 
+        source = GSplatData.load(medium_gsplats)
+        colored = GSplatData(
+            centers=source.centers,
+            amplitudes=source.amplitudes,
+            cholesky_factors=source.cholesky_factors,
+            colors=np.arange(source.n_splats * 3, dtype=np.uint8).reshape(-1, 3),
+        )
+        colored_path = tmp_path / "colored.gsplats.zarr"
+        colored.save(colored_path)
         part = tmp_path / "part.gsplats.zarr"
-        total = self._make_partition(runner, medium_gsplats, part)
+        total = self._make_partition(runner, colored_path, part)
         expected_node, _ = load_module.load_gsplat_node(part)
         expected = GSplatData.from_default_selection(expected_node).flattened()
 
@@ -7543,11 +7552,13 @@ class TestFlattenCommand:
         )
         real_read = gsplat_tree.read_gsplat_node
         largest_read = 0
+        total_read = 0
 
         def tracked_read(*args: Any, **kwargs: Any) -> Any:
-            nonlocal largest_read
+            nonlocal largest_read, total_read
             node = real_read(*args, **kwargs)
             largest_read = max(largest_read, node.n_splats)
+            total_read += node.n_splats
             return node
 
         monkeypatch.setattr(gsplat_tree, "read_gsplat_node", tracked_read)
@@ -7556,6 +7567,7 @@ class TestFlattenCommand:
         result = runner.invoke(app, ["gsplat", "flatten", str(part), str(flat)])
         assert result.exit_code == 0, result.stdout
         assert largest_read < total
+        assert total_read == total
         monkeypatch.setattr(load_module, "load_gsplat_node", real_load_node)
 
         actual = GSplatData.load(flat)
@@ -7572,9 +7584,76 @@ class TestFlattenCommand:
             actual.cholesky_factors[actual_order],
             expected.cholesky_factors[expected_order],
         )
+        np.testing.assert_array_equal(
+            actual.colors[actual_order], expected.colors[expected_order]
+        )
         root = zc_open_group(str(flat), mode="r")
         assert root.attrs["ordering"] == "hilbert"
         assert root["chunk_bounds"].shape[0] >= 1
+
+    @pytest.mark.skipif(
+        not Path("/proc/self/smaps_rollup").exists(),
+        reason="anonymous-memory accounting requires Linux procfs",
+    )
+    def test_flatten_peak_anonymous_memory_is_bounded(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Flatten stays well below the resident cost of a whole-tree concat."""
+        import gc
+        import threading
+        import time
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(23)
+        n_splats = 400_000
+        source = tmp_path / "source.gsplats.zarr"
+        GSplatData(
+            centers=rng.normal(size=(n_splats, 3)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_splats, 1),
+            ),
+        ).save(source)
+        partition = tmp_path / "partition.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "partition", str(source), str(partition), "--parts", "8"],
+        )
+        assert result.exit_code == 0, result.stdout
+
+        def anonymous_bytes() -> int:
+            for line in Path("/proc/self/smaps_rollup").read_text().splitlines():
+                if line.startswith("Anonymous:"):
+                    return int(line.split()[1]) * 1024
+            raise AssertionError("Anonymous total missing from smaps_rollup")
+
+        gc.collect()
+        baseline = anonymous_bytes()
+        samples = [baseline]
+        stop = threading.Event()
+
+        def sample_memory() -> None:
+            while not stop.wait(0.01):
+                samples.append(anonymous_bytes())
+
+        sampler = threading.Thread(target=sample_memory, daemon=True)
+        sampler.start()
+        try:
+            flat = tmp_path / "flat.gsplats.zarr"
+            result = runner.invoke(
+                app, ["gsplat", "flatten", str(partition), str(flat)]
+            )
+        finally:
+            stop.set()
+            sampler.join()
+            time.sleep(0)
+        assert result.exit_code == 0, result.stdout
+
+        flat_payload_bytes = n_splats * (3 * 4 + 4 + 6 * 4)
+        peak_delta = max(samples) - baseline
+        assert peak_delta < flat_payload_bytes * 2.5
 
     def test_flatten_preserves_barrier_chunk_layout(
         self, runner: CliRunner, tmp_path: Path

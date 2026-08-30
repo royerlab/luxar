@@ -190,12 +190,14 @@ def run_flatten_dataset(
             read_gsplat_root_stats,
         )
         from luxar.gsplats.io.save_gsplats import (
+            StreamingSplatSetMetadata,
             split_fitting_info,
             write_flat_leaf_streaming,
         )
         from luxar.gsplats.tree import GSplatLeaf
         from luxar.io._compiler.gsplat_tree import read_gsplat_node
         from luxar.io.ordering import sort_splats_spatial
+        from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
         if output_path.exists() and not overwrite:
             aprint(f"❌ Error: {output_path} exists; pass --overwrite to replace it.")
@@ -243,6 +245,31 @@ def run_flatten_dataset(
                     leaf_paths = [leaf_paths[int(index)] for index in order]
 
                 barrier_dims = _resolve_barrier_dims(root, leaf_paths, stats)
+                splat_set_metadata = []
+                for leaf_path in leaf_paths:
+                    for group in _leaf_splat_groups(root, leaf_path):
+                        color_dtype = None
+                        color_channels = 0
+                        if "colors" in group:
+                            colors = group["colors"]
+                            encoding = colors.attrs.get("encoding", {})
+                            color_dtype = np.dtype(
+                                encoding.get("original_dtype", colors.dtype)
+                            )
+                            color_channels = int(colors.shape[1])
+                        splat_set_metadata.append(
+                            StreamingSplatSetMetadata(
+                                n_splats=int(group.attrs["n_splats"]),
+                                ndim=int(group.attrs["ndim"]),
+                                truncation_radius=float(
+                                    group.attrs.get(
+                                        "truncation_radius", DEFAULT_TRUNCATION_RADIUS
+                                    )
+                                ),
+                                color_channels=color_channels,
+                                color_dtype=color_dtype,
+                            )
+                        )
 
                 def splat_sets() -> Iterator[Any]:
                     for leaf_path in leaf_paths:
@@ -267,6 +294,7 @@ def run_flatten_dataset(
                     n_splats = write_flat_leaf_streaming(
                         output_path,
                         splat_sets,
+                        splat_set_metadata=splat_set_metadata,
                         encoding_mode=encoding_mode_obj,
                         compress=compress,
                         fitting_info=fitting,

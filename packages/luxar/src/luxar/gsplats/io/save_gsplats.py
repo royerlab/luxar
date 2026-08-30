@@ -21,6 +21,7 @@ import os
 import shutil
 import tempfile
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -63,6 +64,17 @@ from luxar.typing_utils._format_contract import (
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.utils.arbol_warnings import arbol_warnings
 from luxar.utils.paths import normalize_zarr_path
+
+
+@dataclass(frozen=True)
+class StreamingSplatSetMetadata:
+    """Metadata needed to size a streamed flat-leaf write without decoding it."""
+
+    n_splats: int
+    ndim: int
+    truncation_radius: float
+    color_channels: int = 0
+    color_dtype: Optional[np.dtype[Any]] = None
 
 
 # Get luxar.gsplats version — the subpackage has no own __version__, so fall
@@ -866,6 +878,7 @@ def write_flat_leaf_streaming(
     path: str | Path,
     splat_sets: Callable[[], Iterator["AdditiveSubLOD"]],
     *,
+    splat_set_metadata: Sequence[StreamingSplatSetMetadata],
     encoding_mode: EncodingMode = EncodingMode.PRECISION,
     fitting_info: Optional[Dict[str, Any]] = None,
     fitting_config: Optional[Dict[str, Any]] = None,
@@ -878,7 +891,7 @@ def write_flat_leaf_streaming(
     compress: Optional[Literal["zip", "tar.gz"]] = None,
     zip_deflate: bool = True,
 ) -> int:
-    """Write one flat leaf from a replayable stream, holding one set in memory.
+    """Write one flat leaf from a stream, holding one decoded set in memory.
 
     The decoded source sets are spatially ordered independently and concatenated
     into disk-backed staging arrays. The final leaf therefore has a piecewise
@@ -886,11 +899,10 @@ def write_flat_leaf_streaming(
     writer. The canonical array writer still owns the on-disk encoding, chunk
     layout, metadata, appearance defaults, and format stamps.
 
-    ``splat_sets`` is consumed twice: once to validate the flat-shape contract
-    and size the staging arrays, then once to populate them. Callers must return
-    a fresh iterator each time. Streaming currently requires precision encoding;
-    auto/memory need whole-array encoding analysis and would defeat the memory
-    bound this entry point exists to provide.
+    ``splat_set_metadata`` sizes the staging arrays without decoding source data;
+    ``splat_sets`` is consumed exactly once to populate them. Streaming currently
+    requires precision encoding; auto/memory need whole-array encoding analysis
+    and would defeat the memory bound this entry point exists to provide.
     """
     if encoding_mode != EncodingMode.PRECISION:
         raise ValueError(
@@ -902,11 +914,11 @@ def write_flat_leaf_streaming(
     from luxar.gsplats.utils.trils import tril_size
     from luxar.io._compiler.gsplat_assembly import (
         apply_gsplat_group_attrs,
-        apply_gsplat_spatial_ordering,
         resolve_gsplat_chunk_size,
         write_gsplat_arrays,
     )
     from luxar.io._ordering.gsplats import compute_chunk_bounds_gsplats
+    from luxar.io.ordering import detect_barrier_dims, sort_splats_spatial
 
     n_splats = 0
     ndim: Optional[int] = None
@@ -915,27 +927,27 @@ def write_flat_leaf_streaming(
     color_dtypes: set[np.dtype[Any]] = set()
     any_colors = False
     any_missing_colors = False
-    for sublod in splat_sets():
+    for stream_metadata in splat_set_metadata:
         if ndim is None:
-            ndim = sublod.ndim
-            truncation_radius = float(sublod.truncation_radius)
-        elif sublod.ndim != ndim:
+            ndim = stream_metadata.ndim
+            truncation_radius = float(stream_metadata.truncation_radius)
+        elif stream_metadata.ndim != ndim:
             raise ValueError(
                 f"streamed splat sets must share one dimensionality; got {ndim}D "
-                f"and {sublod.ndim}D"
+                f"and {stream_metadata.ndim}D"
             )
-        elif float(sublod.truncation_radius) != truncation_radius:
+        elif float(stream_metadata.truncation_radius) != truncation_radius:
             raise ValueError(
                 "streamed splat sets must share one truncation_radius; got "
-                f"{truncation_radius} and {sublod.truncation_radius}"
+                f"{truncation_radius} and {stream_metadata.truncation_radius}"
             )
-        n_splats += sublod.n_splats
-        if sublod.colors is None:
+        n_splats += stream_metadata.n_splats
+        if stream_metadata.color_dtype is None:
             any_missing_colors = True
         else:
             any_colors = True
-            color_channels = max(color_channels, int(sublod.colors.shape[1]))
-            color_dtypes.add(sublod.colors.dtype)
+            color_channels = max(color_channels, stream_metadata.color_channels)
+            color_dtypes.add(stream_metadata.color_dtype)
 
     if ndim is None or n_splats == 0:
         raise ValueError("write_flat_leaf_streaming: no non-empty splat sets to write")
@@ -945,7 +957,7 @@ def write_flat_leaf_streaming(
     temp_dir, zarr_path = _resolve_zarr_path(path, compress)
     if temp_dir is None:
         zarr_path = _tmp_sibling(path)
-    stage_parent = temp_dir if temp_dir is not None else path.parent
+    stage_parent = path.parent
 
     try:
         with tempfile.TemporaryDirectory(
@@ -990,25 +1002,46 @@ def write_flat_leaf_streaming(
             )
 
             dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
-            ordering_ctx = make_ordering_ctx("hilbert")
+            chunk_size = resolve_gsplat_chunk_size(n_splats, ndim)
             offset = 0
             ordering_template: Optional[Dict[str, Any]] = None
-            for sublod in splat_sets():
-                ordered = apply_gsplat_spatial_ordering(
+            ordering_min: Optional[np.ndarray] = None
+            ordering_max: Optional[np.ndarray] = None
+            chunk_bounds: list[np.ndarray] = []
+            next_chunk_stop = chunk_size
+            cholesky_reference: Optional[np.ndarray] = None
+            cholesky_is_uniform = True
+            resolved_slice_dims = (
+                list(barrier_dims) if barrier_dims is not None else None
+            )
+            stream = iter(splat_sets())
+            for stream_metadata in splat_set_metadata:
+                try:
+                    sublod = next(stream)
+                except StopIteration as exc:
+                    raise ValueError(
+                        "splat_sets ended before splat_set_metadata"
+                    ) from exc
+                if (
+                    sublod.n_splats != stream_metadata.n_splats
+                    or sublod.ndim != stream_metadata.ndim
+                    or float(sublod.truncation_radius)
+                    != stream_metadata.truncation_radius
+                ):
+                    raise ValueError("streamed splat set does not match its metadata")
+                if resolved_slice_dims is None:
+                    resolved_slice_dims = detect_barrier_dims(sublod.centers)
+
+                sort_indices, meta = sort_splats_spatial(
                     sublod.centers,
-                    sublod.amplitudes,
-                    sublod.cholesky_factors,
-                    sublod.colors,
-                    sublod.n_splats,
-                    sublod.ndim,
-                    False,
-                    ordering_ctx,
-                    coverage_sigma=float(sublod.truncation_radius),
-                    barrier_dims=barrier_dims,
-                    dataset_ctx=dataset_ctx,
+                    method="hilbert",
+                    slice_dims=resolved_slice_dims,
                 )
-                part_centers, part_amplitudes, part_cholesky, part_colors, meta, _ = (
-                    ordered
+                part_centers = sublod.centers[sort_indices]
+                part_amplitudes = sublod.amplitudes[sort_indices]
+                part_cholesky = sublod.cholesky_factors[sort_indices]
+                part_colors = (
+                    sublod.colors[sort_indices] if sublod.colors is not None else None
                 )
                 stop = offset + sublod.n_splats
                 centers[offset:stop] = part_centers
@@ -1032,54 +1065,92 @@ def write_flat_leaf_streaming(
                         if color_channels == 4 and normalized.shape[1] == 3:
                             normalized = widen_colors_to_rgba(normalized)
                     colors[offset:stop] = normalized
-                if meta is not None:
-                    if ordering_template is None:
-                        ordering_template = meta
-                    elif meta.get("slice_dims") != ordering_template.get(
-                        "slice_dims"
-                    ) or meta.get("ordering_dims") != ordering_template.get(
-                        "ordering_dims"
-                    ):
-                        raise ValueError(
-                            "streamed splat sets resolved inconsistent ordering axes"
-                        )
+                if ordering_template is None:
+                    ordering_template = meta
+                    ordering_dims = list(meta.get("ordering_dims", []))
+                    ordering_min = np.full(len(ordering_dims), np.inf)
+                    ordering_max = np.full(len(ordering_dims), -np.inf)
+                ordering_dims = list(ordering_template.get("ordering_dims", []))
+                assert ordering_min is not None and ordering_max is not None
+                for index, dim in enumerate(ordering_dims):
+                    ordering_min[index] = min(
+                        ordering_min[index], float(np.min(part_centers[:, dim]))
+                    )
+                    ordering_max[index] = max(
+                        ordering_max[index], float(np.max(part_centers[:, dim]))
+                    )
+
+                if cholesky_reference is None:
+                    cholesky_reference = part_cholesky[0].copy()
+                if cholesky_is_uniform:
+                    for start in range(0, len(part_cholesky), 65_536):
+                        block = part_cholesky[start : start + 65_536]
+                        if not np.all(block == cholesky_reference):
+                            cholesky_is_uniform = False
+                            break
+
                 offset = stop
+                while next_chunk_stop <= offset:
+                    chunk_start = next_chunk_stop - chunk_size
+                    chunk_bounds.append(
+                        compute_chunk_bounds_gsplats(
+                            centers[chunk_start:next_chunk_stop],
+                            cholesky[chunk_start:next_chunk_stop],
+                            chunk_size,
+                            coverage_sigma=float(truncation_radius),
+                            slice_dims=resolved_slice_dims,
+                        )[0]
+                    )
+                    next_chunk_stop += chunk_size
                 del sublod, part_centers, part_amplitudes, part_cholesky, part_colors
                 if colors is not None:
                     del normalized
 
+            try:
+                next(stream)
+            except StopIteration:
+                pass
+            else:
+                raise ValueError("splat_sets yielded more entries than its metadata")
+
+            chunk_start = next_chunk_stop - chunk_size
+            if offset > chunk_start:
+                chunk_bounds.append(
+                    compute_chunk_bounds_gsplats(
+                        centers[chunk_start:offset],
+                        cholesky[chunk_start:offset],
+                        offset - chunk_start,
+                        coverage_sigma=float(truncation_radius),
+                        slice_dims=resolved_slice_dims,
+                    )[0]
+                )
+
             assert ordering_template is not None
+            assert ordering_min is not None and ordering_max is not None
+            assert resolved_slice_dims is not None
             centers.flush()
             amplitudes.flush()
             cholesky.flush()
             if colors is not None:
                 colors.flush()
 
-            chunk_size = resolve_gsplat_chunk_size(n_splats, ndim)
             ordering_dims = list(ordering_template.get("ordering_dims", []))
             ordering_bits_per_dim = (
                 min(21, 64 // len(ordering_dims)) if ordering_dims else 21
             )
             ordering_data = {
                 "ordering": "hilbert",
-                "ordering_min": np.min(centers[:, ordering_dims], axis=0).tolist(),
-                "ordering_max": np.max(centers[:, ordering_dims], axis=0).tolist(),
+                "ordering_min": ordering_min.tolist(),
+                "ordering_max": ordering_max.tolist(),
                 "ordering_bits_per_dim": ordering_bits_per_dim,
                 "chunk_size": chunk_size,
-                "slice_dims": list(ordering_template.get("slice_dims", [])),
+                "slice_dims": list(resolved_slice_dims),
                 "ordering_dims": ordering_dims,
-                "chunk_bounds": compute_chunk_bounds_gsplats(
-                    centers,
-                    cholesky,
-                    chunk_size,
-                    coverage_sigma=float(truncation_radius),
-                    slice_dims=ordering_template.get("slice_dims", []),
-                ),
+                "chunk_bounds": np.stack(chunk_bounds),
             }
 
             store = open_store(zarr_path, mode="w")
             root = create_root_group(store, overwrite=True)
-            cholesky_is_uniform = bool(np.all(cholesky == cholesky[0]))
             metadata = write_gsplat_arrays(
                 root,
                 centers,
