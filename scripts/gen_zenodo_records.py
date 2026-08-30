@@ -23,9 +23,10 @@ retain their own provenance note after a later pinned archive read supplies that
 digest.
 
 ``quality_note`` is internal provenance and is never rendered. ``quality_caveat``
-is reader-facing text rendered next to an absent figure. ``unmeasured_reason`` is
-written by ``--refresh`` when a local file exists but is not the pinned artifact
-and no committed measurement survives that rejected read.
+is reader-facing text rendered next to an absent quality figure and tells
+``--check`` that the absence is explained. ``unmeasured_reason`` is written by
+``--refresh`` when a local file exists but is not the pinned artifact and no
+committed measurement survives that rejected read.
 
 This script NEVER talks to Zenodo. It writes markdown for a human to paste into
 a draft, and publication stays a manual act.
@@ -696,8 +697,9 @@ def refresh_characteristics(
                     "a later pinned archive read may supply the digest while "
                     "retaining those source-derived figures. "
                     "quality_note is internal provenance; quality_caveat is "
-                    "published beside an absent figure. unmeasured_reason records "
-                    "why refresh deliberately withheld measurements."
+                    "published beside an absent quality figure and tells --check "
+                    "that the absence is explained. unmeasured_reason records why "
+                    "refresh deliberately withheld measurements."
                 ),
                 "archives": archives,
             },
@@ -1071,7 +1073,8 @@ def _gaps(manifest: dict[str, Any]) -> GapResult:
                 ("splats", row["splats"]),
                 ("compression", row["vs_raw"]),
             ]
-            if row["quality_quotable"] is not False:
+            # A published caveat explains absent quality figures, not other gaps.
+            if row["quality_quotable"] is not False and not row["caveat"]:
                 expected[1:1] = [
                     ("PSNR", row["psnr"]),
                     ("foreground PSNR", row["fg_psnr"]),
