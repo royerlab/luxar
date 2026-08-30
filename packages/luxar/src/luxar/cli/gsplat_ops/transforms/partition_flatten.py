@@ -124,16 +124,19 @@ def _detect_barrier_dims_across_groups(
     for group in splat_groups:
         centers = np.asarray(decoder.decode(group["centers"], root))
         n_splats += len(centers)
-        for dim in range(ndim):
-            if not integer_axes[dim]:
-                continue
-            rounded = np.rint(centers[:, dim])
-            if not np.allclose(centers[:, dim], rounded):
-                integer_axes[dim] = False
-                distinct[dim].clear()
-                continue
-            if len(distinct[dim]) <= max_cardinality:
-                distinct[dim].update(float(value) for value in np.unique(rounded))
+        for start in range(0, len(centers), 65_536):
+            block = centers[start : start + 65_536]
+            for dim in range(ndim):
+                if not integer_axes[dim] or len(distinct[dim]) > max_cardinality:
+                    continue
+                rounded = np.rint(block[:, dim])
+                if not np.allclose(block[:, dim], rounded):
+                    integer_axes[dim] = False
+                    distinct[dim].clear()
+                    continue
+                remaining = max_cardinality + 1 - len(distinct[dim])
+                unique = np.unique(rounded)
+                distinct[dim].update(float(value) for value in unique[:remaining])
         del centers
     return tuple(
         dim

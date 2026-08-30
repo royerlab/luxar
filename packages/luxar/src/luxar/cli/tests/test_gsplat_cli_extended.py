@@ -7771,10 +7771,10 @@ class TestFlattenCommand:
             expected_bounds[:, 3, 1] - expected_bounds[:, 3, 0],
         )
 
-    def test_flatten_detects_barrier_across_small_partition_leaves(
+    def test_flatten_detects_barrier_across_stale_empty_stamps(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Global detection recovers a barrier missed by undersized leaves."""
+        """Global detection recovers a barrier from stale per-leaf empty stamps."""
         from luxar.encoding import EncodingMode
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
