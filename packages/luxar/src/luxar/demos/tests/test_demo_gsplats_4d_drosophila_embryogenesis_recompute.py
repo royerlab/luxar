@@ -230,6 +230,9 @@ def test_recompute_requires_source_and_invokes_exact_cli_paths(
     final = work_dir / demo.REBUILT_FILENAME
     assert result == final
     assert fit_marker.is_dir()
+    assert not culled.exists()
+    assert not scaled.exists()
+    assert not final.exists()
     assert calls == [
         (
             "gsplat",

@@ -443,13 +443,13 @@ def _validate_splat_count(got: int) -> None:
     if drift >= SPLAT_COUNT_TOLERANCE:
         raise RuntimeError(
             f"rebuilt {got:,} splats against a recorded {EXPECTED_SPLATS:,} "
-            f"({drift:.2%} drift). Over 1% means the recipe changed, not cull "
-            f"noise -- check the source, fit settings, and cumulative retention."
+            f"({drift:.2%} drift). Over 1% means the recipe changed -- check "
+            f"the source, fit settings, and recorded amplitude cutoff."
         )
 
 
 def recompute_archive(work_dir: Path) -> Path:
-    """Refit, cull, physically scale, and re-chunk the 500-frame archive."""
+    """Refit, filter, physically scale, and re-chunk the 500-frame archive."""
     with asection("Recomputing the Drosophila embryogenesis archive"):
         if SOURCE_ARG is None:
             raise SystemExit(
