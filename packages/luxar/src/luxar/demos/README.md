@@ -562,7 +562,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run human_multiome_peak_umap`
 
-**Requires**: Local parquet data file and the `pandas` package.
+**Requires**: The ~34 MB coords parquet is resolved through the dataset manifest (cache → in-repo Git LFS → Zenodo); no manual data file is needed.
 
 **Demonstrates**: Large-scale single-cell visualization (~1M points), multiple categorical attributes (cell type, lineage, timepoint, peak type, chromosome), ATAC-seq chromatin accessibility data.
 
@@ -573,7 +573,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run mouse_multiome_peak_umap`
 
-**Requires**: Local parquet data file and the `pandas` package.
+**Requires**: The ~7 MB coords parquet is resolved through the dataset manifest (cache → in-repo Git LFS → Zenodo); no manual data file is needed.
 
 **Demonstrates**: Single-cell ATAC-seq visualization, embryonic developmental timepoints, multiple categorical attribute navigation, lineage-based coloring.
 
