@@ -19,6 +19,8 @@ from typing import Any
 
 import pytest
 
+from luxar.demos.demo_gsplats_4d_h2afva_timelapse import PARENT_FINEST_SPLATS
+
 #: .../packages/luxar/src/luxar/demos/tests/this_file.py -> repo root is 6 up.
 _SCRIPT = Path(__file__).resolve().parents[6] / "scripts" / "gen_zenodo_records.py"
 
@@ -483,14 +485,67 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
             characteristics["quality_quotable"] = True
         monkeypatch.setattr(gen, "load_characteristics", lambda: {key: characteristics})
 
-        problems, unread, unreadable, inaccessible = gen._gaps(
-            {"datasets": {"movie": entry}}
+        manifest = {"datasets": {"movie": entry}}
+        problems, *_ = gen._gaps(manifest)
+
+        assert problems == ["movie/stack.gsplats.zarr.zip: no PSNR, foreground PSNR"]
+        assert gen._run_check(manifest) == 1
+
+    def test_check_accepts_missing_scores_with_a_published_caveat(
+        self, gen: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = {
+            "bucket": "zenodo",
+            "dir": "movie",
+            "files": [{"name": "stack.gsplats.zarr.zip", "bytes": 1000}],
+        }
+        key = gen._char_key("movie", "", "stack.gsplats.zarr.zip")
+        monkeypatch.setattr(
+            gen,
+            "load_characteristics",
+            lambda: {
+                key: {
+                    "n_splats": 100,
+                    "source_bytes": 10_000,
+                    "psnr_db": None,
+                    "foreground_psnr_db": None,
+                    "quality_caveat": "A refit is required for an honest score.",
+                }
+            },
         )
 
-        assert unread == []
-        assert unreadable == []
-        assert inaccessible == []
-        assert problems == ["movie/stack.gsplats.zarr.zip: no PSNR, foreground PSNR"]
+        manifest = {"datasets": {"movie": entry}}
+        problems, *_ = gen._gaps(manifest)
+
+        assert problems == []
+        assert gen._run_check(manifest) == 0
+
+    def test_a_quality_caveat_does_not_exempt_other_missing_figures(
+        self, gen: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entry = {
+            "bucket": "zenodo",
+            "dir": "movie",
+            "files": [{"name": "stack.gsplats.zarr.zip", "bytes": 1000}],
+        }
+        key = gen._char_key("movie", "", "stack.gsplats.zarr.zip")
+        monkeypatch.setattr(
+            gen,
+            "load_characteristics",
+            lambda: {
+                key: {
+                    "psnr_db": None,
+                    "foreground_psnr_db": None,
+                    "quality_caveat": "A refit is required for an honest score.",
+                }
+            },
+        )
+
+        manifest = {"datasets": {"movie": entry}}
+        problems, *_ = gen._gaps(manifest)
+
+        assert problems == ["movie/stack.gsplats.zarr.zip: no splats, compression"]
+        assert gen._run_check(manifest) == 1
 
 
 class TestFiguresAreAbsentRatherThanInvented:
@@ -1931,6 +1986,21 @@ def test_h2afva_51tp_measurements_describe_the_pinned_flat_ladder(gen: Any) -> N
     )
     assert "one 4D leaf" in info["quality_note"]
     assert "does not retain source_archive" in info["quality_note"]
+
+
+def test_h2afva_unscored_variants_publish_consistent_caveats(gen: Any) -> None:
+    chars = gen.load_characteristics()
+    full = chars["h2afva/253tp/h2afva_253tp.gsplats.zarr.zip"]
+    sliced = chars["h2afva/51tp/h2afva_51tp.gsplats.zarr.zip"]
+
+    assert full["n_splats"] == PARENT_FINEST_SPLATS
+    assert "sum of the pinned store's finest per-part levels" in full["quality_note"]
+    for info in (full, sliced):
+        assert info["psnr_db"] is None
+        assert info["foreground_psnr_db"] is None
+        assert "isotropic grid" in info["quality_caveat"]
+        assert "requires a refit" in info["quality_caveat"]
+        assert "every-fifth-frame slice" in info["quality_caveat"]
 
 
 def test_milkyway_hosted_archive_keeps_the_levels_generation(gen: Any) -> None:
