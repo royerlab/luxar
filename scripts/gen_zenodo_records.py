@@ -503,6 +503,11 @@ def _select_pinned_location(
     return fallback[0], fallback[1], tuple(inaccessible)
 
 
+def _count_paths_under(paths: Iterable[Path], root: Optional[Path]) -> int:
+    """Count *paths* below *root*, or zero when no root was supplied."""
+    return 0 if root is None else sum(path.is_relative_to(root) for path in paths)
+
+
 def _retain_preferred_measurements(
     measured: dict[str, Any],
     existing: dict[str, Any],
@@ -629,10 +634,7 @@ def refresh_characteristics(
                 _locate(dataset, entry, variant, spec["name"], extra_root),
                 pinned_digests[key],
             )
-            if extra_root is not None:
-                staged_hash_failures += sum(
-                    failed.is_relative_to(extra_root) for failed in hash_failures
-                )
+            staged_hash_failures += _count_paths_under(hash_failures, extra_root)
             if hash_failures and _is_fit(spec["name"]):
                 inaccessible.append(hash_failures[0])
             if path is None:
