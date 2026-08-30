@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "gen_data_manifest.py"
+
+needs_git = pytest.mark.skipif(
+    shutil.which("git") is None,
+    reason="git not available",
+)
 
 
 def _load_generator():
@@ -106,3 +114,166 @@ def test_build_rejects_positional_pairs_on_variants(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="variants.*positional_pairs"):
         generator.build()
+
+
+def _manifest_entry(hosted: str | None, history: list[str] | None = None) -> dict:
+    entry: dict[str, object] = {"name": "fit.zip"}
+    if hosted is not None:
+        entry["hosted_sha256"] = hosted
+    if history is not None:
+        entry["superseded_sha256"] = history
+    return {"datasets": {"toy": {"files": [entry]}}}
+
+
+@needs_git
+def test_head_manifest_activates_repin_guard(tmp_path, monkeypatch) -> None:
+    generator = _load_generator()
+    repo_root = tmp_path / "repo"
+    manifest_path = repo_root / "data_manifest.json"
+    repo_root.mkdir()
+    committed = _manifest_entry("a" * 64)
+    manifest_path.write_text(json.dumps(committed))
+    subprocess.run(
+        ["git", "init", "-q"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    subprocess.run(
+        ["git", "add", manifest_path.name],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Luxar Tests",
+            "-c",
+            "user.email=luxar-tests@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--no-verify",
+            "-m",
+            "baseline",
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    repinned = _manifest_entry("b" * 64)
+    manifest_path.write_text(json.dumps(repinned))
+    monkeypatch.setattr(generator, "REPO_ROOT", repo_root)
+    monkeypatch.setattr(generator, "MANIFEST", manifest_path)
+
+    baseline = generator._head_manifest()
+
+    assert baseline == committed
+    with pytest.raises(ValueError, match="outgoing hosted digest"):
+        generator._refuse_invalid_repin_history(repinned, baseline)
+
+
+def test_head_manifest_returns_none_outside_git_checkout(tmp_path, monkeypatch) -> None:
+    generator = _load_generator()
+    manifest_path = tmp_path / "data_manifest.json"
+    monkeypatch.setattr(generator, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(generator, "MANIFEST", manifest_path)
+
+    assert generator._head_manifest() is None
+
+
+def test_hosted_repin_accepts_outgoing_digest_and_existing_history() -> None:
+    generator = _load_generator()
+    outgoing = "a" * 64
+    committed = _manifest_entry(outgoing, ["0" * 64])
+    repinned = _manifest_entry("b" * 64, ["0" * 64, outgoing])
+
+    generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_hosted_only_repin_requires_outgoing_digest_in_runtime_slot() -> None:
+    generator = _load_generator()
+    outgoing = "a" * 64
+    committed = _manifest_entry(outgoing, ["0" * 64])
+    repinned = _manifest_entry("b" * 64, ["0" * 64, outgoing, "f" * 64])
+
+    with pytest.raises(ValueError, match="outgoing hosted digest last"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_combined_repin_keeps_outgoing_local_digest_in_runtime_slot() -> None:
+    generator = _load_generator()
+    committed_entry = {
+        "name": "fit.zip",
+        "sha256": "0" * 64,
+        "hosted_sha256": "a" * 64,
+    }
+    authored_entry = {
+        **committed_entry,
+        "hosted_sha256": "b" * 64,
+        "superseded_sha256": ["a" * 64],
+    }
+    (repinned_entry,) = generator._carry_hosted(
+        [{"name": "fit.zip", "sha256": "1" * 64}], [authored_entry]
+    )
+    committed = {"datasets": {"toy": {"files": [committed_entry]}}}
+    repinned = {"datasets": {"toy": {"files": [repinned_entry]}}}
+
+    assert repinned_entry["superseded_sha256"] == ["a" * 64, "0" * 64]
+    generator._refuse_invalid_repin_history(repinned, committed)
+
+    repinned_entry["superseded_sha256"] = ["0" * 64, "a" * 64]
+    with pytest.raises(ValueError, match="outgoing local digest last"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_hosted_repin_rejects_missing_outgoing_digest() -> None:
+    generator = _load_generator()
+    committed = _manifest_entry("a" * 64, ["0" * 64])
+    repinned = _manifest_entry("b" * 64, ["0" * 64])
+
+    with pytest.raises(ValueError, match="outgoing hosted digest"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_hosted_repin_rejects_wrong_appended_digest() -> None:
+    generator = _load_generator()
+    committed = _manifest_entry("a" * 64, ["0" * 64])
+    repinned = _manifest_entry("b" * 64, ["0" * 64, "f" * 64])
+
+    with pytest.raises(ValueError, match="outgoing hosted digest"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_hosted_repin_rejects_dropped_existing_history() -> None:
+    generator = _load_generator()
+    outgoing = "a" * 64
+    committed = _manifest_entry(outgoing, ["0" * 64, "1" * 64])
+    repinned = _manifest_entry("b" * 64, [outgoing])
+
+    with pytest.raises(ValueError, match="drops 2 previously recorded"):
+        generator._refuse_invalid_repin_history(repinned, committed)
+
+
+def test_first_hosted_pin_needs_no_superseded_history() -> None:
+    generator = _load_generator()
+    committed = _manifest_entry(None)
+    current = _manifest_entry("a" * 64)
+
+    generator._refuse_invalid_repin_history(current, committed)
+
+
+def test_unchanged_hosted_pin_may_remove_obsolete_history() -> None:
+    generator = _load_generator()
+    committed = _manifest_entry("a" * 64, ["0" * 64])
+    current = _manifest_entry("a" * 64)
+
+    generator._refuse_invalid_repin_history(current, committed)
