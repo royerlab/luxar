@@ -55,6 +55,7 @@ from luxar.io.lod_screening import (
     print_screen_report,
     screen_stores,
 )
+from luxar.utils.lod_breakpoints import DEFAULT_CAPPED_FIRST_CHUNK
 
 #: The ``--screen-aspect`` default, rendered from :data:`DEFAULT_ASPECTS` so the
 #: help text and the measured aspects can never drift apart.
@@ -87,7 +88,7 @@ DEFAULT_MIN_SUBLODS = 3
 
 #: A sliced first rung below this absolute element count is visually empty in
 #: playback even when its share of the whole node looks structurally healthy.
-DEFAULT_MIN_SLICE_FIRST_RUNG = 1_000
+DEFAULT_MIN_SLICE_FIRST_RUNG = DEFAULT_CAPPED_FIRST_CHUNK
 
 
 def _element_count(attrs: dict[str, Any]) -> int:
@@ -167,6 +168,31 @@ def sliced_first_rung_counts(root: Any) -> list[int]:
         for name in root.group_keys()
         for count in sliced_first_rung_counts(root[name])
     ]
+
+
+def _record_sliced_verdicts(
+    root: Any,
+    scene_name: str,
+    min_first_rung: int,
+    results: list[tuple[str, str, str]],
+    counts: dict[str, int],
+    failures: list[str],
+) -> None:
+    """Append scene-level sliced-rung failures without inflating ``run_gate``."""
+    for index, count in enumerate(sliced_first_rung_counts(root)):
+        path = f"/sliced-node-{index}"
+        if count <= 0:
+            message = "empty rung-0 slice survey"
+        elif count < min_first_rung:
+            message = (
+                f"largest rung-0 slice has {count:,} elements, below the "
+                f"{min_first_rung:,} absolute first-paint floor"
+            )
+        else:
+            continue
+        results.append((path, "fail", message))
+        counts["fail"] += 1
+        failures.append(f"{scene_name}{path}")
 
 
 def check_leaf(
@@ -408,25 +434,14 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             if status == "fail":
                 failures.append(f"{scene.name}{leaf_path}")
 
-        sliced_counts = sliced_first_rung_counts(root)
-        for index, count in enumerate(sliced_counts):
-            if count <= 0:
-                results.append(
-                    (f"/sliced-node-{index}", "fail", "empty rung-0 slice survey")
-                )
-                counts["fail"] += 1
-                failures.append(f"{scene.name}/sliced-node-{index}")
-            elif count < args.min_slice_first_rung:
-                results.append(
-                    (
-                        f"/sliced-node-{index}",
-                        "fail",
-                        f"largest rung-0 slice has {count:,} elements, below the "
-                        f"{args.min_slice_first_rung:,} absolute first-paint floor",
-                    )
-                )
-                counts["fail"] += 1
-                failures.append(f"{scene.name}/sliced-node-{index}")
+        _record_sliced_verdicts(
+            root,
+            scene.name,
+            args.min_slice_first_rung,
+            results,
+            counts,
+            failures,
+        )
 
         visible_results = [
             result

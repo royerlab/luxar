@@ -58,14 +58,14 @@ single increment exceeds the relative `--max-share` limit, or an increment
 exceeds the absolute `--max-level-elements` commit budget. For sliced nodes it
 also histograms rung 0 by hidden coordinate across every partition part and
 fails when the largest visible slice is below `--min-slice-first-rung` (default
-1,000), or when a sliced survey is empty. The existing demo output directory is
+2,000), or when a sliced survey is empty. The existing demo output directory is
 inventoried read-only; the check does not create it.
 
 ```bash
 hatch run check-demo-ladders
 hatch run check-demo-ladders path/to/scene.luxar.zarr
 hatch run check-demo-ladders --max-share 0.6 --max-level-elements 1000000
-hatch run check-demo-ladders --min-slice-first-rung 1000
+hatch run check-demo-ladders --min-slice-first-rung 2000
 ```
 
 The command is included in `hatch run check`. A checkout without generated demo
