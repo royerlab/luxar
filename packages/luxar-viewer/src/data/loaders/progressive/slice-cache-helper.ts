@@ -249,7 +249,14 @@ export function storeLadder<T extends object>(
   // Re-check upgrade-if-longer against the (possibly trimmed) prefix length.
   if (existing && (existing.payload as unknown[]).length >= fit) return;
   const snapshot = fit < lods.length ? lods.slice(0, fit) : lods;
-  const { totalLODCount, ...cacheOpts } = opts ?? {};
+  const totalLODCount = opts?.totalLODCount;
+  const cacheOpts =
+    opts?.scan !== undefined || opts?.pin !== undefined
+      ? {
+          ...(opts.scan !== undefined ? { scan: opts.scan } : {}),
+          ...(opts.pin !== undefined ? { pin: opts.pin } : {}),
+        }
+      : undefined;
   sliceCache.set(
     key,
     {
