@@ -43,7 +43,6 @@ def test_default_cache_uses_the_manifest_resolved_path(
         _demo,
         "ensure_dataset",
         lambda name: calls.append(("ensure", name)) or [resolved],
-        raising=False,
     )
     monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
     monkeypatch.setattr(
@@ -82,7 +81,6 @@ def test_explicit_cache_override_bypasses_the_manifest(
         _demo,
         "ensure_dataset",
         lambda name: pytest.fail(f"unexpected manifest lookup for {name}"),
-        raising=False,
     )
     monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
     monkeypatch.setattr(

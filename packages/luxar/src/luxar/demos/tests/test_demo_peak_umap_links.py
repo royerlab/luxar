@@ -36,13 +36,6 @@ def test_packaged_peak_umaps_use_the_manifest_resolved_path(
         module,
         "ensure_dataset",
         lambda name: calls.append(("ensure", name)) or [resolved],
-        raising=False,
-    )
-    monkeypatch.setattr(
-        module,
-        "require_local_data",
-        lambda path: pytest.fail(f"bypassed manifest for packaged path {path}"),
-        raising=False,
     )
     monkeypatch.setattr(
         module.pd,
