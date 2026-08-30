@@ -56,8 +56,9 @@ On entry it calls `setLodLoadStatsEnabled(true)` (from
 `data/scene-loader/lod-load-stats`) so per-stage timing for lazy LOD level
 loads and additive per-level ladder loads is captured under `?debug` only.
 Those lazy `ensureLoaded` loads run outside any `updateView` cycle, so the
-`UpdateProfiler` never sees them — this fills the gap. The captured stats are reachable as
-`__luxarDebug.getLodLoadStats()` (snapshot) and `resetLodLoadStats()`.
+`UpdateProfiler` never sees them — this fills the gap. The captured stats are
+reachable as `__luxarDebug.getLodLoadStats()` (snapshot) and
+`resetLodLoadStats()`.
 
 `injectSyntheticScene`'s body is wrapped in try/catch: on failure it logs via
 `log.error` and surfaces the message through the user-facing error overlay
