@@ -968,6 +968,35 @@ def test_an_unpinned_unreadable_archive_does_not_fail_refresh(
     }
 
 
+def test_an_unhashable_present_archive_is_not_counted_as_absent(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "inaccessible.gsplats.zarr.zip"
+    archive.write_bytes(b"present but inaccessible")
+    key = f"ds/{archive.name}"
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen, "load_characteristics", lambda: {key: {"n_splats": 7, "psnr_db": 1.0}}
+    )
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+    monkeypatch.setattr(
+        gen,
+        "_sha256_of",
+        lambda path: (_ for _ in ()).throw(PermissionError(path)),
+    )
+
+    result = gen.refresh_characteristics(
+        _fake_manifest([_entry(archive.name, "pinned")])
+    )
+
+    assert result.inaccessible == (archive,)
+    assert result.preserved == 0
+    assert json.loads((tmp_path / "chars.json").read_text())["archives"][key] == {
+        "n_splats": 7,
+        "psnr_db": 1.0,
+    }
+
+
 def test_a_pinned_non_fit_file_does_not_fail_refresh(
     gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1150,7 +1179,7 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     monkeypatch.setattr(
         gen,
         "refresh_characteristics",
-        lambda manifest, extra_root: gen.RefreshResult(4, 2, 1, 3, (), 5, 2),
+        lambda manifest, extra_root: gen.RefreshResult(4, 2, 1, 3, (), (), 5, 2),
     )
     monkeypatch.setattr(
         sys,
@@ -1194,7 +1223,7 @@ def test_refresh_reports_each_unreadable_pinned_archive_and_exits_nonzero(
         gen,
         "refresh_characteristics",
         lambda manifest, extra_root: gen.RefreshResult(
-            2, 0, 0, 0, (first, second), 0, 0
+            2, 0, 0, 0, (first, second), (), 0, 0
         ),
     )
     monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
@@ -1205,6 +1234,36 @@ def test_refresh_reports_each_unreadable_pinned_archive_and_exits_nonzero(
     assert f"pinned archive is present but unreadable: {first}" in output
     assert f"pinned archive is present but unreadable: {second}" in output
     assert "skipped 2 pinned archive(s) that were present but unreadable" in output
+
+
+def test_refresh_reports_inaccessible_archives_without_failing(
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"datasets": {}}))
+    archive = tmp_path / "inaccessible.gsplats.zarr.zip"
+    monkeypatch.setattr(gen, "MANIFEST", manifest_path)
+    monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(
+        gen,
+        "refresh_characteristics",
+        lambda manifest, extra_root: gen.RefreshResult(
+            0, 0, 0, 0, (), (archive,), 0, 0
+        ),
+    )
+    monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
+
+    assert gen.main() == 0
+
+    output = capsys.readouterr().out
+    assert "archive is on this machine but could not be read" in output
+    assert "check permissions" in output
+    assert str(archive) in output
+    assert "preserved 0 not on this machine" in output
 
 
 def test_a_flat_archives_root_warns_with_the_expected_layout(

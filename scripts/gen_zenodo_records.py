@@ -69,6 +69,7 @@ class RefreshResult(NamedTuple):
     rejected: int
     preserved: int
     unreadable: tuple[Path, ...]
+    inaccessible: tuple[Path, ...]
     unpinned_unreadable: int
     staged_selected: int
 
@@ -601,6 +602,8 @@ def refresh_characteristics(
 
     Pinned archives that are present but unreadable are also left intact on disk,
     but are returned separately so the caller can fail after writing good reads.
+    Candidates that cannot be hashed are returned separately from absent archives,
+    without failing because their bytes cannot be verified against the pin.
     """
     existing = load_characteristics()
     measured: dict[str, Any] = {}
@@ -608,6 +611,7 @@ def refresh_characteristics(
     seen: set[str] = set()
     absent: set[str] = set()
     unreadable: list[Path] = []
+    inaccessible: list[Path] = []
     unpinned_unreadable = 0
     staged_selected = 0
     for dataset, entry in sorted(manifest["datasets"].items()):
@@ -617,12 +621,18 @@ def refresh_characteristics(
             key = _char_key(dataset, variant, spec["name"])
             seen.add(key)
             pinned_digests[key] = _pinned_digest(spec)
+            candidates = list(
+                _locate(dataset, entry, variant, spec["name"], extra_root)
+            )
             path, measured_sha256 = _select_pinned_location(
-                _locate(dataset, entry, variant, spec["name"], extra_root),
+                iter(candidates),
                 pinned_digests[key],
             )
             if path is None:
-                absent.add(key)
+                if candidates:
+                    inaccessible.extend(candidates)
+                else:
+                    absent.add(key)
                 continue
             root = (
                 "staged"
@@ -696,6 +706,7 @@ def refresh_characteristics(
         rejected=rejected,
         preserved=sum(key in absent for key in preserved_entries),
         unreadable=tuple(unreadable),
+        inaccessible=tuple(inaccessible),
         unpinned_unreadable=unpinned_unreadable,
         staged_selected=staged_selected,
     )
@@ -1058,6 +1069,11 @@ def main() -> int:
         result = refresh_characteristics(manifest, args.archives_root)
         for path in result.unreadable:
             print(f"ERROR: pinned archive is present but unreadable: {path}")
+        for path in result.inaccessible:
+            print(
+                "WARNING: archive is on this machine but could not be read "
+                f"(check permissions): {path}"
+            )
         if args.archives_root:
             print(
                 f"selected {result.staged_selected} archive(s) under --archives-root "
@@ -1072,6 +1088,10 @@ def main() -> int:
         print(
             f"skipped {len(result.unreadable)} pinned archive(s) that were present "
             "but unreadable"
+        )
+        print(
+            f"skipped {len(result.inaccessible)} archive candidate(s) that were on "
+            "this machine but could not be read"
         )
         print(
             f"skipped {result.unpinned_unreadable} fit archive(s) that were present "
