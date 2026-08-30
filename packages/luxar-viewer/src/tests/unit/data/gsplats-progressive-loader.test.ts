@@ -374,13 +374,23 @@ describe('GSplatsProgressiveLoader', () => {
     });
 
     it('still prefetches the next level after an empty LOD 0', async () => {
-      // A playback budget stops the pass at the LOD-0 first-paint floor. The
-      // level that actually holds this slice's splats is the one still to come,
-      // so skipping prefetch would leave it cold.
-      lodA.updateView.mockResolvedValue(makeLodData(0));
-      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
-      expect(loader.loadedLODCount).toBe(1);
-      expect(lodB.prefetchChunks).toHaveBeenCalled();
+      // Budget-expiry needs a clock that MOVES: with the real one a 10ms budget
+      // never expires against these instant stubs, and playback now streams
+      // resident levels rather than stopping at level 0 (#2374). Advance on
+      // every read so the deadline is past by level 1's loop-top check.
+      let nowMs = 0;
+      const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (nowMs += 100));
+      try {
+        // The moving clock exhausts the playback budget after LOD 0. The level
+        // that actually holds this slice's splats is the one still to come, so
+        // skipping prefetch would leave it cold.
+        lodA.updateView.mockResolvedValue(makeLodData(0));
+        await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+        expect(loader.loadedLODCount).toBe(1);
+        expect(lodB.prefetchChunks).toHaveBeenCalled();
+      } finally {
+        nowSpy.mockRestore();
+      }
     });
 
     it('walks EVERY level even when they all come back empty', async () => {
@@ -417,8 +427,15 @@ describe('GSplatsProgressiveLoader', () => {
     };
 
     it('streams on from a restored PREFIX whose LOD 0 is empty', async () => {
-      // A playback budget caps the pass at LOD 0 and stores that 1-level
-      // prefix. Scrubbing back restores it — and an empty restored LOD 0 is
+      // Budget-expiry needs a clock that MOVES (see the sibling tests): a 10ms
+      // budget never expires against instant stubs on the real clock, and
+      // playback now streams resident levels instead of stopping at level 0
+      // (#2374). Restored before the budget-free scrub-back so the refine pass
+      // below is timed honestly.
+      let nowMs = 0;
+      const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (nowMs += 100));
+      // The moving clock expires after LOD 0 and stores that 1-level prefix.
+      // Scrubbing back restores it — and an empty restored LOD 0 is
       // exactly as uninformative as a freshly loaded one (#1456): the levels
       // the prefix never reached are disjoint increments that may well
       // intersect this slice, so the loop must resume at level 1. Concluding
@@ -434,9 +451,13 @@ describe('GSplatsProgressiveLoader', () => {
         sc
       );
 
-      await l.updateView({ ...viewA, frameBudgetMs: 10 }); // LOD 0 only, prefix stored
-      expect(l.loadedLODCount).toBe(1);
-      await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move away
+      try {
+        await l.updateView({ ...viewA, frameBudgetMs: 10 }); // LOD 0 only, prefix stored
+        expect(l.loadedLODCount).toBe(1);
+        await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move away
+      } finally {
+        nowSpy.mockRestore();
+      }
 
       a.updateViewWithResidency.mockClear();
       b.updateViewWithResidency.mockClear();
@@ -566,16 +587,38 @@ describe('GSplatsProgressiveLoader', () => {
       expect(loader.hasMoreLODs).toBe(false);
     });
 
-    it('a foreground PLAYBACK pass loads ONLY the LOD-0 first-paint floor (never blocks on fine levels)', async () => {
-      // Even with a budget that fits two 30ms levels, a budgeted foreground
-      // (non-prefetch) pass commits just the floor and stays responsive —
-      // deepening is the background prefetch's job.
-      await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
+    it('a foreground PLAYBACK pass STREAMS RESIDENT levels within its budget', async () => {
+      // Budget 50ms fits two 30ms levels; the third's loop-top check fails.
+      // Playback used to load level 0 and stop, which assumed LOD 0 is a usable
+      // picture. On a node the viewer SLICES it is not — an additive ladder's
+      // rungs are sized against the WHOLE node, so a 500-timepoint gsplat leaf
+      // put ~42 splats of a 166,443-splat frame in LOD 0 and playback rendered
+      // an empty screen (#2374, #2376). Resident levels are cheap, so spend the
+      // budget on them.
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 50 });
 
       expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
-      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
       expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(loader.loadedLODCount).toBe(1);
+      expect(loader.loadedLODCount).toBe(2);
+    });
+
+    it('a foreground PLAYBACK pass STOPS at the first COLD level, however much budget is left', async () => {
+      // The safety property that replaces the level-0 gate: a cold level costs
+      // hundreds of ms and would blow the tick, so residency (not level index)
+      // is the brake. Worst case is one cold load per pass — exactly what the
+      // old floor-only behaviour cost.
+      lodB.updateViewWithResidency.mockImplementation(async () => {
+        now += 30;
+        return { data: makeLodData(10, 3, { color: 'uint8' }), allResident: false };
+      });
+
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 100_000 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(2);
     });
 
     it('a background PREFETCH pass deepens as many levels as fit the budget', async () => {
@@ -618,9 +661,9 @@ describe('GSplatsProgressiveLoader', () => {
       expect(loader.loadedLODCount).toBe(1);
 
       await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
-      // No reset: level 0 is NOT reloaded (same-view, ladder survives). Playback
-      // stays at the floor — deepening is the background prefetch's job, not the
-      // foreground tick's.
+      // No reset: level 0 is NOT reloaded, the ladder survives. A budgeted pass
+      // whose ladder is already non-empty commits it as-is — deepening is the
+      // background prefetch's job, not the foreground tick's (#2374).
       expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
       expect(loader.loadedLODCount).toBe(1);
     });
@@ -859,12 +902,21 @@ describe('GSplatsProgressiveLoader', () => {
 
   describe('concatenation', () => {
     it('returns a single part as-is when only one LOD is loaded', async () => {
-      // A playback budget caps the pass at the LOD-0 first-paint floor — the
-      // single-part state of every ladder. (It used to be provoked with an
-      // empty LOD 0, which no longer stops the loop: #1456.)
-      const result = await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
-      expect(loader.loadedLODCount).toBe(1);
-      expect(result.splatCount).toBe(100);
+      // Budget-expiry needs a clock that MOVES: with the real one a 10ms budget
+      // never expires against these instant stubs, and playback now streams
+      // resident levels rather than stopping at level 0 (#2374). Advance on
+      // every read so the deadline is past by level 1's loop-top check.
+      let nowMs = 0;
+      const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (nowMs += 100));
+      try {
+        // The moving clock expires after the first level, preserving the
+        // single-part state of the ladder.
+        const result = await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+        expect(loader.loadedLODCount).toBe(1);
+        expect(result.splatCount).toBe(100);
+      } finally {
+        nowSpy.mockRestore();
+      }
     });
 
     it('concatenates positions / amplitudes / cholesky from multiple LODs', async () => {
