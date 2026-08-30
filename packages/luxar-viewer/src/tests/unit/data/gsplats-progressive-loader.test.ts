@@ -380,14 +380,17 @@ describe('GSplatsProgressiveLoader', () => {
       // every read so the deadline is past by level 1's loop-top check.
       let nowMs = 0;
       const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (nowMs += 100));
-      // The moving clock exhausts the playback budget after LOD 0. The level
-      // that actually holds this slice's splats is the one still to come, so
-      // skipping prefetch would leave it cold.
-      lodA.updateView.mockResolvedValue(makeLodData(0));
-      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
-      expect(loader.loadedLODCount).toBe(1);
-      expect(lodB.prefetchChunks).toHaveBeenCalled();
-      nowSpy.mockRestore();
+      try {
+        // The moving clock exhausts the playback budget after LOD 0. The level
+        // that actually holds this slice's splats is the one still to come, so
+        // skipping prefetch would leave it cold.
+        lodA.updateView.mockResolvedValue(makeLodData(0));
+        await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+        expect(loader.loadedLODCount).toBe(1);
+        expect(lodB.prefetchChunks).toHaveBeenCalled();
+      } finally {
+        nowSpy.mockRestore();
+      }
     });
 
     it('walks EVERY level even when they all come back empty', async () => {
@@ -448,13 +451,16 @@ describe('GSplatsProgressiveLoader', () => {
         sc
       );
 
-      await l.updateView({ ...viewA, frameBudgetMs: 10 }); // LOD 0 only, prefix stored
-      expect(l.loadedLODCount).toBe(1);
-      await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move away
+      try {
+        await l.updateView({ ...viewA, frameBudgetMs: 10 }); // LOD 0 only, prefix stored
+        expect(l.loadedLODCount).toBe(1);
+        await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move away
+      } finally {
+        nowSpy.mockRestore();
+      }
 
       a.updateViewWithResidency.mockClear();
       b.updateViewWithResidency.mockClear();
-      nowSpy.mockRestore();
       const restored = await l.loadGSplats(viewA); // scrub back, no budget
 
       expect(a.updateViewWithResidency).not.toHaveBeenCalled(); // served from the S-cache
@@ -902,12 +908,15 @@ describe('GSplatsProgressiveLoader', () => {
       // every read so the deadline is past by level 1's loop-top check.
       let nowMs = 0;
       const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (nowMs += 100));
-      // The moving clock expires after the first level, preserving the
-      // single-part state of the ladder.
-      const result = await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
-      expect(loader.loadedLODCount).toBe(1);
-      expect(result.splatCount).toBe(100);
-      nowSpy.mockRestore();
+      try {
+        // The moving clock expires after the first level, preserving the
+        // single-part state of the ladder.
+        const result = await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
+        expect(loader.loadedLODCount).toBe(1);
+        expect(result.splatCount).toBe(100);
+      } finally {
+        nowSpy.mockRestore();
+      }
     });
 
     it('concatenates positions / amplitudes / cholesky from multiple LODs', async () => {
