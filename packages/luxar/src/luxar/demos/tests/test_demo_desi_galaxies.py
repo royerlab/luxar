@@ -933,7 +933,10 @@ class TestMainSceneReuse:
         ]
 
     def test_unavailable_manifest_scene_falls_back_to_catalog_build(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         from luxar.demos import DatasetUnavailable
 
@@ -952,7 +955,9 @@ class TestMainSceneReuse:
         monkeypatch.setattr(
             _demo,
             "ensure_dataset",
-            lambda name: (_ for _ in ()).throw(DatasetUnavailable(name)),
+            lambda name: (_ for _ in ()).throw(
+                DatasetUnavailable(f"{name} unavailable; run `git lfs pull`")
+            ),
         )
         monkeypatch.setattr(_demo, "_load_or_build_or_exit", lambda: arrays)
         monkeypatch.setattr(
@@ -972,6 +977,9 @@ class TestMainSceneReuse:
         assert redshift is arrays[1]
         assert tracers is arrays[2]
         assert path == output
+        assert (
+            "desi_galaxies unavailable; run `git lfs pull`" in capsys.readouterr().out
+        )
 
     def test_manifest_integrity_fault_does_not_trigger_catalog_build(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

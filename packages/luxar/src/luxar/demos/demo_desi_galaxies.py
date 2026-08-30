@@ -49,6 +49,8 @@ On a fresh machine this demo bootstraps itself with no manual steps:
      converts (RA, Dec, z) → comoving Mpc, keeps every row, and builds the
      substitutive LOD (GPU-accelerated but slow on CPU-only machines — which is
      exactly why the built scene is hosted precomputed).
+     If the DESI host is unavailable, ``git lfs pull`` restores the no-download
+     fast path from a source checkout.
 
 USAGE
 -----
@@ -938,15 +940,16 @@ def main() -> None:
         # Fast path: resolve and unzip the fully-built scene (instant, no LOD build).
         try:
             scene_zip = ensure_dataset(DEMO_NAME)[0]
-        except DatasetUnavailable:
+        except DatasetUnavailable as exc:
             scene_zip = None
+            unavailable_reason = str(exc)
         if scene_zip is not None:
             extract_shipped_scene(scene_zip, output_path)
             ensure_origin_framing(output_path)
             warn_if_scene_is_stale(output_path)
         else:
             aprint(
-                "Precomputed scene not available from the manifest. "
+                f"Precomputed scene not available from the manifest: {unavailable_reason}. "
                 "Falling back to download + build (one-time; result is cached)."
             )
             positions, redshift, tracer_ids = _load_or_build_or_exit()
