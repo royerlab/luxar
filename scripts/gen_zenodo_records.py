@@ -723,7 +723,8 @@ def _dataset_rows(
     describes the artifact it serves, and the local copy may be a pre-refit
     generation or a local scratch fit. Reading an archive is the fallback for
     something not measured yet, so a fresh dataset still renders before its first
-    ``--refresh``.
+    ``--refresh``; that fallback prefers pinned bytes when available but does not
+    require them.
     """
     chars = load_characteristics() if chars is None else chars
     rows = []
@@ -750,6 +751,8 @@ def _dataset_rows(
             if read is not None:
                 info = {**read, **{k: v for k, v in info.items() if v is not None}}
         elif info is None:
+            # Unlike a note, a wholly unmeasured row may use unpinned local bytes
+            # so a fresh fit remains renderable before its first refresh.
             path, _ = _select_pinned_location(
                 _locate(dataset, entry, variant, spec["name"]),
                 _pinned_digest(spec),
