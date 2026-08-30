@@ -7776,6 +7776,34 @@ class TestFlattenCommand:
             ]
         )
 
+    def test_flatten_rejects_high_cardinality_coarsen_barrier(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A continuous axis stamped as a barrier fails before run expansion."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        rng = np.random.default_rng(32)
+        n_splats = 1_100
+        centers = rng.uniform(0, 100, (n_splats, 3)).astype(np.float32)
+        centers[:, 2] = np.arange(n_splats, dtype=np.float32)
+        source = tmp_path / "source.gsplats.zarr"
+        GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.1, 1.0, n_splats).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32),
+                (n_splats, 1),
+            ),
+            stats={"coarsen_dims": [0, 1]},
+        ).save(source)
+
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(source), str(flat)])
+        assert result.exit_code != 0
+        assert "barrier axes [2] derived from coarsen_dims [0, 1]" in result.stdout
+        assert "at most 1024 values" in result.stdout
+        assert not flat.exists()
+
     def test_flatten_preserves_barrier_chunk_layout(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:

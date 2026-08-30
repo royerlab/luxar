@@ -799,9 +799,15 @@ def _resolve_streaming_layout(
 def _resolve_streaming_barrier_offsets(
     metadata: Sequence[StreamingSplatSetMetadata], barrier_dims: Sequence[int]
 ) -> Optional[dict[tuple[float, ...], int]]:
+    from luxar.io._ordering.compound import (
+        _DEFAULT_BARRIER_MAX_CARDINALITY,
+        _barrier_axis_qualifies,
+    )
+
     if not barrier_dims:
         return None
     totals: dict[tuple[float, ...], int] = {}
+    n_splats = 0
     for item in metadata:
         values = item.barrier_values
         counts = item.barrier_counts
@@ -816,9 +822,22 @@ def _resolve_streaming_barrier_offsets(
             raise ValueError("streamed barrier counts do not match barrier values")
         if int(np.sum(counts)) != item.n_splats:
             raise ValueError("streamed barrier counts do not match n_splats")
+        n_splats += item.n_splats
         for value, count in zip(values, counts):
             key = tuple(float(component) for component in value)
             totals[key] = totals.get(key, 0) + int(count)
+            if len(totals) > _DEFAULT_BARRIER_MAX_CARDINALITY:
+                raise ValueError(
+                    "streamed barrier values exceed the categorical cardinality "
+                    f"limit of {_DEFAULT_BARRIER_MAX_CARDINALITY}"
+                )
+    if not _barrier_axis_qualifies(
+        n_splats, len(totals), _DEFAULT_BARRIER_MAX_CARDINALITY
+    ):
+        raise ValueError(
+            f"streamed barrier axes {list(barrier_dims)} have {len(totals)} distinct "
+            f"value tuples across {n_splats} splats and do not qualify as categorical"
+        )
     offsets = {}
     next_offset = 0
     for key in sorted(totals):

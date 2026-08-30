@@ -16,6 +16,8 @@ from .curves.hilbert import hilbert_encode_nd
 from .curves.morton import morton_encode_nd
 from .grid import normalize_coords_to_grid
 
+_DEFAULT_BARRIER_MAX_CARDINALITY = 1024
+
 
 def _rounded_barrier_values(values: np.ndarray) -> np.ndarray | None:
     rounded = np.rint(values)
@@ -111,7 +113,7 @@ def _compound_sort(
 
 def detect_barrier_dims(
     centers: np.ndarray,
-    max_cardinality: int = 1024,
+    max_cardinality: int = _DEFAULT_BARRIER_MAX_CARDINALITY,
 ) -> list[int]:
     """Heuristically identify categorical/barrier axes in a GSplat center array.
 

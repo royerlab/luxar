@@ -11,6 +11,7 @@ import typer
 from arbol import aprint, asection
 
 from luxar.io._ordering.compound import (
+    _DEFAULT_BARRIER_MAX_CARDINALITY,
     _barrier_axis_qualifies,
     _rounded_barrier_values,
 )
@@ -189,7 +190,10 @@ class _BarrierAxisAccumulator:
 
 
 def _detect_barrier_dims_across_groups(
-    splat_groups: Sequence[Any], root: Any, decoder: Any, max_cardinality: int = 1024
+    splat_groups: Sequence[Any],
+    root: Any,
+    decoder: Any,
+    max_cardinality: int = _DEFAULT_BARRIER_MAX_CARDINALITY,
 ) -> tuple[tuple[int, ...], Optional[list[tuple[np.ndarray, np.ndarray]]]]:
     ndim = int(splat_groups[0].attrs["ndim"])
     accumulators = [_BarrierAxisAccumulator(max_cardinality) for _ in range(ndim)]
@@ -211,7 +215,13 @@ def _detect_barrier_dims_across_groups(
     )
     if len(barrier_dims) != 1:
         return barrier_dims, None
-    return barrier_dims, accumulators[barrier_dims[0]].runs()
+    runs = accumulators[barrier_dims[0]].runs()
+    if runs is None:
+        raise ValueError(
+            f"auto-detected barrier axis {barrier_dims[0]} exceeds the "
+            f"{max_cardinality}-value streaming limit; coarsen_dims is absent"
+        )
+    return barrier_dims, runs
 
 
 def _stored_color_layout(group: Any) -> tuple[Optional[np.dtype[Any]], int]:
@@ -235,11 +245,14 @@ def _collect_streaming_metadata(
     decoder: Any,
     barrier_dims: Sequence[int],
     barrier_runs: Optional[Sequence[tuple[np.ndarray, np.ndarray]]] = None,
+    coarsen_dims: Optional[Sequence[int]] = None,
 ) -> list[Any]:
     from luxar.gsplats.io.save_gsplats import StreamingSplatSetMetadata
     from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
     metadata = []
+    barrier_values_seen: set[tuple[float, ...]] = set()
+    n_splats = 0
     if barrier_runs is not None and len(barrier_runs) != len(splat_groups):
         raise ValueError("barrier runs do not match streamed splat groups")
     for index, group in enumerate(splat_groups):
@@ -251,8 +264,25 @@ def _collect_streaming_metadata(
                 barrier_values, barrier_counts = barrier_runs[index]
             else:
                 centers = decoder.decode(group["centers"], root)
-                barrier_values, barrier_counts = _barrier_runs(centers, barrier_dims)
+                barrier_values, barrier_counts = _barrier_runs(
+                    centers,
+                    barrier_dims,
+                    coarsen_dims=coarsen_dims,
+                )
                 del centers
+            barrier_values_seen.update(
+                tuple(float(component) for component in value)
+                for value in barrier_values
+            )
+            if len(barrier_values_seen) > _DEFAULT_BARRIER_MAX_CARDINALITY:
+                _raise_barrier_cardinality_error(
+                    barrier_dims,
+                    coarsen_dims,
+                    len(barrier_values_seen),
+                    n_splats + int(group.attrs["n_splats"]),
+                    _DEFAULT_BARRIER_MAX_CARDINALITY,
+                )
+        n_splats += int(group.attrs["n_splats"])
         metadata.append(
             StreamingSplatSetMetadata(
                 n_splats=int(group.attrs["n_splats"]),
@@ -266,11 +296,27 @@ def _collect_streaming_metadata(
                 barrier_counts=barrier_counts,
             )
         )
+    if barrier_dims and not _barrier_axis_qualifies(
+        n_splats,
+        len(barrier_values_seen),
+        _DEFAULT_BARRIER_MAX_CARDINALITY,
+    ):
+        _raise_barrier_cardinality_error(
+            barrier_dims,
+            coarsen_dims,
+            len(barrier_values_seen),
+            n_splats,
+            _DEFAULT_BARRIER_MAX_CARDINALITY,
+        )
     return metadata
 
 
 def _barrier_runs(
-    centers: Any, barrier_dims: Sequence[int]
+    centers: Any,
+    barrier_dims: Sequence[int],
+    *,
+    max_cardinality: int = _DEFAULT_BARRIER_MAX_CARDINALITY,
+    coarsen_dims: Optional[Sequence[int]] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     counts: dict[tuple[float, ...], int] = {}
     for start in range(0, len(centers), 65_536):
@@ -279,10 +325,37 @@ def _barrier_runs(
         for value, count in zip(values, block_counts):
             key = tuple(float(component) for component in value)
             counts[key] = counts.get(key, 0) + int(count)
+            if len(counts) > max_cardinality:
+                _raise_barrier_cardinality_error(
+                    barrier_dims,
+                    coarsen_dims,
+                    len(counts),
+                    len(centers),
+                    max_cardinality,
+                )
     ordered = sorted(counts)
     return (
         np.asarray(ordered, dtype=np.float32),
         np.asarray([counts[key] for key in ordered], dtype=np.int64),
+    )
+
+
+def _raise_barrier_cardinality_error(
+    barrier_dims: Sequence[int],
+    coarsen_dims: Optional[Sequence[int]],
+    n_unique: int,
+    n_splats: int,
+    max_cardinality: int,
+) -> None:
+    source = (
+        f"coarsen_dims {list(coarsen_dims)}"
+        if coarsen_dims is not None
+        else "persisted slice_dims"
+    )
+    raise ValueError(
+        f"barrier axes {list(barrier_dims)} derived from {source} have {n_unique} "
+        f"distinct value tuples across {n_splats} splats; categorical barriers must "
+        f"have at most {max_cardinality} values and at least four splats per value"
     )
 
 
@@ -445,6 +518,7 @@ def run_flatten_dataset(
                     decoder,
                     barrier_dims,
                     barrier_runs,
+                    coarsen_dims=stats.get("coarsen_dims"),
                 )
 
                 def splat_sets() -> Iterator[Any]:
