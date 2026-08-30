@@ -747,7 +747,10 @@ def _dataset_rows(
             if read is not None:
                 info = {**read, **{k: v for k, v in info.items() if v is not None}}
         elif info is None:
-            path = next(_locate(dataset, entry, variant, spec["name"]), None)
+            path, _ = _select_pinned_location(
+                _locate(dataset, entry, variant, spec["name"]),
+                _pinned_digest(spec),
+            )
             info = _read_archive(path) if path else None
         stored = hosted_size(spec)
         name = f"{variant}/{spec['name']}" if variant else spec["name"]
