@@ -657,24 +657,64 @@ describe('LinesProgressiveLoader', () => {
       expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1); // no reset
     });
 
-    it('a differing budget with an identical view does NOT reset the ladder', async () => {
+    it('a differing budget deepens the existing ladder without resetting it', async () => {
       await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
       expect(loader.loadedLODCount).toBe(1);
 
       await loader.updateView({ ...baseViewState, frameBudgetMs: 70 });
-      // No reset: level 0 is NOT reloaded, the ladder survives. A budgeted pass
-      // whose ladder is already non-empty commits it as-is — deepening is the
-      // background prefetch's job, not the foreground tick's (#2374).
+      // No reset: level 0 is NOT reloaded, and the remaining playback budget
+      // deepens the existing prefix instead of treating it worse than an empty
+      // ladder (#2379).
       expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(loader.loadedLODCount).toBe(2);
+    });
+
+    it('a restored prefix does not receive an unconditional level at zero budget', async () => {
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 10 });
       expect(loader.loadedLODCount).toBe(1);
+
+      nowSpy.mockImplementation(() => (now += 5));
+      await loader.updateView({ ...baseViewState, frameBudgetMs: 0 });
+
+      expect(lodA.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.loadedLODCount).toBe(1);
+    });
+
+    it('a restored prefetch prefix still deepens one level after its budget expires', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const l = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      const viewA = baseViewState;
+      const viewB = { ...baseViewState, slicePosition: [0, 0, 0, 1] };
+
+      await l.updateView({ ...viewA, frameBudgetMs: 10 });
+      await l.updateView({ ...viewB, frameBudgetMs: 10 });
+
+      lodA.updateViewWithResidency.mockClear();
+      lodB.updateViewWithResidency.mockClear();
+      lodC.updateViewWithResidency.mockClear();
+      nowSpy.mockImplementation(() => (now += 5));
+
+      await l.updateView({ ...viewA, frameBudgetMs: 0, prefetch: true });
+
+      expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(l.loadedLODCount).toBe(2);
     });
 
     it('background prefetch deepens a capped ladder loop-over-loop; playback restores it responsively', async () => {
       // Mirrors gsplats-progressive-loader.test.ts (three-geometry symmetry).
-      // Foreground PLAYBACK ticks commit only the cached prefix (never block on
-      // fine levels); background PREFETCH passes deepen the SAME slice +1 level,
-      // so a later playback tick restores a DEEPER prefix — higher quality,
-      // still instant.
+      // Background PREFETCH deepens the SAME slice's cached ladder +1 level at
+      // a time. A later PLAYBACK tick restores that deeper prefix, then spends
+      // only its remaining foreground budget on resident detail.
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const l = new LinesProgressiveLoader(
         [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
@@ -705,16 +745,16 @@ describe('LinesProgressiveLoader', () => {
 
       await l.updateView({ ...viewB, frameBudgetMs: 10 }); // move on
 
-      // Loop-2 PLAYBACK tick at A: restores the DEEPER prefix(2) and commits it
-      // with ZERO streaming (the floor gate blocks further foreground decode).
+      // Loop-2 PLAYBACK tick at A: restores the DEEPER prefix(2), then spends
+      // the remaining foreground budget on the resident final level.
       lodA.updateViewWithResidency.mockClear();
       lodB.updateViewWithResidency.mockClear();
       lodC.updateViewWithResidency.mockClear();
       await l.updateView({ ...viewA, frameBudgetMs: 10 });
       expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
       expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(l.loadedLODCount).toBe(2); // shows the deepened quality, no re-decode
+      expect(lodC.updateViewWithResidency).toHaveBeenCalledTimes(1);
+      expect(l.loadedLODCount).toBe(3);
     });
 
     it('partial restore copies the container: resume never mutates the cached payload', async () => {
@@ -806,7 +846,7 @@ describe('LinesProgressiveLoader', () => {
       // only handoff to the foreground is the shared S-cache: the shadow
       // deepens view B's ladder while the foreground displays A; the real
       // PLAYBACK tick at B then restores that cached prefix (no level-0
-      // re-stream) and commits it responsively.
+      // re-stream) and spends its remaining budget on resident detail.
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const shadow = new LinesProgressiveLoader(
         [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
@@ -832,13 +872,13 @@ describe('LinesProgressiveLoader', () => {
       lodB.updateViewWithResidency.mockClear();
       lodC.updateViewWithResidency.mockClear();
 
-      // Real PLAYBACK tick at B: level 0 comes from the SHADOW's cache entry —
-      // no LOD loader runs (restored, not re-streamed).
+      // Real PLAYBACK tick at B: level 0 comes from the SHADOW's cache entry,
+      // then the foreground budget deepens the restored prefix by one level.
       await foreground.updateView({ ...viewB, frameBudgetMs: 20 });
       expect(lodA.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(lodB.updateViewWithResidency).toHaveBeenCalledTimes(1);
       expect(lodC.updateViewWithResidency).not.toHaveBeenCalled();
-      expect(foreground.loadedLODCount).toBe(1);
+      expect(foreground.loadedLODCount).toBe(2);
     });
   });
 

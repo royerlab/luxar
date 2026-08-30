@@ -350,6 +350,32 @@ describe('MeshProgressiveLoader', () => {
     }
   });
 
+  it('deepens an existing playback prefix only while budget remains', async () => {
+    let now = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (now += 5));
+    try {
+      const { loader, subs } = makeLadder([
+        level(4, [0, 1, 2]),
+        level(3, [0, 1, 2]),
+        level(3, [0, 1, 2]),
+      ]);
+
+      await loader.updateView({ ...VIEW, frameBudgetMs: 0 });
+      expect(loader.loadedLODCount).toBe(1); // empty-ladder first-paint floor
+
+      await loader.updateView({ ...VIEW, frameBudgetMs: 0 });
+      expect(loader.loadedLODCount).toBe(1); // non-empty ladder has no floor
+      expect(subs[1].calls).toBe(0);
+
+      nowSpy.mockImplementation(() => now);
+      await loader.updateView({ ...VIEW, frameBudgetMs: 8 });
+      expect(loader.loadedLODCount).toBe(3);
+      expect(subs[0].calls).toBe(1); // no reset
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it('returns the SAME object across view changes once the ladder is complete', async () => {
     const { loader } = makeLadder([level(4, [0, 1, 2]), level(3, [0, 1, 2])]);
 
