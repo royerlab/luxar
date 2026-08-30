@@ -67,7 +67,8 @@ class RefreshResult(NamedTuple):
     rejected: int
     preserved: int
     unreadable: tuple[Path, ...]
-    staged_reads: int
+    unpinned_unreadable: int
+    staged_selected: int
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +404,7 @@ def _locate(
     for base, subdir in roots:
         parts = [p for p in (subdir, variant, file_name) if p]
         candidate = base.joinpath(*parts)
-        if candidate.exists():
+        if candidate.is_file():
             yield candidate
 
 
@@ -428,6 +429,11 @@ def _locate(
 def _char_key(dataset: str, variant: str, file_name: str) -> str:
     """Stable identity for one archive: ``dataset[/variant]/file``."""
     return "/".join(p for p in (dataset, variant, file_name) if p)
+
+
+def _is_fit(file_name: str) -> bool:
+    """Whether a manifest file owes gsplat measurements."""
+    return file_name.endswith(".gsplats.zarr.zip")
 
 
 def load_characteristics() -> dict[str, Any]:
@@ -595,7 +601,8 @@ def refresh_characteristics(
     seen: set[str] = set()
     absent: set[str] = set()
     unreadable: list[Path] = []
-    staged_reads = 0
+    unpinned_unreadable = 0
+    staged_selected = 0
     for dataset, entry in sorted(manifest["datasets"].items()):
         if entry.get("bucket") != "zenodo":
             continue
@@ -610,19 +617,24 @@ def refresh_characteristics(
             if path is None:
                 absent.add(key)
                 continue
-            if extra_root and path.is_relative_to(extra_root):
-                staged_reads += 1
+            root = (
+                "staged"
+                if extra_root is not None and path.is_relative_to(extra_root)
+                else "repo"
+                if path.is_relative_to(DATA_DIR)
+                else "cache"
+            )
+            if root == "staged":
+                staged_selected += 1
             info = _read_archive(path)
             if info is None:
+                if not _is_fit(spec["name"]):
+                    continue
                 if measured_sha256 == pinned_digests[key]:
                     unreadable.append(path)
+                else:
+                    unpinned_unreadable += 1
                 continue
-            if extra_root and path.is_relative_to(extra_root):
-                root = "staged"
-            elif path.is_relative_to(DATA_DIR):
-                root = "repo"
-            else:
-                root = "cache"
             measured[key] = {
                 **info,
                 # Which copy was read, and what it hashed to. Without the digest a
@@ -677,7 +689,8 @@ def refresh_characteristics(
         rejected=rejected,
         preserved=sum(key in absent for key in preserved_entries),
         unreadable=tuple(unreadable),
-        staged_reads=staged_reads,
+        unpinned_unreadable=unpinned_unreadable,
+        staged_selected=staged_selected,
     )
 
 
@@ -793,7 +806,7 @@ def _dataset_rows(
                 # LFS file, an archive not fetched yet) must not be mistaken for
                 # "this is not a fit": it belongs in the splat table with its
                 # figures absent, and `--check` has to say it went unexamined.
-                "is_fit": spec["name"].endswith(".gsplats.zarr.zip"),
+                "is_fit": _is_fit(spec["name"]),
                 "file": name,
                 "splats": f"{info['n_splats']:,}"
                 if info and isinstance(info.get("n_splats"), int)
@@ -1031,17 +1044,21 @@ def main() -> int:
             print(f"ERROR: pinned archive is present but unreadable: {path}")
         if args.archives_root:
             print(
-                f"read {result.staged_reads} archive(s) from --archives-root "
+                f"selected {result.staged_selected} archive(s) under --archives-root "
                 f"{args.archives_root}"
             )
-            if result.staged_reads == 0:
+            if result.staged_selected == 0:
                 print(
-                    "WARNING: --archives-root contributed no archive reads; "
+                    "WARNING: --archives-root matched no archives; "
                     "expected layout: <root>/<dataset>/[<variant>/]<file>"
                 )
         print(
             f"skipped {len(result.unreadable)} pinned archive(s) that were present "
             "but unreadable"
+        )
+        print(
+            f"skipped {result.unpinned_unreadable} fit archive(s) that were present "
+            "but not the pinned bytes, and unreadable"
         )
         print(
             f"read {result.read} archive(s) here, skipped {result.rejected} read(s) "

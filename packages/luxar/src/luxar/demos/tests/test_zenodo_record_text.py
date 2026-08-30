@@ -301,7 +301,7 @@ class TestABundleIsDescribedWhole:
         chars = gen.load_characteristics()
         (row,) = gen._dataset_rows("ds", manifest["datasets"]["ds"], chars)
 
-        assert result.staged_reads == 1
+        assert result.staged_selected == 1
         assert row["file"] == "movie.gsplats.zarr.zip (3 frames)"
         assert row["psnr"] == "31.2–54.9"
 
@@ -934,6 +934,7 @@ def test_refresh_writes_good_reads_before_reporting_a_pinned_unreadable_archive(
     )
 
     assert result.unreadable == (unreadable,)
+    assert result.unpinned_unreadable == 0
     assert result.preserved == 0
     archives = json.loads((tmp_path / "chars.json").read_text())["archives"]
     assert archives[good_key]["n_splats"] == 11
@@ -945,8 +946,11 @@ def test_an_unpinned_unreadable_archive_does_not_fail_refresh(
 ) -> None:
     archive = tmp_path / "unreadable.gsplats.zarr.zip"
     archive.write_bytes(b"unreadable")
+    key = f"ds/{archive.name}"
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
-    monkeypatch.setattr(gen, "load_characteristics", lambda: {})
+    monkeypatch.setattr(
+        gen, "load_characteristics", lambda: {key: {"n_splats": 7, "psnr_db": 1.0}}
+    )
     monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
     monkeypatch.setattr(gen, "_sha256_of", lambda path: "local")
     monkeypatch.setattr(gen, "_read_archive", lambda path: None)
@@ -956,6 +960,47 @@ def test_an_unpinned_unreadable_archive_does_not_fail_refresh(
     )
 
     assert result.unreadable == ()
+    assert result.unpinned_unreadable == 1
+    assert result.preserved == 0
+    assert json.loads((tmp_path / "chars.json").read_text())["archives"][key] == {
+        "n_splats": 7,
+        "psnr_db": 1.0,
+    }
+
+
+def test_a_pinned_non_fit_file_does_not_fail_refresh(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "coords.npz"
+    archive.write_bytes(b"healthy coordinate array")
+    digest = gen._sha256_of(archive)
+    monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
+    monkeypatch.setattr(gen, "load_characteristics", lambda: {})
+    monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
+    monkeypatch.setattr(gen, "_read_archive", lambda path: None)
+
+    result = gen.refresh_characteristics(_fake_manifest([_entry(archive.name, digest)]))
+    monkeypatch.setattr(gen, "refresh_characteristics", lambda manifest, root: result)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(_fake_manifest([_entry(archive.name, digest)])))
+    monkeypatch.setattr(gen, "MANIFEST", manifest_path)
+    monkeypatch.setattr(gen, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
+
+    assert result.unreadable == ()
+    assert result.unpinned_unreadable == 0
+    assert gen.main() == 0
+
+
+def test_locate_ignores_an_unzipped_archive_directory(
+    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "staged" / "ds" / "fit.gsplats.zarr.zip"
+    archive.mkdir(parents=True)
+    monkeypatch.setattr(gen, "DATA_DIR", tmp_path / "repo")
+    monkeypatch.setattr(gen, "CACHE_DIR", tmp_path / "cache")
+
+    assert list(gen._locate("ds", {}, None, archive.name, tmp_path / "staged")) == []
 
 
 def test_a_prefix_matching_cache_path_is_not_labelled_staged(
@@ -1105,7 +1150,7 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     monkeypatch.setattr(
         gen,
         "refresh_characteristics",
-        lambda manifest, extra_root: gen.RefreshResult(4, 2, 1, 3, (), 2),
+        lambda manifest, extra_root: gen.RefreshResult(4, 2, 1, 3, (), 5, 2),
     )
     monkeypatch.setattr(
         sys,
@@ -1126,7 +1171,9 @@ def test_refresh_summary_distinguishes_rejected_and_retained_reads(
     assert "kept 2 committed measurement(s) that outrank the local copy" in summary
     assert "preserved 3 not on this machine" in summary
     assert "skipped 0 pinned archive(s) that were present but unreadable" in summary
-    assert f"read 2 archive(s) from --archives-root {staged_root}" in summary
+    assert "skipped 5 fit archive(s)" in summary
+    assert "not the pinned bytes, and unreadable" in summary
+    assert f"selected 2 archive(s) under --archives-root {staged_root}" in summary
     assert "WARNING" not in summary
 
 
@@ -1146,7 +1193,9 @@ def test_refresh_reports_each_unreadable_pinned_archive_and_exits_nonzero(
     monkeypatch.setattr(
         gen,
         "refresh_characteristics",
-        lambda manifest, extra_root: gen.RefreshResult(2, 0, 0, 0, (first, second), 0),
+        lambda manifest, extra_root: gen.RefreshResult(
+            2, 0, 0, 0, (first, second), 0, 0
+        ),
     )
     monkeypatch.setattr(sys, "argv", ["gen_zenodo_records.py", "--refresh"])
 
@@ -1190,7 +1239,7 @@ def test_a_flat_archives_root_warns_with_the_expected_layout(
 
     output = capsys.readouterr().out
     assert "WARNING" in output
-    assert "read 0 archive(s) from --archives-root" in output
+    assert "selected 0 archive(s) under --archives-root" in output
     assert str(staged_root) in output
     assert "<root>/<dataset>/[<variant>/]<file>" in output
 
