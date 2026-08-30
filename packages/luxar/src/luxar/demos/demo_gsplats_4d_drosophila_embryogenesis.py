@@ -79,10 +79,10 @@ lands on the grid rather than trusting that it does.
 CULLING: WHY THE SHIPPED ARCHIVE USES A FIXED AMPLITUDE CUTOFF
 ================================================================================
 
-The fit uses a nominal seed budget of 256,000 splats per frame — 128 million in
-total — but dynamic fit operations and the preset's post-fit cull make the real
-output count data-dependent. The shipped archive contains 83,221,420 splats and
-was filtered at the recorded raw-amplitude cutoff **33.40462112**.
+The fit uses a nominal seed budget of 256,000 splats per frame — a ceiling of
+128 million in total — and this run's ``merged/final.gsplats.zarr`` measured
+exactly 128,000,000. The shipped archive contains 83,221,420 splats and was
+filtered at the recorded raw-amplitude cutoff **33.40462112**.
 
 That is not a quality compromise so much as a haze removal. Amplitude in a
 fitted light-sheet stack is heavily right-skewed: a minority of splats sit on
@@ -95,11 +95,12 @@ differences this subtle are actually visible.
 
 The original operation was intended as cumulative-amplitude retention 0.960.
 The pre-#2260 float32 accumulator silently kept only 12.4% at the 128M scale;
-the corrected float64 implementation keeps 55.3% on the same fit. The published
-archive was rebuilt with the fixed cutoff above, so rerunning the current
-cumulative cull would not reproduce its recorded count. Keep the distinction:
-the cutoff reproduces this artifact; cumulative retention expresses the original
-quality choice.
+the corrected float64 implementation keeps 55.3% on the same fit. The shipped
+archive's root stats instead record ``n_splats = 83,221,420`` and
+``amplitude_range.min = 33.40462112426758`` — a hard floor at the fixed cutoff
+above. Rerunning the current cumulative cull therefore does not reproduce this
+artifact. Keep the distinction: the cutoff reproduces the archive; cumulative
+retention expresses the original quality choice.
 
 WHERE THE DATA COMES FROM
 ================================================================================
@@ -341,7 +342,7 @@ JOBS_PER_GPU = 2
 #: Progressive first-paint ladder produced during the streaming merge.
 MERGE_RECIPE = "stream"
 MERGE_TARGET_MS = 200
-#: Float64 cutoff recorded in the corrected published rebuild (83,221,420 kept).
+#: The shipped root stats record 83,221,420 splats with this exact hard floor.
 AMPLITUDE_MIN = 33.40462112
 #: Physical (z, y, x) microns; the stacked frame-index axis is unchanged here.
 VOXEL_SCALE = (1.93, 0.40625, 0.40625, 1.0)
