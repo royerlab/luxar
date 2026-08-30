@@ -14,8 +14,9 @@ import importlib.util
 import json
 import sys
 import zipfile
+from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Protocol, cast, get_args
 
 import pytest
 
@@ -23,6 +24,23 @@ from luxar.demos.demo_gsplats_4d_h2afva_timelapse import PARENT_FINEST_SPLATS
 
 #: .../packages/luxar/src/luxar/demos/tests/this_file.py -> repo root is 6 up.
 _SCRIPT = Path(__file__).resolve().parents[6] / "scripts" / "gen_zenodo_records.py"
+# "wrapped" is zipped from outside the store directory; "root" from inside it.
+_ArchiveLayout = Literal["wrapped", "root"]
+
+
+class _FrameWriter(Protocol):
+    def __call__(
+        self,
+        path: Path,
+        *,
+        n_splats: int = 100,
+        psnr: float | None = 40.0,
+        foreground_psnr: float | None = None,
+        source_bytes: int | None = 1_000_000,
+        gsplats: bool = True,
+        kind: str | None = None,
+        part_provenance: list[dict[str, Any]] | None = None,
+    ) -> None: ...
 
 
 def _load_module() -> Any:
@@ -61,19 +79,20 @@ def _write_frame(
     gsplats: bool = True,
     kind: str | None = None,
     part_provenance: list[dict[str, Any]] | None = None,
+    layout: _ArchiveLayout,
 ) -> None:
-    """One single-store `.gsplats.zarr.zip`, as a bundle's frames are."""
-    root = f"{path.name.split('.')[0]}.gsplats.zarr"
+    """Write a store zipped from outside its directory or from inside it."""
+    prefix = f"{path.name.split('.')[0]}.gsplats.zarr/" if layout == "wrapped" else ""
     with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr(f"{root}/.zgroup", json.dumps({"zarr_format": 2}))
+        zf.writestr(f"{prefix}.zgroup", json.dumps({"zarr_format": 2}))
         root_attrs = {
             "format_type": "gsplats_zarr" if gsplats else "luxar_zarr",
             "n_splats": n_splats,
         }
         if kind is not None:
             root_attrs["kind"] = kind
-        zf.writestr(f"{root}/.zattrs", json.dumps(root_attrs))
-        zf.writestr(f"{root}/fitting/.zgroup", json.dumps({"zarr_format": 2}))
+        zf.writestr(f"{prefix}.zattrs", json.dumps(root_attrs))
+        zf.writestr(f"{prefix}fitting/.zgroup", json.dumps({"zarr_format": 2}))
         fitting = {}
         if psnr is not None:
             fitting["psnr_db"] = psnr
@@ -83,15 +102,30 @@ def _write_frame(
             fitting["source_bytes"] = source_bytes
         if part_provenance is not None:
             fitting["part_provenance"] = part_provenance
-        zf.writestr(f"{root}/fitting/.zattrs", json.dumps(fitting))
+        zf.writestr(f"{prefix}fitting/.zattrs", json.dumps(fitting))
 
 
-def _write_bundle(path: Path, frames: list[dict[str, Any]], tmp_path: Path) -> None:
+@pytest.fixture(params=get_args(_ArchiveLayout), ids=lambda layout: f"{layout}-store")
+def archive_layout(request: pytest.FixtureRequest) -> _ArchiveLayout:
+    return cast(_ArchiveLayout, request.param)
+
+
+@pytest.fixture
+def write_frame(archive_layout: _ArchiveLayout) -> _FrameWriter:
+    return partial(_write_frame, layout=archive_layout)
+
+
+def _write_bundle(
+    path: Path,
+    frames: list[dict[str, Any]],
+    tmp_path: Path,
+    write_frame: _FrameWriter,
+) -> None:
     """An outer zip of per-frame `.gsplats.zarr.zip` members, as the timelapses are."""
     members = []
     for index, kwargs in enumerate(frames):
         member = tmp_path / f"frame{index:04d}.gsplats.zarr.zip"
-        _write_frame(member, **kwargs)
+        write_frame(member, **kwargs)
         members.append(member)
     with zipfile.ZipFile(path, "w") as zf:
         for member in members:
@@ -262,33 +296,47 @@ class TestABundleIsDescribedWhole:
     its best frame's PSNR as the bundle's.
     """
 
-    def test_the_splat_count_covers_every_frame(self, gen: Any, tmp_path: Path) -> None:
+    def test_the_splat_count_covers_every_frame(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
         path = tmp_path / "movie.gsplats.zarr.zip"
         _write_bundle(
             path,
             [{"n_splats": 10}, {"n_splats": 20}, {"n_splats": 30}],
             tmp_path,
+            write_frame,
         )
         info = gen._read_archive(path)
         assert info is not None
         assert info["frames"] == 3
         assert info["n_splats"] == 60, "the first frame's count is not the archive's"
 
-    def test_the_source_bytes_cover_every_frame(self, gen: Any, tmp_path: Path) -> None:
+    def test_the_source_bytes_cover_every_frame(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
         """`vs raw voxels` divides these by the WHOLE bundle's stored size."""
         path = tmp_path / "movie.gsplats.zarr.zip"
-        _write_bundle(path, [{"source_bytes": 1000}] * 4, tmp_path)
+        _write_bundle(path, [{"source_bytes": 1000}] * 4, tmp_path, write_frame)
         assert gen._read_archive(path)["source_bytes"] == 4000
 
     def test_quality_is_reported_as_the_range_across_frames(
-        self, gen: Any, tmp_path: Path
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
     ) -> None:
         path = tmp_path / "movie.gsplats.zarr.zip"
-        _write_bundle(path, [{"psnr": 31.2}, {"psnr": 54.9}, {"psnr": 40.0}], tmp_path)
+        _write_bundle(
+            path,
+            [{"psnr": 31.2}, {"psnr": 54.9}, {"psnr": 40.0}],
+            tmp_path,
+            write_frame,
+        )
         assert gen._db(gen._read_archive(path)["psnr_db"]) == "31.2–54.9"
 
     def test_quality_range_survives_the_committed_sidecar(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
         archive.parent.mkdir()
@@ -296,6 +344,7 @@ class TestABundleIsDescribedWhole:
             archive,
             [{"psnr": 31.2}, {"psnr": 54.9}, {"psnr": 40.0}],
             tmp_path,
+            write_frame,
         )
         monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
         manifest = _fake_manifest(
@@ -310,17 +359,19 @@ class TestABundleIsDescribedWhole:
         assert row["file"] == "movie.gsplats.zarr.zip (3 frames)"
         assert row["psnr"] == "31.2–54.9"
 
-    def test_one_value_when_every_frame_agrees(self, gen: Any, tmp_path: Path) -> None:
+    def test_one_value_when_every_frame_agrees(
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
+    ) -> None:
         path = tmp_path / "movie.gsplats.zarr.zip"
-        _write_bundle(path, [{"psnr": 40.0}] * 3, tmp_path)
+        _write_bundle(path, [{"psnr": 40.0}] * 3, tmp_path, write_frame)
         assert gen._db(gen._read_archive(path)["psnr_db"]) == "40.0"
 
     def test_an_unreadable_frame_makes_the_totals_absent(
-        self, gen: Any, tmp_path: Path
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
     ) -> None:
         """A partial sum published as a total is the falsehood, not a lesser one."""
         path = tmp_path / "movie.gsplats.zarr.zip"
-        _write_bundle(path, [{"n_splats": 10}, {"n_splats": 20}], tmp_path)
+        _write_bundle(path, [{"n_splats": 10}, {"n_splats": 20}], tmp_path, write_frame)
         broken = tmp_path / "frame0002.gsplats.zarr.zip"
         broken.write_bytes(b"truncated")
         with zipfile.ZipFile(path, "a") as zf:
@@ -351,10 +402,10 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         return parts
 
     def test_acquisition_referenced_parts_publish_a_range(
-        self, gen: Any, tmp_path: Path
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
     ) -> None:
         path = tmp_path / "movie.gsplats.zarr.zip"
-        _write_frame(
+        write_frame(
             path,
             psnr=None,
             source_bytes=None,
@@ -371,10 +422,14 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
 
     @pytest.mark.parametrize("kind", [None, "preprocessed", "synthetic"])
     def test_non_acquisition_parts_are_not_quoted(
-        self, gen: Any, tmp_path: Path, kind: str | None
+        self,
+        gen: Any,
+        tmp_path: Path,
+        kind: str | None,
+        write_frame: _FrameWriter,
     ) -> None:
         path = tmp_path / f"movie-{kind}.gsplats.zarr.zip"
-        _write_frame(
+        write_frame(
             path,
             psnr=None,
             source_bytes=None,
@@ -390,10 +445,10 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         assert info["quality_quotable"] is False
 
     def test_partition_parts_are_not_reported_as_frames(
-        self, gen: Any, tmp_path: Path
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
     ) -> None:
         path = tmp_path / "partition.gsplats.zarr.zip"
-        _write_frame(
+        write_frame(
             path,
             psnr=None,
             source_bytes=None,
@@ -407,10 +462,10 @@ class TestAStackedStoreIsDescribedFromItsPartProvenance:
         assert info["source_bytes"] is None
 
     def test_nested_single_part_is_not_reported_as_one_frame(
-        self, gen: Any, tmp_path: Path
+        self, gen: Any, tmp_path: Path, write_frame: _FrameWriter
     ) -> None:
         path = tmp_path / "single-part-timelapse.gsplats.zarr.zip"
-        _write_frame(
+        write_frame(
             path,
             psnr=None,
             source_bytes=None,
@@ -863,7 +918,11 @@ class TestAnUnreadableFitIsNotCalledANonFit:
         assert "not on this machine" not in output
 
     def test_check_does_not_inherit_unreadability_from_an_unpinned_copy(
-        self, gen: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        gen: Any,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        write_frame: _FrameWriter,
     ) -> None:
         repo_archive = tmp_path / "repo" / "d" / "absent.gsplats.zarr.zip"
         repo_archive.parent.mkdir(parents=True)
@@ -872,7 +931,7 @@ class TestAnUnreadableFitIsNotCalledANonFit:
         pinned_archive.parent.mkdir(parents=True)
         # Fully stamped, so a non-zero exit could only come from the unpinned
         # copy's unreadability — which is exactly what must not happen.
-        _write_frame(pinned_archive, foreground_psnr=30.0)
+        write_frame(pinned_archive, foreground_psnr=30.0)
         entry = dict(
             self.ENTRY,
             files=[
@@ -1045,15 +1104,18 @@ def test_a_staged_measurement_is_not_clobbered_by_a_local_refresh(
 
 
 def test_refresh_uses_a_pinned_cache_copy_over_an_unpinned_repo_copy(
-    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    write_frame: _FrameWriter,
 ) -> None:
     file_name = "a.gsplats.zarr.zip"
     repo_archive = tmp_path / "repo" / "ds" / file_name
     cache_archive = tmp_path / "cache" / "ds" / file_name
     repo_archive.parent.mkdir(parents=True)
     cache_archive.parent.mkdir(parents=True)
-    _write_frame(repo_archive, n_splats=111)
-    _write_frame(cache_archive, n_splats=999)
+    write_frame(repo_archive, n_splats=111)
+    write_frame(cache_archive, n_splats=999)
     pinned_sha = gen._sha256_of(cache_archive)
     monkeypatch.setattr(gen, "DATA_DIR", tmp_path / "repo")
     monkeypatch.setattr(gen, "CACHE_DIR", tmp_path / "cache")
@@ -1524,11 +1586,14 @@ def test_refresh_reports_and_discards_an_unpinned_read_without_a_fallback(
 
 
 def test_refresh_preserves_quality_prose_on_a_successful_read(
-    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    write_frame: _FrameWriter,
 ) -> None:
     key = "ds/a.gsplats.zarr.zip"
     archive = tmp_path / "a.gsplats.zarr.zip"
-    _write_frame(archive)
+    write_frame(archive)
     digest = gen._sha256_of(archive)
     monkeypatch.setattr(gen, "CHARACTERISTICS", tmp_path / "chars.json")
     monkeypatch.setattr(
@@ -1581,10 +1646,13 @@ def test_rejected_read_marks_only_an_empty_retained_entry(gen: Any) -> None:
 
 
 def test_a_note_does_not_read_figures_from_unpinned_bytes(
-    gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    gen: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    write_frame: _FrameWriter,
 ) -> None:
     archive = tmp_path / "a.gsplats.zarr.zip"
-    _write_frame(archive, n_splats=30)
+    write_frame(archive, n_splats=30)
     monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
     monkeypatch.setattr(
         gen,
@@ -2197,10 +2265,11 @@ class TestCheckExplainsAnAbsentFigure:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sidecar: dict[str, Any],
+        write_frame: _FrameWriter,
     ) -> list[str]:
         archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
         archive.parent.mkdir(exist_ok=True)
-        _write_bundle(archive, [{"n_splats": 10}], tmp_path)
+        _write_bundle(archive, [{"n_splats": 10}], tmp_path, write_frame)
         manifest = _fake_manifest([_entry("movie.gsplats.zarr.zip", "p" * 64)])
         chars_path = tmp_path / "chars.json"
         chars_path.write_text(
@@ -2237,9 +2306,15 @@ class TestCheckExplainsAnAbsentFigure:
             assert chars[key]["unmeasured_reason"] == "unpinned-local-copy"
 
     def test_an_unpinned_local_copy_is_named_as_the_cause(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
-        (problem,) = self._gaps_for(gen, tmp_path, monkeypatch, dict(self._ADJUDICATED))
+        (problem,) = self._gaps_for(
+            gen, tmp_path, monkeypatch, dict(self._ADJUDICATED), write_frame
+        )
 
         assert "not the pinned artifact" in problem, (
             "an absence refresh decided on must say so, or it reads as unmeasured "
@@ -2247,22 +2322,34 @@ class TestCheckExplainsAnAbsentFigure:
         )
 
     def test_a_measured_entry_gets_no_such_excuse(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         """The diagnosis must not fire for an archive that was really measured."""
         sidecar = dict(self._ADJUDICATED, measured_sha256="a" * 64, n_splats=10)
         sidecar.pop("unmeasured_reason")
 
-        problems = self._gaps_for(gen, tmp_path, monkeypatch, sidecar)
+        problems = self._gaps_for(gen, tmp_path, monkeypatch, sidecar, write_frame)
 
         assert not any("not the pinned artifact" in p for p in problems)
 
     def test_a_never_measured_entry_gets_no_such_excuse(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         """A hand-written note is not a refresh verdict, so it explains nothing."""
         problems = self._gaps_for(
-            gen, tmp_path, monkeypatch, {"quality_note": "measured elsewhere"}
+            gen,
+            tmp_path,
+            monkeypatch,
+            {"quality_note": "measured elsewhere"},
+            write_frame,
         )
 
         assert not any("not the pinned artifact" in p for p in problems)
@@ -2300,44 +2387,60 @@ class TestUnmeasuredRowsPreferPinnedArchives:
         return row
 
     def test_a_readable_pinned_copy_outranks_an_older_readable_copy(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         older, pinned = self._paths(gen, tmp_path, monkeypatch)
-        _write_frame(older, n_splats=10)
-        _write_frame(pinned, n_splats=20)
+        write_frame(older, n_splats=10)
+        write_frame(pinned, n_splats=20)
 
         row = self._row(gen, gen._sha256_of(pinned))
 
         assert row["splats"] == "20"
 
     def test_a_readable_pinned_copy_is_not_hidden_by_an_unreadable_copy(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         unreadable, pinned = self._paths(gen, tmp_path, monkeypatch)
         unreadable.write_bytes(b"not a zip archive")
-        _write_frame(pinned, n_splats=20)
+        write_frame(pinned, n_splats=20)
 
         row = self._row(gen, gen._sha256_of(pinned))
 
         assert row["splats"] == "20"
 
     def test_a_directory_candidate_does_not_hide_a_readable_pinned_copy(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         directory, pinned = self._paths(gen, tmp_path, monkeypatch)
         directory.mkdir()
-        _write_frame(pinned, n_splats=20)
+        write_frame(pinned, n_splats=20)
 
         row = self._row(gen, gen._sha256_of(pinned))
 
         assert row["splats"] == "20"
 
     def test_the_first_readable_copy_remains_the_fallback_without_pinned_bytes(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         first, second = self._paths(gen, tmp_path, monkeypatch)
-        _write_frame(first, n_splats=10)
-        _write_frame(second, n_splats=20)
+        write_frame(first, n_splats=10)
+        write_frame(second, n_splats=20)
 
         row = self._row(gen, "f" * 64)
 
@@ -2365,10 +2468,13 @@ class TestWhoWroteTheEntryDecides:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         sidecar: dict[str, Any],
+        write_frame: _FrameWriter,
     ) -> dict[str, Any]:
         archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
         archive.parent.mkdir(exist_ok=True)
-        _write_bundle(archive, [{"n_splats": 10}, {"n_splats": 20}], tmp_path)
+        _write_bundle(
+            archive, [{"n_splats": 10}, {"n_splats": 20}], tmp_path, write_frame
+        )
         # `_locate` searches DATA_DIR and the user cache, never tmp_path, so
         # without this the archive is unreadable and EVERY figure comes back
         # absent -- which makes an "absent" assertion pass no matter what the
@@ -2382,7 +2488,11 @@ class TestWhoWroteTheEntryDecides:
         return row
 
     def test_the_archive_is_reachable_in_this_fixture(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         """Guard the guard: with no sidecar entry the read must supply the count.
 
@@ -2392,7 +2502,9 @@ class TestWhoWroteTheEntryDecides:
         """
         archive = tmp_path / "ds" / "movie.gsplats.zarr.zip"
         archive.parent.mkdir(exist_ok=True)
-        _write_bundle(archive, [{"n_splats": 10}, {"n_splats": 20}], tmp_path)
+        _write_bundle(
+            archive, [{"n_splats": 10}, {"n_splats": 20}], tmp_path, write_frame
+        )
         monkeypatch.setattr(gen, "_locate", lambda *a, **k: iter((archive,)))
         manifest = _fake_manifest(
             [_entry("movie.gsplats.zarr.zip", gen._sha256_of(archive))]
@@ -2403,7 +2515,11 @@ class TestWhoWroteTheEntryDecides:
         assert row["splats"] == "30"
 
     def test_a_note_does_not_delete_the_readable_figures(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         """Explaining one gap must not open others.
 
@@ -2412,13 +2528,21 @@ class TestWhoWroteTheEntryDecides:
         with nothing to say.
         """
         row = self._row(
-            gen, tmp_path, monkeypatch, {"quality_note": "PSNR not recoverable here"}
+            gen,
+            tmp_path,
+            monkeypatch,
+            {"quality_note": "PSNR not recoverable here"},
+            write_frame,
         )
 
         assert row["splats"] == "30"
 
     def test_a_refresh_verdict_is_respected_including_its_nulls(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         """The unpinned-copy verdict must survive the note-merging path."""
         row = self._row(
@@ -2431,6 +2555,7 @@ class TestWhoWroteTheEntryDecides:
                 "measured_from": None,
                 "measured_sha256": None,
             },
+            write_frame,
         )
 
         assert row["splats"] == gen._ABSENT, (
@@ -2439,11 +2564,19 @@ class TestWhoWroteTheEntryDecides:
         )
 
     def test_a_committed_measurement_still_outranks_the_local_copy(
-        self, gen: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        gen: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        write_frame: _FrameWriter,
     ) -> None:
         """A record describes what it SERVES, so the sidecar wins where it speaks."""
         row = self._row(
-            gen, tmp_path, monkeypatch, {"n_splats": 99999, "measured_sha256": "a" * 64}
+            gen,
+            tmp_path,
+            monkeypatch,
+            {"n_splats": 99999, "measured_sha256": "a" * 64},
+            write_frame,
         )
 
         assert row["splats"] == "99,999"
@@ -2608,6 +2741,23 @@ class TestTheStoreRootIsFoundFromFormatMetadata:
         assert info["ndim"] == 4
         assert info["psnr_db"] == 38.25
 
+    def test_a_conventional_root_accepts_the_legacy_type_marker(
+        self, gen: Any, tmp_path: Path, archive_layout: _ArchiveLayout
+    ) -> None:
+        prefix = "" if archive_layout == "root" else "x.gsplats.zarr/"
+        path = tmp_path / "legacy-marker.gsplats.zarr.zip"
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr(f"{prefix}.zgroup", json.dumps({"zarr_format": 2}))
+            zf.writestr(
+                f"{prefix}.zattrs",
+                json.dumps({"type": "gsplats", "n_splats": 2468}),
+            )
+
+        info = gen._read_archive(path)
+
+        assert info is not None
+        assert info["n_splats"] == 2468
+
     def test_a_root_level_store_is_read_not_skipped(
         self, gen: Any, tmp_path: Path
     ) -> None:
@@ -2635,12 +2785,23 @@ class TestTheStoreRootIsFoundFromFormatMetadata:
         assert info is not None
         assert info["n_splats"] == 8_823_953, "read a child group as the root"
 
-    def test_the_wrapping_directory_layout_still_works(
-        self, gen: Any, tmp_path: Path
+    def test_the_shared_store_fixture_reads_both_layouts(
+        self,
+        gen: Any,
+        tmp_path: Path,
+        archive_layout: _ArchiveLayout,
+        write_frame: _FrameWriter,
     ) -> None:
-        """The other half of the corpus must not regress."""
-        path = tmp_path / "wrapped.gsplats.zarr.zip"
-        _write_frame(path, n_splats=1234, psnr=39.0)
+        path = tmp_path / "fixture.gsplats.zarr.zip"
+        write_frame(path, n_splats=1234, psnr=39.0)
+
+        with zipfile.ZipFile(path) as zf:
+            root_attrs = (
+                ".zattrs"
+                if archive_layout == "root"
+                else "fixture.gsplats.zarr/.zattrs"
+            )
+            assert root_attrs in zf.namelist()
 
         info = gen._read_archive(path)
 
