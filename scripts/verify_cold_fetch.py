@@ -16,9 +16,9 @@ The obvious safety net does not work here. ``DatasetUnavailable`` subclasses
 ``FileNotFoundError`` and **sixteen demos catch it deliberately**. Most fall back
 to refitting locally; the Census demo prints regeneration guidance instead. See
 the class docstring in
-``luxar.demos._support.datasets.data_fetch``. That is a good design, but it means
-that after the payloads are removed a broken hosting configuration does not
-surface as a failure. It surfaces as a multi-minute GPU refit on a user's
+``luxar.demos._support.datasets.data_fetch``. For the refitting fallbacks, that
+means a broken hosting configuration does not surface as a failure after the
+payloads are removed. It surfaces as a multi-minute GPU refit on a user's
 machine, from source data they do not have, and the process exit code stays 0.
 
 So "did the demo run?" cannot be the check, and neither can any exit-code sweep
