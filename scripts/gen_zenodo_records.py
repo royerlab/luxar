@@ -485,10 +485,13 @@ def _sha256_of(path: Path) -> str:
 def _select_pinned_location(
     candidates: Iterator[Path], pinned_digest: Optional[str]
 ) -> tuple[Optional[Path], Optional[str]]:
-    """Prefer pinned bytes, falling back to the first existing candidate."""
+    """Prefer pinned bytes, falling back to the first readable candidate."""
     fallback: tuple[Optional[Path], Optional[str]] = (None, None)
     for path in candidates:
-        digest = _sha256_of(path)
+        try:
+            digest = _sha256_of(path)
+        except OSError:
+            continue
         if fallback[0] is None:
             fallback = (path, digest)
         if digest == pinned_digest:
@@ -770,7 +773,8 @@ def _dataset_rows(
     describes the artifact it serves, and the local copy may be a pre-refit
     generation or a local scratch fit. Reading an archive is the fallback for
     something not measured yet, so a fresh dataset still renders before its first
-    ``--refresh``.
+    ``--refresh``; that fallback prefers pinned bytes when available but does not
+    require them.
     """
     chars = load_characteristics() if chars is None else chars
     rows = []
@@ -797,7 +801,12 @@ def _dataset_rows(
             if read is not None:
                 info = {**read, **{k: v for k, v in info.items() if v is not None}}
         elif info is None:
-            path = next(_locate(dataset, entry, variant, spec["name"]), None)
+            # Unlike a note, a wholly unmeasured row may use unpinned local bytes
+            # so a fresh fit remains renderable before its first refresh.
+            path, _ = _select_pinned_location(
+                _locate(dataset, entry, variant, spec["name"]),
+                _pinned_digest(spec),
+            )
             info = _read_archive(path) if path else None
         stored = hosted_size(spec)
         name = f"{variant}/{spec['name']}" if variant else spec["name"]
