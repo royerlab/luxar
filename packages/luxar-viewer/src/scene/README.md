@@ -25,7 +25,7 @@ scene/
 │   ├── clipping/                   # bounds-math, scene-bounds-cache, clipping-policy
 │   ├── render-pipeline/            # renderer-setup, post-processing-setup, scene-disposal, webgl-context-recovery
 │   └── viewport/                   # dpr-policy, resize-orchestrator
-├── animation/                      # animation-controller, dimension-animation-manager
+├── animation/                      # animation-controller, committed-quality, dimension-animation-manager
 ├── dims/                           # Pure nD step and dimension-selection helpers
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── dimension-loading.ts            # Current-slice loading + playback prefetch

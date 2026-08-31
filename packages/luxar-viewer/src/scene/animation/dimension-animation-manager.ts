@@ -33,6 +33,7 @@ import type { AnimationController } from './animation-controller';
 import type { SceneDimsManager } from '../scene-dims-manager';
 import { snapDiscreteValue } from '../scene-dims-manager';
 import { config } from '../../config';
+import { ENERGY_RELEASE_THRESHOLD } from '../lod-display-gate';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
 import { advanceDimensionValue } from './advance-value';
@@ -85,7 +86,14 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    */
   constructor(
     private sceneDimsManager: SceneDimsManager,
-    private animationController: AnimationController
+    private animationController: AnimationController,
+    /**
+     * Optional probe for the worst-served laddered node's committed energy.
+     * Supplied by the wiring in `input/.../dimension-navigation/setup.ts`, which
+     * has the scene. Absent (or returning `null`) falls back to cadence-only
+     * feedback, which is the honest behaviour when nothing on screen is stamped.
+     */
+    private committedQuality?: () => number | null
   ) {
     super();
 
@@ -189,21 +197,46 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         state.frameCount = 0;
         state.lastFPSMeasurementTime = currentTime;
 
-        // Check if actual FPS is significantly lower than target
+        // Cadence alone cannot say whether this is a problem. Since #2377 a
+        // playback pass streams every cache-resident rung, so the playhead
+        // routinely slows to wait for data — that is the pacing gate working,
+        // and frames on screen are complete. Before #2377 the opposite held:
+        // cadence was MET because a pass committed one rung and stopped, so
+        // this feedback stayed silent through the blank-frame defect (#2374).
+        // Consult committed quality so the two are distinguishable.
         const threshold = config.dimensionAnimation.ui.feedbackThreshold;
-        if (state.actualFPS < state.targetFPS * threshold) {
+        const energy = this.committedQuality?.() ?? null;
+        const cadenceSlipped = state.actualFPS < state.targetFPS * threshold;
+        const framesStillFilling = energy !== null && energy < ENERGY_RELEASE_THRESHOLD;
+        if (cadenceSlipped || framesStillFilling) {
+          const enoughOnScreen = energy !== null && energy >= ENERGY_RELEASE_THRESHOLD;
           this.dispatchEvent({
             type: 'fpsWarning',
             dimIndex,
             targetFPS: state.targetFPS,
             actualFPS: state.actualFPS,
+            committedEnergyFraction: energy,
           });
 
           if (config.dimensionAnimation.ui.showFPSFeedback) {
-            log.warning(
-              Modules.ANIMATION,
-              `Dim ${dimIndex}: Actual FPS (${state.actualFPS.toFixed(1)}) < Target (${state.targetFPS})`
-            );
+            const cadence = `Dim ${dimIndex}: ${state.actualFPS.toFixed(1)} of ${state.targetFPS} fps requested`;
+            if (enoughOnScreen) {
+              // NOT a warning: enough content is visible to read the frame and
+              // the playhead is pacing to data as designed.
+              log.info(
+                Modules.ANIMATION,
+                `${cadence} — pacing to data, enough on screen to read ` +
+                  `(committed energy ${(energy * 100).toFixed(0)}%)`
+              );
+            } else {
+              log.warning(
+                Modules.ANIMATION,
+                energy === null
+                  ? `${cadence} — committed quality unknown (no energy stamps on this scene)`
+                  : `${cadence} — still filling in ` +
+                      `(committed energy ${(energy * 100).toFixed(0)}%)`
+              );
+            }
           }
         }
       }

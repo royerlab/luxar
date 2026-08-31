@@ -63,6 +63,16 @@ export interface DimensionAnimationEvents {
   stepChange: { dimIndex: number; stepSize: number | null };
   /** Emitted when direction changes (bounce mode) */
   directionChange: { dimIndex: number; direction: AnimationDirection };
-  /** Emitted when measured FPS differs significantly from target */
-  fpsWarning: { dimIndex: number; targetFPS: number; actualFPS: number };
+  /**
+   * Playback missed the requested cadence or a visible node is still below the
+   * committed-energy display threshold. `committedEnergyFraction` is the
+   * worst-served non-empty laddered node's committed energy, or `null` when
+   * nothing on screen carries energy stamps (#2374).
+   */
+  fpsWarning: {
+    dimIndex: number;
+    targetFPS: number;
+    actualFPS: number;
+    committedEnergyFraction: number | null;
+  };
 }
