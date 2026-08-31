@@ -12,12 +12,6 @@ import { test, expect } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 
 test.describe('Luxar Basic Rendering', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
-  });
-
   test('should load viewer without errors', async ({ page }) => {
     // Track console errors
     const errors: string[] = [];

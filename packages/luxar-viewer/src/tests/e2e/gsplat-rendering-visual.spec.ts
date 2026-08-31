@@ -20,6 +20,7 @@ import {
   assertNoShaderErrors,
   getElementPixelStats,
   placeCameraAt,
+  renderOnce,
 } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
@@ -37,15 +38,46 @@ test.describe('GSplats visual correctness', () => {
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
-    // Require actual visible output. The pitch-black clear color
-    // (default 0x000000) contributes exactly zero, so any non-black
-    // pixel is real splat signal. Whole-canvas stats are more robust
-    // than sparse grid sampling for small splat clusters.
+    // Whole-canvas stats are more robust than sparse grid sampling for small
+    // splat clusters. Pixel helpers suppress DOM painted over the canvas, so
+    // non-black pixels here can only come from the rendered canvas itself.
     const stats = await getElementPixelStats(page, 'canvas', 10);
     expect(
       stats.nonBlackPixels,
       `Expected visible GSplat output; stats=${JSON.stringify(stats)}`
     ).toBeGreaterThan(0);
+
+    const hidden = await page.evaluate(() => {
+      const debug = (
+        window as unknown as {
+          __luxarDebug: { scene: { traverse(cb: (object: any) => void): void } };
+        }
+      ).__luxarDebug;
+      let count = 0;
+      debug.scene.traverse((object) => {
+        if (object.userData?.nodeType === 'gsplats') {
+          object.visible = false;
+          count++;
+        }
+      });
+      const chromeCanvas = document.createElement('canvas');
+      chromeCanvas.width = 120;
+      chromeCanvas.height = 12;
+      chromeCanvas.style.cssText =
+        'position: fixed; left: 0; top: 0; width: 120px; height: 12px; z-index: 9999';
+      const context = chromeCanvas.getContext('2d')!;
+      context.fillStyle = '#fff';
+      context.fillRect(0, 0, chromeCanvas.width, chromeCanvas.height);
+      document.body.appendChild(chromeCanvas);
+      return count;
+    });
+    expect(hidden, 'the blank-frame control must hide real GSplat geometry').toBeGreaterThan(0);
+    await renderOnce(page);
+    const blankStats = await getElementPixelStats(page, 'canvas', 10);
+    expect(
+      blankStats.nonBlackPixels,
+      `Blank frame is not black; DOM chrome or geometry leaked into the canvas capture; stats=${JSON.stringify(blankStats)}`
+    ).toBe(0);
   });
 
   test('Camera rotation does not produce shader errors (precision-based ray integral)', async ({
