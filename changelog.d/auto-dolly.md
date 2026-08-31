@@ -17,6 +17,10 @@ rotates a running turntable. Because it is gated on zoom rather than rotation
 it also works in ortho mode, where it breathes the orthographic zoom and the
 turntable is inert.
 
+Switching it off leaves the camera where the swing had reached, and re-enabling
+resumes from there — the same way stopping the turntable leaves the scene at its
+current angle.
+
 The amplitude slider runs to 95% — nearly halving and doubling the viewing
 distance each cycle — but the default is a modest 15%, because the cost is
 steeply non-linear. Screen area goes as the inverse square of distance, so a

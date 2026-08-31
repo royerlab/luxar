@@ -238,23 +238,6 @@ describe('ControlsManager', () => {
       expect(camera.position.distanceTo(recreatedControls.target)).toBeCloseTo(pausedDistance, 6);
     });
 
-    it('DOES undo a live mid-swing offset when the controls are abandoned', () => {
-      // The other half of the contract: while the dolly is running, its
-      // position is a transient. Baking it into the saved camera state would
-      // make an arbitrary point of the swing the new permanent framing.
-      controlsManager.setAutoDolly(true);
-      const controls = controlsManager.getControls() as LuxarOrbitControls;
-      const baseline = camera.position.distanceTo(controls.target);
-
-      controls.update(2.5);
-      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline / 1.15, 6);
-
-      controlsManager.setControlType('fly');
-      controlsManager.setControlType('orbit');
-      const recreated = controlsManager.getControls() as LuxarOrbitControls;
-      expect(camera.position.distanceTo(recreated.target)).toBeCloseTo(baseline, 6);
-    });
-
     it('switching an animation OFF never rewinds it — dolly matches turntable', () => {
       // The symmetry that decided this behaviour. Disabling auto-rotation does
       // not rewind the scene to its starting angle, so disabling the dolly must
@@ -279,6 +262,9 @@ describe('ControlsManager', () => {
     });
 
     it('returns a running dolly to baseline before rebuilding controls', () => {
+      // While the dolly is running, its position is a transient. Baking it
+      // into the saved camera state would make an arbitrary point of the swing
+      // the new permanent framing when the controls are abandoned.
       controlsManager.setAutoDolly(true);
       let controls = controlsManager.getControls() as LuxarOrbitControls;
       const baseline = camera.position.distanceTo(controls.target);

@@ -149,8 +149,11 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   public autoDolly: boolean;
   private _autoDollyAmplitude: number;
   /**
-   * Peak dolly swing as a fraction of distance (0.15 = ±15%). Assigning
-   * re-derives the position at the current phase while preserving the baseline.
+   * Peak dolly swing as a fraction of distance (0.15 = ±15%). While the dolly
+   * is running, assigning re-derives the position at the current phase while
+   * preserving the baseline. While it is switched off, assigning does not move
+   * the camera because the frozen position is the user's framing (see
+   * {@link autoDolly}).
    */
   public get autoDollyAmplitude(): number {
     return this._autoDollyAmplitude;

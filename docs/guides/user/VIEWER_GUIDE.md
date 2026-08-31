@@ -504,8 +504,11 @@ vc = luxar.ViewerConfig(
     #
     # The user keeps control of zoom while it runs: both the wheel and the
     # dolly only ever multiply the distance, so a scroll moves the centre the
-    # camera is breathing around rather than fighting the animation. It also
-    # works in ortho mode, where it breathes the orthographic zoom instead.
+    # camera is breathing around rather than fighting the animation. Switching
+    # it off leaves the camera where the swing had reached, and re-enabling
+    # resumes from there — the same way stopping the turntable leaves the scene
+    # at its current angle. It also works in ortho mode, where it breathes the
+    # orthographic zoom instead.
     auto_dolly=False,
     auto_dolly_amplitude_percent=15,
     auto_dolly_period=10,  # seconds per full in-and-out cycle
