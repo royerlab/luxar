@@ -21,6 +21,23 @@ if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatNode, GSplatPartition
 
 
+def _concatenate_label_channel(items: Sequence[Any]) -> tuple[Any, Any]:
+    """Concatenate compatible categorical channels, or fail loudly."""
+    presence = {item.label_ids is not None for item in items}
+    if len(presence) > 1:
+        raise ValueError(
+            "cannot merge label_ids when only some inputs carry the channel"
+        )
+    if not presence or presence == {False}:
+        return None, None
+    vocabularies = [item.label_vocabulary for item in items]
+    if any(vocabulary != vocabularies[0] for vocabulary in vocabularies[1:]):
+        raise ValueError(
+            "cannot merge label_ids with different label_vocabulary values"
+        )
+    return np.concatenate([item.label_ids for item in items]), vocabularies[0]
+
+
 def _aggregate_part_source_stats(
     part_provenance: Sequence[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -157,7 +174,9 @@ class CompositionMixin(_GSplatDataOps):
 
         Raises:
             ValueError: On empty input list, or mismatched ndim /
-                truncation_radius / n_substitutive across datasets.
+                truncation_radius / n_substitutive across datasets; also when
+                categorical labels are present on only some inputs or use
+                different vocabularies.
         """
         from luxar.gsplats.gsplat_data import SubstitutiveLevel
 
@@ -185,6 +204,7 @@ class CompositionMixin(_GSplatDataOps):
                 "splats_per_source": [0 for _ in datasets],
             }
             empty_stats.update(agreed_normalization_stats([x.stats for x in datasets]))
+            label_ids, label_vocabulary = _concatenate_label_channel(datasets)
             return make(
                 centers=np.empty((0, d), dtype=np.float32),
                 amplitudes=np.empty(0, dtype=np.float32),
@@ -192,6 +212,8 @@ class CompositionMixin(_GSplatDataOps):
                     (0, tril_size(d) if d > 0 else 0), dtype=np.float32
                 ),
                 colors=None,
+                label_ids=label_ids,
+                label_vocabulary=label_vocabulary,
                 stats=empty_stats,
                 truncation_radius=d0.truncation_radius,
             )
@@ -277,6 +299,8 @@ class CompositionMixin(_GSplatDataOps):
             amplitudes=only.amplitudes,
             cholesky_factors=only.cholesky_factors,
             colors=only.colors,
+            label_ids=only.label_ids,
+            label_vocabulary=only.label_vocabulary,
             stats=merged_stats,
             truncation_radius=only.truncation_radius,
         )
@@ -319,7 +343,9 @@ class CompositionMixin(_GSplatDataOps):
             Single GSplatData with ndim+1 dimensions containing all splats.
 
         Raises:
-            ValueError: If datasets is empty, lengths mismatch, or ndims differ.
+            ValueError: If datasets is empty, lengths mismatch, ndims differ,
+                or categorical labels are present on only some inputs or use
+                different vocabularies.
 
         Example:
             >>> # Combine 3D timepoints into 4D
@@ -424,6 +450,12 @@ class CompositionMixin(_GSplatDataOps):
                             amplitudes=src.amplitudes[idx],
                             cholesky_factors=src.cholesky_factors[idx],
                             colors=src.colors[idx] if src.colors is not None else None,
+                            label_ids=(
+                                src.label_ids[idx]
+                                if src.label_ids is not None
+                                else None
+                            ),
+                            label_vocabulary=src.label_vocabulary,
                             truncation_radius=src.truncation_radius,
                         )
                     ]
@@ -624,6 +656,8 @@ class CompositionMixin(_GSplatDataOps):
                 amplitudes=lod.amplitudes,
                 cholesky_factors=lod_cholesky,
                 colors=lod.colors,
+                label_ids=lod.label_ids,
+                label_vocabulary=lod.label_vocabulary,
                 stats=dict(lod.stats),
                 truncation_radius=lod.truncation_radius,
             )
@@ -761,12 +795,17 @@ class CompositionMixin(_GSplatDataOps):
                     ],
                     axis=0,
                 )
+                label_ids, label_vocabulary = _concatenate_label_channel(
+                    [lod for lod, _ in level_parts]
+                )
                 merged_lods.append(
                     AdditiveSubLOD(
                         centers=centers,
                         amplitudes=amplitudes,
                         cholesky_factors=cholesky,
                         colors=colors,
+                        label_ids=label_ids,
+                        label_vocabulary=label_vocabulary,
                         stats={"lod_level": level, "n_channels": len(level_parts)},
                         truncation_radius=level_parts[0][0].truncation_radius,
                     )
@@ -788,12 +827,17 @@ class CompositionMixin(_GSplatDataOps):
             )
             color_arrays.append(channel_color_array)
         all_colors = np.concatenate(color_arrays, axis=0)
+        all_label_ids, label_vocabulary = _concatenate_label_channel(
+            gsplats_per_channel
+        )
 
         return make(
             centers=all_centers,
             amplitudes=all_amplitudes,
             cholesky_factors=all_cholesky,
             colors=all_colors,
+            label_ids=all_label_ids,
+            label_vocabulary=label_vocabulary,
             stats=merged_stats,
             truncation_radius=gsplats_per_channel[0].truncation_radius,
         )

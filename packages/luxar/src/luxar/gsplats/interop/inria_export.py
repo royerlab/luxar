@@ -290,6 +290,12 @@ def gsplat_data_to_inria_ply(
         raise ValueError(f"sh_degree must be in [0, 3]; got {sh_degree}")
     if data.n_splats == 0:
         raise ValueError("Cannot export an empty splat set")
+    if data.label_ids is not None:
+        raise ValueError(
+            "cannot export categorical channel 'label_ids' to INRIA PLY: the "
+            "format has no field for the id-to-name vocabulary. Remove it first "
+            "(`GSplatData.without_label_ids()`)."
+        )
 
     centers, sigma, amplitudes, per_splat_colors = _select_3d(
         data, timepoint, slice_dim, slice_index

@@ -592,6 +592,7 @@ def get_zarr_info(store_path: Path, detailed: bool = False) -> dict[str, Any]:
                     "n_splats": centers.shape[0],
                     "n_dims": centers.shape[1] if len(centers.shape) > 1 else 1,
                     "has_colors": "colors" in group,
+                    "has_label_ids": "label_ids" in group,
                 }
                 if detailed:
                     gsplat_info["shape"] = list(centers.shape)

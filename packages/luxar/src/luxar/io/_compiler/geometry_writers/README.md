@@ -140,10 +140,10 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 
 3. **Spatial ordering**:
    - `barrier_dims = scene_barrier_dims(ctx.store, n_dims)` — from scene `Dimensions` metadata (discrete non-display dims), or `None` if no scene dims
-   - `apply_gsplat_spatial_ordering(centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform, ctx.ordering_ctx, truncation_radius, barrier_dims=scene_barrier_dims(ctx.store, n_dims), dataset_ctx=ctx.dataset_ctx)` → 6-tuple `(centers, amplitudes, cholesky_factors, colors, ordering_data, centers_encoding_plan)` (the `truncation_radius` from `attrs` is passed as the `coverage_sigma` arg; `ordering_data` is `None` if ordering was not applied)
+   - `apply_gsplat_spatial_ordering(centers, amplitudes, cholesky_factors, colors, label_ids, n_splats, n_dims, cholesky_is_uniform, ctx.ordering_ctx, truncation_radius, barrier_dims=scene_barrier_dims(ctx.store, n_dims), dataset_ctx=ctx.dataset_ctx)` → 7-tuple `(centers, amplitudes, cholesky_factors, colors, label_ids, ordering_data, centers_encoding_plan)` (the `truncation_radius` from `attrs` is passed as the `coverage_sigma` arg; `ordering_data` is `None` if ordering was not applied)
 
 4. **Write arrays**:
-   - `write_gsplat_arrays(group, centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform, ordering_data, centers_encoding_plan, ctx.dataset_ctx)` → `metadata`
+   - `write_gsplat_arrays(group, centers, amplitudes, cholesky_factors, colors, label_ids, label_vocabulary, n_splats, n_dims, cholesky_is_uniform, ordering_data, centers_encoding_plan, ctx.dataset_ctx)` → `metadata`
 
 5. **Apply rendering defaults** + stamp attrs (stamped BEFORE labels are written):
    - `ctx.apply_gsplat_group_attrs(group, metadata, attrs)` — a bound orchestrator method returning `None`; it delegates to `apply_gsplat_group_attrs(...)` and stores the warn-once colormap-LUT flag on the orchestrator instance (it is NOT threaded through the ctx)
@@ -153,7 +153,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 6. **Write annotations** (CSR serialization; `sort_order` derived from `ordering_data`):
    - `_write_element_annotations(group, labels=labels, keys=keys, image_labels=image_labels, n_splats=n_splats, compressor=ctx.compressor, ordering_data=ordering_data, metadata=metadata)` — writes every present text/image channel with the same permutation
 
-7. **Return metadata**: the `metadata` dict from `write_gsplat_arrays` — `{"n_splats", "ndim", "has_colors", "amplitude_range", "center_bounds"}` plus ordering keys, `position_bounds` (added by `apply_gsplat_group_attrs`), and — all conditional — `amplitude_data_range` (when `amplitudes` is a non-empty array; note that finalize then HARMONIZES that window across the whole gsplat structure — see `finalize/amplitude_window.py`), `has_labels` / `has_image_labels` / `has_keys` (no `"type"` or `"lut_tone_mapping_warned"` key) — plus the mass statistics `amplitude_mass` / `amplitude_mass_weighted_mean`, which are **unconditional** (`compute_amplitude_mass_stats` normalizes every non-finite or mass-less case to `0.0` / `0.0`, so "present and zero" and "absent" stay distinguishable — the harmonization reads absence as a legacy store)
+7. **Return metadata**: the `metadata` dict from `write_gsplat_arrays` — `{"n_splats", "ndim", "has_colors", "has_label_ids", "amplitude_range", "center_bounds"}` plus ordering keys, `position_bounds` (added by `apply_gsplat_group_attrs`), and — all conditional — `label_vocabulary` (when `has_label_ids`), `amplitude_data_range` (when `amplitudes` is a non-empty array; note that finalize then HARMONIZES that window across the whole gsplat structure — see `finalize/amplitude_window.py`), `has_labels` / `has_image_labels` / `has_keys` (no `"type"` or `"lut_tone_mapping_warned"` key) — plus the mass statistics `amplitude_mass` / `amplitude_mass_weighted_mean`, which are **unconditional** (`compute_amplitude_mass_stats` normalizes every non-finite or mass-less case to `0.0` / `0.0`, so "present and zero" and "absent" stay distinguishable — the harmonization reads absence as a legacy store)
 
 ### GSplat Subtree Pipeline (`write_gsplat_leaf_subtree`)
 

@@ -145,6 +145,13 @@ def _slice_sublod(
         missing = "amplitudes" if amplitudes is None else "cholesky_factors"
         raise ValueError(f"{label}: has a centers array but no {missing}")
     colors = decode("colors")
+    label_ids = decode("label_ids")
+    vocabulary_raw = group.attrs.get("label_vocabulary")
+    label_vocabulary = (
+        {int(label_id): name for label_id, name in dict(vocabulary_raw).items()}
+        if vocabulary_raw is not None
+        else None
+    )
 
     kept_centers = np.array(centers[keep], dtype=np.float32)
     kept_centers[:, time_col] = (rounded[keep] / stride).astype(np.float32)
@@ -155,6 +162,8 @@ def _slice_sublod(
             amplitudes=np.asarray(amplitudes[keep], dtype=np.float32),
             cholesky_factors=np.asarray(cholesky[keep], dtype=np.float32),
             colors=None if colors is None else np.asarray(colors[keep]),
+            label_ids=None if label_ids is None else np.asarray(label_ids[keep]),
+            label_vocabulary=label_vocabulary,
             truncation_radius=_truncation_radius(group, level, root, label=label),
         ),
         splats_read,

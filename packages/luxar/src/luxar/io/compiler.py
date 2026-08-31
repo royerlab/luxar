@@ -1591,6 +1591,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         colors: Optional[
             Union[NDArray[np.float32], List[float], Tuple[float, ...]]
         ] = None,
+        label_ids: Optional[Union[np.ndarray[Any, Any], Sequence[int]]] = None,
+        label_vocabulary: Optional[dict[int, str]] = None,
         labels: Optional["Sequence[str]"] = None,
         image_labels: Optional[Any] = None,
         keys: Optional[Sequence[str]] = None,
@@ -1608,6 +1610,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             amplitudes: Amplitudes - array (N,) or scalar float
             cholesky_factors: Packed Cholesky factors of shape (N, k)
             colors: Colors - array (N, 3), RGB tuple/list, or None
+            label_ids: Optional non-negative integer class id per splat.
+            label_vocabulary: Explicit mapping from stored class ids to names.
             labels: Optional list of strings, one per splat. Stored as CSR-encoded
                 label_offsets + label_bytes arrays for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
@@ -1627,9 +1631,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             centers,
             amplitudes,
             cholesky_factors,
-            colors,
-            labels,
-            image_labels,
+            colors=colors,
+            label_ids=label_ids,
+            label_vocabulary=label_vocabulary,
+            labels=labels,
+            image_labels=image_labels,
             keys=keys,
             **attrs,
         )

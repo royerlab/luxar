@@ -77,9 +77,7 @@ class TestClosedLoop:
         from luxar.gsplats.utils.alpha import effective_amplitudes
 
         assert np.allclose(back.amplitudes, 1.0)
-        assert np.allclose(
-            effective_amplitudes(back), data.amplitudes, atol=1e-4
-        )
+        assert np.allclose(effective_amplitudes(back), data.amplitudes, atol=1e-4)
         assert back.colors is not None
         assert np.allclose(back.colors[:, :3], data.colors, atol=1e-3)
 
@@ -225,9 +223,7 @@ class TestColorSources:
         # RGB with alpha 128 — the exported DC must reproduce
         # linear_to_srgb([200/255, 100/255, 50/255]) and opacity ~= 128/255.
         n = 12
-        colors = np.tile(
-            np.array([200, 100, 50, 128], dtype=np.uint8), (n, 1)
-        )
+        colors = np.tile(np.array([200, 100, 50, 128], dtype=np.uint8), (n, 1))
         data = GSplatData(
             centers=np.zeros((n, 3), np.float32),
             amplitudes=np.ones(n, np.float32),  # amplitude policy -> opacity = alpha
@@ -345,6 +341,25 @@ class TestFileLevel:
             export_inria_ply(store, out, opacity_policy="amplitude")
             cs = read_inria_ply(out)
         assert np.allclose(cs.positions, gt.positions, atol=1e-2)
+
+    def test_export_refuses_categorical_channel(self, tmp_path: Path) -> None:
+        data = _synthetic_gsplat_data(n=4)
+        labeled = GSplatData(
+            centers=data.centers,
+            amplitudes=data.amplitudes,
+            cholesky_factors=data.cholesky_factors,
+            colors=data.colors,
+            label_ids=np.arange(4, dtype=np.uint8),
+            label_vocabulary={i: str(i) for i in range(4)},
+        )
+        store = tmp_path / "labeled.gsplats.zarr"
+        labeled.save(store, ordering="none")
+
+        with pytest.raises(ValueError, match="without_label_ids"):
+            export_inria_ply(store, tmp_path / "out.ply")
+
+        with pytest.raises(ValueError, match="without_label_ids"):
+            gsplat_data_to_inria_ply(labeled)
 
     def test_empty_export_raises(self) -> None:
         empty = GSplatData(

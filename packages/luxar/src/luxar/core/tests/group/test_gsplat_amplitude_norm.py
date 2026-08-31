@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar._zarr_compat import read_node_attrs
@@ -61,6 +62,32 @@ def _build(tmp_path, data, name="g", **kwargs):
         scene = compiler.create_scene(dimensions=DIMS)
         scene.add_gsplats_from_data(name=name, result=data, **kwargs)
     return out
+
+
+def _assert_scene_labels_follow_centers(scene_path, expected: GSplatData) -> None:
+    from luxar.encoding.decoder import ArrayDecoder
+
+    assert expected.label_ids is not None
+    root = zarr.open_group(str(scene_path / "g"), mode="r")
+    leaves = [root]
+    if "label_ids" not in root:
+        leaves = [root[name] for name in sorted(root.group_keys())]
+    decoder = ArrayDecoder()
+    centers = np.concatenate(
+        [np.asarray(decoder.decode(leaf["centers"], root)) for leaf in leaves]
+    )
+    label_ids = np.concatenate(
+        [np.asarray(decoder.decode(leaf["label_ids"], root)) for leaf in leaves]
+    )
+    assert {
+        int(label_id): name
+        for label_id, name in leaves[0].attrs["label_vocabulary"].items()
+    } == expected.label_vocabulary
+    for center, label_id in zip(centers, label_ids):
+        distances = np.linalg.norm(expected.centers - center, axis=1)
+        source_index = int(np.argmin(distances))
+        assert distances[source_index] < 0.02
+        assert int(label_id) == int(expected.label_ids[source_index])
 
 
 def _window(scene_dir, name="g"):
@@ -135,6 +162,23 @@ def test_normalisation_is_idempotent(tmp_path):
 
     assert _window(twice, "b")[1] == pytest.approx(hi_once, rel=1e-4)
     assert _factor(twice, "b") is None
+
+
+@pytest.mark.parametrize("laddered", [False, True])
+def test_file_ingestion_preserves_labels_when_normalising(tmp_path, laddered):
+    data = _ladder_data(40, 800.0, 4) if laddered else _data(40, 800.0, 4)
+    labels = (np.arange(data.n_splats, dtype=np.uint16) * 3) % 7
+    labeled = data.with_label_ids(labels, {i: f"class-{i}" for i in range(7)})
+    source = tmp_path / f"source-{laddered}.gsplats.zarr"
+    labeled.save(source, ordering="none")
+
+    out = tmp_path / f"scene-{laddered}.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=DIMS)
+        scene.add_gsplats_from_file("g", source)
+
+    assert _factor(out) is not None
+    _assert_scene_labels_follow_centers(out, labeled)
 
 
 def test_substitutive_levels_share_one_factor(tmp_path):

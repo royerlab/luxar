@@ -7,6 +7,7 @@ ladder-preserving: a pyramid is rebuilt level by level, never collapsed.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Callable, Sequence, cast
 
 import numpy as np
@@ -60,6 +61,8 @@ class IntensityMixin(_GSplatDataOps):
                     amplitudes=new_amplitudes[offset : offset + n],
                     cholesky_factors=lod.cholesky_factors,
                     colors=lod.colors,
+                    label_ids=lod.label_ids,
+                    label_vocabulary=lod.label_vocabulary,
                     stats=dict(lod.stats),
                     truncation_radius=lod.truncation_radius,
                 )
@@ -150,9 +153,48 @@ class IntensityMixin(_GSplatDataOps):
                 amplitudes=lod.amplitudes,
                 cholesky_factors=lod.cholesky_factors,
                 colors=colors[offset : offset + n],
+                label_ids=lod.label_ids,
+                label_vocabulary=lod.label_vocabulary,
                 stats=dict(lod.stats),
                 truncation_radius=lod.truncation_radius,
             )
+        )
+
+    def with_label_ids(
+        self,
+        label_ids: "np.ndarray | Sequence[int]",
+        label_vocabulary: "dict[int, str]",
+    ) -> "GSplatData":
+        """Attach exact categorical ids to a flat/additive gsplat dataset."""
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, validate_label_channel
+
+        label_ids = np.asarray(label_ids)
+        if self.n_substitutive > 1:
+            raise ValueError(
+                "with_label_ids is not supported on a multi-substitutive pyramid: "
+                "coarse splats merge multiple fine class ids. Attach labels before "
+                "building an additive ladder, not to substitutive levels."
+            )
+        vocabulary = validate_label_channel(label_ids, label_vocabulary, self.n_splats)
+        return self._map_additive(
+            lambda lod, offset, n: AdditiveSubLOD(
+                centers=lod.centers,
+                amplitudes=lod.amplitudes,
+                cholesky_factors=lod.cholesky_factors,
+                colors=lod.colors,
+                label_ids=label_ids[offset : offset + n],
+                label_vocabulary=vocabulary,
+                stats=dict(lod.stats),
+                truncation_radius=lod.truncation_radius,
+            )
+        )
+
+    def without_label_ids(self) -> "GSplatData":
+        """Remove categorical ids and vocabulary while preserving all LODs."""
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda level: level.without_label_ids())
+        return self._map_additive(
+            lambda lod, _offset, _n: replace(lod, label_ids=None, label_vocabulary=None)
         )
 
     def affine_intensity(self, scale: float = 1.0, offset: float = 0.0) -> "GSplatData":

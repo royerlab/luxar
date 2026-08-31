@@ -1067,6 +1067,12 @@ def make_additive_lod(
                     if target_view.colors is not None
                     else None
                 ),
+                label_ids=(
+                    np.asarray(target_view.label_ids)
+                    if target_view.label_ids is not None
+                    else None
+                ),
+                label_vocabulary=target_view.label_vocabulary,
                 stats={
                     "lod_method": "none",
                     "lod_level": 0,
@@ -1141,6 +1147,11 @@ def make_additive_lod(
             if target_view.colors is not None
             else None
         )
+        label_ids_full = (
+            np.asarray(target_view.label_ids)[order]
+            if target_view.label_ids is not None
+            else None
+        )
 
         new_sublods = []
         prev = 0
@@ -1164,6 +1175,10 @@ def make_additive_lod(
                     amplitudes=amps_full[prev:end].astype(np.float32, copy=False),
                     cholesky_factors=chol_full[prev:end].astype(np.float32, copy=False),
                     colors=(colors_full[prev:end] if colors_full is not None else None),
+                    label_ids=(
+                        label_ids_full[prev:end] if label_ids_full is not None else None
+                    ),
+                    label_vocabulary=target_view.label_vocabulary,
                     stats=lod_stats,
                     truncation_radius=target_view.truncation_radius,
                 )

@@ -122,3 +122,4 @@ array_names:
   - cholesky_factors_diag
   - cholesky_factors_offdiag
   - colors
+  - label_ids

@@ -1065,21 +1065,39 @@ class TestRenderCommand:
 
 
 class TestMergeCommand:
-    def test_merge_concatenate(
-        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
-    ) -> None:
-        # Create second dataset
+    @staticmethod
+    def _labeled_input(tmp_path: Path, name: str, start: int, count: int) -> Path:
         from luxar.gsplats.gsplat_data import GSplatData
 
-        data2 = GSplatData(
-            centers=np.random.rand(3, 3).astype(np.float32) * 10,
-            amplitudes=np.random.rand(3).astype(np.float32),
+        centers = np.zeros((count, 3), dtype=np.float32)
+        centers[:, 0] = np.arange(start, start + count, dtype=np.float32) * 10
+        data = GSplatData(
+            centers=centers,
+            amplitudes=np.linspace(0.2, 0.8, count, dtype=np.float32),
             cholesky_factors=np.tile(
-                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (3, 1)
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (count, 1)
             ),
+            label_ids=np.arange(start, start + count, dtype=np.uint16) % 3,
+            label_vocabulary={0: "zero", 1: "one", 2: "two"},
         )
-        path2 = tmp_path / "test2.gsplats.zarr"
-        data2.save(path2)
+        path = tmp_path / f"{name}.gsplats.zarr"
+        data.save(path, ordering="none")
+        return path
+
+    @staticmethod
+    def _assert_labeled_rows(merged: "GSplatData", count: int) -> None:
+        assert merged.label_ids is not None
+        assert merged.label_vocabulary == {0: "zero", 1: "one", 2: "two"}
+        order = np.argsort(merged.centers[:, 0])
+        np.testing.assert_array_equal(
+            merged.label_ids[order], np.arange(count, dtype=np.uint16) % 3
+        )
+
+    def test_merge_concatenate(self, runner: CliRunner, tmp_path: Path) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        path1 = self._labeled_input(tmp_path, "test1", 0, 5)
+        path2 = self._labeled_input(tmp_path, "test2", 5, 3)
 
         out = tmp_path / "merged.gsplats.zarr"
         result = runner.invoke(
@@ -1087,7 +1105,7 @@ class TestMergeCommand:
             [
                 "gsplat",
                 "merge",
-                str(sample_gsplats),
+                str(path1),
                 str(path2),
                 "-o",
                 str(out),
@@ -1098,22 +1116,13 @@ class TestMergeCommand:
 
         merged = GSplatData.load(out)
         assert merged.n_splats == 8  # 5 + 3
+        self._assert_labeled_rows(merged, 8)
 
-    def test_merge_as_dimension(
-        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
-    ) -> None:
-        # Create second dataset with same shape
+    def test_merge_as_dimension(self, runner: CliRunner, tmp_path: Path) -> None:
         from luxar.gsplats.gsplat_data import GSplatData
 
-        data2 = GSplatData(
-            centers=np.random.rand(4, 3).astype(np.float32) * 10,
-            amplitudes=np.random.rand(4).astype(np.float32),
-            cholesky_factors=np.tile(
-                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (4, 1)
-            ),
-        )
-        path2 = tmp_path / "test2.gsplats.zarr"
-        data2.save(path2)
+        path1 = self._labeled_input(tmp_path, "test1", 0, 5)
+        path2 = self._labeled_input(tmp_path, "test2", 5, 4)
 
         out = tmp_path / "stacked.gsplats.zarr"
         result = runner.invoke(
@@ -1121,7 +1130,7 @@ class TestMergeCommand:
             [
                 "gsplat",
                 "merge",
-                str(sample_gsplats),
+                str(path1),
                 str(path2),
                 "-o",
                 str(out),
@@ -1135,6 +1144,7 @@ class TestMergeCommand:
         merged = GSplatData.load(out)
         assert merged.ndim == 4  # 3D -> 4D
         assert merged.n_splats == 9  # 5 + 4
+        self._assert_labeled_rows(merged, 9)
 
     def test_merge_channel_colors(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
@@ -7694,6 +7704,35 @@ class TestFlattenCommand:
         assert loaded.n_splats == n0  # count conserved
         assert loaded.n_substitutive == 1  # a single flat leaf (no LOD/partition)
 
+    def test_flatten_partition_preserves_categorical_channel(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        source = GSplatData.load(medium_gsplats)
+        label_ids = (np.arange(source.n_splats) % 7).astype(np.uint8)
+        label_vocabulary = {index: f"class-{index}" for index in range(7)}
+        labeled = source.with_label_ids(label_ids, label_vocabulary)
+        labeled_path = tmp_path / "labeled.gsplats.zarr"
+        labeled.save(labeled_path, ordering="none")
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        self._make_partition(runner, labeled_path, partition)
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(partition), str(flat)])
+        assert result.exit_code == 0, result.stdout
+
+        actual = GSplatData.load(flat)
+        assert actual.label_vocabulary == label_vocabulary
+        expected_order = np.lexsort(source.centers.T[::-1])
+        actual_order = np.lexsort(actual.centers.T[::-1])
+        np.testing.assert_allclose(
+            actual.centers[actual_order], source.centers[expected_order], atol=5e-5
+        )
+        np.testing.assert_array_equal(
+            actual.label_ids[actual_order], label_ids[expected_order]
+        )
+
     def test_flatten_streams_one_default_leaf_at_a_time(
         self,
         runner: CliRunner,
@@ -8918,6 +8957,38 @@ class TestReencode:
         assert result.exit_code == 0, result.output
         assert _diag_dtype(out) == "float32"
 
+    def test_reencode_preserves_categorical_channel(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        source = GSplatData.load(sample_gsplats)
+        label_ids = np.array([0, 117, 3, 117, 0], dtype=np.uint8)
+        label_vocabulary = {0: "background", 3: "axon", 117: "soma"}
+        labeled_path = tmp_path / "labeled.gsplats.zarr"
+        source.with_label_ids(label_ids, label_vocabulary).save(
+            labeled_path, ordering="none"
+        )
+
+        out = tmp_path / "reencoded.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "reencode",
+                str(labeled_path),
+                str(out),
+                "--ordering",
+                "none",
+                "-e",
+                "memory",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        actual = GSplatData.load(out)
+        np.testing.assert_array_equal(actual.label_ids, label_ids)
+        assert actual.label_vocabulary == label_vocabulary
+
     def test_reencode_preserves_splat_count_and_geometry(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
@@ -9176,6 +9247,29 @@ class TestAnnotateQualityCommand:
         fake.write_bytes(b"not a zip")
         result = runner.invoke(app, ["gsplat", "annotate-quality", str(fake)])
         assert result.exit_code != 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# `gsplat info` reports categorical labels
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_info_reports_categorical_label_vocabulary(
+    runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+) -> None:
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    source = GSplatData.load(sample_gsplats)
+    path = tmp_path / "labeled.gsplats.zarr"
+    source.with_label_ids(
+        np.arange(source.n_splats, dtype=np.uint8) % 2,
+        {0: "background", 1: "foreground"},
+    ).save(path)
+
+    result = runner.invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
+
+    assert result.exit_code == 0, f"failed:\n{result.stdout}"
+    assert "Categorical labels: 2 vocabulary entries" in _plain(result.stdout)
 
 
 # ═══════════════════════════════════════════════════════════════════════

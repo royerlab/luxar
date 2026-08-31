@@ -633,6 +633,8 @@ class Group(Node):
         colors: Optional[
             Union[ColorArray, np.ndarray[Any, Any], Sequence[float | int]]
         ] = None,
+        label_ids: Optional[np.ndarray[Any, Any]] = None,
+        label_vocabulary: Optional[Dict[int, str]] = None,
         labels: Optional[Union[List[str], Sequence[str]]] = None,
         image_labels: Optional[Any] = None,
         keys: Optional[Union[List[str], Sequence[str]]] = None,
@@ -655,6 +657,8 @@ class Group(Node):
                 isotropic std σ uses [σ, 0, σ, 0, 0, σ], not 1/sigma.
             colors: Optional (N, 3) RGB or (N, 4) RGBA array (the alpha
                 column is per-splat opacity in [0, 1]), RGB tuple, or None
+            label_ids: Optional non-negative integer class id per splat.
+            label_vocabulary: Explicit mapping from every stored class id to its name.
             labels: Optional list of strings, one per splat. Used for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
             keys: Optional list of machine-readable strings, one per splat,
@@ -717,6 +721,8 @@ class Group(Node):
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky_factors,
                 colors=colors,
+                label_ids=label_ids,
+                label_vocabulary=label_vocabulary,
                 labels=labels,
                 keys=keys,
                 image_labels=image_labels,

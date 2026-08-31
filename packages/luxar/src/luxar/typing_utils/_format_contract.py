@@ -149,6 +149,7 @@ ArrayName = Literal[
     "cholesky_factors_diag",
     "cholesky_factors_offdiag",
     "colors",
+    "label_ids",
 ]
 ARRAY_NAMES: Final[tuple[ArrayName, ...]] = (
     "centers",
@@ -157,6 +158,7 @@ ARRAY_NAMES: Final[tuple[ArrayName, ...]] = (
     "cholesky_factors_diag",
     "cholesky_factors_offdiag",
     "colors",
+    "label_ids",
 )
 
 __all__ = [

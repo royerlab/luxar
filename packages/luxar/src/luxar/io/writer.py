@@ -230,6 +230,8 @@ class ZarrWriterProtocol(Protocol):
         amplitudes: Union[ScalarArray, float],
         cholesky_factors: NDArray[np.float32],
         colors: Optional[Union[ColorArray, tuple, list]] = None,
+        label_ids: Optional[Union[np.ndarray[Any, Any], Sequence[int]]] = None,
+        label_vocabulary: Optional[dict[int, str]] = None,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,
         keys: Optional[Sequence[str]] = None,
@@ -247,6 +249,8 @@ class ZarrWriterProtocol(Protocol):
             amplitudes: Amplitude values - array of shape (N,) or scalar float
             cholesky_factors: Packed Cholesky factors array of shape (N, k)
             colors: Optional - array of shape (N, 3), tuple/list (R,G,B), or None
+            label_ids: Optional non-negative integer class id per splat
+            label_vocabulary: Explicit mapping from stored class ids to names
             labels: Optional list of strings, one per splat, for hover tooltips
             image_labels: Optional per-element images for hover thumbnails
             keys: Optional machine-readable strings, one per splat, for link and

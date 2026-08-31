@@ -31,6 +31,8 @@ save_gsplats(
     amplitudes=amplitudes,        # (N,) float32
     cholesky_factors=cholesky,    # (N, d*(d+1)//2) float32
     colors=colors,                # (N, 3) float32/uint8 (optional)
+    label_ids=label_ids,          # (N,) non-negative int class ids (optional)
+    label_vocabulary={0: "bone"}, # id -> name; must name every id present
     ordering="hilbert",           # "morton", "hilbert", or "none"
     encoding_mode=EncodingMode.AUTO,  # AUTO, PRECISION, or MEMORY
     fitting_info={"time_seconds": 45.3, "iterations": 850},
@@ -51,7 +53,9 @@ resident.
 
 **`load_gsplats()` / `load_default_gsplats()`** - Load splats from .gsplats.zarr
 
-Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
+Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks).
+
+Float arrays are decoded from their stored encoding (quantization, broadcasting, etc.) back to float32. The integer ones keep their stored dtype: `label_ids` comes back as the unsigned int it was written as (a class id is exact, never a float), and `colors` supplied as `uint8` come back as `uint8`.
 
 `load_gsplats()` requires a flat/matrix-shaped tree. `load_default_gsplats()`
 also accepts partition and nested trees by materializing their default-rendered
@@ -91,7 +95,8 @@ print(format_gsplats_info(info))
 
 `inspect_gsplats_zarr()` walks the node tree to surface the primary
 leaf's fields (`n_splats`, `ndim`, `ordering`, `chunk_size`,
-`amplitude_range`, `center_bounds`), plus tree-shape metadata
+`amplitude_range`, `center_bounds`, `has_label_ids` and — when set —
+`label_vocabulary`), plus tree-shape metadata
 (`n_additive_sublods_default`, `kind`, and `n_substitutive` or `n_parts`) so
 multi-LOD and partitioned datasets are visible at a glance. Like
 `load_gsplats()` it accepts a `.gsplats.zarr.zip` / `.gsplats.zarr.tar.gz`
@@ -185,6 +190,7 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 | `cholesky_factors_diag` | CHOLESKY_DIAG | per-channel log: `log_perchannel_u8` (AUTO — certified, escalates to `u16`; MEMORY) / `float32` (PRECISION) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u8` (escalates with the diagonal — one shared tier) / `float32`; absent if d==1 |
 | `colors` | COLOR | `rgb_uint8` (SDR) or per-channel geolog (HDR, auto-detected): `geolog_perchannel_u16` (AUTO) / `_u8` (MEMORY) / `float32` (PRECISION) |
+| `label_ids` | INDEX | smallest exact unsigned int for the largest id **present** (not the vocabulary's largest — a filtered leaf may keep unused entries) — identical in every mode, never LUT-encoded and never quantized (a class id has no near-miss) |
 
 **COORDINATE centers are uint16 per-axis fixed-point** under AUTO/MEMORY
 (`linear_perchannel_u16`, decoded back to float32 on read; a per-axis extent
@@ -273,6 +279,8 @@ kind=partition, freely nestable).
 ```
 fitted.gsplats.zarr/
 ├── .zattrs          # type: "gsplats", n_splats, ndim, has_colors,
+│                    #   has_label_ids, label_vocabulary? (decimal-string
+│                    #   id keys; present only with label_ids),
 │                    #   ordering, ordering_min/max/bits, chunk_size,
 │                    #   amplitude_range, center_bounds, position_bounds,
 │                    #   truncation_radius, opacity/absorption/gamma/intensity/offset,
@@ -287,6 +295,7 @@ fitted.gsplats.zarr/
 ├── cholesky_factors_diag     # (N, d) float32          (diagonal of L)
 ├── cholesky_factors_offdiag  # (N, d*(d-1)/2) float32  (off-diagonal; absent if d==1)
 ├── colors           # (N, 3) float32/uint8  (optional)
+├── label_ids        # (N,) or broadcast (1,) smallest exact uint  (optional)
 ├── chunk_bounds     # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/         # Optimization info (optional)
 │   ├── .zattrs      # time_seconds, iterations, converged, …
@@ -329,6 +338,7 @@ See `docs/specs/GSPLATS_ZARR_FORMAT.md` for full ASCII trees of all five shapes.
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": false,
+  "has_label_ids": false,
   "position_bounds": {"min": [0,0,0], "max": [256,256,128]}
 }
 ```
@@ -346,6 +356,8 @@ accordingly (see `docs/specs/GSPLATS_ZARR_FORMAT.md`).
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": true,
+  "has_label_ids": true,
+  "label_vocabulary": {"0": "bone", "1": "lung"},
   "ordering": "hilbert",
   "ordering_min": [0.0, 0.0, 0.0],
   "ordering_max": [256.0, 256.0, 128.0],

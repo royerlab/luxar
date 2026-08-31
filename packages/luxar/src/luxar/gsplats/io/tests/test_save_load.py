@@ -357,6 +357,135 @@ class TestSaveGsplats:
             assert "colors" in root
             assert root.attrs["has_colors"] is True
 
+    def test_label_ids_round_trip_exactly_through_ordering(
+        self, tmp_path: Path
+    ) -> None:
+        splats = create_test_splats_3d(118)
+        splats["centers"][:, 0] = np.arange(118, dtype=np.float32)
+        splats["centers"][:, 1:] = 0.0
+        label_ids = np.arange(118, dtype=np.uint16)
+        label_ids[::7] = 117
+        vocabulary = {i: f"class-{i}" for i in range(118)}
+        data = GSplatData(
+            **splats,
+            label_ids=label_ids,
+            label_vocabulary=vocabulary,
+        )
+
+        path = tmp_path / "labels.gsplats.zarr"
+        data.save(path, ordering="hilbert", encoding_mode=EncodingMode.AUTO)
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root.attrs["has_label_ids"] is True
+        assert root["label_ids"].attrs["encoding"]["name"] == "uint8"
+
+        loaded = GSplatData.load(path)
+        assert loaded.label_ids is not None
+        assert set(loaded.label_ids.tolist()) == set(label_ids.tolist())
+        expected_by_center = {
+            tuple(center): int(label_id)
+            for center, label_id in zip(splats["centers"], label_ids)
+        }
+        np.testing.assert_array_equal(
+            loaded.label_ids,
+            [expected_by_center[tuple(center)] for center in loaded.centers],
+        )
+        assert loaded.label_vocabulary == vocabulary
+
+    def test_constant_label_ids_use_smallest_unsigned_dtype(
+        self, tmp_path: Path
+    ) -> None:
+        label_ids = np.full(8, 300, dtype=np.int64)
+        data = GSplatData(
+            **create_test_splats_3d(8),
+            label_ids=label_ids,
+            label_vocabulary={300: "class-300"},
+        )
+
+        path = tmp_path / "constant-labels.gsplats.zarr"
+        data.save(path, ordering="none")
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root["label_ids"].dtype == np.uint16
+        assert root["label_ids"].attrs["encoding"]["name"] == "broadcasted"
+        loaded = GSplatData.load(path)
+        np.testing.assert_array_equal(loaded.label_ids, label_ids)
+
+    def test_load_rejects_label_ids_missing_from_vocabulary(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "labels.gsplats.zarr"
+        GSplatData(
+            **create_test_splats_3d(4),
+            label_ids=np.array([0, 1, 0, 1], dtype=np.uint8),
+            label_vocabulary={0: "zero", 1: "one"},
+        ).save(path, ordering="none")
+
+        root = zarr.open_group(str(path), mode="a")
+        root.attrs["label_vocabulary"] = {"0": "zero"}
+
+        with pytest.raises(ValueError, match="missing ids.*1"):
+            GSplatData.load(path)
+
+    def test_load_rejects_non_string_label_vocabulary_name(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "labels.gsplats.zarr"
+        GSplatData(
+            **create_test_splats_3d(2),
+            label_ids=np.array([0, 1], dtype=np.uint8),
+            label_vocabulary={0: "zero", 1: "one"},
+        ).save(path, ordering="none")
+
+        root = zarr.open_group(str(path), mode="a")
+        root.attrs["label_vocabulary"] = {"0": "zero", "1": 1}
+
+        with pytest.raises(TypeError, match="values must be strings"):
+            GSplatData.load(path)
+
+    def test_save_rejects_label_ids_missing_from_vocabulary(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ValueError, match="missing ids.*1"):
+            save_gsplats(
+                tmp_path / "invalid-labels.gsplats.zarr",
+                **create_test_splats_3d(4),
+                label_ids=np.array([0, 1, 0, 1], dtype=np.uint8),
+                label_vocabulary={0: "zero"},
+                ordering="none",
+            )
+
+    def test_streaming_save_rejects_label_ids_missing_from_vocabulary(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import (
+            StreamingSplatSetMetadata,
+            write_flat_leaf_streaming,
+        )
+
+        splats = create_test_splats_3d(4)
+        sublod = AdditiveSubLOD(
+            **splats,
+            label_ids=np.array([0, 1, 0, 1], dtype=np.uint8),
+            label_vocabulary={0: "zero"},
+        )
+        metadata = StreamingSplatSetMetadata(
+            n_splats=4,
+            ndim=3,
+            truncation_radius=sublod.truncation_radius,
+            label_dtype=np.dtype(np.uint8),
+            label_vocabulary={0: "zero"},
+        )
+
+        with pytest.raises(ValueError, match="missing ids.*1"):
+            write_flat_leaf_streaming(
+                tmp_path / "invalid-stream.gsplats.zarr",
+                lambda: iter([sublod]),
+                splat_set_metadata=[metadata],
+                barrier_dims=[],
+            )
+
     @pytest.mark.parametrize("mode", [EncodingMode.PRECISION, EncodingMode.AUTO])
     def test_rgba_colors_round_trip(self, mode: EncodingMode) -> None:
         # RGBA colors (per-splat opacity in the 4th column) survive
@@ -896,6 +1025,18 @@ class TestInspectGsplats:
             assert info["ndim"] == 3
             assert info["ordering"] == "morton"
             assert info["has_colors"] is False
+
+    def test_inspect_label_vocabulary_uses_integer_ids(self, tmp_path: Path) -> None:
+        data = GSplatData(
+            **create_test_splats_3d(4),
+            label_ids=np.array([0, 2, 2, 0], dtype=np.uint8),
+            label_vocabulary={0: "zero", 2: "two"},
+        )
+        path = tmp_path / "labels.gsplats.zarr"
+        data.save(path, ordering="none")
+
+        info = inspect_gsplats_zarr(path)
+        assert info["label_vocabulary"] == {0: "zero", 2: "two"}
 
     def test_inspect_with_fitting(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1521,9 +1521,14 @@ class TestWriterFuzzRegressions:
         """The gsplat writer unconditionally stamps position_bounds; a
         user-supplied value must be rejected up front, not silently
         stamped over (the same rule points/lines already enforce)."""
-        from luxar.io._compiler.node_common import GSPLATS_RESERVED_ATTRS
+        from luxar.io._compiler.node_common import (
+            GSPLATS_RESERVED_ATTRS,
+            POINTS_RESERVED_ATTRS,
+        )
 
         assert "position_bounds" in GSPLATS_RESERVED_ATTRS
+        assert {"has_label_ids", "label_vocabulary"} <= GSPLATS_RESERVED_ATTRS
+        assert not {"has_label_ids", "label_vocabulary"} & POINTS_RESERVED_ATTRS
 
     # ---- F1: empty node name must not clobber the scene root -----------
 
