@@ -1902,17 +1902,35 @@ export interface ElementPixelStats {
  * WebGL drawing buffer after compositing, which produced all-zero pixels
  * in shader smoke tests even when the screenshot was visibly rendered.
  * Capturing the element screenshot samples the composited output instead
- * and is therefore the right primitive for E2E visual smoke tests.
+ * and is therefore the right primitive for E2E visual smoke tests. New
+ * pixel-measurement specs should use this helper or one of its consumers,
+ * never a hand-rolled 2D-context readback.
  */
-async function captureElementScreenshotDataUrl(page: Page, selector: string): Promise<string> {
+export async function captureElementScreenshot(
+  page: Page,
+  selector: string,
+  timeout?: number
+): Promise<Buffer> {
   const element = page.locator(selector).first();
-  await element.waitFor({ state: 'visible' });
-  const png = await element.screenshot({
-    animations: 'disabled',
-    // An element screenshot is a page screenshot cropped to the element box,
-    // so DOM overlays otherwise remain in the pixels. Keep only canvases visible.
-    style: 'body * { visibility: hidden !important; } canvas { visibility: visible !important; }',
-  });
+  await element.waitFor({ state: 'visible', timeout });
+  await element.evaluate((node) => node.setAttribute('data-luxar-capture', ''));
+  try {
+    return await element.screenshot({
+      animations: 'disabled',
+      timeout,
+      // Element screenshots are page screenshots cropped to the element box, so
+      // DOM overlays otherwise remain in the pixels. Scope the visibility reset
+      // to this element only; `visibility` avoids reflow and drawing-buffer resize.
+      style:
+        'body * { visibility: hidden !important; } [data-luxar-capture] { visibility: visible !important; }',
+    });
+  } finally {
+    await element.evaluate((node) => node.removeAttribute('data-luxar-capture'));
+  }
+}
+
+async function captureElementScreenshotDataUrl(page: Page, selector: string): Promise<string> {
+  const png = await captureElementScreenshot(page, selector);
   return `data:image/png;base64,${png.toString('base64')}`;
 }
 
@@ -2083,13 +2101,7 @@ export async function getElementPixelStats(
         }
       }
 
-      return {
-        width,
-        height,
-        threshold: cutoff,
-        nonBlackPixels,
-        brightest,
-      };
+      return { width, height, threshold: cutoff, nonBlackPixels, brightest };
     },
     { url: dataUrl, cutoff: threshold }
   );

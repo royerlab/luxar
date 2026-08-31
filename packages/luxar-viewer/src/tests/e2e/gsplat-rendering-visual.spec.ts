@@ -59,6 +59,14 @@ test.describe('GSplats visual correctness', () => {
           count++;
         }
       });
+      const chromeCanvas = document.createElement('canvas');
+      chromeCanvas.width = 120;
+      chromeCanvas.height = 12;
+      chromeCanvas.style.cssText = 'position: fixed; left: 0; top: 0; z-index: 9999';
+      const context = chromeCanvas.getContext('2d')!;
+      context.fillStyle = '#fff';
+      context.fillRect(0, 0, chromeCanvas.width, chromeCanvas.height);
+      document.body.appendChild(chromeCanvas);
       return count;
     });
     expect(hidden, 'the blank-frame control must hide real GSplat geometry').toBeGreaterThan(0);
