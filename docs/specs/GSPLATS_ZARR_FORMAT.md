@@ -71,6 +71,33 @@ Each Gaussian splat is parameterized by:
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
 | `colors` | (N, 3\|4) or (1, 3\|4) | uint8/uint16/float32 | COLOR | RGB or RGBA colors (optional); SDR → `rgb_uint8`; HDR → `geolog_perchannel_u16` (AUTO; u8 under MEMORY, float32 under PRECISION); absent if not present. The optional 4th channel is per-splat opacity α ∈ [0, 1] (per-element opacity: every blending mode scales a splat's contribution by α; volumetric maps it into optical depth w = −ln(1−α) — see VOLUMETRIC_BLENDING_SPEC.md §5.4.1). α is never HDR. No format-version bump: readers key off the array shape, and codecs are channel-agnostic. |
+| `label_ids` | (N,) or (1,) | uint8/uint16/uint32/uint64 | INDEX | Optional categorical class id per splat; a constant channel may use broadcast encoding. Stored as the smallest exact unsigned integer with LUT and lossy quantization disabled. `label_vocabulary` maps every stored id to its name as a JSON object keyed by the id's decimal string form. |
+
+`label_ids` is an optional leaf channel and does not bump the format version.
+`label_ids` / `label_vocabulary` is the exact categorical channel, distinct
+from the per-element string `labels` / `has_labels` tooltip channel; both may
+coexist on one node.
+Its vocabulary is explicit rather than inferred: every observed id must have a
+name, while a filtered subset may retain unused vocabulary entries so ids keep
+the same meaning across related leaves. Any row permutation or subset operation
+must apply the identical operation to `label_ids`. Concatenation, partition
+flattening, and other operations that combine rows across leaves carry the channel
+only when all contributing leaves have identical presence and vocabularies;
+mixed presence or different vocabularies is an error. Per-leaf rewrites such as
+re-encoding, migration, restriding, optimisation, and batch merge carry each
+leaf's vocabulary unchanged without comparing leaves, so vocabularies may differ
+between leaves in one store. Merge-based coarsening (`lod levels`, `overview`,
+`adaptive`, and merge decimation) is refused because there is no defined class id
+for a splat synthesized from differently labeled inputs. Prefix/additive LOD is
+safe because it only reorders or subsets existing splats. Exporters without a
+vocabulary-bearing categorical field must refuse the channel rather than drop it.
+The vocabulary is duplicated on every leaf and additive rung and therefore lands
+in consolidated metadata; keep it to the small id set actually in use. If that
+cost becomes material, the format should add a shared subtree-level vocabulary.
+This refusal is a writer-side rule, not an on-disk capability stamp, and does not
+bump the format version. Older Luxar versions therefore cannot distinguish a
+labeled store before rewriting it and may silently drop the channel in operations
+such as flattening or LOD construction; use a label-aware version for all edits.
 
 **Note**: Since **v3.1** the packed lower-triangular factor L (where Σ = LLᵀ) is
 stored as **two arrays** — the diagonal (`cholesky_factors_diag`) and the
@@ -189,11 +216,12 @@ The file root IS the node. The same three primitives nest arbitrarily:
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, ordering,
-│                     # ordering_min/max/bits, slice_dims, ordering_dims,
+├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, has_label_ids,
+│                     # ordering, ordering_min/max/bits, slice_dims, ordering_dims,
 │                     # chunk_size, amplitude_range, amplitude_data_range,
 │                     # amplitude_mass, amplitude_mass_weighted_mean,
-│                     # center_bounds, position_bounds, truncation_radius,
+│                     # label_vocabulary? (decimal-string id keys), center_bounds,
+│                     # position_bounds, truncation_radius,
 │                     # opacity, absorption, gamma, intensity, offset, blending_mode?,
 │                     # format_version: "3.4", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
@@ -203,6 +231,7 @@ fitted.gsplats.zarr/
 ├── cholesky_factors_diag     # (N, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION)  (diagonal of L)
 ├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO, certified as above) / float32 (PRECISION) (off-diagonal; absent if d=1)
 ├── colors            # (N, 3) uint8/uint16 (AUTO) / float32 (PRECISION)  (optional)
+├── label_ids         # (N,) or broadcast (1,) smallest exact uint (optional; never LUT/quantized)
 ├── chunk_bounds      # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/          # Optimization info (optional)
 │   ├── .zattrs       # time_seconds, iterations, converged, psnr_db, …

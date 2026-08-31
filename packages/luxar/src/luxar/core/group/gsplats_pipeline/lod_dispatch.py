@@ -202,6 +202,8 @@ def add_gsplats_multi_lod_impl(
                     amplitudes=lod.amplitudes,
                     cholesky_factors=chol_arr,
                     colors=lod.colors,
+                    label_ids=lod.label_ids,
+                    label_vocabulary=lod.label_vocabulary,
                     stats=dict(lod.stats),
                     truncation_radius=lod.truncation_radius,
                 )

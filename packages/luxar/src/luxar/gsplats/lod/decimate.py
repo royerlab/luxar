@@ -139,6 +139,31 @@ def resolve_method(method: AutoOrMethod, n_target: int, n_in: int) -> MethodName
     return "prefix" if n_target >= PREFIX_ABOVE_FRACTION * n_in else "merge"
 
 
+def _resolve_labeled_method(
+    data: GSplatData, method: AutoOrMethod, chosen: MethodName
+) -> tuple[MethodName, bool]:
+    """Keep categorical labels exact or reject an explicit merge."""
+    label_override = method == "auto" and data.label_ids is not None
+    if label_override:
+        warnings.warn(
+            "method='auto' selected 'prefix' because the input carries "
+            "categorical channel 'label_ids'; merging would have to combine "
+            "class ids, and no combination rule is defined",
+            UserWarning,
+            stacklevel=3,
+        )
+        return "prefix", True
+
+    if chosen == "merge" and data.label_ids is not None:
+        raise ValueError(
+            "cannot coarsen: input carries categorical channel 'label_ids'; "
+            "merging would have to combine class ids, and there is no meaningful "
+            "combination of two class ids. Use method='prefix' or call "
+            "without_label_ids() first."
+        )
+    return chosen, False
+
+
 def decimate(
     data: GSplatData,
     *,
@@ -159,7 +184,8 @@ def decimate(
         target: Absolute count (``int``) or fraction of the input (``float`` in
             ``(0, 1]``). See :func:`resolve_target_count`.
         method: ``"merge"``, ``"prefix"``, or ``"auto"`` (the measured rule —
-            see the module docstring).
+            see the module docstring). Labeled inputs constrain ``"auto"`` to
+            ``"prefix"`` because merging has no defined categorical rule.
         prefix_method: Ordering for ``method="prefix"``, passed to
             :func:`compute_additive_order` (``auto`` / ``self_energy`` /
             ``mass`` / ``greedy`` / ``radial`` / ...).
@@ -193,7 +219,8 @@ def decimate(
 
     Raises:
         ValueError: on an out-of-range target, an unknown method, or a
-            ``coarsen_dims`` index outside ``[0, data.ndim)``.
+            ``coarsen_dims`` index outside ``[0, data.ndim)``; also when
+            ``method="merge"`` is requested for categorical labels.
     """
     n_in = int(data.n_splats)
     n_target = resolve_target_count(target, n_in)
@@ -204,6 +231,8 @@ def decimate(
         if verbose:
             aprint(f"Target {n_target:,} >= input {n_in:,} — returning input unchanged")
         return data
+
+    chosen, label_override = _resolve_labeled_method(data, method, chosen)
 
     if coarsen_dims is not None and chosen == "prefix":
         # The family decides whether this knob means anything, and with
@@ -219,14 +248,20 @@ def decimate(
         # programmatic `decimate(..., verbose=False)` on stdout unbidden. The
         # CLI still shows it: `luxar`'s root callback installs
         # `install_arbol_warnings`, which renders warnings as arbol lines.
-        why = (
-            f" (method='auto' resolved to prefix: the request keeps "
-            f"{100.0 * n_target / n_in:.1f}% of the input, at or above the "
-            f"{100.0 * PREFIX_ABOVE_FRACTION:.0f}% crossover — pass "
-            f"method='merge' to force a merge)"
-            if method == "auto"
-            else ""
-        )
+        if label_override:
+            why = (
+                " (method='auto' resolved to prefix because the input carries "
+                "categorical channel 'label_ids')"
+            )
+        elif method == "auto":
+            why = (
+                f" (method='auto' resolved to prefix: the request keeps "
+                f"{100.0 * n_target / n_in:.1f}% of the input, at or above the "
+                f"{100.0 * PREFIX_ABOVE_FRACTION:.0f}% crossover — pass "
+                f"method='merge' to force a merge)"
+            )
+        else:
+            why = ""
         warnings.warn(
             f"coarsen_dims={sorted({int(d) for d in coarsen_dims})} is IGNORED "
             f"by the 'prefix' family{why}: a prefix keeps whole input splats at "
@@ -345,6 +380,8 @@ def _subset(data: GSplatData, idx: np.ndarray) -> GSplatData:
         amplitudes=np.asarray(data.amplitudes)[idx],
         cholesky_factors=np.asarray(data.cholesky_factors)[idx],
         colors=None if colors is None else np.asarray(colors)[idx],
+        label_ids=(None if data.label_ids is None else np.asarray(data.label_ids)[idx]),
+        label_vocabulary=data.label_vocabulary,
         truncation_radius=data.truncation_radius,
     )
 

@@ -142,6 +142,7 @@ def register_info_command(app: typer.Typer) -> None:
                         aprint(f"    Splats: {gs['n_splats']:,}")
                         aprint(f"    Dimensions: {gs['n_dims']}")
                         aprint(f"    Has colors: {gs['has_colors']}")
+                        aprint(f"    Has categorical labels: {gs['has_label_ids']}")
         except typer.Exit:
             raise
         except Exception as e:

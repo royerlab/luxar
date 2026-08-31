@@ -200,6 +200,57 @@ def test_a_no_op_decimate_returns_the_input_verbatim() -> None:
     assert data.stats == _laddered_stats()
 
 
+def test_decimate_carries_label_prefix_and_refuses_label_merge() -> None:
+    data = _flat_dataset()
+    labeled = GSplatData(
+        centers=data.centers,
+        amplitudes=data.amplitudes,
+        cholesky_factors=data.cholesky_factors,
+        label_ids=np.arange(data.n_splats, dtype=np.uint16),
+        label_vocabulary={i: str(i) for i in range(data.n_splats)},
+    )
+
+    prefix = decimate(labeled, target=data.n_splats // 2, method="prefix")
+    assert prefix.label_ids is not None
+    for center, label_id in zip(prefix.centers, prefix.label_ids):
+        matches = np.flatnonzero(np.all(labeled.centers == center, axis=1))
+        assert matches.size == 1
+        assert int(label_id) == int(matches[0])
+
+    with pytest.raises(ValueError, match="without_label_ids"):
+        decimate(labeled, target=data.n_splats // 2, method="merge", device="cpu")
+
+    merged = decimate(
+        labeled.without_label_ids(),
+        target=data.n_splats // 2,
+        method="merge",
+        device="cpu",
+    )
+    assert merged.n_splats == data.n_splats // 2
+    assert merged.label_ids is None
+    assert merged.label_vocabulary is None
+
+    with pytest.warns(UserWarning) as caught:
+        automatic = decimate(
+            labeled,
+            target=data.n_splats // 4,
+            method="auto",
+            coarsen_dims=[0, 1, 2],
+        )
+    messages = [str(warning.message) for warning in caught]
+    assert any("selected 'prefix'" in message for message in messages)
+    ignored = next(message for message in messages if "is IGNORED" in message)
+    assert "categorical channel 'label_ids'" in ignored
+    assert "crossover" not in ignored
+    assert "method='merge'" not in ignored
+    assert automatic.label_ids is not None
+    assert automatic.n_splats == data.n_splats // 4
+    for center, label_id in zip(automatic.centers, automatic.label_ids):
+        matches = np.flatnonzero(np.all(labeled.centers == center, axis=1))
+        assert matches.size == 1
+        assert int(label_id) == int(matches[0])
+
+
 def _stacked_dataset(n: int = 200) -> GSplatData:
     """4D splats on three integer timepoints, stamped ``coarsen_dims=[1, 2, 3]``.
 

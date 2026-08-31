@@ -11,13 +11,142 @@ core (single-LOD) data API. This file covers:
 - ``SubstitutiveLevel`` and 2-D substitutive × additive accessors
 """
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
+from luxar.gsplats.lod.additive import make_additive_lod
+from luxar.gsplats.lod.decimate import decimate
+from luxar.gsplats.lod.substitutive import make_substitutive_lod
+from luxar.gsplats.tree import iter_leaves
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 from ._gsplat_data_helpers import _make_3d_gsplat
+
+_LABEL_COUNT = 3
+_LABEL_VOCABULARY = {i: f"class-{i}" for i in range(_LABEL_COUNT)}
+
+
+def _label_operation(operation, *, id: str, refuses: bool = False):
+    return pytest.param(operation, refuses, id=id)
+
+
+_LABEL_CHANNEL_OPERATIONS = (
+    _label_operation(
+        lambda data: data.filter(np.arange(data.n_splats) % 2 == 0), id="filter"
+    ),
+    _label_operation(
+        lambda data: data.filter_by(bbox=[(2.0, 10.0), (-1.0, 1.0), (-1.0, 1.0)]),
+        id="filter-by",
+    ),
+    _label_operation(
+        lambda data: data.slice_by([slice(2.0, 10.0), slice(None), slice(None)]),
+        id="slice-by",
+    ),
+    _label_operation(
+        lambda data: data.cull(method="amplitude_percentile", amplitude_percentile=25),
+        id="cull",
+    ),
+    _label_operation(
+        lambda data: data.transform(np.eye(data.ndim, dtype=np.float32)),
+        id="transform",
+    ),
+    _label_operation(
+        lambda data: data.translate(np.array([3.0, 0.0, 0.0], dtype=np.float32)),
+        id="translate",
+    ),
+    _label_operation(lambda data: data.center_at_centroid(), id="center-at-centroid"),
+    _label_operation(lambda data: data.with_colors((0.2, 0.4, 0.6)), id="with-colors"),
+    _label_operation(
+        lambda data: data.affine_intensity(scale=2.0, offset=0.1),
+        id="affine-intensity",
+    ),
+    _label_operation(lambda data: data.normalize_intensity(), id="normalize-intensity"),
+    _label_operation(
+        lambda data: data.clamp_intensity(min=0.5, max=2.0),
+        id="clamp-intensity",
+    ),
+    _label_operation(lambda data: data.scale_intensity(2.0), id="scale-intensity"),
+    _label_operation(
+        lambda data: data.reweight_amplitude(np.linspace(0.5, 1.5, data.n_splats)),
+        id="reweight-amplitude",
+    ),
+    _label_operation(
+        lambda data: data.soft_scale_filter(highpass=2.0),
+        id="soft-scale-filter",
+    ),
+    _label_operation(lambda data: data.flattened(), id="flattened"),
+    _label_operation(
+        lambda data: data.additive_prefix(min(1, data.n_additive_sublods - 1)),
+        id="additive-prefix",
+    ),
+    _label_operation(lambda data: data.at_substitutive(0), id="at-substitutive"),
+    _label_operation(lambda data: data.embed_dimension(2.0), id="embed-dimension"),
+    _label_operation(
+        lambda data: GSplatData.concatenate([data, data]), id="concatenate"
+    ),
+    _label_operation(
+        lambda data: GSplatData.combine_as_new_dimension([data, data]),
+        id="combine-as-new-dimension",
+    ),
+    _label_operation(
+        lambda data: GSplatData.merge_with_channel_colors(
+            [data, data], [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+        ),
+        id="merge-with-channel-colors",
+    ),
+    _label_operation(
+        lambda data: data.to_spatial_partition(max_elements=4),
+        id="to-spatial-partition",
+    ),
+    _label_operation(
+        lambda data: GSplatData.partition_from_regions(
+            [
+                data.filter(np.arange(data.n_splats) % 2 == 0),
+                data.filter(np.arange(data.n_splats) % 2 == 1),
+            ]
+        ),
+        id="partition-from-regions",
+    ),
+    _label_operation(
+        lambda data: make_additive_lod(data, n_lods=3, method="radial"),
+        id="make-additive-lod",
+    ),
+    _label_operation(
+        lambda data: decimate(data, target=0.5, method="prefix", verbose=False),
+        id="decimate-prefix",
+    ),
+    _label_operation(
+        lambda data: decimate(data, target=0.4, method="auto", verbose=False),
+        id="decimate-auto",
+    ),
+    _label_operation(
+        lambda data: decimate(
+            data,
+            target=0.5,
+            method="merge",
+            device="cpu",
+            lloyd_iterations=1,
+            verbose=False,
+        ),
+        id="decimate-merge",
+        refuses=True,
+    ),
+    _label_operation(
+        lambda data: make_substitutive_lod(
+            data,
+            levels=1,
+            compression_factor=2,
+            method="greedy",
+            device="cpu",
+            verbose=False,
+        ),
+        id="make-substitutive-lod",
+        refuses=True,
+    ),
+)
 
 
 class TestAdditiveSubLOD:
@@ -210,6 +339,149 @@ class TestGSplatDataLOD:
         assert filtered.n_additive_sublods == 3  # LODs preserved
         assert filtered.n_splats == int(mask.sum())
 
+    def test_label_ids_survive_subset_reorder_and_partition(self):
+        centers = np.column_stack(
+            [np.arange(12, dtype=np.float32), np.zeros((12, 2), dtype=np.float32)]
+        )
+        label_ids = np.arange(12, dtype=np.uint8)
+        vocabulary = {i: f"class-{i}" for i in range(12)}
+        data = GSplatData(
+            centers=centers,
+            amplitudes=np.linspace(0.1, 1.2, 12, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (12, 1)
+            ),
+            label_ids=label_ids,
+            label_vocabulary=vocabulary,
+        )
+
+        filtered = data.filter(np.arange(12) % 2 == 0)
+        np.testing.assert_array_equal(filtered.label_ids, label_ids[::2])
+        assert filtered.label_vocabulary == vocabulary
+
+        translated = data.translate(np.array([3.0, 0.0, 0.0], dtype=np.float32))
+        np.testing.assert_array_equal(translated.label_ids, label_ids)
+
+        ladder = make_additive_lod(data, n_lods=3, method="radial")
+        assert ladder.label_ids is not None
+        for center, label_id in zip(ladder.centers, ladder.label_ids):
+            assert int(label_id) == int(center[0])
+
+        partition = data.to_spatial_partition(max_elements=4)
+        for child in partition.children:
+            for sublod in child.additive_sublods:
+                assert sublod.label_ids is not None
+                for center, label_id in zip(sublod.centers, sublod.label_ids):
+                    assert int(label_id) == int(center[0])
+                assert sublod.label_vocabulary == vocabulary
+
+    @pytest.mark.parametrize("operation,refuses", _LABEL_CHANNEL_OPERATIONS)
+    @pytest.mark.parametrize("laddered", [False, True], ids=["flat", "laddered"])
+    @pytest.mark.parametrize("labeled", [False, True], ids=["unlabeled", "labeled"])
+    def test_operations_carry_or_refuse_categorical_channel(
+        self, operation, refuses: bool, laddered: bool, labeled: bool
+    ) -> None:
+        centers = np.column_stack(
+            [np.arange(12, dtype=np.float32), np.zeros((12, 2), dtype=np.float32)]
+        )
+        amplitudes = np.ones(12, dtype=np.float32)
+        amplitudes[9] = 3.0
+        data = GSplatData(
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (12, 1)
+            ),
+        )
+        if labeled:
+            data = data.with_label_ids(
+                np.arange(12, dtype=np.uint8) % _LABEL_COUNT,
+                _LABEL_VOCABULARY,
+            )
+        if laddered:
+            data = make_additive_lod(data, n_lods=3, method="radial")
+
+        if labeled and refuses:
+            with pytest.raises(
+                ValueError,
+                match="cannot coarsen: input carries categorical channel 'label_ids'",
+            ):
+                operation(data)
+            return
+
+        result = operation(data)
+
+        node = result.tree if isinstance(result, GSplatData) else result
+        sublods = [
+            sublod for leaf in iter_leaves(node) for sublod in leaf.additive_sublods
+        ]
+        assert sublods
+        if not labeled:
+            assert all(sublod.label_ids is None for sublod in sublods)
+            assert all(sublod.label_vocabulary is None for sublod in sublods)
+            return
+
+        for sublod in sublods:
+            assert sublod.label_ids is not None
+            assert sublod.label_vocabulary == _LABEL_VOCABULARY
+            expected = np.rint(sublod.centers[:, 0]).astype(np.int64) % _LABEL_COUNT
+            np.testing.assert_array_equal(sublod.label_ids, expected)
+
+    def test_with_label_ids_accepts_integer_sequence(self) -> None:
+        source = _make_3d_gsplat(6)
+        label_ids = [0, 1, 0, 2, 1, 2]
+        vocabulary = {0: "background", 1: "left", 2: "right"}
+
+        labeled = source.with_label_ids(label_ids, vocabulary)
+
+        np.testing.assert_array_equal(labeled.label_ids, label_ids)
+        assert labeled.label_vocabulary == vocabulary
+        assert source.label_ids is None
+        assert source.label_vocabulary is None
+
+    def test_without_label_ids_preserves_additive_ladder_and_stats(self) -> None:
+        source = _make_3d_gsplat(12).with_label_ids(
+            np.arange(12, dtype=np.uint8) % 3,
+            {0: "background", 1: "left", 2: "right"},
+        )
+        ladder = make_additive_lod(source, n_lods=3, method="radial")
+        ladder.stats["psnr_db"] = 42.0
+        for index, sublod in enumerate(ladder.additive_sublods):
+            sublod.stats["rung"] = index
+
+        stripped = ladder.without_label_ids()
+
+        assert stripped.n_additive_sublods == ladder.n_additive_sublods
+        assert stripped.stats == ladder.stats
+        for original, result in zip(ladder.additive_sublods, stripped.additive_sublods):
+            np.testing.assert_array_equal(result.centers, original.centers)
+            np.testing.assert_array_equal(result.amplitudes, original.amplitudes)
+            np.testing.assert_array_equal(
+                result.cholesky_factors, original.cholesky_factors
+            )
+            assert result.stats == original.stats
+            assert result.label_ids is None
+            assert result.label_vocabulary is None
+        assert ladder.label_ids is not None
+        assert ladder.label_vocabulary is not None
+
+    def test_derived_operations_do_not_rescan_label_membership(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        data = _make_3d_gsplat(12).with_label_ids(
+            np.arange(12, dtype=np.uint8),
+            {i: f"class-{i}" for i in range(12)},
+        )
+
+        def fail_unique(*args: object, **kwargs: object) -> None:
+            raise AssertionError("derived data re-scanned categorical membership")
+
+        monkeypatch.setattr(np, "unique", fail_unique)
+        filtered = data.filter(np.arange(12) % 2 == 0)
+
+        np.testing.assert_array_equal(filtered.label_ids, np.arange(0, 12, 2))
+        assert filtered.label_vocabulary == data.label_vocabulary
+
     def test_empty_lods_raises(self):
         with pytest.raises(ValueError, match="at least one"):
             GSplatData(additive_sublods=[])
@@ -287,6 +559,43 @@ class TestLODPreservation:
         result = GSplatData.concatenate([d1, d2])
         assert result.n_additive_sublods == 1
         assert result.n_splats == 12
+
+    def test_concatenate_requires_identical_label_vocabularies(self):
+        left = GSplatData(
+            centers=np.zeros((2, 3), dtype=np.float32),
+            amplitudes=np.ones(2, dtype=np.float32),
+            cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (2, 1)).astype(np.float32),
+            label_ids=np.array([0, 1], dtype=np.uint8),
+            label_vocabulary={0: "zero", 1: "one"},
+        )
+        right = GSplatData(
+            centers=np.ones((2, 3), dtype=np.float32),
+            amplitudes=np.ones(2, dtype=np.float32),
+            cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (2, 1)).astype(np.float32),
+            label_ids=np.array([0, 1], dtype=np.uint8),
+            label_vocabulary={0: "background", 1: "foreground"},
+        )
+
+        with pytest.raises(ValueError, match="different label_vocabulary"):
+            GSplatData.concatenate([left, right])
+
+    def test_all_empty_concatenate_preserves_compatible_labels(self):
+        vocabulary = {0: "zero"}
+
+        def empty() -> GSplatData:
+            return GSplatData(
+                centers=np.empty((0, 3), dtype=np.float32),
+                amplitudes=np.empty(0, dtype=np.float32),
+                cholesky_factors=np.empty((0, 6), dtype=np.float32),
+                label_ids=np.empty(0, dtype=np.uint8),
+                label_vocabulary=vocabulary,
+            )
+
+        merged = GSplatData.concatenate([empty(), empty()])
+        assert merged.label_ids is not None
+        assert merged.label_ids.dtype == np.uint8
+        assert merged.label_ids.size == 0
+        assert merged.label_vocabulary == vocabulary
 
     def test_embed_dimension_preserves_lods(self):
         data = self._make_multi_lod(n_lods=3, splats_per_lod=10, ndim=3)
@@ -445,6 +754,44 @@ class TestSubstitutivePreservation:
                 data.at_substitutive(s).centers * 2.0,
                 atol=1e-4,
             )
+
+    def test_without_label_ids_preserves_pyramid(self) -> None:
+        data = self._make_pyramid(counts=(12, 5))
+        vocabulary = {0: "background", 1: "foreground"}
+        labeled = GSplatData.from_substitutive_levels(
+            [
+                replace(
+                    level,
+                    additive_sublods=[
+                        replace(
+                            sublod,
+                            label_ids=np.arange(sublod.n_splats, dtype=np.uint8) % 2,
+                            label_vocabulary=vocabulary,
+                        )
+                        for sublod in level.additive_sublods
+                    ],
+                )
+                for level in data.substitutive_levels
+            ],
+            stats={"psnr_db": 42.0},
+        )
+
+        stripped = labeled.without_label_ids()
+
+        assert stripped.n_substitutive == labeled.n_substitutive
+        assert stripped.stats == labeled.stats
+        for original_level, result_level in zip(
+            labeled.substitutive_levels, stripped.substitutive_levels
+        ):
+            assert result_level.compression_factor == original_level.compression_factor
+            assert result_level.parent_method == original_level.parent_method
+            assert result_level.level_index == original_level.level_index
+            for original, result in zip(
+                original_level.additive_sublods, result_level.additive_sublods
+            ):
+                np.testing.assert_array_equal(result.centers, original.centers)
+                assert result.label_ids is None
+                assert result.label_vocabulary is None
 
     def test_translate_preserves_pyramid(self):
         data = self._make_pyramid()

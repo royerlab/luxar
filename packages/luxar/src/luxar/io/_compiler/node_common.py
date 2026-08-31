@@ -105,6 +105,8 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "n_splats",
         "ndim",
         "has_colors",
+        "has_label_ids",
+        "label_vocabulary",
         "has_labels",
         "has_image_labels",
         "has_keys",

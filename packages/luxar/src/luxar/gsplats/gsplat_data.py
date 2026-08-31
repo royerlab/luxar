@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
 import numpy as np
 
@@ -64,6 +64,90 @@ def widen_colors_to_rgba(colors: np.ndarray) -> np.ndarray:
     return np.concatenate([colors, alpha], axis=1)
 
 
+def normalize_label_vocabulary(
+    vocabulary: Optional[Mapping[int, str]],
+) -> Optional[Dict[int, str]]:
+    """Validate and normalize an id-to-name vocabulary."""
+    if vocabulary is None:
+        return None
+    normalized: Dict[int, str] = {}
+    for raw_id, name in vocabulary.items():
+        if isinstance(raw_id, bool) or not isinstance(raw_id, (int, np.integer)):
+            raise TypeError("label_vocabulary keys must be non-negative integers")
+        label_id = int(raw_id)
+        if label_id < 0:
+            raise ValueError("label_vocabulary keys must be non-negative integers")
+        if not isinstance(name, str):
+            raise TypeError("label_vocabulary values must be strings")
+        normalized[label_id] = name
+    return normalized
+
+
+def validate_label_channel(
+    label_ids: Optional[np.ndarray],
+    label_vocabulary: Optional[Mapping[int, str]],
+    n_splats: int,
+) -> Optional[Dict[int, str]]:
+    """Validate one exact categorical per-splat channel."""
+    vocabulary = _validate_label_channel_structure(
+        label_ids, label_vocabulary, n_splats
+    )
+    if label_ids is None:
+        return None
+    assert vocabulary is not None
+    missing = sorted(
+        set(int(value) for value in np.unique(label_ids)) - vocabulary.keys()
+    )
+    if missing:
+        raise ValueError(
+            f"label_vocabulary is missing ids present in label_ids: {missing}"
+        )
+    return vocabulary
+
+
+def _validate_label_channel_structure(
+    label_ids: Optional[np.ndarray],
+    label_vocabulary: Optional[Mapping[int, str]],
+    n_splats: int,
+) -> Optional[Dict[int, str]]:
+    """Validate categorical channel metadata without scanning its values."""
+    vocabulary = normalize_label_vocabulary(label_vocabulary)
+    if label_ids is None:
+        if vocabulary is not None:
+            raise ValueError("label_vocabulary requires label_ids")
+        return None
+    if vocabulary is None:
+        raise ValueError("label_ids requires an explicit label_vocabulary")
+    if label_ids.shape != (n_splats,):
+        raise ValueError(
+            f"Label IDs shape {label_ids.shape} doesn't match centers count ({n_splats},)"
+        )
+    if not np.issubdtype(label_ids.dtype, np.integer) or (
+        np.issubdtype(label_ids.dtype, np.signedinteger) and np.any(label_ids < 0)
+    ):
+        raise ValueError("label_ids must contain non-negative integers")
+    return vocabulary
+
+
+def _merge_additive_label_channel(
+    sublods: List["AdditiveSubLOD"],
+) -> tuple[Optional[np.ndarray], Optional[Dict[int, str]]]:
+    label_presence = {lod.label_ids is not None for lod in sublods}
+    if len(label_presence) > 1:
+        raise ValueError(
+            "additive ladder must carry label_ids on every sub-LOD or none"
+        )
+    if label_presence == {False}:
+        return None, None
+    label_ids = np.concatenate(
+        [lod.label_ids for lod in sublods if lod.label_ids is not None]
+    )
+    vocabularies = [lod.label_vocabulary for lod in sublods]
+    if any(vocab != vocabularies[0] for vocab in vocabularies[1:]):
+        raise ValueError("additive ladder label_vocabulary values must be identical")
+    return label_ids, vocabularies[0]
+
+
 @dataclass(frozen=True, eq=False)
 class AdditiveSubLOD(_SplatArrayMixin):
     """A single Level-of-Detail layer — immutable container for splat arrays.
@@ -82,6 +166,10 @@ class AdditiveSubLOD(_SplatArrayMixin):
         Optional RGB(A) colors per splat. The optional alpha channel is
         per-splat opacity in [0, 1] (consumed by every blending mode; mapped
         into optical depth in volumetric — see VOLUMETRIC_BLENDING_SPEC.md).
+    label_ids : Optional[np.ndarray], shape (N,)
+        Exact non-negative categorical id per splat.
+    label_vocabulary : Optional[Dict[int, str]]
+        Explicit name for every id present in ``label_ids``.
     stats : Dict[str, Any]
         Per-LOD statistics (e.g., psnr_db, time_seconds, pass_index).
     truncation_radius : float
@@ -94,6 +182,8 @@ class AdditiveSubLOD(_SplatArrayMixin):
     amplitudes: np.ndarray
     cholesky_factors: np.ndarray
     colors: Optional[np.ndarray] = None
+    label_ids: Optional[np.ndarray] = None
+    label_vocabulary: Optional[Dict[int, str]] = None
     stats: Dict[str, Any] = field(default_factory=dict)
     truncation_radius: float = DEFAULT_TRUNCATION_RADIUS
 
@@ -115,6 +205,10 @@ class AdditiveSubLOD(_SplatArrayMixin):
             raise ValueError(
                 f"Colors count {self.colors.shape[0]} doesn't match centers count {n}"
             )
+        vocabulary = _validate_label_channel_structure(
+            self.label_ids, self.label_vocabulary, n
+        )
+        object.__setattr__(self, "label_vocabulary", vocabulary)
         if self.centers.ndim >= 2:
             from luxar.gsplats.utils.trils import validate_cholesky_shape
 
@@ -219,8 +313,9 @@ class GSplatData(
         # Explicit LOD construction:
         GSplatData.from_additive_sublods([lod0, lod1, lod2])
 
-    Top-level ``centers``, ``amplitudes``, ``cholesky_factors``, and ``colors``
-    are the concatenation of all LODs, computed once at construction time.
+    Top-level ``centers``, ``amplitudes``, ``cholesky_factors``, ``colors``, and
+    ``label_ids`` are the concatenation of all additive LODs, computed once at
+    construction time.
     The object is conceptually immutable — all operations return new instances.
 
     The behaviour is split across the domain mixins in
@@ -243,6 +338,10 @@ class GSplatData(
     colors : Optional[np.ndarray], shape (N_total, 3) or (N_total, 4)
         Cached concatenation of all LOD colors (None if no LOD has colors).
         The optional 4th column is per-splat opacity alpha in [0, 1].
+    label_ids : Optional[np.ndarray], shape (N_total,)
+        Cached concatenation of exact categorical ids.
+    label_vocabulary : Optional[Dict[int, str]]
+        Shared id-to-name vocabulary for the categorical channel.
     stats : Dict[str, Any]
         Top-level statistics (overall quality, timing, etc.).
     """
@@ -253,6 +352,8 @@ class GSplatData(
         amplitudes: Optional[np.ndarray] = None,
         cholesky_factors: Optional[np.ndarray] = None,
         colors: Optional[np.ndarray] = None,
+        label_ids: Optional[np.ndarray] = None,
+        label_vocabulary: Optional[Mapping[int, str]] = None,
         stats: Optional[Dict[str, Any]] = None,
         *,
         additive_sublods: Optional[List[AdditiveSubLOD]] = None,
@@ -308,11 +409,16 @@ class GSplatData(
             and cholesky_factors is not None
         ):
             # Convenience constructor — wrap into a single-LOD leaf.
+            label_vocabulary = validate_label_channel(
+                label_ids, label_vocabulary, centers.shape[0]
+            )
             single_lod = AdditiveSubLOD(
                 centers=centers,
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky_factors,
                 colors=colors,
+                label_ids=label_ids,
+                label_vocabulary=label_vocabulary,
                 stats=stats if stats is not None else {},
                 truncation_radius=truncation_radius,
             )
@@ -333,6 +439,8 @@ class GSplatData(
             self.amplitudes = lod0.amplitudes
             self.cholesky_factors = lod0.cholesky_factors
             self.colors = lod0.colors
+            self.label_ids = lod0.label_ids
+            self.label_vocabulary = lod0.label_vocabulary
         else:
             self.centers = np.concatenate(
                 [lod.centers for lod in finest_sublods], axis=0
@@ -342,6 +450,9 @@ class GSplatData(
                 [lod.cholesky_factors for lod in finest_sublods], axis=0
             )
             self.colors = _merge_lod_colors(finest_sublods)
+            self.label_ids, self.label_vocabulary = _merge_additive_label_channel(
+                finest_sublods
+            )
 
         # Top-level stats (separate from per-LOD stats)
         if stats is not None:

@@ -17,7 +17,7 @@ Main API
    :members:
    :inherited-members:
    :undoc-members:
-   :exclude-members: additive_sublods, centers, amplitudes, cholesky_factors, colors, stats
+   :exclude-members: additive_sublods, centers, amplitudes, cholesky_factors, colors, label_ids, label_vocabulary, stats
    :show-inheritance:
 
 .. autoproperty:: luxar.gsplats.GSplatData.additive_sublods

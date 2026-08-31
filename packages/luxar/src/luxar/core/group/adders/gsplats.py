@@ -38,6 +38,20 @@ if TYPE_CHECKING:
     from ..group import Group
 
 
+def _normalize_scene_label_channel(
+    label_ids: Any,
+    label_vocabulary: Optional[Dict[int, str]],
+    n_splats: int,
+) -> tuple[Optional[np.ndarray], Optional[Dict[int, str]]]:
+    from ....gsplats.gsplat_data import validate_label_channel
+
+    normalized_ids = None if label_ids is None else np.asarray(label_ids)
+    normalized_vocabulary = validate_label_channel(
+        normalized_ids, label_vocabulary, n_splats
+    )
+    return normalized_ids, normalized_vocabulary
+
+
 def add_gsplats_impl(
     group: "Group",
     *,
@@ -46,6 +60,8 @@ def add_gsplats_impl(
     amplitudes: Any,
     cholesky_factors: Any,
     colors: Any = None,
+    label_ids: Any = None,
+    label_vocabulary: Optional[Dict[int, str]] = None,
     labels: Optional[Union[List[str], Sequence[str]]] = None,
     image_labels: Optional[Any] = None,
     keys: Optional[Union[List[str], Sequence[str]]] = None,
@@ -115,6 +131,9 @@ def add_gsplats_impl(
 
         n_splats = ctr_arr.shape[0]
         ndim = ctr_arr.shape[1]
+        label_ids, label_vocabulary = _normalize_scene_label_channel(
+            label_ids, label_vocabulary, n_splats
+        )
 
         # Colormap / colors mutual exclusivity — validated BEFORE the partition
         # branch, as the Points and Lines adders do. Checked after the branch it
@@ -213,6 +232,8 @@ def add_gsplats_impl(
                     parts=parts,
                     n_splats=n_splats,
                     colors=colors,
+                    label_ids=label_ids,
+                    label_vocabulary=label_vocabulary,
                     labels=labels,
                     keys=keys,
                     parent=parent,
@@ -244,6 +265,8 @@ def add_gsplats_impl(
             amplitudes=amplitudes,
             cholesky_factors=chol_arr,
             colors=cast(Any, colors),
+            label_ids=label_ids,
+            label_vocabulary=label_vocabulary,
             labels=labels,
             keys=keys,
             image_labels=image_labels,
@@ -291,6 +314,8 @@ def add_gsplats_partition_wrapper_impl(
     parts: List[np.ndarray],
     n_splats: int,
     colors: Any,
+    label_ids: Any,
+    label_vocabulary: Optional[Dict[int, str]],
     labels: Any,
     keys: Any = None,
     parent: Optional["Node"],
@@ -357,6 +382,8 @@ def add_gsplats_partition_wrapper_impl(
             colors=colors
             if uniform_color
             else slice_optional_array(colors, indices, n_splats),
+            label_ids=slice_optional_array(label_ids, indices, n_splats),
+            label_vocabulary=label_vocabulary,
             labels=slice_optional_array(labels, indices, n_splats),
             keys=slice_optional_array(keys, indices, n_splats),
             image_labels=None,

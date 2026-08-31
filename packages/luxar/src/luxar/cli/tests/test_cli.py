@@ -335,13 +335,19 @@ def test_info_detects_gsplats_objects(runner, tmp_path) -> None:
     gs_group = root.create_group("my_gsplats")
     gs_group.attrs["type"] = "gsplats"
     create_array(gs_group, "centers", data=np.random.rand(50, 3).astype(np.float32))
+    create_array(gs_group, "label_ids", data=np.arange(50, dtype=np.uint8) % 3)
 
     result = runner.invoke(app, ["info", str(store_path), "--format", "json"])
     assert result.exit_code == 0
     data = json.loads(result.stdout)
     assert len(data["gsplats_objects"]) == 1
     assert data["gsplats_objects"][0]["n_splats"] == 50
+    assert data["gsplats_objects"][0]["has_label_ids"] is True
     assert data["n_gsplats_total"] == 50
+
+    result = runner.invoke(app, ["info", str(store_path), "--stats"])
+    assert result.exit_code == 0
+    assert "Has categorical labels: True" in result.stdout
 
 
 # [Python-R6 / A-G1] Type-validation boundary cases for --points.

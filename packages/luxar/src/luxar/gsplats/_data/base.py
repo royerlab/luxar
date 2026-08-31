@@ -57,6 +57,8 @@ class _GSplatDataOps(_SplatArrayMixin):
     # Instance attributes assigned by GSplatData.__init__ (beyond the
     # centers/amplitudes/cholesky_factors declared on _SplatArrayMixin).
     colors: Optional[np.ndarray]
+    label_ids: Optional[np.ndarray]
+    label_vocabulary: Optional[Dict[int, str]]
     stats: Dict[str, Any]
     _node: GSplatNode
 
@@ -278,6 +280,10 @@ def _readonly_sublod(lod: "AdditiveSubLOD") -> "AdditiveSubLOD":
         amplitudes=_readonly(lod.amplitudes),
         cholesky_factors=_readonly(lod.cholesky_factors),
         colors=_readonly_opt(lod.colors),
+        label_ids=_readonly_opt(lod.label_ids),
+        label_vocabulary=(
+            dict(lod.label_vocabulary) if lod.label_vocabulary is not None else None
+        ),
         stats=dict(lod.stats),
         truncation_radius=lod.truncation_radius,
     )
@@ -330,6 +336,18 @@ def _concat_additive_levels(
     merged: "list[AdditiveSubLOD]" = []
     for level in range(max_lods):
         level_lods = levels[level]
+        label_presence = {lod.label_ids is not None for lod in level_lods}
+        if len(label_presence) > 1:
+            raise ValueError(
+                "cannot merge label_ids when only some inputs carry the channel"
+            )
+        vocabularies = [
+            lod.label_vocabulary for lod in level_lods if lod.label_ids is not None
+        ]
+        if any(vocabulary != vocabularies[0] for vocabulary in vocabularies[1:]):
+            raise ValueError(
+                "cannot merge label_ids with different label_vocabulary values"
+            )
         merged.append(
             AdditiveSubLOD(
                 centers=np.concatenate(
@@ -346,6 +364,18 @@ def _concat_additive_levels(
                     channels=ladder_channels if all_present else None,
                     allow_integer=ladder_allow_integer,
                 ),
+                label_ids=(
+                    np.concatenate(
+                        [
+                            lod.label_ids
+                            for lod in level_lods
+                            if lod.label_ids is not None
+                        ]
+                    )
+                    if vocabularies
+                    else None
+                ),
+                label_vocabulary=vocabularies[0] if vocabularies else None,
                 stats={"lod_level": level, "n_sources": len(level_lods)},
                 truncation_radius=level_lods[0].truncation_radius,
             )

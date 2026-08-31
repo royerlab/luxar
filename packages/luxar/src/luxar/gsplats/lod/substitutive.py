@@ -191,6 +191,16 @@ def _finest_content(data: GSplatData) -> GSplatData:
     return src
 
 
+def _refuse_categorical_coarsening(data: GSplatData) -> None:
+    if data.label_ids is not None:
+        raise ValueError(
+            "cannot coarsen: input carries categorical channel 'label_ids'; "
+            "merging would have to combine class ids, and there is no meaningful "
+            "combination of two class ids. Call without_label_ids() first if a "
+            "coarse level is what you want."
+        )
+
+
 def _resolve_reduction_device(
     device: Union[str, torch.device, None], *, caller: str
 ) -> torch.device:
@@ -948,6 +958,7 @@ def make_substitutive_lod(
     L_levels = int(levels)
 
     src = _finest_content(data)
+    _refuse_categorical_coarsening(src)
     target_device = _resolve_reduction_device(device, caller="make_substitutive_lod")
 
     # Normalise coarsen_dims -> a sorted barrier set (or None == coarsen all dims).
@@ -1247,6 +1258,8 @@ def merge_to_count(
 
     Raises:
         ValueError: If ``n_target < 1`` or ``method`` is not recognised.
+            Also raised when the input carries categorical labels, because
+            merging has no defined label-combination rule.
     """
     if n_target < 1:
         raise ValueError(f"n_target must be >= 1, got {n_target}")
@@ -1257,6 +1270,7 @@ def merge_to_count(
     src = _finest_content(data)
     if src.n_splats <= n_target:
         return src
+    _refuse_categorical_coarsening(src)
     target_device = _resolve_reduction_device(device, caller="merge_to_count")
     norm_coarsen = _normalise_coarsen_dims(coarsen_dims, src)
     level_method = _resolve_method(method, src.n_splats)
