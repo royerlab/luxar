@@ -1894,17 +1894,15 @@ export interface ElementPixelStats {
 }
 
 /**
- * Capture the visible, composited pixels of a rendered element as a PNG buffer
- * while hiding every other DOM element from the screenshot.
+ * Capture a rendered element as a PNG buffer.
  *
- * Do not read WebGL canvases by drawing the canvas into a 2D canvas:
- * with `preserveDrawingBuffer: false` Chromium is allowed to clear the
- * WebGL drawing buffer after compositing, which produced all-zero pixels
- * in shader smoke tests even when the screenshot was visibly rendered.
- * Capturing the element screenshot samples the composited output instead
- * and is therefore the right primitive for E2E visual smoke tests. New
- * pixel-measurement specs should use this helper or one of its consumers,
- * never a hand-rolled 2D-context readback.
+ * The viewer's own renderer canvas is captured through
+ * `PostProcessingManager.renderToImageData()`, which renders a fresh frame
+ * through the full post-processing chain and reads its target back on both
+ * WebGL and WebGPU. Other elements (notably embed/host canvases) retain the
+ * composited element-screenshot route, with unrelated DOM hidden without
+ * reflow. New pixel-measurement specs should use this helper or one of its
+ * consumers, never a hand-rolled 2D-context readback.
  */
 export async function captureElementScreenshot(
   page: Page,
@@ -1913,6 +1911,32 @@ export async function captureElementScreenshot(
 ): Promise<Buffer> {
   const element = page.locator(selector).first();
   await element.waitFor({ state: 'visible', timeout });
+  const framebufferDataUrl = await element.evaluate(async (node) => {
+    const debug = (
+      window as unknown as {
+        __luxarDebug?: {
+          renderer?: { domElement?: Element };
+          postProcessing?: { renderToImageData?: () => Promise<ImageData> };
+        };
+      }
+    ).__luxarDebug;
+    if (debug?.renderer?.domElement !== node || !debug.postProcessing?.renderToImageData) {
+      return null;
+    }
+
+    const imageData = await debug.postProcessing.renderToImageData();
+    const canvas = document.createElement('canvas');
+    canvas.width = imageData.width;
+    canvas.height = imageData.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('captureElementScreenshot: 2D context unavailable');
+    context.putImageData(imageData, 0, 0);
+    return canvas.toDataURL('image/png');
+  });
+  if (framebufferDataUrl) {
+    return Buffer.from(framebufferDataUrl.slice(framebufferDataUrl.indexOf(',') + 1), 'base64');
+  }
+
   await element.evaluate((node) => node.setAttribute('data-luxar-capture', ''));
   try {
     return await element.screenshot({
@@ -1949,11 +1973,10 @@ export interface CanvasFrameRGBA {
  * regions of one identical frame is the point, and re-screenshotting per
  * region would let an unrelated frame difference masquerade as a defect.
  *
- * The screenshot route (rather than a direct `gl.readPixels`) is required
- * for the reason spelled out on `captureElementScreenshot` above:
- * with `preserveDrawingBuffer: false` the WebGL drawing buffer may already
- * be cleared. The PNG is decoded in-page and handed back as base64 RGBA so
- * the whole frame crosses the CDP bridge exactly once.
+ * The PNG is decoded in-page and handed back as base64 RGBA so the whole
+ * frame crosses the CDP bridge exactly once. See
+ * `captureElementScreenshot` for viewer-framebuffer versus embed/host
+ * screenshot routing.
  *
  * @param page Playwright page.
  * @param selector Element to capture; defaults to the viewer canvas.

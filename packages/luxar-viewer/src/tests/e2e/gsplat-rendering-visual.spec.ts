@@ -63,6 +63,8 @@ test.describe('GSplats visual correctness', () => {
       const chromeCanvas = document.createElement('canvas');
       chromeCanvas.width = 120;
       chromeCanvas.height = 12;
+      // Deliberately defeats the screenshot helper's CSS mask. Only a
+      // framebuffer read can keep this composited overlay out of the pixels.
       chromeCanvas.style.cssText =
         'position: fixed; left: 0; top: 0; width: 120px; height: 12px; z-index: 9999; visibility: visible !important';
       const context = chromeCanvas.getContext('2d')!;
