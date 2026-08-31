@@ -1,7 +1,7 @@
 #### KTX2 UASTC authoring uses measured RDO defaults (#2403)
 
 UASTC texture authoring now exposes `texture_ktx2_rdo_l` and
-`texture_ktx2_zcmp`, defaulting to RDO lambda 0.25 and zstd level 9. On the two
+`texture_ktx2_zcmp`, defaulting to RDO lambda 0.25 and zstd level 9.
 Set `texture_ktx2_rdo_l=0` to keep the previous lossless zstd-only authoring. On
 the two real 8193x8192 Blue Marble tiles used by the Earth demos, `toktx` 4.4.2
 at UASTC quality 2 drops from 107.26 MiB without RDO to 88.80 MiB with those
