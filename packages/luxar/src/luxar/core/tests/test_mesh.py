@@ -3276,8 +3276,15 @@ def test_encoded_texture_round_trips_as_opaque_bytes(tmp_path) -> None:
     assert mesh.metadata["texture_height"] == 8
 
 
+@pytest.mark.parametrize(
+    "mode,quality,rdo_l,zcmp",
+    [
+        ("etc1s", 200, None, None),
+        ("uastc", 3, 0.75, 7),
+    ],
+)
 def test_ktx2_texture_encodes_raw_rgba_and_stores_opaque_bytes(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, mode, quality, rdo_l, zcmp
 ) -> None:
     """The public mesh API invokes the optional encoder and stores its result."""
     encoded = np.frombuffer(b"\xabKTX 20\xbb\r\n\x1a\nfixture", dtype=np.uint8)
@@ -3296,10 +3303,10 @@ def test_ktx2_texture_encodes_raw_rgba_and_stores_opaque_bytes(
         tmp_path,
         texture=source,
         texture_encoding="ktx2",
-        texture_ktx2_mode="uastc",
-        texture_ktx2_quality=3,
-        texture_ktx2_rdo_l=0.25,
-        texture_ktx2_zcmp=7,
+        texture_ktx2_mode=mode,
+        texture_ktx2_quality=quality,
+        texture_ktx2_rdo_l=rdo_l,
+        texture_ktx2_zcmp=zcmp,
     )
     assert np.array_equal(mesh.texture, encoded)
     assert mesh.metadata["texture_encoding"] == "ktx2"
@@ -3307,7 +3314,7 @@ def test_ktx2_texture_encodes_raw_rgba_and_stores_opaque_bytes(
     assert mesh.metadata["texture_height"] == 4
     assert mesh.metadata["texture_channels"] == 4
     assert len(calls) == 1
-    assert calls[0][1:] == ("uastc", 3, 0.25, 7, "srgb")
+    assert calls[0][1:] == (mode, quality, rdo_l, zcmp, "srgb")
     assert np.array_equal(calls[0][0][..., 3], source[..., 3])
 
 
@@ -3401,6 +3408,30 @@ def test_ktx2_encoder_applies_explicit_uastc_rdo_options(monkeypatch) -> None:
     ]
 
 
+def test_ktx2_encoder_allows_disabling_uastc_rdo(monkeypatch) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        Path(command[-2]).write_bytes(b"ktx2")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
+    texture_writer._encode_ktx2(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        "uastc",
+        None,
+        0,
+        9,
+        "srgb",
+    )
+    assert "--uastc_rdo_l" not in seen["command"]
+    assert seen["command"][5:9] == ["--uastc_quality", "2", "--zcmp", "9"]
+
+
 def test_ktx2_encoder_missing_binary_has_actionable_fallback(monkeypatch) -> None:
     from luxar.io._compiler.dataset_writers import texture as texture_writer
 
@@ -3450,7 +3481,6 @@ def test_ktx2_encoder_uses_supported_etc1s_spelling(monkeypatch) -> None:
 @pytest.mark.parametrize(
     "rdo_l,zcmp,error_pattern",
     [
-        (0.0, 9, r"texture_ktx2_rdo_l.*\[0.001, 10.0\]"),
         (True, 9, r"texture_ktx2_rdo_l.*\[0.001, 10.0\]"),
         (0.5, 0, r"texture_ktx2_zcmp.*\[1, 22\]"),
         (0.5, True, r"texture_ktx2_zcmp.*\[1, 22\]"),

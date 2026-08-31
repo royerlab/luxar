@@ -612,7 +612,7 @@ def test_uv_acceptances(uvs, test_id) -> None:
                 3,
                 ktx2_rdo_l=0.5,
             ),
-            "KTX2-only options",
+            "texture_ktx2_rdo_l require texture_encoding='ktx2'",
             "ktx2_rdo_rejected_for_webp",
         ),
         (

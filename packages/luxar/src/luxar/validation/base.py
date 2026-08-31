@@ -1377,14 +1377,22 @@ def _validate_texture_codec_options(
     ktx2_zcmp: Optional[int],
     context: str,
 ) -> None:
-    if encoding != "ktx2" and (
-        ktx2_mode != "uastc"
-        or ktx2_quality is not None
-        or ktx2_rdo_l is not None
-        or ktx2_zcmp is not None
-    ):
+    if encoding != "ktx2":
+        specified_options = [
+            name
+            for name, specified in (
+                ("texture_ktx2_mode", ktx2_mode != "uastc"),
+                ("texture_ktx2_quality", ktx2_quality is not None),
+                ("texture_ktx2_rdo_l", ktx2_rdo_l is not None),
+                ("texture_ktx2_zcmp", ktx2_zcmp is not None),
+            )
+            if specified
+        ]
+    else:
+        specified_options = []
+    if specified_options:
         raise ValidationError(
-            f"{context}: texture_ktx2_* options require texture_encoding='ktx2'",
+            f"{context}: {'/'.join(specified_options)} require texture_encoding='ktx2'",
             "Remove the KTX2-only options or select texture_encoding='ktx2'",
         )
     if (

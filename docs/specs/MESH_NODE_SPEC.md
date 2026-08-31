@@ -162,6 +162,7 @@ ETC1/2, S3TC/BC or PVRTC target rejects the node; an uncompressed RGBA8 transcod
 fallback is not permitted because it would exceed that device-independent charge.
 UASTC authoring defaults to quality 2, RDO lambda 0.25, and zstd level 9;
 `texture_ktx2_rdo_l` and `texture_ktx2_zcmp` override those UASTC-only controls.
+Set `texture_ktx2_rdo_l=0` to disable RDO while retaining zstd compression.
 ETC1S remains selected explicitly with `texture_ktx2_mode="etc1s"` and uses its
 own `texture_ktx2_quality` scale.
 

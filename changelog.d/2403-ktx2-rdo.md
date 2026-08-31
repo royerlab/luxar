@@ -10,6 +10,4 @@ quality 2 drops from 107.26 MiB without RDO to 88.80 MiB with those defaults, a
 The more aggressive lambda 0.5 with zstd level 9 reached 84.76 MiB, but doubled
 the PSNR loss for only 4.04 MiB more savings, so it is not the general default.
 ETC1S quality 128 reached 10.97 MiB but only 34.13/33.19 dB and
-0.9147/0.9141 SSIM; it remains opt-in. Its `toktx` mode spelling is also
-corrected from the ignored `basis-lz` alias to the supported `etc1s`, so the
-ETC1S arm now emits an actual BasisLZ payload rather than uncompressed RGB.
+0.9147/0.9141 SSIM; it remains opt-in and uses `toktx`'s `etc1s` mode.

@@ -82,10 +82,10 @@ def _encode_ktx2(
     if (
         isinstance(resolved_rdo_l, bool)
         or not isinstance(resolved_rdo_l, (int, float))
-        or not 0.001 <= resolved_rdo_l <= 10.0
+        or not (resolved_rdo_l == 0 or 0.001 <= resolved_rdo_l <= 10.0)
     ):
         raise ValueError(
-            "texture_ktx2_rdo_l must be a number in [0.001, 10.0] for uastc, "
+            "texture_ktx2_rdo_l must be 0 or a number in [0.001, 10.0] for uastc, "
             f"got {resolved_rdo_l!r}"
         )
     resolved_zcmp = 9 if zcmp is None else zcmp
@@ -130,11 +130,10 @@ def _encode_ktx2(
                 "uastc",
                 "--uastc_quality",
                 str(resolved_quality),
-                "--uastc_rdo_l",
-                str(resolved_rdo_l),
-                "--zcmp",
-                str(resolved_zcmp),
             ]
+            if resolved_rdo_l != 0:
+                command += ["--uastc_rdo_l", str(resolved_rdo_l)]
+            command += ["--zcmp", str(resolved_zcmp)]
         else:
             command += ["--encode", "etc1s", "--qlevel", str(resolved_quality)]
         command += ["--assign_oetf", color_space]
