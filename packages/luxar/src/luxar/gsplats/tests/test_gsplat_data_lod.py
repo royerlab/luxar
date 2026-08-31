@@ -25,73 +25,81 @@ from ._gsplat_data_helpers import _make_3d_gsplat
 
 _LABEL_COUNT = 3
 _LABEL_VOCABULARY = {i: f"class-{i}" for i in range(_LABEL_COUNT)}
+
+
+def _label_operation(operation, *, id: str, refuses: bool = False):
+    return pytest.param(operation, refuses, id=id)
+
+
 _LABEL_CHANNEL_OPERATIONS = (
-    pytest.param(
+    _label_operation(
         lambda data: data.filter(np.arange(data.n_splats) % 2 == 0), id="filter"
     ),
-    pytest.param(
+    _label_operation(
         lambda data: data.filter_by(bbox=[(2.0, 10.0), (-1.0, 1.0), (-1.0, 1.0)]),
         id="filter-by",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: data.slice_by([slice(2.0, 10.0), slice(None), slice(None)]),
         id="slice-by",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: data.cull(method="amplitude_percentile", amplitude_percentile=25),
         id="cull",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: data.transform(np.eye(data.ndim, dtype=np.float32)),
         id="transform",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: data.translate(np.array([3.0, 0.0, 0.0], dtype=np.float32)),
         id="translate",
     ),
-    pytest.param(lambda data: data.center_at_centroid(), id="center-at-centroid"),
-    pytest.param(lambda data: data.with_colors((0.2, 0.4, 0.6)), id="with-colors"),
-    pytest.param(
+    _label_operation(lambda data: data.center_at_centroid(), id="center-at-centroid"),
+    _label_operation(lambda data: data.with_colors((0.2, 0.4, 0.6)), id="with-colors"),
+    _label_operation(
         lambda data: data.affine_intensity(scale=2.0, offset=0.1),
         id="affine-intensity",
     ),
-    pytest.param(lambda data: data.normalize_intensity(), id="normalize-intensity"),
-    pytest.param(
+    _label_operation(lambda data: data.normalize_intensity(), id="normalize-intensity"),
+    _label_operation(
         lambda data: data.clamp_intensity(min=0.5, max=2.0),
         id="clamp-intensity",
     ),
-    pytest.param(lambda data: data.scale_intensity(2.0), id="scale-intensity"),
-    pytest.param(
+    _label_operation(lambda data: data.scale_intensity(2.0), id="scale-intensity"),
+    _label_operation(
         lambda data: data.reweight_amplitude(np.linspace(0.5, 1.5, data.n_splats)),
         id="reweight-amplitude",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: data.soft_scale_filter(highpass=2.0),
         id="soft-scale-filter",
     ),
-    pytest.param(lambda data: data.flattened(), id="flattened"),
-    pytest.param(
+    _label_operation(lambda data: data.flattened(), id="flattened"),
+    _label_operation(
         lambda data: data.additive_prefix(min(1, data.n_additive_sublods - 1)),
         id="additive-prefix",
     ),
-    pytest.param(lambda data: data.at_substitutive(0), id="at-substitutive"),
-    pytest.param(lambda data: data.embed_dimension(2.0), id="embed-dimension"),
-    pytest.param(lambda data: GSplatData.concatenate([data, data]), id="concatenate"),
-    pytest.param(
+    _label_operation(lambda data: data.at_substitutive(0), id="at-substitutive"),
+    _label_operation(lambda data: data.embed_dimension(2.0), id="embed-dimension"),
+    _label_operation(
+        lambda data: GSplatData.concatenate([data, data]), id="concatenate"
+    ),
+    _label_operation(
         lambda data: GSplatData.combine_as_new_dimension([data, data]),
         id="combine-as-new-dimension",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: GSplatData.merge_with_channel_colors(
             [data, data], [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
         ),
         id="merge-with-channel-colors",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: data.to_spatial_partition(max_elements=4),
         id="to-spatial-partition",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: GSplatData.partition_from_regions(
             [
                 data.filter(np.arange(data.n_splats) % 2 == 0),
@@ -100,19 +108,19 @@ _LABEL_CHANNEL_OPERATIONS = (
         ),
         id="partition-from-regions",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: make_additive_lod(data, n_lods=3, method="radial"),
         id="make-additive-lod",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: decimate(data, target=0.5, method="prefix", verbose=False),
         id="decimate-prefix",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: decimate(data, target=0.4, method="auto", verbose=False),
         id="decimate-auto",
     ),
-    pytest.param(
+    _label_operation(
         lambda data: decimate(
             data,
             target=0.5,
@@ -122,8 +130,9 @@ _LABEL_CHANNEL_OPERATIONS = (
             verbose=False,
         ),
         id="decimate-merge",
+        refuses=True,
     ),
-    pytest.param(
+    _label_operation(
         lambda data: make_substitutive_lod(
             data,
             levels=1,
@@ -133,6 +142,7 @@ _LABEL_CHANNEL_OPERATIONS = (
             verbose=False,
         ),
         id="make-substitutive-lod",
+        refuses=True,
     ),
 )
 
@@ -363,11 +373,11 @@ class TestGSplatDataLOD:
                     assert int(label_id) == int(center[0])
                 assert sublod.label_vocabulary == vocabulary
 
-    @pytest.mark.parametrize("operation", _LABEL_CHANNEL_OPERATIONS)
+    @pytest.mark.parametrize("operation,refuses", _LABEL_CHANNEL_OPERATIONS)
     @pytest.mark.parametrize("laddered", [False, True], ids=["flat", "laddered"])
     @pytest.mark.parametrize("labeled", [False, True], ids=["unlabeled", "labeled"])
     def test_operations_carry_or_refuse_categorical_channel(
-        self, operation, laddered: bool, labeled: bool
+        self, operation, refuses: bool, laddered: bool, labeled: bool
     ) -> None:
         centers = np.column_stack(
             [np.arange(12, dtype=np.float32), np.zeros((12, 2), dtype=np.float32)]
@@ -389,12 +399,15 @@ class TestGSplatDataLOD:
         if laddered:
             data = make_additive_lod(data, n_lods=3, method="radial")
 
-        try:
-            result = operation(data)
-        except (ValueError, NotImplementedError):
-            if labeled:
-                return
-            raise
+        if labeled and refuses:
+            with pytest.raises(
+                ValueError,
+                match="cannot coarsen: input carries categorical channel 'label_ids'",
+            ):
+                operation(data)
+            return
+
+        result = operation(data)
 
         node = result.tree if isinstance(result, GSplatData) else result
         sublods = [
