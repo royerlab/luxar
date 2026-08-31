@@ -32,7 +32,13 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { openLayersPanel } from './helpers';
+import { captureElementScreenshot, openLayersPanel } from './helpers';
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+  });
+});
 
 // Served by the E2E data server (playwright.config.ts webServer on :9000,
 // rooted at the repo root) — NOT by Vite, which transforms the zarr JSON and
@@ -325,7 +331,7 @@ async function cellLuminances(page: Page, centres: Cell[]): Promise<Map<string, 
   // Both of these need the budget, and the screenshot — Visible AND Stable —
   // is the stricter of the two; see CANVAS_READY_TIMEOUT.
   await canvas.waitFor({ state: 'visible', timeout: CANVAS_READY_TIMEOUT });
-  const png = await canvas.screenshot({ animations: 'disabled', timeout: CANVAS_READY_TIMEOUT });
+  const png = await captureElementScreenshot(page, 'canvas#app', CANVAS_READY_TIMEOUT);
   const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
 
   const measured = await page.evaluate(

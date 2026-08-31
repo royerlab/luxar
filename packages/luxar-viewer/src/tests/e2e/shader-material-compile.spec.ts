@@ -7,7 +7,7 @@
  * issues. This spec instantiates each material variant in a real
  * browser, renders one frame, and asserts:
  *   1. No shader / GLSL / attribute / uniform errors in the console.
- *   2. The center pixel is non-black (proves the shader produced output
+ *   2. The canvas contains a non-black pixel (proves the shader produced output
  *      rather than silently discarding every fragment).
  *
  * Each rendering variant has a specific assertion so shader breakage
@@ -29,7 +29,7 @@ const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixture
 interface Variant {
   name: string;
   src: string;
-  /** When true, assert center pixel has non-zero alpha + RGB sum > 10. */
+  /** When true, assert the canvas contains a pixel with RGB sum > 10. */
   expectColored: boolean;
 }
 
@@ -62,9 +62,9 @@ test.describe('browser-real shader compile + pixel smoke', () => {
       // (1) No shader/GLSL/attribute/uniform errors.
       await assertNoShaderErrors(page);
 
-      // (2) Some pixel on the canvas has rendered output. Use whole-canvas
-      //     screenshot stats instead of sparse grid sampling: thin lines and
-      //     small splat clusters can easily fall between fixed sample points.
+      // (2) Some canvas pixel has rendered output. Whole-canvas stats avoid
+      //     missing thin lines or small splat clusters between sparse sample
+      //     points, while the helper suppresses DOM chrome before capture.
       if (v.expectColored) {
         const stats = await getElementPixelStats(page, 'canvas', VISIBLE_PIXEL_THRESHOLD);
         expect(

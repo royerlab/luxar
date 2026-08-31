@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { waitForLuxarReady } from './helpers';
+import { captureElementScreenshot, waitForLuxarReady } from './helpers';
 
 const POINTS_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_points_blending_modes.luxar.zarr';
@@ -7,9 +7,7 @@ const LINES_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lines_blending_modes.luxar.zarr';
 
 async function meanCanvasLinearLuminance(page: Page): Promise<number> {
-  const canvas = page.locator('canvas').first();
-  await canvas.waitFor({ state: 'visible' });
-  const png = await canvas.screenshot({ animations: 'disabled' });
+  const png = await captureElementScreenshot(page, 'canvas');
   const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
 
   return page.evaluate(async (url) => {
@@ -222,13 +220,6 @@ async function overlapOpaqueInFrontOfLuminous(
     };
   }, nodeType);
 }
-
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    // Canvas screenshots include overlaid DOM, and this hint auto-hides after 10 seconds.
-    localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-  });
-});
 
 for (const [nodeType, fixture] of [
   ['points', POINTS_FIXTURE],

@@ -198,9 +198,6 @@ test.describe('Blending Modes', () => {
   });
 
   test('@visual visual regression: scene renders with blending applied', async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${DATASET}&debug&no-opfs`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
@@ -277,9 +274,6 @@ test.describe('Points blending modes (per-mode material state)', () => {
     // r&g-high / b-low pixel that NO single layer's base color can
     // produce (every other fixture color carries a high blue channel).
     // No exact color pins: thresholds are loose ratios.
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     // ?dpr=1 pins the pixel ratio for deterministic sampling.
     await page.goto(`/?src=${POINTS_BLENDING_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
@@ -541,13 +535,6 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     // the draw ordering by the Phase-2 depth-sort test below — a
     // blend-state or sort regression is caught there, not here.
     //
-    // Suppress the one-time control-rail hint popup: its gray pixels
-    // (~rgb 42,45,49) would satisfy a naive r>30 && g>30 test — the
-    // discriminators below also exclude grays, but keeping the frame clean
-    // makes failures readable.
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     // ?dpr=1 pins the pixel ratio for deterministic sampling.
     await page.goto(`/?src=${GSPLAT_OVERLAP_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
@@ -688,9 +675,6 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     // so pre-Phase-2 the non-identity wait times out — the non-vacuous
     // gate. The overlap pixels are then checked for the correct
     // green-over-red compositing.
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${GSPLAT_OVERLAP_REVERSED_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitForGSplatsCommitted(page);
@@ -878,9 +862,6 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
   test('camera orbit re-sorts — ordering settles back-to-front from every angle (Phase 3)', async ({
     page,
   }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${GSPLAT_OVERLAP_REVERSED_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitForGSplatsCommitted(page);
@@ -936,9 +917,6 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
   test('?depthSort=0 pins the identity ordering across load and camera motion (Phase 3)', async ({
     page,
   }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${GSPLAT_OVERLAP_REVERSED_FIXTURE}&debug&dpr=1&depthSort=0`);
     await waitForLuxarReady(page);
     await waitForGSplatsCommitted(page);
@@ -1058,9 +1036,6 @@ test.describe('Points normal mode depth sorting', () => {
     // points-blind coordinator times out at the non-identity wait — the
     // non-vacuous gate. The overlap pixels are then checked for the
     // correct green-over-red compositing.
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${POINTS_OVERLAP_REVERSED_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitForPointsCommitted(page);
@@ -1251,9 +1226,6 @@ test.describe('Points and Lines volumetric depth sorting', () => {
     nodeType: 'points' | 'lines',
     stride: number
   ): Promise<void> {
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${fixture}&debug&dpr=1`);
     await waitForLuxarReady(page);
 
@@ -1521,9 +1493,6 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
     // TAA/dither noise between frames; the additive limit itself is
     // exact in the blend math (canvas is alpha:false, so RGB readback
     // is unaffected by the differing destination alpha).
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${GSPLAT_VOLUMETRIC_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitCommitted(page);
@@ -1574,9 +1543,6 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
     // behind (1−e^(−τ) destination factor). Total sampled luminance
     // must drop measurably — a pure-additive (κ-ignoring) regression
     // would keep the two frames equal.
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${GSPLAT_VOLUMETRIC_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitCommitted(page);
@@ -1614,9 +1580,6 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
     // ordering is not back-to-front under the auto-framed camera, so
     // this times out unless needsDepthSort routes volumetric commits
     // through the SortWorker.
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${GSPLAT_VOLUMETRIC_REVERSED_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitCommitted(page);
@@ -1779,9 +1742,6 @@ test.describe('GSplat RGBA per-element opacity (occlusion)', () => {
     // regression that ignored the alpha channel would still darken (rayMass
     // alone), so this is paired with the uHasElementAlpha=1 test and the
     // TSL↔GLSL parity of the w(α) fold to attribute the effect to alpha.
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${GSPLAT_RGBA_OCCLUSION_FIXTURE}&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitCommitted(page);
