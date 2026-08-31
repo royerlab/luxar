@@ -11,6 +11,8 @@ core (single-LOD) data API. This file covers:
 - ``SubstitutiveLevel`` and 2-D substitutive × additive accessors
 """
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -752,6 +754,44 @@ class TestSubstitutivePreservation:
                 data.at_substitutive(s).centers * 2.0,
                 atol=1e-4,
             )
+
+    def test_without_label_ids_preserves_pyramid(self) -> None:
+        data = self._make_pyramid(counts=(12, 5))
+        vocabulary = {0: "background", 1: "foreground"}
+        labeled = GSplatData.from_substitutive_levels(
+            [
+                replace(
+                    level,
+                    additive_sublods=[
+                        replace(
+                            sublod,
+                            label_ids=np.arange(sublod.n_splats, dtype=np.uint8) % 2,
+                            label_vocabulary=vocabulary,
+                        )
+                        for sublod in level.additive_sublods
+                    ],
+                )
+                for level in data.substitutive_levels
+            ],
+            stats={"psnr_db": 42.0},
+        )
+
+        stripped = labeled.without_label_ids()
+
+        assert stripped.n_substitutive == labeled.n_substitutive
+        assert stripped.stats == labeled.stats
+        for original_level, result_level in zip(
+            labeled.substitutive_levels, stripped.substitutive_levels
+        ):
+            assert result_level.compression_factor == original_level.compression_factor
+            assert result_level.parent_method == original_level.parent_method
+            assert result_level.level_index == original_level.level_index
+            for original, result in zip(
+                original_level.additive_sublods, result_level.additive_sublods
+            ):
+                np.testing.assert_array_equal(result.centers, original.centers)
+                assert result.label_ids is None
+                assert result.label_vocabulary is None
 
     def test_translate_preserves_pyramid(self):
         data = self._make_pyramid()
