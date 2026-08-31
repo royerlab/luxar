@@ -143,6 +143,22 @@ describe('processGSplatsData', () => {
     expect(mockGetWorkerPool).not.toHaveBeenCalled();
   });
 
+  it('rejects a label channel whose length does not match the splat count', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    const data = makeData(3);
+    data.labelIndices = new Uint32Array([1, 2]);
+    data.labelVocabulary = [
+      { id: '1', name: 'one' },
+      { id: '2', name: 'two' },
+    ];
+
+    await expect(processGSplatsData('/g', data, makeViewState(), root, 1)).rejects.toThrow(
+      /labelIndices length 2.*splat count 3/
+    );
+    expect(mockProcessGSplats).not.toHaveBeenCalled();
+  });
+
   it('runs in-process dispatcher for 3D data even when splatCount > 1000', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));

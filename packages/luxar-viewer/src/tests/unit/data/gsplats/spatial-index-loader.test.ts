@@ -169,6 +169,7 @@ describe('GSplatsSpatialIndexLoader', () => {
       cholesky_factors_diag: { shape: number[]; dtype: string; attrs?: object };
       cholesky_factors_offdiag: { shape: number[]; dtype: string; attrs?: object };
       colors: { shape: number[]; dtype: string; attrs?: object };
+      label_ids: { shape: number[]; dtype: string; attrs?: object };
     };
     let chunkBoundsArray: { shape: number[]; dtype: string; attrs: object };
 
@@ -182,6 +183,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         cholesky_factors_diag: { shape: [5000, 3], dtype: 'float32', attrs: {} },
         cholesky_factors_offdiag: { shape: [5000, 3], dtype: 'float32', attrs: {} },
         colors: { shape: [5000, 3], dtype: 'float32', attrs: {} },
+        label_ids: { shape: [5000], dtype: 'uint64', attrs: {} },
       };
 
       mockZarrLocation = makeMockZarrLocation();
@@ -206,6 +208,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         if (path.includes('cholesky_factors_offdiag'))
           return Promise.resolve(mockArrays.cholesky_factors_offdiag);
         if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
+        if (path.includes('label_ids')) return Promise.resolve(mockArrays.label_ids);
         return Promise.reject(new Error(`Unknown array: ${path}`));
       });
 
@@ -221,6 +224,13 @@ describe('GSplatsSpatialIndexLoader', () => {
           else if (array === mockArrays.cholesky_factors_diag) elementsPerItem = 3;
           else if (array === mockArrays.cholesky_factors_offdiag) elementsPerItem = 3;
           else if (array === mockArrays.colors) elementsPerItem = 3;
+          if (array === mockArrays.label_ids) {
+            return Promise.resolve({
+              data: BigUint64Array.from({ length: count }, (_, index) =>
+                BigInt((sliceSpec[0].start + index) % 2 === 0 ? 7 : 9)
+              ),
+            });
+          }
           return Promise.resolve({ data: new Float32Array(count * elementsPerItem) });
         }
       );
@@ -352,6 +362,151 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(opens.some((c) => String(c[0]).includes('centers'))).toBe(true);
         expect(opens.some((c) => String(c[0]).includes('amplitudes'))).toBe(true);
         expect(opens.some((c) => String(c[0]).includes('cholesky_factors'))).toBe(true);
+      });
+
+      it('decodes exact label ids across all visible ranges', async () => {
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              has_label_ids: true,
+              label_vocabulary: { '7': 'seven', '9': 'nine' },
+            },
+          })
+        );
+
+        const result = await bodyLoader.loadGSplats({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+
+        expect(result.labelIndices).toHaveLength(200);
+        expect(Array.from(result.labelIndices!.subarray(0, 4))).toEqual([1, 2, 1, 2]);
+        expect(result.labelVocabulary).toEqual([
+          { id: '7', name: 'seven' },
+          { id: '9', name: 'nine' },
+        ]);
+
+        const next = await bodyLoader.loadGSplats({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+        expect(next.labelIndices!.buffer).toBe(result.labelIndices!.buffer);
+      });
+
+      it('expands a broadcast label id to the loaded splat count', async () => {
+        mockArrays.label_ids.shape = [1];
+        (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+          (array: unknown, slices?: unknown) => {
+            if (array === chunkBoundsArray) {
+              return Promise.resolve({ data: new Float32Array(20 * 3 * 2) });
+            }
+            if (array === mockArrays.label_ids) {
+              return Promise.resolve({ data: new BigUint64Array([9n]) });
+            }
+            const sliceSpec = slices as Array<{ start: number; end: number }>;
+            const count = sliceSpec[0].end - sliceSpec[0].start;
+            const width =
+              array === mockArrays.centers ||
+              array === mockArrays.cholesky_factors_diag ||
+              array === mockArrays.cholesky_factors_offdiag ||
+              array === mockArrays.colors
+                ? 3
+                : 1;
+            return Promise.resolve({ data: new Float32Array(count * width) });
+          }
+        );
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              has_label_ids: true,
+              label_vocabulary: { '9': 'nine' },
+            },
+          })
+        );
+
+        const result = await bodyLoader.loadGSplats({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+        expect(result.labelIndices).toHaveLength(200);
+        expect(result.labelIndices!.every((value) => value === 1)).toBe(true);
+      });
+
+      it('rejects labelled stores without a vocabulary', async () => {
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({ attrs: { ...mockNode.attrs, has_label_ids: true } })
+        );
+        await expect(
+          bodyLoader.loadGSplats({
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0],
+            tolerance: [0, 0, 0],
+          })
+        ).rejects.toThrow(/has_label_ids requires label_vocabulary/);
+      });
+
+      it('rejects a label id missing from the vocabulary', async () => {
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              has_label_ids: true,
+              label_vocabulary: { '7': 'seven' },
+            },
+          })
+        );
+        await expect(
+          bodyLoader.loadGSplats({
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0],
+            tolerance: [0, 0, 0],
+          })
+        ).rejects.toThrow(/label id 9.*label_vocabulary/);
+      });
+
+      it('rejects a short label read instead of silently zero-filling the tail', async () => {
+        const baseGet = zarr.get as unknown as ReturnType<typeof vi.fn>;
+        const original = baseGet.getMockImplementation() as (
+          array: unknown,
+          slices?: unknown
+        ) => unknown;
+        baseGet.mockImplementation((array: unknown, slices?: unknown) => {
+          if (array !== mockArrays.label_ids) return original(array, slices);
+          const sliceSpec = slices as Array<{ start: number; end: number }>;
+          const count = sliceSpec[0].end - sliceSpec[0].start;
+          return Promise.resolve({ data: new BigUint64Array(Math.max(0, count - 1)).fill(7n) });
+        });
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              has_label_ids: true,
+              label_vocabulary: { '7': 'seven' },
+            },
+          })
+        );
+        await expect(
+          bodyLoader.loadGSplats({
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0],
+            tolerance: [0, 0, 0],
+          })
+        ).rejects.toThrow(/label_ids length 198.*expected 200/);
       });
 
       it('should handle missing spatial index gracefully', async () => {
@@ -1594,6 +1749,33 @@ describe('GSplatsSpatialIndexLoader', () => {
         // Plus 1 chunk_bounds get() during initialize().
         const getCalls = (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls;
         expect(getCalls.length).toBeGreaterThanOrEqual(4);
+      });
+
+      it('includes label_ids when the categorical channel is declared', async () => {
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              has_label_ids: true,
+              label_vocabulary: { '7': 'seven', '9': 'nine' },
+            },
+          })
+        );
+        mockExecute.mockResolvedValueOnce([{ start: 0, end: 50 }]);
+
+        await bodyLoader.prefetchChunks({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+
+        expect(
+          (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+            ([array]) => array === mockArrays.label_ids
+          )
+        ).toBe(true);
       });
 
       it('skips fetches when the spatial query returns no ranges', async () => {

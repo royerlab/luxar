@@ -227,6 +227,89 @@ describe('LayerStateManager', () => {
     expect(mgr.getLayer('outer/partition')!.colormap).toBe('viridis');
   });
 
+  it('derives a shared label vocabulary for a partition wrapper layer', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'tiles',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'tiles/part_0',
+              type: 'gsplats',
+              attrs: {
+                label_vocabulary: {
+                  '9007199254740993': 'cell',
+                  '9007199254740995': 'artifact',
+                },
+              },
+              hasSpatialIndex: true,
+            },
+            {
+              path: 'tiles/part_1',
+              type: 'gsplats',
+              attrs: {
+                label_vocabulary: {
+                  '9007199254740995': 'artifact',
+                  '9007199254740993': 'cell',
+                },
+              },
+              hasSpatialIndex: true,
+            },
+          ],
+        },
+      ],
+    };
+
+    mgr.initFromSceneGraph(graph);
+
+    expect(mgr.getLayer('tiles')!.labelVocabulary).toEqual([
+      { id: '9007199254740993', name: 'cell' },
+      { id: '9007199254740995', name: 'artifact' },
+    ]);
+  });
+
+  it('does not derive a wrapper label vocabulary when descendants disagree', () => {
+    const graph: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: 'tiles',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'tiles/part_0',
+              type: 'gsplats',
+              attrs: { label_vocabulary: { '7': 'cell' } },
+              hasSpatialIndex: true,
+            },
+            {
+              path: 'tiles/part_1',
+              type: 'gsplats',
+              attrs: { label_vocabulary: { '8': 'cell' } },
+              hasSpatialIndex: true,
+            },
+          ],
+        },
+      ],
+    };
+
+    mgr.initFromSceneGraph(graph);
+
+    expect(mgr.getLayer('tiles')!.labelVocabulary).toBeUndefined();
+  });
+
   it('does not report an inherited palette on a scalarless points wrapper layer', () => {
     const graph: SceneNode = {
       path: '',

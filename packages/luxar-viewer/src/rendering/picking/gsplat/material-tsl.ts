@@ -49,6 +49,7 @@ export class GSplatPickingTSLMaterial
     uSurfaceDepth: TSLNode;
     uNodeId: TSLNode;
     uSortedIndexSlot: TSLNode;
+    uLabelFilterIndex: TSLNode;
   };
 
   constructor(config: GSplatPickingMaterialConfig) {
@@ -87,6 +88,7 @@ export class GSplatPickingTSLMaterial
       // coordinator's `syncSortedIndexSlot`, which finds it through
       // `uniforms` below.
       uSortedIndexSlot: uniform(0),
+      uLabelFilterIndex: uniform(0),
     };
 
     this.uniforms = {
@@ -105,6 +107,7 @@ export class GSplatPickingTSLMaterial
       uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
+      uLabelFilterIndex: proxyIUniform(this.tslNodes.uLabelFilterIndex),
     };
 
     this.toneMapped = false;
@@ -141,6 +144,10 @@ export class GSplatPickingTSLMaterial
     this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
   }
 
+  updateLabelFilter(filterIndex: number): void {
+    this.uniforms.uLabelFilterIndex.value = Math.max(0, Math.floor(filterIndex));
+  }
+
   /**
    * Clone this picking material. Mirrors the GLSL wrapper's explicit
    * clone (the inherited `Material.clone()` calls the constructor with
@@ -163,6 +170,7 @@ export class GSplatPickingTSLMaterial
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    cloned.uniforms.uLabelFilterIndex.value = this.uniforms.uLabelFilterIndex.value;
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.

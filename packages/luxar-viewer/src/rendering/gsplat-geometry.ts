@@ -107,6 +107,8 @@ export interface InstancedGSplatsMeshConfig {
   colors: Float32Array;
   /** Components per color item: 3 (RGB) or 4 (RGBA). Absent means 3. */
   colorComponents?: 3 | 4;
+  /** Compact 1-based categorical class index per splat; 0 means absent. */
+  labelIndices?: Uint32Array | null;
   /** Number of splats */
   splatCount: number;
   /**
@@ -141,6 +143,8 @@ export interface SplatTexelSource {
    * defaults to 1.0 (opaque — the per-element-opacity identity).
    */
   colorComponents?: 3 | 4;
+  /** Compact 1-based categorical class index per splat; 0 means absent. */
+  labelIndices?: Uint32Array | null;
 }
 
 /**
@@ -193,7 +197,7 @@ export function writeSplatTexels(
   const arr = texture.image.data as Float32Array;
   const n = Math.min(count, elementTexelCapacity(texture, SPLAT_FLOATS_PER_SPLAT));
   const from = Math.max(0, Math.min(opts?.fromSplat ?? 0, n));
-  const { centers, choleskyFactors, amplitudes, colors } = src;
+  const { centers, choleskyFactors, amplitudes, colors, labelIndices } = src;
   const colorK = src.colorComponents ?? 3;
   // Fail loud on source/count mismatch (the interleaved-era writer
   // threw here too) — a silent short read would write NaN texels that
@@ -202,12 +206,14 @@ export function writeSplatTexels(
     centers.length < n * 3 ||
     choleskyFactors.length < n * 6 ||
     amplitudes.length < n ||
-    colors.length < n * colorK
+    colors.length < n * colorK ||
+    (labelIndices !== undefined && labelIndices !== null && labelIndices.length < n)
   ) {
     throw new Error(
       `writeSplatTexels: source arrays shorter than count=${n} ` +
         `(centers=${centers.length}, choleskyFactors=${choleskyFactors.length}, ` +
-        `amplitudes=${amplitudes.length}, colors=${colors.length})`
+        `amplitudes=${amplitudes.length}, colors=${colors.length}, ` +
+        `labelIndices=${labelIndices?.length ?? 'none'})`
     );
   }
   for (let i = from; i < n; i++) {
@@ -234,10 +240,12 @@ export function writeSplatTexels(
     // texel 3: color.b, alpha (per-splat opacity). Alpha is written
     // UNCONDITIONALLY — pool textures are reused, so leaving it
     // unspecified would let a previous tenant's alpha leak through.
-    // 1.0 (opaque) is the per-element-opacity identity. .zw stay
-    // unspecified (stale on reused pool textures; never read).
+    // 1.0 (opaque) is the per-element-opacity identity. z carries the
+    // compact categorical index; 0 means no label channel. w stays unused.
     arr[o + 12] = colors[ck + 2];
     arr[o + 13] = colorK === 4 ? colors[ck + 3] : 1.0;
+    arr[o + 14] = labelIndices?.[i] ?? 0;
+    arr[o + 15] = 0;
   }
   // Ranged upload: only the [from, n) rows just written go to the GPU, not
   // the full capacity-sized image (pool slack rows past n never re-upload;
