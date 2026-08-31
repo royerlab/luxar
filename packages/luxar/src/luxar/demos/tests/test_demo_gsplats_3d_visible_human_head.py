@@ -221,6 +221,7 @@ def _scattered_gsplat_data(n: int, extent: float, seed: int = 0) -> GSplatData:
         centers=rng.uniform(0.0, extent, (n, 3)).astype(np.float32),
         amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
         cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+        stats={"psnr_db": 38.25, "source_shape": [16, 16, 16]},
     )
 
 
@@ -280,6 +281,9 @@ class TestColorSidecarOrdering:
         # change that quietly moved it to 0.999 would eat the tolerance budget
         # that `TestColorAgreementThreshold` spends.
         assert voxel_sampled_payload_agreement(stored.centers, colors) == 1.0
+        cached = GSplatData.load(_demo.LOCAL_FIT, include_stats=True)
+        assert cached.stats["psnr_db"] == 38.25
+        assert cached.stats["source_shape"] == [16, 16, 16]
         # ...and NOT the pre-save sampling the old code persisted.
         assert not np.array_equal(
             expected,
@@ -598,24 +602,31 @@ class TestNativeColorsWinOverTheSidecar:
 
         assert _demo._colors_for(stored, _demo.LOCAL_FIT, None) is None
 
-    def test_a_color_array_that_does_not_describe_its_splats_is_refused(
+    def test_a_native_color_array_with_too_few_channels_is_refused(
         self, tmp_path, monkeypatch, capsys
     ) -> None:
-        """A malformed native array must not be handed to the scene.
+        """A real two-channel GSplatData must not be handed to the scene."""
+        _, fit = self._fixture(tmp_path, monkeypatch, "malformed-")
+        malformed = GSplatData(
+            centers=fit.centers,
+            amplitudes=fit.amplitudes,
+            cholesky_factors=fit.cholesky_factors,
+            colors=np.ones((len(fit.centers), 2), dtype=np.float32),
+        )
 
-        Reported rather than silently dropped: a store whose color array has the
-        wrong row count is malformed, and falling through to a sidecar as though
-        no colors had been found would hide that.
-        """
-        rgb_vol, fit = self._fixture(tmp_path, monkeypatch, "malformed-")
-        stored, _ = _demo.save_and_sample_colors(fit, rgb_vol)
-
-        class _Truncated:
-            centers = stored.centers
-            colors = np.asarray(_demo._native_colors(stored))[:-5]
-
-        assert _demo._native_colors(_Truncated()) is None
+        assert _demo._native_colors(malformed) is None
         assert "does not describe its" in capsys.readouterr().out
+
+    def test_a_cache_that_drops_native_colors_is_removed(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        rgb_vol, fit = self._fixture(tmp_path, monkeypatch, "dropped-")
+        monkeypatch.setattr(_demo, "_native_colors", lambda _fit: None)
+
+        with pytest.raises(RuntimeError, match="cannot be cached without its colors"):
+            _demo.save_and_sample_colors(fit, rgb_vol)
+
+        assert not _demo.LOCAL_FIT.exists()
 
 
 class TestManifestPairIsGuardedToo:

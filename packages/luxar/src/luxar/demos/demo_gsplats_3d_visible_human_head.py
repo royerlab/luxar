@@ -35,22 +35,19 @@ U.S. National Library of Medicine — The Visible Human Project® (Male).
 
 SELF-CONTAINED / CACHING
 ------------------------
-The colors sidecar is indexed positionally against the fit, and the cache goes
-through ``save_with_lod`` (a streaming ladder whose rungs are each written in
-hilbert order), which reorders splats — so the colors are sampled from the SAVED
-store's own order (save → reload → sample), never from the in-memory fit. On load
-the pair is verified against that invariant (splats sharing a voxel must share a
-color); a mismatched pair is reported and refitted rather than rendered.
+The hosted and locally recomputed fits carry colors as a native gsplat channel,
+so the writer permutes them in lockstep with the centers. The in-repo Git-LFS fit
+is an older colorless generation and still uses its positional sidecar; that pair
+is verified on load, and a mismatch is refitted rather than rendered.
 
 On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: the manifest resolves a precomputed fit and its matching colors
-     sidecar through a checksum-verified cache, the in-repo Git LFS copies, or
-     the hosted record. The pair is then verified against the invariant above.
+  1. Fast path: the manifest resolves a checksum-verified precomputed fit from
+     the in-repo Git LFS copies or the hosted record. Hosted fits carry colors
+     natively; the older in-repo fit resolves its matching sidecar.
   2. If no precomputed pair is available, it downloads the 377 color slices
      (~1.1 GB) to ``~/.cache/luxar/gsplats_visible_human_head/``, builds the
-     masked RGB volume, fits luminance on the GPU, caches the fit, then reloads
-     it and samples the colors from the stored splat order — so subsequent runs
-     load that (verified) local pair instantly.
+     masked RGB volume, fits luminance on the GPU, then caches the fit with its
+     colors sampled from the stored splat order.
 ``--recompute`` forces the download + build + fit path.
 
 Manifest integrity faults are not treated as ordinary absence: a stale in-repo
@@ -125,7 +122,7 @@ DEMO_META = {
         # The DEFAULT path is the small assets, not the 1.1 GB cryosection
         # download: either the two Git-LFS files (20.6 MB colorless fit + 5.0 MB
         # sidecar) or, on a machine without them, the hosted pair — a 25.1 MB fit
-        # that carries its own colors plus the 5.0 MB sidecar the manifest still
+        # that carries its own colors plus the 5.1 MB sidecar the manifest still
         # lists for the Git-LFS shape. 31 covers the larger of the two. Read by
         # `luxar demo run-all`, whose `--max-download-mb` default of 200
         # therefore keeps this demo in.
@@ -478,11 +475,11 @@ def _native_colors(fit: GSplatData) -> np.ndarray | None:
     ``add_gsplats`` — rescaling uint8 exactly as ``_load_colors_f32`` does for
     the sidecar, so both doors hand back the same thing.
     """
-    raw = getattr(fit, "colors", None)
+    raw = fit.colors
     if raw is None:
         return None
     arr = np.asarray(raw)
-    if arr.ndim != 2 or arr.shape[0] != len(fit.centers) or arr.shape[1] < 3:
+    if arr.ndim != 2 or arr.shape[1] < 3:
         # Not a fallback-worthy near miss: a store whose color array does not
         # describe its own splats is malformed, so say so rather than silently
         # dropping through to the sidecar as if no colors had been found.
@@ -571,7 +568,7 @@ def save_and_sample_colors(
     of the colors included.
     """
     _save_fit(fit)
-    stored = GSplatData.load(LOCAL_FIT, include_stats=False)
+    stored = GSplatData.load(LOCAL_FIT, include_stats=True)
     with asection("Sampling per-splat colors from the RGB volume"):
         colors = sample_colors(rgb_vol, stored.centers)
     # uint8 is the format's native color dtype and is what the sidecar stored, so
@@ -587,6 +584,7 @@ def save_and_sample_colors(
         # The colors were attached before the save, so their absence here means
         # the writer dropped them — never something to paper over by falling back
         # to a sidecar, which would reintroduce the ordering hazard silently.
+        LOCAL_FIT.unlink(missing_ok=True)
         raise RuntimeError(
             f"{LOCAL_FIT} was written with per-splat colors but loaded back "
             "without them; the fit cannot be cached without its colors."

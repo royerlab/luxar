@@ -37,24 +37,21 @@ Label scheme: the 117-class `total` map from the TotalSegmentator tool
 
 SELF-CONTAINED / CACHING
 ------------------------
-On a fresh machine this demo bootstraps itself with no manual steps:
-  1. Fast path: a precomputed fit + per-splat organ labels shipped via Git LFS
-     (``demos/data/gsplats_ct_totalsegmentator/``); loads instantly (colors,
-     layers, and hover tooltips are all derived from the labels at scene build).
-  2. If those assets aren't pulled, ``--recompute`` (or missing assets)
-     AUTOMATICALLY downloads the 3.2 GB subset to
-     ``~/.cache/luxar/gsplats_ct_totalsegmentator/`` (resumable), extracts one
-     subject, combines its masks with ``nibabel``, fits on the GPU, caches the
-     fit + labels pair under that directory's ``local/`` subdir (its own
-     namespace, so the manifest fetch never quarantines it), then reloads it and
-     samples the per-splat organ label from the stored splat order.
+The hosted and locally recomputed fits carry organ ids as a native categorical
+gsplat channel, so the writer permutes them in lockstep with the centers. The
+in-repo Git-LFS fit is an older label-less generation and still uses its
+positional sidecar; that pair is verified on load, and a mismatch is refitted
+rather than rendered.
 
-The labels sidecar is indexed positionally against the fit, and the cache goes
-through ``save_with_lod`` (a streaming ladder whose rungs are each written in
-hilbert order), which reorders splats — so the labels are sampled from the SAVED
-store's own order (save → reload → sample), never from the in-memory fit. On load
-the pair is verified against that invariant (splats sharing a voxel must share a
-label); a mismatched pair is reported and refitted rather than rendered.
+On a fresh machine this demo bootstraps itself with no manual steps:
+  1. Fast path: the manifest resolves a checksum-verified precomputed fit from
+     the in-repo Git LFS copies or the hosted record. Hosted fits carry labels
+     natively; the older in-repo fit resolves its matching sidecar.
+  2. ``--recompute`` downloads the 3.2 GB subset to
+     ``~/.cache/luxar/gsplats_ct_totalsegmentator/`` (resumable), extracts one
+     subject, combines its masks with ``nibabel``, fits on the GPU, then caches
+     the fit with labels sampled from the stored splat order under that
+     directory's ``local/`` subdir.
 
 USAGE
 -----
@@ -539,19 +536,10 @@ def _native_labels(fit: GSplatData) -> np.ndarray | None:
 
     Returned as int32, the dtype the scene builder's LUTs index with.
     """
-    ids = getattr(fit, "label_ids", None)
+    ids = fit.label_ids
     if ids is None:
         return None
-    arr = np.asarray(ids)
-    if arr.ndim != 1 or arr.shape[0] != len(fit.centers):
-        # A store whose label channel does not describe its own splats is
-        # malformed; say so rather than dropping silently through to a sidecar.
-        aprint(
-            f"⚠️  The fit carries a label array of shape {arr.shape}, which does "
-            f"not describe its {len(fit.centers):,} splats — ignoring it."
-        )
-        return None
-    return arr.astype(np.int32)
+    return np.asarray(ids).astype(np.int32)
 
 
 def _labels_for(
@@ -767,7 +755,7 @@ def save_and_sample_labels(
     own paths — see their definitions. No sidecar is emitted any more.
     """
     _save_atlas_fit(fit)
-    stored = GSplatData.load(LOCAL_FIT)
+    stored = GSplatData.load(LOCAL_FIT, include_stats=True)
     with asection("Sampling per-splat organ labels"):
         labels = sample_labels(label_vol, stored.centers)
     # CLASS_MAP is ids 1..117; label 0 is the background the crop leaves behind,
@@ -784,6 +772,7 @@ def save_and_sample_labels(
         # The ids were attached before the save, so their absence here means the
         # writer dropped them — never something to paper over with a sidecar,
         # which would reintroduce the ordering hazard silently.
+        LOCAL_FIT.unlink(missing_ok=True)
         raise RuntimeError(
             f"{LOCAL_FIT} was written with per-splat organ ids but loaded back "
             "without them; the fit cannot be cached without its labels."

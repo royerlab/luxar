@@ -247,6 +247,7 @@ def _scattered_gsplat_data(n: int, extent: float, seed: int = 0) -> GSplatData:
         centers=rng.uniform(0.0, extent, (n, 3)).astype(np.float32),
         amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
         cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+        stats={"psnr_db": 42.5, "source_shape": [16, 16, 16]},
     )
 
 
@@ -547,11 +548,17 @@ class TestNativeLabelsWinOverTheSidecar:
 
         assert stored.label_ids is not None
         ids = np.asarray(stored.label_ids).astype(np.int32)
-        assert set(np.unique(ids).tolist()) == set(np.unique(labels).tolist())
-        for cls in np.unique(labels):
-            assert int((ids == cls).sum()) == int((labels == cls).sum()), (
+        expected = _demo.sample_labels(label_vol, stored.centers)
+        np.testing.assert_array_equal(labels, expected)
+        np.testing.assert_array_equal(ids, expected)
+        assert set(np.unique(ids).tolist()) == set(np.unique(expected).tolist())
+        for cls in np.unique(expected):
+            assert int((ids == cls).sum()) == int((expected == cls).sum()), (
                 f"class {int(cls)} changed population through the save"
             )
+        cached = GSplatData.load(_demo.LOCAL_FIT, include_stats=True)
+        assert cached.stats["psnr_db"] == 42.5
+        assert cached.stats["source_shape"] == [16, 16, 16]
         # The vocabulary has to name every id present, background included.
         vocab = {int(k): str(v) for k, v in (stored.label_vocabulary or {}).items()}
         assert set(np.unique(ids).tolist()) <= set(vocab), "an id has no name"
@@ -588,18 +595,16 @@ class TestNativeLabelsWinOverTheSidecar:
 
         assert _demo._labels_for(stored, _demo.LOCAL_FIT, None) is None
 
-    def test_a_label_array_that_does_not_describe_its_splats_is_refused(
-        self, tmp_path, monkeypatch, capsys
+    def test_a_cache_that_drops_native_labels_is_removed(
+        self, tmp_path, monkeypatch
     ) -> None:
-        label_vol, fit = self._fixture(tmp_path, monkeypatch, "malformed-")
-        stored, _ = _demo.save_and_sample_labels(fit, label_vol)
+        label_vol, fit = self._fixture(tmp_path, monkeypatch, "dropped-")
+        monkeypatch.setattr(_demo, "_native_labels", lambda _fit: None)
 
-        class _Truncated:
-            centers = stored.centers
-            label_ids = np.asarray(stored.label_ids)[:-5]
+        with pytest.raises(RuntimeError, match="cannot be cached without its labels"):
+            _demo.save_and_sample_labels(fit, label_vol)
 
-        assert _demo._native_labels(_Truncated()) is None
-        assert "does not describe its" in capsys.readouterr().out
+        assert not _demo.LOCAL_FIT.exists()
 
 
 class TestRejectedPairFallsThroughToRefit:
