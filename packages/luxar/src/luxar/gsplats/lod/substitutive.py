@@ -196,8 +196,8 @@ def _refuse_categorical_coarsening(data: GSplatData) -> None:
         raise ValueError(
             "cannot coarsen: input carries categorical channel 'label_ids'; "
             "merging would have to combine class ids, and there is no meaningful "
-            "combination of two class ids. Drop the channel first if a coarse "
-            "level is what you want."
+            "combination of two class ids. Call without_label_ids() first if a "
+            "coarse level is what you want."
         )
 
 

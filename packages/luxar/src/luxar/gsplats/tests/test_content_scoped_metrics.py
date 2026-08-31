@@ -403,6 +403,15 @@ _CASES: List[Tuple[str, str, Callable[[GSplatData], GSplatData], bool]] = [
         ),
         False,
     ),
+    (
+        "without_label_ids",
+        "without_label_ids",
+        lambda gs: gs.with_label_ids(
+            np.arange(gs.n_splats, dtype=np.uint32) % 2,
+            {0: "background", 1: "foreground"},
+        ).without_label_ids(),
+        False,
+    ),
     ("flattened", "flattened", lambda gs: gs.flattened(), False),
 ]
 

@@ -7,6 +7,7 @@ ladder-preserving: a pyramid is rebuilt level by level, never collapsed.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Callable, Sequence, cast
 
 import numpy as np
@@ -186,6 +187,14 @@ class IntensityMixin(_GSplatDataOps):
                 stats=dict(lod.stats),
                 truncation_radius=lod.truncation_radius,
             )
+        )
+
+    def without_label_ids(self) -> "GSplatData":
+        """Remove categorical ids and vocabulary while preserving all LODs."""
+        if self.n_substitutive > 1:
+            return self._map_substitutive(lambda level: level.without_label_ids())
+        return self._map_additive(
+            lambda lod, _offset, _n: replace(lod, label_ids=None, label_vocabulary=None)
         )
 
     def affine_intensity(self, scale: float = 1.0, offset: float = 0.0) -> "GSplatData":

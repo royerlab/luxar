@@ -158,8 +158,8 @@ def _resolve_labeled_method(
         raise ValueError(
             "cannot coarsen: input carries categorical channel 'label_ids'; "
             "merging would have to combine class ids, and there is no meaningful "
-            "combination of two class ids. Use method='prefix' or drop the "
-            "channel first."
+            "combination of two class ids. Use method='prefix' or call "
+            "without_label_ids() first."
         )
     return chosen, False
 

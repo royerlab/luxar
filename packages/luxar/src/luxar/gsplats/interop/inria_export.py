@@ -369,8 +369,8 @@ def export_inria_ply(
     if data.label_ids is not None:
         raise ValueError(
             "cannot export categorical channel 'label_ids' to INRIA PLY: the "
-            "format has no field for the id-to-name vocabulary. Drop the channel "
-            "explicitly before exporting."
+            "format has no field for the id-to-name vocabulary. Call "
+            "without_label_ids() before exporting."
         )
 
     payload = gsplat_data_to_inria_ply(data, **kwargs)  # type: ignore[arg-type]

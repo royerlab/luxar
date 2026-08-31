@@ -217,8 +217,18 @@ def test_decimate_carries_label_prefix_and_refuses_label_merge() -> None:
         assert matches.size == 1
         assert int(label_id) == int(matches[0])
 
-    with pytest.raises(ValueError, match="cannot coarsen.*label_ids"):
+    with pytest.raises(ValueError, match="without_label_ids"):
         decimate(labeled, target=data.n_splats // 2, method="merge", device="cpu")
+
+    merged = decimate(
+        labeled.without_label_ids(),
+        target=data.n_splats // 2,
+        method="merge",
+        device="cpu",
+    )
+    assert merged.n_splats == data.n_splats // 2
+    assert merged.label_ids is None
+    assert merged.label_vocabulary is None
 
     with pytest.warns(UserWarning) as caught:
         automatic = decimate(

@@ -355,7 +355,7 @@ class TestFileLevel:
         store = tmp_path / "labeled.gsplats.zarr"
         labeled.save(store, ordering="none")
 
-        with pytest.raises(ValueError, match="cannot export.*label_ids"):
+        with pytest.raises(ValueError, match="without_label_ids"):
             export_inria_ply(store, tmp_path / "out.ply")
 
     def test_empty_export_raises(self) -> None:

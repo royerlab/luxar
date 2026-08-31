@@ -437,6 +437,32 @@ class TestGSplatDataLOD:
         assert source.label_ids is None
         assert source.label_vocabulary is None
 
+    def test_without_label_ids_preserves_additive_ladder_and_stats(self) -> None:
+        source = _make_3d_gsplat(12).with_label_ids(
+            np.arange(12, dtype=np.uint8) % 3,
+            {0: "background", 1: "left", 2: "right"},
+        )
+        ladder = make_additive_lod(source, n_lods=3, method="radial")
+        ladder.stats["psnr_db"] = 42.0
+        for index, sublod in enumerate(ladder.additive_sublods):
+            sublod.stats["rung"] = index
+
+        stripped = ladder.without_label_ids()
+
+        assert stripped.n_additive_sublods == ladder.n_additive_sublods
+        assert stripped.stats == ladder.stats
+        for original, result in zip(ladder.additive_sublods, stripped.additive_sublods):
+            np.testing.assert_array_equal(result.centers, original.centers)
+            np.testing.assert_array_equal(result.amplitudes, original.amplitudes)
+            np.testing.assert_array_equal(
+                result.cholesky_factors, original.cholesky_factors
+            )
+            assert result.stats == original.stats
+            assert result.label_ids is None
+            assert result.label_vocabulary is None
+        assert ladder.label_ids is not None
+        assert ladder.label_vocabulary is not None
+
     def test_derived_operations_do_not_rescan_label_membership(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

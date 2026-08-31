@@ -2287,5 +2287,5 @@ def test_categorical_channel_refuses_substitutive_coarsening() -> None:
         label_vocabulary={i: str(i) for i in range(8)},
     )
 
-    with pytest.raises(ValueError, match="cannot coarsen.*label_ids"):
+    with pytest.raises(ValueError, match="without_label_ids"):
         make_substitutive_lod(labeled, levels=1, device="cpu")
