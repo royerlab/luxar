@@ -138,7 +138,10 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from arbol import aprint
 
-from luxar.utils.lod_breakpoints import DEFAULT_SLICED_LADDER_MAX_DEPTH
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_SLICED_LADDER_MAX_DEPTH,
+    hidden_coordinate_count,
+)
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -302,11 +305,7 @@ def hidden_axis_stops(positions: Any, hidden_dims: Sequence[int]) -> int:
         raise ValueError(
             f"hidden_dims {bad} out of range for positions with {arr.shape[1]} columns"
         )
-    if arr.shape[0] == 0:
-        return 1
-    if len(cols) == 1:
-        return max(1, int(np.unique(arr[:, cols[0]]).shape[0]))
-    return max(1, int(np.unique(arr[:, cols], axis=0).shape[0]))
+    return hidden_coordinate_count(arr, cols)
 
 
 def stream_ladder(

@@ -1663,19 +1663,11 @@ def level_additive_lod(
     if slices > 1 and isinstance(counts, str) and counts.startswith("stream:"):
         from ....utils.lod_breakpoints import (
             DEFAULT_MAX_ADDITIVE_COMMIT,
-            DEFAULT_SLICED_LADDER_MAX_DEPTH,
             parse_stream_chunk,
+            stream_cuts,
         )
 
         sized_counts = default_composed_additive_lod(elements=level_n, slices=slices)
-        chunk = parse_stream_chunk(sized_counts["counts"])
-        if chunk > DEFAULT_MAX_ADDITIVE_COMMIT:
-            raise ValueError(
-                f"Sliced node with {level_n:,} elements cannot deliver its "
-                f"{100 / DEFAULT_SLICED_LADDER_MAX_DEPTH:g}% first rung within "
-                f"the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. "
-                "Reduce the leaf size or supply an explicit additive_lod ladder."
-            )
         out["counts"] = sized_counts["counts"]
     if not is_coarsest:
         from ....utils.lod_breakpoints import sibling_aware_stream_breakpoints
@@ -1684,6 +1676,22 @@ def level_additive_lod(
         if isinstance(counts, str):
             out["counts"] = sibling_aware_stream_breakpoints(
                 counts, level_n, compression_factor
+            )
+    counts = out.get("counts")
+    if slices > 1 and isinstance(counts, str) and counts.startswith("stream:"):
+        chunk = parse_stream_chunk(counts)
+        cuts = stream_cuts(level_n, chunk)
+        largest_commit = max(
+            (cut - previous for previous, cut in zip([0, *cuts[:-1]], cuts)),
+            default=0,
+        )
+        if largest_commit > DEFAULT_MAX_ADDITIVE_COMMIT:
+            raise ValueError(
+                f"Sliced node with {level_n:,} elements resolves a "
+                f"{largest_commit:,}-element additive increment, above the "
+                f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. "
+                "Reduce the leaf size with partition= or supply an explicit "
+                "additive_lod ladder."
             )
     return out
 

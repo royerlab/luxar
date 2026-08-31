@@ -115,7 +115,14 @@ def sliced_ladder_first_chunk(
     slices: int,
     max_depth: int = DEFAULT_SLICED_LADDER_MAX_DEPTH,
 ) -> int:
-    """Floor a sliced node's first chunk at a useful resident share."""
+    """Floor a sliced node's first chunk at a useful resident share.
+
+    ``slices`` is a predicate, not a divisor: requiring
+    ``first_chunk / slices >= elements / (max_depth * slices)`` cancels the
+    slice count, so any value above 1 applies the same whole-node share floor.
+    See ``luxar.demos._lod_policy.stream_ladder`` for the measured rationale and
+    the non-uniform-slice caveat behind that contract.
+    """
     if first_chunk < 1:
         raise ValueError(f"first_chunk must be >= 1; got {first_chunk}")
     if elements < 1:
