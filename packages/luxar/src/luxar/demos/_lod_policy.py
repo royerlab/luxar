@@ -386,11 +386,13 @@ def stream_ladder(
     wall-clock penalty is smaller than the byte arithmetic suggests.
 
     **The fatal version of this is on a PLAYED axis, and it wants a different
-    ladder.** Under a playback frame budget the viewer commits level 0 plus any
-    further rungs already cache-resident, so a never-visited timepoint starts
-    close to the first rung alone. A time-budget rung leaves each timepoint with
-    a handful of elements — measured on a published 500-timepoint gsplat demo, a
-    median of 45 splats per timepoint, which renders as nothing (#2374). An
+    ladder.** Under a playback frame budget a cold ladder's opening frame starts
+    from level 0; since #2377, any further cache-resident rungs can join it. The
+    published playback measurements below used the old LOD-0-only policy, but
+    level 0 remains the floor each timepoint starts from. A time-budget rung
+    leaves each timepoint with a handful of elements — measured on a published
+    500-timepoint gsplat demo, a median of 45 splats per timepoint, which renders
+    as nothing (#2374). An
     EQUAL-COUNT ladder (``--n-lods L``) gives ``1/L`` of the node in aggregate,
     making the average slice share independent of ``S``. Its global prefix can
     still concentrate away from sparse slices, so check the per-stop histogram

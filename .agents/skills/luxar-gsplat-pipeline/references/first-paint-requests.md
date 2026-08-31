@@ -99,10 +99,11 @@ against what the deployed viewer commits while the axis plays:
 | `celegans_tracking` | 4 | 1,069 | ~2,970 of 3,209 | fine |
 | `neuromast_2ch/membranes` | 8 | 2,962 | 12,842-17,465 of 110,614 | soft, usable |
 
-Under a playback frame budget the viewer commits the first rung and, since
-#2377, whatever further rungs are already cache-resident. A slice it has never
-visited therefore shows close to rung 0 alone, which is why the p05 rung-0 column
-predicts the playback column.
+Under a playback frame budget a cold ladder's opening frame starts from the
+first rung; since #2377, any further cache-resident rungs can join it. The
+playback column above was measured under the old LOD-0-only policy. Rung 0
+remains the floor every slice starts from, so a starved p05 still identifies a
+starved opening frame wherever playback lands.
 
 **Rules that follow.** Prefer `--n-lods 3..4` on any node with a hidden
 dimension, then inspect the per-slice histogram on a long or non-uniform axis
