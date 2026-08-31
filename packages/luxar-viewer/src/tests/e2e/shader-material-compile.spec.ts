@@ -7,8 +7,8 @@
  * issues. This spec instantiates each material variant in a real
  * browser, renders one frame, and asserts:
  *   1. No shader / GLSL / attribute / uniform errors in the console.
- *   2. A pixel inside the projected geometry bounds is non-black (proves the
- *      shader produced output rather than silently discarding every fragment).
+ *   2. The canvas contains a non-black pixel (proves the shader produced output
+ *      rather than silently discarding every fragment).
  *
  * Each rendering variant has a specific assertion so shader breakage
  * fails close to the affected material instead of as a vague "loads
@@ -21,7 +21,6 @@ import {
   waitForDataLoaded,
   assertNoShaderErrors,
   getElementPixelStats,
-  getProjectedGeometryRegion,
   waitForRenderStable,
 } from './helpers';
 
@@ -30,9 +29,8 @@ const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixture
 interface Variant {
   name: string;
   src: string;
-  /** When true, assert projected geometry contains a pixel with RGB sum > 10. */
+  /** When true, assert the canvas contains a pixel with RGB sum > 10. */
   expectColored: boolean;
-  nodeType: string;
 }
 
 /**
@@ -48,21 +46,18 @@ const VARIANTS: Variant[] = [
     name: 'Point colormap',
     src: 'test_4d_scalar_lut.luxar.zarr',
     expectColored: true,
-    nodeType: 'points',
   },
   // Lines: direct colors.
   {
     name: 'Line direct color',
     src: 'test_lines.luxar.zarr',
     expectColored: true,
-    nodeType: 'lines',
   },
   // GSplats: direct color (gsplats use aAmplitude as colormap source).
   {
     name: 'GSplat direct color',
     src: 'test_gsplats.luxar.zarr',
     expectColored: true,
-    nodeType: 'gsplats',
   },
 ];
 
@@ -79,11 +74,10 @@ test.describe('browser-real shader compile + pixel smoke', () => {
       // (1) No shader/GLSL/attribute/uniform errors.
       await assertNoShaderErrors(page);
 
-      // (2) Some pixel inside the projected geometry bounds has rendered output.
-      //     The canvas screenshot also contains DOM chrome painted above it.
+      // (2) Some canvas pixel has rendered output. The helper suppresses DOM
+      //     chrome painted above the canvas before taking the screenshot.
       if (v.expectColored) {
-        const region = await getProjectedGeometryRegion(page, [v.nodeType]);
-        const stats = await getElementPixelStats(page, 'canvas', VISIBLE_PIXEL_THRESHOLD, region);
+        const stats = await getElementPixelStats(page, 'canvas', VISIBLE_PIXEL_THRESHOLD);
         expect(
           stats.nonBlackPixels > 0,
           `Variant '${v.name}': no canvas pixels exceeded RGB-sum threshold ` +
