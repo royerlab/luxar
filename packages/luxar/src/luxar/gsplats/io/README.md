@@ -32,7 +32,7 @@ save_gsplats(
     cholesky_factors=cholesky,    # (N, d*(d+1)//2) float32
     colors=colors,                # (N, 3) float32/uint8 (optional)
     label_ids=label_ids,          # (N,) non-negative int class ids (optional)
-    label_vocabulary={0: "bone"}, # id -> name, required with label_ids
+    label_vocabulary={0: "bone"}, # id -> name; must name every id present
     ordering="hilbert",           # "morton", "hilbert", or "none"
     encoding_mode=EncodingMode.AUTO,  # AUTO, PRECISION, or MEMORY
     fitting_info={"time_seconds": 45.3, "iterations": 850},
@@ -53,7 +53,7 @@ resident.
 
 **`load_gsplats()` / `load_default_gsplats()`** - Load splats from .gsplats.zarr
 
-Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32.
+Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32 — `label_ids` excepted, which decodes back to its stored unsigned integer dtype (a class id is exact, never a float).
 
 `load_gsplats()` requires a flat/matrix-shaped tree. `load_default_gsplats()`
 also accepts partition and nested trees by materializing their default-rendered
@@ -93,7 +93,8 @@ print(format_gsplats_info(info))
 
 `inspect_gsplats_zarr()` walks the node tree to surface the primary
 leaf's fields (`n_splats`, `ndim`, `ordering`, `chunk_size`,
-`amplitude_range`, `center_bounds`), plus tree-shape metadata
+`amplitude_range`, `center_bounds`, `has_label_ids` and — when set —
+`label_vocabulary`), plus tree-shape metadata
 (`n_additive_sublods_default`, `kind`, and `n_substitutive` or `n_parts`) so
 multi-LOD and partitioned datasets are visible at a glance. Like
 `load_gsplats()` it accepts a `.gsplats.zarr.zip` / `.gsplats.zarr.tar.gz`
