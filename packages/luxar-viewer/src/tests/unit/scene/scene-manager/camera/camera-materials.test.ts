@@ -98,6 +98,7 @@ describe('updateMaterialsForCurrentCamera', () => {
   it('includes SSAA in the framebuffer-pixels-per-CSS-pixel scale', () => {
     const camera = new THREE.PerspectiveCamera();
     const ctx = makeCtx({ camera });
+    vi.mocked(ctx.renderer.getPixelRatio).mockReturnValue(1);
 
     updateMaterialsForCurrentCamera(ctx);
 
@@ -149,9 +150,10 @@ describe('updateMaterialsForCurrentCamera', () => {
     expect(nearCull).toBe(0.1);
   });
 
-  it('forwards the active renderer pixel ratio', () => {
+  it('falls back to the renderer pixel ratio before canvas layout', () => {
     const camera = new THREE.PerspectiveCamera();
     const ctx = makeCtx({ camera });
+    Object.defineProperty(ctx.renderer.domElement, 'clientHeight', { value: 0 });
 
     updateMaterialsForCurrentCamera(ctx);
 
