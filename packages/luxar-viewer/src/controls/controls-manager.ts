@@ -64,9 +64,10 @@ export interface ControlsManagerConfig {
   autoRotate?: boolean;
   autoRotateSpeed?: number;
   /**
-   * Camera-frame axis the orbit turntable revolves around. Persisted here (not
-   * only on the live instance) so it survives the dispose/recreate an
-   * orbit↔ortho switch performs, exactly like the speed above.
+   * Camera-frame or fixed scene axis the orbit turntable revolves around (see
+   * {@link AutoRotateAxis}). Persisted here (not only on the live instance) so
+   * it survives the dispose/recreate an orbit↔ortho switch performs, exactly
+   * like the speed above.
    */
   autoRotateAxis?: AutoRotateAxis;
   /**

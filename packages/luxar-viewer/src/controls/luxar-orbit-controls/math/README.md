@@ -15,7 +15,7 @@ math/
 ├── trackball.ts    Shoemake virtual-trackball rotation (sphere + hyperboloid)
 ├── pan.ts          OrbitControls pan math (perspective + ortho)
 ├── zoom.ts         OrbitControls zoom math (perspective distance / ortho zoom)
-└── auto-rotate.ts  Turntable axis: camera-frame axis → world-space vector
+└── auto-rotate.ts  Turntable axis → world-space vector
 ```
 
 ### `auto-rotate.ts`
