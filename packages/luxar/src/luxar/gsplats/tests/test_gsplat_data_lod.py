@@ -344,6 +344,24 @@ class TestLODPreservation:
         with pytest.raises(ValueError, match="different label_vocabulary"):
             GSplatData.concatenate([left, right])
 
+    def test_all_empty_concatenate_preserves_compatible_labels(self):
+        vocabulary = {0: "zero"}
+
+        def empty() -> GSplatData:
+            return GSplatData(
+                centers=np.empty((0, 3), dtype=np.float32),
+                amplitudes=np.empty(0, dtype=np.float32),
+                cholesky_factors=np.empty((0, 6), dtype=np.float32),
+                label_ids=np.empty(0, dtype=np.uint8),
+                label_vocabulary=vocabulary,
+            )
+
+        merged = GSplatData.concatenate([empty(), empty()])
+        assert merged.label_ids is not None
+        assert merged.label_ids.dtype == np.uint8
+        assert merged.label_ids.size == 0
+        assert merged.label_vocabulary == vocabulary
+
     def test_embed_dimension_preserves_lods(self):
         data = self._make_multi_lod(n_lods=3, splats_per_lod=10, ndim=3)
         assert data.ndim == 3

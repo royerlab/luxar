@@ -202,6 +202,7 @@ class CompositionMixin(_GSplatDataOps):
                 "splats_per_source": [0 for _ in datasets],
             }
             empty_stats.update(agreed_normalization_stats([x.stats for x in datasets]))
+            label_ids, label_vocabulary = _concatenate_label_channel(datasets)
             return make(
                 centers=np.empty((0, d), dtype=np.float32),
                 amplitudes=np.empty(0, dtype=np.float32),
@@ -209,6 +210,8 @@ class CompositionMixin(_GSplatDataOps):
                     (0, tril_size(d) if d > 0 else 0), dtype=np.float32
                 ),
                 colors=None,
+                label_ids=label_ids,
+                label_vocabulary=label_vocabulary,
                 stats=empty_stats,
                 truncation_radius=d0.truncation_radius,
             )
