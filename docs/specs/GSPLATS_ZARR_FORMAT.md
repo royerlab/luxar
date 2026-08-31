@@ -74,6 +74,9 @@ Each Gaussian splat is parameterized by:
 | `label_ids` | (N,) or (1,) | uint8/uint16/uint32/uint64 | INDEX | Optional categorical class id per splat; a constant channel may use broadcast encoding. Stored as the smallest exact unsigned integer with LUT and lossy quantization disabled. `label_vocabulary` maps every stored id to its name as a JSON object keyed by the id's decimal string form. |
 
 `label_ids` is an optional leaf channel and does not bump the format version.
+`label_ids` / `label_vocabulary` is the exact categorical channel, distinct
+from the per-element string `labels` / `has_labels` tooltip channel; both may
+coexist on one node.
 Its vocabulary is explicit rather than inferred: every observed id must have a
 name, while a filtered subset may retain unused vocabulary entries so ids keep
 the same meaning across related leaves. Any row permutation or subset operation
@@ -211,7 +214,7 @@ The file root IS the node. The same three primitives nest arbitrarily:
 ```
 fitted.gsplats.zarr/
 ├── .zattrs           # type: "gsplats", n_splats, ndim, has_colors, has_label_ids,
-│                     # ordering_min/max/bits, slice_dims, ordering_dims,
+│                     # ordering, ordering_min/max/bits, slice_dims, ordering_dims,
 │                     # chunk_size, amplitude_range, amplitude_data_range,
 │                     # amplitude_mass, amplitude_mass_weighted_mean,
 │                     # label_vocabulary? (decimal-string id keys), center_bounds,
