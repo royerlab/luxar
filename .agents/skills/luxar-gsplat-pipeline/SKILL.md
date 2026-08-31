@@ -477,6 +477,14 @@ loader derivation, selector thresholds, measured example, and exact `requestCoun
 procedure are in
 [references/first-paint-requests.md](references/first-paint-requests.md).
 
+**On a node with a hidden dimension, count elements per SLICE, not per node.** A
+ladder's rungs are sized against the whole node while the viewer draws one hidden
+coordinate, so an absolute first rung (`--target-ms`, `-b stream:<c>`) arrives
+divided by the slice count: on a 500-timepoint leaf a 20,833-splat rung 0 is 42
+splats on screen, and playback rendered an empty frame. `--n-lods L` is immune —
+it is exactly `1/L` of the frame at any slice count. Prefer `--n-lods 3..4` there;
+the "Sliced nodes" section of that reference carries the measured table.
+
 - **`overview` — ~3 eager rungs, independent of part count.** Its root is a
   `kind=lod` whose fine partition defers behind a fills-screen selector. Crossing
   it loads every fine part at once, so this saves opening-view requests, not total

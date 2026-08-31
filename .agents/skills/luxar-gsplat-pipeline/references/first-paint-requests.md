@@ -73,6 +73,50 @@ This explains the recipe split:
 - `stream` and `levels` fetch one leaf or level initially, but a typical whole-object
   `levels` ladder promotes on frame 1.
 
+## Sliced nodes: the first rung arrives divided
+
+Everything above counts rungs. On a node the viewer SLICES — any non-displayed
+dimension — you also have to count how many elements land in the rung it actually
+draws, because a ladder's rungs are sized against the WHOLE node while only one
+hidden coordinate is on screen.
+
+A rung specified as an ABSOLUTE count is the trap. `--target-ms` and
+`-b stream:<c>` both resolve to a count `C` for the whole node, so the resident
+slice receives `C / stops`. A rung specified as a SHARE is not: `--n-lods L`
+gives exactly `1/L` of the frame whatever the slice count, by construction.
+
+Measured on the shipped corpus — the 5th-percentile rung-0 count per coordinate
+against what the deployed viewer commits while the axis plays:
+
+| node | levels | p05 rung 0 | observed playback | reads as |
+|---|---|---|---|---|
+| `drosophila_embryogenesis` | 14 | 7 | 20-51 of 166,443 | blank |
+| `nexrad_supercell` | 7 | 4 | 187-440 of ~10,000 | structure gone |
+| `zebrafish_timelapse/endoderm` | 4 | 330 | ~1,449 of ~11,159 | soft, usable |
+| `celegans_tracking` | 4 | 1,069 | ~2,970 of 3,209 | fine |
+| `neuromast_2ch/membranes` | 8 | 2,962 | 12,842-17,465 of 110,614 | soft, usable |
+
+Under a playback frame budget the viewer commits the first rung and, since
+#2377, whatever further rungs are already cache-resident. A slice it has never
+visited therefore shows close to rung 0 alone, which is why the left column
+predicts the right one.
+
+**Rules that follow.** Prefer `--n-lods 3..4` on any node with a hidden
+dimension. If you use `--target-ms` there, know that the CLI scales it by the
+slice count for you and logs the multiplier — read that line rather than
+assuming the number you typed is what a viewer will see. Count stops as distinct
+OCCURRING combinations across all hidden axes: not the product of per-axis
+cardinality (`biodiversity_planetary_scale` is 126 populated of 140), and not
+the declared `Dimension` range (`drosophila_embryogenesis` declares 500
+timepoints and its coarsest rung carries data at 499).
+
+Three things enforce this so it does not rest on remembering: the CLI scales
+`--target-ms` by the slice count, `default_composed_additive_lod` requires a
+`slices` argument rather than defaulting it, and `hatch run check-demo-ladders`
+fails a built store whose sparsest slices fall below an absolute floor. The
+gate measures the 5th percentile, not the maximum — a ladder starves at its
+sparsest slice, and one busy coordinate used to mask hundreds of starved ones.
+
 ## Measured example
 
 One 1.58 GiB 4D timelapse built with `adaptive` had 44 parts × 4 levels × 4 rungs =
