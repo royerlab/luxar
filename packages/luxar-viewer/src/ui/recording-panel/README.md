@@ -128,6 +128,14 @@ frame-by-frame capture for turntable + EXR-sequence modes:
    locked across a thousand consecutive heights, so no bounded walk helps
    and the even floor is taken instead. Exactly 2 and 4 never need a
    step; 1 and 3 need at most one.
+   The turntable's speed row is shown as **`Turn Duration (s)`** but stored as
+   `RecordingOptions.turntableSpeed` in **degrees per second** — the unit the
+   capture strategies and saved presets already use, converted at the GUI edge by
+   `turnSecondsFromDegPerSec` / `degPerSecFromTurnSeconds` in `animation-sync.ts`.
+   Same split, and same reason, as the Navigation popover's rotation period: every
+   timing control in the viewer answers "how long does it take?" in seconds, while
+   what is written down keeps meaning what it always meant.
+
 4. Pause auto-rotate AND the auto-dolly, then compute the per-frame angle for
    the turntable. The rotation itself goes through
    `LuxarOrbitControls.applyOrbitRotation(angle)` with no explicit axis, which

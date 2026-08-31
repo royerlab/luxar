@@ -25,6 +25,30 @@ import { sceneDimsManager } from '../../scene/scene-dims-manager';
 import { log, Modules } from '../../utils/log';
 
 /**
+ * Seconds one recorded turn takes, from the stored turntable SPEED — and back.
+ *
+ * `RecordingOptions.turntableSpeed` is degrees per second, so a full 360°
+ * takes `360/speed` seconds. Like the navigation popover's rotation row, the
+ * UI shows the DURATION (the same unit as every other timing control) while
+ * the option keeps the rate it has always had, so saved presets and the
+ * capture strategies are untouched.
+ *
+ * A non-positive or non-finite input falls back to the other unit's identity
+ * rather than dividing to `Infinity`/`NaN`, which would make `totalFrames`
+ * either zero or unbounded.
+ */
+export function turnSecondsFromDegPerSec(degPerSec: number): number {
+  if (!Number.isFinite(degPerSec) || degPerSec <= 0) return 360;
+  return 360 / degPerSec;
+}
+
+/** Inverse of {@link turnSecondsFromDegPerSec} (10 s → 36 °/s). */
+export function degPerSecFromTurnSeconds(seconds: number): number {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 360;
+  return 360 / seconds;
+}
+
+/**
  * Format the turntable duration / frame-count info string used by the
  * GUI ("12.0s, 720 frames"). Pure given speed and target FPS.
  */

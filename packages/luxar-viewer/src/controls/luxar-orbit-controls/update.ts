@@ -104,8 +104,11 @@ export function runUpdateStep(ctx: OrbitUpdateCtx, deltaTime?: number): boolean 
   const zoomBefore = ctx.camera instanceof THREE.OrthographicCamera ? ctx.camera.zoom : null;
 
   // 1. Auto-rotation around the chosen camera-frame or fixed scene axis (see
-  // AutoRotateAxis). Speed=1.0 → one full rotation in 60 seconds (matches
-  // THREE.js OrbitControls convention)
+  // AutoRotateAxis). `autoRotateSpeed` is REVOLUTIONS PER MINUTE: the turn
+  // rate is (2π/60)·speed rad/s, so a full turn takes 60/speed seconds
+  // (speed 1.0 → 60 s, measured). Matches the THREE.js OrbitControls
+  // convention, and is the unit `auto_rotate_speed` carries on disk — the UI
+  // shows the equivalent period instead (see secondsPerTurnFromRpm).
   if (ctx.autoRotate && ctx.enableRotate) {
     const dt = deltaTime ?? 1 / 60;
     const angle = ((2 * Math.PI) / 60) * ctx.autoRotateSpeed * dt;

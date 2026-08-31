@@ -398,6 +398,12 @@ class ViewerConfig:
     # Navigation
     control_type: Optional[str] = None
     auto_rotate: Optional[bool] = None
+    # Turntable rate in REVOLUTIONS PER MINUTE (a three.js OrbitControls
+    # inheritance): a full turn takes 60 / auto_rotate_speed seconds, so the
+    # 0.25 the demos mostly use is one turn every four minutes. Frame-rate
+    # independent. The viewer's Navigation popover shows the equivalent PERIOD
+    # in seconds — same number, friendlier question — but the stored unit stays
+    # a rate so every already-published scene keeps meaning what it meant.
     auto_rotate_speed: Optional[float] = None
     # Axis the turntable revolves around — a camera-frame axis ("vertical",
     # "horizontal", "view") or a fixed scene axis ("world-x"/"-y"/"-z"); see

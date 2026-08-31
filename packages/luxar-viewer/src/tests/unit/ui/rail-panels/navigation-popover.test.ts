@@ -27,6 +27,17 @@ interface ControllerStub {
    * dropdown case is recorded.
    */
   _options?: Record<string, unknown>;
+  /**
+   * The object the row is bound to. Usually the shared `settings`, but a row
+   * that displays a DERIVED unit (the turntable period, stored as a rate)
+   * binds a small local view object instead — so tests can read the seeded
+   * display value, not just the write-back.
+   */
+  object?: Record<string, unknown>;
+  /** Numeric slider bounds, recorded so a range regression is catchable. */
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 interface GuiStub {
@@ -40,10 +51,19 @@ interface GuiStub {
 // bound property name so tests don't depend on insertion order.
 let currentGui: GuiStub;
 
-function makeController(prop: string, options?: Record<string, unknown>): ControllerStub {
+function makeController(
+  prop: string,
+  options?: Record<string, unknown>,
+  bound?: Record<string, unknown>,
+  range?: { min?: number; max?: number; step?: number }
+): ControllerStub {
   const ctrl: ControllerStub = {
     prop,
     _options: options,
+    object: bound,
+    min: range?.min,
+    max: range?.max,
+    step: range?.step,
     name: vi.fn(),
     onChange: vi.fn(),
     hide: vi.fn(),
@@ -61,12 +81,23 @@ function makeController(prop: string, options?: Record<string, unknown>): Contro
 function makeGui(): GuiStub {
   const controllers: ControllerStub[] = [];
   return {
-    add: vi.fn().mockImplementation((_obj: object, prop: string, arg3?: unknown) => {
-      const isOptionsMap = typeof arg3 === 'object' && arg3 !== null;
-      const c = makeController(prop, isOptionsMap ? (arg3 as Record<string, unknown>) : undefined);
-      controllers.push(c);
-      return c;
-    }),
+    add: vi
+      .fn()
+      .mockImplementation(
+        (obj: object, prop: string, arg3?: unknown, arg4?: unknown, arg5?: unknown) => {
+          const isOptionsMap = typeof arg3 === 'object' && arg3 !== null;
+          const c = makeController(
+            prop,
+            isOptionsMap ? (arg3 as Record<string, unknown>) : undefined,
+            obj as Record<string, unknown>,
+            isOptionsMap
+              ? undefined
+              : { min: arg3 as number, max: arg4 as number, step: arg5 as number }
+          );
+          controllers.push(c);
+          return c;
+        }
+      ),
     destroy: vi.fn(),
     domElement: document.createElement('div'),
     controllers,
@@ -183,10 +214,30 @@ describe('buildNavigationPopover', () => {
       expect(stubs.animationController.startAnimation).not.toHaveBeenCalled();
     });
 
-    it('wires autoRotateSpeed → setAutoRotateSpeed', () => {
-      byProp('autoRotateSpeed')._onChangeFn?.(2.5);
-      expect(stubs.sceneManager.setAutoRotateSpeed).toHaveBeenCalledWith(2.5);
+    it('shows the turntable as a PERIOD but stores the rate', () => {
+      // The row asks "how long is one turn?" while `auto_rotate_speed` keeps
+      // meaning rpm on disk — which it must, because ~15 shipped demos and
+      // every published scene carry that number. 20 s → 3 rpm.
+      byProp('seconds')._onChangeFn?.(20);
+      expect(stubs.sceneManager.setAutoRotateSpeed).toHaveBeenCalledWith(3);
+      expect(stubs.settings.autoRotateSpeed).toBe(3);
+      expect(stubs.saveSettings).toHaveBeenCalled();
       expect(stubs.triggerAnimation).toHaveBeenCalled();
+    });
+
+    it('seeds the period row FROM the stored rate', () => {
+      // 0.25 rpm is the shipped default: one turn every four minutes.
+      const seeded = makeStubs('orbit', { autoRotateSpeed: 0.25 });
+      build(seeded);
+      expect(byProp('seconds').object?.seconds).toBe(240);
+    });
+
+    it('offers exactly the rates the stored range allows, as periods', () => {
+      // Derived from config.controls.orbit.autoRotate.speed (0.1-5 rpm), not
+      // declared separately, so the reachable set cannot drift from the rate's.
+      const ctrl = byProp('seconds');
+      expect(ctrl.min).toBe(12); // 60 / 5 rpm — the fastest turn
+      expect(ctrl.max).toBe(600); // 60 / 0.1 rpm — the slowest
     });
 
     it('wires autoRotateAxis → setAutoRotateAxis', () => {

@@ -20,6 +20,7 @@ import { config, type RenderingSettings } from '../../config';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { AutoRotateAxis, ControlType } from '../../controls/types';
+import { rpmFromSecondsPerTurn, secondsPerTurnFromRpm } from '../../controls/types';
 import { makePopoverGui } from './popover-gui';
 
 export interface NavigationPopoverContext {
@@ -180,11 +181,28 @@ function buildModeParams(
         triggerAnimation();
       });
 
+    // Shown as a PERIOD, stored as a rate. `autoRotateSpeed` is rpm (a
+    // three.js inheritance, and the meaning of `auto_rotate_speed` in every
+    // published scene), but "how long is one turn?" is the question a user
+    // actually has — and the answer is then in the same unit as the dolly
+    // period right below it. The slider range is DERIVED from the stored
+    // rate's range rather than declared separately, so the two cannot drift:
+    // the reachable set is exactly today's.
+    const rs = config.controls.orbit.autoRotate.speed;
+    const periodView = { seconds: secondsPerTurnFromRpm(settings.autoRotateSpeed) };
     gui
-      .add(settings, 'autoRotateSpeed', 0.1, 5, 0.1)
-      .name('Rotation Speed')
+      .add(
+        periodView,
+        'seconds',
+        Math.round(secondsPerTurnFromRpm(rs.max)),
+        Math.round(secondsPerTurnFromRpm(rs.min)),
+        1
+      )
+      .name('Rotation Period (s)')
       .onChange((value: number) => {
-        sceneManager.setAutoRotateSpeed(value);
+        const rpm = rpmFromSecondsPerTurn(value);
+        settings.autoRotateSpeed = rpm;
+        sceneManager.setAutoRotateSpeed(rpm);
         saveSettings();
         triggerAnimation();
       });

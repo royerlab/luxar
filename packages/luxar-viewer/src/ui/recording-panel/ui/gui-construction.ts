@@ -20,6 +20,7 @@ import type {
   VideoQuality,
   VideoResolution,
 } from '../types';
+import { degPerSecFromTurnSeconds, turnSecondsFromDegPerSec } from '../animation-sync';
 
 export interface BuildGUIResult {
   formatController: Controller;
@@ -180,7 +181,10 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
   videoControllers.push(fpsCtrl);
 
   // ── Turntable options (primary) ──
-  const ttSettings = { speed: deps.options.turntableSpeed };
+  // Shown as a DURATION, stored as degrees/second — same treatment as the
+  // navigation popover's rotation row, so every timing control in the viewer
+  // answers "how long does it take?" in seconds.
+  const ttSettings = { turnSeconds: turnSecondsFromDegPerSec(deps.options.turntableSpeed) };
 
   // Turntable info display (computed from speed + FPS, read-only)
   const turntableInfo = { info: deps.getTurntableInfo() };
@@ -199,16 +203,24 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
     turntableInfoCtrl.updateDisplay();
   };
 
+  // Range derived from the stored rate's own 6-180 °/s bounds, so the
+  // reachable set is exactly what it was: 2 s to 60 s per turn.
   const speedCtrl = root
-    .add(ttSettings, 'speed', 6, 180, 1)
-    .name('Speed (°/s)')
+    .add(
+      ttSettings,
+      'turnSeconds',
+      Math.round(turnSecondsFromDegPerSec(180)),
+      Math.round(turnSecondsFromDegPerSec(6)),
+      1
+    )
+    .name('Turn Duration (s)')
     .onChange((val: number) => {
-      deps.options.turntableSpeed = val;
+      deps.options.turntableSpeed = degPerSecFromTurnSeconds(val);
       updateTurntableInfo();
     });
   speedCtrl.domElement
     .closest('.luxar-gui__controller')
-    ?.setAttribute('title', 'Rotation speed in degrees per second (36 = 10s for 360°)');
+    ?.setAttribute('title', 'Seconds for one full 360° turn (10 = a ten-second orbit)');
   turntableControllers.push(speedCtrl);
 
   // Also update turntable info when FPS changes

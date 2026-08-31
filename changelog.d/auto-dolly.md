@@ -33,3 +33,29 @@ auto_dolly_amplitude_percent=20, auto_dolly_period=8)`, and the choice
 persists per scene with the rest of the rendering settings. Turntable
 recording bakes it in frame-indexed, at a whole number of cycles per turn, so
 an exported clip breathes like its preview and still loops seamlessly.
+
+#### Every timing control now answers the same question, in seconds
+
+Adding a period-based control exposed that the viewer had three units for
+"how fast does the camera move": auto-rotation was revolutions per minute
+(`5.0` meaning one turn per twelve seconds — inherited from three.js and
+stated nowhere in the UI), the recording turntable was degrees per second, and
+the new dolly was seconds per cycle. The rows now read `Rotation Period (s)`,
+`Dolly Period (s)` and `Turn Duration (s)`, so the answer is always a duration
+and always in the same unit.
+
+What is *written down* is deliberately unchanged. `auto_rotate_speed` is still
+rpm and `RecordingOptions.turntableSpeed` is still degrees per second, because
+around fifteen shipped demos and every published `.luxar.zarr` carry that
+number: reinterpreting it would have made those scenes spin roughly 240x too
+fast, silently. Each conversion lives in one named pair at the UI edge —
+`secondsPerTurnFromRpm` / `rpmFromSecondsPerTurn` and
+`turnSecondsFromDegPerSec` / `degPerSecFromTurnSeconds` — the same split the
+dolly amplitude already uses for percent versus fraction. Slider ranges are
+derived from the stored ranges rather than declared again, so the reachable
+set cannot drift: 12-600 s is exactly the old 0.1-5 rpm.
+
+Three doc comments claimed things that were no longer true, including a
+`setAutoRotateSpeed` docstring citing a default of 2.0 (it is 0.25) and
+"30 seconds per orbit at 60fps" (the turn is frame-rate independent).
+

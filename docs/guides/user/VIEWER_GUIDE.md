@@ -442,6 +442,12 @@ vc = luxar.ViewerConfig(
     bloom_strength=0.4,
     control_type="orbit",
     auto_rotate=True,
+    # Turntable rate in REVOLUTIONS PER MINUTE: a full turn takes
+    # 60 / auto_rotate_speed seconds, so 0.25 is one turn every four minutes
+    # and 3.0 is one every twenty seconds. (The viewer's Navigation popover
+    # shows this as "Rotation Period (s)" — the same setting asked the other
+    # way round, so it reads in the same unit as the dolly period below.)
+    auto_rotate_speed=0.25,
     # Turntable axis. Either a CAMERA-frame axis — "vertical" (screen-up, the
     # default), "horizontal" (screen-right — the scene tumbles over the top),
     # "view" (the view direction — a pure roll, the camera never moves) — or a

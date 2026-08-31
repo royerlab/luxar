@@ -226,7 +226,8 @@ class LuxarOrbitControls extends EventDispatcher {
   enablePan: boolean;
   enableZoom: boolean;
   autoRotate: boolean;
-  autoRotateSpeed: number; // 0.25 = 4 min/rotation
+  autoRotateSpeed: number; // REVOLUTIONS PER MINUTE; a turn takes 60/speed s
+  // (0.25 = 4 min/turn). Shown in the UI as a period.
   // camera frame ('vertical' | 'horizontal' | 'view') or a fixed scene axis
   // ('world-x' | 'world-y' | 'world-z'); also the default axis of
   // applyOrbitRotation, so recorded turntables match the preview

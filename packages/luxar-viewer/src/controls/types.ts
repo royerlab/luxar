@@ -122,6 +122,38 @@ export function dollyAmplitudeToPercent(amplitude: number): number {
   return amplitude * 100;
 }
 
+/**
+ * Seconds one full turntable revolution takes, from the stored auto-rotation
+ * SPEED — and back.
+ *
+ * `autoRotateSpeed` is a rate in revolutions per minute: the update step turns
+ * by `(2π/60)·speed` radians per second, so a full turn takes `60/speed`
+ * seconds (measured: 1.0 → 60.00 s, 5.0 → 12.00 s). That unit is inherited
+ * from three.js `OrbitControls`, and it is baked into ~15 shipped demo scenes
+ * and every published `.luxar.zarr` as `auto_rotate_speed`, so it must keep
+ * meaning exactly what it means today on disk.
+ *
+ * The UI asks the question users actually have — "how long is one turn?" — and
+ * converts here, exactly as {@link dollyAmplitudeFromPercent} does for the
+ * dolly. Same trick, same reason: one unit stored, a friendlier one shown, and
+ * a single named place where the two meet.
+ *
+ * Both directions are `60/x`, but they are named separately so a call site
+ * reads as a conversion rather than as arithmetic. A non-positive or
+ * non-finite input would divide to `Infinity`/`NaN` and freeze or explode the
+ * turntable, so it falls back to the other unit's identity instead.
+ */
+export function secondsPerTurnFromRpm(rpm: number): number {
+  if (!Number.isFinite(rpm) || rpm <= 0) return 60;
+  return 60 / rpm;
+}
+
+/** Inverse of {@link secondsPerTurnFromRpm} (20 s → 3 rpm). */
+export function rpmFromSecondsPerTurn(seconds: number): number {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 1;
+  return 60 / seconds;
+}
+
 /** Union type for control instances. */
 export type ControlInstance = LuxarOrbitControls | LuxarFlyControls;
 

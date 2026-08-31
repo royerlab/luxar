@@ -1344,8 +1344,18 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Set the speed of automatic rotation
-   * @param speed - Rotation speed (default 2.0 = 30 seconds per orbit at 60fps)
+   * Set the turntable speed, in REVOLUTIONS PER MINUTE.
+   *
+   * A full turn takes `60 / speed` seconds — 1.0 is one turn a minute, the
+   * 0.25 default is one turn every four minutes. The unit is inherited from
+   * three.js `OrbitControls` and is what `auto_rotate_speed` means in every
+   * authored scene, so it is the stored unit; the Navigation popover shows the
+   * equivalent PERIOD in seconds (see `secondsPerTurnFromRpm`).
+   *
+   * Frame-rate independent: the update step scales by `deltaTime`, so the
+   * turn takes the same wall-clock time at 30 fps and at 144.
+   *
+   * @param speed - Revolutions per minute (> 0).
    */
   setAutoRotateSpeed(speed: number): void {
     this.controls.setAutoRotateSpeed(speed);
