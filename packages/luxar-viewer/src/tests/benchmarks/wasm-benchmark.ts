@@ -245,6 +245,8 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
             size,
             0,
             noBounds,
+            noBounds,
+            noBounds,
             noBounds
           );
         },
@@ -260,6 +262,8 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
             wasmOrdering,
             size,
             0,
+            noBounds,
+            noBounds,
             noBounds,
             noBounds
           );

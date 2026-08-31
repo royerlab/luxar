@@ -39,14 +39,21 @@ const EMPTY_BOUNDS = new Float32Array(0);
  */
 function writeShardBounds(
   centers3: Float32Array,
+  zView: Float32Array,
   ordering: Uint32Array,
   count: number,
   shardCount: number,
   shardBoundsMin: Float32Array,
-  shardBoundsMax: Float32Array
+  shardBoundsMax: Float32Array,
+  shardViewZMin: Float32Array,
+  shardViewZMax: Float32Array
 ): void {
   if (shardCount === 0) {
     return;
+  }
+  for (let i = 0; i < shardCount; i++) {
+    shardViewZMin[i] = Infinity;
+    shardViewZMax[i] = -Infinity;
   }
   for (let i = 0; i < shardCount * 3; i++) {
     shardBoundsMin[i] = Infinity;
@@ -69,11 +76,18 @@ function writeShardBounds(
     let maxX = -Infinity;
     let maxY = -Infinity;
     let maxZ = -Infinity;
+    let minZv = Infinity;
+    let maxZv = -Infinity;
     for (let j = lo; j < hi; j++) {
-      const base = ordering[j] * 3;
+      const element = ordering[j];
+      const base = element * 3;
       const x = centers3[base];
       const y = centers3[base + 1];
       const z = centers3[base + 2];
+      // VIEW-space z at THIS sort's pose — the cross-node merge key.
+      const zv = zView[element];
+      if (zv < minZv) minZv = zv;
+      if (zv > maxZv) maxZv = zv;
       if (x < minX) minX = x;
       if (y < minY) minY = y;
       if (z < minZ) minZ = z;
@@ -88,6 +102,8 @@ function writeShardBounds(
     shardBoundsMax[out] = maxX;
     shardBoundsMax[out + 1] = maxY;
     shardBoundsMax[out + 2] = maxZ;
+    shardViewZMin[s] = minZv;
+    shardViewZMax[s] = maxZv;
   }
 }
 
@@ -116,17 +132,31 @@ export function sort_splats_by_depth(
   count: number,
   shardCount = 0,
   shardBoundsMin?: Float32Array,
-  shardBoundsMax?: Float32Array
+  shardBoundsMax?: Float32Array,
+  shardViewZMin?: Float32Array,
+  shardViewZMax?: Float32Array
 ): number {
   // Both slices are present whenever shardCount > 0 (the WASM signature makes
   // them required); default to a throwaway so the optional TS arity stays safe.
   const boundsMin = shardBoundsMin ?? EMPTY_BOUNDS;
   const boundsMax = shardBoundsMax ?? EMPTY_BOUNDS;
+  const viewZMin = shardViewZMin ?? EMPTY_BOUNDS;
+  const viewZMax = shardViewZMax ?? EMPTY_BOUNDS;
 
   if (count === 0) {
     // Still stamp the empty-box sentinels: a caller that reads the arrays
     // without checking the return value must not see a stale previous frame.
-    writeShardBounds(centers3, ordering, 0, shardCount, boundsMin, boundsMax);
+    writeShardBounds(
+      centers3,
+      EMPTY_BOUNDS,
+      ordering,
+      0,
+      shardCount,
+      boundsMin,
+      boundsMax,
+      viewZMin,
+      viewZMax
+    );
     return 0;
   }
 
@@ -166,7 +196,17 @@ export function sort_splats_by_depth(
     for (let j = 0; j < count; j++) {
       ordering[j] = j;
     }
-    writeShardBounds(centers3, ordering, count, shardCount, boundsMin, boundsMax);
+    writeShardBounds(
+      centers3,
+      zScratch,
+      ordering,
+      count,
+      shardCount,
+      boundsMin,
+      boundsMax,
+      viewZMin,
+      viewZMax
+    );
     return 0;
   }
 
@@ -207,7 +247,17 @@ export function sort_splats_by_depth(
     histogram[bucket]++;
   }
 
-  writeShardBounds(centers3, ordering, count, shardCount, boundsMin, boundsMax);
+  writeShardBounds(
+    centers3,
+    zScratch,
+    ordering,
+    count,
+    shardCount,
+    boundsMin,
+    boundsMax,
+    viewZMin,
+    viewZMax
+  );
 
   return count;
 }

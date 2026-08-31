@@ -1,6 +1,6 @@
 # Cross-Node Depth Ordering — Depth-Shard Interleaving (Route B)
 
-> **Status**: Phases S, 0, 1, 2 and 3 IMPLEMENTED on the draft holding PR #2407 (branch `feat/cross-node-depth-shards`); the feature is **off by default** (`config.depthShards.enabled = false`, opt in with `?depthShards=N`). Implementation deltas vs the text below, all found by tests rather than review: (a) `syncDepthShards`'s idempotent path must RE-ASSERT the parent's narrowed `instanceCount`, because every commit resets it to the whole count — without it the parent redraws the entire node on top of its shards (the two-node E2E counted 9375 elements drawn for a 5000-element node); (b) the group's internal sort keys had to become MEMBER-level, since a shard with no usable bounds keys to 0 (i.e. at the camera) and sorted to the near end of its own node, and a shard-level key makes the member comparison non-transitive; (c) `orderGroupsWithContainment` now RETURNS its edge set — inferring the edges by diffing depth order against hoisted order is a guess, not the relation; and (d) **the containment override is dropped between two SHARDED groups** (decision 4's "plausibly subsumes" note, now settled): two co-extensive interpenetrating nodes have near-equal bounding spheres, so whichever is a hair larger "contains" the other and the block forced strict node-major order — defeating the exact case sharding exists to fix. An edge with only one side sharded is kept. Two questions gated the design and **both have been answered by measurement, not estimate**: what splitting one instanced draw into S costs (§7), and which attribute layout can express a shard draw on every renderer backend (§7.1). The design below is written against those results.
+> **Status**: Phases S, 0, 1, 2 and 3 IMPLEMENTED on the draft holding PR #2407 (branch `feat/cross-node-depth-shards`); the feature is **off by default** and **NOT yet recommended for use** — §7.2 records measured popping on co-extensive, finely-interleaved nodes, whose cause (shard count vs interleaving fineness) is understood but not yet gated against. Real data measures clean. Implementation deltas vs the text below, all found by tests or measurement rather than review: (a) `syncDepthShards`'s idempotent path must RE-ASSERT the parent's narrowed `instanceCount`, because every commit resets it to the whole count — without it the parent redraws the entire node on top of its shards (the two-node E2E counted 9375 elements drawn for a 5000-element node); (b) the group's internal sort keys had to become MEMBER-level, since a shard with no usable bounds keys to 0 (i.e. at the camera) and sorted to the near end of its own node, and a shard-level key makes the member comparison non-transitive; (c) `orderGroupsWithContainment` now RETURNS its edge set — inferring the edges by diffing depth order against hoisted order is a guess, not the relation; (d) **the containment override is dropped between two SHARDED groups** (decision 4's "plausibly subsumes" note, now settled): two co-extensive interpenetrating nodes have near-equal bounding spheres, so whichever is a hair larger "contains" the other and the block forced strict node-major order — defeating the exact case sharding exists to fix (an edge with only one side sharded is kept); and (e) the merge key is the shard's sort-pose VIEW-Z interval, not a re-projected box — correct on principle, but measurably neutral (§7.2).
 > **Scope**: Viewer-only. No `.luxar.zarr` / `.gsplats.zarr` format change, no Python-side change, **no shader change**.
 > **Goal**: correct back-to-front compositing *between* two or more overlapping order-dependent nodes — of any instanced geometry type, in any mix of order-dependent blending modes — to a bounded, tunable ordering error.
 > **Non-goals**: per-pixel ordering (the StopThePop error class — a single per-element depth cannot fix it, and no global sort can); order-independent transparency; one globally merged draw (Spark's architecture — §8.2); Mesh (§8.1).
@@ -247,6 +247,69 @@ The WebGPU failure is explicit, not inferred: `THREE.WebGPURenderer: Render pipe
 1. **"All meshes drew" is NOT sufficient evidence.** The `onAfterRender` counter reported `8/8` shard meshes drawn on the failing WebGPU arm — the hook fires even though pipeline creation failed and the draw contributed nothing. Only the pixel comparison caught it. By the same token `renderer.info.render.calls` is unusable here: three resets `info` at the start of every `render()`, and the viewer runs post-processing, so a post-render read reports just the final fullscreen pass (it read `1` for a 2-node scene).
 2. **An anti-vacuity control is mandatory, and it moved the threshold.** Sharding and then *hiding* the shard children (so only shard 0 draws) must visibly diverge; it scores mad ≈ 9.5–10.4. Without that number there is no scale on which 0.0000 means anything — and the first version of this probe used a lit-fraction metric so saturated (0.89) that it could not distinguish a correct split from a silently dropped one.
 3. **A residual difference against the *unsharded* baseline is a measurement artifact, and was proved so rather than assumed.** Every sharded arm sits ≈1.19–1.55 mad from the unsharded frame. Re-running at **`S = 1`** — where the "sharded" arm is structurally identical to the baseline, no children at all — reproduces the *same* 1.190. So it is TAA re-convergence between capture points, uniform across arms, and the split itself contributes zero. Screenshot captures must also confirm a real frame was produced (`info.render.frame` advanced): once the on-demand loop settles, `renderOnce()` is a no-op and a naive capture silently re-photographs the previous arm's image.
+
+---
+
+## 7.2 Measured popping, and the shard-count limit (2026-08-31)
+
+Reported from real use: "crazy amount of popping when rotating". Measured and
+confirmed, then narrowed to a cause that is **not** what §3.3 first assumed.
+
+Method: orbit the camera in 2.5-degree steps and, separately, drag continuously
+with no settling; record mean per-channel image change per step and how often the
+cross-node draw sequence changes. Popping shows up as *spikiness* — max change
+over median — because a smooth rotation changes the image by a roughly constant
+amount per step.
+
+| Scene | `?depthShards` | median | max | spikiness | order changes |
+| --- | --- | --- | --- | --- | --- |
+| two-comb fixture (settled) | 0 | 2.79 | 5.08 | 1.82 | 0 / 24 |
+| two-comb fixture (settled) | 16 | 5.35 | 27.37 | **5.12** | 14 / 24 |
+| two-comb fixture (drag) | 0 | 4.34 | 10.36 | 2.39 | 0 / 331 frames |
+| two-comb fixture (drag) | 16 | 8.18 | 32.56 | **3.98** | 33 / 401 frames |
+| two-comb fixture (drag) | 256 | 4.97 | 35.79 | — | **0** / 347 frames |
+| neuromast, 2 volumetric nodes (drag) | 0 | 1.41 | 1.47 | 1.04 | 0 / 564 frames |
+| neuromast, 2 volumetric nodes (drag) | 16 | 1.51 | 1.70 | **1.13** | 32 / 637 frames |
+
+**The emitted order is correct.** An independent check — recomputing each drawn
+mesh's mean view-z from its own `aSortedIndex` range and the element texture,
+then testing that `renderOrder` ascends with depth — finds 0–4 inversions out of
+32 draws across a 66-degree orbit, worst inversion 0.1–1% of the depth span. The
+merge is not mis-ordering anything.
+
+**The cause is shard COUNT versus how finely the two nodes interleave.** The
+fixture is two combs of 5,000 splats offset by 0.0002 along z, so the two nodes
+are co-extensive and perfectly interleaved at element scale. At 16 shards each
+shard spans ~1/16 of the depth range, so node A's shard *k* and node B's shard
+*k* overlap almost completely — no ordering of those two intervals is meaningfully
+correct, and which one wins flips on tiny camera changes. Raising the count until
+the intervals separate removes it: at 256 shards the median per-frame change
+returns to the unsharded baseline (4.97 vs 4.34) with **zero** order changes
+across the drag. This is §4 rule 3 ("S ≈ overlap extent ÷ accepted error")
+asserting itself — and §4's implementation does not honour it, using a constant
+`shardsPerNode` regardless of overlap.
+
+**A too-coarse split is worse than no split**, which is the part worth designing
+against: it replaces a stable (if approximate) whole-node order with an
+oscillating one. Real data does not hit this — the neuromast's two channels are
+co-extensive in *bounds* but spatially segregated at fine scale (nuclei are blobs,
+membranes are shells), so coarse shards do separate them: spikiness 1.13 vs 1.04.
+Bounding-sphere overlap therefore cannot distinguish the two cases; only the
+shard intervals themselves can, and those exist only after a sort.
+
+**Two corrections to earlier claims in this document.** The view-z interval
+replaced the re-projected AABB as the merge key (§3.3 decision 3) on the theory
+that the box degenerates off-axis. The box *does* degenerate — that reasoning
+stands — but swapping the key back gives **identical** numbers on real data
+(spikiness 1.07 either way), so it was not the cause of the reported popping and
+must not be credited with fixing it. And the settled-pose harness in §7.1 hides
+transients by construction; the drag numbers above are the ones that correspond
+to what a user sees.
+
+**Open**: gate on separability rather than on bounds — after a sort, compare one
+node's shard intervals against the other's and fall back to whole-node ordering
+for that pair when they overlap too heavily to order meaningfully. Until that
+lands, `shardsPerNode` is a blunt instrument and the feature stays off by default.
 
 ---
 

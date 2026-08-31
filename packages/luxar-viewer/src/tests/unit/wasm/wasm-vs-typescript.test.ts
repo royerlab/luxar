@@ -440,6 +440,8 @@ describe('WASM vs TypeScript Comparison', () => {
       tsMax: Float32Array;
       wasmMin: Float32Array;
       wasmMax: Float32Array;
+      tsZMin: Float32Array;
+      tsZMax: Float32Array;
     } {
       const ts = new Uint32Array(count);
       const wasm = new Uint32Array(count);
@@ -447,6 +449,10 @@ describe('WASM vs TypeScript Comparison', () => {
       const tsMax = new Float32Array(shardCount * 3);
       const wasmMin = new Float32Array(shardCount * 3);
       const wasmMax = new Float32Array(shardCount * 3);
+      const tsZMin = new Float32Array(shardCount);
+      const tsZMax = new Float32Array(shardCount);
+      const wasmZMin = new Float32Array(shardCount);
+      const wasmZMax = new Float32Array(shardCount);
       const tsSorted = tsModule.sort_splats_by_depth(
         centers3,
         modelView,
@@ -454,7 +460,9 @@ describe('WASM vs TypeScript Comparison', () => {
         count,
         shardCount,
         tsMin,
-        tsMax
+        tsMax,
+        tsZMin,
+        tsZMax
       );
       const wasmSorted = wasmModule!.sort_splats_by_depth(
         centers3,
@@ -463,7 +471,9 @@ describe('WASM vs TypeScript Comparison', () => {
         count,
         shardCount,
         wasmMin,
-        wasmMax
+        wasmMax,
+        wasmZMin,
+        wasmZMax
       );
       // Asserted inside the harness so no case can forget it, and so a new
       // ordering case automatically extends bounds coverage too.
@@ -475,7 +485,29 @@ describe('WASM vs TypeScript Comparison', () => {
         exactBitsEqual(tsMax, wasmMax),
         `shard bounds max diverged: ts=${Array.from(tsMax)} wasm=${Array.from(wasmMax)}`
       ).toBe(true);
-      return { ts, wasm, tsSorted, wasmSorted, tsMin, tsMax, wasmMin, wasmMax };
+      // The MERGE KEY. Same exact-bits bar: it is min/max over the pass-1 view-z
+      // scratch, so no rounding is involved and the two backends must agree
+      // bit-for-bit.
+      expect(
+        exactBitsEqual(tsZMin, wasmZMin),
+        `shard view-z min diverged: ts=${Array.from(tsZMin)} wasm=${Array.from(wasmZMin)}`
+      ).toBe(true);
+      expect(
+        exactBitsEqual(tsZMax, wasmZMax),
+        `shard view-z max diverged: ts=${Array.from(tsZMax)} wasm=${Array.from(wasmZMax)}`
+      ).toBe(true);
+      return {
+        ts,
+        wasm,
+        tsSorted,
+        wasmSorted,
+        tsMin,
+        tsMax,
+        wasmMin,
+        wasmMax,
+        tsZMin,
+        tsZMax,
+      };
     }
 
     const IDENTITY_MV = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -578,8 +610,32 @@ describe('WASM vs TypeScript Comparison', () => {
       const tsMax = new Float32Array([9, 9, 9]);
       const wasmMin = new Float32Array([7, 7, 7]);
       const wasmMax = new Float32Array([9, 9, 9]);
-      tsModule.sort_splats_by_depth(centers3, IDENTITY_MV, ts, 3, 0, tsMin, tsMax);
-      wasmModule!.sort_splats_by_depth(centers3, IDENTITY_MV, wasm, 3, 0, wasmMin, wasmMax);
+      const untouched = new Float32Array([5, 5, 5]);
+      const untouchedW = new Float32Array([5, 5, 5]);
+      tsModule.sort_splats_by_depth(
+        centers3,
+        IDENTITY_MV,
+        ts,
+        3,
+        0,
+        tsMin,
+        tsMax,
+        untouched,
+        untouched
+      );
+      wasmModule!.sort_splats_by_depth(
+        centers3,
+        IDENTITY_MV,
+        wasm,
+        3,
+        0,
+        wasmMin,
+        wasmMax,
+        untouchedW,
+        untouchedW
+      );
+      expect(Array.from(untouched)).toEqual([5, 5, 5]);
+      expect(Array.from(untouchedW)).toEqual([5, 5, 5]);
       expect(exactBitsEqual(tsMin, new Float32Array([7, 7, 7]))).toBe(true);
       expect(exactBitsEqual(tsMax, new Float32Array([9, 9, 9]))).toBe(true);
       expect(exactBitsEqual(wasmMin, new Float32Array([7, 7, 7]))).toBe(true);

@@ -301,10 +301,27 @@ export interface ShardOrderInput {
   meshes: readonly THREE.Mesh[];
   /** Shards with usable depth bounds. `<= 1` means "do not shard the order". */
   count: number;
-  /** Per-shard LOCAL-space AABB minima, `[count * 3]`. */
+  /** Per-shard LOCAL-space AABB minima, `[count * 3]`. Extent only, NOT the key. */
   boundsMin: Float32Array;
-  /** Per-shard LOCAL-space AABB maxima, `[count * 3]`. */
+  /** Per-shard LOCAL-space AABB maxima, `[count * 3]`. Extent only, NOT the key. */
   boundsMax: Float32Array;
+  /**
+   * Per-shard VIEW-space z interval `[count]` each, at the pose the shards were
+   * built at. **This is the merge key.**
+   *
+   * Held, not re-derived per frame. A shard is a slab perpendicular to the view
+   * axis at THAT pose, so re-projecting its box from a rotated camera gives a
+   * box that is fat along the new view direction and the key degenerates. No
+   * local-space summary avoids that, because the GROUPING is itself
+   * pose-dependent — so the key must be exactly as stale as the grouping.
+   *
+   * Exact and pose-consistent, and the right key on those grounds — but note it
+   * did NOT measurably reduce the popping it was first written to fix (identical
+   * numbers with the old box key on real data). See the Rust kernel's
+   * `write_shard_bounds` for what the dominant cause actually is.
+   */
+  viewZMin: Float32Array;
+  viewZMax: Float32Array;
 }
 let orderSlots: OrderSlot[] = [];
 
@@ -632,10 +649,24 @@ export function collectRenderOrderSlot(
   // against another node's interval meaningfully.
   if (shards && shards.count > 1) {
     const scale = mv.getMaxScaleOnAxis();
-    // The node's own centroid depth, used as the member-ordering key on every
-    // shard so the group orders its MEMBERS exactly as it did pre-sharding.
+    // Member-ordering key, shared by every shard of this node. Taken from the
+    // SORT-POSE view-z span rather than re-projecting the bounding sphere, so a
+    // sharded node's whole stream — member key and shard keys alike — is
+    // consistently as stale as the grouping it describes. Mixing a fresh member
+    // key with held shard keys would put the drift back at the node boundary.
+    // Falls back to the re-projected centroid when the span is unusable.
     let memberViewZ = 0;
-    if (bs && Number.isFinite(bs.radius)) {
+    let spanLo = Infinity;
+    let spanHi = -Infinity;
+    for (let s = 0; s < shards.count; s++) {
+      const lo = shards.viewZMin[s];
+      const hi = shards.viewZMax[s];
+      if (lo < spanLo) spanLo = lo;
+      if (hi > spanHi) spanHi = hi;
+    }
+    if (spanLo <= spanHi && Number.isFinite(spanLo + spanHi)) {
+      memberViewZ = (spanLo + spanHi) / 2;
+    } else if (bs && Number.isFinite(bs.radius)) {
       scratch.center.copy(bs.center).applyMatrix4(mv);
       if (Number.isFinite(scratch.center.z)) memberViewZ = scratch.center.z;
     }
@@ -669,11 +700,18 @@ export function collectRenderOrderSlot(
       const dz = maxZ - minZ;
       const localRadius = usable ? Math.sqrt(dx * dx + dy * dy + dz * dz) / 2 : -1;
       const scaledRadius = usable ? localRadius * scale : -1;
+
+      // THE MERGE KEY is the shard's own view-z interval from the sort that
+      // built it — the midpoint — NOT the re-projected box centre above. The box
+      // survives only as extent, for the containment test. See ShardOrderInput.
+      const zLo = shards.viewZMin[s];
+      const zHi = shards.viewZMax[s];
+      const keyUsable = zLo <= zHi && Number.isFinite(zLo + zHi);
       orderSlots.push({
         mesh: shardMesh,
         groupKey,
         partRank,
-        viewZ: usable ? scratch.center.z : 0,
+        viewZ: keyUsable ? (zLo + zHi) / 2 : memberViewZ,
         viewX: usable ? scratch.center.x : 0,
         viewY: usable ? scratch.center.y : 0,
         radius: Number.isFinite(scaledRadius) ? scaledRadius : -1,

@@ -246,6 +246,18 @@ interface NodeSortState {
    */
   shardBoundsMin?: Float32Array;
   shardBoundsMax?: Float32Array;
+  /**
+   * Per-shard VIEW-space z interval `[shardCount]` each, at the pose the last
+   * resolved sort ran from — the cross-node merge KEY.
+   *
+   * Held rather than re-derived per frame, and that is the whole point: a shard
+   * is a slab perpendicular to the view axis at THAT pose, so the grouping is
+   * pose-dependent. A freshly re-projected key over a stale grouping is
+   * incoherent and measurably pops (spec §3.3 decision 3). Holding the key as
+   * long as the grouping makes the merge output constant between re-sorts.
+   */
+  shardViewZMin?: Float32Array;
+  shardViewZMax?: Float32Array;
 }
 
 let worker: Worker | null = null;
@@ -581,7 +593,15 @@ function evaluateShardPolicy(): void {
  * mesh is gone would silently skip elements the parent is now drawing itself.
  */
 function shardOrderInputFor(state: NodeSortState): ShardOrderInput | undefined {
-  if (state.shardCount <= 1 || !state.shardBoundsMin || !state.shardBoundsMax) return undefined;
+  if (
+    state.shardCount <= 1 ||
+    !state.shardBoundsMin ||
+    !state.shardBoundsMax ||
+    !state.shardViewZMin ||
+    !state.shardViewZMax
+  ) {
+    return undefined;
+  }
   const meshes = depthShardChildren(state.mesh);
   if (meshes.length + 1 !== state.shardCount) return undefined;
   return {
@@ -589,6 +609,8 @@ function shardOrderInputFor(state: NodeSortState): ShardOrderInput | undefined {
     count: state.shardCount,
     boundsMin: state.shardBoundsMin,
     boundsMax: state.shardBoundsMax,
+    viewZMin: state.shardViewZMin,
+    viewZMax: state.shardViewZMax,
   };
 }
 
@@ -1440,6 +1462,8 @@ function clearShardBounds(state: NodeSortState): void {
   state.shardCount = 0;
   state.shardBoundsMin = undefined;
   state.shardBoundsMax = undefined;
+  state.shardViewZMin = undefined;
+  state.shardViewZMax = undefined;
 }
 
 /**
@@ -1566,6 +1590,8 @@ function trySynchronousFirstSort(
     ordering,
     count,
     0,
+    EMPTY_SHARD_BOUNDS,
+    EMPTY_SHARD_BOUNDS,
     EMPTY_SHARD_BOUNDS,
     EMPTY_SHARD_BOUNDS
   );
@@ -1703,10 +1729,19 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
         // ordering, and only when that ordering will actually be applied —
         // boxes describing a permutation the node never draws would place its
         // shards by where their elements were about to be, not where they are.
-        if (applicable && result.shardCount > 0 && result.shardBoundsMin && result.shardBoundsMax) {
+        if (
+          applicable &&
+          result.shardCount > 0 &&
+          result.shardBoundsMin &&
+          result.shardBoundsMax &&
+          result.shardViewZMin &&
+          result.shardViewZMax
+        ) {
           current.shardCount = result.shardCount;
           current.shardBoundsMin = result.shardBoundsMin;
           current.shardBoundsMax = result.shardBoundsMax;
+          current.shardViewZMin = result.shardViewZMin;
+          current.shardViewZMax = result.shardViewZMax;
         } else {
           clearShardBounds(current);
         }

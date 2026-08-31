@@ -81,6 +81,19 @@ export interface SortResult {
   shardBoundsMin?: Float32Array;
   /** Per-shard local-space AABB maxima `[shardCount * 3]`, TRANSFERRED. */
   shardBoundsMax?: Float32Array;
+  /**
+   * Per-shard VIEW-space z interval `[shardCount]` each, at THIS sort's pose —
+   * the cross-node merge key. TRANSFERRED; absent when `shardCount === 0`.
+   *
+   * Deliberately a sort-pose quantity rather than something the main thread
+   * re-derives per frame: a shard is a slab perpendicular to the view axis at
+   * this pose, so the GROUPING is pose-dependent and a freshly re-projected key
+   * over a stale grouping is incoherent. The key is held exactly as long as the
+   * grouping it describes. See the Rust kernel's `write_shard_bounds`, including
+   * its note on what this did and did not fix.
+   */
+  shardViewZMin?: Float32Array;
+  shardViewZMax?: Float32Array;
 }
 
 /**
@@ -123,6 +136,8 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   const shardCount = Math.min(requestedShards, node.count);
   const shardBoundsMin = new Float32Array(shardCount * 3);
   const shardBoundsMax = new Float32Array(shardCount * 3);
+  const shardViewZMin = new Float32Array(shardCount);
+  const shardViewZMax = new Float32Array(shardCount);
 
   // Timing wraps the backend call generically: `ctx.wasm` is either the
   // compiled WASM module or the TypeScript fallback, so both report.
@@ -134,7 +149,9 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
     node.count,
     shardCount,
     shardBoundsMin,
-    shardBoundsMax
+    shardBoundsMax,
+    shardViewZMin,
+    shardViewZMax
   );
   const kernelEnd = performance.now();
 
@@ -144,7 +161,12 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   const usableShards = placed === 0 ? 0 : shardCount;
   const transferables: Transferable[] = [ordering.buffer];
   if (usableShards > 0) {
-    transferables.push(shardBoundsMin.buffer, shardBoundsMax.buffer);
+    transferables.push(
+      shardBoundsMin.buffer,
+      shardBoundsMax.buffer,
+      shardViewZMin.buffer,
+      shardViewZMax.buffer
+    );
   }
 
   return transfer(
@@ -154,7 +176,7 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
       kernelMs: kernelEnd - kernelStart,
       workerMs: kernelEnd - bodyStart,
       shardCount: usableShards,
-      ...(usableShards > 0 ? { shardBoundsMin, shardBoundsMax } : {}),
+      ...(usableShards > 0 ? { shardBoundsMin, shardBoundsMax, shardViewZMin, shardViewZMax } : {}),
     },
     transferables
   );

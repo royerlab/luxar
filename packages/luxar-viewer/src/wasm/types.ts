@@ -50,6 +50,10 @@ export interface WasmModule {
    *   0 skips the work and leaves the two output arrays untouched
    * @param shardBoundsMin - Output AABB minima [shardCount * 3]
    * @param shardBoundsMax - Output AABB maxima [shardCount * 3]
+   * @param shardViewZMin - Output per-shard VIEW-space z minima [shardCount] at
+   *   this sort's pose — the cross-node merge key (a re-projected box is NOT
+   *   usable for it; see the Rust kernel's `write_shard_bounds`)
+   * @param shardViewZMax - Output per-shard VIEW-space z maxima [shardCount]
    * @returns Number of splats placed via depth keys (0 = identity fallback,
    *   in which case any shard bounds carry no depth meaning)
    */
@@ -60,7 +64,9 @@ export interface WasmModule {
     count: number,
     shardCount: number,
     shardBoundsMin: Float32Array,
-    shardBoundsMax: Float32Array
+    shardBoundsMax: Float32Array,
+    shardViewZMin: Float32Array,
+    shardViewZMax: Float32Array
   ): number;
 
   // ============================================================================

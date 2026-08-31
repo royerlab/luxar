@@ -46,12 +46,18 @@ function shardsSpanning(
   const meshes: THREE.Mesh[] = [];
   const boundsMin = new Float32Array(count * 3);
   const boundsMax = new Float32Array(count * 3);
+  // The MERGE KEY: each shard's view-z interval at the sort pose. With the
+  // identity model-view, local z IS view z, so the slab's z span is the interval.
+  const viewZMin = new Float32Array(count);
+  const viewZMax = new Float32Array(count);
   const step = (zEnd - zStart) / count;
   for (let s = 0; s < count; s++) {
     const lo = zStart + s * step;
     const hi = lo + step;
     boundsMin.set([-0.5, -0.5, Math.min(lo, hi)], s * 3);
     boundsMax.set([0.5, 0.5, Math.max(lo, hi)], s * 3);
+    viewZMin[s] = Math.min(lo, hi);
+    viewZMax[s] = Math.max(lo, hi);
     if (s > 0) {
       const shard = new THREE.Mesh(parent.geometry, parent.material);
       shard.name = `${parent.name}__s${s}`;
@@ -61,7 +67,7 @@ function shardsSpanning(
       meshes.push(shard);
     }
   }
-  return { meshes, count, boundsMin, boundsMax };
+  return { meshes, count, boundsMin, boundsMax, viewZMin, viewZMax };
 }
 
 /** Every mesh that received a rank, ordered by it (lowest = drawn first). */
@@ -169,25 +175,29 @@ describe('cross-node depth merge', () => {
     // non-transitive — different shards of the same member disagree — which
     // `Array.sort` may resolve any way it likes.
     //
-    // Rigged so the two keys disagree outright: p1's node centre is much farther
-    // (-50 vs -10), so p1 must draw first; but p0 owns the single farthest SHARD
-    // of the whole scene (≈ -75), so a shard-keyed comparison puts p0 first.
+    // Rigged so the node-level and shard-level keys disagree, WITHOUT making the
+    // fixture self-inconsistent: p0 is a wide node spanning -100..-20 (midpoint
+    // -60) and p1 a narrow one spanning -50..-40 (midpoint -45), so by node depth
+    // p0 draws first. But p0 also owns both the farthest shard (-100) AND the
+    // nearest (-20) in the group, so a shard-keyed member comparison is
+    // non-transitive — different shards of p0 disagree about p1 — and
+    // `Array.sort` may then resolve it any way it likes.
     const wrapper = new THREE.Group();
     wrapper.userData.kind = 'partition';
-    const p0 = makeMesh('p0', new THREE.Vector3(0, 0, -10), 5);
-    const p1 = makeMesh('p1', new THREE.Vector3(0, 0, -50), 5);
+    const p0 = makeMesh('p0', new THREE.Vector3(0, 0, -60), 40);
+    const p1 = makeMesh('p1', new THREE.Vector3(0, 0, -45), 5);
     p0.userData.partIndex = 0;
     p1.userData.partIndex = 1;
     wrapper.add(p0, p1);
     wrapper.updateMatrixWorld(true);
 
-    collectRenderOrderSlot(p0, IDENTITY_MV, CAM_POS, shardsSpanning(p0, 2, -100, -1));
-    collectRenderOrderSlot(p1, IDENTITY_MV, CAM_POS, shardsSpanning(p1, 2, -52, -48));
+    collectRenderOrderSlot(p0, IDENTITY_MV, CAM_POS, shardsSpanning(p0, 4, -100, -20));
+    collectRenderOrderSlot(p1, IDENTITY_MV, CAM_POS, shardsSpanning(p1, 4, -50, -40));
     assignGlobalRenderOrder();
 
-    const p1Max = Math.max(p1.renderOrder, ...p1.children.map((c) => c.renderOrder));
-    const p0Min = Math.min(p0.renderOrder, ...p0.children.map((c) => c.renderOrder));
-    expect(p1Max, 'the farther NODE draws first, whole').toBeLessThan(p0Min);
+    const p0Max = Math.max(p0.renderOrder, ...p0.children.map((c) => c.renderOrder));
+    const p1Min = Math.min(p1.renderOrder, ...p1.children.map((c) => c.renderOrder));
+    expect(p0Max, 'the farther NODE draws first, whole').toBeLessThan(p1Min);
   });
 
   it('DROPS the containment override when both sides are sharded, and interleaves instead', () => {
@@ -256,6 +266,8 @@ describe('cross-node depth merge', () => {
       count: 1,
       boundsMin: new Float32Array(3),
       boundsMax: new Float32Array(3),
+      viewZMin: new Float32Array(1),
+      viewZMax: new Float32Array(1),
     };
     collectRenderOrderSlot(a, IDENTITY_MV, CAM_POS, degenerate);
     collectRenderOrderSlot(b, IDENTITY_MV, CAM_POS, degenerate);

@@ -48,15 +48,19 @@
 //! This kernel takes already-projected 3D centers (the projection stage's
 //! output), so `validate_ndim` / the 16-dimension cap are not involved.
 //!
-//! ## Per-shard bounds (cross-node depth ordering)
+//! ## Per-shard geometry (cross-node depth ordering)
 //!
 //! Optionally the kernel also reports, for each of `shard_count` contiguous
-//! equal-population ranges of the output ordering, the local-space AABB of the
-//! elements that range draws — see
-//! `docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md` §3.3 decision 3. Since
-//! the permutation is already back-to-front, a contiguous range of it is a depth
-//! interval, and the main thread re-projects these boxes every frame to order
-//! shards of DIFFERENT nodes against each other.
+//! equal-population ranges of the output ordering, both the local-space AABB of
+//! the elements that range draws AND that range's view-space z interval at this
+//! sort's pose — see `docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md` §3.3
+//! decision 3. Since the permutation is already back-to-front, a contiguous range
+//! of it is a depth interval, which is what lets the main thread order ranges of
+//! DIFFERENT nodes against each other.
+//!
+//! The VIEW-Z interval is the merge key; the box is only an extent (containment).
+//! `write_shard_bounds` explains at length why a re-projected box CANNOT serve as
+//! the key — it is the correction to a design that measurably popped.
 //!
 //! `shard_count == 0` skips the work entirely and leaves the output slices
 //! untouched, so an unsharded node pays nothing.
@@ -81,13 +85,43 @@ const DEPTH_SORT_BUCKETS: usize = 1 << 16;
 /// Maximum key value (`DEPTH_SORT_BUCKETS - 1` as f32 for normalization).
 const DEPTH_KEY_MAX: f32 = (DEPTH_SORT_BUCKETS - 1) as f32;
 
-/// Local-space AABB of the elements drawn by each contiguous equal-population
-/// range of `ordering`.
+/// Per-shard geometry for each contiguous equal-population range of `ordering`:
+/// a local-space AABB **and** the range's VIEW-space z interval at this sort's
+/// pose.
 ///
 /// `shard_bounds_min` / `shard_bounds_max` are `[shard_count * 3]` (x, y, z per
-/// shard). A shard with no elements — reachable when `count < shard_count` —
-/// keeps the empty-box sentinel (`min = +inf`, `max = -inf`), which the caller
-/// must read as "no usable bounds" rather than as a degenerate point.
+/// shard); `shard_view_z_min` / `shard_view_z_max` are `[shard_count]`. A shard
+/// with no elements — reachable when `count < shard_count` — keeps the empty
+/// sentinel (`min = +inf`, `max = -inf`), which the caller must read as "no
+/// usable bounds" rather than as a degenerate point.
+///
+/// ## Why the VIEW-Z interval is the merge key rather than the box
+///
+/// A shard is a thin slab perpendicular to the view axis AT THIS POSE. Its
+/// axis-aligned box is therefore thin along that axis but spans the whole node in
+/// the other two, so re-projecting the box from a rotated camera gives something
+/// FAT along the new view direction: adjacent shards' projected centres converge
+/// and the key degenerates. No local-space geometric summary avoids that, because
+/// the shard GROUPING is itself pose-dependent — a centroid degenerates exactly as
+/// the box does. A fresh key over a stale grouping is incoherent, so the key is
+/// taken from the pose the grouping was built at and held until the next sort
+/// rebuilds both. The merge output is then constant between re-sorts.
+///
+/// **Honest scope**: this makes the key exact and pose-consistent, and it is the
+/// right key on those grounds. It did NOT measurably change the popping it was
+/// first written to fix — swapping back to the re-projected box gives identical
+/// per-frame numbers on real data (neuromast, two volumetric nodes: spikiness
+/// 1.07 either way). The dominant cause of that popping is elsewhere: shard
+/// COUNT versus how finely the two nodes interleave in depth. Two co-extensive,
+/// finely interleaved nodes have shard intervals that overlap almost completely
+/// at practical counts, so the imposed order is near-arbitrary and flaps; raising
+/// the count until the intervals separate removes it (measured on the adversarial
+/// two-comb fixture: median per-frame change 8.18 at 16 shards, 4.97 at 256,
+/// against a 4.34 unsharded baseline). Spec §4 rule 3 describes deriving the
+/// count from the overlap extent; the policy does not yet implement it.
+///
+/// `z_view` is pass 1's per-element view-space z, indexed by ELEMENT (not by draw
+/// slot), so it is read through `ordering`.
 ///
 /// Non-finite centers are handled ASYMMETRICALLY, on purpose:
 ///
@@ -105,14 +139,23 @@ const DEPTH_KEY_MAX: f32 = (DEPTH_SORT_BUCKETS - 1) as f32;
 /// (`f32::min(NaN, 65535.0) == 65535`), so a NaN center lands in the LAST shard.
 fn write_shard_bounds(
     centers3: &[f32],
+    z_view: &[f32],
     ordering: &[u32],
     count: usize,
     shard_count: usize,
     shard_bounds_min: &mut [f32],
     shard_bounds_max: &mut [f32],
+    shard_view_z_min: &mut [f32],
+    shard_view_z_max: &mut [f32],
 ) {
     if shard_count == 0 {
         return;
+    }
+    for slot in shard_view_z_min.iter_mut().take(shard_count) {
+        *slot = f32::INFINITY;
+    }
+    for slot in shard_view_z_max.iter_mut().take(shard_count) {
+        *slot = f32::NEG_INFINITY;
     }
     for slot in shard_bounds_min.iter_mut().take(shard_count * 3) {
         *slot = f32::INFINITY;
@@ -137,9 +180,20 @@ fn write_shard_bounds(
         let (mut min_x, mut min_y, mut min_z) = (f32::INFINITY, f32::INFINITY, f32::INFINITY);
         let (mut max_x, mut max_y, mut max_z) =
             (f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+        let mut min_zv = f32::INFINITY;
+        let mut max_zv = f32::NEG_INFINITY;
         for &element in &ordering[lo..hi] {
             let base = element as usize * 3;
             let (x, y, z) = (centers3[base], centers3[base + 1], centers3[base + 2]);
+            // VIEW-space z at THIS sort's pose — the shard's true depth interval,
+            // and the only sound cross-node merge key (see the fn doc).
+            let zv = z_view[element as usize];
+            if zv < min_zv {
+                min_zv = zv;
+            }
+            if zv > max_zv {
+                max_zv = zv;
+            }
             // Plain comparisons, which are false for NaN — so a NaN center is
             // EXCLUDED from the box rather than poisoning it (see the fn doc).
             // `f32::min`/`f32::max` would behave the same here; the explicit form
@@ -171,6 +225,8 @@ fn write_shard_bounds(
         shard_bounds_max[out] = max_x;
         shard_bounds_max[out + 1] = max_y;
         shard_bounds_max[out + 2] = max_z;
+        shard_view_z_min[s] = min_zv;
+        shard_view_z_max[s] = max_zv;
     }
 }
 
@@ -187,6 +243,8 @@ fn write_shard_bounds(
 ///   bounds for; `0` skips that work and leaves the two slices untouched
 /// - `shard_bounds_min` / `shard_bounds_max`: Output local-space AABBs
 ///   `[shard_count * 3]` — see {@link write_shard_bounds}
+/// - `shard_view_z_min` / `shard_view_z_max`: Output per-shard VIEW-space z
+///   interval `[shard_count]` at this sort's pose — the cross-node merge key
 ///
 /// # Returns
 /// Number of splats placed via depth keys, or `0` when the identity
@@ -203,6 +261,8 @@ pub fn sort_splats_by_depth(
     shard_count: usize,
     shard_bounds_min: &mut [f32],
     shard_bounds_max: &mut [f32],
+    shard_view_z_min: &mut [f32],
+    shard_view_z_max: &mut [f32],
 ) -> u32 {
     // Undersized buffers are SAFE in release too: the debug_asserts
     // below only add friendlier messages — Rust's slice bounds checks
@@ -244,11 +304,14 @@ pub fn sort_splats_by_depth(
         // without checking the return value must not see a stale previous frame.
         write_shard_bounds(
             centers3,
+            &[],
             ordering,
             0,
             shard_count,
             shard_bounds_min,
             shard_bounds_max,
+            shard_view_z_min,
+            shard_view_z_max,
         );
         return 0;
     }
@@ -286,11 +349,14 @@ pub fn sort_splats_by_depth(
         }
         write_shard_bounds(
             centers3,
+            &z_scratch,
             ordering,
             count,
             shard_count,
             shard_bounds_min,
             shard_bounds_max,
+            shard_view_z_min,
+            shard_view_z_max,
         );
         return 0;
     }
@@ -331,11 +397,14 @@ pub fn sort_splats_by_depth(
 
     write_shard_bounds(
         centers3,
+        &z_scratch,
         ordering,
         count,
         shard_count,
         shard_bounds_min,
         shard_bounds_max,
+        shard_view_z_min,
+        shard_view_z_max,
     );
 
     count as u32
@@ -376,16 +445,30 @@ mod tests {
             0,
             &mut [],
             &mut [],
+            &mut [],
+            &mut [],
         );
         (ordering, sorted)
     }
 
     /// Sort + report per-shard bounds. Returns `(ordering, sorted, min, max)`.
     fn sort_sharded(zs: &[f32], shard_count: usize) -> (Vec<u32>, u32, Vec<f32>, Vec<f32>) {
+        let (ordering, sorted, min, max, _, _) = sort_sharded_full(zs, shard_count);
+        (ordering, sorted, min, max)
+    }
+
+    /// Sort + report per-shard boxes AND view-z intervals.
+    #[allow(clippy::type_complexity)]
+    fn sort_sharded_full(
+        zs: &[f32],
+        shard_count: usize,
+    ) -> (Vec<u32>, u32, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
         let centers = centers_with_z(zs);
         let mut ordering = vec![u32::MAX; zs.len()];
         let mut min = vec![0.0f32; shard_count * 3];
         let mut max = vec![0.0f32; shard_count * 3];
+        let mut zmin = vec![0.0f32; shard_count];
+        let mut zmax = vec![0.0f32; shard_count];
         let sorted = sort_splats_by_depth(
             &centers,
             &IDENTITY_MV,
@@ -394,8 +477,10 @@ mod tests {
             shard_count,
             &mut min,
             &mut max,
+            &mut zmin,
+            &mut zmax,
         );
-        (ordering, sorted, min, max)
+        (ordering, sorted, min, max, zmin, zmax)
     }
 
     fn assert_is_permutation(ordering: &[u32], count: usize) {
@@ -509,7 +594,17 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let mut ordering: Vec<u32> = vec![];
-        let sorted = sort_splats_by_depth(&[], &IDENTITY_MV, &mut ordering, 0, 0, &mut [], &mut []);
+        let sorted = sort_splats_by_depth(
+            &[],
+            &IDENTITY_MV,
+            &mut ordering,
+            0,
+            0,
+            &mut [],
+            &mut [],
+            &mut [],
+            &mut [],
+        );
         assert_eq!(sorted, 0);
     }
 
@@ -573,7 +668,17 @@ mod tests {
         mv[14] = -5.0;
         let centers = centers_with_z(&[2.0, -2.0, 4.0]);
         let mut ordering = vec![u32::MAX; 3];
-        let sorted = sort_splats_by_depth(&centers, &mv, &mut ordering, 3, 0, &mut [], &mut []);
+        let sorted = sort_splats_by_depth(
+            &centers,
+            &mv,
+            &mut ordering,
+            3,
+            0,
+            &mut [],
+            &mut [],
+            &mut [],
+            &mut [],
+        );
         assert_eq!(sorted, 3);
         // View z: -3, -7, -1 -> back-to-front: 1, 0, 2.
         assert_eq!(ordering, vec![1, 0, 2]);
@@ -596,7 +701,17 @@ mod tests {
             5.0, 0.0, 0.0, // view z = -5
         ];
         let mut ordering = vec![u32::MAX; 3];
-        let sorted = sort_splats_by_depth(&centers, &mv, &mut ordering, 3, 0, &mut [], &mut []);
+        let sorted = sort_splats_by_depth(
+            &centers,
+            &mv,
+            &mut ordering,
+            3,
+            0,
+            &mut [],
+            &mut [],
+            &mut [],
+            &mut [],
+        );
         assert_eq!(sorted, 3);
         assert_eq!(ordering, vec![1, 2, 0]);
     }
@@ -610,6 +725,8 @@ mod tests {
         let mut ordering = vec![u32::MAX; 4];
         let mut min = vec![7.0f32; 3];
         let mut max = vec![9.0f32; 3];
+        let mut zmin = vec![7.0f32; 1];
+        let mut zmax = vec![9.0f32; 1];
         sort_splats_by_depth(
             &centers,
             &IDENTITY_MV,
@@ -618,9 +735,13 @@ mod tests {
             0,
             &mut min,
             &mut max,
+            &mut zmin,
+            &mut zmax,
         );
         assert_eq!(min, vec![7.0, 7.0, 7.0]);
         assert_eq!(max, vec![9.0, 9.0, 9.0]);
+        assert_eq!(zmin, vec![7.0]);
+        assert_eq!(zmax, vec![9.0]);
     }
 
     #[test]
@@ -676,6 +797,71 @@ mod tests {
     }
 
     #[test]
+    fn test_shard_view_z_intervals_are_ordered_and_contiguous() {
+        // The cross-node merge key. Shards are contiguous ranges of a
+        // back-to-front permutation, so their view-z intervals must ascend and
+        // tile the node's whole depth range with no gap — that is what makes
+        // them comparable against ANOTHER node's intervals.
+        let zs = [-1.0, -8.0, -3.0, -6.0, -2.0, -7.0, -4.0, -5.0];
+        let (_, sorted, _, _, zmin, zmax) = sort_sharded_full(&zs, 4);
+        assert_eq!(sorted, 8);
+        for s in 0..4 {
+            assert!(zmin[s] <= zmax[s], "shard {s} interval is inverted");
+        }
+        for s in 1..4 {
+            assert!(
+                zmin[s] >= zmax[s - 1],
+                "shard {s} starts at {} before shard {} ends at {}",
+                zmin[s],
+                s - 1,
+                zmax[s - 1]
+            );
+        }
+        // Farthest first, and the union covers the input range.
+        assert_eq!(zmin[0], -8.0);
+        assert_eq!(zmax[3], -1.0);
+    }
+
+    #[test]
+    fn test_shard_view_z_uses_the_view_axis_not_world_z() {
+        // The key must come from the SORT POSE. Under a 90-degree rotation about
+        // y, view z is derived from world x — so the intervals must follow x,
+        // which a world-space box could not tell you.
+        let mv: [f32; 16] = [
+            0.0, 0.0, -1.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        // Centers along x only: view z = -x, so x=8 is farthest.
+        let mut centers = Vec::new();
+        for x in [1.0f32, 8.0, 3.0, 6.0] {
+            centers.extend_from_slice(&[x, 0.0, 0.0]);
+        }
+        let mut ordering = vec![u32::MAX; 4];
+        let mut min = vec![0.0f32; 6];
+        let mut max = vec![0.0f32; 6];
+        let mut zmin = vec![0.0f32; 2];
+        let mut zmax = vec![0.0f32; 2];
+        let sorted = sort_splats_by_depth(
+            &centers,
+            &mv,
+            &mut ordering,
+            4,
+            2,
+            &mut min,
+            &mut max,
+            &mut zmin,
+            &mut zmax,
+        );
+        assert_eq!(sorted, 4);
+        // Back-to-front by view z: x = 8, 6, 3, 1 -> view z -8, -6, -3, -1.
+        assert_eq!(ordering, vec![1, 3, 2, 0]);
+        assert_eq!((zmin[0], zmax[0]), (-8.0, -6.0));
+        assert_eq!((zmin[1], zmax[1]), (-3.0, -1.0));
+    }
+
+    #[test]
     fn test_shard_bounds_empty_shard_keeps_sentinel() {
         // More shards than elements: the tail shards get the empty-box sentinel,
         // which the caller must read as "no usable bounds".
@@ -712,8 +898,19 @@ mod tests {
         let mut ordering: Vec<u32> = vec![];
         let mut min = vec![7.0f32; 6];
         let mut max = vec![9.0f32; 6];
-        let sorted =
-            sort_splats_by_depth(&[], &IDENTITY_MV, &mut ordering, 0, 2, &mut min, &mut max);
+        let mut zmin = vec![7.0f32; 2];
+        let mut zmax = vec![9.0f32; 2];
+        let sorted = sort_splats_by_depth(
+            &[],
+            &IDENTITY_MV,
+            &mut ordering,
+            0,
+            2,
+            &mut min,
+            &mut max,
+            &mut zmin,
+            &mut zmax,
+        );
         assert_eq!(sorted, 0);
         assert_eq!(min, vec![f32::INFINITY; 6]);
         assert_eq!(max, vec![f32::NEG_INFINITY; 6]);
@@ -790,6 +987,8 @@ mod tests {
             1,
             &mut min,
             &mut max,
+            &mut [0.0f32],
+            &mut [0.0f32],
         );
         assert_eq!(min[0], f32::NEG_INFINITY);
         assert!(!min[0].is_finite());

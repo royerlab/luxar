@@ -206,7 +206,17 @@ describeIfWasm(
 
       const r = medianSpeedup(
         () =>
-          tsModule.sort_splats_by_depth(centers3, modelView, tsOut, SIZE, 0, noBounds, noBounds),
+          tsModule.sort_splats_by_depth(
+            centers3,
+            modelView,
+            tsOut,
+            SIZE,
+            0,
+            noBounds,
+            noBounds,
+            noBounds,
+            noBounds
+          ),
         () =>
           wasmModule!.sort_splats_by_depth(
             centers3,
@@ -214,6 +224,8 @@ describeIfWasm(
             wasmOut,
             SIZE,
             0,
+            noBounds,
+            noBounds,
             noBounds,
             noBounds
           )
@@ -233,6 +245,8 @@ describeIfWasm(
               wasmOut,
               SIZE,
               0,
+              noBounds,
+              noBounds,
               noBounds,
               noBounds
             )
