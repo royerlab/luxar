@@ -289,8 +289,8 @@ jobs:
         name: Route hosted if the queue scanner cannot be checked out
         if: steps.guard.outputs.label == '' && steps.scanner-checkout.outcome != 'success'
         run: |
-          echo "queue scanner checkout failed -> routing to ubuntu-latest"
-          echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+          echo "queue scanner checkout failed -> routing to obsidian (no paid fallback)"
+          echo "label=obsidian" >> "$GITHUB_OUTPUT"
 
       - id: pick
         if: steps.guard.outputs.label == '' && steps.scanner-checkout.outcome == 'success'
@@ -301,6 +301,17 @@ jobs:
           MAX_QUEUED_OBSIDIAN: ${{ vars.LUXAR_CI_MAX_QUEUED_OBSIDIAN }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          # COST GUARD: same-repo CI is obsidian-ONLY -- it must NEVER auto-fall-back
+          # to paid GitHub runners (too expensive). Forks and LUXAR_CI_FORCE_HOSTED=1
+          # (both handled in the guard step above) are the SOLE paid routes. If
+          # obsidian is saturated the job QUEUES on the obsidian label; if obsidian is
+          # DOWN the job waits (up to GitHub's 24h ceiling) rather than spilling to paid
+          # -- flip LUXAR_CI_FORCE_HOSTED=1 as a manual break-glass during an extended
+          # outage, then clear it. (The capacity/queue-scan logic below is now
+          # unreachable and can be removed in a follow-up.)
+          echo "same-repo run -> obsidian only (no automatic paid fallback)"
+          echo "label=obsidian" >> "$GITHUB_OUTPUT"
+          exit 0
           now=$(date +%s)
           hb=${HEARTBEAT:-0}
           if ! echo "$hb" | grep -qE '^[0-9]+$'; then hb=0; fi
