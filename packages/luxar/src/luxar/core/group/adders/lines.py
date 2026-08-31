@@ -1114,10 +1114,15 @@ def add_lines_substitutive_lod_wrapper_impl(
     # cross-geometry policy change, not part of suppression scoping.
     # A default ladder's first chunk is a whole-node download budget, so the
     # slice count is what keeps it from arriving divided on an nD node (#2374).
-    slices = resident_slice_count(group._find_scene(), vert_arr)
+    slices = (
+        resident_slice_count(group._find_scene(), vert_arr)
+        if additive_lod is None
+        else 1
+    )
     coarse_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_lines,
+        elements=int(vert_arr.shape[0]),
         name=name,
         slices=slices,
     )
@@ -1162,6 +1167,7 @@ def add_lines_substitutive_lod_wrapper_impl(
     finest_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_lines,
+        elements=int(vert_arr.shape[0]),
         name=name,
         slices=slices,
         suppress_reason=finest_suppress_reason,

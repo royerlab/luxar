@@ -402,6 +402,45 @@ class TestSubstitutiveComposedWithAdditive:
         assert subs == [f"additive_{i}" for i in range(n_sub)]
         assert sum(int(finest[s].attrs["n_points"]) for s in subs) == n
 
+    def test_default_ladder_uses_real_hidden_slice_count(self, tmp_path) -> None:
+        n_slices = 30
+        points_per_slice = 2_000
+        n = n_slices * points_per_slice
+        rng = np.random.default_rng(7)
+        positions = np.column_stack(
+            [
+                rng.normal(size=(n, 3)),
+                np.repeat(np.arange(n_slices), points_per_slice),
+            ]
+        ).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("time", display=False, discrete=True),
+            ]
+        )
+        out = tmp_path / "sliced.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "cloud",
+                positions,
+                substitutive_lod=dict(
+                    compression_factor=2_000,
+                    levels=1,
+                    method="greedy",
+                    device="cpu",
+                    seed=0,
+                ),
+            )
+
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        finest = grp[self._children(grp)[-1]]
+        assert int(finest.attrs.get("n_additive_sublods", 1)) > 1
+        assert int(finest["additive_0"].attrs["n_points"]) == 39_062
+
     def test_coarse_levels_are_laddered_too(self, composed) -> None:
         # Full symmetry with the gsplat pyramid, which ladders every level.
         # A coarse level smaller than one stream chunk stays a flat leaf —

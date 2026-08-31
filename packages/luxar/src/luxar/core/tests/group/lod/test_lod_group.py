@@ -807,6 +807,7 @@ class TestComposeAdditiveUnderSubstitutive:
             result = compose_additive_under_substitutive(
                 None,
                 resolve=self._resolve,
+                elements=100,
                 name="node",
                 slices=1,
                 suppress_reason="image_labels is set",
@@ -818,6 +819,7 @@ class TestComposeAdditiveUnderSubstitutive:
             result = compose_additive_under_substitutive(
                 {"method": "random"},
                 resolve=self._resolve,
+                elements=100,
                 name="node",
                 slices=1,
                 suppress_reason="image_labels is set",
@@ -829,6 +831,7 @@ class TestComposeAdditiveUnderSubstitutive:
             result = compose_additive_under_substitutive(
                 {"method": "random"},
                 resolve=self._resolve,
+                elements=100,
                 name="node",
                 slices=1,
                 suppress_reason="image_labels is set",
@@ -843,6 +846,7 @@ class TestComposeAdditiveUnderSubstitutive:
         result = compose_additive_under_substitutive(
             None,
             resolve=self._resolve,
+            elements=100,
             name="node",
             slices=1,
             suppress_reason="image_labels is set",
@@ -864,6 +868,7 @@ class TestComposeAdditiveUnderSubstitutive:
             compose_additive_under_substitutive(
                 True,
                 resolve=self._resolve,
+                elements=100,
                 name="node",
                 slices=1,
                 suppress_reason="line_type='indexed' edges are not preserved",
@@ -877,6 +882,7 @@ class TestComposeAdditiveUnderSubstitutive:
             result = compose_additive_under_substitutive(
                 False,
                 resolve=self._resolve,
+                elements=100,
                 name="node",
                 slices=1,
                 suppress_reason="image_labels is set",
@@ -1134,19 +1140,31 @@ def test_default_composed_ladder_refuses_to_be_sized_without_a_slice_count():
         default_composed_additive_lod()  # type: ignore[call-arg]
 
 
-def test_default_composed_ladder_scales_its_first_rung_by_the_slice_count():
+def test_default_composed_ladder_uses_a_resident_share_without_losing_the_ladder():
     from luxar.core.group.lod.group import default_composed_additive_lod
-    from luxar.utils.lod_breakpoints import parse_stream_chunk
+    from luxar.utils.lod_breakpoints import parse_stream_chunk, stream_cuts
 
-    unsliced = parse_stream_chunk(default_composed_additive_lod(slices=1)["counts"])
-    sliced = parse_stream_chunk(default_composed_additive_lod(slices=6)["counts"])
+    unsliced = parse_stream_chunk(
+        default_composed_additive_lod(elements=60_000, slices=1)["counts"]
+    )
+    sliced = parse_stream_chunk(
+        default_composed_additive_lod(elements=60_000, slices=30)["counts"]
+    )
 
     # slices=1 reproduces the historical whole-node value exactly, so an
     # unsliced node's output is unchanged by this plumbing.
     assert unsliced == 39_062
-    # ...and a 6-way sliced node gets 6x, so each resident slice still receives
-    # the ~200 ms first paint the budget was asking for.
-    assert sliced == 6 * unsliced
+    # A sliced node keeps a useful resident share without scaling the chunk past
+    # the node and silently collapsing its ladder to one all-at-once commit.
+    assert sliced == unsliced
+    assert len(stream_cuts(60_000, sliced)) > 1
+
+
+def test_default_composed_ladder_rejects_a_share_over_the_commit_ceiling():
+    from luxar.core.group.lod.group import default_composed_additive_lod
+
+    with pytest.raises(ValueError, match="12.5% first rung.*900,000-element"):
+        default_composed_additive_lod(elements=7_200_001, slices=2)
 
 
 def test_resident_slice_count_counts_occurring_combinations():

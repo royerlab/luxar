@@ -1469,22 +1469,18 @@ def resident_slice_count(scene: Any, positions: Any) -> int:
     dims = getattr(scene, "dimensions", None) if scene is not None else None
     if dims is None or getattr(dims, "ndim", None) != arr.shape[1]:
         return 1
-    displayed = {d for d in dims.displayed if 0 <= d < arr.shape[1]}
-    hidden = [d for d in range(arr.shape[1]) if d not in displayed]
-    return hidden_coordinate_count(arr, hidden)
+    return hidden_coordinate_count(arr, dims.non_displayed)
 
 
-def default_composed_additive_lod(*, slices: int) -> Dict[str, Any]:
+def default_composed_additive_lod(*, elements: int, slices: int) -> Dict[str, Any]:
     """The ladder a substitutive Points/Lines level gets when none is requested.
 
-    ``slices`` is REQUIRED, and required rather than defaulted deliberately. The
-    download budget below sizes a first chunk for the WHOLE node, but the viewer
-    draws one hidden coordinate at a time, so on a sliced node that chunk arrives
-    divided by the slice count — which is how a 500-timepoint gsplat leaf came to
-    paint 42 splats of a 166,443-splat frame and play as an empty screen
-    (#2374/#2376). This function used to take NO arguments, so it could not know
-    and its callers never had to think about it. Pass
-    :func:`resident_slice_count`, or ``1`` for a node known to be unsliced.
+    ``elements`` and ``slices`` are REQUIRED rather than defaulted deliberately.
+    The download budget below sizes a first chunk for the WHOLE node, but the
+    viewer draws one hidden coordinate at a time. A sliced node therefore gets
+    at least one eighth of the node in rung 0, matching the demo authoring policy
+    and keeping the resident share stable without scaling the chunk past the node
+    and silently removing the ladder (#2374/#2376).
 
     A bandwidth-derived ``stream:`` ladder, NOT an equal-count one: an
     equal-count split into 4 still ends with an N/4-sized commit, which on a
@@ -1503,7 +1499,9 @@ def default_composed_additive_lod(*, slices: int) -> Dict[str, Any]:
     """
     from ....utils.lod_breakpoints import (
         DEFAULT_BANDWIDTH_MBPS,
-        scaled_streaming_chunk,
+        DEFAULT_MAX_ADDITIVE_COMMIT,
+        DEFAULT_SLICED_LADDER_MAX_DEPTH,
+        sliced_ladder_first_chunk,
         streaming_chunk_splats,
     )
 
@@ -1512,7 +1510,19 @@ def default_composed_additive_lod(*, slices: int) -> Dict[str, Any]:
         DEFAULT_BANDWIDTH_MBPS,
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
     )
-    chunk = scaled_streaming_chunk(whole_node, slice_count=slices)
+    chunk = sliced_ladder_first_chunk(
+        whole_node,
+        elements=elements,
+        slices=slices,
+        max_depth=DEFAULT_SLICED_LADDER_MAX_DEPTH,
+    )
+    if slices > 1 and chunk > DEFAULT_MAX_ADDITIVE_COMMIT:
+        raise ValueError(
+            f"Sliced node with {elements:,} elements cannot deliver its "
+            f"{100 / DEFAULT_SLICED_LADDER_MAX_DEPTH:g}% first rung within the "
+            f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. Partition "
+            "the node or supply an explicit additive_lod ladder."
+        )
     return {"method": "random", "counts": f"stream:{chunk}", "seed": 0}
 
 
@@ -1563,6 +1573,7 @@ def compose_additive_under_substitutive(
     additive_lod: Any,
     *,
     resolve: Callable[[Any], Optional[Dict[str, Any]]],
+    elements: int,
     name: str,
     slices: int,
     suppress_reason: Optional[str] = None,
@@ -1589,7 +1600,9 @@ def compose_additive_under_substitutive(
             is normalized through it, so the returned dict is idempotent under
             re-resolution — which is what makes it safe to hand straight to the
             PUBLIC ``add_points`` / ``add_lines`` for the finest child.
+        elements: Element count of the unsplit finest node.
         name: Node name, for messages.
+        slices: Number of occurring hidden coordinates in the node.
         suppress_reason: When set, no ladder is built and the reason is
             reported. Used for the cases where laddering would lose data or be a
             no-op rather than a win. A *default* ladder (``additive_lod`` left as
@@ -1622,7 +1635,7 @@ def compose_additive_under_substitutive(
     spec = (
         additive_lod
         if additive_lod is not None
-        else default_composed_additive_lod(slices=slices)
+        else default_composed_additive_lod(elements=elements, slices=slices)
     )
     return resolve(spec)
 

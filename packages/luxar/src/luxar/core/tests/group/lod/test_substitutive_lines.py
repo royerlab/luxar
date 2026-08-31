@@ -300,6 +300,42 @@ class TestSubstitutiveLinesComposedWithAdditive:
             == n_vertices
         )
 
+    def test_default_ladder_uses_real_hidden_slice_count(self, tmp_path) -> None:
+        n_slices = 30
+        segments_per_slice = 1_000
+        n_segments = n_slices * segments_per_slice
+        verts = _segments(n_segments, seed=7)
+        times = np.repeat(np.arange(n_slices), segments_per_slice * 2)
+        vertices = np.column_stack([verts, times]).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("time", display=False, discrete=True),
+            ]
+        )
+        out = tmp_path / "sliced.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_lines(
+                "curves",
+                vertices,
+                0.8,
+                substitutive_lod=dict(
+                    compression_factor=2_000,
+                    levels=1,
+                    method="greedy",
+                    device="cpu",
+                    seed=0,
+                ),
+            )
+
+        grp = zarr.open(str(out), mode="r")["curves"]
+        finest = grp[self._children(grp)[-1]]
+        assert int(finest.attrs.get("n_additive_sublods", 1)) > 1
+        assert int(finest["additive_0"].attrs["n_vertices"]) == 39_062
+
     def test_every_level_holds_whole_polylines(self, composed) -> None:
         # The invariant that makes a partial load renderable: a level must never
         # contain half a polyline, or its segment indices dangle.

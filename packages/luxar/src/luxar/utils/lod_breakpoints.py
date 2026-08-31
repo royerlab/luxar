@@ -54,6 +54,10 @@ DEFAULT_CAPPED_FIRST_CHUNK = 2_000
 #: (``DEFAULT_MAX_LEVEL_ELEMENTS``), with margin.
 DEFAULT_MAX_ADDITIVE_COMMIT = 900_000
 
+#: Deepest default ladder for a sliced node: rung 0 carries at least 1/8 of
+#: the node, hence the same share of every resident slice under uniform mixing.
+DEFAULT_SLICED_LADDER_MAX_DEPTH = 8
+
 #: Hard cap on the number of levels a ``stream:<c>`` ladder may produce. The
 #: geometric doubling schedule gives ~log2(N/c) levels, so 16 covers c·2^15
 #: splats (≈ 460 M at c=14 k) — far beyond realistic leaves. On hitting the cap
@@ -102,6 +106,27 @@ def scaled_streaming_chunk(
     return max(1, round(first_chunk * slice_count / part_count))
 
 
+def sliced_ladder_first_chunk(
+    first_chunk: int,
+    *,
+    elements: int,
+    slices: int,
+    max_depth: int = DEFAULT_SLICED_LADDER_MAX_DEPTH,
+) -> int:
+    """Floor a sliced node's first chunk at a useful resident share."""
+    if first_chunk < 1:
+        raise ValueError(f"first_chunk must be >= 1; got {first_chunk}")
+    if elements < 1:
+        raise ValueError(f"elements must be >= 1; got {elements}")
+    if slices < 1:
+        raise ValueError(f"slices must be >= 1; got {slices}")
+    if max_depth < 1:
+        raise ValueError(f"max_depth must be >= 1; got {max_depth}")
+    if slices == 1:
+        return first_chunk
+    return max(first_chunk, -(-elements // max_depth))
+
+
 def hidden_coordinate_count(positions: Any, hidden_cols: Sequence[int]) -> int:
     """How many distinct hidden coordinates a node's elements actually occupy.
 
@@ -130,7 +155,12 @@ def hidden_coordinate_count(positions: Any, hidden_cols: Sequence[int]) -> int:
         return 1
     if any(not 0 <= c < arr.shape[1] for c in cols):
         return 1
-    return max(1, len(np.unique(arr[:, cols], axis=0)))
+    unique = (
+        np.unique(arr[:, cols[0]])
+        if len(cols) == 1
+        else np.unique(arr[:, cols], axis=0)
+    )
+    return max(1, len(unique))
 
 
 def parse_stream_chunk(spec: str) -> int:

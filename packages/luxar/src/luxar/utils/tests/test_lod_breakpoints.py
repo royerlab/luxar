@@ -16,12 +16,31 @@ from luxar.utils.lod_breakpoints import (
     DEFAULT_MAX_ADDITIVE_COMMIT,
     DEFAULT_STREAM_MAX_LEVELS,
     capped_stream_cuts,
+    hidden_coordinate_count,
     parse_stream_chunk,
     sibling_aware_stream_breakpoints,
     stream_cuts,
     streaming_chunk_splats,
     validate_element_breakpoints,
 )
+
+
+class TestHiddenCoordinateCount:
+    def test_counts_occurring_combinations_not_cardinality_product(self) -> None:
+        positions = [
+            [0.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
+            [1.0, 0.0],
+        ]
+        assert hidden_coordinate_count(positions, [0, 1]) == 3
+
+    def test_empty_positions_or_columns_are_unsliced(self) -> None:
+        assert hidden_coordinate_count([], [0]) == 1
+        assert hidden_coordinate_count([[1.0, 2.0]], []) == 1
+
+    def test_out_of_range_column_is_undeterminable(self) -> None:
+        assert hidden_coordinate_count([[1.0, 2.0]], [2]) == 1
 
 
 class TestStreamCuts:
