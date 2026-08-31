@@ -206,7 +206,8 @@ def decimate(
             aprint(f"Target {n_target:,} >= input {n_in:,} — returning input unchanged")
         return data
 
-    if method == "auto" and data.label_ids is not None:
+    label_override = method == "auto" and data.label_ids is not None
+    if label_override:
         chosen = "prefix"
         warnings.warn(
             "method='auto' selected 'prefix' because the input carries "
@@ -238,14 +239,20 @@ def decimate(
         # programmatic `decimate(..., verbose=False)` on stdout unbidden. The
         # CLI still shows it: `luxar`'s root callback installs
         # `install_arbol_warnings`, which renders warnings as arbol lines.
-        why = (
-            f" (method='auto' resolved to prefix: the request keeps "
-            f"{100.0 * n_target / n_in:.1f}% of the input, at or above the "
-            f"{100.0 * PREFIX_ABOVE_FRACTION:.0f}% crossover — pass "
-            f"method='merge' to force a merge)"
-            if method == "auto"
-            else ""
-        )
+        if label_override:
+            why = (
+                " (method='auto' resolved to prefix because the input carries "
+                "categorical channel 'label_ids')"
+            )
+        elif method == "auto":
+            why = (
+                f" (method='auto' resolved to prefix: the request keeps "
+                f"{100.0 * n_target / n_in:.1f}% of the input, at or above the "
+                f"{100.0 * PREFIX_ABOVE_FRACTION:.0f}% crossover — pass "
+                f"method='merge' to force a merge)"
+            )
+        else:
+            why = ""
         warnings.warn(
             f"coarsen_dims={sorted({int(d) for d in coarsen_dims})} is IGNORED "
             f"by the 'prefix' family{why}: a prefix keeps whole input splats at "
