@@ -408,6 +408,22 @@ class TestSaveGsplats:
         with pytest.raises(ValueError, match="missing ids.*1"):
             GSplatData.load(path)
 
+    def test_load_rejects_non_string_label_vocabulary_name(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "labels.gsplats.zarr"
+        GSplatData(
+            **create_test_splats_3d(2),
+            label_ids=np.array([0, 1], dtype=np.uint8),
+            label_vocabulary={0: "zero", 1: "one"},
+        ).save(path, ordering="none")
+
+        root = zarr.open_group(str(path), mode="a")
+        root.attrs["label_vocabulary"] = {"0": "zero", "1": 1}
+
+        with pytest.raises(TypeError, match="values must be strings"):
+            GSplatData.load(path)
+
     def test_save_rejects_label_ids_missing_from_vocabulary(
         self, tmp_path: Path
     ) -> None:

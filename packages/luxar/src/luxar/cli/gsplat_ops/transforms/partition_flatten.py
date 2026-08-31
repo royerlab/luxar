@@ -282,7 +282,7 @@ def _collect_streaming_metadata(
         vocabulary_raw = group.attrs.get("label_vocabulary")
         label_vocabulary = (
             {
-                int(label_id): str(name)
+                int(label_id): name
                 for label_id, name in dict(vocabulary_raw).items()
             }
             if vocabulary_raw is not None

@@ -148,7 +148,7 @@ def _slice_sublod(
     label_ids = decode("label_ids")
     vocabulary_raw = group.attrs.get("label_vocabulary")
     label_vocabulary = (
-        {int(label_id): str(name) for label_id, name in dict(vocabulary_raw).items()}
+        {int(label_id): name for label_id, name in dict(vocabulary_raw).items()}
         if vocabulary_raw is not None
         else None
     )
