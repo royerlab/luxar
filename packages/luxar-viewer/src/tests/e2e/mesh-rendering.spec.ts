@@ -247,10 +247,12 @@ test.describe('Mesh rendering', () => {
       stats.nonBlackPixels,
       `the canvas is blank — the mesh committed ${(await meshNodes(page)).length} nodes but drew nothing`
     ).toBeGreaterThan(1000);
-    // A loose upper bound too: the three nodes occupy a minority of the frame, so a
-    // full-canvas wash (a shader emitting a constant, or the clear colour going wrong)
-    // is a different failure that "> 1000" alone would pass.
-    expect(litFraction, 'the whole canvas is lit — this is a wash, not a mesh').toBeLessThan(0.5);
+    // A loose upper bound too: the surfaces occupy a minority of their projected
+    // bounds, so a constant-filled region is a different failure that "> 1000" alone
+    // would pass.
+    expect(litFraction, 'the geometry region is filled — this is a wash, not a mesh').toBeLessThan(
+      0.5
+    );
     // The brightest pixel must be a real shaded colour rather than a single stray
     // channel, which is what a NaN or an uninitialised varying tends to produce.
     const { r, g, b } = stats.brightest;

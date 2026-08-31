@@ -300,6 +300,7 @@ exports group into the categories below.
 | `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`.                                                                                                                                                                                                   |
 | `captureCanvasRGBA(page, selector?)`           | Decode one element screenshot into a full-frame RGBA buffer — whole-image / multi-region analysis on a single identical frame.                                                                                                                        |
 | `getElementPixelStats(page, ...)`              | Pixel-statistics rollup used by visual-regression-adjacent specs.                                                                                                                                                                                     |
+| `getProjectedGeometryRegion(page, nodeTypes)`  | Project visible geometry bounds through the live debug camera so pixel assertions exclude unrelated DOM chrome.                                                                                                                                       |
 
 ### Camera placement
 
