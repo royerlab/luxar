@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   advanceDollyPhase,
+  dollyAmplitudeChangeScale,
   dollyScale,
 } from '../../../../../controls/luxar-orbit-controls/math/auto-dolly';
 
@@ -123,5 +124,22 @@ describe('dollyScale', () => {
   it('is inert on a non-finite phase', () => {
     expect(dollyScale(NaN, 1, 0.15)).toBe(1);
     expect(dollyScale(0, Infinity, 0.15)).toBe(1);
+  });
+});
+
+describe('dollyAmplitudeChangeScale', () => {
+  it('keeps the same baseline when amplitude changes at a non-zero phase', () => {
+    const phase = Math.PI / 2;
+    const distanceAtOldAmplitude = 5 * dollyScale(0, phase, 0.15);
+    const compensated = distanceAtOldAmplitude * dollyAmplitudeChangeScale(phase, 0.15, 0.5);
+
+    expect(compensated).toBeCloseTo(5 * dollyScale(0, phase, 0.5), 12);
+  });
+
+  it('returns the current swing to its baseline when the new amplitude is zero', () => {
+    const phase = (3 * Math.PI) / 2;
+    const displaced = 5 * dollyScale(0, phase, 0.3);
+
+    expect(displaced * dollyAmplitudeChangeScale(phase, 0.3, 0)).toBeCloseTo(5, 12);
   });
 });

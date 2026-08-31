@@ -14,6 +14,10 @@
 
 const TWO_PI = Math.PI * 2;
 
+function logAmplitude(amplitude: number): number {
+  return Number.isFinite(amplitude) && amplitude > 0 ? Math.log1p(amplitude) : 0;
+}
+
 /**
  * Advance the oscillation phase by `deltaTime` seconds, wrapped to `[0, 2π)`.
  *
@@ -69,8 +73,16 @@ export function advanceDollyPhase(phase: number, deltaTime: number, period: numb
  * @returns The factor to multiply the orbit distance by (1 = no change).
  */
 export function dollyScale(fromPhase: number, toPhase: number, amplitude: number): number {
-  if (!Number.isFinite(amplitude) || amplitude <= 0) return 1;
   if (!Number.isFinite(fromPhase) || !Number.isFinite(toPhase)) return 1;
-  const logAmplitude = Math.log1p(amplitude);
-  return Math.exp(-logAmplitude * (Math.sin(toPhase) - Math.sin(fromPhase)));
+  return Math.exp(-logAmplitude(amplitude) * (Math.sin(toPhase) - Math.sin(fromPhase)));
+}
+
+/** Preserve the same baseline while changing amplitude at the current phase. */
+export function dollyAmplitudeChangeScale(
+  phase: number,
+  fromAmplitude: number,
+  toAmplitude: number
+): number {
+  if (!Number.isFinite(phase)) return 1;
+  return Math.exp((logAmplitude(fromAmplitude) - logAmplitude(toAmplitude)) * Math.sin(phase));
 }

@@ -31,14 +31,17 @@ function makeControls(focusTarget = new THREE.Vector3(0, 0, 0)) {
   const setCamera = vi.fn();
   const setControlTypeMock = vi.fn();
   const getFocusTarget = vi.fn(() => focusTarget.clone());
+  const returnAutoDollyToBaseline = vi.fn();
   return {
     controls: {
       setCamera,
       setControlType: setControlTypeMock,
       getFocusTarget,
+      returnAutoDollyToBaseline,
     } as unknown as ControlsManager,
     setCamera,
     setControlTypeMock,
+    returnAutoDollyToBaseline,
   };
 }
 
@@ -393,6 +396,21 @@ describe('setControlType', () => {
 
     expect(harness.setControlTypeMock).toHaveBeenCalledWith('ortho');
     expect(harness.controlsSetCamera).toHaveBeenCalledWith(harness.getCurrentCamera());
+  });
+
+  it('returns the dolly to baseline before deriving the replacement projection', () => {
+    const persp = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    persp.position.set(0, 0, 5 / 1.15);
+    const made = makeControls();
+    made.returnAutoDollyToBaseline.mockImplementation(() => persp.position.set(0, 0, 5));
+    const harness = makeCtx(persp, made.controls);
+
+    setControlType('ortho', harness.ctx);
+
+    const ortho = harness.getCurrentCamera() as THREE.OrthographicCamera;
+    expect(made.returnAutoDollyToBaseline).toHaveBeenCalledTimes(1);
+    expect(ortho.position.z).toBeCloseTo(5, 6);
+    expect(ortho.top - ortho.bottom).toBeCloseTo(2 * 5 * Math.tan(Math.PI / 6), 6);
   });
 
   it('triggers material update after the swap', () => {

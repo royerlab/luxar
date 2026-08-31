@@ -229,6 +229,8 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       return;
     }
 
+    this.returnAutoDollyToBaseline();
+
     // Save current camera state
     this.saveCameraState();
 
@@ -267,6 +269,13 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   /** Get current controls instance. */
   public getControls(): ActiveControls | null {
     return this.currentControls;
+  }
+
+  /** Remove any live dolly offset before the active controls are abandoned. */
+  public returnAutoDollyToBaseline(): void {
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.returnAutoDollyToBaseline();
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -178,6 +178,37 @@ describe('ControlsManager', () => {
       expect(controlsManager.getAutoDolly()).toBe(true);
     });
 
+    it('changing dolly amplitude mid-cycle preserves the baseline distance', () => {
+      controlsManager.setAutoDolly(true);
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      const baseline = camera.position.distanceTo(controls.target);
+
+      controls.update(2.5);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline / 1.15, 6);
+
+      controlsManager.setAutoDollyAmplitudePercent(50);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline / 1.5, 6);
+
+      controls.update(7.5);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline, 6);
+    });
+
+    it('returns a running dolly to baseline before rebuilding controls', () => {
+      controlsManager.setAutoDolly(true);
+      let controls = controlsManager.getControls() as LuxarOrbitControls;
+      const baseline = camera.position.distanceTo(controls.target);
+
+      controls.update(2.5);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline / 1.15, 6);
+
+      controlsManager.setControlType('fly');
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline, 6);
+
+      controlsManager.setControlType('orbit');
+      controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline, 6);
+    });
+
     it('isAutoDollyActive requires zoom, a real amplitude and a real period', () => {
       expect(controlsManager.isAutoDollyActive()).toBe(false);
 

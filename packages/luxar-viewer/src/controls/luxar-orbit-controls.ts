@@ -18,7 +18,7 @@ import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
 import { applyToCamera, initializeFromCamera } from './luxar-orbit-controls/camera-application';
 import { runUpdateStep, type OrbitUpdateCtx } from './luxar-orbit-controls/update';
 import { autoRotateAxisVector } from './luxar-orbit-controls/math/auto-rotate';
-import { dollyScale } from './luxar-orbit-controls/math/auto-dolly';
+import { dollyAmplitudeChangeScale, dollyScale } from './luxar-orbit-controls/math/auto-dolly';
 import { applyZoomScale } from './luxar-orbit-controls/math/zoom';
 import { clamp } from '../utils/clamp';
 import {
@@ -137,8 +137,18 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
    * `camera.zoom`; see `math/auto-dolly.ts`).
    */
   public autoDolly: boolean;
+  private _autoDollyAmplitude: number;
   /** Peak dolly swing as a fraction of distance (0.15 = ±15%). */
-  public autoDollyAmplitude: number;
+  public get autoDollyAmplitude(): number {
+    return this._autoDollyAmplitude;
+  }
+
+  public set autoDollyAmplitude(amplitude: number) {
+    const scale = dollyAmplitudeChangeScale(this.dollyPhase, this._autoDollyAmplitude, amplitude);
+    this._autoDollyAmplitude = amplitude;
+    if (!this.autoDolly || scale === 1) return;
+    this.applyDollyScale(scale);
+  }
   /** Seconds per full dolly oscillation. */
   public autoDollyPeriod: number;
   public screenSpacePanning: boolean;
@@ -231,7 +241,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.autoRotateSpeed = config?.autoRotateSpeed ?? 0.25;
     this.autoRotateAxis = config?.autoRotateAxis ?? DEFAULT_AUTO_ROTATE_AXIS;
     this.autoDolly = config?.autoDolly ?? false;
-    this.autoDollyAmplitude = config?.autoDollyAmplitude ?? DEFAULT_AUTO_DOLLY_AMPLITUDE;
+    this._autoDollyAmplitude = config?.autoDollyAmplitude ?? DEFAULT_AUTO_DOLLY_AMPLITUDE;
     this.autoDollyPeriod = config?.autoDollyPeriod ?? DEFAULT_AUTO_DOLLY_PERIOD;
     this.screenSpacePanning = config?.screenSpacePanning ?? true;
     this.trackballRadius = config?.trackballRadius ?? 1.0;
@@ -417,10 +427,14 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     if (!this.enableZoom || !Number.isFinite(phase)) return;
     const scale = dollyScale(this.dollyPhase, phase, this.autoDollyAmplitude);
     this.dollyPhase = phase;
-    if (scale === 1) return;
-    this.distance = applyZoomScale(this.camera, this.distance, scale, this.minZoom, this.maxZoom);
-    this.distance = clamp(this.distance, this.minDistance, this.maxDistance);
-    this.applyToCamera();
+    this.applyDollyScale(scale);
+  }
+
+  /** Remove the currently applied dolly offset and restart from phase zero. */
+  public returnAutoDollyToBaseline(): void {
+    const scale = dollyAmplitudeChangeScale(this.dollyPhase, this.autoDollyAmplitude, 0);
+    this.dollyPhase = 0;
+    this.applyDollyScale(scale);
   }
 
   /**
@@ -434,6 +448,13 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.zoomDelta = 0;
     this.rollDelta = 0;
     this.dollyPhase = 0;
+  }
+
+  private applyDollyScale(scale: number): void {
+    if (scale === 1) return;
+    this.distance = applyZoomScale(this.camera, this.distance, scale, this.minZoom, this.maxZoom);
+    this.distance = clamp(this.distance, this.minDistance, this.maxDistance);
+    this.applyToCamera();
   }
 
   /**
