@@ -3283,8 +3283,8 @@ def test_ktx2_texture_encodes_raw_rgba_and_stores_opaque_bytes(
     encoded = np.frombuffer(b"\xabKTX 20\xbb\r\n\x1a\nfixture", dtype=np.uint8)
     calls = []
 
-    def fake_encode(texture, mode, quality, color_space):
-        calls.append((texture.copy(), mode, quality, color_space))
+    def fake_encode(texture, mode, quality, rdo_l, zcmp, color_space):
+        calls.append((texture.copy(), mode, quality, rdo_l, zcmp, color_space))
         return encoded.copy()
 
     monkeypatch.setattr(
@@ -3296,8 +3296,10 @@ def test_ktx2_texture_encodes_raw_rgba_and_stores_opaque_bytes(
         tmp_path,
         texture=source,
         texture_encoding="ktx2",
-        texture_ktx2_mode="etc1s",
-        texture_ktx2_quality=200,
+        texture_ktx2_mode="uastc",
+        texture_ktx2_quality=3,
+        texture_ktx2_rdo_l=0.25,
+        texture_ktx2_zcmp=7,
     )
     assert np.array_equal(mesh.texture, encoded)
     assert mesh.metadata["texture_encoding"] == "ktx2"
@@ -3305,7 +3307,7 @@ def test_ktx2_texture_encodes_raw_rgba_and_stores_opaque_bytes(
     assert mesh.metadata["texture_height"] == 4
     assert mesh.metadata["texture_channels"] == 4
     assert len(calls) == 1
-    assert calls[0][1:] == ("etc1s", 200, "srgb")
+    assert calls[0][1:] == ("uastc", 3, 0.25, 7, "srgb")
     assert np.array_equal(calls[0][0][..., 3], source[..., 3])
 
 
@@ -3327,18 +3329,22 @@ def test_ktx2_encoder_defaults_to_uastc_and_preserves_rgba_input(
     monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
     rgba = np.zeros((2, 3, 4), dtype=np.uint8)
     rgba[..., 3] = [[0, 64, 255], [255, 64, 0]]
-    encoded = texture_writer._encode_ktx2(rgba, "uastc", None, "srgb")
+    encoded = texture_writer._encode_ktx2(
+        rgba, "uastc", None, None, None, "srgb"
+    )
     assert bytes(encoded) == b"ktx2"
-    assert seen["command"][1:8] == [
+    assert seen["command"][1:10] == [
         "--t2",
         "--genmipmap",
         "--encode",
         "uastc",
         "--uastc_quality",
         "2",
+        "--uastc_rdo_l",
+        "0.5",
         "--zcmp",
     ]
-    assert seen["command"][8:11] == ["3", "--assign_oetf", "srgb"]
+    assert seen["command"][10:13] == ["9", "--assign_oetf", "srgb"]
     header, pixels = seen["source"].split(b"ENDHDR\n", 1)
     assert b"TUPLTYPE RGB_ALPHA" in header
     assert np.array_equal(
@@ -3359,7 +3365,7 @@ def test_ktx2_encoder_writes_rgb_as_binary_ppm(monkeypatch) -> None:
     monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
     monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
     rgb = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
-    texture_writer._encode_ktx2(rgb, "uastc", None, "srgb")
+    texture_writer._encode_ktx2(rgb, "uastc", None, None, None, "srgb")
     header, pixels = seen["source"].split(b"255\n", 1)
     assert header == b"P6\n3 2\n"
     assert np.array_equal(np.frombuffer(pixels, dtype=np.uint8).reshape(rgb.shape), rgb)
@@ -3371,7 +3377,69 @@ def test_ktx2_encoder_missing_binary_has_actionable_fallback(monkeypatch) -> Non
     monkeypatch.setattr(texture_writer.shutil, "which", lambda name: None)
     with pytest.raises(RuntimeError, match=r"toktx.*raw.*jpeg"):
         texture_writer._encode_ktx2(
-            np.zeros((2, 2, 3), dtype=np.uint8), "uastc", None, "srgb"
+            np.zeros((2, 2, 3), dtype=np.uint8),
+            "uastc",
+            None,
+            None,
+            None,
+            "srgb",
+        )
+
+
+def test_ktx2_encoder_uses_supported_etc1s_spelling(monkeypatch) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        Path(command[-2]).write_bytes(b"ktx2")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
+    texture_writer._encode_ktx2(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        "etc1s",
+        None,
+        0.25,
+        7,
+        "srgb",
+    )
+    assert seen["command"][1:6] == [
+        "--t2",
+        "--genmipmap",
+        "--encode",
+        "etc1s",
+        "--qlevel",
+    ]
+    assert "--uastc_rdo_l" not in seen["command"]
+    assert "--zcmp" not in seen["command"]
+
+
+@pytest.mark.parametrize(
+    "rdo_l,zcmp,error_pattern",
+    [
+        (0.0, 9, r"texture_ktx2_rdo_l.*\[0.001, 10.0\]"),
+        (True, 9, r"texture_ktx2_rdo_l.*\[0.001, 10.0\]"),
+        (0.5, 0, r"texture_ktx2_zcmp.*\[1, 22\]"),
+        (0.5, True, r"texture_ktx2_zcmp.*\[1, 22\]"),
+    ],
+)
+def test_ktx2_encoder_rejects_invalid_uastc_rdo_options(
+    monkeypatch, rdo_l, zcmp, error_pattern
+) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    with pytest.raises(ValueError, match=error_pattern):
+        texture_writer._encode_ktx2(
+            np.zeros((2, 2, 3), dtype=np.uint8),
+            "uastc",
+            None,
+            rdo_l,
+            zcmp,
+            "srgb",
         )
 
 

@@ -1373,13 +1373,27 @@ def _validate_texture_codec_options(
     encoding: str,
     ktx2_mode: str,
     ktx2_quality: Optional[int],
+    ktx2_rdo_l: Optional[float],
+    ktx2_zcmp: Optional[int],
     context: str,
 ) -> None:
-    if encoding != "ktx2" and (ktx2_mode != "uastc" or ktx2_quality is not None):
+    if encoding != "ktx2" and (
+        ktx2_mode != "uastc"
+        or ktx2_quality is not None
+        or ktx2_rdo_l is not None
+        or ktx2_zcmp is not None
+    ):
         raise ValidationError(
-            f"{context}: texture_ktx2_mode/texture_ktx2_quality require "
+            f"{context}: texture_ktx2_* options require "
             "texture_encoding='ktx2'",
             "Remove the KTX2-only options or select texture_encoding='ktx2'",
+        )
+    if encoding == "ktx2" and ktx2_mode == "etc1s" and (
+        ktx2_rdo_l is not None or ktx2_zcmp is not None
+    ):
+        raise ValidationError(
+            f"{context}: texture_ktx2_rdo_l/texture_ktx2_zcmp apply only to UASTC",
+            "Remove the UASTC-only options or select texture_ktx2_mode='uastc'",
         )
 
 
@@ -1420,6 +1434,8 @@ def validate_texture_for_writing(
     context: str = "texture",
     ktx2_mode: str = "uastc",
     ktx2_quality: Optional[int] = None,
+    ktx2_rdo_l: Optional[float] = None,
+    ktx2_zcmp: Optional[int] = None,
 ) -> Tuple[int, int, int]:
     """Validate a mesh texture payload and resolve its declared dimensions.
 
@@ -1452,6 +1468,8 @@ def validate_texture_for_writing(
         context: Context for error messages.
         ktx2_mode: Basis encoding mode for KTX2 authoring.
         ktx2_quality: Optional mode-specific KTX2 quality.
+        ktx2_rdo_l: Optional UASTC RDO lambda.
+        ktx2_zcmp: Optional UASTC zstd level.
 
     Returns:
         ``(height, width, channels)``, resolved.
@@ -1472,7 +1490,9 @@ def validate_texture_for_writing(
             "HDR), 'ktx2' for uint8 RGB/RGBA input, or 'png'/'webp'/'jpeg' for "
             "encoded bytes",
         )
-    _validate_texture_codec_options(encoding, ktx2_mode, ktx2_quality, context)
+    _validate_texture_codec_options(
+        encoding, ktx2_mode, ktx2_quality, ktx2_rdo_l, ktx2_zcmp, context
+    )
 
     arr = np.asarray(texture)
     res_h, res_w, res_c = (

@@ -516,6 +516,8 @@ scene.add_mesh(
     texture_color_space: Literal["srgb", "linear"] = "srgb",
     texture_ktx2_mode: Literal["uastc", "etc1s"] = "uastc",
     texture_ktx2_quality: int | None = None,
+    texture_ktx2_rdo_l: float | None = None,
+    texture_ktx2_zcmp: int | None = None,
     shading: Literal["smooth", "flat", "none"] | None = None,
     double_sided: bool = True,
     labels: Sequence[str] | None = None,

@@ -52,7 +52,12 @@ from ..context import DatasetCtx
 
 
 def _encode_ktx2(
-    texture: NDArray[Any], mode: str, quality: Optional[int], color_space: str
+    texture: NDArray[Any],
+    mode: str,
+    quality: Optional[int],
+    rdo_l: Optional[float],
+    zcmp: Optional[int],
+    color_space: str,
 ) -> NDArray[np.uint8]:
     if mode not in {"uastc", "etc1s"}:
         raise ValueError("texture_ktx2_mode must be 'uastc' or 'etc1s'")
@@ -72,6 +77,26 @@ def _encode_ktx2(
         raise ValueError(
             f"texture_ktx2_quality must be an integer in [{limit[0]}, {limit[1]}] "
             f"for {mode}, got {resolved_quality!r}"
+        )
+    resolved_rdo_l = 0.5 if rdo_l is None else rdo_l
+    if (
+        isinstance(resolved_rdo_l, bool)
+        or not isinstance(resolved_rdo_l, (int, float))
+        or not 0.001 <= resolved_rdo_l <= 10.0
+    ):
+        raise ValueError(
+            "texture_ktx2_rdo_l must be a number in [0.001, 10.0] for uastc, "
+            f"got {resolved_rdo_l!r}"
+        )
+    resolved_zcmp = 9 if zcmp is None else zcmp
+    if (
+        isinstance(resolved_zcmp, bool)
+        or not isinstance(resolved_zcmp, int)
+        or not 1 <= resolved_zcmp <= 22
+    ):
+        raise ValueError(
+            "texture_ktx2_zcmp must be an integer in [1, 22] for uastc, "
+            f"got {resolved_zcmp!r}"
         )
 
     executable = shutil.which("toktx")
@@ -105,11 +130,13 @@ def _encode_ktx2(
                 "uastc",
                 "--uastc_quality",
                 str(resolved_quality),
+                "--uastc_rdo_l",
+                str(resolved_rdo_l),
                 "--zcmp",
-                "3",
+                str(resolved_zcmp),
             ]
         else:
-            command += ["--encode", "basis-lz", "--qlevel", str(resolved_quality)]
+            command += ["--encode", "etc1s", "--qlevel", str(resolved_quality)]
         command += ["--assign_oetf", color_space]
         command += [str(output), str(source)]
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
@@ -132,6 +159,8 @@ def write_texture(
     ctx: DatasetCtx,
     ktx2_mode: str = "uastc",
     ktx2_quality: Optional[int] = None,
+    ktx2_rdo_l: Optional[float] = None,
+    ktx2_zcmp: Optional[int] = None,
     encoded_ktx2: Optional[NDArray[np.uint8]] = None,
 ) -> Tuple[int, int, int]:
     """Write a mesh texture and return its resolved ``(height, width, channels)``.
@@ -148,6 +177,8 @@ def write_texture(
         ctx: Dataset write context (encoder, mode, compressor).
         ktx2_mode: Basis encoding mode for KTX2 authoring.
         ktx2_quality: Optional mode-specific KTX2 quality.
+        ktx2_rdo_l: Optional UASTC RDO lambda; defaults to 0.5.
+        ktx2_zcmp: Optional UASTC zstd level; defaults to 9.
         encoded_ktx2: Pre-encoded bytes supplied by the mesh writer after its
             failure-atomic preflight.
 
@@ -165,6 +196,8 @@ def write_texture(
         color_space,
         ktx2_mode=ktx2_mode,
         ktx2_quality=ktx2_quality,
+        ktx2_rdo_l=ktx2_rdo_l,
+        ktx2_zcmp=ktx2_zcmp,
     )
     arr = np.asarray(texture)
 
@@ -172,7 +205,14 @@ def write_texture(
         arr = (
             encoded_ktx2
             if encoded_ktx2 is not None
-            else _encode_ktx2(arr, ktx2_mode, ktx2_quality, color_space)
+            else _encode_ktx2(
+                arr,
+                ktx2_mode,
+                ktx2_quality,
+                ktx2_rdo_l,
+                ktx2_zcmp,
+                color_space,
+            )
         )
 
     if encoding != "raw":
