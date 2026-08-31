@@ -53,7 +53,9 @@ resident.
 
 **`load_gsplats()` / `load_default_gsplats()`** - Load splats from .gsplats.zarr
 
-Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks). Arrays are decoded from their stored encoding (quantization, broadcasting, etc.) to float32 — `label_ids` excepted, which decodes back to its stored unsigned integer dtype (a class id is exact, never a float).
+Transparently handles compressed formats (`.gsplats.zarr.zip`, `.gsplats.zarr.tar.gz`) by extracting to a temporary directory automatically (via the shared, hardened `_archive.extract_compressed_zarr` — it rejects links/devices, validates every member before extracting, and caps member count / total size to guard against path-traversal and archive-bomb attacks).
+
+Float arrays are decoded from their stored encoding (quantization, broadcasting, etc.) back to float32. The integer ones keep their stored dtype: `label_ids` comes back as the unsigned int it was written as (a class id is exact, never a float), and `colors` supplied as `uint8` come back as `uint8`.
 
 `load_gsplats()` requires a flat/matrix-shaped tree. `load_default_gsplats()`
 also accepts partition and nested trees by materializing their default-rendered
