@@ -1,8 +1,19 @@
+/**
+ * Exact GSplat categorical-label decoding and projection helpers.
+ *
+ * Exact unsigned ids remain decimal strings so `uint64` values survive JavaScript
+ * number precision. GPU-facing indices are compact and 1-based; 0 means unlabelled.
+ *
+ * @module data/gsplats/label-channel
+ */
+
+/** One exact categorical label entry. */
 export interface GSplatLabelEntry {
   id: string;
   name: string;
 }
 
+/** Compact per-splat indices paired with their exact vocabulary. */
 export interface GSplatLabelChannel {
   indices: Uint32Array;
   vocabulary: readonly GSplatLabelEntry[];
@@ -16,6 +27,7 @@ function exactIdAt(
   return typeof value === 'bigint' ? value.toString() : String(value);
 }
 
+/** Compact exact unsigned ids into stable 1-based GPU indices. */
 export function compactGSplatLabelIds(
   values: Uint8Array | Uint16Array | Uint32Array | BigUint64Array,
   vocabulary: Record<string, string>,
@@ -40,12 +52,13 @@ export function compactGSplatLabelIds(
   return { indices, vocabulary: entries };
 }
 
+/** Project compact label indices through the same visible-splat mapping as geometry. */
 export function projectGSplatLabelIndices(
   indices: Uint32Array,
   sourceIndices: Uint32Array | undefined,
   visibleCount: number
 ): Uint32Array {
-  if (!sourceIndices) return indices.subarray(0, visibleCount);
+  if (!sourceIndices) return indices.slice(0, visibleCount);
   const projected = new Uint32Array(visibleCount);
   for (let index = 0; index < visibleCount; index++) {
     const sourceIndex = sourceIndices[index];
@@ -59,6 +72,7 @@ export function projectGSplatLabelIndices(
   return projected;
 }
 
+/** Resolve one storage slot back to its exact id and display name. */
 export function gsplatLabelAt(
   channel: Pick<GSplatLabelChannel, 'indices' | 'vocabulary'>,
   storageIndex: number

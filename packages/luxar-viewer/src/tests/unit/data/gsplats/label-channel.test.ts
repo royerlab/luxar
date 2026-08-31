@@ -26,6 +26,16 @@ describe('GSplats categorical label channel', () => {
     ).toEqual([3, 1]);
   });
 
+  it('copies labels on the identity projection path', () => {
+    const source = new Uint32Array([1, 2, 3]);
+    const projected = projectGSplatLabelIndices(source, undefined, 2);
+
+    source[0] = 9;
+
+    expect(Array.from(projected)).toEqual([1, 2]);
+    expect(projected.buffer).not.toBe(source.buffer);
+  });
+
   it('fails loudly when projection references a missing source label', () => {
     expect(() =>
       projectGSplatLabelIndices(new Uint32Array([1, 2]), new Uint32Array([2]), 1)
