@@ -50,6 +50,7 @@ describe('AnimationController', () => {
     mockControls = {
       update: vi.fn(),
       isAutoRotateActive: vi.fn().mockReturnValue(false),
+      isAutoDollyActive: vi.fn().mockReturnValue(false),
     };
 
     // Create mock post-processing manager

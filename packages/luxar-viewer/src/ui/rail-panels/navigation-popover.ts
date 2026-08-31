@@ -20,6 +20,7 @@ import { config, type RenderingSettings } from '../../config';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { AutoRotateAxis, ControlType } from '../../controls/types';
+import { rpmFromSecondsPerTurn, secondsPerTurnFromRpm } from '../../controls/types';
 import { makePopoverGui } from './popover-gui';
 
 export interface NavigationPopoverContext {
@@ -107,6 +108,52 @@ function buildModeSelector(
   return strip;
 }
 
+/**
+ * Build the auto-dolly rows — shared by orbit AND ortho.
+ *
+ * Shared deliberately: the dolly is gated on `enableZoom`, not `enableRotate`,
+ * so it is one of the few camera animations that is alive in 2D (where it
+ * breathes `camera.zoom` instead of moving the camera). Offering it in only
+ * one of the two modes would make the same stored setting silently inert.
+ */
+function buildAutoDollyParams(
+  gui: ReturnType<typeof makePopoverGui>,
+  ctx: NavigationPopoverContext
+): void {
+  const { settings, sceneManager, animationController, saveSettings, triggerAnimation } = ctx;
+
+  gui
+    .add(settings, 'autoDolly')
+    .name('Auto Dolly')
+    .onChange((value: boolean) => {
+      sceneManager.setAutoDolly(value);
+      saveSettings();
+      // Same as Auto Rotate: nothing else is driving the loop, so an enable
+      // has to wake it or the oscillation never renders.
+      if (value) animationController.startAnimation();
+    });
+
+  const amp = config.controls.orbit.autoDolly.amplitudePercent;
+  gui
+    .add(settings, 'autoDollyAmplitudePercent', amp.min, amp.max, amp.step || 1)
+    .name('Dolly Amplitude (%)')
+    .onChange((value: number) => {
+      sceneManager.setAutoDollyAmplitudePercent(value);
+      saveSettings();
+      triggerAnimation();
+    });
+
+  const per = config.controls.orbit.autoDolly.period;
+  gui
+    .add(settings, 'autoDollyPeriod', per.min, per.max, per.step || 0.5)
+    .name('Dolly Period (s)')
+    .onChange((value: number) => {
+      sceneManager.setAutoDollyPeriod(value);
+      saveSettings();
+      triggerAnimation();
+    });
+}
+
 /** Build the parameter controls for the current mode into `gui`. */
 function buildModeParams(
   gui: ReturnType<typeof makePopoverGui>,
@@ -134,14 +181,33 @@ function buildModeParams(
         triggerAnimation();
       });
 
+    // Shown as a PERIOD, stored as a rate. `autoRotateSpeed` is rpm (a
+    // three.js inheritance, and the meaning of `auto_rotate_speed` in every
+    // published scene), but "how long is one turn?" is the question a user
+    // actually has — and the answer is then in the same unit as the dolly
+    // period right below it. The slider range is DERIVED from the stored
+    // rate's range rather than declared separately, so their endpoints stay
+    // aligned with the published range.
+    const rs = config.controls.orbit.autoRotate.speed;
+    const periodView = { seconds: secondsPerTurnFromRpm(settings.autoRotateSpeed) };
     gui
-      .add(settings, 'autoRotateSpeed', 0.1, 5, 0.1)
-      .name('Rotation Speed')
+      .add(
+        periodView,
+        'seconds',
+        Math.round(secondsPerTurnFromRpm(rs.max)),
+        Math.round(secondsPerTurnFromRpm(rs.min)),
+        1
+      )
+      .name('Rotation Period (s)')
       .onChange((value: number) => {
-        sceneManager.setAutoRotateSpeed(value);
+        const rpm = rpmFromSecondsPerTurn(value);
+        settings.autoRotateSpeed = rpm;
+        sceneManager.setAutoRotateSpeed(rpm);
         saveSettings();
         triggerAnimation();
       });
+
+    buildAutoDollyParams(gui, ctx);
 
     gui
       .add(settings, 'naturalDrag')
@@ -237,8 +303,10 @@ function buildModeParams(
       dampingControl.hide();
       rotationDampingControl.hide();
     }
+  } else if (mode === 'ortho') {
+    // Ortho has no rotation to configure, but the dolly works here.
+    buildAutoDollyParams(gui, ctx);
   }
-  // ortho: no per-mode parameters (handled by the caller's note).
 }
 
 /**
@@ -283,7 +351,7 @@ export function buildNavigationPopover(
     if (mode === 'ortho') {
       const note = document.createElement('div');
       note.className = 'luxar-control-rail__popover-note';
-      note.textContent = 'Orthographic projection — pan & zoom only. No parameters.';
+      note.textContent = 'Orthographic projection — pan & zoom only.';
       host.appendChild(note);
     }
 

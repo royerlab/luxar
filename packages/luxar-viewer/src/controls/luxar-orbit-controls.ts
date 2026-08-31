@@ -18,7 +18,15 @@ import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
 import { applyToCamera, initializeFromCamera } from './luxar-orbit-controls/camera-application';
 import { runUpdateStep, type OrbitUpdateCtx } from './luxar-orbit-controls/update';
 import { autoRotateAxisVector } from './luxar-orbit-controls/math/auto-rotate';
-import { type AutoRotateAxis, DEFAULT_AUTO_ROTATE_AXIS } from './types';
+import { dollyAmplitudeChangeScale, dollyScale } from './luxar-orbit-controls/math/auto-dolly';
+import { applyZoomScale } from './luxar-orbit-controls/math/zoom';
+import { clamp } from '../utils/clamp';
+import {
+  type AutoRotateAxis,
+  DEFAULT_AUTO_DOLLY_AMPLITUDE,
+  DEFAULT_AUTO_DOLLY_PERIOD,
+  DEFAULT_AUTO_ROTATE_AXIS,
+} from './types';
 import {
   type ControlAction,
   type OrbitInputCtx,
@@ -61,6 +69,9 @@ export interface LuxarOrbitControlsConfig {
   autoRotate?: boolean;
   autoRotateSpeed?: number;
   autoRotateAxis?: AutoRotateAxis;
+  autoDolly?: boolean;
+  autoDollyAmplitude?: number;
+  autoDollyPeriod?: number;
   minDistance?: number;
   maxDistance?: number;
   minZoom?: number;
@@ -119,6 +130,43 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
    * turntables (recording) follow the same choice as the interactive one.
    */
   public autoRotateAxis: AutoRotateAxis;
+  /**
+   * Auto-dolly: oscillate the orbit distance on a sine while enabled — the
+   * turntable's radial sibling. Gated on {@link enableZoom} rather than
+   * `enableRotate`, so it also runs in ortho mode (where it modulates
+   * `camera.zoom`; see `math/auto-dolly.ts`).
+   *
+   * Switching it OFF leaves the camera exactly where it is, mid-swing or not,
+   * and freezes the phase there. That is deliberate, and it is what the
+   * turntable does: disabling auto-rotation does not rewind the scene to the
+   * angle it started from, so disabling the dolly must not rewind the
+   * distance either (measured: rotation jumps 0.000° on disable, and a
+   * snap-back would have teleported the camera by up to 95% of the viewing
+   * distance in a single frame at max amplitude). Re-enabling resumes from
+   * the frozen phase, so nothing jumps in either direction and a completed
+   * cycle still returns to wherever the user left it.
+   */
+  public autoDolly: boolean;
+  private _autoDollyAmplitude: number;
+  /**
+   * Peak dolly swing as a fraction of distance (0.15 = ±15%). While the dolly
+   * is running, assigning re-derives the position at the current phase while
+   * preserving the baseline. While it is switched off, assigning does not move
+   * the camera because the frozen position is the user's framing (see
+   * {@link autoDolly}).
+   */
+  public get autoDollyAmplitude(): number {
+    return this._autoDollyAmplitude;
+  }
+
+  public set autoDollyAmplitude(amplitude: number) {
+    const scale = dollyAmplitudeChangeScale(this.dollyPhase, this._autoDollyAmplitude, amplitude);
+    this._autoDollyAmplitude = amplitude;
+    if (!this.autoDolly || scale === 1) return;
+    this.applyDollyScale(scale);
+  }
+  /** Seconds per full dolly oscillation. */
+  public autoDollyPeriod: number;
   public screenSpacePanning: boolean;
 
   // Constraints
@@ -147,6 +195,14 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   private panDelta = new THREE.Vector3();
   private zoomDelta: number = 0;
   private rollDelta: number = 0; // view-axis rotation (radians, damped)
+
+  /**
+   * Auto-dolly oscillation phase (radians, wrapped to `[0, 2π)`). NOT a
+   * damping accumulator: the dolly is applied to the distance directly, and
+   * this is only the clock it reads. Phase 0 is the baseline distance moving
+   * inward, so enabling the feature starts with an approach.
+   */
+  private dollyPhase: number = 0;
 
   // Pointer state
   private pointers: PointerEvent[] = [];
@@ -200,6 +256,9 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.autoRotate = config?.autoRotate ?? false;
     this.autoRotateSpeed = config?.autoRotateSpeed ?? 0.25;
     this.autoRotateAxis = config?.autoRotateAxis ?? DEFAULT_AUTO_ROTATE_AXIS;
+    this.autoDolly = config?.autoDolly ?? false;
+    this._autoDollyAmplitude = config?.autoDollyAmplitude ?? DEFAULT_AUTO_DOLLY_AMPLITUDE;
+    this.autoDollyPeriod = config?.autoDollyPeriod ?? DEFAULT_AUTO_DOLLY_PERIOD;
     this.screenSpacePanning = config?.screenSpacePanning ?? true;
     this.trackballRadius = config?.trackballRadius ?? 1.0;
 
@@ -212,7 +271,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     // hardened against runaway distance: `computeZoomScale()` clamps
     // `scale` to `(0, 1]` for outward wheel deltas, so the distance
     // never grows by more than ×1 per frame before the next clamp at
-    // `update.ts:131`.
+    // `update.ts`'s distance-clamp step.
     this.minDistance = config?.minDistance ?? 0.01;
     this.maxDistance = config?.maxDistance ?? Infinity;
     this.minZoom = config?.minZoom ?? 0.01;
@@ -269,6 +328,10 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       autoRotate: this.autoRotate,
       autoRotateSpeed: this.autoRotateSpeed,
       autoRotateAxis: this.autoRotateAxis,
+      enableZoom: this.enableZoom,
+      autoDolly: this.autoDolly,
+      autoDollyAmplitude: this.autoDollyAmplitude,
+      autoDollyPeriod: this.autoDollyPeriod,
       orientation: this.orientation,
       rotationDelta: this.rotationDelta,
       panDelta: this.panDelta,
@@ -284,6 +347,10 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       getDistance: () => this.distance,
       setDistance: (v) => {
         this.distance = v;
+      },
+      getDollyPhase: () => this.dollyPhase,
+      setDollyPhase: (v) => {
+        this.dollyPhase = v;
       },
       camera: this.camera,
       minDistance: this.minDistance,
@@ -325,6 +392,11 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.panDelta.set(0, 0, 0);
     this.zoomDelta = 0;
     this.rollDelta = 0;
+    // Restart the oscillation at its baseline: reset() has just restored the
+    // saved distance, so leaving the phase mid-cycle would have the next frame
+    // apply the REMAINDER of a swing that no longer has a matching outbound
+    // half, permanently offsetting the centre the camera breathes around.
+    this.dollyPhase = 0;
     this.applyToCamera();
     this.update();
   }
@@ -351,6 +423,37 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   }
 
   /**
+   * Move the auto-dolly to an absolute oscillation `phase` (radians) and apply
+   * the resulting distance change.
+   *
+   * The programmatic counterpart of the per-frame dolly, for the same reason
+   * {@link applyOrbitRotation} exists: offline capture drives the camera from
+   * a FRAME INDEX, not from wall-clock time (its frames wait on LOD settling,
+   * so `deltaTime` there is meaningless), and both paths must agree on what
+   * the oscillation is. Passing an absolute phase rather than an increment
+   * lets a recording close its loop exactly — phase `2π` lands on the same
+   * distance as phase `0`, with no accumulated error.
+   *
+   * Uses the configured {@link autoDollyAmplitude}, so a recording breathes as
+   * deeply as the preview. Does nothing while {@link enableZoom} is false.
+   *
+   * @param phase - Absolute oscillation phase in radians.
+   */
+  public applyOrbitDolly(phase: number): void {
+    if (!this.enableZoom || !Number.isFinite(phase)) return;
+    const scale = dollyScale(this.dollyPhase, phase, this.autoDollyAmplitude);
+    this.dollyPhase = phase;
+    this.applyDollyScale(scale);
+  }
+
+  /** Remove the currently applied dolly offset and restart from phase zero. */
+  public returnAutoDollyToBaseline(): void {
+    const scale = dollyAmplitudeChangeScale(this.dollyPhase, this.autoDollyAmplitude, 0);
+    this.dollyPhase = 0;
+    this.applyDollyScale(scale);
+  }
+
+  /**
    * Re-derive orientation and distance from the current camera position and target.
    * Call after changing the target externally to keep the orbit state consistent.
    */
@@ -360,6 +463,14 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.panDelta.set(0, 0, 0);
     this.zoomDelta = 0;
     this.rollDelta = 0;
+    this.dollyPhase = 0;
+  }
+
+  private applyDollyScale(scale: number): void {
+    if (scale === 1) return;
+    this.distance = applyZoomScale(this.camera, this.distance, scale, this.minZoom, this.maxZoom);
+    this.distance = clamp(this.distance, this.minDistance, this.maxDistance);
+    this.applyToCamera();
   }
 
   /**

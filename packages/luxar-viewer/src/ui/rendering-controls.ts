@@ -371,6 +371,9 @@ export class RenderingControls {
     this.sceneManager.setAutoRotate(this.settings.autoRotate);
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
     this.sceneManager.setAutoRotateAxis(this.settings.autoRotateAxis);
+    this.sceneManager.setAutoDolly(this.settings.autoDolly);
+    this.sceneManager.setAutoDollyAmplitudePercent(this.settings.autoDollyAmplitudePercent);
+    this.sceneManager.setAutoDollyPeriod(this.settings.autoDollyPeriod);
     this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
     this.sceneManager.setOrbitZoomSpeed(defaults.orbitZoomSpeed);
     this.sceneManager.setOrbitDampingFactor(defaults.orbitDampingFactor);
@@ -475,6 +478,9 @@ export class RenderingControls {
     this.sceneManager.setAutoRotate(this.settings.autoRotate);
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
     this.sceneManager.setAutoRotateAxis(this.settings.autoRotateAxis);
+    this.sceneManager.setAutoDolly(this.settings.autoDolly);
+    this.sceneManager.setAutoDollyAmplitudePercent(this.settings.autoDollyAmplitudePercent);
+    this.sceneManager.setAutoDollyPeriod(this.settings.autoDollyPeriod);
     this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
 
     // Apply orbit feel settings (if they exist in loaded settings)
@@ -579,6 +585,15 @@ export class RenderingControls {
     }
     if (zarrOverrides.autoRotateAxis !== undefined) {
       this.sceneManager.setAutoRotateAxis(this.settings.autoRotateAxis);
+    }
+    if (zarrOverrides.autoDolly !== undefined) {
+      this.sceneManager.setAutoDolly(this.settings.autoDolly);
+    }
+    if (zarrOverrides.autoDollyAmplitudePercent !== undefined) {
+      this.sceneManager.setAutoDollyAmplitudePercent(this.settings.autoDollyAmplitudePercent);
+    }
+    if (zarrOverrides.autoDollyPeriod !== undefined) {
+      this.sceneManager.setAutoDollyPeriod(this.settings.autoDollyPeriod);
     }
     if (zarrOverrides.naturalDrag !== undefined) {
       this.sceneManager.setNaturalDrag(this.settings.naturalDrag);

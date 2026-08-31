@@ -294,6 +294,7 @@ vi.mock('../../../controls/controls-manager', () => ({
     dispose: vi.fn(),
     setCamera: vi.fn(),
     setControlType: vi.fn(),
+    returnAutoDollyToBaseline: vi.fn(),
     getControlType: vi.fn(() => 'orbit'),
     getControls: vi.fn(() => ({
       target: new THREE.Vector3(),

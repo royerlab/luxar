@@ -7,7 +7,7 @@
  * ordering and gate thresholds).
  *
  * Direct ctx-driven tests avoid the orchestrator and exercise each of
- * the nine steps in isolation.
+ * the ten steps in isolation.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -23,6 +23,7 @@ function makeCtx(overrides: Partial<OrbitUpdateCtx> = {}): {
     rollDelta: number;
     zoomDelta: number;
     distance: number;
+    dollyPhase: number;
   };
 } {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
@@ -32,6 +33,7 @@ function makeCtx(overrides: Partial<OrbitUpdateCtx> = {}): {
     rollDelta: 0,
     zoomDelta: 0,
     distance: 5,
+    dollyPhase: 0,
   };
   const ctx: OrbitUpdateCtx = {
     enableRotate: true,
@@ -40,6 +42,10 @@ function makeCtx(overrides: Partial<OrbitUpdateCtx> = {}): {
     autoRotate: false,
     autoRotateSpeed: 0,
     autoRotateAxis: 'vertical',
+    enableZoom: true,
+    autoDolly: false,
+    autoDollyAmplitude: 0.15,
+    autoDollyPeriod: 10,
     orientation: new THREE.Quaternion(),
     rotationDelta: new THREE.Quaternion(),
     panDelta: new THREE.Vector3(),
@@ -55,6 +61,10 @@ function makeCtx(overrides: Partial<OrbitUpdateCtx> = {}): {
     getDistance: () => state.distance,
     setDistance: (v) => {
       state.distance = v;
+    },
+    getDollyPhase: () => state.dollyPhase,
+    setDollyPhase: (v) => {
+      state.dollyPhase = v;
     },
     camera,
     minDistance: 0.01,
@@ -344,7 +354,7 @@ describe('runUpdateStep — step 3: view-axis roll gate (G9, M3)', () => {
   });
 });
 
-describe('runUpdateStep — step 5: zoom gate (G9, M3)', () => {
+describe('runUpdateStep — step 6: zoom gate (G9, M3)', () => {
   it('zoomDelta = 1e-9 is BELOW the 1e-8 gate (distance unchanged)', () => {
     const { ctx, state } = makeCtx();
     state.zoomDelta = 1e-9;
@@ -416,7 +426,7 @@ describe('runUpdateStep — step 7: ortho zoom clamping', () => {
   });
 });
 
-describe('runUpdateStep — step 9: change detection + dispatch', () => {
+describe('runUpdateStep — step 10: change detection + dispatch', () => {
   it('dispatches "change" when camera moves', () => {
     const { ctx, state } = makeCtx();
     state.zoomDelta = -0.5; // forces a distance change
@@ -481,5 +491,109 @@ describe('runUpdateStep — step 4: pan damping', () => {
     // target += panDelta * 0.5 = (1,0,0). panDelta *= (1 - 0.5) = (1,0,0).
     expect(ctx.target.x).toBeCloseTo(1, 5);
     expect(ctx.panDelta.x).toBeCloseTo(1, 5);
+  });
+});
+
+describe('runUpdateStep — step 2: auto-dolly', () => {
+  const PERIOD = 10;
+  const STEPS_PER_PERIOD = 400;
+  const DT = PERIOD / STEPS_PER_PERIOD;
+
+  /** Advance `frames` frames of the oscillation and return the ctx state. */
+  function run(
+    overrides: Partial<OrbitUpdateCtx>,
+    frames: number
+  ): ReturnType<typeof makeCtx>['state'] {
+    const { ctx, state } = makeCtx({
+      autoDolly: true,
+      autoDollyAmplitude: 0.15,
+      autoDollyPeriod: PERIOD,
+      ...overrides,
+    });
+    for (let i = 0; i < frames; i++) runUpdateStep(ctx, DT);
+    return state;
+  }
+
+  it('is gated on autoDolly', () => {
+    const state = run({ autoDolly: false }, STEPS_PER_PERIOD / 4);
+    expect(state.distance).toBe(5);
+  });
+
+  it('is gated on enableZoom, NOT enableRotate', () => {
+    // The asymmetry is the point: ortho disables rotation but keeps zoom, and
+    // the dolly is alive there.
+    const withoutZoom = run({ enableZoom: false }, STEPS_PER_PERIOD / 4);
+    expect(withoutZoom.distance).toBe(5);
+
+    const withoutRotate = run({ enableRotate: false }, STEPS_PER_PERIOD / 4);
+    expect(withoutRotate.distance).toBeCloseTo(5 / 1.15, 6);
+  });
+
+  it('moves CLOSER first, then back out to the far extreme', () => {
+    expect(run({}, STEPS_PER_PERIOD / 4).distance).toBeCloseTo(5 / 1.15, 6);
+    expect(run({}, (STEPS_PER_PERIOD * 3) / 4).distance).toBeCloseTo(5 * 1.15, 6);
+  });
+
+  it('returns to the starting distance after a full period', () => {
+    expect(run({}, STEPS_PER_PERIOD).distance).toBeCloseTo(5, 9);
+  });
+
+  it('reaches full amplitude even with damping ON (it bypasses the filter)', () => {
+    // Routing the dolly through `zoomDelta` would low-pass it: the quarter-turn
+    // extreme would fall short of 1/1.15 and lag the requested period. This
+    // pins the "apply straight to the distance" decision.
+    const damped = run({ enableDamping: true, dampingFactor: 0.25 }, STEPS_PER_PERIOD / 4);
+    expect(damped.distance).toBeCloseTo(5 / 1.15, 6);
+  });
+
+  it('lets the user keep zooming: a wheel delta shifts the CENTRE, not the swing', () => {
+    // The load-bearing interaction claim. Both the wheel and the dolly only
+    // ever MULTIPLY the distance, and multiplication commutes — so a zoom
+    // mid-oscillation moves the point the camera breathes around and the
+    // oscillation carries on around it, rather than being fought or reset.
+    const { ctx, state } = makeCtx({
+      autoDolly: true,
+      autoDollyAmplitude: 0.15,
+      autoDollyPeriod: PERIOD,
+    });
+    for (let i = 0; i < STEPS_PER_PERIOD; i++) {
+      // Halfway through, the user scrolls out by a factor of 1.5.
+      if (i === STEPS_PER_PERIOD / 2) state.zoomDelta = 0.5;
+      runUpdateStep(ctx, DT);
+    }
+    // One whole period of dolly (net factor 1) times the user's 1.5.
+    expect(state.distance).toBeCloseTo(5 * 1.5, 6);
+  });
+
+  it('breathes ortho zoom instead of distance, and reports the frame as moved', () => {
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+    camera.zoom = 1;
+    const { ctx, state } = makeCtx({
+      camera,
+      autoDolly: true,
+      autoDollyAmplitude: 0.15,
+      autoDollyPeriod: PERIOD,
+    });
+    const moved = runUpdateStep(ctx, DT);
+    expect(moved).toBe(true);
+    expect(ctx.dispatch).toHaveBeenCalledWith('change');
+    // Closer in ortho means a LARGER zoom (zoom ~ 1/distance).
+    expect(camera.zoom).toBeGreaterThan(1);
+    expect(state.distance).toBe(5);
+  });
+
+  it('does not hold the camera still when only the dolly is running', () => {
+    const { ctx } = makeCtx({
+      autoDolly: true,
+      autoDollyAmplitude: 0.15,
+      autoDollyPeriod: PERIOD,
+    });
+    runUpdateStep(ctx, DT);
+    expect(runUpdateStep(ctx, DT)).toBe(true);
+  });
+
+  it('is inert at zero amplitude or a zero period', () => {
+    expect(run({ autoDollyAmplitude: 0 }, STEPS_PER_PERIOD / 4).distance).toBe(5);
+    expect(run({ autoDollyPeriod: 0 }, STEPS_PER_PERIOD / 4).distance).toBe(5);
   });
 });

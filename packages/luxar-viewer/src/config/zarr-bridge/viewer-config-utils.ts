@@ -48,6 +48,9 @@ export const RENDERING_SETTINGS_MAP: Record<string, keyof RenderingSettings> = {
   auto_rotate: 'autoRotate',
   auto_rotate_speed: 'autoRotateSpeed',
   auto_rotate_axis: 'autoRotateAxis',
+  auto_dolly: 'autoDolly',
+  auto_dolly_amplitude_percent: 'autoDollyAmplitudePercent',
+  auto_dolly_period: 'autoDollyPeriod',
   natural_drag: 'naturalDrag',
 
   // Cinematic

@@ -93,6 +93,52 @@ describe('rendering-controls-utils', () => {
       }
     );
 
+    it('rejects a hostile stored dolly amplitude or period', () => {
+      // A hand-edited (or corrupted) 900% amplitude would fling the camera
+      // through the subject every cycle, and a zero period would divide by
+      // zero in the phase advance. Both fall back rather than reaching the
+      // render loop.
+      const defaults = getDefaultRenderingSettings();
+      const result = validateRenderingSettings({
+        autoDolly: 'yes' as any,
+        autoDollyAmplitudePercent: 900,
+        autoDollyPeriod: 0,
+      });
+      expect(result.autoDolly).toBe(defaults.autoDolly);
+      expect(result.autoDollyAmplitudePercent).toBe(defaults.autoDollyAmplitudePercent);
+      expect(result.autoDollyPeriod).toBe(defaults.autoDollyPeriod);
+    });
+
+    it.each([
+      ['NaN', NaN],
+      ['Infinity', Infinity],
+      ['negative', -20],
+    ])('rejects a %s dolly amplitude', (_label, value) => {
+      const defaults = getDefaultRenderingSettings();
+      const result = validateRenderingSettings({ autoDollyAmplitudePercent: value as any });
+      expect(result.autoDollyAmplitudePercent).toBe(defaults.autoDollyAmplitudePercent);
+    });
+
+    it('accepts an extreme but legal 95% amplitude', () => {
+      // The ceiling is a cost boundary, not a safety one: 95% nearly halves and
+      // doubles the viewing distance each cycle, which is expensive (the LOD
+      // ladder loads finer levels at the near extreme) but never unsafe. A
+      // deliberate choice must survive validation instead of snapping back.
+      const result = validateRenderingSettings({ autoDollyAmplitudePercent: 95 });
+      expect(result.autoDollyAmplitudePercent).toBe(95);
+    });
+
+    it('keeps a legitimate in-range dolly setting', () => {
+      const result = validateRenderingSettings({
+        autoDolly: true,
+        autoDollyAmplitudePercent: 30,
+        autoDollyPeriod: 2.5,
+      });
+      expect(result.autoDolly).toBe(true);
+      expect(result.autoDollyAmplitudePercent).toBe(30);
+      expect(result.autoDollyPeriod).toBe(2.5);
+    });
+
     it('should accept ortho as a valid control type', () => {
       const result = validateRenderingSettings({
         controlType: 'ortho' as any,

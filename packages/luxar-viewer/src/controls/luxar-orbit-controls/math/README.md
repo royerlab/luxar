@@ -15,7 +15,8 @@ math/
 ├── trackball.ts    Shoemake virtual-trackball rotation (sphere + hyperboloid)
 ├── pan.ts          OrbitControls pan math (perspective + ortho)
 ├── zoom.ts         OrbitControls zoom math (perspective distance / ortho zoom)
-└── auto-rotate.ts  Turntable axis → world-space vector
+├── auto-rotate.ts  Turntable axis → world-space vector
+└── auto-dolly.ts   Sinusoidal distance oscillation (phase → distance factor)
 ```
 
 ### `auto-rotate.ts`
@@ -41,6 +42,31 @@ math/
 - An unrecognized token degrades to `'vertical'` rather than throwing:
   this runs inside the render loop, and a hand-edited scene attribute
   should not kill every subsequent frame.
+
+### `auto-dolly.ts`
+
+- `advanceDollyPhase(phase, deltaTime, period) -> number` walks the
+  oscillation phase, wrapped to `[0, 2π)`. Inert on a non-positive or
+  non-finite period.
+- `dollyScale(fromPhase, toPhase, amplitude) -> number` returns the factor
+  to multiply the orbit distance by. The oscillation is defined in LOG
+  distance, `d(φ) = d₀·exp(−A·sin φ)` with `A = ln(1 + amplitude)`, so
+  `amplitude` is a RATIO (0.15 → `d₀×1.15` out, `d₀÷1.15` in) and means the
+  same thing at any scene scale — which is what makes it the sinusoidal
+  mousewheel the feature is named for.
+- `dollyAmplitudeChangeScale(phase, fromAmplitude, toAmplitude) -> number`
+  compensates the displacement already applied at a phase. Callers use it to
+  preserve the baseline when changing amplitude or returning to phase zero.
+- Returning a RATIO between two phases, rather than an absolute distance, is
+  what lets the user keep zooming while it runs: distance is only ever
+  multiplied, and multiplication commutes, so a wheel click moves the centre
+  the camera breathes around instead of fighting the animation.
+- Taking the DIFFERENCE OF SINES rather than integrating `−A·cos φ·dφ` keeps
+  the amplitude exact at any frame rate and makes a period's factors
+  telescope to exactly 1, so the centre cannot drift over a long session.
+- Both the interactive dolly (`update.ts`, wall-clock) and the recorded one
+  (the capture strategies, frame-indexed) go through `dollyScale`, so an
+  exported video cannot breathe unlike its own preview.
 
 ### `trackball.ts`
 

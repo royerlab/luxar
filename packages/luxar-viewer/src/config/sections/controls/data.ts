@@ -33,6 +33,23 @@ export const controlsConfig: ControlsConfig = {
     autoRotate: {
       speed: { min: 0.1, max: 5.0, default: 0.25, step: 0.1 },
     },
+    // Auto-dolly. The ceiling is a COST boundary, not a safety one — the math
+    // is exact at any amplitude and the distance clamps sit orders of magnitude
+    // away (a scene framed at 176k units clamps at 327), so a big swing is
+    // free to be a deliberate choice. What grows is work: screen area goes as
+    // 1/d², so a swing of A moves projected area by (1+A)⁴ and the LOD ladder
+    // answers by loading finer levels at the near extreme. Measured on the
+    // 100-group embryo demo over one 3 s cycle: 15% → 1.75x area, 118k
+    // elements resident, 161 level transitions; 50% → 5.06x, 526k, 392;
+    // 95% → 14.46x, 2.29M, 520. That is a 19x resident set for a 6x bigger
+    // swing, which a local warm cache absorbs (144 → 129 fps here) and a
+    // hosted scene pays for in requests. Hence a high ceiling with a modest
+    // default. Defaults mirror DEFAULT_AUTO_DOLLY_AMPLITUDE /
+    // DEFAULT_AUTO_DOLLY_PERIOD in controls/types.ts (pinned by a unit test).
+    autoDolly: {
+      amplitudePercent: { min: 1, max: 95, default: 15, step: 1 },
+      period: { min: 1, max: 60, default: 10, step: 0.5 },
+    },
     zoom: {
       minDistance: 0.1,
       maxDistance: 1000,

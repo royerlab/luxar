@@ -442,6 +442,12 @@ vc = luxar.ViewerConfig(
     bloom_strength=0.4,
     control_type="orbit",
     auto_rotate=True,
+    # Turntable rate in REVOLUTIONS PER MINUTE: a full turn takes
+    # 60 / auto_rotate_speed seconds, so 0.25 is one turn every four minutes
+    # and 3.0 is one every twenty seconds. (The viewer's Navigation popover
+    # shows this as "Rotation Period (s)" — the same setting asked the other
+    # way round, so it reads in the same unit as the dolly period below.)
+    auto_rotate_speed=0.25,
     # Turntable axis. Either a CAMERA-frame axis — "vertical" (screen-up, the
     # default), "horizontal" (screen-right — the scene tumbles over the top),
     # "view" (the view direction — a pure roll, the camera never moves) — or a
@@ -467,6 +473,45 @@ vc = luxar.ViewerConfig(
     # direction. At exact alignment the turntable is a pure roll with a
     # stationary camera.
     auto_rotate_axis="vertical",
+    # Auto-dolly: the turntable's radial sibling. Instead of going AROUND the
+    # subject the camera breathes toward and away from it on a sine — the
+    # equivalent of turning the mousewheel back and forth. Combined with
+    # auto_rotate it gives the slow approach-and-retreat hero shot; on its own
+    # the parallax is a depth cue a still cannot give.
+    #
+    # The amplitude is a PERCENT of the viewing distance, so it means the same
+    # thing at any scene scale: 15 swings between d/1.15 and d x 1.15. The
+    # slider goes to 95 (nearly halving and doubling the distance), and a big
+    # swing is a legitimate choice — but it is not free, and the cost is not
+    # linear. Screen area goes as 1/d^2, so the swing moves projected area by
+    # (1 + a)^4 between the far and near extremes: 1.75x at 15%, 5.06x at
+    # 50%, 14.46x at 95%. The LOD ladder answers by loading finer levels at
+    # the near extreme, and THAT is what scales. Measured over one 3 s cycle
+    # on a 100-group demo:
+    #
+    #     amplitude   area swing   resident elements   LOD transitions
+    #        15%         1.75x           118k                161
+    #        50%         5.06x           526k                392
+    #        95%        14.46x          2.29M                520
+    #
+    # A 6x bigger swing costs a 19x resident set. Locally, with a warm cache,
+    # that is nearly free (144 -> 129 fps on an M-series laptop). On a hosted
+    # scene, where cost is requests rather than bytes, it is not — every cycle
+    # re-walks the ladder and anything the cache has evicted is re-fetched.
+    # Nothing about a large amplitude is unsafe: the distance clamps sit orders
+    # of magnitude away (a scene framed at 176k units clamps at 327). Choose by
+    # what the motion is worth, not by fear of it.
+    #
+    # The user keeps control of zoom while it runs: both the wheel and the
+    # dolly only ever multiply the distance, so a scroll moves the centre the
+    # camera is breathing around rather than fighting the animation. Switching
+    # it off leaves the camera where the swing had reached, and re-enabling
+    # resumes from there — the same way stopping the turntable leaves the scene
+    # at its current angle. It also works in ortho mode, where it breathes the
+    # orthographic zoom instead.
+    auto_dolly=False,
+    auto_dolly_amplitude_percent=15,
+    auto_dolly_period=10,  # seconds per full in-and-out cycle
 )
 
 dims = luxar.Dimensions.default_3d()
@@ -520,7 +565,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Theme | `theme` (`dark`, `light`, `frosted-glass`, `liquid-glass`) |
 | Tone mapping | `tone_mapping`, `exposure`, `global_offset`, `global_gamma` |
 | Bloom | `bloom_enabled`, `bloom_strength`, `bloom_radius`, `bloom_threshold` |
-| Controls | `control_type`, `auto_rotate`, `auto_rotate_speed`, `auto_rotate_axis` |
+| Controls | `control_type`, `auto_rotate`, `auto_rotate_speed`, `auto_rotate_axis`, `auto_dolly`, `auto_dolly_amplitude_percent`, `auto_dolly_period` |
 | Cinematic | `cinematic_mode`, `vignette_enabled`, `chromatic_lens_distortion_enabled` |
 | Detector noise | `detector_noise_enabled`, `detector_noise_readout_sigma`, `detector_noise_photon_gain` |
 | Anti-aliasing | `fxaa_enabled`, `msaa_enabled`, `ssaa_enabled` |
