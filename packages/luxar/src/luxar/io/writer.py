@@ -230,7 +230,7 @@ class ZarrWriterProtocol(Protocol):
         amplitudes: Union[ScalarArray, float],
         cholesky_factors: NDArray[np.float32],
         colors: Optional[Union[ColorArray, tuple, list]] = None,
-        label_ids: Optional[np.ndarray[Any, Any]] = None,
+        label_ids: Optional[Union[np.ndarray[Any, Any], Sequence[int]]] = None,
         label_vocabulary: Optional[dict[int, str]] = None,
         labels: Optional[Sequence[str]] = None,
         image_labels: Optional[Any] = None,

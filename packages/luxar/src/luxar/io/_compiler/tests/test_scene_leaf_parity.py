@@ -119,6 +119,26 @@ def test_standalone_leaf_matches_scene_leaf():
             )
 
 
+def test_public_writer_accepts_label_id_sequences(tmp_path: Path) -> None:
+    centers, amplitudes, cholesky = _splats(8)
+    scene_path = tmp_path / "scene.luxar.zarr"
+
+    with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        compiler.write_gsplats(
+            "g",
+            centers=centers,
+            amplitudes=amplitudes,
+            cholesky_factors=cholesky,
+            label_ids=[0] * len(centers),
+            label_vocabulary={0: "zero"},
+        )
+
+    group = zarr.open_group(str(scene_path), mode="r")["g"]
+    np.testing.assert_array_equal(group["label_ids"][:], [0])
+    assert group.attrs["label_vocabulary"] == {"0": "zero"}
+
+
 def test_standalone_leaf_matches_scene_leaf_under_the_centers_sigma_rail():
     """Parity must also hold for a decision taken INSIDE the shared writer.
 

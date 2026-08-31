@@ -87,7 +87,7 @@ def write_gsplats(
     amplitudes: Union[NDArray[np.float32], float],
     cholesky_factors: NDArray[np.float32],
     colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
-    label_ids: Optional[np.ndarray] = None,
+    label_ids: Optional[Union[np.ndarray, Sequence[int]]] = None,
     label_vocabulary: Optional[dict[int, str]] = None,
     labels: Optional["Sequence[str]"] = None,
     image_labels: Optional[Any] = None,
@@ -132,6 +132,7 @@ def write_gsplats(
     ) = validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)
     from ....gsplats.gsplat_data import validate_label_channel
 
+    label_ids = None if label_ids is None else np.asarray(label_ids)
     label_vocabulary = validate_label_channel(label_ids, label_vocabulary, n_splats)
 
     # 0d. Labels: sequence-of-str type + length check (the CSR serializer

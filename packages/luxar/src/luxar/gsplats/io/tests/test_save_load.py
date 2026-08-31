@@ -392,6 +392,22 @@ class TestSaveGsplats:
         )
         assert loaded.label_vocabulary == vocabulary
 
+    def test_load_rejects_label_ids_missing_from_vocabulary(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "labels.gsplats.zarr"
+        GSplatData(
+            **create_test_splats_3d(4),
+            label_ids=np.array([0, 1, 0, 1], dtype=np.uint8),
+            label_vocabulary={0: "zero", 1: "one"},
+        ).save(path, ordering="none")
+
+        root = zarr.open_group(str(path), mode="a")
+        root.attrs["label_vocabulary"] = {"0": "zero"}
+
+        with pytest.raises(ValueError, match="missing ids.*1"):
+            GSplatData.load(path)
+
     @pytest.mark.parametrize("mode", [EncodingMode.PRECISION, EncodingMode.AUTO])
     def test_rgba_colors_round_trip(self, mode: EncodingMode) -> None:
         # RGBA colors (per-splat opacity in the 4th column) survive

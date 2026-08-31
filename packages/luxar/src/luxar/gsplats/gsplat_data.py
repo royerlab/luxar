@@ -89,6 +89,28 @@ def validate_label_channel(
     n_splats: int,
 ) -> Optional[Dict[int, str]]:
     """Validate one exact categorical per-splat channel."""
+    vocabulary = _validate_label_channel_structure(
+        label_ids, label_vocabulary, n_splats
+    )
+    if label_ids is None:
+        return None
+    assert vocabulary is not None
+    missing = sorted(
+        set(int(value) for value in np.unique(label_ids)) - vocabulary.keys()
+    )
+    if missing:
+        raise ValueError(
+            f"label_vocabulary is missing ids present in label_ids: {missing}"
+        )
+    return vocabulary
+
+
+def _validate_label_channel_structure(
+    label_ids: Optional[np.ndarray],
+    label_vocabulary: Optional[Mapping[int, str]],
+    n_splats: int,
+) -> Optional[Dict[int, str]]:
+    """Validate categorical channel metadata without scanning its values."""
     vocabulary = normalize_label_vocabulary(label_vocabulary)
     if label_ids is None:
         if vocabulary is not None:
@@ -104,13 +126,6 @@ def validate_label_channel(
         np.issubdtype(label_ids.dtype, np.signedinteger) and np.any(label_ids < 0)
     ):
         raise ValueError("label_ids must contain non-negative integers")
-    missing = sorted(
-        set(int(value) for value in np.unique(label_ids)) - vocabulary.keys()
-    )
-    if missing:
-        raise ValueError(
-            f"label_vocabulary is missing ids present in label_ids: {missing}"
-        )
     return vocabulary
 
 
@@ -190,7 +205,9 @@ class AdditiveSubLOD(_SplatArrayMixin):
             raise ValueError(
                 f"Colors count {self.colors.shape[0]} doesn't match centers count {n}"
             )
-        vocabulary = validate_label_channel(self.label_ids, self.label_vocabulary, n)
+        vocabulary = _validate_label_channel_structure(
+            self.label_ids, self.label_vocabulary, n
+        )
         object.__setattr__(self, "label_vocabulary", vocabulary)
         if self.centers.ndim >= 2:
             from luxar.gsplats.utils.trils import validate_cholesky_shape
@@ -392,13 +409,16 @@ class GSplatData(
             and cholesky_factors is not None
         ):
             # Convenience constructor — wrap into a single-LOD leaf.
+            label_vocabulary = validate_label_channel(
+                label_ids, label_vocabulary, centers.shape[0]
+            )
             single_lod = AdditiveSubLOD(
                 centers=centers,
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky_factors,
                 colors=colors,
                 label_ids=label_ids,
-                label_vocabulary=normalize_label_vocabulary(label_vocabulary),
+                label_vocabulary=label_vocabulary,
                 stats=stats if stats is not None else {},
                 truncation_radius=truncation_radius,
             )

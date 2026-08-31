@@ -247,6 +247,23 @@ class TestGSplatDataLOD:
                     assert int(label_id) == int(center[0])
                 assert sublod.label_vocabulary == vocabulary
 
+    def test_derived_operations_do_not_rescan_label_membership(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        data = _make_3d_gsplat(12).with_label_ids(
+            np.arange(12, dtype=np.uint8),
+            {i: f"class-{i}" for i in range(12)},
+        )
+
+        def fail_unique(*args: object, **kwargs: object) -> None:
+            raise AssertionError("derived data re-scanned categorical membership")
+
+        monkeypatch.setattr(np, "unique", fail_unique)
+        filtered = data.filter(np.arange(12) % 2 == 0)
+
+        np.testing.assert_array_equal(filtered.label_ids, np.arange(0, 12, 2))
+        assert filtered.label_vocabulary == data.label_vocabulary
+
     def test_empty_lods_raises(self):
         with pytest.raises(ValueError, match="at least one"):
             GSplatData(additive_sublods=[])

@@ -878,7 +878,7 @@ def _decode_cholesky(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
 
 def _read_leaf_arrays(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
     """Decode one splat set's arrays from ``group`` into an ``AdditiveSubLOD``."""
-    from luxar.gsplats.gsplat_data import AdditiveSubLOD
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, validate_label_channel
 
     centers = decoder.decode(group["centers"], root)
     amplitudes = decoder.decode(group["amplitudes"], root)
@@ -892,6 +892,9 @@ def _read_leaf_arrays(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
         {int(label_id): str(name) for label_id, name in dict(vocabulary_raw).items()}
         if vocabulary_raw is not None
         else None
+    )
+    label_vocabulary = validate_label_channel(
+        label_ids, label_vocabulary, centers.shape[0]
     )
     stats_raw = group.attrs.get("lod_stats", {})
     stats = dict(stats_raw) if isinstance(stats_raw, dict) else {}
