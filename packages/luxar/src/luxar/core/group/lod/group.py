@@ -1450,8 +1450,41 @@ DEFAULT_LADDER_BYTES_PER_ELEMENT: float = 16.0
 DEFAULT_LADDER_TARGET_MS: float = 200.0
 
 
-def default_composed_additive_lod() -> Dict[str, Any]:
+def resident_slice_count(scene: Any, positions: Any) -> int:
+    """How many hidden coordinates a node is sliced into, or 1 if undeterminable.
+
+    Returns 1 — "treat it as unsliced" — when the positions do not align 1:1 with
+    the scene dims, because a scene-dim index is only a centre column under that
+    alignment (the same guard ``coarsen_dims='display'`` applies above).
+    Under-counting is the safe direction: it reproduces the historical whole-node
+    sizing rather than inventing a divisor from a mis-mapped column.
+    """
+    import numpy as np
+
+    from ....utils.lod_breakpoints import hidden_coordinate_count
+
+    arr = np.asarray(positions)
+    if arr.ndim != 2:
+        return 1
+    dims = getattr(scene, "dimensions", None) if scene is not None else None
+    if dims is None or getattr(dims, "ndim", None) != arr.shape[1]:
+        return 1
+    displayed = {d for d in dims.displayed if 0 <= d < arr.shape[1]}
+    hidden = [d for d in range(arr.shape[1]) if d not in displayed]
+    return hidden_coordinate_count(arr, hidden)
+
+
+def default_composed_additive_lod(*, slices: int) -> Dict[str, Any]:
     """The ladder a substitutive Points/Lines level gets when none is requested.
+
+    ``slices`` is REQUIRED, and required rather than defaulted deliberately. The
+    download budget below sizes a first chunk for the WHOLE node, but the viewer
+    draws one hidden coordinate at a time, so on a sliced node that chunk arrives
+    divided by the slice count — which is how a 500-timepoint gsplat leaf came to
+    paint 42 splats of a 166,443-splat frame and play as an empty screen
+    (#2374/#2376). This function used to take NO arguments, so it could not know
+    and its callers never had to think about it. Pass
+    :func:`resident_slice_count`, or ``1`` for a node known to be unsliced.
 
     A bandwidth-derived ``stream:`` ladder, NOT an equal-count one: an
     equal-count split into 4 still ends with an N/4-sized commit, which on a
@@ -1468,13 +1501,18 @@ def default_composed_additive_lod() -> Dict[str, Any]:
     visibly wrong first frame. Callers who want the earlier release opt in with
     ``additive_lod=dict(method="salience", salience_kind="energy", ...)``.
     """
-    from ....utils.lod_breakpoints import DEFAULT_BANDWIDTH_MBPS, streaming_chunk_splats
+    from ....utils.lod_breakpoints import (
+        DEFAULT_BANDWIDTH_MBPS,
+        scaled_streaming_chunk,
+        streaming_chunk_splats,
+    )
 
-    chunk = streaming_chunk_splats(
+    whole_node = streaming_chunk_splats(
         DEFAULT_LADDER_TARGET_MS,
         DEFAULT_BANDWIDTH_MBPS,
         DEFAULT_LADDER_BYTES_PER_ELEMENT,
     )
+    chunk = scaled_streaming_chunk(whole_node, slice_count=slices)
     return {"method": "random", "counts": f"stream:{chunk}", "seed": 0}
 
 
@@ -1526,6 +1564,7 @@ def compose_additive_under_substitutive(
     *,
     resolve: Callable[[Any], Optional[Dict[str, Any]]],
     name: str,
+    slices: int,
     suppress_reason: Optional[str] = None,
     suppression_outcome: str = "levels will load all-at-once.",
 ) -> Optional[Dict[str, Any]]:
@@ -1580,7 +1619,11 @@ def compose_additive_under_substitutive(
                 f"{suppression_outcome}"
             )
         return None
-    spec = additive_lod if additive_lod is not None else default_composed_additive_lod()
+    spec = (
+        additive_lod
+        if additive_lod is not None
+        else default_composed_additive_lod(slices=slices)
+    )
     return resolve(spec)
 
 

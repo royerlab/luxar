@@ -808,6 +808,7 @@ class TestComposeAdditiveUnderSubstitutive:
                 None,
                 resolve=self._resolve,
                 name="node",
+                slices=1,
                 suppress_reason="image_labels is set",
             )
         assert result is None
@@ -818,6 +819,7 @@ class TestComposeAdditiveUnderSubstitutive:
                 {"method": "random"},
                 resolve=self._resolve,
                 name="node",
+                slices=1,
                 suppress_reason="image_labels is set",
             )
         assert result is None
@@ -828,6 +830,7 @@ class TestComposeAdditiveUnderSubstitutive:
                 {"method": "random"},
                 resolve=self._resolve,
                 name="node",
+                slices=1,
                 suppress_reason="image_labels is set",
                 suppression_outcome=(
                     "the finest level will load all-at-once; coarse levels keep "
@@ -841,6 +844,7 @@ class TestComposeAdditiveUnderSubstitutive:
             None,
             resolve=self._resolve,
             name="node",
+            slices=1,
             suppress_reason="image_labels is set",
             suppression_outcome=(
                 "the finest level will load all-at-once; coarse levels keep their "
@@ -861,6 +865,7 @@ class TestComposeAdditiveUnderSubstitutive:
                 True,
                 resolve=self._resolve,
                 name="node",
+                slices=1,
                 suppress_reason="line_type='indexed' edges are not preserved",
             )
 
@@ -873,6 +878,7 @@ class TestComposeAdditiveUnderSubstitutive:
                 False,
                 resolve=self._resolve,
                 name="node",
+                slices=1,
                 suppress_reason="image_labels is set",
             )
         assert result is None
@@ -1106,3 +1112,75 @@ def test_max_coverage_fraction_matches_the_viewer_fill_factor() -> None:
         "or the bound stops meaning 'may be required to fill the screen, at "
         "most'."
     )
+
+
+# ---------------------------------------------------------------------------
+# A default composed ladder must be sized against the RESIDENT SLICE (#2374).
+# ---------------------------------------------------------------------------
+
+
+def test_default_composed_ladder_refuses_to_be_sized_without_a_slice_count():
+    """The guard is the SIGNATURE, not a warning.
+
+    This function once took no arguments, so a caller could not supply the one
+    fact that decides whether its whole-node download budget is right — and
+    three of the four ladder-sizing seams in the tree protected against that
+    while this one structurally could not. Requiring the argument is what makes
+    the mistake unwriteable rather than merely documented.
+    """
+    from luxar.core.group.lod.group import default_composed_additive_lod
+
+    with pytest.raises(TypeError):
+        default_composed_additive_lod()  # type: ignore[call-arg]
+
+
+def test_default_composed_ladder_scales_its_first_rung_by_the_slice_count():
+    from luxar.core.group.lod.group import default_composed_additive_lod
+    from luxar.utils.lod_breakpoints import parse_stream_chunk
+
+    unsliced = parse_stream_chunk(default_composed_additive_lod(slices=1)["counts"])
+    sliced = parse_stream_chunk(default_composed_additive_lod(slices=6)["counts"])
+
+    # slices=1 reproduces the historical whole-node value exactly, so an
+    # unsliced node's output is unchanged by this plumbing.
+    assert unsliced == 39_062
+    # ...and a 6-way sliced node gets 6x, so each resident slice still receives
+    # the ~200 ms first paint the budget was asking for.
+    assert sliced == 6 * unsliced
+
+
+def test_resident_slice_count_counts_occurring_combinations():
+    """Distinct OCCURRING combinations, not the product of per-axis cardinality."""
+    from luxar.core.group.lod.group import resident_slice_count
+
+    class _Dims:
+        ndim = 3
+        displayed = [0, 1]
+
+    class _Scene:
+        dimensions = _Dims()
+
+    # Hidden column 2 takes three values; columns 0-1 are displayed and ignored.
+    positions = np.array(
+        [[0.0, 0.0, 5.0], [1.0, 1.0, 5.0], [0.0, 0.0, 7.0], [2.0, 2.0, 9.0]]
+    )
+    assert resident_slice_count(_Scene(), positions) == 3
+
+
+def test_resident_slice_count_treats_unaligned_positions_as_unsliced():
+    """1 is the SAFE answer: a scene-dim index is only a centre column when the
+    positions align 1:1, so an unaligned node reproduces the historical
+    whole-node sizing rather than inventing a divisor from a mis-mapped column.
+    """
+    from luxar.core.group.lod.group import resident_slice_count
+
+    class _Dims:
+        ndim = 4  # scene says 4D...
+        displayed = [0, 1]
+
+    class _Scene:
+        dimensions = _Dims()
+
+    positions = np.array([[0.0, 0.0, 5.0], [1.0, 1.0, 7.0]])  # ...node is 3-column
+    assert resident_slice_count(_Scene(), positions) == 1
+    assert resident_slice_count(None, positions) == 1

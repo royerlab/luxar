@@ -1101,6 +1101,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         compose_additive_under_substitutive,
         gsplat_additive_lod_from,
         level_additive_lod,
+        resident_slice_count,
         resolve_lod_ladder,
     )
     from ..lod.lines import indexed_components_are_chains, resolve_additive_axis_lines
@@ -1111,10 +1112,14 @@ def add_lines_substitutive_lod_wrapper_impl(
     # Keep the existing element-domain stream counts for composed coarse
     # children. Retuning those counts for gsplat bytes-per-element is a separate
     # cross-geometry policy change, not part of suppression scoping.
+    # A default ladder's first chunk is a whole-node download budget, so the
+    # slice count is what keeps it from arriving divided on an nD node (#2374).
+    slices = resident_slice_count(group._find_scene(), vert_arr)
     coarse_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_lines,
         name=name,
+        slices=slices,
     )
     finest_suppress_reason = (
         # The multi-LOD writer has no image_labels channel, so laddering would
@@ -1158,6 +1163,7 @@ def add_lines_substitutive_lod_wrapper_impl(
         additive_lod,
         resolve=resolve_additive_axis_lines,
         name=name,
+        slices=slices,
         suppress_reason=finest_suppress_reason,
         suppression_outcome=(
             "the finest level will load all-at-once; coarse levels keep their "

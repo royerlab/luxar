@@ -819,6 +819,7 @@ def add_points_substitutive_lod_wrapper_impl(
         compose_additive_under_substitutive,
         gsplat_additive_lod_from,
         level_additive_lod,
+        resident_slice_count,
         resolve_lod_ladder,
     )
     from ..lod.points import resolve_additive_axis_points
@@ -829,10 +830,14 @@ def add_points_substitutive_lod_wrapper_impl(
     # Keep the existing element-domain stream counts for composed coarse
     # children. Retuning those counts for gsplat bytes-per-element is a separate
     # cross-geometry policy change, not part of suppression scoping.
+    # A default ladder's first chunk is a whole-node download budget, so the
+    # slice count is what keeps it from arriving divided on an nD node (#2374).
+    slices = resident_slice_count(group._find_scene(), pos_arr)
     coarse_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_points,
         name=name,
+        slices=slices,
     )
     reveal_note = (
         " Coarse levels use self_energy ordering, so reveal_centre is not applied."
@@ -844,6 +849,7 @@ def add_points_substitutive_lod_wrapper_impl(
         additive_lod,
         resolve=resolve_additive_axis_points,
         name=name,
+        slices=slices,
         # The multi-LOD writer has no image_labels channel, so laddering would
         # silently drop them. Refuse the ladder, not the labels.
         suppress_reason="image_labels is set" if image_labels is not None else None,

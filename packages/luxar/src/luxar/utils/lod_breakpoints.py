@@ -31,7 +31,7 @@ head, then equal steps of a fixed ceiling — instead of :func:`stream_cuts`.
 from __future__ import annotations
 
 import math
-from typing import List, Sequence, Union
+from typing import Any, List, Sequence, Union
 
 #: Breakpoint specification for an additive ladder. Either a string form
 #: (``"equal-count"``, ``"stream:<c>"``, ``"energy:<fractions>"`` for
@@ -100,6 +100,37 @@ def scaled_streaming_chunk(
     if part_count < 1:
         raise ValueError(f"part_count must be >= 1; got {part_count}")
     return max(1, round(first_chunk * slice_count / part_count))
+
+
+def hidden_coordinate_count(positions: Any, hidden_cols: Sequence[int]) -> int:
+    """How many distinct hidden coordinates a node's elements actually occupy.
+
+    The divisor a sliced node's first rung is spread over: the viewer shows one
+    hidden coordinate at a time, so a rung sized against the whole node arrives
+    divided by this (#2374/#2376).
+
+    Counts distinct OCCURRING COMBINATIONS across all hidden columns, not the
+    product of each column's cardinality. A node stacked on time *and* channel is
+    sliced only by the pairs that occur, and on sparse data the product
+    overstates badly — measured on ``biodiversity_planetary_scale``, the product
+    of two axes gives 140 against 126 actually populated. Nor is it the declared
+    ``Dimension`` range/step: ``drosophila_embryogenesis`` declares 500
+    timepoints and its coarsest rung carries data at 499, and a coordinate with
+    no elements costs no bytes and divides no rung.
+
+    Returns at least 1, so the result is always safe as a divisor or multiplier.
+    """
+    import numpy as np
+
+    cols = [int(c) for c in hidden_cols]
+    if not cols:
+        return 1
+    arr = np.asarray(positions)
+    if arr.ndim != 2 or arr.shape[0] == 0:
+        return 1
+    if any(not 0 <= c < arr.shape[1] for c in cols):
+        return 1
+    return max(1, len(np.unique(arr[:, cols], axis=0)))
 
 
 def parse_stream_chunk(spec: str) -> int:
