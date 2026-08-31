@@ -17,6 +17,7 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
+import { log } from '../../../utils/log';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
 import type { ControlsManager } from '../../../controls/controls-manager';
@@ -962,6 +963,87 @@ describe('DimensionAnimationManager', () => {
       mockTime += 1000;
       perFrameCallback?.();
       expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(start + 1);
+    });
+  });
+
+  describe('pacing feedback distinguishes thin frames from data-bound pacing', () => {
+    // Since #2377 a playback pass streams every cache-resident rung, so the
+    // playhead routinely slows to wait for data — that is the pacing gate
+    // working. Before it, cadence was MET because a pass committed one rung and
+    // stopped, and this feedback stayed silent right through the blank-frame
+    // defect (#2374). Cadence alone therefore cannot say whether anything is
+    // wrong; these pin that committed quality is what decides.
+    let mockTime: number;
+    let warn: ReturnType<typeof vi.spyOn>;
+    let info: ReturnType<typeof vi.spyOn>;
+
+    /** Log messages a spy saw, narrowed to the pacing-feedback line. */
+    const pacingMessages = (spy: { mock: { calls: unknown[][] } }): string[] =>
+      spy.mock.calls.map((call) => String(call[1])).filter((msg) => msg.includes('fps'));
+
+    const runOneMeasurementWindow = (energy: number | null | undefined) => {
+      const probe = energy === undefined ? undefined : () => energy;
+      const m = new DimensionAnimationManager(sceneDimsManager, mockAnimationController, probe);
+      const events: Array<{ committedEnergyFraction: number | null }> = [];
+      m.addEventListener('fpsWarning', (e) =>
+        events.push(e as unknown as { committedEnergyFraction: number | null })
+      );
+      m.play(3, { targetFPS: 10, direction: 'forward' });
+      // One tick a full second later: 1 frame in 1000 ms is 1 fps against a
+      // requested 10, comfortably under the 0.8 threshold.
+      mockTime += 1000;
+      perFrameCallback?.();
+      m.dispose();
+      return events;
+    };
+
+    beforeEach(() => {
+      mockTime = 1000;
+      vi.spyOn(performance, 'now').mockImplementation(() => mockTime);
+      warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('does NOT warn when frames are complete — it is the playhead pacing to data', () => {
+      const events = runOneMeasurementWindow(0.97);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].committedEnergyFraction).toBeCloseTo(0.97);
+      const warned = pacingMessages(warn);
+      expect(warned).toEqual([]);
+      expect(pacingMessages(info).join(' ')).toContain('pacing to data');
+    });
+
+    it('warns when frames are incomplete, and says so', () => {
+      const events = runOneMeasurementWindow(0.05);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].committedEnergyFraction).toBeCloseTo(0.05);
+      const warned = pacingMessages(warn);
+      expect(warned).toHaveLength(1);
+      expect(warned[0]).toContain('frames are incomplete');
+    });
+
+    it('falls back to warning when the scene carries no energy stamps', () => {
+      // `null` means "cannot tell", so the honest behaviour is the historical
+      // one rather than assuming the frames are fine.
+      const events = runOneMeasurementWindow(null);
+
+      expect(events[0].committedEnergyFraction).toBeNull();
+      const warned = pacingMessages(warn);
+      expect(warned).toHaveLength(1);
+      expect(warned[0]).toContain('no energy stamps');
+    });
+
+    it('falls back to warning when no probe is supplied at all', () => {
+      const events = runOneMeasurementWindow(undefined);
+
+      expect(events[0].committedEnergyFraction).toBeNull();
+      expect(pacingMessages(warn)).toHaveLength(1);
     });
   });
 });

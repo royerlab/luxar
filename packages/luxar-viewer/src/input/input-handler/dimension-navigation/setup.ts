@@ -18,6 +18,7 @@
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { updateAllNDNodes, type DimensionLoadingContext } from '../../../scene/dimension-loading';
 import { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
+import { worstCommittedEnergy, type QualityNode } from '../../../scene/animation/committed-quality';
 import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
 import type { PanelCoordinator } from '../commands/panel-coordinator';
@@ -78,7 +79,12 @@ export function clearDimensionUI(ctx: DimNavSetupCtx): void {
 export function initAnimationManager(ctx: DimNavSetupCtx): void {
   if (ctx.getAnimationManager()) return;
 
-  const manager = new DimensionAnimationManager(sceneDimsManager, ctx.animationController);
+  // The pacing feedback needs to tell "loaders cannot keep up" from "the
+  // playhead slowed to wait for them", and only the scene knows which (#2374).
+  // Read live rather than captured: the scene is rebuilt across dataset loads.
+  const manager = new DimensionAnimationManager(sceneDimsManager, ctx.animationController, () =>
+    worstCommittedEnergy(ctx.sceneManager.scene as unknown as QualityNode)
+  );
   ctx.setAnimationManager(manager);
 }
 
