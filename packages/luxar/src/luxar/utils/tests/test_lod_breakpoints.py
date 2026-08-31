@@ -16,12 +16,59 @@ from luxar.utils.lod_breakpoints import (
     DEFAULT_MAX_ADDITIVE_COMMIT,
     DEFAULT_STREAM_MAX_LEVELS,
     capped_stream_cuts,
+    hidden_coordinate_count,
     parse_stream_chunk,
     sibling_aware_stream_breakpoints,
+    sliced_ladder_first_chunk,
     stream_cuts,
     streaming_chunk_splats,
     validate_element_breakpoints,
 )
+
+
+class TestHiddenCoordinateCount:
+    def test_counts_occurring_combinations_not_cardinality_product(self) -> None:
+        positions = [
+            [0.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
+            [1.0, 0.0],
+        ]
+        assert hidden_coordinate_count(positions, [0, 1]) == 3
+
+    def test_empty_positions_or_columns_are_unsliced(self) -> None:
+        assert hidden_coordinate_count([], [0]) == 1
+        assert hidden_coordinate_count([[1.0, 2.0]], []) == 1
+
+    def test_out_of_range_column_is_undeterminable(self) -> None:
+        assert hidden_coordinate_count([[1.0, 2.0]], [2]) == 1
+
+
+class TestSlicedLadderFirstChunk:
+    def test_unsliced_preserves_the_download_budget(self) -> None:
+        assert sliced_ladder_first_chunk(40, elements=800, slices=1) == 40
+
+    def test_resident_share_floor_binds(self) -> None:
+        assert sliced_ladder_first_chunk(40, elements=800, slices=2) == 100
+
+    def test_download_budget_wins_above_the_floor(self) -> None:
+        assert sliced_ladder_first_chunk(120, elements=800, slices=2) == 120
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"first_chunk": 0, "elements": 1, "slices": 1}, "first_chunk"),
+            ({"first_chunk": 1, "elements": 0, "slices": 1}, "elements"),
+            ({"first_chunk": 1, "elements": 1, "slices": 0}, "slices"),
+            (
+                {"first_chunk": 1, "elements": 1, "slices": 1, "max_depth": 0},
+                "max_depth",
+            ),
+        ],
+    )
+    def test_rejects_non_positive_inputs(self, kwargs, match) -> None:
+        with pytest.raises(ValueError, match=match):
+            sliced_ladder_first_chunk(**kwargs)
 
 
 class TestStreamCuts:

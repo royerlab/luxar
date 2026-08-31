@@ -138,6 +138,11 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from arbol import aprint
 
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_SLICED_LADDER_MAX_DEPTH,
+    hidden_coordinate_count,
+)
+
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
@@ -258,7 +263,7 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
 #: little room to be non-uniform, which is the case this constant was sized for;
 #: a long timelapse over a growing specimen does not, and wants its per-stop
 #: histogram checked rather than this constant trusted.
-SLICED_LADDER_MAX_DEPTH = 8
+SLICED_LADDER_MAX_DEPTH = DEFAULT_SLICED_LADDER_MAX_DEPTH
 
 
 def hidden_axis_stops(positions: Any, hidden_dims: Sequence[int]) -> int:
@@ -301,11 +306,7 @@ def hidden_axis_stops(positions: Any, hidden_dims: Sequence[int]) -> int:
         raise ValueError(
             f"hidden_dims {bad} out of range for positions with {arr.shape[1]} columns"
         )
-    if arr.shape[0] == 0:
-        return 1
-    if len(cols) == 1:
-        return max(1, int(np.unique(arr[:, cols[0]]).shape[0]))
-    return max(1, int(np.unique(arr[:, cols], axis=0).shape[0]))
+    return hidden_coordinate_count(arr, cols)
 
 
 def stream_ladder(
@@ -325,7 +326,8 @@ def stream_ladder(
     Two numbers, and both are chosen rather than inherited:
 
     **First rung = the ~200 ms download budget** (39,062 elements at 25 Mbps and
-    16 B/element), matching ``default_composed_additive_lod``. Not desi's 2,000:
+    16 B/element), matching ``default_composed_additive_lod`` when unsliced;
+    both paths apply the same resident-share floor once sliced. Not desi's 2,000:
     that is sized to land in a single zarr chunk because its EAGER COARSEST
     SUBSTITUTIVE LEVEL is what paints first. An additive-only leaf has no coarse
     level, so its first rung IS first paint, and a 2,000-point opening frame buys
@@ -465,6 +467,7 @@ def stream_ladder(
         DEFAULT_BANDWIDTH_MBPS,
         DEFAULT_MAX_ADDITIVE_COMMIT,
         capped_stream_cuts,
+        sliced_ladder_first_chunk,
         stream_cuts,
         streaming_chunk_splats,
     )
@@ -488,7 +491,12 @@ def stream_ladder(
         # so the arithmetic is slice-independent and `slices` only decides
         # WHETHER the floor applies — an unsliced node keeps its budget ladder
         # untouched, which is why no existing unsliced caller moves.
-        share_chunk = -(-n // SLICED_LADDER_MAX_DEPTH)
+        share_chunk = sliced_ladder_first_chunk(
+            first_chunk,
+            elements=n,
+            slices=slices,
+            max_depth=SLICED_LADDER_MAX_DEPTH,
+        )
         if share_chunk > DEFAULT_MAX_ADDITIVE_COMMIT:
             raise ValueError(
                 f"Sliced node with {n:,} elements cannot deliver its "
@@ -497,7 +505,7 @@ def stream_ladder(
                 "ceiling. Partition this leaf after moving any stacked axis last, "
                 "or supply explicit capped cuts instead of stream_ladder."
             )
-        first_chunk = max(first_chunk, share_chunk)
+        first_chunk = share_chunk
     if geometry == "lines":
         cuts = stream_cuts(int(n), first_chunk)
         largest_commit = max(
