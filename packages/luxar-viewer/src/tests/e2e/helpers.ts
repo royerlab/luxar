@@ -1893,26 +1893,70 @@ export interface ElementPixelStats {
   brightest: SampledPixel;
 }
 
+export type PixelCaptureRoute = 'framebuffer' | 'composited';
+
 /**
- * Capture the visible, composited pixels of a rendered element as a PNG buffer
- * while hiding every other DOM element from the screenshot.
+ * Capture a rendered element as a PNG buffer.
  *
- * Do not read WebGL canvases by drawing the canvas into a 2D canvas:
- * with `preserveDrawingBuffer: false` Chromium is allowed to clear the
- * WebGL drawing buffer after compositing, which produced all-zero pixels
- * in shader smoke tests even when the screenshot was visibly rendered.
- * Capturing the element screenshot samples the composited output instead
- * and is therefore the right primitive for E2E visual smoke tests. New
- * pixel-measurement specs should use this helper or one of its consumers,
- * never a hand-rolled 2D-context readback.
+ * The viewer's own renderer canvas is captured through
+ * `PostProcessingManager.renderToImageData()`, which renders a fresh frame
+ * through the full post-processing chain and reads its target back on both
+ * WebGL and WebGPU. Other elements (notably embed/host canvases) retain the
+ * composited element-screenshot route, with unrelated DOM hidden without
+ * reflow. New pixel-measurement specs should use this helper or one of its
+ * consumers, never a hand-rolled 2D-context readback.
+ *
+ * Framebuffer captures return drawing-buffer pixels. Pin `?dpr=1` when pixel
+ * counts or exact sample locations must not vary with adaptive DPR. `timeout`
+ * bounds element readiness; the render/readback remains bounded by the test.
  */
 export async function captureElementScreenshot(
   page: Page,
   selector: string,
+  route: PixelCaptureRoute,
   timeout?: number
 ): Promise<Buffer> {
   const element = page.locator(selector).first();
   await element.waitFor({ state: 'visible', timeout });
+  if (route === 'framebuffer') {
+    const framebufferDataUrl = await element.evaluate(async (node) => {
+      const debug = (
+        window as unknown as {
+          __luxarDebug?: {
+            renderer?: { domElement?: Element };
+            postProcessing?: { renderToImageData?: () => Promise<ImageData> };
+          };
+        }
+      ).__luxarDebug;
+      if (!debug) {
+        throw new Error('captureElementScreenshot: framebuffer route requires ?debug');
+      }
+      if (debug.renderer?.domElement !== node) {
+        throw new Error(
+          'captureElementScreenshot: selector did not resolve to the renderer canvas'
+        );
+      }
+      if (!debug.postProcessing?.renderToImageData) {
+        throw new Error('captureElementScreenshot: framebuffer readback is unavailable');
+      }
+
+      const imageData = await debug.postProcessing.renderToImageData();
+      for (let index = 3; index < imageData.data.length; index += 4) {
+        // The onscreen canvas is opaque; match compositor presentation before
+        // PNG encode/decode can premultiply partially transparent RGB values.
+        imageData.data[index] = 255;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = imageData.width;
+      canvas.height = imageData.height;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('captureElementScreenshot: 2D context unavailable');
+      context.putImageData(imageData, 0, 0);
+      return canvas.toDataURL('image/png');
+    });
+    return Buffer.from(framebufferDataUrl.slice(framebufferDataUrl.indexOf(',') + 1), 'base64');
+  }
+
   await element.evaluate((node) => node.setAttribute('data-luxar-capture', ''));
   try {
     return await element.screenshot({
@@ -1929,8 +1973,12 @@ export async function captureElementScreenshot(
   }
 }
 
-async function captureElementScreenshotDataUrl(page: Page, selector: string): Promise<string> {
-  const png = await captureElementScreenshot(page, selector);
+async function captureElementScreenshotDataUrl(
+  page: Page,
+  selector: string,
+  route: PixelCaptureRoute
+): Promise<string> {
+  const png = await captureElementScreenshot(page, selector, route);
   return `data:image/png;base64,${png.toString('base64')}`;
 }
 
@@ -1949,18 +1997,22 @@ export interface CanvasFrameRGBA {
  * regions of one identical frame is the point, and re-screenshotting per
  * region would let an unrelated frame difference masquerade as a defect.
  *
- * The screenshot route (rather than a direct `gl.readPixels`) is required
- * for the reason spelled out on `captureElementScreenshot` above:
- * with `preserveDrawingBuffer: false` the WebGL drawing buffer may already
- * be cleared. The PNG is decoded in-page and handed back as base64 RGBA so
- * the whole frame crosses the CDP bridge exactly once.
+ * The PNG is decoded in-page and handed back as base64 RGBA so the whole
+ * frame crosses the CDP bridge exactly once. See
+ * `captureElementScreenshot` for viewer-framebuffer versus embed/host
+ * screenshot routing.
  *
  * @param page Playwright page.
- * @param selector Element to capture; defaults to the viewer canvas.
+ * @param selector Element to capture.
+ * @param route Explicit framebuffer or composited capture intent.
  * @returns Decoded pixel dimensions and the interleaved RGBA buffer.
  */
-export async function captureCanvasRGBA(page: Page, selector = 'canvas'): Promise<CanvasFrameRGBA> {
-  const dataUrl = await captureElementScreenshotDataUrl(page, selector);
+export async function captureCanvasRGBA(
+  page: Page,
+  selector: string,
+  route: PixelCaptureRoute
+): Promise<CanvasFrameRGBA> {
+  const dataUrl = await captureElementScreenshotDataUrl(page, selector, route);
 
   const decoded = await page.evaluate(async (url: string) => {
     const img = new Image();
@@ -2006,11 +2058,12 @@ export async function captureCanvasRGBA(page: Page, selector = 'canvas'): Promis
 export async function samplePixelsAt(
   page: Page,
   selector: string,
-  offsets: Array<[number, number]>
+  offsets: Array<[number, number]>,
+  route: PixelCaptureRoute
 ): Promise<SampledPixel[]> {
   if (offsets.length === 0) return [];
 
-  const dataUrl = await captureElementScreenshotDataUrl(page, selector);
+  const dataUrl = await captureElementScreenshotDataUrl(page, selector, route);
 
   return await page.evaluate(
     async ({ url, points }) => {
@@ -2055,9 +2108,10 @@ export async function samplePixelsAt(
 export async function getElementPixelStats(
   page: Page,
   selector: string,
-  threshold = 10
+  threshold: number,
+  route: PixelCaptureRoute
 ): Promise<ElementPixelStats> {
-  const dataUrl = await captureElementScreenshotDataUrl(page, selector);
+  const dataUrl = await captureElementScreenshotDataUrl(page, selector, route);
 
   return await page.evaluate(
     async ({ url, cutoff }) => {
@@ -2116,9 +2170,10 @@ export async function samplePixelAt(
   page: Page,
   selector: string,
   fx: number,
-  fy: number
+  fy: number,
+  route: PixelCaptureRoute
 ): Promise<SampledPixel> {
-  const [pixel] = await samplePixelsAt(page, selector, [[fx, fy]]);
+  const [pixel] = await samplePixelsAt(page, selector, [[fx, fy]], route);
   return pixel;
 }
 

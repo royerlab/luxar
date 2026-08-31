@@ -362,7 +362,7 @@ test.describe('Line-joint artifact measurement (#790)', () => {
     await waitForRenderStable(page);
     await assertNoShaderErrors(page);
 
-    const frame = await captureCanvasRGBA(page);
+    const frame = await captureCanvasRGBA(page, 'canvas#app', 'framebuffer');
     const luminance = rgbaToLuminance(frame.rgba, frame.width, frame.height);
     const ndcBoxes = await projectBands(page, LINE_JOIN_BANDS);
 

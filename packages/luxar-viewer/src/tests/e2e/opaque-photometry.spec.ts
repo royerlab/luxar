@@ -7,7 +7,7 @@ const LINES_FIXTURE =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lines_blending_modes.luxar.zarr';
 
 async function meanCanvasLinearLuminance(page: Page): Promise<number> {
-  const png = await captureElementScreenshot(page, 'canvas');
+  const png = await captureElementScreenshot(page, 'canvas#app', 'framebuffer');
   const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
 
   return page.evaluate(async (url) => {
