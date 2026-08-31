@@ -27,7 +27,6 @@ import {
   getLuxarState,
   getWebGLErrors,
   getElementPixelStats,
-  getProjectedGeometryRegion,
   captureCanvasRGBA,
   renderOnce,
 } from './helpers';
@@ -240,19 +239,15 @@ test.describe('Mesh rendering', () => {
     await waitForMeshCommitted(page, 4);
     await renderOnce(page);
 
-    const region = await getProjectedGeometryRegion(page, ['mesh']);
-    const stats = await getElementPixelStats(page, 'canvas', 10, region);
+    const stats = await getElementPixelStats(page, 'canvas', 10);
     const litFraction = stats.nonBlackPixels / (stats.width * stats.height);
     expect(
       stats.nonBlackPixels,
       `the canvas is blank — the mesh committed ${(await meshNodes(page)).length} nodes but drew nothing`
     ).toBeGreaterThan(1000);
-    // A loose upper bound too: the surfaces occupy a minority of their projected
-    // bounds, so a constant-filled region is a different failure that "> 1000" alone
-    // would pass.
-    expect(litFraction, 'the geometry region is filled — this is a wash, not a mesh').toBeLessThan(
-      0.5
-    );
+    // A loose upper bound too: the three nodes occupy a minority of the frame, so a
+    // full-canvas wash is a different failure that "> 1000" alone would pass.
+    expect(litFraction, 'the whole canvas is lit — this is a wash, not a mesh').toBeLessThan(0.5);
     // The brightest pixel must be a real shaded colour rather than a single stray
     // channel, which is what a NaN or an uninitialised varying tends to produce.
     const { r, g, b } = stats.brightest;

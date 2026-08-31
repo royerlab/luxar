@@ -19,7 +19,6 @@ import {
   waitForRenderStable,
   assertNoShaderErrors,
   getElementPixelStats,
-  getProjectedGeometryRegion,
   placeCameraAt,
   renderOnce,
 } from './helpers';
@@ -39,10 +38,9 @@ test.describe('GSplats visual correctness', () => {
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
-    // Measure only where the live GSplat bounds project. The canvas element's
-    // screenshot also contains the control rail painted above it.
-    const region = await getProjectedGeometryRegion(page, ['gsplats']);
-    const stats = await getElementPixelStats(page, 'canvas', 10, region);
+    // Pixel helpers suppress DOM painted over the canvas, so non-black pixels
+    // here can only come from the rendered canvas itself.
+    const stats = await getElementPixelStats(page, 'canvas', 10);
     expect(
       stats.nonBlackPixels,
       `Expected visible GSplat output; stats=${JSON.stringify(stats)}`
@@ -65,7 +63,7 @@ test.describe('GSplats visual correctness', () => {
     });
     expect(hidden, 'the blank-frame control must hide real GSplat geometry').toBeGreaterThan(0);
     await renderOnce(page);
-    const blankStats = await getElementPixelStats(page, 'canvas', 10, region);
+    const blankStats = await getElementPixelStats(page, 'canvas', 10);
     expect(
       blankStats.nonBlackPixels,
       `DOM chrome entered the projected GSplat region; stats=${JSON.stringify(blankStats)}`
