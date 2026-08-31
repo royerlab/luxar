@@ -73,17 +73,20 @@ This explains the recipe split:
 - `stream` and `levels` fetch one leaf or level initially, but a typical whole-object
   `levels` ladder promotes on frame 1.
 
-## Sliced nodes: the first rung arrives divided
+## Sliced nodes: count the resident slice
 
 Everything above counts rungs. On a node the viewer SLICES — any non-displayed
 dimension — you also have to count how many elements land in the rung it actually
 draws, because a ladder's rungs are sized against the WHOLE node while only one
 hidden coordinate is on screen.
 
-A rung specified as an ABSOLUTE count is the trap. `--target-ms` and
-`-b stream:<c>` both resolve to a count `C` for the whole node, so the resident
-slice receives `C / stops`. A rung specified as a SHARE is not: `--n-lods L`
-gives exactly `1/L` of the frame whatever the slice count, by construction.
+An explicit ABSOLUTE count is the trap. `-b stream:<c>` fixes a count `C` for the
+whole node, so the resident slice receives part of `C`. The CLI's `--target-ms`
+path avoids that mistake by surveying the store, multiplying its first chunk by
+the observed slice count, and logging the multiplier. `--n-lods L` instead makes
+rung 0 an aggregate `1/L` share of the whole node, so the average share is stable
+as the slice count changes. It is not a per-slice guarantee: the global prefix
+concentrates where the signal is, and sparse slices can receive much less.
 
 Measured on the shipped corpus — the 5th-percentile rung-0 count per coordinate
 against what the deployed viewer commits while the axis plays:
@@ -102,20 +105,21 @@ visited therefore shows close to rung 0 alone, which is why the left column
 predicts the right one.
 
 **Rules that follow.** Prefer `--n-lods 3..4` on any node with a hidden
-dimension. If you use `--target-ms` there, know that the CLI scales it by the
-slice count for you and logs the multiplier — read that line rather than
-assuming the number you typed is what a viewer will see. Count stops as distinct
-OCCURRING combinations across all hidden axes: not the product of per-axis
-cardinality (`biodiversity_planetary_scale` is 126 populated of 140), and not
-the declared `Dimension` range (`drosophila_embryogenesis` declares 500
-timepoints and its coarsest rung carries data at 499).
+dimension, then inspect the per-slice histogram on a long or non-uniform axis
+rather than trusting the aggregate share. If you use `--target-ms` there, read
+the CLI's logged slice multiplier rather than assuming the number you typed is
+what a viewer will see. Count stops as distinct OCCURRING combinations across
+all hidden axes: not the product of per-axis cardinality
+(`biodiversity_planetary_scale` is 126 populated of 140), and not the declared
+`Dimension` range (`drosophila_embryogenesis` declares 500 timepoints and its
+coarsest rung carries data at 499).
 
-Three things enforce this so it does not rest on remembering: the CLI scales
-`--target-ms` by the slice count, `default_composed_additive_lod` requires a
-`slices` argument rather than defaulting it, and `hatch run check-demo-ladders`
-fails a built store whose sparsest slices fall below an absolute floor. The
-gate measures the 5th percentile, not the maximum — a ladder starves at its
-sparsest slice, and one busy coordinate used to mask hundreds of starved ones.
+Two landed protections keep this from resting on memory: the CLI scales
+`--target-ms` by the slice count, and `hatch run check-demo-ladders` fails a built
+store whose sparsest slices fall below the floor. The demo policy also floors
+sliced first rungs at an aggregate share before stores are built. The gate
+measures the 5th percentile, not the maximum — a ladder starves at its sparsest
+slice, and one busy coordinate used to mask hundreds of starved ones.
 
 ## Measured example
 
