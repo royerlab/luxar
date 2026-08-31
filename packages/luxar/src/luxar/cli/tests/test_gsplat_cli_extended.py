@@ -1093,9 +1093,7 @@ class TestMergeCommand:
             merged.label_ids[order], np.arange(count, dtype=np.uint16) % 3
         )
 
-    def test_merge_concatenate(
-        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
-    ) -> None:
+    def test_merge_concatenate(self, runner: CliRunner, tmp_path: Path) -> None:
         from luxar.gsplats.gsplat_data import GSplatData
 
         path1 = self._labeled_input(tmp_path, "test1", 0, 5)
@@ -1120,9 +1118,7 @@ class TestMergeCommand:
         assert merged.n_splats == 8  # 5 + 3
         self._assert_labeled_rows(merged, 8)
 
-    def test_merge_as_dimension(
-        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
-    ) -> None:
+    def test_merge_as_dimension(self, runner: CliRunner, tmp_path: Path) -> None:
         from luxar.gsplats.gsplat_data import GSplatData
 
         path1 = self._labeled_input(tmp_path, "test1", 0, 5)

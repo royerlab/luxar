@@ -948,7 +948,7 @@ class TestMigrateV3LegacyLodAttrs:
         from luxar.encoding.decoder import ArrayDecoder
 
         decoder = ArrayDecoder()
-        for index, count in enumerate((2, 8)):
+        for index in range(2):
             child = out_root["part_0"][f"child_{index}"]
             centers = decoder.decode(child["centers"], out_root)
             expected_ids = []
