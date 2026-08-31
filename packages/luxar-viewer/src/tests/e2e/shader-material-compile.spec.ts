@@ -64,7 +64,7 @@ test.describe('browser-real shader compile + pixel smoke', () => {
 
       // (2) Some canvas pixel has rendered output. Whole-canvas stats avoid
       //     missing thin lines or small splat clusters between sparse sample
-      //     points, while the helper suppresses DOM chrome before capture.
+      //     points, while the framebuffer route excludes DOM chrome from capture.
       if (v.expectColored) {
         const stats = await getElementPixelStats(
           page,

@@ -39,8 +39,8 @@ test.describe('GSplats visual correctness', () => {
     await waitForRenderStable(page);
 
     // Whole-canvas stats are more robust than sparse grid sampling for small
-    // splat clusters. Pixel helpers suppress DOM painted over the canvas, so
-    // non-black pixels here can only come from the rendered canvas itself.
+    // splat clusters. The framebuffer route excludes DOM chrome, so non-black
+    // pixels here can only come from the rendered canvas itself.
     const stats = await getElementPixelStats(page, 'canvas#app', 10, 'framebuffer');
     expect(
       stats.nonBlackPixels,

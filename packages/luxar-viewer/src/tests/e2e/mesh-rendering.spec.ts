@@ -255,7 +255,7 @@ test.describe('Mesh rendering', () => {
   test('flying into a mesh fades it out smoothly instead of clipping (#1431)', async ({ page }) => {
     // Mesh was the one geometry type with no `perspectiveNearFade`: a triangle
     // clipped hard against the near plane while the other three faded. This pins the
-    // fixed behaviour where it is observable — in composited pixels, through the
+    // fixed behaviour where it is observable — in framebuffer pixels, through the
     // production material, on a mesh that came out of the writer.
     //
     // The approach fly-in is driven by SCALING `uNearCull` rather than by moving the
