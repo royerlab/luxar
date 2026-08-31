@@ -97,8 +97,8 @@ export class ResizeOrchestrator {
 
     // Ensure pixel ratio stays current. When adaptive/manual DPR is
     // active, preserve that explicit override across ordinary window
-    // resizes; when no override is active, track native
-    // devicePixelRatio changes (e.g. dragging between monitors).
+    // resizes; when no override is active, track ceiling changes
+    // (including display changes when dragging between monitors).
     ctx.renderer.setPixelRatio(getActivePixelRatio(ctx.pixelRatioOverride));
 
     // PostProcessingManager owns renderer + composer sizing — it calls

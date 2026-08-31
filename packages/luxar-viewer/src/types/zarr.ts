@@ -175,6 +175,7 @@ export interface ZarrViewerConfig {
 
   // Adaptive resolution
   adaptive_dpr_enabled?: boolean;
+  allow_high_dpr?: boolean;
 
   // UI panel visibility
   ui?: {

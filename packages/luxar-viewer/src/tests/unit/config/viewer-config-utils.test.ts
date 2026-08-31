@@ -561,6 +561,7 @@ describe('RENDERING_SETTINGS_MAP completeness', () => {
     ['fly_rotation_damping', 'flyRotationDamping'],
     ['dynamic_clipping_enabled', 'dynamicClippingEnabled'],
     ['adaptive_dpr_enabled', 'adaptiveDPREnabled'],
+    ['allow_high_dpr', 'allowHighDPR'],
   ];
 
   it.each(REQUIRED_PAIRS)('maps snake `%s` → camel `%s`', (snake, camel) => {

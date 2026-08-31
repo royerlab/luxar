@@ -17,6 +17,7 @@ import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
 import type { AdaptiveDPRManager } from '../../rendering/adaptive-dpr-manager';
+import { getMaxPixelRatioCap, setMaxPixelRatioCap } from '../../rendering/pixel-ratio-cap';
 import type { OverlayManager } from '../overlay-manager';
 import { SliderSyncCoordinator } from './animation-sync';
 import { getViewerContainer } from '../../utils/viewer-container';
@@ -85,13 +86,27 @@ function alignForEncoder(value: number, scale: number): number {
 export interface SavedRecordingState {
   dprEnabled: boolean;
   dpr: number;
+  /** Whether this capture explicitly pinned DPR through the manager. */
+  dprPinned: boolean;
+  /** Pixel-ratio cap in force before the capture raised it. */
+  pixelRatioCap: number;
   rendererSize: { width: number; height: number } | null;
   resizeLocked: boolean;
 }
 
 export interface SaveRecordingStateOptions {
   lockResize?: boolean;
-  disableDPR?: boolean;
+  /**
+   * Pixel ratio to render the capture at. Adaptive DPR is switched off
+   * and this exact ratio is pinned for the duration.
+   *
+   * Defaults (in the panel) to the on-screen ceiling, so an export
+   * matches what you see. A HIGHER value is honoured by temporarily
+   * raising the pixel-ratio cap — otherwise the renderer boundary would
+   * clamp the request straight back down and the option would look
+   * broken. Bounded by the display's own DPR.
+   */
+  captureDPR?: number;
   scaleResolution?: { targetH: number; alignEven?: boolean };
 }
 
@@ -201,7 +216,7 @@ export class RecordingSession {
    */
   saveRecordingState(options: SaveRecordingStateOptions): void {
     const dprEnabled = this.adaptiveDPRManager?.isActive() ?? false;
-    const dpr = this.adaptiveDPRManager?.getCurrentDPR() ?? window.devicePixelRatio;
+    const dpr = this.adaptiveDPRManager?.getCurrentDPR() ?? this.sceneManager.activePixelRatio;
     const renderer = this.sceneManager.renderer;
     // The DISPLAY size, not `renderer.getSize()`: post-processing hands
     // the renderer the SSAA-multiplied size, so the renderer reports
@@ -213,22 +228,27 @@ export class RecordingSession {
     this.savedRecordingState = {
       dprEnabled,
       dpr,
+      dprPinned: options.captureDPR !== undefined && this.adaptiveDPRManager !== null,
+      pixelRatioCap: getMaxPixelRatioCap(),
       rendererSize: null,
       resizeLocked: this.sceneManager.resizeLocked,
     };
 
-    if (options.disableDPR && this.adaptiveDPRManager) {
-      // When adaptive was enabled, setEnabled(false) already resets to
-      // native and applies it through the full resize path — calling
-      // setAdaptivePixelRatio again would repeat the HDR-target
-      // dispose/recreate for nothing.
+    if (options.captureDPR !== undefined && this.adaptiveDPRManager) {
+      // Freeze the resolution for the capture: adaptation off, then the
+      // requested ratio pinned.
       this.adaptiveDPRManager.setEnabled(false);
-      if (!dprEnabled) {
-        // Manual-DPR mode: setEnabled(false) early-returned (state
-        // unchanged), so this call is the only thing forcing native
-        // resolution for the capture. NOT dead code.
-        this.sceneManager.setAdaptivePixelRatio(this.adaptiveDPRManager.getNativeDPR());
+      // Raising the cap FIRST — a captureDPR above the on-screen ceiling
+      // is the whole point of the panel's override, and the renderer
+      // boundary would otherwise clamp it straight back down. Bounded by
+      // the display, which `setAdaptivePixelRatio` applies for us.
+      if (options.captureDPR > getMaxPixelRatioCap()) {
+        setMaxPixelRatioCap(options.captureDPR);
       }
+      // Unconditional, unlike the pre-cap version which leaned on
+      // setEnabled(false) resetting to native: that reset now lands on
+      // the CEILING, which is not necessarily the requested ratio.
+      this.sceneManager.setAdaptivePixelRatio(options.captureDPR);
     }
 
     if (options.lockResize) {
@@ -280,9 +300,20 @@ export class RecordingSession {
     const saved = this.savedRecordingState;
     if (!saved) return;
 
+    // Drop the capture's cap FIRST, so everything below re-sizes against
+    // the ratio the session is going back to rather than the one the
+    // export ran at.
+    setMaxPixelRatioCap(saved.pixelRatioCap);
+
     if (saved.rendererSize) {
       const renderer = this.sceneManager.renderer;
-      renderer.setPixelRatio(window.devicePixelRatio);
+      // Through the policy, NOT `window.devicePixelRatio` directly: the
+      // raw native value ignores both the cap and the scene manager's
+      // override, so on a capped session it left the renderer drawing at
+      // 2x while `pixelRatioOverride` still said 1.0 — a doubled
+      // backbuffer that only snapped back at the next resize, as a
+      // visible resolution flip.
+      renderer.setPixelRatio(this.sceneManager.activePixelRatio);
       this.sceneManager.postProcessing.resize(saved.rendererSize.width, saved.rendererSize.height);
       const camera = this.sceneManager.camera;
       if (camera instanceof THREE.PerspectiveCamera) {
@@ -297,7 +328,10 @@ export class RecordingSession {
     if (this.adaptiveDPRManager) {
       if (saved.dprEnabled) {
         this.adaptiveDPRManager.setEnabled(true);
-      } else {
+        if (saved.dprPinned) {
+          this.sceneManager.setAdaptivePixelRatio(this.adaptiveDPRManager.getCurrentDPR());
+        }
+      } else if (saved.dprPinned) {
         this.sceneManager.setAdaptivePixelRatio(saved.dpr);
       }
     }

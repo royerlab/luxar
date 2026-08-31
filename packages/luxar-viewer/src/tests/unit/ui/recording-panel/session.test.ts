@@ -73,6 +73,12 @@ vi.mock('../../../../scene/scene-dims-manager', () => ({
 
 import { RecordingPanel } from '../../../../ui/recording-panel';
 import { createMockSceneManager, createMockAnimationController } from './_helpers';
+import {
+  DEFAULT_MAX_PIXEL_RATIO,
+  getMaxPixelRatioCap,
+  setMaxPixelRatioCap,
+} from '../../../../rendering/pixel-ratio-cap';
+import { setNativeDPR } from '../../../helpers/device-pixel-ratio';
 
 describe('RecordingSession', () => {
   let panel: RecordingPanel;
@@ -101,37 +107,40 @@ describe('RecordingSession', () => {
       };
     }
 
-    it('adaptive-enabled: disables once, no second resize pass, restore re-enables', () => {
-      const manager = makeDPRManager(true, 1.4);
+    it('adaptive-enabled: freezes adaptation and pins the capture DPR, restore re-enables', () => {
+      let currentDPR = 1.4;
+      const manager = makeDPRManager(true, currentDPR);
+      manager.getCurrentDPR.mockImplementation(() => currentDPR);
+      manager.setEnabled.mockImplementation((enabled: boolean) => {
+        if (!enabled) currentDPR = 1.0;
+      });
       panel.setAdaptiveDPRManager(manager as any);
 
-      panel.session.saveRecordingState({ disableDPR: true });
-      // setEnabled(false) already applies native through the resize
-      // path; a second explicit setAdaptivePixelRatio would repeat the
-      // HDR-target dispose/recreate for nothing.
+      panel.session.saveRecordingState({ captureDPR: 2.0 });
       expect(manager.setEnabled).toHaveBeenCalledWith(false);
-      expect(mockSceneManager.setAdaptivePixelRatio).not.toHaveBeenCalled();
+      // Applied UNCONDITIONALLY now. It used to lean on setEnabled(false)
+      // resetting to native, but that reset lands on the CEILING, which
+      // is not necessarily the ratio the capture asked for.
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(2.0);
 
       panel.session.restoreRecordingState();
       expect(manager.setEnabled).toHaveBeenLastCalledWith(true);
-      expect(mockSceneManager.setAdaptivePixelRatio).not.toHaveBeenCalled();
+      expect(mockSceneManager.renderer.setPixelRatio).toHaveBeenLastCalledWith(1.0);
     });
 
-    it('manual-DPR mode: forces native explicitly (load-bearing), restore reapplies the manual value', () => {
+    it('manual-DPR mode: pins the capture DPR, restore reapplies the manual value', () => {
       const manager = makeDPRManager(false, 0.5);
       panel.setAdaptiveDPRManager(manager as any);
 
-      panel.session.saveRecordingState({ disableDPR: true });
-      // setEnabled(false) early-returns when already disabled — the
-      // explicit call is the only thing forcing native for the capture.
-      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(2.0);
+      panel.session.saveRecordingState({ captureDPR: 1.0 });
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(1.0);
 
       panel.session.restoreRecordingState();
       expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenLastCalledWith(0.5);
       expect(manager.setEnabled).not.toHaveBeenCalledWith(true);
     });
 
-    it('without disableDPR the session leaves DPR entirely alone', () => {
+    it('without captureDPR the session leaves DPR entirely alone', () => {
       const manager = makeDPRManager(true, 1.4);
       panel.setAdaptiveDPRManager(manager as any);
 
@@ -140,6 +149,38 @@ describe('RecordingSession', () => {
 
       expect(manager.setEnabled).not.toHaveBeenCalledWith(false);
       expect(mockSceneManager.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The capture override: an export ABOVE the on-screen ceiling must
+     * actually render at that ratio. The renderer boundary clamps to the
+     * cap, so the session has to lift the cap for the duration — and put
+     * it back, or the whole session would keep rendering at the export's
+     * resolution afterwards.
+     */
+    it('lifts the pixel-ratio cap for an above-ceiling capture and restores it', () => {
+      const manager = makeDPRManager(false, 1.0);
+      panel.setAdaptiveDPRManager(manager as any);
+      setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
+
+      panel.session.saveRecordingState({ captureDPR: 2.0 });
+      expect(getMaxPixelRatioCap()).toBe(2.0);
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(2.0);
+
+      panel.session.restoreRecordingState();
+      expect(getMaxPixelRatioCap()).toBe(DEFAULT_MAX_PIXEL_RATIO);
+    });
+
+    it('leaves the cap alone for a WYSIWYG capture at the ceiling', () => {
+      const manager = makeDPRManager(false, 1.0);
+      panel.setAdaptiveDPRManager(manager as any);
+      setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
+
+      panel.session.saveRecordingState({ captureDPR: 1.0 });
+      expect(getMaxPixelRatioCap()).toBe(DEFAULT_MAX_PIXEL_RATIO);
+
+      panel.session.restoreRecordingState();
+      expect(getMaxPixelRatioCap()).toBe(DEFAULT_MAX_PIXEL_RATIO);
     });
   });
 
@@ -291,15 +332,22 @@ describe('RecordingSession', () => {
       // display size and applies the multiplier itself. Snapshotting the
       // renderer's number therefore grew the viewport by the multiplier
       // on every capture, and compounded on the next one.
+      const restoreNativeDPR = setNativeDPR(2);
+      setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
       mockSceneManager.postProcessing.getEffectiveRenderScale = vi.fn().mockReturnValue(2);
       withCanvas(1512, 850);
-      panel.session.saveRecordingState({
-        scaleResolution: { targetH: 1700, alignEven: true },
-      });
-      panel.session.restoreRecordingState();
+      try {
+        panel.session.saveRecordingState({
+          scaleResolution: { targetH: 1700, alignEven: true },
+        });
+        panel.session.restoreRecordingState();
 
-      const calls = mockSceneManager.postProcessing.resize.mock.calls;
-      expect(calls.at(-1)).toEqual([1512, 850]);
+        const calls = mockSceneManager.postProcessing.resize.mock.calls;
+        expect(calls.at(-1)).toEqual([1512, 850]);
+        expect(mockSceneManager.renderer.setPixelRatio).toHaveBeenLastCalledWith(1);
+      } finally {
+        restoreNativeDPR();
+      }
     });
 
     it('leaves the height alone when no alignment is asked for', () => {

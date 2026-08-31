@@ -1,12 +1,17 @@
 /**
  * Performance / adaptive-DPR setup for the rendering-controls panel.
  *
- * Builds the "Performance" folder with the Adaptive Resolution toggle,
- * a Manual DPR slider (visible when adaptive is OFF), and read-only
- * Current DPR / Current FPS display rows (visible when adaptive is ON).
+ * Builds the "Performance" folder with the Allow High DPR toggle, the
+ * Adaptive Resolution toggle, a Manual DPR slider (visible when adaptive
+ * is OFF), and read-only Current DPR / Current FPS display rows (visible
+ * when adaptive is ON).
+ *
+ * Allow High DPR shows in BOTH modes, because it caps both: it is the
+ * adaptive scale-up ceiling and the top of the manual slider's range.
  *
  * Returns:
- *  - the controller for `adaptiveDPREnabled` so the facade can store it,
+ *  - the controllers for `adaptiveDPREnabled` and `allowHighDPR` so the
+ *    facade can store them,
  *  - a visibility callback used by the persistence layer to re-sync
  *    the panel after settings load,
  *  - a cleanup function for the FPS-display polling interval.
@@ -17,8 +22,21 @@ import type GUI from '../../gui';
 import type { RenderingSettings } from '../../../config';
 import { FOLDER_ICONS } from '../folder-icons';
 import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
+import { getMaxPixelRatio } from '../../../rendering/pixel-ratio-cap';
 import { formatFPSReading } from '../../performance-monitor';
 import { log, Modules } from '../../../utils/log';
+
+/**
+ * `min`/`max`/`step` live on lil-gui's NumberController but not on the
+ * base `Controller` type, so a structural cast targets just those three
+ * fluent methods (same pattern as the fly-speed slider in
+ * `ui/rendering-controls.ts`).
+ */
+type ChainableNumber = {
+  min(v: number): ChainableNumber;
+  max(v: number): ChainableNumber;
+  step(v: number): ChainableNumber;
+};
 
 export interface PerformanceSetupContext {
   gui: GUI;
@@ -31,6 +49,8 @@ export interface PerformanceSetupContext {
 export interface PerformanceSetupResult {
   /** The Adaptive Resolution toggle controller. */
   adaptiveDPREnabled: Controller;
+  /** The Allow High DPR toggle controller. */
+  allowHighDPR: Controller;
   /** Re-applied by `loadSettings` after a stored adaptiveDPREnabled flips. */
   updateVisibility: (adaptiveEnabled: boolean) => void;
   /** Cleanup callback for the periodic FPS/DPR display update interval. */
@@ -67,11 +87,27 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
   performanceFolder.domElement?.setAttribute(
     'title',
     'Performance: Controls that trade visual quality for speed\n\n' +
+      "• Allow High DPR: Let the viewer render at your display's full pixel\n" +
+      '  density instead of CSS resolution.\n' +
       '• Adaptive Resolution: Automatically lowers pixel ratio when FPS drops,\n' +
       '  then gradually restores quality when the GPU catches up.\n' +
       '• Manual DPR: Set a fixed pixel ratio (lower = faster but blurrier).\n\n' +
       'Useful for large datasets or lower-end GPUs where smooth interaction\n' +
       'matters more than pixel-perfect sharpness.'
+  );
+
+  const highDPRToggle = performanceFolder.add(settings, 'allowHighDPR').name('Allow High DPR');
+
+  highDPRToggle.domElement.setAttribute(
+    'title',
+    "Allow High DPR: Render at your display's full pixel density\n" +
+      `• Your display: ${manager.getNativeDPR().toFixed(2)}x\n` +
+      '• OFF (default): the viewer never renders above 1.0 — the starting\n' +
+      '  resolution, the adaptive ceiling, and the top of the Manual DPR slider\n' +
+      `• ON: allows up to ${manager.getNativeDPR().toFixed(2)}x, which costs ` +
+      `${(manager.getNativeDPR() ** 2).toFixed(0)}x the pixels\n` +
+      '• Off by default because points, splats and lines are soft-edged — the\n' +
+      '  extra pixels usually cost far more than they show'
   );
 
   const adaptiveToggle = performanceFolder
@@ -88,10 +124,14 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
   );
 
   const nativeDPR = manager.getNativeDPR();
-  const manualDPRSettings = { dpr: nativeDPR };
+  // The slider tops out at the CEILING, not the display's DPR: while
+  // high DPR is disallowed the toggle above is a hard cap on everything
+  // interactive, this control included. `retargetManualDPRRange` widens
+  // and narrows it when that toggle flips with the popover open.
+  const manualDPRSettings = { dpr: getMaxPixelRatio() };
 
   const manualDPRControl = performanceFolder
-    .add(manualDPRSettings, 'dpr', 0.25, nativeDPR, 0.05)
+    .add(manualDPRSettings, 'dpr', 0.25, getMaxPixelRatio(), 0.05)
     .name('Manual DPR')
     .onFinishChange((value: number) => {
       if (!settings.adaptiveDPREnabled) {
@@ -103,15 +143,27 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
   manualDPRControl.domElement.setAttribute(
     'title',
     'Manual Device Pixel Ratio (when adaptive is off)\n' +
-      `• Native: ${nativeDPR.toFixed(2)}\n` +
+      `• Display: ${nativeDPR.toFixed(2)} — enable Allow High DPR to go above 1.00\n` +
       '• Lower values = better performance, less sharpness\n' +
       '• Applied when you release/commit the slider to avoid GPU resize thrash\n' +
       '• 1.0 = 100% resolution, 0.5 = 50% resolution'
   );
 
+  /**
+   * Point the slider at the current ceiling. `min`/`max`/`step` are
+   * NumberController-only, so reach them through the same structural
+   * cast the fly-speed slider uses.
+   */
+  const retargetManualDPRRange = (): void => {
+    const ceiling = getMaxPixelRatio();
+    (manualDPRControl as unknown as ChainableNumber).max(ceiling);
+    if (manualDPRSettings.dpr > ceiling) manualDPRSettings.dpr = ceiling;
+    manualDPRControl.updateDisplay();
+  };
+
   const dprRow = createDisplayRow(
     'Current DPR',
-    `Current Device Pixel Ratio\n• Native: ${nativeDPR.toFixed(2)}\n• Lower values = better performance, less sharpness`
+    `Current Device Pixel Ratio\n• Display: ${nativeDPR.toFixed(2)}\n• Lower values = better performance, less sharpness`
   );
   const dprValue = dprRow.querySelector('.luxar-gui__controller-widget') as HTMLElement;
 
@@ -154,17 +206,35 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
       fpsValue.textContent = formatFPS(state.currentFPS);
     } else {
       manualDPRControl.show();
-      manualDPRSettings.dpr = manager.getCurrentDPR() ?? nativeDPR;
+      retargetManualDPRRange();
+      manualDPRSettings.dpr = manager.getCurrentDPR() ?? getMaxPixelRatio();
       manualDPRControl.updateDisplay();
       dprRow.style.display = 'none';
       fpsRow.style.display = 'none';
     }
   };
 
-  // Sync initial state from manager BEFORE setting visibility.
-  settings.adaptiveDPREnabled = manager.isActive();
+  // Sync initial state from manager BEFORE setting visibility. A URL pin
+  // is session-only, so keep the stored scene settings untouched while
+  // pinned rather than letting the effective override leak into the next
+  // saveSettings() call.
+  if (!manager.isPinned()) {
+    settings.adaptiveDPREnabled = manager.isActive();
+    settings.allowHighDPR = manager.isHighDPRAllowed();
+  }
   adaptiveToggle.updateDisplay();
+  highDPRToggle.updateDisplay();
   updateVisibility(settings.adaptiveDPREnabled);
+
+  highDPRToggle.onChange((allowed: boolean) => {
+    manager.setHighDPRAllowed(allowed);
+    saveSettings();
+    log.info(Modules.RENDERER, `High DPR ${allowed ? 'allowed' : 'disallowed'}`);
+    // The ceiling moved, so the manual slider's range and the readouts
+    // must follow it in the same tick.
+    updateVisibility(settings.adaptiveDPREnabled);
+    triggerAnimation();
+  });
 
   adaptiveToggle.onChange((enabled: boolean) => {
     manager.setEnabled(enabled);
@@ -187,6 +257,7 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
 
   return {
     adaptiveDPREnabled: adaptiveToggle,
+    allowHighDPR: highDPRToggle,
     updateVisibility,
     cleanup: () => clearInterval(updateInterval),
   };

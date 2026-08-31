@@ -65,6 +65,7 @@ import { getViewerContainer } from '../../utils/viewer-container';
 import { showToast } from '../toast';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
+import { getMaxPixelRatio } from '../../rendering/pixel-ratio-cap';
 import { LuxarOrbitControls } from '../../controls/luxar-orbit-controls';
 import { computeVideoBitrate as computeVideoBitratePure } from './media-utilities';
 import {
@@ -300,12 +301,15 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     // asked for a 12096×6800 target). `saveRecordingState` re-applies
     // the multiplier itself, so the frames on disk still carry SSAA —
     // which is what the real-time path's canvas backbuffer includes too.
+    // `captureDPR`, not the display's native DPR: "Native" here means
+    // "the resolution this capture renders at", which by default is what
+    // is on screen. Raise Capture DPR in the panel for a bigger export.
     const displayH = this.sceneManager.postProcessing.getDisplaySize().height;
-    const nativeDPR = session.adaptiveDPRManager?.getNativeDPR() ?? window.devicePixelRatio ?? 1;
+    const captureDPR = opts.captureDPR ?? getMaxPixelRatio();
     const targetH =
-      opts.videoResolution > 0 ? opts.videoResolution : Math.round(displayH * nativeDPR);
+      opts.videoResolution > 0 ? opts.videoResolution : Math.round(displayH * captureDPR);
     session.saveRecordingState({
-      disableDPR: true,
+      captureDPR,
       lockResize: true,
       scaleResolution: { targetH, alignEven: true },
     });

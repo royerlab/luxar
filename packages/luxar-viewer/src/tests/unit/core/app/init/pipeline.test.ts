@@ -194,6 +194,11 @@ import {
   setDepthSortEnabled,
   warmUpDepthSortWorker,
 } from '../../../../../rendering/depth-sort-coordinator';
+import {
+  DEFAULT_MAX_PIXEL_RATIO,
+  setMaxPixelRatioCap,
+} from '../../../../../rendering/pixel-ratio-cap';
+import { setNativeDPR } from '../../../../helpers/device-pixel-ratio';
 
 function makePorts(): InitPipelinePorts {
   const canvas = document.createElement('canvas');
@@ -289,7 +294,7 @@ describe('runInitPipeline', () => {
       expect(partial.sceneSrc).toBe('http://example.com/scene.zarr');
     });
 
-    it('normalizes the DPR-change callback to percent-of-native before showing the indicator', async () => {
+    it('normalizes the DPR-change callback to percent-of-CEILING before showing the indicator', async () => {
       const { factories } = makeFactoryOverrides();
       const ports = makePorts();
       ports.options.factories = factories as never;
@@ -309,15 +314,32 @@ describe('runInitPipeline', () => {
         isReducedResolution: boolean
       ) => void;
 
-      // Reduced at DPR 1.8 on a native-2 display → indicator shows 0.9
-      // (percent-of-native), NOT the absolute DPR (the retina "180%" bug).
-      callback(1.8, true);
-      expect(indicator.show).toHaveBeenCalledWith(0.9);
+      // Reduced at DPR 1.8 with a 2.0 ceiling → indicator shows 0.9
+      // (percent-of-full-quality), NOT the absolute DPR (the retina
+      // "180%" bug).
+      //
+      // Against the CEILING, not the display: with high DPR disallowed
+      // the ceiling is 1.0, so dividing by a native 2.0 would report a
+      // permanent "50%" and pop the toast on every scene load.
+      setMaxPixelRatioCap(Infinity);
+      const restoreNative = setNativeDPR(2);
+      try {
+        callback(1.8, true);
+        expect(indicator.show).toHaveBeenCalledWith(0.9);
 
-      // Back at native → reset branch, no further show.
-      callback(2, false);
-      expect(indicator.reset).toHaveBeenCalledTimes(1);
-      expect(indicator.show).toHaveBeenCalledTimes(1);
+        // Back at the ceiling → reset branch, no further show.
+        callback(2, false);
+        expect(indicator.reset).toHaveBeenCalledTimes(1);
+        expect(indicator.show).toHaveBeenCalledTimes(1);
+
+        // Capped at 1.0: a DPR of 0.9 is 90% of full quality, not 45%.
+        setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
+        callback(0.9, true);
+        expect(indicator.show).toHaveBeenLastCalledWith(0.9);
+      } finally {
+        restoreNative();
+        setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
+      }
     });
 
     it('returns the SAME object reference as `partial` (happy path)', async () => {

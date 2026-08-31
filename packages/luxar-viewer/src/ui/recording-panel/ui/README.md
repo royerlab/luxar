@@ -10,7 +10,7 @@ callback on the injected `deps`.
 The tree is **two-tiered**: primary settings (Format, Image Quality,
 Transparent BG, Video Quality, Resolution, Max Duration, Frame Rate,
 turntable Output / Speed / Smooth) sit directly on the root GUI,
-while niche toggles (Show Panels, Include Overlays, Max Resolution,
+while niche toggles (Show Panels, Include Overlays, Capture DPR,
 Codec, Sync to Slider, Dimension) live in the `Advanced Options`
 folder. The folder is created _after_ the primary controls so it
 renders beneath them.
