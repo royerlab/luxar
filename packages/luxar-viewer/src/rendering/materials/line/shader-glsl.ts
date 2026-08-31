@@ -392,7 +392,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       // Enforce minimum pixel width to prevent sub-pixel rendering artifacts
       // Lines thinner than ~1.5 pixels cause severe aliasing due to rasterization gaps
-      float minPixelWidth = 1.5 * uPixelRatio;
+      // Preserve the historical framebuffer-pixel floor below 1× render scale.
+      float minPixelWidth = 1.5 * max(uPixelRatio, 1.0);
       // clamp to a maximum pixel width so a near-camera segment
       // can't paint the entire screen. Default uMaxLinePixelWidth is
       // resolution.y * 0.5 (set by JS).
@@ -582,7 +583,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // Anti-aliasing: smooth falloff at edges
       // The AA region is ~1 pixel wide in the rendered quad
       // Since we enforce minimum 1.5px width, use that as reference
-      float minPixelWidth = 1.5 * uPixelRatio;
+      float minPixelWidth = 1.5 * max(uPixelRatio, 1.0);
       float renderedWidth = max(vPixelWidth, minPixelWidth);
       float aaWidth = 1.0 / renderedWidth;  // ~1 pixel in normalized coords
       float edgeAA = 1.0 - smoothstep(1.0 - aaWidth, 1.0, p);

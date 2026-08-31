@@ -30,6 +30,7 @@ import { config } from '../../../../../config';
 
 function makeRenderer(): Renderer {
   return {
+    domElement: { clientHeight: 300 },
     getDrawingBufferSize: vi.fn((target: THREE.Vector2) => {
       target.set(800, 600);
       return target;
@@ -92,6 +93,21 @@ describe('updateMaterialsForCurrentCamera', () => {
     expect(buf).toBe(bufferSize); // Same reference, not a fresh allocation.
     expect(bufferSize.x).toBe(800);
     expect(bufferSize.y).toBe(600);
+  });
+
+  it('includes SSAA in the framebuffer-pixels-per-CSS-pixel scale', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const ctx = makeCtx({ camera });
+
+    updateMaterialsForCurrentCamera(ctx);
+
+    expect(materialManager.updateCameraParams).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(THREE.Vector2),
+      false,
+      expect.any(Number),
+      2
+    );
   });
 
   it('mutates the supplied bufferSize in place on each call (MED-47 contract)', () => {

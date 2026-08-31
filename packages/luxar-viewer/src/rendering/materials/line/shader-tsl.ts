@@ -500,7 +500,8 @@ export function lineWebGPUFactory(
       rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView).toVar();
     }
 
-    const minPixelWidth = uPixelRatio.mul(1.5);
+    // Preserve the historical framebuffer-pixel floor below 1× render scale.
+    const minPixelWidth = uPixelRatio.max(float(1.0)).mul(1.5);
     const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0)).toVar();
     // Width fade for clamped extreme cases. `.toVar()` on the
     // expression branch so select() picks the right concrete value.
@@ -712,7 +713,7 @@ export function lineWebGPUFactory(
     const perpFalloff: TSLNode = exp(p.pow(beta).mul(-K)).sub(C).max(float(0.0)).mul(invOneMinusC);
 
     // Edge AA: smoothstep over ~1 pixel.
-    const minPW = uPixelRatio.mul(1.5);
+    const minPW = uPixelRatio.max(float(1.0)).mul(1.5);
     const renderedWidth: TSLNode = max(vPixelWidth, minPW);
     const aaWidth: TSLNode = float(1.0).div(renderedWidth);
     const edgeAA: TSLNode = float(1.0).sub(smoothstep(float(1.0).sub(aaWidth), float(1.0), p));

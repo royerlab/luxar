@@ -188,7 +188,7 @@ import { LuxarLayer, type LuxarLayerOptions } from '../../../core/layer/luxar-la
 function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOptions {
   const renderer = {
     isWebGLRenderer: true,
-    getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
+    getDrawingBufferSize: (v: THREE.Vector2) => v.set(1600, 1200),
     getPixelRatio: () => 2,
   } as unknown as LuxarLayerOptions['renderer'];
   return {
@@ -1005,6 +1005,30 @@ describe('LuxarLayer', () => {
         2
       );
       expect(updateCameraParams.mock.calls[0][0]).toBeCloseTo(3); // top - bottom
+    });
+
+    it('includes host supersampling in the framebuffer scale', () => {
+      const layer = new LuxarLayer(
+        makeOptions({
+          renderer: {
+            isWebGLRenderer: true,
+            getDrawingBufferSize: (v: THREE.Vector2) => v.set(2400, 1800),
+            getPixelRatio: () => 2,
+          } as unknown as LuxarLayerOptions['renderer'],
+          getViewportSize: () => ({ width: 800, height: 600 }),
+        })
+      );
+      updateCameraParams.mockClear();
+
+      layer.resize();
+
+      expect(updateCameraParams).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(THREE.Vector2),
+        false,
+        undefined,
+        3
+      );
     });
 
     it('is a no-op after dispose', async () => {

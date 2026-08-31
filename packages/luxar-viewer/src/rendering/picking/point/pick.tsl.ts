@@ -223,7 +223,8 @@ export function pointPickWebGPUFactory(
     // 1.5px floor tracks the VISUAL sprite floor (the drawn outer ring
     // stays pickable); keep in sync with shaders.ts.
     const rawPickSize: TSLNode = basePointSize.mul(0.8).toVar();
-    const pickPointSize: TSLNode = clamp(rawPickSize, uPixelRatio.mul(1.5), uMaxPointSize);
+    const appearancePixelRatio: TSLNode = uPixelRatio.max(float(1.0));
+    const pickPointSize: TSLNode = clamp(rawPickSize, appearancePixelRatio.mul(1.5), uMaxPointSize);
 
     const offsetClip: TSLNode = aQuadCorner.mul(pickPointSize.div(uResolution)).mul(projCenter.w);
     // Reject points behind the camera (perspective only; camera looks down -Z).
@@ -276,7 +277,7 @@ export function pointPickWebGPUFactory(
     .mul(vNearFade)
     // Sub-pixel compensation (sizeScale², matching the VISUAL point and
     // the line pick's widthScale) — pick salience tracks visual salience.
-    .mul(min(vPickSize.div(uPixelRatio.mul(1.5)), float(1.0)).pow(2.0))
+    .mul(min(vPickSize.div(uPixelRatio.max(float(1.0)).mul(1.5)), float(1.0)).pow(2.0))
     .toVar();
 
   const colorNode = Fn(() => {

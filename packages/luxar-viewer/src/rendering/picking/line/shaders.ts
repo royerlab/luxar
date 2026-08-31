@@ -222,7 +222,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         rawPixelWidth = width * uPerspectiveLineScale / dist;
       }
 
-      float minPixelWidth = 1.5 * uPixelRatio;
+      float minPixelWidth = 1.5 * max(uPixelRatio, 1.0);
       float maxPW = max(uMaxLinePixelWidth, minPixelWidth + 1.0);
       // Visual-shader parity: discard pathological near-camera segments
       // (both endpoints inside near-cull margin AND the pixel width blows
@@ -358,7 +358,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       float beta = exp2(6.0 * vSharpness - 2.0);
       float perpFalloff = max(exp(-K * pow(p, beta)) - C, 0.0) * INV_ONE_MINUS_C;
 
-      float minPixelWidth = 1.5 * uPixelRatio;
+      float minPixelWidth = 1.5 * max(uPixelRatio, 1.0);
       float widthScale = min(vPixelWidth / minPixelWidth, 1.0);
 
       // cap factor in fragment (matches visual shader).

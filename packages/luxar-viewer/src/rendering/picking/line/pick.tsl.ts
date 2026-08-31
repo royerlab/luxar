@@ -326,7 +326,7 @@ export function linePickWebGPUFactory(
       rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView).toVar();
     }
 
-    const minPixelWidth = uPixelRatio.mul(1.5);
+    const minPixelWidth = uPixelRatio.max(float(1.0)).mul(1.5);
     const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0)).toVar();
     const vWidthFadeVal: TSLNode = rawPixelWidth
       .lessThanEqual(maxPW)
@@ -501,7 +501,7 @@ export function linePickWebGPUFactory(
     const invOneMinusC = INV_ONE_MINUS_FALLOFF_FLOOR;
     const beta: TSLNode = float(2.0).pow(vSharpness.mul(6.0).sub(2.0));
     const perpFalloff: TSLNode = exp(p.pow(beta).mul(-K)).sub(C).max(float(0.0)).mul(invOneMinusC);
-    const minPW = uPixelRatio.mul(1.5);
+    const minPW = uPixelRatio.max(float(1.0)).mul(1.5);
     const widthScale: TSLNode = min(vPixelWidth.div(minPW), float(1.0));
 
     const distFromStart: TSLNode = vT.mul(vSegmentLength);

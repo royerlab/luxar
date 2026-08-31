@@ -375,9 +375,10 @@ export function pointWebGPUFactory(
     // No size compensation: the shifted-truncated super-Gaussian truncates at
     // the sprite edge (rho = 1), so basePointSize already IS the visible extent.
     // Minimum sprite size 1.5px (matches the LINE shader — thinner quads
-    // cause rasterization gaps); sub-pixel energy is preserved by the
-    // fragment's sizeScale^2 compensation via vPointSize.
-    const minPointSize: TSLNode = uPixelRatio.mul(1.5);
+    // cause rasterization gaps); below 1× render scale retain the historical
+    // framebuffer-pixel floor rather than shrinking below one sample.
+    const appearancePixelRatio: TSLNode = uPixelRatio.max(float(1.0));
+    const minPointSize: TSLNode = appearancePixelRatio.mul(1.5);
     const pointSize: TSLNode = clamp(basePointSize, minPointSize, uMaxPointSize);
 
     // Expand the unit quad to a sprite in clip space.
@@ -458,7 +459,10 @@ export function pointWebGPUFactory(
 
     // Sub-pixel intensity compensation (mirrors the line shader's
     // widthScale, SQUARED: both sprite dimensions clamp, energy ∝ area).
-    const sizeScale: TSLNode = min(vPointSize.div(uPixelRatio.mul(1.5)), float(1.0));
+    const sizeScale: TSLNode = min(
+      vPointSize.div(uPixelRatio.max(float(1.0)).mul(1.5)),
+      float(1.0)
+    );
     // Screen density of this fragment — falloff scaled by every "how
     // much of this point is there" factor. This is the additive alpha.
     const alphaBase: TSLNode = falloff

@@ -734,6 +734,8 @@ export class PickingSystem {
     // vCenterScreen (full-res) vs gl_FragCoord (half-res) will mismatch.
     const pickRes = this._pickResolution;
     pickRes.set(this.pickTarget.width, this.pickTarget.height);
+    const cssHeight = renderer.domElement.clientHeight;
+    const pixelRatio = cssHeight > 0 ? pickRes.y / cssHeight : (renderer.getPixelRatio?.() ?? 1);
     const cam = this.camera as LuxarCamera;
     const isOrtho = isOrthographicCamera(cam);
     const fov = isOrtho ? getOrthoFrustumHeight(cam) : getCameraFovRadians(cam);
@@ -763,7 +765,7 @@ export class PickingSystem {
       // Update pick material camera params to match half-res pick buffer
       const mat = (entry.pick as THREE.Mesh).material;
       if (isCameraAwareMaterial(mat)) {
-        mat.updateCameraParams(fov, pickRes, isOrtho, undefined, renderer.getPixelRatio());
+        mat.updateCameraParams(fov, pickRes, isOrtho, undefined, pixelRatio);
       }
 
       // Pick-depth convention sync: under the depth-ordered surface

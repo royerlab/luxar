@@ -237,8 +237,9 @@ export function capsuleLineWebGPUFactory(
             .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
             .div(max(mvB.z.negate(), nearCull))
     ).toVar();
-    const minRadius: TSLNode = uPixelRatio.mul(CAPSULE_MIN_RADIUS_PX).toVar();
-    const packetMinRadius: TSLNode = uPixelRatio
+    const appearancePixelRatio: TSLNode = uPixelRatio.max(float(1.0));
+    const minRadius: TSLNode = appearancePixelRatio.mul(CAPSULE_MIN_RADIUS_PX).toVar();
+    const packetMinRadius: TSLNode = appearancePixelRatio
       .mul(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX)
       .toVar();
     const rA: TSLNode = clamp(rawA, minRadius, uMaxLinePixelWidth).toVar();
@@ -338,9 +339,7 @@ export function capsuleLineWebGPUFactory(
                 rMax
                   .greaterThan(packetMinRadius)
                   .or(
-                    dot(qhat, u)
-                      .greaterThan(0.5)
-                      .and(min(rawA, rawB).greaterThanEqual(minRadius))
+                    dot(qhat, u).greaterThan(0.5).and(min(rawA, rawB).greaterThanEqual(minRadius))
                   ),
                 () => {
                   const rpFarA: TSLNode = clamp(
@@ -401,11 +400,7 @@ export function capsuleLineWebGPUFactory(
               If(
                 rMax
                   .greaterThan(packetMinRadius)
-                  .or(
-                    dot(qhat, u)
-                      .lessThan(-0.5)
-                      .and(min(rawA, rawB).greaterThanEqual(minRadius))
-                  ),
+                  .or(dot(qhat, u).lessThan(-0.5).and(min(rawA, rawB).greaterThanEqual(minRadius))),
                 () => {
                   const rpFarB: TSLNode = clamp(
                     isOrtho

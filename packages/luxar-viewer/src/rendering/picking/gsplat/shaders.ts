@@ -190,7 +190,8 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         // 2D low-pass dilation — visual-shader parity (shader-glsl.ts). Widens
         // the pickable footprint to match the dilated visual splat, so what you
         // click matches what you see.
-        float cov2DDilation = uCov2DDilation * uPixelRatio * uPixelRatio;
+        float dilationPixelRatio = max(uPixelRatio, 1.0);
+        float cov2DDilation = uCov2DDilation * dilationPixelRatio * dilationPixelRatio;
         Sigma2D[0][0] += cov2DDilation;
         Sigma2D[1][1] += cov2DDilation;
 

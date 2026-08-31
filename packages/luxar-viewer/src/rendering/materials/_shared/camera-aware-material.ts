@@ -20,7 +20,7 @@ export interface CameraAwareMaterial {
    * @param resolution - Viewport resolution in pixels
    * @param isOrtho - Whether camera is orthographic (default false)
    * @param nearCull - Near-fade start distance in world units (consumed by all four geometry materials via the shared perspectiveNearFade)
-   * @param pixelRatio - Active renderer pixel ratio; screen-space appearance constants scale with it
+   * @param pixelRatio - Physical render-target pixels per CSS pixel; screen-space appearance constants scale with it above 1×
    */
   updateCameraParams(
     fov: number,

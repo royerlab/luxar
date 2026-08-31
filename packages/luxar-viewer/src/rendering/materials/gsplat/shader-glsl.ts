@@ -263,7 +263,9 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // compensate their own sub-pixel widening (the sizeScale^2 term in
         // materials/point/shader-glsl.ts); gsplats now do too.
         float detRaw2D = Sigma2D[0][0] * Sigma2D[1][1] - Sigma2D[0][1] * Sigma2D[1][0];
-        float cov2DDilation = uCov2DDilation * uPixelRatio * uPixelRatio;
+        // Keep the historical framebuffer-pixel low-pass below 1× render scale.
+        float dilationPixelRatio = max(uPixelRatio, 1.0);
+        float cov2DDilation = uCov2DDilation * dilationPixelRatio * dilationPixelRatio;
         Sigma2D[0][0] += cov2DDilation;
         Sigma2D[1][1] += cov2DDilation;
         float detDilated2D = Sigma2D[0][0] * Sigma2D[1][1] - Sigma2D[0][1] * Sigma2D[1][0];

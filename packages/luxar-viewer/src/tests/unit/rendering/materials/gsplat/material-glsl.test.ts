@@ -527,8 +527,9 @@ describe('GSplatMaterial', () => {
       expect(tuned.uniforms.uCov2DDilation.value).toBe(0.5);
       expect(tuned.clone().uniforms.uCov2DDilation.value).toBe(0.5);
       expect(tuned.vertexShader).toContain(
-        'float cov2DDilation = uCov2DDilation * uPixelRatio * uPixelRatio;'
+        'float cov2DDilation = uCov2DDilation * dilationPixelRatio * dilationPixelRatio;'
       );
+      expect(tuned.vertexShader).toContain('float dilationPixelRatio = max(uPixelRatio, 1.0);');
     });
   });
 

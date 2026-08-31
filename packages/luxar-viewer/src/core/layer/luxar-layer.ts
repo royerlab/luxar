@@ -424,7 +424,11 @@ export class LuxarLayer {
     // union, and a camera that is neither falls back to the default FOV.
     const camera = this.options.getCamera() as LuxarCamera;
     this.options.renderer.getDrawingBufferSize(this.bufferSize);
-    const pixelRatio = this.options.renderer.getPixelRatio();
+    const viewportHeight = this.options.getViewportSize().height;
+    const pixelRatio =
+      viewportHeight > 0
+        ? this.bufferSize.y / viewportHeight
+        : this.options.renderer.getPixelRatio();
     if (isOrthographicCamera(camera)) {
       materialManager.updateCameraParams(
         getOrthoFrustumHeight(camera),

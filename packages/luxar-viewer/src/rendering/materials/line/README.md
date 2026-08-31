@@ -48,7 +48,7 @@ at both clipped endpoints, so the whole quad takes one branch — blows past
 either `uPerspectiveLineScale = resY / tan(fov/2)` or
 `uOrthoLineScale = 2·resY / frustumHeight` (precomputed CPU-side so the
 shader has no `tan()` or projection-mode divide), clamps to
-`[1.5 CSS px × DPR, uMaxLinePixelWidth]` with an intensity-fading `vWidthFade`, then
+`[1.5 px × max(render-target scale, 1), uMaxLinePixelWidth]` with an intensity-fading `vWidthFade` (CSS-invariant above 1×; the historical framebuffer floor below 1×), then
 offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × startEndPixelWidth` /
 `endEndPixelWidth` — the clamped pixel half-width of the END this corner sits at
 (from the shared `luxarLineEndPixelWidth` / `tslLineEndPixelWidth` helper),

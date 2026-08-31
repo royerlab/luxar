@@ -71,7 +71,8 @@ export function updateMaterialsForCurrentCamera(ctx: CameraMaterialsCtx): void {
   ctx.renderer.getDrawingBufferSize(ctx.bufferSize);
   ctx.boundsCache.ensure(ctx.scene);
   const nearCull = ctx.boundsCache.getNearCull();
-  const pixelRatio = ctx.renderer.getPixelRatio();
+  const cssHeight = ctx.renderer.domElement.clientHeight;
+  const pixelRatio = cssHeight > 0 ? ctx.bufferSize.y / cssHeight : ctx.renderer.getPixelRatio();
 
   if (isOrthographicCamera(ctx.camera)) {
     const frustumHeight = getOrthoFrustumHeight(ctx.camera);

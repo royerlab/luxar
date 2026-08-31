@@ -14,7 +14,7 @@ import { erfRef } from '../_shared/erf';
  */
 
 /**
- * Screen-space 2D-covariance low-pass dilation, in pixels² (the standard 3DGS
+ * Screen-space 2D-covariance low-pass dilation, in CSS pixels² (the standard 3DGS
  * anti-aliasing term). Added to the diagonal of the projected covariance Σ_2D
  * so every splat covers at least ~1 pixel — this prevents extremely anisotropic
  * splats (near-degenerate, edge-on flat disks, common in imported classical 3DGS

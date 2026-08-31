@@ -97,7 +97,7 @@ export const CAPSULE_STENCIL_APRON_PX = 0.5;
 export const CAPSULE_JOINT_DEFICIT_GATE = 0.02;
 
 /**
- * Width gate for the joint packet: below this stencil half-width (px) the
+ * Width gate for the joint packet: below this stencil half-width (CSS px) the
  * vertex stage skips the packet math, so hairline scenes pay nothing for the
  * deficit rule — EXCEPT where the turn is SHARPER THAN 120° and BOTH of my
  * raw radii reach `CAPSULE_MIN_RADIUS_PX` (#1495).
@@ -134,6 +134,9 @@ export const CAPSULE_JOINT_DEFICIT_GATE = 0.02;
  * their walk draws every step independently, so 24.9% of their joints turn
  * past 120°, and whether their drawn radius lands in the band this opens
  * depends on framing (not measured).
+ *
+ * All radii and residual measurements in this block are CSS-pixel values;
+ * fragment-work percentages vary with the render-target scale.
  *
  * THREE RESIDUALS, all pinned by the sweep: a joint at or below 120° still
  * hard-cuts (−0.19 at `ql = 0.4 r`, −0.39 at 0.05 r, r = 3.5); the angle
@@ -207,7 +210,8 @@ export function capsuleProfile(p: number, sharpKnob = 0.5): number {
  * One leg of a joint, in a shared 2D px frame with the joint at the origin.
  *
  * The radii are RAW (pre-clamp) pixel radii — the shader's `rawA`/`rawB`.
- * The model clamps them to `CAPSULE_MIN_RADIUS_PX` for the profile geometry
+ * This reference model operates at DPR/render scale 1, so its pixel values are
+ * CSS pixels. The model clamps them to `CAPSULE_MIN_RADIUS_PX` for the profile geometry
  * and dims the leg by `capsuleLegWidthScale`, exactly as the vertex stage
  * does, so a sub-floor leg is a representable (floored, dimmed) leg rather
  * than an illegal one. It mirrors the FLOOR of the shaders'

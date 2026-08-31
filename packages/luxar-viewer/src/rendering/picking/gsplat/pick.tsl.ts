@@ -125,7 +125,8 @@ export function gsplatPickWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
   const uCov2DDilation = nodes.uCov2DDilation;
-  const cov2DDilation = uCov2DDilation.mul(nodes.uPixelRatio).mul(nodes.uPixelRatio);
+  const dilationPixelRatio = nodes.uPixelRatio.max(float(1.0));
+  const cov2DDilation = uCov2DDilation.mul(dilationPixelRatio).mul(dilationPixelRatio);
   const uSurfaceDepth = nodes.uSurfaceDepth;
   const uNodeId = nodes.uNodeId;
   const uLabelFilterIndex = nodes.uLabelFilterIndex;

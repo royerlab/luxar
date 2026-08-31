@@ -161,8 +161,9 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
         rawA = wEffA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvStart.z, nearCull);
         rawB = wEffB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvEnd.z, nearCull);
       }
-      float minRadius = ${G.MIN_RADIUS} * uPixelRatio;
-      float packetMinRadius = ${G.PACKET_MIN_R} * uPixelRatio;
+      float appearancePixelRatio = max(uPixelRatio, 1.0);
+      float minRadius = ${G.MIN_RADIUS} * appearancePixelRatio;
+      float packetMinRadius = ${G.PACKET_MIN_R} * appearancePixelRatio;
       float rA = clamp(rawA, minRadius, uMaxLinePixelWidth);
       float rB = clamp(rawB, minRadius, uMaxLinePixelWidth);
 

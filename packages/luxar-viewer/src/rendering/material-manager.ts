@@ -484,9 +484,9 @@ export class MaterialManager {
   updateCameraParams(
     fov: number,
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
+    isOrtho: boolean,
+    nearCull: number | undefined,
+    pixelRatio: number
   ): void {
     this.currentFov = fov;
     this.currentResolution.copy(resolution);

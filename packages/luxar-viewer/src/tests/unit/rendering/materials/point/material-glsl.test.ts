@@ -125,7 +125,7 @@ describe('PointMaterial', () => {
 
       // Check pointSize clamp + sprite expansion (replaces gl_PointSize).
       expect(material.vertexShader).toContain('uniform float maxPointSize');
-      expect(material.vertexShader).toContain('float minPointSize = 1.5 * uPixelRatio');
+      expect(material.vertexShader).toContain('float minPointSize = 1.5 * max(uPixelRatio, 1.0)');
       expect(material.vertexShader).toContain('clamp(basePointSize, minPointSize, maxPointSize)');
       expect(material.vertexShader).toContain(
         'vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w'
@@ -329,7 +329,7 @@ describe('PointMaterial', () => {
       // Point size clamps to [1.5 CSS px, maxPointSize] (the floor matches
       // the line shader; sub-pixel energy preserved via sizeScale^2);
       // the sprite is then expanded in NDC via aQuadCorner.
-      expect(material.vertexShader).toContain('float minPointSize = 1.5 * uPixelRatio');
+      expect(material.vertexShader).toContain('float minPointSize = 1.5 * max(uPixelRatio, 1.0)');
 
       // Check comment about zero-radius filtering
       expect(material.vertexShader).toContain('Zero-radius filtering happens in the fragment');

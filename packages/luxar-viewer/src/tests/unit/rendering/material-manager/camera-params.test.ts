@@ -42,7 +42,7 @@ describe('MaterialManager camera params on newly created materials', () => {
 
   it('applies the stored nearCull to a line material created after updateCameraParams', () => {
     const mm = new MaterialManager();
-    mm.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.42);
+    mm.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.42, 1);
 
     const line = mm.getLineMaterial(baseProps()) as LineMaterial;
     expect(line.uniforms.uNearCull.value).toBe(0.42);
@@ -50,7 +50,7 @@ describe('MaterialManager camera params on newly created materials', () => {
 
   it('applies the stored nearCull to a gsplat material created after updateCameraParams', () => {
     const mm = new MaterialManager();
-    mm.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.42);
+    mm.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.42, 1);
 
     const gsplat = mm.getGSplatMaterial(baseProps()) as GSplatMaterial;
     expect(gsplat.uniforms.uNearCull.value).toBe(0.42);
@@ -62,7 +62,7 @@ describe('MaterialManager camera params on newly created materials', () => {
     // applies: left out, a mesh would fade against the 0.1 default on a scene whose
     // world scale is nothing like it, and only correct itself on the next resize.
     const mm = new MaterialManager();
-    mm.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.42);
+    mm.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.42, 1);
 
     const mesh = mm.getMeshMaterial(baseProps({ blendingMode: 'opaque' })) as MeshMaterial;
     expect(mesh.uniforms.uNearCull.value).toBe(0.42);
@@ -71,7 +71,7 @@ describe('MaterialManager camera params on newly created materials', () => {
 
   it('applies the stored resolution/fov/isOrtho to materials created after updateCameraParams', () => {
     const mm = new MaterialManager();
-    mm.updateCameraParams(1.25, new THREE.Vector2(1234, 777), true, 0.5);
+    mm.updateCameraParams(1.25, new THREE.Vector2(1234, 777), true, 0.5, 1);
 
     const line = mm.getLineMaterial(baseProps()) as LineMaterial;
     expect(line.uniforms.uResolution.value.x).toBe(1234);

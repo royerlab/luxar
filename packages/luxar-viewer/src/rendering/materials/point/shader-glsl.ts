@@ -181,11 +181,13 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       //
       // Minimum sprite size 1.5px, matching the LINE shader: quads
       // thinner than ~1.5px cause rasterization gaps (flicker).
+      // Below 1× render scale keep the historical 1.5 framebuffer-pixel
+      // floor rather than shrinking below one sample.
       // Sub-pixel points keep their visual weight via the fragment's
       // sizeScale^2 energy compensation (vPointSize carries the raw,
       // pre-clamp size). Zero-radius filtering happens in the fragment.
       vPointSize = basePointSize;
-      float minPointSize = 1.5 * uPixelRatio;
+      float minPointSize = 1.5 * max(uPixelRatio, 1.0);
       float pointSize = clamp(basePointSize, minPointSize, maxPointSize);
 
       // Expand the unit quad to a screen-space sprite. aQuadCorner is
@@ -288,7 +290,7 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // widthScale, SQUARED because both sprite dimensions clamp:
       // energy ∝ area ∝ size²). Points at or above the 1.5px floor
       // are unaffected (sizeScale = 1).
-      mediump float sizeScale = min(vPointSize / (1.5 * uPixelRatio), 1.0);
+      mediump float sizeScale = min(vPointSize / (1.5 * max(uPixelRatio, 1.0)), 1.0);
 
       // Screen density of this fragment — falloff scaled by every
       // "how much of this point is there" factor (node opacity,

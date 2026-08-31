@@ -196,7 +196,7 @@ float luxarLineJointCapSuppression(float jointCode) {
 `;
 
 /**
- * Rendered half-width (px) below which the join is skipped.
+ * Rendered half-width in CSS pixels below which the join is skipped.
  *
  * The uncovered wedge has area ~theta*R^2/2, so under a couple of pixels it is
  * sub-pixel and invisible — and a line that thin already sits on the 1.5 px
@@ -323,7 +323,7 @@ vec3 luxarLineJoin(
   // decided by the provoking vertex alone — which WebGL takes from the last
   // vertex and WGSL from the first. Same reasoning as the #849 segment-constant
   // pathological cull at the call sites.
-  float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)} * uPixelRatio;
+  float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)} * max(uPixelRatio, 1.0);
   if (uLineJoin < 0.5 || joinPixelWidth <= joinMinHalfWidth) return noJoin;
   // A near-clipped endpoint was moved onto the nearCull plane, so it is no
   // longer AT its source vertex and no neighbour meets it there.

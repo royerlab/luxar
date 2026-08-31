@@ -228,7 +228,9 @@ export function gsplatWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
   const uCov2DDilation = nodes.uCov2DDilation;
-  const cov2DDilation = uCov2DDilation.mul(nodes.uPixelRatio).mul(nodes.uPixelRatio);
+  // Keep the historical framebuffer-pixel low-pass below 1× render scale.
+  const dilationPixelRatio = nodes.uPixelRatio.max(float(1.0));
+  const cov2DDilation = uCov2DDilation.mul(dilationPixelRatio).mul(dilationPixelRatio);
   const uColormapTex = config.useColormap ? nodes.uColormapTex : null;
   const uScalarMin = config.useColormap ? nodes.uScalarMin : null;
   const uScalarScale = config.useColormap ? nodes.uScalarScale : null;
