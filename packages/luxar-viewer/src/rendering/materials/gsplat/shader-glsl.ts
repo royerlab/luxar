@@ -48,7 +48,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // Near cull distance (scene-scale-aware)
     uniform float uMaxExtentFactor;   // Max projected extent as fraction of viewport before fade
-    uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in px² (3DGS anti-aliasing)
+    uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in CSS px² (3DGS anti-aliasing)
     uniform float uPixelRatio;
     uniform int uLabelColorMode;
     uniform int uLabelFilterIndex;

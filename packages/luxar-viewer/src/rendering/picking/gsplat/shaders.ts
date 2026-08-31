@@ -58,7 +58,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform int uIsOrtho;
     uniform float uNearCull;
     uniform float uMaxExtentFactor;
-    uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in px² (visual-shader parity)
+    uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in CSS px² (visual-shader parity)
     uniform float uPixelRatio;
     uniform float uNodeId;
     uniform int uLabelFilterIndex;
