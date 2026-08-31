@@ -177,9 +177,11 @@ GLOBE_LAT = 256
 # ~2k was invisible however large the image. Sampling per fragment makes the
 # basemap the only thing limiting how sharp a coastline looks.
 # 16384x8192 across TWO tiles of 8192x8192 — 4x the pixels of a single
-# 8192x4096, and cheaper on disk than the alternative: two WebP payloads instead
-# of one large JPEG, because 16384 is one pixel over WebP's hard 16383 limit so a
-# single texture that size can only be JPEG.
+# 8192x4096. One node would exceed the 512 MiB admission budget once its KTX2
+# payload is counted at 5x alongside the resident mip chain. Two nodes keep the
+# larger measured q2 Blue Marble tile at ~386 MiB peak with ~126 MiB headroom.
+# They also keep the missing-`toktx` bitmap fallback below WebP's hard
+# 16383-pixel per-axis limit.
 #
 # Splitting is also the only way past 16384 at all. A GPU silently CLAMPS a
 # larger texture — wrong image, no diagnostic — so `MAX_MESH_TEXTURE_SIZE`
@@ -188,8 +190,8 @@ GLOBE_LAT = 256
 # per longitude band is the route, and it lifts the ceiling to tiles x 16384.
 GLOBE_TEXTURE_WIDTH = 16384
 GLOBE_TILES = 2
-GLOBE_TEXTURE_FORMAT = "webp"
-GLOBE_TEXTURE_QUALITY = 90
+GLOBE_TEXTURE_FORMAT = "ktx2"
+GLOBE_TEXTURE_QUALITY = None
 
 # The cloud deck is REAL WEATHER — NASA's Blue Marble cloud composite — not
 # procedural noise, and a translucent mesh shell rather than 60k luminous points.
@@ -1145,10 +1147,7 @@ def generate_earthquake_scene(
                 width=GLOBE_TEXTURE_WIDTH
             )
             use_texture = True
-            aprint(
-                f"basemap: {basemap_w}x{basemap_h} across {GLOBE_TILES} "
-                f"{GLOBE_TEXTURE_FORMAT} tiles"
-            )
+            aprint(f"basemap: {basemap_w}x{basemap_h} across {GLOBE_TILES} tiles")
         except Exception as error:
             aprint(
                 f"⚠️  Basemap unavailable ({error}); falling back to heuristic colours"
