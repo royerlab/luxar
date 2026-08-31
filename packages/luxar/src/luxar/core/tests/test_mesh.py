@@ -3413,6 +3413,35 @@ def test_ktx2_encoder_rejects_old_toktx_with_actionable_version(monkeypatch) -> 
 
 
 @pytest.mark.parametrize(
+    "returncode,stdout,stderr,error_pattern",
+    [
+        (1, "", "unknown option --version", r"--version` failed.*unknown option"),
+        (
+            0,
+            "toktx development build",
+            "",
+            r"version could not be read.*toktx development build",
+        ),
+    ],
+    ids=["probe_failed", "unparseable_output"],
+)
+def test_ktx2_encoder_rejects_unusable_toktx_version_probe(
+    monkeypatch, returncode, stdout, stderr, error_pattern
+) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match=error_pattern):
+        texture_writer._encode_ktx2(
+            np.zeros((2, 2, 3), dtype=np.uint8), "uastc", None, "srgb"
+        )
+
+
+@pytest.mark.parametrize(
     "mode,scheme",
     [("etc1s", 0), ("uastc", 1)],
     ids=["etc1s_not_basis_lz", "uastc_not_zstandard"],
