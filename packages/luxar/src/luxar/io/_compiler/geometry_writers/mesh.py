@@ -161,6 +161,8 @@ def _write_mesh_texture_arrays(
     texture_color_space: str,
     texture_ktx2_mode: str,
     texture_ktx2_quality: Optional[int],
+    texture_ktx2_rdo_l: Optional[float],
+    texture_ktx2_zcmp: Optional[int],
     encoded_ktx2: Optional[NDArray[np.uint8]],
 ) -> dict[str, Any]:
     """Write the UV and texture arrays, and return the attrs they imply.
@@ -203,6 +205,8 @@ def _write_mesh_texture_arrays(
             ctx.dataset_ctx,
             texture_ktx2_mode,
             texture_ktx2_quality,
+            texture_ktx2_rdo_l,
+            texture_ktx2_zcmp,
             encoded_ktx2,
         )
         meta.update(
@@ -236,6 +240,8 @@ def validate_mesh_arrays(
     texture_color_space: str = "srgb",
     texture_ktx2_mode: str = "uastc",
     texture_ktx2_quality: Optional[int] = None,
+    texture_ktx2_rdo_l: Optional[float] = None,
+    texture_ktx2_zcmp: Optional[int] = None,
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Any = None,
@@ -336,6 +342,8 @@ def validate_mesh_arrays(
             texture_color_space,
             ktx2_mode=texture_ktx2_mode,
             ktx2_quality=texture_ktx2_quality,
+            ktx2_rdo_l=texture_ktx2_rdo_l,
+            ktx2_zcmp=texture_ktx2_zcmp,
         )
         texture_decoded_bytes = _texture_decoded_bytes(
             texture_encoding, texture_width, texture_height, texture_channels
@@ -371,6 +379,8 @@ def write_mesh(
     texture_color_space: str = "srgb",
     texture_ktx2_mode: str = "uastc",
     texture_ktx2_quality: Optional[int] = None,
+    texture_ktx2_rdo_l: Optional[float] = None,
+    texture_ktx2_zcmp: Optional[int] = None,
     shading: Optional[str] = None,
     double_sided: bool = True,
     labels: Optional["Sequence[str]"] = None,
@@ -431,6 +441,8 @@ def write_mesh(
         texture_color_space=texture_color_space,
         texture_ktx2_mode=texture_ktx2_mode,
         texture_ktx2_quality=texture_ktx2_quality,
+        texture_ktx2_rdo_l=texture_ktx2_rdo_l,
+        texture_ktx2_zcmp=texture_ktx2_zcmp,
         shading=shading,
         double_sided=double_sided,
         labels=labels,
@@ -445,6 +457,8 @@ def write_mesh(
             np.asarray(texture),
             texture_ktx2_mode,
             texture_ktx2_quality,
+            texture_ktx2_rdo_l,
+            texture_ktx2_zcmp,
             texture_color_space,
         )
     # 0i. Transform / nd_transform normalization is pure attr processing, so it
@@ -582,6 +596,8 @@ def write_mesh(
         texture_color_space,
         texture_ktx2_mode,
         texture_ktx2_quality,
+        texture_ktx2_rdo_l,
+        texture_ktx2_zcmp,
         encoded_ktx2,
     )
     metadata.update(texture_attrs)

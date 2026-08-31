@@ -605,6 +605,28 @@ def test_uv_acceptances(uvs, test_id) -> None:
         ),
         (
             lambda: validate_texture_for_writing(
+                np.zeros(16, np.uint8),
+                "webp",
+                2,
+                2,
+                3,
+                ktx2_rdo_l=0.5,
+            ),
+            "texture_encoding='ktx2' is required for texture_ktx2_rdo_l",
+            "ktx2_rdo_rejected_for_webp",
+        ),
+        (
+            lambda: validate_texture_for_writing(
+                np.zeros((2, 2, 3), np.uint8),
+                "ktx2",
+                ktx2_mode="etc1s",
+                ktx2_zcmp=9,
+            ),
+            "apply only to UASTC",
+            "uastc_options_rejected_for_etc1s",
+        ),
+        (
+            lambda: validate_texture_for_writing(
                 np.zeros(0, np.uint8), "jpeg", 2, 2, 3
             ),
             "payload is empty",
@@ -667,7 +689,9 @@ def test_texture_rejections(factory, error_pattern, test_id) -> None:
         factory()
 
 
-@pytest.mark.parametrize("texture", [np.zeros((4, 4), np.uint8), np.zeros(16, np.uint8)])
+@pytest.mark.parametrize(
+    "texture", [np.zeros((4, 4), np.uint8), np.zeros(16, np.uint8)]
+)
 def test_ktx2_shape_error_names_pixel_input_contract(texture) -> None:
     """KTX2 authoring takes pixels, not the encoded-byte shape used by bitmap codecs."""
     with pytest.raises(ValidationError) as exc_info:
