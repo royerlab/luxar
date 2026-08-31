@@ -247,6 +247,18 @@ class TestGSplatDataLOD:
                     assert int(label_id) == int(center[0])
                 assert sublod.label_vocabulary == vocabulary
 
+    def test_with_label_ids_accepts_integer_sequence(self) -> None:
+        source = _make_3d_gsplat(6)
+        label_ids = [0, 1, 0, 2, 1, 2]
+        vocabulary = {0: "background", 1: "left", 2: "right"}
+
+        labeled = source.with_label_ids(label_ids, vocabulary)
+
+        np.testing.assert_array_equal(labeled.label_ids, label_ids)
+        assert labeled.label_vocabulary == vocabulary
+        assert source.label_ids is None
+        assert source.label_vocabulary is None
+
     def test_derived_operations_do_not_rescan_label_membership(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

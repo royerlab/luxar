@@ -160,11 +160,14 @@ class IntensityMixin(_GSplatDataOps):
         )
 
     def with_label_ids(
-        self, label_ids: np.ndarray, label_vocabulary: "dict[int, str]"
+        self,
+        label_ids: "np.ndarray | Sequence[int]",
+        label_vocabulary: "dict[int, str]",
     ) -> "GSplatData":
         """Attach exact categorical ids to a flat/additive gsplat dataset."""
         from luxar.gsplats.gsplat_data import AdditiveSubLOD, validate_label_channel
 
+        label_ids = np.asarray(label_ids)
         if self.n_substitutive > 1:
             raise ValueError(
                 "with_label_ids is not supported on a multi-substitutive pyramid: "
