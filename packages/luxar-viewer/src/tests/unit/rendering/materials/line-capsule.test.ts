@@ -931,10 +931,10 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
     ] as const) {
       const bare = squash(src);
       expect(bare, `${name} end A`).toContain(
-        `if(rMax>packetMinRadius||(dot(qq/ql,u)>0.5&&min(rawA,rawB)>=minRadius)){`
+        'if(rMax>packetMinRadius||(dot(qq/ql,u)>0.5&&min(rawA,rawB)>=minRadius)){'
       );
       expect(bare, `${name} end B`).toContain(
-        `if(rMax>packetMinRadius||(dot(qq/ql,u)<-0.5&&min(rawA,rawB)>=minRadius)){`
+        'if(rMax>packetMinRadius||(dot(qq/ql,u)<-0.5&&min(rawA,rawB)>=minRadius)){'
       );
     }
     for (const [name, rel] of [
