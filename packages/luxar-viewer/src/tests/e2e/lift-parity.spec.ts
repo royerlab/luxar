@@ -327,11 +327,14 @@ async function cellLuminances(page: Page, centres: Cell[]): Promise<Map<string, 
   // order today, so a bare `canvas` locator's `.first()` picks the right one by
   // accident — if the control rail ever moved ahead of `#app` this spec would
   // silently screenshot the hidden one.
-  const canvas = page.locator('canvas#app');
-  // Both of these need the budget, and the screenshot — Visible AND Stable —
-  // is the stricter of the two; see CANVAS_READY_TIMEOUT.
-  await canvas.waitFor({ state: 'visible', timeout: CANVAS_READY_TIMEOUT });
-  const png = await captureElementScreenshot(page, 'canvas#app', CANVAS_READY_TIMEOUT);
+  // The helper uses this as a readiness budget before the framebuffer capture;
+  // the render/readback itself remains bounded by the test timeout.
+  const png = await captureElementScreenshot(
+    page,
+    'canvas#app',
+    'framebuffer',
+    CANVAS_READY_TIMEOUT
+  );
   const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
 
   const measured = await page.evaluate(

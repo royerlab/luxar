@@ -295,7 +295,7 @@ test.describe('Points blending modes (per-mode material state)', () => {
         offsets.push([gx, gy]);
       }
     }
-    const samples = await samplePixelsAt(page, 'canvas', offsets);
+    const samples = await samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
 
     // Each of the two single-channel clouds renders its own PURE core
     // somewhere (strict dominance ratios exclude the mixed regions, UI
@@ -574,7 +574,7 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
       'scene-identity banner is up — its non-neutral fill satisfies the colour ' +
         'predicates below, so this gate would pass vacuously'
     ).toBe(0);
-    const frame = await captureCanvasRGBA(page);
+    const frame = await captureCanvasRGBA(page, 'canvas#app', 'framebuffer');
 
     let redDominant = 0;
     let greenDominant = 0;
@@ -813,7 +813,7 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
       return offsets;
     });
     expect(midOffsets).not.toBeNull();
-    const samples = await samplePixelsAt(page, 'canvas', midOffsets!);
+    const samples = await samplePixelsAt(page, 'canvas#app', midOffsets!, 'framebuffer');
     const lit = samples.filter((s) => s.r > 20 || s.g > 20);
     expect(lit.length).toBeGreaterThan(0);
     const greenOverRed = lit.filter((s) => s.g > s.r).length;
@@ -1176,7 +1176,7 @@ test.describe('Points normal mode depth sorting', () => {
       return offsets;
     });
     expect(midOffsets).not.toBeNull();
-    const samples = await samplePixelsAt(page, 'canvas', midOffsets!);
+    const samples = await samplePixelsAt(page, 'canvas#app', midOffsets!, 'framebuffer');
     const lit = samples.filter((s) => s.r > 20 || s.g > 20);
     expect(lit.length).toBeGreaterThan(0);
     const greenOverRed = lit.filter((s) => s.g > s.r).length;
@@ -1507,7 +1507,7 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
 
     await setAbsorption(page, 0);
     await waitForNextRender(page, 5);
-    const volumetricK0 = await samplePixelsAt(page, 'canvas', offsets);
+    const volumetricK0 = await samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
 
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
@@ -1519,7 +1519,7 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
       debug.renderOnce();
     });
     await waitForNextRender(page, 5);
-    const additive = await samplePixelsAt(page, 'canvas', offsets);
+    const additive = await samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
 
     // Non-vacuous: the scene actually renders content.
     const lit = additive.filter((s) => s.r + s.g + s.b > 30);
@@ -1557,11 +1557,11 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
 
     await setAbsorption(page, 0);
     await waitForNextRender(page, 5);
-    const bright = await samplePixelsAt(page, 'canvas', offsets);
+    const bright = await samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
 
     await setAbsorption(page, 5);
     await waitForNextRender(page, 5);
-    const absorbed = await samplePixelsAt(page, 'canvas', offsets);
+    const absorbed = await samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
 
     const sum = (xs: Array<{ r: number; g: number; b: number }>) =>
       xs.reduce((acc, s) => acc + s.r + s.g + s.b, 0);
@@ -1772,12 +1772,12 @@ test.describe('GSplat RGBA per-element opacity (occlusion)', () => {
 
     await setAbsorption(0); // additive limit — the black splat can't occlude
     await waitForNextRender(page, 5);
-    const bright = await samplePixelsAt(page, 'canvas', offsets);
+    const bright = await samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
     const sumBright = sum(bright);
 
     await setAbsorption(5); // the black splat becomes a real occluder
     await waitForNextRender(page, 5);
-    const absorbed = await samplePixelsAt(page, 'canvas', offsets);
+    const absorbed = await samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
     const sumAbsorbed = sum(absorbed);
 
     expect(sumBright, 'κ=0 frame rendered black — fixture/camera broke').toBeGreaterThan(1000);

@@ -47,7 +47,7 @@ test.describe('LuxarLayer host example', () => {
     const state = await getExampleState(page);
     expect(state.visibleSplatCount).toBeGreaterThan(0);
 
-    const frame = await captureCanvasRGBA(page, '#layer-canvas');
+    const frame = await captureCanvasRGBA(page, '#layer-canvas', 'composited');
     let litPixels = 0;
     for (let index = 0; index < frame.rgba.length; index += 4) {
       if (frame.rgba[index] + frame.rgba[index + 1] + frame.rgba[index + 2] > CLEAR_COLOR_SUM + 8) {

@@ -21,6 +21,7 @@ import {
   waitForRenderStable,
   assertNoShaderErrors,
   getElementPixelStats,
+  renderOnce,
 } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
@@ -50,17 +51,37 @@ test.describe('Standalone .gsplats.zarr bare-node load', () => {
   });
 
   test('the offset cluster is auto-framed on load (non-black canvas)', async ({ page }) => {
-    await page.goto(`/?src=${STANDALONE}&debug`);
+    await page.goto(`/?src=${STANDALONE}&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
     // No manual camera move: the cluster (offset ~[12,8,5] from origin) is only
     // visible if the initial auto-frame used the node's position_bounds.
-    const stats = await getElementPixelStats(page, 'canvas', 10);
+    const stats = await getElementPixelStats(page, 'canvas#app', 10, 'framebuffer');
     expect(
       stats.nonBlackPixels,
       `Expected the auto-framed standalone cluster to be visible; stats=${JSON.stringify(stats)}`
     ).toBeGreaterThan(0);
+
+    const hidden = await page.evaluate(() => {
+      let count = 0;
+      (window as any).__luxarDebug.scene.traverse((object: any) => {
+        if (object.userData?.nodeType === 'gsplats') {
+          object.visible = false;
+          count++;
+        }
+      });
+      return count;
+    });
+    expect(hidden, 'the blank-frame control must hide the standalone GSplat node').toBeGreaterThan(
+      0
+    );
+    await renderOnce(page);
+    const blankStats = await getElementPixelStats(page, 'canvas#app', 10, 'framebuffer');
+    expect(
+      blankStats.nonBlackPixels,
+      `Hidden standalone GSplat node still produced visible pixels; stats=${JSON.stringify(blankStats)}`
+    ).toBeLessThan(10);
   });
 
   test('renders without shader errors', async ({ page }) => {
