@@ -239,9 +239,10 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
 
 #: Deepest additive ladder a SLICED node may carry, as a share of its frame.
 #:
-#: `1/8` = 12.5% of the resident slice in the first rung. Sized to clear the
-#: viewer-side gate for #2374 — which fails a sliced node below **10%** of its
-#: frame, or below 250 elements at the 5th-percentile stop — with margin.
+#: `1/8` floors the first rung at 12.5% of the node, hence 12.5% per resident
+#: slice on average. Sized to clear the viewer-side gate for #2374 — which fails
+#: a sliced node below **10%** of its frame, or below 250 elements at the
+#: 5th-percentile stop — with margin.
 #: :func:`stream_ladder` rejects a sliced leaf whose share would exceed the
 #: 900,000-element commit ceiling; partition after moving any stacked axis last,
 #: or supply explicit capped cuts, rather than silently delivering less than
@@ -385,15 +386,20 @@ def stream_ladder(
     wall-clock penalty is smaller than the byte arithmetic suggests.
 
     **The fatal version of this is on a PLAYED axis, and it wants a different
-    ladder.** Under a playback frame budget the viewer commits level 0 only, so a
-    time-budget rung leaves each timepoint with a handful of elements — measured
-    on a published 500-timepoint gsplat demo, a median of 45 splats per
-    timepoint, which renders as nothing (#2374). An EQUAL-COUNT ladder
-    (``--n-lods L``) gives exactly ``1/L`` of the slice regardless of ``S`` or
-    ``n``, so it is the right shape for anything scrubbed or played. Do NOT reach
-    for it here: on a keypress-navigated categorical axis it would put ~40x the
-    200 ms budget into first paint and buy a slow opening frame these demos do
-    not need. Two regimes, two answers.
+    ladder.** Under a playback frame budget a cold ladder's opening frame starts
+    from level 0; since #2377, any further cache-resident rungs can join it. The
+    published playback measurements below used the old LOD-0-only policy, but
+    level 0 remains the floor each timepoint starts from. A time-budget rung
+    leaves each timepoint with a handful of elements — measured on a published
+    500-timepoint gsplat demo, a median of 45 splats per timepoint, which renders
+    as nothing (#2374). An
+    EQUAL-COUNT ladder (``--n-lods L``) gives ``1/L`` of the node in aggregate,
+    making the average slice share independent of ``S``. Its global prefix can
+    still concentrate away from sparse slices, so check the per-stop histogram
+    on a long or non-uniform played axis. Do NOT reach for it here: on a
+    keypress-navigated categorical axis it would put ~40x the 200 ms budget into
+    first paint and buy a slow opening frame these demos do not need. Two
+    regimes, two answers.
 
     LINES SPELL THIS DIFFERENTLY, AND THE UNITS DISAGREE
     ----------------------------------------------------
@@ -472,8 +478,10 @@ def stream_ladder(
         # Loic's ruling, 2026-08-30: on a sliced node the contract is a SHARE of
         # the frame, not a download budget. A share is what tracks whether the
         # opening frame is recognisable (measured: 0.03% blank, 0.87% thin, 12.5%
-        # soft-but-usable, 54% fine), and `1/L` is slice-invariant by
-        # construction, so it cannot regress when a demo gains a dimension.
+        # soft-but-usable, 54% fine), and an aggregate `1/L` share is invariant
+        # to the slice count, so it cannot regress merely because a demo gains a
+        # dimension. The per-stop distribution can still be uneven; see
+        # SLICED_LADDER_MAX_DEPTH.
         #
         # Note the floor needs no `slices` term. Requiring
         # `first_chunk/S >= share * (n/S)` cancels to `first_chunk >= share * n`,

@@ -73,6 +73,55 @@ This explains the recipe split:
 - `stream` and `levels` fetch one leaf or level initially, but a typical whole-object
   `levels` ladder promotes on frame 1.
 
+## Sliced nodes: count the resident slice
+
+Everything above counts rungs. On a node the viewer SLICES — any non-displayed
+dimension — you also have to count how many elements land in the rung it actually
+draws, because a ladder's rungs are sized against the WHOLE node while only one
+hidden coordinate is on screen.
+
+An explicit ABSOLUTE count is the trap. `-b stream:<c>` fixes a count `C` for the
+whole node, so the resident slice receives part of `C`. The CLI's `--target-ms`
+path avoids that mistake by surveying the store, multiplying its first chunk by
+the observed slice count, and logging the multiplier. `--n-lods L` instead makes
+rung 0 an aggregate `1/L` share of the whole node, so the average share is stable
+as the slice count changes. It is not a per-slice guarantee: the global prefix
+concentrates where the signal is, and sparse slices can receive much less.
+
+Measured on the shipped corpus — the 5th-percentile rung-0 count per coordinate
+against what the deployed viewer commits while the axis plays:
+
+| node | levels | p05 rung 0 | observed playback | reads as |
+|---|---|---|---|---|
+| `drosophila_embryogenesis` | 14 | 7 | 20-51 of 166,443 | blank |
+| `nexrad_supercell` | 7 | 4 | 187-440 of ~10,000 | structure gone |
+| `zebrafish_timelapse/endoderm` | 4 | 330 | ~1,449 of ~11,159 | soft, usable |
+| `celegans_tracking` | 4 | 1,069 | ~2,970 of 3,209 | fine |
+| `neuromast_2ch/membranes` | 8 | 2,962 | 12,842-17,465 of 110,614 | soft, usable |
+
+Under a playback frame budget a cold ladder's opening frame starts from the
+first rung; since #2377, any further cache-resident rungs can join it. The
+playback column above was measured under the old LOD-0-only policy. Rung 0
+remains the floor every slice starts from, so a starved p05 still identifies a
+starved opening frame wherever playback lands.
+
+**Rules that follow.** Prefer `--n-lods 3..4` on any node with a hidden
+dimension, then inspect the per-slice histogram on a long or non-uniform axis
+rather than trusting the aggregate share. If you use `--target-ms` there, read
+the CLI's logged slice multiplier rather than assuming the number you typed is
+what a viewer will see. Count stops as distinct OCCURRING combinations across
+all hidden axes: not the product of per-axis cardinality
+(`biodiversity_planetary_scale` is 126 populated of 140), and not the declared
+`Dimension` range (`drosophila_embryogenesis` declares 500 timepoints and its
+coarsest rung carries data at 499).
+
+Three landed protections keep this from resting on memory: the CLI scales
+`--target-ms` by the slice count; the demo policy floors sliced first rungs at an
+aggregate share before stores are built; and `hatch run check-demo-ladders` fails
+a built store whose sparsest slices fall below the floor. The gate measures the
+5th percentile, not the maximum — a ladder starves at its sparsest slice, and one
+busy coordinate used to mask hundreds of starved ones.
+
 ## Measured example
 
 One 1.58 GiB 4D timelapse built with `adaptive` had 44 parts × 4 levels × 4 rungs =
