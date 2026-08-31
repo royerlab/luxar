@@ -455,14 +455,17 @@ vc = luxar.ViewerConfig(
     # about its own axis at any elevation. The two coincide exactly when the
     # camera is level, so switching frames there changes nothing.
     #
-    # One caveat on "view": the LOD selector measures a node by the
-    # axis-aligned screen box of its projected bounds, which is not
-    # roll-invariant — a square footprint swings about 2x in area at 45°, a
-    # full level of the halving ladder. A rolling scene parked near a switch
-    # threshold will therefore breathe between levels (and a turntable
-    # recording pays extra LOD-settle ticks per frame). Hysteresis softens it;
-    # "vertical" and "horizontal" change the view legitimately and are not
-    # affected in the same way.
+    # One caveat on "view" — and on a world axis as it nears the view
+    # direction: the LOD selector measures a node by the axis-aligned screen
+    # box of its projected bounds, which is not roll-invariant — a square
+    # footprint swings about 2x in area at 45°, a full level of the halving
+    # ladder. A rolling scene parked near a switch threshold will therefore
+    # breathe between levels (and a turntable recording pays extra LOD-settle
+    # ticks per frame). Hysteresis softens it. "vertical" and "horizontal"
+    # change the view legitimately and are not affected in the same way. A
+    # world axis is affected to the extent that it approaches the view
+    # direction. At exact alignment the turntable is a pure roll with a
+    # stationary camera.
     auto_rotate_axis="vertical",
 )
 

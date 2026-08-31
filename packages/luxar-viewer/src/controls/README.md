@@ -107,8 +107,8 @@ ergonomics. In both mappings `Shift+left` performs the opposite action.
 
 - Quaternion-based rotation (no gimbal lock at any angle)
 - Exponential damping for smooth interaction
-- Auto-rotation around a chosen camera-frame axis: screen-vertical (default),
-  screen-horizontal (a tumble over the top), or the view axis (a pure roll)
+- Auto-rotation around a camera-frame axis or a fixed scene axis — see
+  `AutoRotateAxis`
 - Configurable mouse button mapping (CAD/Blender vs. natural-drag)
 - Touch support (1-finger rotate, 2-finger pinch-zoom + pan)
 
