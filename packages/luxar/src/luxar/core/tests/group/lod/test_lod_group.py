@@ -1174,6 +1174,7 @@ def test_resident_slice_count_counts_occurring_combinations():
     class _Dims:
         ndim = 3
         displayed = [0, 1]
+        non_displayed = [2]
 
     class _Scene:
         dimensions = _Dims()
@@ -1195,6 +1196,7 @@ def test_resident_slice_count_treats_unaligned_positions_as_unsliced():
     class _Dims:
         ndim = 4  # scene says 4D...
         displayed = [0, 1]
+        non_displayed = [2, 3]
 
     class _Scene:
         dimensions = _Dims()
