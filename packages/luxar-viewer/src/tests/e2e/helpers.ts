@@ -2003,7 +2003,7 @@ export interface CanvasFrameRGBA {
  * screenshot routing.
  *
  * @param page Playwright page.
- * @param selector Element to capture; defaults to the viewer canvas.
+ * @param selector Element to capture.
  * @param route Explicit framebuffer or composited capture intent.
  * @returns Decoded pixel dimensions and the interleaved RGBA buffer.
  */
