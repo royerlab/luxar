@@ -1160,6 +1160,7 @@ fi
 def test_pick_runner_routes_same_repo_to_obsidian(
     workflow: str, tmp_path: Path
 ) -> None:
+    """Same-repo PR, push, schedule, and rerun events must stay on obsidian."""
     result, label = _run_pick_runner(workflow, tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1177,6 +1178,7 @@ def test_pick_runner_hosted_overrides(
     head_repo: str,
     force_hosted: str,
 ) -> None:
+    """Forks and the explicit repository override must select hosted CI."""
     result, label = _run_pick_runner(
         workflow, tmp_path, head_repo=head_repo, force_hosted=force_hosted
     )
@@ -1351,6 +1353,7 @@ exec "$REAL_PYTHON" "$@"
 
 
 def _obsidian_job(name: str, status: str) -> dict[str, object]:
+    """Build a watchdog API job resolved to the obsidian runner label."""
     return {"name": name, "status": status, "labels": ["obsidian"]}
 
 

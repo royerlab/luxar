@@ -228,8 +228,8 @@ jobs:
           # as same-repo, which they are.
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
         run: |
-          # Fork PRs never route to the self-hosted box, whatever the heartbeat
-          # says. Today this is belt-and-braces — the repo is private, so only
+          # Fork PRs never route to the self-hosted box. Today this is
+          # belt-and-braces — the repo is private, so only
           # collaborators can open PRs at all — but the routing must stay safe
           # if the repo ever goes public: per GitHub's own hardening guidance,
           # a self-hosted runner must not execute code from arbitrary forks.
@@ -251,9 +251,8 @@ jobs:
           echo "same-repo run -> obsidian only (no automatic paid fallback)"
           echo "label=obsidian" >> "$GITHUB_OUTPUT"
 
-  # pick-runner's heartbeat check is a snapshot: it proves obsidian was alive
-  # when the run was ROUTED, not that it survives long enough to pick the jobs
-  # up. GitHub never re-evaluates `runs-on` — a job assigned to the `obsidian`
+  # Runner selection deliberately does not inspect obsidian liveness. GitHub
+  # never re-evaluates `runs-on` — a job assigned to the `obsidian`
   # label whose runners then vanish does not fall back. If it is never dispatched,
   # it can remain queued until GitHub's 24-hour ceiling; job-level timeout has not
   # started. If it was dispatched before its slot recycled, the timeout can run
@@ -507,8 +506,9 @@ jobs:
     # 180, not 60, because the self-hosted runners are deliberately SCHED_IDLE
     # (see luxar-ci-slot@.service): CI only gets CPU nobody else on that box
     # wants, so a sustained burst from the other workloads there can stretch a
-    # leg arbitrarily. That is starvation, not a hang, and the heartbeat cannot
-    # detect it — an idle-priority job is perfectly healthy, just slow. A
+    # leg arbitrarily. That is starvation, not a hang, and the router
+    # deliberately does not redirect it — an idle-priority job is perfectly
+    # healthy, just slow. A
     # timeout here would be a self-inflicted red. Including the ~5.5 min outside
     # the coverage step, the capped runs imply ~83-91 min jobs before contention;
     # completed obsidian legs have stretched 2.4-3.3x over their unloaded time.
@@ -524,7 +524,7 @@ jobs:
       # `typescript-tests`; pushes and the daily full-matrix schedule execute two
       # Python legs, then the third. PRs and the seven floor-only scheduled
       # windows have one Python leg and are unaffected. Keep the GitHub-hosted
-      # fallback elastic: its matrix legs run on separate VMs.
+      # fork/override branch elastic: its matrix legs run on separate VMs.
       max-parallel: ${{ needs.pick-runner.outputs.label == 'obsidian' && 2 || 3 }}
       matrix:
         # FLOOR on every event, floor + NEWEST on push-to-dev and the daily
@@ -590,17 +590,17 @@ jobs:
       # with exit 143 + "the runner has received a shutdown signal" -- four
       # workers each importing torch/napari/scipy exhaust a 2-core hosted VM and
       # the OOM killer takes the runner agent with them. That would have broken
-      # the fallback path, i.e. exactly the safety net obsidian relies on.
+      # the fork/manual-hosted path.
       #
-      # Hosted stays serial (about 1h17m in recent fallback runs).
+      # Hosted stays serial (about 1h17m in recent hosted runs).
       # PYTEST_ADDOPTS is read by pytest itself, so the shared `test-cov` script
       # stays machine-agnostic for local use.
       PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2 --dist loadfile' || '' }}
     steps:
-      - name: Free disk space (hosted-runner fallback)
+      - name: Free disk space on hosted runners
         # The full suite exhausts the ~14 GB GitHub-hosted runner and fails with
-        # `[Errno 28] No space left on device`, turning dev red whenever
-        # pick-runner falls back off the self-hosted box (#1816). Reclaim
+        # `[Errno 28] No space left on device`, turning forced-hosted runs red
+        # (#1816). Reclaim
         # preinstalled tooling we never use. obsidian has ample disk, so skip it
         # there.
         if: runner.environment == 'github-hosted'
@@ -725,9 +725,9 @@ jobs:
     # roughly 59 minutes, leaving the former 60-minute budget no headroom for any
     # pre-step dispatch latency. A dispatch-lost leg can spend the same budget
     # without starting a step. The cost is doubled time-to-red and delayed stale
-    # repair for that leg; on the hosted fallback it also doubles hang detection
-    # and worst-case billed time. release-readiness keeps 30 because its hosted
-    # runner is not exposed to SCHED_IDLE starvation.
+    # diagnosis for that leg; on the hosted fork/override branch it also doubles
+    # hang detection and worst-case billed time. release-readiness keeps 30
+    # because its hosted runner is not exposed to SCHED_IDLE starvation.
     timeout-minutes: 120
     defaults:
       run:
@@ -739,9 +739,9 @@ jobs:
       # real comparison and the smoke test verifies the artefacts are present.
       LUXAR_REQUIRE_WASM_TESTS: '1'
     steps:
-      - name: Free disk space (hosted-runner fallback)
-        # See python-tests: reclaim preinstalled tooling on the GitHub-hosted
-        # fallback so the WASM build + suite do not hit `[Errno 28] No space left
+      - name: Free disk space on hosted runners
+        # See python-tests: reclaim preinstalled tooling on GitHub-hosted runners
+        # so the WASM build + suite do not hit `[Errno 28] No space left
         # on device` (#1816). Skipped on the self-hosted box.
         if: runner.environment == 'github-hosted'
         working-directory: ${{ github.workspace }}

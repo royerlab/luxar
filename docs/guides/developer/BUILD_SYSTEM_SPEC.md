@@ -912,8 +912,8 @@ the same budget without starting a step. `typescript-tests` now carries 120 minu
 at the cost of a doubled time-to-red for that leg. Every scheduled window also runs
 the short `changes`, `pick-runner`, `docs-quality`, `release-readiness`,
 `wheel-viewer`, and `go-launcher` jobs on GitHub-hosted runners. Together those jobs
-were about a nine-minute hosted floor on the 2026-08-30 PR run that introduced this
-policy. The long Python/TypeScript legs always join the obsidian queue unless the
+were about a nine-minute hosted floor on the initial PR run for this policy. The
+long Python/TypeScript legs always join the obsidian queue unless the
 operator has set `LUXAR_CI_FORCE_HOSTED=1`; schedules have no automatic paid
 exception. Sustained contention can therefore cancel successive promotion windows.
 During an extended outage or promotion stall, set the override before the next
