@@ -112,8 +112,35 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Fit parameters (fixed-K, seeds=K*)
-MAX_SPLATS = 25000
+# Fit parameters. The seed budget is PER CHANNEL, and the shipped archives were
+# fitted at these values: `scripts/demo_archive_characteristics.json` records
+# 41,975 splats for ch0 and 57,946 for ch1, measured on the `hosted_sha256` this
+# demo pins. A single shared 25,000 — what this file declared until now — makes
+# `--recompute` produce roughly half that, so the source disagreed with the data
+# it ships.
+#
+# Why the budgets differ: a blind-spot calibration sweep (1/8x..4x of the old
+# shared 25,000) put ch0's held-out foreground PSNR on a plateau at roughly twice
+# that budget while ch1 was still climbing at four times it, so one number fits
+# neither channel.
+#
+# What the bump actually delivered, measured on the ARCHIVE (full volume, against
+# the original) rather than predicted from the sweep:
+#
+#   ch0 Membranes  20,320 -> 41,980 splats   foreground 31.14 -> 31.52 dB
+#   ch1 Nuclei     19,936 -> 58,107 splats   foreground 21.50 -> 21.64 dB
+#
+# Tenths of a dB, not the 1.5-1.7 the sweep suggested — held-out PSNR over 5%
+# masked voxels is a much noisier estimator than it looks, and it mispredicted
+# this in both directions. The bump is kept because side-by-side renders at
+# matched zoom are visibly better, which is the standard a demo dataset is
+# actually held to; the archives are ~1 MB either way.
+#
+# Why the dB numbers understate it: the extra splats pick up BOTH real structure
+# (chromatin granularity, membrane fine detail — visible at matched zoom) and
+# photon noise, and PSNR rewards the two equally while the eye does not. ch1's
+# absolute 21.6 dB is likewise held down by noise it correctly declines to
+# reproduce, so it should not be read as a fidelity deficit.
 
 # Voxel spacing (Z, Y, X) in micrometres for cells3d
 # Original: (0.29, 0.065, 0.065) µm, 4x downsampled in Y/X → (0.29, 0.26, 0.26) µm
@@ -123,8 +150,8 @@ VOXEL_SIZE_ZYX = (0.29, 0.26, 0.26)
 # toggleable layer coloured by a BOP (Blue-Orange-Purple) microscopy LUT.
 # The viewer applies the colormap at display time (interactive switching).
 CHANNELS = [
-    {"index": 0, "name": "Membranes", "colormap": "bop_orange"},
-    {"index": 1, "name": "Nuclei", "colormap": "bop_blue"},
+    {"index": 0, "name": "Membranes", "colormap": "bop_orange", "seeds": 50_000},
+    {"index": 1, "name": "Nuclei", "colormap": "bop_blue", "seeds": 100_000},
 ]
 
 # Per-channel brightness multiplier applied before writing. Kept conservative
@@ -215,13 +242,15 @@ def load_cells3d():
 # =============================================================================
 
 
-def fit_channel(volume, channel_name, cache_file, source_dtype=None):
+def fit_channel(volume, channel_name, cache_file, seeds, source_dtype=None):
     """Fit gsplats to a single channel (always fits — caller handles precomputed).
 
     Args:
         volume: 3D volume (Z, Y, X), float32 [0, 1]
         channel_name: Human-readable channel name
         cache_file: Path to .gsplats.zarr.zip cache file
+        seeds: Splat budget for THIS channel; see the CHANNELS table for the
+            measurement behind the two values.
 
     Returns:
         GSplatData with fitted 3D splats
@@ -235,11 +264,11 @@ def fit_channel(volume, channel_name, cache_file, source_dtype=None):
 
     from luxar.gsplats import fit_gaussian_splats
 
-    aprint(f"Fitting {channel_name} (fixed-K joint fit: seeds={MAX_SPLATS})...")
+    aprint(f"Fitting {channel_name} (fixed-K joint fit: seeds={seeds:,})...")
 
     result = fit_gaussian_splats(
         volume,
-        seeds=MAX_SPLATS,
+        seeds=seeds,
         # The grid is the acquisition's; only the element type was changed
         # on the way here, and that is the denominator of the ratio.
         source_dtype=source_dtype,
@@ -280,7 +309,11 @@ def fit_all_channels(volumes, source_dtype=None):
 
             with asection(f"Channel {i}: {ch_name}"):
                 gsplats = fit_channel(
-                    volume, ch_name, cache_file, source_dtype=source_dtype
+                    volume,
+                    ch_name,
+                    cache_file,
+                    ch_config["seeds"],
+                    source_dtype=source_dtype,
                 )
                 gsplats_list.append(gsplats)
 
