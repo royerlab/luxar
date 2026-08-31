@@ -357,6 +357,39 @@ class TestSaveGsplats:
             assert "colors" in root
             assert root.attrs["has_colors"] is True
 
+    def test_label_ids_round_trip_exactly_through_ordering(self, tmp_path: Path) -> None:
+        splats = create_test_splats_3d(118)
+        splats["centers"][:, 0] = np.arange(118, dtype=np.float32)
+        splats["centers"][:, 1:] = 0.0
+        label_ids = np.arange(118, dtype=np.uint16)
+        label_ids[::7] = 117
+        vocabulary = {i: f"class-{i}" for i in range(118)}
+        data = GSplatData(
+            **splats,
+            label_ids=label_ids,
+            label_vocabulary=vocabulary,
+        )
+
+        path = tmp_path / "labels.gsplats.zarr"
+        data.save(path, ordering="hilbert", encoding_mode=EncodingMode.AUTO)
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root.attrs["has_label_ids"] is True
+        assert root["label_ids"].attrs["encoding"]["name"] == "uint8"
+
+        loaded = GSplatData.load(path)
+        assert loaded.label_ids is not None
+        assert set(loaded.label_ids.tolist()) == set(label_ids.tolist())
+        expected_by_center = {
+            tuple(center): int(label_id)
+            for center, label_id in zip(splats["centers"], label_ids)
+        }
+        np.testing.assert_array_equal(
+            loaded.label_ids,
+            [expected_by_center[tuple(center)] for center in loaded.centers],
+        )
+        assert loaded.label_vocabulary == vocabulary
+
     @pytest.mark.parametrize("mode", [EncodingMode.PRECISION, EncodingMode.AUTO])
     def test_rgba_colors_round_trip(self, mode: EncodingMode) -> None:
         # RGBA colors (per-splat opacity in the 4th column) survive

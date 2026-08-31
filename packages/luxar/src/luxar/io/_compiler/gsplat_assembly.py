@@ -542,6 +542,7 @@ def apply_gsplat_spatial_ordering(
     amplitudes: Union[NDArray[np.float32], float],
     cholesky_factors: NDArray[np.float32],
     colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    label_ids: Optional[np.ndarray],
     n_splats: int,
     n_dims: int,
     cholesky_is_uniform: bool,
@@ -555,6 +556,7 @@ def apply_gsplat_spatial_ordering(
     Union[NDArray[np.float32], float],
     NDArray[np.float32],
     Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    Optional[np.ndarray],
     Optional[Dict[str, Any]],
     Optional[_CentersEncodingPlan],
 ]:
@@ -607,6 +609,8 @@ def apply_gsplat_spatial_ordering(
         if colors is not None and isinstance(colors, np.ndarray):
             if colors.shape[0] > 1:
                 colors = colors[sort_indices]
+        if label_ids is not None:
+            label_ids = label_ids[sort_indices]
 
         chunk_size = resolve_gsplat_chunk_size(n_splats, n_dims)
 
@@ -661,6 +665,7 @@ def apply_gsplat_spatial_ordering(
         amplitudes,
         cholesky_factors,
         colors,
+        label_ids,
         ordering_data,
         centers_encoding_plan,
     )
@@ -784,6 +789,8 @@ def write_gsplat_arrays(
     amplitudes: Union[NDArray[np.float32], float],
     cholesky_factors: NDArray[np.float32],
     colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]],
+    label_ids: Optional[np.ndarray],
+    label_vocabulary: Optional[Dict[int, str]],
     n_splats: int,
     n_dims: int,
     cholesky_is_uniform: bool,
@@ -1010,6 +1017,7 @@ def write_gsplat_arrays(
         "n_splats": n_splats,
         "ndim": n_dims,
         "has_colors": False,
+        "has_label_ids": label_ids is not None,
         "amplitude_range": {"min": amplitude_min, "max": amplitude_max},
         "center_bounds": {"min": center_min, "max": center_max},
     }
@@ -1056,6 +1064,29 @@ def write_gsplat_arrays(
             per_array_bytes=True,
         )
         metadata["has_colors"] = True
+
+    if label_ids is not None:
+        chunks = calculate_intelligent_chunks(
+            label_ids.shape,
+            spatial_index_data=ordering_data,
+            dtype=label_ids.dtype,
+            per_array_bytes=True,
+        )
+        ctx.encoder.encode(
+            data=label_ids,
+            zarr_group=group,
+            name="label_ids",
+            semantic_type=SemanticType.INDEX,
+            mode=ctx.encoding_mode,
+            chunks=chunks,
+            compressor=ctx.compressor,
+            deduplicate=False,
+            allow_lut=False,
+        )
+        metadata["label_vocabulary"] = {
+            str(label_id): name
+            for label_id, name in (label_vocabulary or {}).items()
+        }
 
     # Write chunk_bounds
     if ordering_data is not None:
@@ -1247,6 +1278,9 @@ def apply_gsplat_group_attrs(
     warn_if_over_element_cap("gsplats", metadata["n_splats"], group.name)
     group.attrs["ndim"] = metadata["ndim"]
     group.attrs["has_colors"] = metadata["has_colors"]
+    group.attrs["has_label_ids"] = metadata.get("has_label_ids", False)
+    if metadata.get("has_label_ids"):
+        group.attrs["label_vocabulary"] = metadata["label_vocabulary"]
     group.attrs["amplitude_range"] = metadata["amplitude_range"]
     # Robust display window on the SAME node as the colormap (set above), so the
     # viewer reads colormap + range together. Without this, an additive-ladder

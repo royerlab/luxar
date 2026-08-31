@@ -160,12 +160,21 @@ def _write_single_splat_set(
     truncation_radius = float(
         (attrs or {}).get("truncation_radius", sublod.truncation_radius)
     )
-    centers, amplitudes, cholesky, colors, ordering_data, centers_encoding_plan = (
+    (
+        centers,
+        amplitudes,
+        cholesky,
+        colors,
+        label_ids,
+        ordering_data,
+        centers_encoding_plan,
+    ) = (
         apply_gsplat_spatial_ordering(
             centers,
             amplitudes,
             cholesky,
             colors,
+            sublod.label_ids,
             n_splats,
             n_dims,
             chol_uniform,
@@ -181,6 +190,8 @@ def _write_single_splat_set(
         amplitudes,
         cholesky,
         colors,
+        label_ids,
+        sublod.label_vocabulary,
         n_splats,
         n_dims,
         chol_uniform,
@@ -197,6 +208,9 @@ def _write_single_splat_set(
         group.attrs["n_splats"] = metadata["n_splats"]
         group.attrs["ndim"] = metadata["ndim"]
         group.attrs["has_colors"] = metadata["has_colors"]
+        group.attrs["has_label_ids"] = metadata["has_label_ids"]
+        if metadata["has_label_ids"]:
+            group.attrs["label_vocabulary"] = metadata["label_vocabulary"]
         group.attrs["amplitude_range"] = metadata["amplitude_range"]
         group.attrs["center_bounds"] = metadata["center_bounds"]
         group.attrs["ordering"] = metadata["ordering"]
@@ -268,6 +282,16 @@ def _validate_ladder_color_and_dim_consistency(sublods: Sequence[Any]) -> None:
             "additive ladder has mixed dimensionality across sub-LODs "
             f"(ndims {sorted(sub_ndims)}); all levels must share the dataset "
             "dimensionality."
+        )
+    label_presence = {sub.label_ids is not None for sub in sublods}
+    if len(label_presence) > 1:
+        raise ValueError(
+            "additive ladder must carry label_ids on every sub-LOD or none"
+        )
+    vocabularies = [sub.label_vocabulary for sub in sublods if sub.label_ids is not None]
+    if any(vocabulary != vocabularies[0] for vocabulary in vocabularies[1:]):
+        raise ValueError(
+            "additive ladder label_vocabulary values must be identical"
         )
 
 
@@ -346,6 +370,8 @@ def write_gsplat_leaf(
     n_dims: Optional[int] = None
     total = 0
     has_any_colors = False
+    has_label_ids = False
+    label_vocabulary: Optional[Dict[str, str]] = None
     center_mins: List[List[float]] = []
     center_maxs: List[List[float]] = []
     amp_mins: List[float] = []
@@ -369,6 +395,9 @@ def write_gsplat_leaf(
         n_dims = meta["ndim"] if n_dims is None else n_dims
         total += meta["n_splats"]
         has_any_colors = has_any_colors or meta["has_colors"]
+        has_label_ids = has_label_ids or meta["has_label_ids"]
+        if meta["has_label_ids"]:
+            label_vocabulary = meta["label_vocabulary"]
         center_mins.append(meta["center_bounds"]["min"])
         center_maxs.append(meta["center_bounds"]["max"])
         amp_mins.append(meta["amplitude_range"]["min"])
@@ -395,11 +424,14 @@ def write_gsplat_leaf(
         "n_splats": total,
         "ndim": n_dims,
         "has_colors": has_any_colors,
+        "has_label_ids": has_label_ids,
         "amplitude_range": {"min": min(amp_mins), "max": max(amp_maxs)},
         "center_bounds": {"min": agg_min, "max": agg_max},
         "ordering": "none",
         "n_additive_sublods": len(sublods),
     }
+    if label_vocabulary is not None:
+        agg_meta["label_vocabulary"] = label_vocabulary
     if disp_his:
         # Aggregate robust display window across the ladder's sub-LODs, so the
         # colormap-bearing ladder node carries a range (not the [0,1] fallback).
@@ -854,6 +886,15 @@ def _read_leaf_arrays(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
     amplitudes = decoder.decode(group["amplitudes"], root)
     cholesky = _decode_cholesky(group, root, decoder)
     colors = decoder.decode(group["colors"], root) if "colors" in group else None
+    label_ids = (
+        decoder.decode(group["label_ids"], root) if "label_ids" in group else None
+    )
+    vocabulary_raw = group.attrs.get("label_vocabulary")
+    label_vocabulary = (
+        {int(label_id): str(name) for label_id, name in dict(vocabulary_raw).items()}
+        if vocabulary_raw is not None
+        else None
+    )
     stats_raw = group.attrs.get("lod_stats", {})
     stats = dict(stats_raw) if isinstance(stats_raw, dict) else {}
     truncation_radius = float(
@@ -864,6 +905,8 @@ def _read_leaf_arrays(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
         amplitudes=amplitudes,
         cholesky_factors=cholesky,
         colors=colors,
+        label_ids=label_ids,
+        label_vocabulary=label_vocabulary,
         stats=stats,
         truncation_radius=truncation_radius,
     )

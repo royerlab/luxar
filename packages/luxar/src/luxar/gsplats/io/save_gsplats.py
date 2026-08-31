@@ -1362,6 +1362,8 @@ def save_gsplats(
     amplitudes: np.ndarray,
     cholesky_factors: np.ndarray,
     colors: Optional[np.ndarray] = None,
+    label_ids: Optional[np.ndarray] = None,
+    label_vocabulary: Optional[Dict[int, str]] = None,
     ordering: Literal["morton", "hilbert", "none"] = "hilbert",
     encoding_mode: EncodingMode = EncodingMode.AUTO,
     fitting_info: Optional[Dict[str, Any]] = None,
@@ -1393,6 +1395,8 @@ def save_gsplats(
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky_factors,
                 colors=colors,
+                label_ids=label_ids,
+                label_vocabulary=label_vocabulary,
                 truncation_radius=truncation_radius,
             )
         ]

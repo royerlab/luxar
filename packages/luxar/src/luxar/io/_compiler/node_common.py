@@ -70,6 +70,8 @@ POINTS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "n_points",
         "ndim",
         "has_colors",
+        "has_label_ids",
+        "label_vocabulary",
         "has_radii",
         "has_sharpness",
         "has_scalars",

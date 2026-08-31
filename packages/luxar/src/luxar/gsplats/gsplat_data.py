@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
 import numpy as np
 
@@ -64,6 +64,52 @@ def widen_colors_to_rgba(colors: np.ndarray) -> np.ndarray:
     return np.concatenate([colors, alpha], axis=1)
 
 
+def normalize_label_vocabulary(
+    vocabulary: Optional[Mapping[int, str]],
+) -> Optional[Dict[int, str]]:
+    """Validate and normalize an id-to-name vocabulary."""
+    if vocabulary is None:
+        return None
+    normalized: Dict[int, str] = {}
+    for raw_id, name in vocabulary.items():
+        if isinstance(raw_id, bool) or not isinstance(raw_id, (int, np.integer)):
+            raise TypeError("label_vocabulary keys must be non-negative integers")
+        label_id = int(raw_id)
+        if label_id < 0:
+            raise ValueError("label_vocabulary keys must be non-negative integers")
+        if not isinstance(name, str):
+            raise TypeError("label_vocabulary values must be strings")
+        normalized[label_id] = name
+    return normalized
+
+
+def validate_label_channel(
+    label_ids: Optional[np.ndarray],
+    label_vocabulary: Optional[Mapping[int, str]],
+    n_splats: int,
+) -> Optional[Dict[int, str]]:
+    """Validate one exact categorical per-splat channel."""
+    vocabulary = normalize_label_vocabulary(label_vocabulary)
+    if label_ids is None:
+        if vocabulary is not None:
+            raise ValueError("label_vocabulary requires label_ids")
+        return None
+    if vocabulary is None:
+        raise ValueError("label_ids requires an explicit label_vocabulary")
+    if label_ids.shape != (n_splats,):
+        raise ValueError(
+            f"Label IDs shape {label_ids.shape} doesn't match centers count ({n_splats},)"
+        )
+    if not np.issubdtype(label_ids.dtype, np.integer) or np.issubdtype(
+        label_ids.dtype, np.signedinteger
+    ) and np.any(label_ids < 0):
+        raise ValueError("label_ids must contain non-negative integers")
+    missing = sorted(set(int(value) for value in np.unique(label_ids)) - vocabulary.keys())
+    if missing:
+        raise ValueError(f"label_vocabulary is missing ids present in label_ids: {missing}")
+    return vocabulary
+
+
 @dataclass(frozen=True, eq=False)
 class AdditiveSubLOD(_SplatArrayMixin):
     """A single Level-of-Detail layer — immutable container for splat arrays.
@@ -94,6 +140,8 @@ class AdditiveSubLOD(_SplatArrayMixin):
     amplitudes: np.ndarray
     cholesky_factors: np.ndarray
     colors: Optional[np.ndarray] = None
+    label_ids: Optional[np.ndarray] = None
+    label_vocabulary: Optional[Dict[int, str]] = None
     stats: Dict[str, Any] = field(default_factory=dict)
     truncation_radius: float = DEFAULT_TRUNCATION_RADIUS
 
@@ -115,6 +163,8 @@ class AdditiveSubLOD(_SplatArrayMixin):
             raise ValueError(
                 f"Colors count {self.colors.shape[0]} doesn't match centers count {n}"
             )
+        vocabulary = validate_label_channel(self.label_ids, self.label_vocabulary, n)
+        object.__setattr__(self, "label_vocabulary", vocabulary)
         if self.centers.ndim >= 2:
             from luxar.gsplats.utils.trils import validate_cholesky_shape
 
@@ -253,6 +303,8 @@ class GSplatData(
         amplitudes: Optional[np.ndarray] = None,
         cholesky_factors: Optional[np.ndarray] = None,
         colors: Optional[np.ndarray] = None,
+        label_ids: Optional[np.ndarray] = None,
+        label_vocabulary: Optional[Mapping[int, str]] = None,
         stats: Optional[Dict[str, Any]] = None,
         *,
         additive_sublods: Optional[List[AdditiveSubLOD]] = None,
@@ -313,6 +365,8 @@ class GSplatData(
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky_factors,
                 colors=colors,
+                label_ids=label_ids,
+                label_vocabulary=normalize_label_vocabulary(label_vocabulary),
                 stats=stats if stats is not None else {},
                 truncation_radius=truncation_radius,
             )
@@ -333,6 +387,8 @@ class GSplatData(
             self.amplitudes = lod0.amplitudes
             self.cholesky_factors = lod0.cholesky_factors
             self.colors = lod0.colors
+            self.label_ids = lod0.label_ids
+            self.label_vocabulary = lod0.label_vocabulary
         else:
             self.centers = np.concatenate(
                 [lod.centers for lod in finest_sublods], axis=0
@@ -342,6 +398,19 @@ class GSplatData(
                 [lod.cholesky_factors for lod in finest_sublods], axis=0
             )
             self.colors = _merge_lod_colors(finest_sublods)
+            if any(lod.label_ids is None for lod in finest_sublods):
+                self.label_ids = None
+                self.label_vocabulary = None
+            else:
+                self.label_ids = np.concatenate(
+                    [lod.label_ids for lod in finest_sublods if lod.label_ids is not None]
+                )
+                vocabularies = [lod.label_vocabulary for lod in finest_sublods]
+                if any(vocab != vocabularies[0] for vocab in vocabularies[1:]):
+                    raise ValueError(
+                        "additive ladder label_vocabulary values must be identical"
+                    )
+                self.label_vocabulary = vocabularies[0]
 
         # Top-level stats (separate from per-LOD stats)
         if stats is not None:
