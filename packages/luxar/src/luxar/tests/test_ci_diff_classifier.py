@@ -765,13 +765,16 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     )
 
     pick_runner = jobs["pick-runner"]
-    assert pick_runner["permissions"] == {}, "runner selection needs no repository access"
+    assert pick_runner["permissions"] == {}, (
+        "runner selection needs no repository access"
+    )
     pick_steps = {
         step.get("id", step.get("name")): step for step in pick_runner["steps"]
     }
     assert set(pick_steps) == {"guard", "route"}
     assert pick_steps["route"]["if"] == "steps.guard.outputs.label == ''"
     assert "label=obsidian" in pick_steps["route"]["run"]
+    assert "ubuntu-latest" not in pick_steps["route"]["run"]
     assert "github.event" not in pick_steps["route"]["if"], (
         "schedule and rerun events must not acquire an automatic hosted exception"
     )
@@ -790,6 +793,58 @@ def test_ci_jobs_respect_the_three_slot_obsidian_admission_contract(
     }
     assert "not cancelling" in watchdog["steps"][1]["run"]
     assert watchdog["steps"][2]["if"] == ("steps.scanner-checkout.outcome == 'success'")
+
+
+def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
+    """Every documented and enforced mypy entry point checks the same files."""
+    with (REPO / "pyproject.toml").open("rb") as stream:
+        lint_commands = tomllib.load(stream)["tool"]["hatch"]["envs"]["default"][
+            "scripts"
+        ]["lint"]
+
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    make_command = re.search(
+        r"^type-check-python:.*\n\t(.+)$", makefile, flags=re.MULTILINE
+    )
+    assert make_command is not None
+
+    precommit = yaml.safe_load(
+        (REPO / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    )
+    precommit_hooks = [
+        hook for repo in precommit["repos"] for hook in repo.get("hooks", [])
+    ]
+
+    claude = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    claude_command = re.search(
+        r"^hatch run mypy .+  # Type check$", claude, flags=re.MULTILINE
+    )
+    assert claude_command is not None
+
+    ci_steps = yaml.safe_load(workflow)["jobs"]["python-tests"]["steps"]
+    commands = {
+        "pyproject.toml": next(
+            command for command in lint_commands if command.startswith("mypy ")
+        ),
+        "Makefile": make_command.group(1),
+        ".pre-commit-config.yaml": next(
+            hook["entry"] for hook in precommit_hooks if hook.get("id") == "mypy"
+        ),
+        "CLAUDE.md": claude_command.group(0).removesuffix("  # Type check"),
+        ".github/workflows/ci.yml": next(
+            step["run"] for step in ci_steps if step.get("name") == "Type check (mypy)"
+        ),
+    }
+
+    targets = {}
+    for source, command in commands.items():
+        arguments = shlex.split(command)
+        mypy_index = arguments.index("mypy")
+        targets[source] = arguments[mypy_index + 1 :]
+
+    assert len({tuple(paths) for paths in targets.values()}) == 1, (
+        f"mypy target lists diverged: {targets}"
+    )
 
 
 def test_obsidian_routed_jobs_have_timeout_headroom(workflow: str) -> None:
