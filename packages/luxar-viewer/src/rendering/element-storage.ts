@@ -585,6 +585,7 @@ function applyNextSortedIndexChunk(
   attr.clearUpdateRanges();
   attr.addUpdateRange(rangeStart, rangeEnd - rangeStart);
   attr.needsUpdate = true;
+  markSortedIndexMirrorRange(geometry, attr, rangeStart, rangeEnd - rangeStart);
 
   if (chunkedApplyEnabled) {
     // Arm the back-pressure flag and wire its acknowledgement (issue
@@ -919,7 +920,7 @@ export function writeSortedIndexIdentity(
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
   for (let i = 0; i < n; i++) arr[i] = i;
-  collapseSortedIndexRanges(attr, n);
+  collapseSortedIndexRanges(geometry, attr, n);
 }
 
 /**
@@ -949,7 +950,7 @@ export function writeSortedIndexIdentityRange(
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
   for (let i = Math.max(0, from); i < n; i++) arr[i] = i;
-  collapseSortedIndexRanges(attr, n);
+  collapseSortedIndexRanges(geometry, attr, n);
 }
 
 /**
@@ -989,7 +990,7 @@ export function writeSortedIndexOrderingLive(
   // older sort of this same population and would land on top of this one.
   cancelSortedIndexOrderingApply(geometry);
   arr.set(ordering.subarray(0, count), 0);
-  collapseSortedIndexRanges(attr, count);
+  collapseSortedIndexRanges(geometry, attr, count);
   return count;
 }
 
@@ -1088,7 +1089,7 @@ export function repairSortedIndexForCount(
     if (seen[v] === 0) arr[write++] = v;
   }
 
-  collapseSortedIndexRanges(attr, n);
+  collapseSortedIndexRanges(geometry, attr, n);
 }
 
 /**
@@ -1201,7 +1202,11 @@ export function writeSortedIndexOrdering(
  * fresh entries plus any still-pending ranges (see the identity writer's
  * doc comment for why ranges must never accumulate).
  */
-function collapseSortedIndexRanges(attr: THREE.InstancedBufferAttribute, n: number): void {
+function collapseSortedIndexRanges(
+  geometry: THREE.InstancedBufferGeometry,
+  attr: THREE.InstancedBufferAttribute,
+  n: number
+): void {
   let rangeEnd = n;
   for (const range of attr.updateRanges) {
     const end = range.start + range.count;
@@ -1210,4 +1215,80 @@ function collapseSortedIndexRanges(attr: THREE.InstancedBufferAttribute, n: numb
   attr.clearUpdateRanges();
   attr.addUpdateRange(0, rangeEnd);
   attr.needsUpdate = true;
+  markSortedIndexMirrorRange(geometry, attr, 0, rangeEnd);
+}
+
+/**
+ * Shard views over a node's ordering arrays, keyed by the attribute they mirror.
+ *
+ * A depth shard draws a contiguous range of the node's permutation through an
+ * `InstancedBufferAttribute` whose array is a SUBARRAY of the parent's — so a
+ * write to the parent's array is already visible in the view's memory, but each
+ * view owns its own GPU buffer and therefore needs its own update range.
+ *
+ * Registered by `depth-sort-coordinator/depth-shards.ts` rather than imported
+ * from it, so this module stays unaware of sharding and can be tested with a
+ * plain list of views.
+ */
+interface SortedIndexMirrorUserData {
+  sortedIndexMirrors?: Map<THREE.InstancedBufferAttribute, THREE.InstancedBufferAttribute[]>;
+}
+
+/**
+ * Declare (or clear) the shard views that mirror `geometry`'s ordering
+ * attributes. Passing `null` removes the registration.
+ */
+export function registerSortedIndexMirrors(
+  geometry: THREE.InstancedBufferGeometry,
+  mirrors: Map<THREE.InstancedBufferAttribute, THREE.InstancedBufferAttribute[]> | null
+): void {
+  const userData = geometry.userData as SortedIndexMirrorUserData;
+  if (mirrors === null || mirrors.size === 0) {
+    delete userData.sortedIndexMirrors;
+    return;
+  }
+  userData.sortedIndexMirrors = mirrors;
+}
+
+/**
+ * Translate an update range written on `attr` into each mirroring shard view's
+ * own local range, and mark those views dirty.
+ *
+ * Deliberately NOT "mark every view fully dirty": the chunked apply exists to
+ * bound ordering upload per frame, and a full re-upload per view per slice would
+ * multiply that bound by the shard count — the exact cost the streaming apply
+ * was built to avoid. Each view's offset comes from its own `array.byteOffset`,
+ * so no bookkeeping can drift out of sync with the subarray it describes.
+ */
+function markSortedIndexMirrorRange(
+  geometry: THREE.InstancedBufferGeometry,
+  attr: THREE.InstancedBufferAttribute,
+  start: number,
+  count: number
+): void {
+  const mirrors = (geometry.userData as SortedIndexMirrorUserData).sortedIndexMirrors?.get(attr);
+  if (!mirrors || count <= 0) return;
+  const parentArray = attr.array as Uint32Array;
+  const parentBase = parentArray.byteOffset / parentArray.BYTES_PER_ELEMENT;
+  const writeStart = parentBase + start;
+  const writeEnd = writeStart + count;
+  for (const view of mirrors) {
+    const viewArray = view.array as Uint32Array;
+    const viewStart = viewArray.byteOffset / viewArray.BYTES_PER_ELEMENT;
+    const overlapStart = Math.max(writeStart, viewStart);
+    const overlapEnd = Math.min(writeEnd, viewStart + viewArray.length);
+    if (overlapEnd <= overlapStart) continue;
+    // Collapse into one span, exactly as the parent's own ranges are collapsed:
+    // ranges must never accumulate across applies.
+    let localStart = overlapStart - viewStart;
+    let localEnd = overlapEnd - viewStart;
+    for (const range of view.updateRanges) {
+      if (range.start < localStart) localStart = range.start;
+      const end = range.start + range.count;
+      if (end > localEnd) localEnd = end;
+    }
+    view.clearUpdateRanges();
+    view.addUpdateRange(localStart, localEnd - localStart);
+    view.needsUpdate = true;
+  }
 }

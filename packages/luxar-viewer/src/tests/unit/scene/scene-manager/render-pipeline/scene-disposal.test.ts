@@ -138,6 +138,45 @@ describe('disposeObjectTree', () => {
     // 'a' (the ancestor mesh) disposes before its child 'b'.
     expect(order).toEqual(['a', 'b']);
   });
+
+  it('does NOT dispose a depth shard, whose geometry and material are the parent’s', () => {
+    // A shard's geometry shares every attribute object with the node's own —
+    // base quad, index, and subarray views of the parent's ordering — and it
+    // shares the material OBJECT. Disposing it would free the parent's GPU
+    // buffers out from under it and destroy a compiled program still in use.
+    // Both are silent corruptions, so this is pinned rather than assumed.
+    const parent = makePoints();
+    const shardGeometry = new THREE.InstancedBufferGeometry();
+    const shardGeometryDispose = vi.spyOn(shardGeometry, 'dispose');
+    const shard = new THREE.Mesh(shardGeometry, parent.points.material);
+    shard.userData.depthShardOf = 'node';
+    parent.points.add(shard);
+
+    disposeObjectTree(parent.points);
+
+    expect(shardGeometryDispose).not.toHaveBeenCalled();
+    // The node's own geometry still disposes, and its material exactly ONCE
+    // despite being referenced by both meshes.
+    expect(parent.geometryDispose).toHaveBeenCalledTimes(1);
+    expect(parent.materialDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not dispose a depth shard reached as a top-level walk root either', () => {
+    // `clearLoadedSceneContent` and `disposeSceneGraphResources` both walk from
+    // above, so a shard can be the object handed to this function directly.
+    const geometry = new THREE.InstancedBufferGeometry();
+    const material = new THREE.MeshBasicMaterial();
+    const geometryDispose = vi.spyOn(geometry, 'dispose');
+    const materialDispose = vi.spyOn(material, 'dispose');
+    const shard = new THREE.Mesh(geometry, material);
+    shard.userData.depthShardOf = 'node';
+
+    disposeObjectTree(shard);
+
+    expect(geometryDispose).not.toHaveBeenCalled();
+    expect(materialDispose).not.toHaveBeenCalled();
+    expect(vi.mocked(releaseDepthSortNode)).not.toHaveBeenCalledWith(shard);
+  });
 });
 
 describe('clearLoadedSceneContent', () => {

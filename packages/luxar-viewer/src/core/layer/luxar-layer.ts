@@ -120,6 +120,7 @@ import {
   releaseDepthSortNode,
   disposeDepthSort,
 } from '../../rendering/depth-sort-coordinator';
+import { isDepthShard } from '../../rendering/depth-sort-coordinator/depth-shards';
 import { disposeWorkerPool } from '../../workers/worker-pool';
 import type { DatasetFaultPayload } from '../app/embedder/events';
 import { applyModuleOverrides } from '../app/init/module-overrides';
@@ -732,6 +733,13 @@ export class LuxarLayer {
   private detachRoot(root: THREE.Group): void {
     root.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
+      // Skip depth shards: their geometry shares every attribute object with
+      // the node's own, so disposing one frees the parent's GPU buffers out
+      // from under it. `releaseDepthSortNode` on the parent already detaches
+      // them (see `rendering/depth-sort-coordinator/depth-shards.ts`), but the
+      // traversal can still reach one — `traverse` snapshots nothing, and a
+      // shard is a CHILD of a mesh this same walk visits.
+      if (isDepthShard(object)) return;
       releaseDepthSortNode(object);
       object.geometry.dispose();
     });

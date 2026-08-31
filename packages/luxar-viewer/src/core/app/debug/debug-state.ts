@@ -19,6 +19,7 @@ import * as THREE from 'three';
 import type { SimpleDims } from '../../../types/dims';
 import { LOADER_TYPES, type LoaderTypeName } from '../../../types/format-contract';
 import { readVisibleElementCount } from '../../../data/scene-loader/monitor/visible-counts';
+import { effectiveInstanceCount } from '../../../rendering/depth-sort-coordinator/depth-shards';
 
 /** Additive reveal-ladder state shared by every drawable leaf type. */
 export interface AdditiveLadderDebugInfo {
@@ -338,9 +339,12 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       const geometry = object.geometry as THREE.InstancedBufferGeometry;
       const visiblePointCount = (object.userData as { visiblePointCount?: number })
         ?.visiblePointCount;
+      // `effectiveInstanceCount` so a depth-sharded node reports its whole
+      // population, not just the range its own mesh draws (see the note in
+      // `computeDrawOrder`). Identical to `instanceCount` when unsharded.
       const pointCount =
         geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
-          ? geometry.instanceCount
+          ? effectiveInstanceCount(object)
           : (visiblePointCount ?? 0);
       // Production nodes are created empty and stamped at commit. The fallback
       // covers synthetic debug/test nodes created directly with geometry data.
@@ -376,7 +380,8 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       (object.userData as { nodeType?: string })?.nodeType === 'gsplats' &&
       object.geometry instanceof THREE.InstancedBufferGeometry
     ) {
-      const splatCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
+      // Whole-node count, not the range this mesh draws — see `computeDrawOrder`.
+      const splatCount = effectiveInstanceCount(object);
       const requestedElementCount =
         (object.userData as { requestedElementCount?: number }).requestedElementCount ?? splatCount;
       const droppedElementCount =
@@ -400,7 +405,8 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       (object.userData as { nodeType?: string })?.nodeType === 'lines' &&
       object.geometry instanceof THREE.InstancedBufferGeometry
     ) {
-      const segmentCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
+      // Whole-node count, not the range this mesh draws — see `computeDrawOrder`.
+      const segmentCount = effectiveInstanceCount(object);
       const requestedElementCount =
         (object.userData as { requestedElementCount?: number }).requestedElementCount ??
         segmentCount;
@@ -587,9 +593,16 @@ export function computeDrawOrder(scene: THREE.Object3D): DrawOrderEntry[] {
       // every mesh**, because `visibleTriangleCount` was not in it and a missing field
       // reads as "no count" rather than as an error.
       const fallbackCount = readVisibleElementCount(object.userData) ?? 0;
+      // `effectiveInstanceCount`, not `instanceCount`: depth sharding narrows a
+      // node's own mesh to ONE depth range and draws the rest from child meshes
+      // that carry no `nodeType`, so the filter above skips them and a raw
+      // `instanceCount` would under-report the node by its shard count.
+      // Identical when unsharded. Shards stay unreported ROWS on purpose — this
+      // list is one entry per data node; the per-shard draw sequence belongs to
+      // the cross-node merge that consumes it.
       const elements =
         geometry instanceof THREE.InstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
-          ? geometry.instanceCount
+          ? effectiveInstanceCount(object)
           : fallbackCount;
 
       entries.push({

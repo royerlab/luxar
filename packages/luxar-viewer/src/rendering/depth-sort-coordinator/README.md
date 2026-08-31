@@ -26,6 +26,8 @@ Mesh cannot double-buffer because `geometry.index` is _bound_ state: no uniform 
 depth-sort-coordinator/
 ├── render-order.ts      — Cross-node renderOrder assignment: BSP partition traversal +
 │                          centroid fallback, ONE global scale
+├── depth-shards.ts      — Splitting ONE node's draw into S contiguous depth ranges so
+│                          shards of DIFFERENT nodes can interleave (inert at S=1)
 └── triangle-ordering.ts — The INDEXED (mesh) apply: face centroids + atomic index
                            permutation + the draw-acknowledgement lifecycle
 ```
@@ -121,6 +123,23 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
   1. **Worker side** (`workers/sort-worker/sorting.ts::sortNode`): returns `null` when `node.generation !== params.generation`
   2. **Main thread** (`scheduleSort` resolve handler): applies the ordering only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
 - **Unique across lifetimes**, not just within one: `releaseDepthSortNode` deletes the node state, and a re-promotion recommit would otherwise restart the counter — letting a stale in-flight sort from the previous life pass the guard and apply a CORRUPT permutation over the new (differently-sized) commit (found by randomized interleaving fuzz; see the `nextGeneration` invariant in `depth-sort-coordinator.ts`)
+
+### Depth Shards (depth-shards.ts)
+
+Splits ONE order-dependent node's draw into `S` contiguous ranges of its permutation so ranges of DIFFERENT nodes can interleave (`docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md`). **Inert today**: `requestedShardCount` always answers 1, so every node draws exactly as it did.
+
+**Ownership is the load-bearing decision.** Shards belong to the coordinator, not the scene graph — no scene path, no `attrs`, no loader, no commit, no pool entry, no pick registration. That is what leaves every path resolving a node by `getObjectByName(path)` untouched (all of `commit-*-geometry.ts`, `run-loader-updates.ts`, the per-type handlers and their `lod-refinement.ts`, `geometry-descriptors.ts`, `retry.ts`). Created from `noteDepthSortCommit`, destroyed from `releaseDepthSortNode` — one teardown point, already called by LOD demotion, layer detach and scene disposal. Deliberately NOT the partition-part precedent: parts ARE scene-graph nodes with their own paths and commits, and a shard can never be one.
+
+**The parent mesh IS shard 0**, with `instanceCount` narrowed to the shard size; shards 1..S−1 are CHILDREN. A zero-instance parent was tried and is wrong — `scene/lod-fade.ts:224-226` is literally `if (obj.material) visit(root); else root.traverse(visit)`, i.e. "a mesh that has a material IS the whole node", so cross-fade and energy compensation would skip every shard; and `camera-framing.ts:163`, `webgl-blend-warmup.ts:273-292` and `scene-stats.ts:73-94` all key off a non-zero instance count.
+
+Two invariants that are correctness, not style:
+
+- **Shards share the parent's material OBJECT, never a clone** — `lod-fade` and the LayersPanel both mutate the one material they find. `syncShardMaterials`, called per frame beside the `uSortedIndexSlot` re-assert, re-points them because `layer-apply.ts:107-113` clone-on-first-use REPLACES `mesh.material`; a pointer compare per shard is immune to a mutation site nobody hooked.
+- **Shards carry `userData.depthShardOf` and NO `nodeType` / `visible*Count` stamps**, so `scene-stats`, `visible-counts`, the draw-order panel and blend warmup skip them by construction instead of double-counting. Readers that legitimately want the node's whole population call `effectiveInstanceCount(mesh)` rather than reading `instanceCount`.
+
+**Attribute layout**: per-shard `InstancedBufferAttribute`s over SUBARRAY views of the parent's ordering arrays. One contiguous CPU array per slot, so all six sorted-index writers keep writing it unchanged and one uniform flip still publishes the whole set; each view owns a GPU buffer, so `element-storage`'s two range-registration points translate a parent write into each view's local range via `registerSortedIndexMirrors`. The zero-copy alternative (one `InstancedInterleavedBuffer`, views at offsets) was measured and REJECTED: it fails WebGPU pipeline validation while working on both WebGL arms (spec §7.1) — do not "optimise" into it.
+
+**Two surfaces need explicit handling and both fail silently if they regress**: picking widens the node back to its whole population for its (order-independent) pass and restores it afterwards — `picking-system.ts` — because a narrowed count would leave the node pickable in its farthest shard alone with no error; and disposal SKIPS shard geometries — `scene-disposal.ts`, `luxar-layer.ts` — because they share every attribute object with the parent, so disposing one frees the parent's GPU buffers and disposes the shared material twice.
 
 ### NodeSortState (Per-Node Tracking)
 

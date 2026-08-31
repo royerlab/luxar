@@ -104,6 +104,11 @@ import {
   cancelTriangleOrderingApply,
   writeSortedTriangleOrdering,
 } from './depth-sort-coordinator/triangle-ordering';
+import {
+  releaseDepthShards,
+  syncDepthShards,
+  syncShardMaterials,
+} from './depth-sort-coordinator/depth-shards';
 import { config } from '../config';
 import type { UpdateProfiler } from '../profiling/update-profiler';
 import { withTimeout } from '../workers/worker-pool/timeout/with-timeout';
@@ -1187,9 +1192,18 @@ export function noteDepthSortCommit(
     // second copy of its index alive for the rest of the session. (The
     // pending indexed apply was already cancelled above, for every commit.)
     state.triangleSource = undefined;
+    // Unshard too: a node that no longer sorts must go back to one draw, and
+    // its shard views alias an ordering that is about to stop being maintained.
+    releaseDepthShards(mesh);
     releaseWorkerNode(nodeId);
     return;
   }
+
+  // Re-establish the shard set against THIS commit. The element count and the
+  // pooled geometry can both have changed, and either invalidates the shard
+  // boundaries and the views that alias them; `syncDepthShards` rebuilds
+  // wholesale and is a no-op while the count is 1 (every node today).
+  syncDepthShards(mesh, requestedShardCount(mesh), count);
 
   // Sort NOW when the node is small enough, so the first frame after this
   // commit is already ordered instead of showing the fallback the commit path
@@ -1763,6 +1777,12 @@ function pumpChunkedOrderingApplies(): void {
     // writes per node, so re-asserting is cheaper than tracking every
     // way they can desync.
     syncSortedIndexSlot(state.mesh);
+    // Re-point any shard children at the parent's CURRENT material, for exactly
+    // the same reason: the LayersPanel's clone-on-first-use and the LOD
+    // cross-fade both REPLACE `mesh.material`, and a shard still holding the old
+    // object would silently stop tracking every appearance edit. A pointer
+    // compare per shard, and a no-op while the node is unsharded.
+    syncShardMaterials(state.mesh);
 
     if (!hasPendingSortedIndexOrderingApply(geometry)) {
       // The indexed (mesh) path has nothing to stream — its write is atomic
@@ -2171,6 +2191,11 @@ export function noteDepthSortBlendingModeSwitch(
 export function releaseDepthSortNode(mesh: THREE.Mesh): void {
   const nodeId = mesh.uuid;
   if (!nodeStates.delete(nodeId)) return;
+  // Shards are a rendering-time detail of a SORTED node, so this is their single
+  // teardown point — LOD demotion, layer detach and scene disposal all already
+  // route here. Restores the parent to one full draw and drops the views, whose
+  // ordering is about to stop being maintained.
+  releaseDepthShards(mesh);
   // With the node state gone the per-frame pump would never visit this
   // geometry again — abort any in-flight chunked apply so the map
   // doesn't pin the geometry + its (up to 40 MB) ordering until the

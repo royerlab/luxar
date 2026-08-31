@@ -26,6 +26,7 @@ import {
 } from '../../../../rendering/picking/picking-system';
 import { MAX_PICK_NODE_ID } from '../../../../rendering/picking/picking-system/pick-render';
 import { setElementIdMap } from '../../../../types/committed-data';
+import { syncDepthShards } from '../../../../rendering/depth-sort-coordinator/depth-shards';
 
 /** A promise plus its external `resolve` — lets a test gate when the readback completes. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -882,6 +883,64 @@ describe('PickingSystem — surface-pick depth sync', () => {
     const spy = registerPair(system); // no userData.blendingMode
     renderPickBuffer();
     expect(spy).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('widens a depth-sharded node to its WHOLE population for the pick pass', () => {
+    // The silent-failure case. Depth sharding narrows the node's own mesh to one
+    // depth range and draws the rest from child meshes, but the pick pass
+    // renders only that ONE mesh — so without widening, the node would be
+    // pickable in its farthest shard alone and hover would just stop working
+    // over the rest, with no error anywhere. Picking is order-INDEPENDENT, so
+    // it wants the whole node in one draw.
+    const { system, renderPickBuffer } = buildSystem();
+    const geometry = new THREE.InstancedBufferGeometry();
+    geometry.setAttribute(
+      'aSortedIndex',
+      new THREE.InstancedBufferAttribute(new Uint32Array(100), 1)
+    );
+    geometry.instanceCount = 100;
+    const mainNode = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    const pickNode = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickNode, system.allocatePickId());
+
+    syncDepthShards(mainNode, 4, 100);
+    expect(geometry.instanceCount).toBe(25);
+
+    // Capture what the pick render actually saw.
+    let instanceCountDuringRender = -1;
+    const renderer = (system as unknown as { renderer: { render: ReturnType<typeof vi.fn> } })
+      .renderer;
+    renderer.render = vi.fn(() => {
+      instanceCountDuringRender = geometry.instanceCount;
+    });
+
+    renderPickBuffer();
+
+    expect(instanceCountDuringRender).toBe(100);
+    // ...and restored afterwards, or the VISUAL pass would draw every node's
+    // whole population from its own mesh and double-draw the sharded elements.
+    expect(geometry.instanceCount).toBe(25);
+  });
+
+  it('leaves an unsharded node’s instance count untouched across a pick pass', () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const geometry = new THREE.InstancedBufferGeometry();
+    geometry.instanceCount = 42;
+    const mainNode = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    const pickNode = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    system.registerNode(mainNode, pickNode, system.allocatePickId());
+
+    let seen = -1;
+    const renderer = (system as unknown as { renderer: { render: ReturnType<typeof vi.fn> } })
+      .renderer;
+    renderer.render = vi.fn(() => {
+      seen = geometry.instanceCount;
+    });
+
+    renderPickBuffer();
+
+    expect(seen).toBe(42);
+    expect(geometry.instanceCount).toBe(42);
   });
 
   it('mixed registrations sync each pick material from its own main node', () => {

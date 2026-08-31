@@ -55,6 +55,7 @@ import { resolveOnDiskElementId } from './picking-system/element-id-map';
 import { applyLensDistortion } from './picking-system/lens-distortion';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr/pixel-utils';
+import { effectiveInstanceCount } from '../depth-sort-coordinator/depth-shards';
 import {
   getCameraFovRadians,
   isOrthographicCamera,
@@ -705,6 +706,17 @@ export class PickingSystem {
    */
   private _lastVisibleSig = -1;
 
+  /**
+   * Geometries whose `instanceCount` this pick pass widened past its depth-shard
+   * value, with the value to put back. Reused across passes (cleared, not
+   * reallocated) so the pick hot path stays allocation-free; always empty
+   * between passes, since `renderPickBuffer` drains it before returning.
+   */
+  private readonly _widenedPickGeometries: {
+    geometry: THREE.InstancedBufferGeometry;
+    saved: number;
+  }[] = [];
+
   /** See {@link _lastVisibleSig}. Map iteration order is insertion-stable. */
   private computeVisibleSig(): number {
     let sig = 0;
@@ -754,6 +766,21 @@ export class PickingSystem {
       const mainGeom = (entry.main as THREE.Mesh).geometry;
       if (mainGeom) {
         (entry.pick as THREE.Mesh).geometry = mainGeom;
+        // PICKING DOES NOT SHARD. Depth sharding narrows the main mesh's
+        // `instanceCount` to one depth range and draws the rest from child
+        // meshes, but the pick pass renders only this ONE mesh — so without
+        // widening it back the node would be pickable only in its farthest
+        // shard, and hover would just stop working over the rest with no error.
+        // Safe because the widen is undone below before returning, and this
+        // whole function is synchronous: no visual render can observe it.
+        // Correct because the pick pass is order-INDEPENDENT (each fragment
+        // writes its own id/depth), so it wants the whole node in one draw.
+        const full = effectiveInstanceCount(entry.main as THREE.Mesh);
+        const instanced = mainGeom as THREE.InstancedBufferGeometry;
+        if (instanced.isInstancedBufferGeometry && instanced.instanceCount !== full) {
+          this._widenedPickGeometries.push({ geometry: instanced, saved: instanced.instanceCount });
+          instanced.instanceCount = full;
+        }
       }
       // Sync world transform
       entry.pick.matrixWorld.copy(entry.main.matrixWorld);
@@ -813,6 +840,15 @@ export class PickingSystem {
     for (const entry of this.nodeMap.values()) {
       this.pickScene.remove(entry.pick);
     }
+
+    // Undo the depth-shard instance-count widen. Restoring the SAVED value
+    // rather than recomputing it matters: the shard record is the only place the
+    // narrowed count lives, and recomputing would re-derive the full count and
+    // leave every sharded node drawing its whole population in the visual pass.
+    for (const widened of this._widenedPickGeometries) {
+      widened.geometry.instanceCount = widened.saved;
+    }
+    this._widenedPickGeometries.length = 0;
 
     // Restore full renderer state. `setRenderTarget` cast: see the
     // post-processing-manager rationale (round-tripping

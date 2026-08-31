@@ -34,6 +34,7 @@
  */
 
 import * as THREE from 'three';
+import { effectiveInstanceCount } from '../../rendering/depth-sort-coordinator/depth-shards';
 
 export interface SceneStats {
   pointsObjects: number;
@@ -70,8 +71,13 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
       // Per-point data lives in the point texture (no per-instance
       // `aCenter` attribute to fall back on); instanceCount is the
       // source of truth, visiblePointCount the commit-stamped fallback.
+      // `effectiveInstanceCount` rather than `instanceCount` directly: depth
+      // sharding narrows the node's own mesh to ONE depth range and draws the
+      // rest from child meshes that deliberately carry no `nodeType` (so this
+      // traversal skips them), which would otherwise under-report the node by a
+      // factor of its shard count. Identical to `instanceCount` when unsharded.
       if (geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)) {
-        totalPoints += geometry.instanceCount;
+        totalPoints += effectiveInstanceCount(obj);
       } else if (obj.userData.visiblePointCount != null) {
         totalPoints += obj.userData.visiblePointCount;
       }
@@ -82,7 +88,8 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
       linesObjects++;
       const geometry = obj.geometry as THREE.InstancedBufferGeometry | undefined;
       if (geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)) {
-        totalSegments += geometry.instanceCount;
+        // See the points arm above for why this is not `instanceCount`.
+        totalSegments += effectiveInstanceCount(obj);
       } else if (obj.userData.visibleSegmentCount != null) {
         totalSegments += obj.userData.visibleSegmentCount;
       }

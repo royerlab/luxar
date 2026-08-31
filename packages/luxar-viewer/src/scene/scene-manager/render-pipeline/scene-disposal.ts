@@ -25,6 +25,7 @@ import {
   releaseDepthSortNode,
   releaseAllDepthSortNodes,
 } from '../../../rendering/depth-sort-coordinator';
+import { isDepthShard } from '../../../rendering/depth-sort-coordinator/depth-shards';
 
 /**
  * Recursively dispose `obj` and every descendant, removing each child
@@ -39,12 +40,27 @@ import {
  */
 export function disposeObjectTree(obj: THREE.Object3D): void {
   if (obj instanceof THREE.Mesh || obj instanceof THREE.InstancedMesh) {
+    // A DEPTH SHARD owns nothing. Its geometry shares every attribute object —
+    // base quad, index, and subarray views of the parent's ordering — with the
+    // node's own geometry, and it shares the material OBJECT too. Disposing it
+    // would free the parent's GPU buffers out from under it and dispose the
+    // shared material a second time, destroying a compiled program still in use.
+    // Dropping the reference (the recursion below removes it) is the whole
+    // teardown. See `rendering/depth-sort-coordinator/depth-shards.ts`.
+    if (isDepthShard(obj)) {
+      while (obj.children.length > 0) {
+        disposeObjectTree(obj.children[0]);
+        obj.remove(obj.children[0]);
+      }
+      return;
+    }
     // Depth sorting: drop the node's SortWorker registration (transferred
     // center buffers) with the mesh, plus any written-but-undrawn index
     // permutation's profiler lifecycle. Unconditional — only sortable nodes
     // (all four geometry types) ever register, and the release
     // is a cheap map-delete no-op for everything else; an in-flight sort
     // resolves onto the deleted coordinator state and is discarded.
+    // Also detaches any shard children, so the recursion below never meets one.
     releaseDepthSortNode(obj);
     if (obj.geometry) obj.geometry.dispose();
     if (obj.material) {

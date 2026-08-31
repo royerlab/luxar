@@ -18,6 +18,7 @@
  */
 
 import * as THREE from 'three';
+import { effectiveInstanceCount } from '../../../rendering/depth-sort-coordinator/depth-shards';
 import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import {
@@ -155,11 +156,17 @@ export function computeSceneBoundingBox(scene: THREE.Object3D): SceneBoundingBox
     // the instanced-quad types, and DRAWN TRIANGLES for a mesh. Reading what is drawn
     // rather than `n_faces` is what makes a culled mesh report what is on screen — the
     // draw range is the only thing a slice change rewrites.
+    // `effectiveInstanceCount` for the instanced-quad arm rather than
+    // `instanceCount`: depth sharding narrows the node's own mesh to ONE depth
+    // range and draws the rest from child meshes that carry no `nodeType` (so
+    // the filter above skips them), which would otherwise under-report by a
+    // factor of the shard count. Identical when unsharded. The BOX is unaffected
+    // either way — a shard shares the whole node's bounds.
     const instanceCount = isLuxarMesh
       ? drawnTriangleCount(geometry)
       : isInstancedMesh
         ? object.count
-        : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
+        : effectiveInstanceCount(object as THREE.Mesh);
     if (instanceCount <= 0) return;
     primitiveCount += instanceCount;
 
