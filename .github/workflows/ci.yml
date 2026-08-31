@@ -41,8 +41,9 @@ on:
     # Every window consumes hosted minutes for its short jobs, but the long
     # Python/TypeScript legs always join the obsidian queue. Sustained contention
     # can therefore cancel successive promotion windows. During an extended
-    # outage or promotion stall, set LUXAR_CI_FORCE_HOSTED=1 before the next
-    # window, then clear it after capacity recovers.
+    # outage or promotion stall, create/set the Actions repository variable
+    # LUXAR_CI_FORCE_HOSTED to 1 before the next window, then clear it after
+    # capacity recovers.
     - cron: '17 9 * * *'
     - cron: '17 0,3,6,12,15,18,21 * * *'
 
@@ -213,6 +214,8 @@ jobs:
   # label. There is no automatic capacity, backlog, schedule, or rerun fallback.
   # This selector MUST itself run on ubuntu-latest so fork safety and the manual
   # override still work while obsidian is unavailable.
+  # The runner/container machinery lives in royerlab/luxar-ci; nothing here can
+  # use the `obsidian` label unless that kit is deployed and healthy.
   pick-runner:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -264,9 +267,10 @@ jobs:
   # is unavailable here; a stale GitHub `in_progress` state can therefore keep a
   # dead runner covered. A box that dies after this window can still leave an
   # undispatched leg queued until the 24-hour ceiling, or a dispatch-lost leg
-  # running down its timeout. To recover, set LUXAR_CI_FORCE_HOSTED=1 and re-run
-  # all jobs; "Re-run failed" reuses the previous router output. Clear the
-  # override after obsidian capacity recovers.
+  # running down its timeout. To recover, create/set the Actions repository
+  # variable LUXAR_CI_FORCE_HOSTED to 1 and re-run all jobs; "Re-run failed"
+  # reuses the previous router output. Clear the override after obsidian capacity
+  # recovers.
   #
   # On a push or the daily full-matrix schedule, max-parallel deliberately holds
   # one Python leg queued while two Python legs and TypeScript occupy the three
@@ -406,7 +410,7 @@ jobs:
               echo "no active obsidian jobs found; requiring a second consecutive check before cancellation"
               sleep 30; continue
             fi
-            echo "::error::obsidian has no active jobs on two consecutive checks with jobs still queued ($queued) — cancelling the run; set LUXAR_CI_FORCE_HOSTED=1, then re-run all jobs"
+            echo "::error::obsidian has no active jobs on two consecutive checks with jobs still queued ($queued) — cancelling the run; create/set the Actions repository variable LUXAR_CI_FORCE_HOSTED to 1 (Settings > Secrets and variables > Actions > Variables), re-run all jobs, then clear it after capacity recovers"
             gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
             # The cancel sweeps this job too; don't fall through to success
             # while it lands.

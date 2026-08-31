@@ -910,16 +910,18 @@ healthy starved run projects to roughly 59 minutes, leaving the former 60-minute
 budget no headroom for any pre-step dispatch latency. A dispatch-lost leg can spend
 the same budget without starting a step. `typescript-tests` now carries 120 minutes,
 at the cost of a doubled time-to-red for that leg. Every scheduled window also runs
-the short `changes`, `pick-runner`, `docs-quality`, `release-readiness`,
-`wheel-viewer`, and `go-launcher` jobs on GitHub-hosted runners. Together those jobs
-were about a nine-minute hosted floor on the initial PR run for this policy. The
-long Python/TypeScript legs always join the obsidian queue unless the
-operator has set `LUXAR_CI_FORCE_HOSTED=1`; schedules have no automatic paid
-exception. Sustained contention can therefore cancel successive promotion windows.
-During an extended outage or promotion stall, set the override before the next
-window, then clear it after capacity recovers. (If newer interpreters ever become
-deliberately unsupported, the honest fix is a `requires-python` upper bound, not a
-quiet single-leg matrix.)
+`changes`, `pick-runner`, `docs-quality`, `release-readiness`, `wheel-viewer`,
+`go-launcher`, and the 10-minute `queue-watchdog` window on GitHub-hosted runners.
+Together those jobs were about a 20-minute hosted wall-clock floor on the initial PR
+run for this policy. The watchdog now runs on every same-repo run because all such
+runs select `obsidian`. The long Python/TypeScript legs always join the obsidian queue
+unless the operator has created/set the Actions repository variable
+`LUXAR_CI_FORCE_HOSTED` to `1` under **Settings → Secrets and variables → Actions →
+Variables**; schedules have no automatic paid exception. Sustained contention can
+therefore cancel successive promotion windows. During an extended outage or promotion
+stall, set the variable before the next window, then clear it after capacity recovers.
+(If newer interpreters ever become deliberately unsupported, the honest fix is a
+`requires-python` upper bound, not a quiet single-leg matrix.)
 
 This is also why the version-equality assertion in the job matters: it proves each
 leg really ran the interpreter it claims, rather than whatever pipx picked — the
@@ -936,10 +938,11 @@ job failure, so required checks do not receive an empty `runs-on` value.
 an obsidian-routed run whose jobs remain queued while no obsidian work is active. It
 sparse-checks out `scripts/` with credentials disabled and treats unreadable liveness
 data as a reason not to cancel. If two consecutive scans find queued work but no active
-obsidian jobs, it cancels the run and instructs the operator to set
-`LUXAR_CI_FORCE_HOSTED=1` before rerunning all jobs. The former scheduled queue
-redispatcher was removed: under obsidian-only routing, cancelling a queued run and
-creating a fresh attempt merely returns it to the same queue.
+obsidian jobs, it cancels the run and instructs the operator to create/set the Actions
+repository variable `LUXAR_CI_FORCE_HOSTED` to `1`, rerun all jobs, and clear it after
+capacity recovers. The former scheduled queue redispatcher was removed: under
+obsidian-only routing, cancelling a queued run and creating a fresh attempt merely
+returns it to the same queue.
 
 Scheduled and push runs differ from a PR run in *scope* as well: neither has a PR
 base, so the `changes` job cannot path-filter and selects the whole suite plus the
