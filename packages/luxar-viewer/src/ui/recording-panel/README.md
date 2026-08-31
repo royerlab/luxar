@@ -131,8 +131,8 @@ frame-by-frame capture for turntable + EXR-sequence modes:
 4. Pause auto-rotate and compute per-frame angle for the turntable. The
    rotation itself goes through `LuxarOrbitControls.applyOrbitRotation(angle)`
    with no explicit axis, which defaults to the configured `autoRotateAxis` —
-   so a turntable recorded from a horizontal- or view-axis preview rotates the
-   same way in the file.
+   so a turntable recorded from a non-default-axis preview rotates the same way
+   in the file.
 5. Build the per-mode driver (`ImageSequenceDriver` /
    `ExrSequenceDriver` / `VideoModeDriver`).
 6. Mount the modal overlay (focus trap + Escape to cancel + preview
