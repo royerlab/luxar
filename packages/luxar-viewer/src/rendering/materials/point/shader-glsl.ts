@@ -212,6 +212,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 export const POINT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
+    uniform float uPixelRatio;
     uniform mediump float uOpacity;
     uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance
     uniform mediump float uIntensity; // Per-node linear color multiplier (gain)

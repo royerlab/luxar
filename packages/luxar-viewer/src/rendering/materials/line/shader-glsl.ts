@@ -532,6 +532,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
 
     uniform int uIsOrtho;   // shared with the vertex stage
     uniform float uNearCull;
+    uniform float uPixelRatio;
     uniform float uOpacity;
     uniform float uInvGamma; // Pre-computed 1/gamma for performance
     uniform float uIntensity; // Per-node linear color multiplier (gain)

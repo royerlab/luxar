@@ -27,6 +27,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../../../rendering/materials/point/material-glsl';
+import { POINT_PICK_FRAGMENT_SHADER } from '../../../../../rendering/picking/point/shaders';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
@@ -125,9 +126,7 @@ describe('PointMaterial', () => {
       // Check pointSize clamp + sprite expansion (replaces gl_PointSize).
       expect(material.vertexShader).toContain('uniform float maxPointSize');
       expect(material.vertexShader).toContain('float minPointSize = 1.5 * uPixelRatio');
-      expect(material.vertexShader).toContain(
-        'clamp(basePointSize, minPointSize, maxPointSize)'
-      );
+      expect(material.vertexShader).toContain('clamp(basePointSize, minPointSize, maxPointSize)');
       expect(material.vertexShader).toContain(
         'vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w'
       );
@@ -177,6 +176,10 @@ describe('PointMaterial', () => {
 
     it('should have correct fragment shader with HDR handling and optimizations', () => {
       const material = new PointMaterial();
+
+      // Fragment-stage uniforms must be declared independently in GLSL.
+      expect(material.fragmentShader).toContain('uniform float uPixelRatio');
+      expect(POINT_PICK_FRAGMENT_SHADER).toContain('uniform float uPixelRatio');
 
       // The fragment reads the sprite UV from a varying.
       expect(material.fragmentShader).toContain('vec2 centered = vSpriteCoord - 0.5');

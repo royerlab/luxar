@@ -171,8 +171,11 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).not.toContain('in vec3 aStartColor;');
       expect(material.vertexShader).not.toContain('in float aStartWidth;');
 
-      // Check for uniforms
+      // Check for uniforms. Fragment-stage uniforms must be declared
+      // independently in GLSL, including the DPR used by width compensation.
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
+      expect(material.fragmentShader).toContain('uniform float uPixelRatio');
+      expect(LINE_PICK_FRAGMENT_SHADER).toContain('uniform float uPixelRatio');
 
       // Check for varyings (GLSL ES 3.0 uses "out" instead of "varying")
       expect(material.vertexShader).toContain('out vec3 vColor');

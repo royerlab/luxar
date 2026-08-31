@@ -145,6 +145,8 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
 export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
+    uniform float uPixelRatio;
+
     in highp float vRadius;
     in mediump float vBeta;
     in mediump float vNearFade;

@@ -326,6 +326,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
 
     uniform int uIsOrtho;   // shared with the vertex stage
     uniform float uNearCull;
+    uniform float uPixelRatio;
 
     in float vSharpness;
     in float vPerpNorm;
