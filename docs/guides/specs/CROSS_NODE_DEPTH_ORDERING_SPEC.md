@@ -1,6 +1,6 @@
 # Cross-Node Depth Ordering — Depth-Shard Interleaving (Route B)
 
-> **Status**: Phases S, 0, 1, 2 and 3 IMPLEMENTED on the draft holding PR #2407 (branch `feat/cross-node-depth-shards`); the feature is **off by default**, pending the separability gate that should choose the shard count per pair instead of the current constant. **It demonstrably works**: against an exact ground truth it removes 84% of the cross-node ordering error at 64 shards for no measurable frame cost, and 93% at 256 for ~1-2 ms (§7.3). §7.2's popping at the default 16 shards is that constant being too low for a co-extensive pair, not a wall. Implementation deltas vs the text below, all found by tests or measurement rather than review: (a) `syncDepthShards`'s idempotent path must RE-ASSERT the parent's narrowed `instanceCount`, because every commit resets it to the whole count — without it the parent redraws the entire node on top of its shards (the two-node E2E counted 9375 elements drawn for a 5000-element node); (b) the group's internal sort keys had to become MEMBER-level, since a shard with no usable bounds keys to 0 (i.e. at the camera) and sorted to the near end of its own node, and a shard-level key makes the member comparison non-transitive; (c) `orderGroupsWithContainment` now RETURNS its edge set — inferring the edges by diffing depth order against hoisted order is a guess, not the relation; (d) **the containment override is dropped between two SHARDED groups** (decision 4's "plausibly subsumes" note, now settled): two co-extensive interpenetrating nodes have near-equal bounding spheres, so whichever is a hair larger "contains" the other and the block forced strict node-major order — defeating the exact case sharding exists to fix (an edge with only one side sharded is kept); and (e) the merge key is the shard's sort-pose VIEW-Z interval, not a re-projected box — correct on principle, but measurably neutral (§7.2).
+> **Status**: **ARCHIVED, 2026-08-31 — not landing.** Phases S, 0, 1, 2 and 3 are implemented and green on branch `feat/cross-node-depth-shards` (holding PR #2407, closed unmerged, branch retained). The mechanism works and is measured (§7.3: 84% of the cross-node ordering error removed at 64 shards for no measurable frame cost, 93% at 256 for ~1-2 ms). It was archived anyway, on the judgement that the visible payoff on real data does not justify the permanent complexity — see §12, which is the section to read first and the only one written with the outcome known.
 > **Scope**: Viewer-only. No `.luxar.zarr` / `.gsplats.zarr` format change, no Python-side change, **no shader change**.
 > **Goal**: correct back-to-front compositing *between* two or more overlapping order-dependent nodes — of any instanced geometry type, in any mix of order-dependent blending modes — to a bounded, tunable ordering error.
 > **Non-goals**: per-pixel ordering (the StopThePop error class — a single per-element depth cannot fix it, and no global sort can); order-independent transparency; one globally merged draw (Spark's architecture — §8.2); Mesh (§8.1).
@@ -398,6 +398,176 @@ Prior art in-repo: PR #843 (containment override), PR #591 (`render-order.ts` ex
 The NVIDIA cross-check named in risk 2 is **pending on infrastructure, not skipped**: the intended host (obsidian, RTX PRO 6000) has had no loaded NVIDIA kernel module since a kernel bump to `6.8.0-138-generic` left the DKMS module unbuilt, and its 16-core load average of ~20 from the agent fleet would invalidate µs-scale timing regardless. Re-run `delme/draw-split-probe/` there once the driver is restored.
 
 ---
+
+## 12. Why this was archived (2026-08-31)
+
+Read this before anything above it. Everything earlier was written while the
+outcome was still open, so it argues for the design; this section is the only
+part written knowing how it turned out.
+
+### The verdict
+
+The mechanism is sound, implemented, and measured. It was archived because on
+**real data it is not visibly convincing**, and a permanent feature has to earn
+its complexity in what people actually see, not in what a fixture can be built
+to show.
+
+Both halves of that sentence matter, so neither should be quoted alone:
+
+- **It works.** Against an exact ground truth — the same 10,000 splats in one
+  node, where within-node sorting is already exact — sharding monotonically
+  converges on the correct composite: 48% of the error removed at 16 shards,
+  84% at 64, 93% at 256 (§7.3). The emitted order was independently verified
+  correct (0-4 inversions out of 32 draws across a 66° orbit). This is not a
+  feature that failed to function.
+- **It does not visibly pay on the scene we checked.** Driven interactively on
+  the neuromast (two channels, ~110k splats, forced to `volumetric`) at 250
+  shards, the result was smooth and cheap — 500 interleaved draws, frame p50
+  6.6 ms vs 6.1 ms unsharded, popping indistinguishable from baseline — and the
+  reviewer's judgement was "ok, but not super convincing". That is the finding.
+
+### What the gap between those two means
+
+The fixture is two 5,000-splat combs offset by 1/5000 of their extent:
+maximally interleaved, co-extensive, equal density, two saturated complementary
+colours chosen so any ordering error shows as a hue shift. It was built to make
+the effect *measurable*, and it succeeded. But a construction that makes an
+effect measurable is not evidence that the effect is *large in the wild* — it is
+evidence that the mechanism operates. Those are different claims, and the whole
+arc rested on conflating them until real data separated them.
+
+Real scenes weaken the effect at every step, and the neuromast weakens it at all
+of them at once. Its two channels are anatomically nested rather than finely
+interleaved, so much of each node is unambiguously in front of or behind the
+other and the whole-node order is already nearly right. Both channels are
+authored `additive`, which is commutative — the feature is *inert* as shipped,
+and only forcing `volumetric` engages it at all. And under volumetric
+compositing, moderate absorption makes the difference between two orderings
+small per pixel even where the order genuinely is wrong.
+
+So the honest summary is: the error this fixes is real, but on the data we have,
+it is mostly small, mostly hidden behind commutative blending, and mostly not
+where the eye is.
+
+### The cost of keeping it
+
+Against that, the standing price is not small. Every node becomes potentially
+several draw calls, and *every* traversal that assumed one drawing mesh per node
+becomes a place where a future change can silently break: picking (which fails
+with no error path — hover simply stops working), element counts, draw-order
+rows, disposal, material identity, LOD fade, context restore. §5 Phase 1 lists
+nine such surfaces; each is adapted and tested here, but each is also a
+permanent invariant that a contributor who has never heard of depth shards can
+violate without any gate going red.
+
+This arc produced two bugs of exactly that shape, both silent, both found only
+by measurement: a parent redrawing its whole node on top of its own shards
+(9,375 elements drawn for a 5,000-element node), and a shard count that did not
+divide the element count causing the feature to **quietly switch itself off**
+while still reporting as enabled — which corrupted a conclusion in §7.2 that
+stood for several hours. A subsystem that fails silently twice during its own
+construction will fail silently again during someone else's.
+
+That is the trade that was declined: a permanent, silent-failure-prone
+invariant across nine subsystems, in exchange for an improvement that a careful
+reviewer looking straight at it called "not super convincing".
+
+### What is preserved, and what is not
+
+Branch `feat/cross-node-depth-shards` (tip `039897772`) holds the complete
+implementation — WASM+TS kernel with per-shard AABBs and exact parity, shard
+meshes, the k-way stream merge, the policy, config section, URL parameter, 60
+depth-shard unit tests, and a two-node E2E spec verified fail-first. It is
+green: 13,439 viewer unit tests, typecheck, lint, warning-fatal Sphinx. Nothing
+needs redoing to resume; the branch is retained deliberately and must not be
+pruned.
+
+Two things are *not* in the branch and are recorded here instead.
+
+**The separability gate, designed but unbuilt.** The one clear gap at archive
+time was that the shard count is a constant, when §7.2 and §7.3 together show it
+has to track how deeply a specific pair interpenetrates. The derivation, for
+whoever picks this up:
+
+> To order two nodes that interpenetrate over a depth extent `P`, a node of
+> depth extent `E` must be cut into ranges thinner than `P/k` to resolve that
+> region `k` ways — so it needs `k·E/P` shards. Take `P = rA + rB − d` (the
+> overlap of their depth ranges along the axis through their centres: the
+> direction in which they are most separated, hence the smallest such overlap
+> over all view directions and the conservative requirement) and `E = 2·rA`.
+> A node's requirement is the max over its overlapping foreign partners, since
+> one set of draw calls serves all of them.
+
+Two properties fall out, and both are the wanted behaviour. A **co-extensive**
+pair (`P = E`) needs exactly `k` — so the configured constant becomes "shards
+for a fully co-extensive pair", and §7.3's curve is its calibration. A pair that
+**barely grazes** needs `k·E/P → ∞`, cannot be afforded, and is left unsharded —
+correct on both counts, since the mis-composited lens is tiny and a split too
+coarse to resolve it would only make that lens flap as the camera moves. Under a
+draw budget, admit cheapest-first and **drop** a node whose requirement does not
+fit rather than scaling it down: under-sharding is the failure mode the gate
+exists to prevent, so serving fewer nodes properly beats serving all of them too
+coarsely.
+
+**The ground-truth method, which outlived the feature.** Merge the nodes under
+test into a single node and photograph that: within-node sorting is exact, so
+the correct composite becomes computable and "does this help?" stops being an
+argument. It cost about an hour and it overturned two of my own diagnoses. It
+generalises to any cross-node compositing question and should be the first move
+next time, not the last. The generator lived at `delme/groundtruth/make_merged.py`
+(gitignored, not preserved — it is ~60 lines and reproducing it from this
+paragraph is faster than recovering it).
+
+### What would justify reopening this
+
+Not a better implementation — the implementation is done. Reopen it on
+**evidence of demand**, in roughly this order of strength:
+
+1. A real dataset where the mis-composite is visible without being pointed out,
+   and whose authors cannot merge the nodes (§2's existing answer: merge them,
+   `partition={"max_elements": N}`). The `volumetric` × genuinely-interpenetrating
+   × two-separate-layers-required combination is the case; we did not find one.
+2. Repeated user reports of wrong compositing between layers.
+3. Mesh with transparency landing, which would add order-dependent surfaces that
+   *cannot* be merged the way splats can.
+
+### Measure the ceiling before building any successor
+
+This applies to **Route C** as much as to Route B, and it is the cheapest useful
+thing anyone can do here.
+
+Every mechanism in this family — depth shards, a shared per-type render list, one
+globally merged draw — is an attempt to approach the same target: the composite
+you would get if the overlapping nodes were a single node. That target is
+directly constructible today, by merging the nodes and compiling one node from
+the union. So the ceiling on the entire family is measurable in about an hour,
+without building any of them:
+
+> Build the scene twice from identical element data — once as two nodes, once
+> merged into one — and compare the renders at several camera angles.
+
+If the merged render is not convincingly better than the two-node one on a given
+dataset, then **no** ordering mechanism can be, because merged *is* the exact
+answer that all of them approximate. That closes the question for that dataset
+in an hour instead of a quarter.
+
+Route B was archived on an approximation (250 shards on the neuromast) rather
+than on this ceiling, which is the one loose end in §12: it is possible, though
+on the evidence unlikely, that the exact answer is visibly better than the
+250-shard approximation was. Anyone reopening this should measure the ceiling on
+the neuromast first — and if it *is* convincing, note that the successor to build
+is Route C, not Route B, since Route C reaches the ceiling exactly and *reduces*
+draw calls instead of multiplying them.
+
+One correction for whoever reads "same geometry type" as the tractable subset:
+per §8.2 it is not where the cost lives. The expensive parts — global element
+storage, per-element indirection for the ~20 per-node uniforms, and invalidating
+the global buffer on every LOD commit — are required whether or not the merge
+spans types. The cross-type extra is one shader branch over three texel layouts.
+Restricting to one type buys perhaps 15% of the work, not an order of magnitude.
+
+Absent those, the authoring rule remains the right answer, and its limitation is
+documented where users meet it (`render-order.ts:588`, the depth-sort README).
 
 ## 11. References
 
