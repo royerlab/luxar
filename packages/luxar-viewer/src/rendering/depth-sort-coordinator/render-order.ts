@@ -251,6 +251,46 @@ interface OrderSlot {
    * center then still carries a valid depth reference).
    */
   radius: number;
+  /**
+   * Depth-shard index within the node, 0 for the node's own mesh. Shards are
+   * contiguous ranges of an ALREADY back-to-front permutation, so ascending
+   * index IS back-to-front and this doubles as the within-node order key —
+   * which is why the merge never needs to compare two shards of one node.
+   */
+  shardIndex: number;
+  /**
+   * The NODE's mesh, shared by every shard of it (so `mesh` for shard 0). The
+   * group's internal sort keys on this rather than on `mesh`, which keeps a
+   * node's shards adjacent and in index order no matter what their individual
+   * depth keys say — including a shard with no usable bounds, whose key would
+   * otherwise sort it to the near end of its own node.
+   */
+  memberKey: THREE.Mesh;
+  /**
+   * View-space z of the NODE's own bounding-sphere centre — identical for every
+   * shard of it. This is the group's member-ordering key, so a group orders its
+   * members exactly as it did before sharding existed; the per-shard `viewZ`
+   * only ever positions a shard against OTHER groups.
+   */
+  memberViewZ: number;
+}
+
+/**
+ * A node's depth shards, as the render-order pass needs them.
+ *
+ * Supplied by the coordinator rather than queried here: it already owns the
+ * per-node sort state the bounds arrive on, and passing them keeps this module
+ * free of any dependency on the shard machinery.
+ */
+export interface ShardOrderInput {
+  /** Shard meshes 1..S-1; shard 0 is the node's own mesh. */
+  meshes: readonly THREE.Mesh[];
+  /** Shards with usable depth bounds. `<= 1` means "do not shard the order". */
+  count: number;
+  /** Per-shard LOCAL-space AABB minima, `[count * 3]`. */
+  boundsMin: Float32Array;
+  /** Per-shard LOCAL-space AABB maxima, `[count * 3]`. */
+  boundsMax: Float32Array;
 }
 let orderSlots: OrderSlot[] = [];
 
@@ -427,9 +467,13 @@ function centroidMaxReachSphere(slots: readonly OrderSlot[]): {
  * Group counts are tens, so the O(G²) edge scan is negligible next to
  * the per-frame BSP traversals this module already does.
  */
-function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
+function orderGroupsWithContainment(byDepth: OrderGroup[]): {
+  ordered: OrderGroup[];
+  /** Groups each key must finish drawing before; empty when no edge applies. */
+  edges: Map<OrderGroup, OrderGroup[]>;
+} {
   const n = byDepth.length;
-  if (n < 2) return byDepth;
+  if (n < 2) return { ordered: byDepth, edges: EMPTY_EDGES };
 
   // Two valid enclosing spheres per group: the Ritter union
   // ({@link groupEnclosingSphere}) and the legacy centroid + max-reach bound
@@ -476,7 +520,22 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
     }
     containsEdges[a] = edges;
   }
-  if (!anyEdge) return byDepth;
+  if (!anyEdge) return { ordered: byDepth, edges: EMPTY_EDGES };
+
+  // Publish the edge set by GROUP identity, so a caller holding either the depth
+  // order or the hoisted order can use it without index bookkeeping. The merge
+  // needs it: inferring edges by diffing the two orderings would be a guess, not
+  // the relation — Kahn's priority tie-breaking reorders groups that no edge
+  // connects, and a transitive chain looks the same as a direct edge.
+  const edgeMap = new Map<OrderGroup, OrderGroup[]>();
+  for (let a = 0; a < n; a++) {
+    if (containsEdges[a].length > 0) {
+      edgeMap.set(
+        byDepth[a],
+        containsEdges[a].map((b) => byDepth[b])
+      );
+    }
+  }
 
   // Kahn's algorithm; among ready groups always emit the farthest first
   // (byDepth index order = depth order, so a linear min-scan suffices).
@@ -501,8 +560,11 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
     ordered.push(byDepth[pick]);
     for (const b of containsEdges[pick]) indegree[b]--;
   }
-  return ordered;
+  return { ordered, edges: edgeMap };
 }
+
+/** Shared empty edge map for the no-containment case (no per-frame allocation). */
+const EMPTY_EDGES: Map<OrderGroup, OrderGroup[]> = new Map();
 
 /**
  * Reset the per-frame containers. Called FIRST in
@@ -534,7 +596,8 @@ export function clearRenderOrderFrameState(): void {
 export function collectRenderOrderSlot(
   mesh: THREE.Mesh,
   mv: THREE.Matrix4,
-  camPos: THREE.Vector3
+  camPos: THREE.Vector3,
+  shards?: ShardOrderInput
 ): void {
   if (!scratch) {
     scratch = {
@@ -546,6 +609,68 @@ export function collectRenderOrderSlot(
   const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
   const part = bspPartOf(mesh);
   const ranks = part ? wrapperPartRanks(part.wrapper, camPos, scratch) : null;
+  const groupKey = part ? part.wrapper : mesh;
+  const partRank = part && ranks ? (ranks.get(part.partIndex) ?? -1) : -1;
+
+  // Sharded: one slot per shard, each positioned by its OWN re-projected box.
+  // This is where cross-node interleaving becomes expressible at all — a shard
+  // is a thin depth interval, so unlike a whole-node centroid it can be compared
+  // against another node's interval meaningfully.
+  if (shards && shards.count > 1) {
+    const scale = mv.getMaxScaleOnAxis();
+    // The node's own centroid depth, used as the member-ordering key on every
+    // shard so the group orders its MEMBERS exactly as it did pre-sharding.
+    let memberViewZ = 0;
+    if (bs && Number.isFinite(bs.radius)) {
+      scratch.center.copy(bs.center).applyMatrix4(mv);
+      if (Number.isFinite(scratch.center.z)) memberViewZ = scratch.center.z;
+    }
+    for (let s = 0; s < shards.count; s++) {
+      // Shard 0 is the node's own mesh; 1..S-1 are its shard children.
+      const shardMesh = s === 0 ? mesh : shards.meshes[s - 1];
+      if (!shardMesh) break;
+      const b = s * 3;
+      const minX = shards.boundsMin[b];
+      const minY = shards.boundsMin[b + 1];
+      const minZ = shards.boundsMin[b + 2];
+      const maxX = shards.boundsMax[b];
+      const maxY = shards.boundsMax[b + 1];
+      const maxZ = shards.boundsMax[b + 2];
+      // `min > max` on any axis is the empty-box sentinel (a shard with no
+      // finite element there); a non-finite bound is a real ±Inf center. Both
+      // mean "no usable depth reference", handled exactly as a missing bounding
+      // sphere is: keep the slot comparable at 0 rather than poisoning the
+      // comparators with NaN, and mark the radius unusable.
+      const usable =
+        minX <= maxX &&
+        minY <= maxY &&
+        minZ <= maxZ &&
+        Number.isFinite(minX + minY + minZ + maxX + maxY + maxZ);
+      if (usable) {
+        scratch.center.set((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+        scratch.center.applyMatrix4(mv);
+      }
+      const dx = maxX - minX;
+      const dy = maxY - minY;
+      const dz = maxZ - minZ;
+      const localRadius = usable ? Math.sqrt(dx * dx + dy * dy + dz * dz) / 2 : -1;
+      const scaledRadius = usable ? localRadius * scale : -1;
+      orderSlots.push({
+        mesh: shardMesh,
+        groupKey,
+        partRank,
+        viewZ: usable ? scratch.center.z : 0,
+        viewX: usable ? scratch.center.x : 0,
+        viewY: usable ? scratch.center.y : 0,
+        radius: Number.isFinite(scaledRadius) ? scaledRadius : -1,
+        shardIndex: s,
+        memberKey: mesh,
+        memberViewZ,
+      });
+    }
+    return;
+  }
+
   if (bs) {
     scratch.center.copy(bs.center).applyMatrix4(mv);
   }
@@ -564,8 +689,8 @@ export function collectRenderOrderSlot(
     mesh,
     // Meshes sharing a partition wrapper form one order group; a
     // single-leaf mesh is its own group of one.
-    groupKey: part ? part.wrapper : mesh,
-    partRank: part && ranks ? (ranks.get(part.partIndex) ?? -1) : -1,
+    groupKey,
+    partRank,
     // View-space z of the content centroid (negative in front of the
     // camera; MORE negative = farther). Without bounds — or with a
     // non-finite center (NaN input data propagates into the bbox) —
@@ -575,6 +700,9 @@ export function collectRenderOrderSlot(
     viewX: usable ? scratch.center.x : 0,
     viewY: usable ? scratch.center.y : 0,
     radius: Number.isFinite(scaledRadius) ? scaledRadius : -1,
+    shardIndex: 0,
+    memberKey: mesh,
+    memberViewZ: usable ? scratch.center.z : 0,
   });
 }
 
@@ -627,9 +755,12 @@ export function assignGlobalRenderOrder(): void {
     const group = groups.get(slot.groupKey);
     if (group) {
       group.slots.push(slot);
-      group.sumZ += slot.viewZ;
+      // MEMBER depth, not shard depth: a single-leaf group's key is then exactly
+      // the node's own centroid whether or not it is sharded, so splitting a
+      // node cannot move it relative to the other groups.
+      group.sumZ += slot.memberViewZ;
     } else {
-      groups.set(slot.groupKey, { slots: [slot], sumZ: slot.viewZ });
+      groups.set(slot.groupKey, { slots: [slot], sumZ: slot.memberViewZ });
     }
   }
 
@@ -638,31 +769,175 @@ export function assignGlobalRenderOrder(): void {
   const byDepth = [...groups.values()].sort(
     (a, b) => a.sumZ / a.slots.length - b.sumZ / b.slots.length
   );
-  const ordered = orderGroupsWithContainment(byDepth);
+  const { ordered, edges } = orderGroupsWithContainment(byDepth);
 
   // Reserve THREE's default 0 for meshes the coordinator does not track yet,
   // so an empty never-committed partition placeholder cannot alias a live rank.
   let nextRank = 1;
+
+  // Order each group's slots internally FIRST, so a group is a monotone stream:
+  // a sequence already in its own correct back-to-front order.
   for (const group of ordered) {
-    // BSP ranks when EVERY member has one; view-z otherwise (a rank-less legacy
-    // wrapper, or a partition with no stored tree).
-    //
-    // The all-or-nothing choice is made once per GROUP, not per comparison, and
-    // that is load-bearing. Mixing the two keys makes the comparator
-    // NON-TRANSITIVE — ranked pairs order by rank while any pair involving an
-    // unranked member orders by depth, so a < b < c < a is representable — and
-    // `Array.sort` is free to return anything for an inconsistent comparator,
-    // including an order that violates both keys. A ranked wrapper normally ranks
-    // all its members, but `ranks.get(partIndex) ?? -1` yields -1 for a part the
-    // stored tree does not name, so the mixed case is reachable from data alone;
-    // falling the whole group back to depth keeps the result a well-defined
-    // (if approximate) order instead of an arbitrary one.
-    const everyMemberRanked = group.slots.every((slot) => slot.partRank >= 0);
-    group.slots.sort(
-      everyMemberRanked ? (a, b) => a.partRank - b.partRank : (a, b) => a.viewZ - b.viewZ
-    );
+    sortGroupSlots(group);
+  }
+
+  // When any group is sharded the assignment becomes a k-way merge of those
+  // streams; otherwise it stays exactly the group-major emission it has always
+  // been (see {@link mergeOrderStreams} for why that split is deliberate).
+  if (ordered.some(groupIsSharded)) {
+    mergeOrderStreams(ordered, edges);
+    return;
+  }
+
+  for (const group of ordered) {
     for (const slot of group.slots) {
       slot.mesh.renderOrder = nextRank++;
+    }
+  }
+}
+
+/**
+ * Put one group's slots into that group's own correct back-to-front order.
+ *
+ * BSP ranks when EVERY member has one; view-z otherwise (a rank-less legacy
+ * wrapper, or a partition with no stored tree).
+ *
+ * The all-or-nothing choice is made once per GROUP, not per comparison, and
+ * that is load-bearing. Mixing the two keys makes the comparator
+ * NON-TRANSITIVE — ranked pairs order by rank while any pair involving an
+ * unranked member orders by depth, so a < b < c < a is representable — and
+ * `Array.sort` is free to return anything for an inconsistent comparator,
+ * including an order that violates both keys. A ranked wrapper normally ranks
+ * all its members, but `ranks.get(partIndex) ?? -1` yields -1 for a part the
+ * stored tree does not name, so the mixed case is reachable from data alone;
+ * falling the whole group back to depth keeps the result a well-defined
+ * (if approximate) order instead of an arbitrary one.
+ *
+ * The keys are MEMBER-level, not shard-level, and that is the point. A node's
+ * shards must stay adjacent and in index order regardless of their individual
+ * depth keys: their correct order is not a matter of comparison at all — they are
+ * contiguous ranges of an already back-to-front permutation, so ascending index
+ * IS back-to-front. Keying on the shard's own `viewZ` instead would let a shard
+ * with no usable bounds (key 0, i.e. AT the camera) sort to the near end of its
+ * own node, and would let float noise swap two adjacent slabs — which would make
+ * the sharding buy nothing at all.
+ */
+function sortGroupSlots(group: OrderGroup): void {
+  const everyMemberRanked = group.slots.every((slot) => slot.partRank >= 0);
+  const primary = everyMemberRanked
+    ? (a: OrderSlot, b: OrderSlot) => a.partRank - b.partRank
+    : (a: OrderSlot, b: OrderSlot) => a.memberViewZ - b.memberViewZ;
+  group.slots.sort((a, b) => {
+    if (a.memberKey === b.memberKey) return a.shardIndex - b.shardIndex;
+    const byPrimary = primary(a, b);
+    if (byPrimary !== 0) return byPrimary;
+    return a.shardIndex - b.shardIndex;
+  });
+}
+
+/** True when any member of `group` was split into depth shards. */
+function groupIsSharded(group: OrderGroup): boolean {
+  return group.slots.some((slot) => slot.shardIndex > 0);
+}
+
+/**
+ * Assign `renderOrder` by merging the groups as MONOTONE STREAMS rather than
+ * emitting them one after another.
+ *
+ * Each group arrives already in its own correct order (see
+ * {@link sortGroupSlots}) and is only ever consumed front-to-back, which is what
+ * makes this safe: a partition wrapper's exact Fuchs–Kedem–Naylor part order and
+ * a node's own shard order are preserved BY CONSTRUCTION, never re-derived from a
+ * comparison. The merge is therefore robust to depth-key noise — a stale or
+ * imprecise key can pick the wrong stream next, but can never mis-order one
+ * node's own shards.
+ *
+ * **An UNSHARDED group is emitted atomically, keyed by its mean view-z** — which
+ * is exactly the group-major behaviour that has always applied, and is not a
+ * compatibility hack: a whole-node centroid is not a depth interval, so
+ * interleaving two unsharded nodes by it would change draw order without
+ * improving accuracy. Only a sharded group is consumed shard-by-shard, keyed by
+ * the head shard's re-projected centroid. With nothing sharded this reduces to
+ * the previous implementation exactly, integer for integer.
+ *
+ * Containment (PR #843) is preserved as a constraint on the merge: a contained
+ * group's stream stays blocked until its container's stream is EXHAUSTED, so the
+ * container still draws entirely first. That is Kahn's algorithm over streams,
+ * with the farthest ready head emitted first — the same priority-topological
+ * shape {@link orderGroupsWithContainment} already applies to whole groups.
+ *
+ * `ordered` is the group list after the containment hoist; `edges` is that
+ * hoist's actual containment relation, keyed by group identity.
+ */
+function mergeOrderStreams(ordered: OrderGroup[], edges: Map<OrderGroup, OrderGroup[]>): void {
+  const n = ordered.length;
+  const cursors = new Array<number>(n).fill(0);
+  const sharded = ordered.map(groupIsSharded);
+  // Mean view-z per group: the atomic streams' selection key, identical to the
+  // one the depth sort that produced `ordered` was built with.
+  const meanZ = ordered.map(
+    (g) => g.slots.reduce((sum, s) => sum + s.memberViewZ, 0) / Math.max(1, g.slots.length)
+  );
+
+  const indexOf = new Map<OrderGroup, number>();
+  ordered.forEach((g, i) => indexOf.set(g, i));
+  const blockedBy = new Array<number>(n).fill(0);
+  const blocks: number[][] = Array.from({ length: n }, () => []);
+  for (let a = 0; a < n; a++) {
+    for (const contained of edges.get(ordered[a]) ?? []) {
+      const b = indexOf.get(contained);
+      if (b === undefined || b === a) continue;
+      blocks[a].push(b);
+      blockedBy[b]++;
+    }
+  }
+
+  let nextRank = 1;
+  let remaining = ordered.reduce((sum, g) => sum + g.slots.length, 0);
+  while (remaining > 0) {
+    // Farthest ready head first. Streams are tens at most, so a linear scan is
+    // cheaper than a heap and keeps the tie-breaking obvious: on an exact tie the
+    // lower stream index wins, which is depth order after the hoist.
+    let pick = -1;
+    let pickKey = Infinity;
+    for (let i = 0; i < n; i++) {
+      if (cursors[i] >= ordered[i].slots.length || blockedBy[i] > 0) continue;
+      const key = sharded[i] ? ordered[i].slots[cursors[i]].viewZ : meanZ[i];
+      if (key < pickKey) {
+        pickKey = key;
+        pick = i;
+      }
+    }
+
+    if (pick === -1) {
+      // Every remaining stream is blocked — impossible while containment edges
+      // point strictly large → small radius, but guard so a future invariant
+      // break degrades to the hoisted order instead of dropping meshes from the
+      // rank pass (the same posture as the cycle guard in the group hoist).
+      for (let i = 0; i < n; i++) {
+        for (let c = cursors[i]; c < ordered[i].slots.length; c++) {
+          ordered[i].slots[c].mesh.renderOrder = nextRank++;
+        }
+        cursors[i] = ordered[i].slots.length;
+      }
+      return;
+    }
+
+    if (sharded[pick]) {
+      ordered[pick].slots[cursors[pick]].mesh.renderOrder = nextRank++;
+      cursors[pick]++;
+      remaining--;
+    } else {
+      // Atomic: the whole group at once, preserving today's group-major emission.
+      for (const slot of ordered[pick].slots) {
+        slot.mesh.renderOrder = nextRank++;
+      }
+      remaining -= ordered[pick].slots.length;
+      cursors[pick] = ordered[pick].slots.length;
+    }
+
+    if (cursors[pick] >= ordered[pick].slots.length) {
+      for (const b of blocks[pick]) blockedBy[b]--;
     }
   }
 }

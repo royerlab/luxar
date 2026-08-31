@@ -371,7 +371,20 @@ Because `renderOrder` is compared **globally** across all transparent meshes, th
    - **Centroid (fallback)** — when either side lacks a rank (rank-less legacy wrapper members, or a single-leaf mesh): order by `viewZ` ascending (more negative = farther). Per-object ordering: approximate, and it degenerates when the camera is inside the volume — which is why the BSP path exists.
 4. **Write sequential integers** — 1..M to `mesh.renderOrder`
 
+Note that step 3's keys are **member-level**: a node's depth shards are ordered by shard index and stay adjacent, never by their own individual depth. Their correct order is positional rather than comparative (contiguous ranges of an already back-to-front permutation), and keying on a shard's own `viewZ` would both let a shard with no usable bounds sort to the near end of its own node AND make the member comparison non-transitive, since different shards of one member disagree.
+
 **Transparent objects OUTSIDE the coordinator's sorted set** (commutative modes), plus empty parts that have never committed, keep `renderOrder` 0 and draw before the globally-farthest sorted mesh — depth interleaving with unsorted content stays out of scope.
+
+### Cross-Node Merge (when any node is sharded)
+
+With every node unsharded — production today — the assignment is exactly the group-major emission above, integer for integer. As soon as any group carries depth shards it becomes a **k-way merge of monotone streams** (`mergeOrderStreams`).
+
+Each group arrives already in its own correct order and is only ever consumed front-to-back. That is what makes the merge safe: a partition wrapper's exact Fuchs–Kedem–Naylor part order and a node's own shard order are preserved BY CONSTRUCTION, never re-derived from a comparison — so the merge is robust to depth-key noise. A stale or imprecise key can pick the wrong stream next; it can never mis-order one node's own shards. A flat sort of shard intervals would have neither property.
+
+- **An UNSHARDED group is emitted atomically**, keyed by its mean member view-z. Not a compatibility hack: a whole-node centroid is not a depth interval, so interleaving two unsharded nodes by it would change draw order without improving accuracy.
+- **A SHARDED group is consumed shard by shard**, keyed by the head shard's re-projected box centroid — the thin depth interval that makes cross-node comparison meaningful at all.
+- **Containment still holds**: a contained group's stream stays blocked until its container's is EXHAUSTED, so the container draws entirely first. Kahn's algorithm over streams, farthest ready head first — the same priority-topological shape `orderGroupsWithContainment` applies to whole groups, using the edge set that function now returns rather than one inferred from the reordering (Kahn's tie-breaking moves groups no edge connects, and a transitive chain looks identical to a direct edge).
+- A group's own depth key uses **member** view-z, so splitting a node cannot move it relative to the other groups.
 
 ### BSP Tree Traversal
 

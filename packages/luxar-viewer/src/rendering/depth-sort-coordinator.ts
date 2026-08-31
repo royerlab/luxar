@@ -97,6 +97,7 @@ import {
   clearRenderOrderFrameState,
   collectRenderOrderSlot,
   setRenderOrderDisplayDimsAccessor,
+  type ShardOrderInput,
 } from './depth-sort-coordinator/render-order';
 import {
   acknowledgeTriangleOrderingDraw,
@@ -105,6 +106,7 @@ import {
   writeSortedTriangleOrdering,
 } from './depth-sort-coordinator/triangle-ordering';
 import {
+  depthShardChildren,
   releaseDepthShards,
   syncDepthShards,
   syncShardMaterials,
@@ -458,6 +460,30 @@ const EMPTY_SHARD_BOUNDS = new Float32Array(0);
 function requestedShardCount(mesh: THREE.Mesh): number {
   const requested = (mesh.userData as { depthShardCount?: number }).depthShardCount;
   return typeof requested === 'number' && requested > 1 ? Math.trunc(requested) : 0;
+}
+
+/**
+ * The node's depth shards in the shape the render-order pass consumes, or
+ * `undefined` when it should be ordered as ONE whole-node interval.
+ *
+ * Three conditions must all hold, and each one failing means the same thing —
+ * the ranges carry no usable depth meaning, so fall back to today's behaviour:
+ * the last resolved sort reported bounds (`shardCount > 1`; it reports 0 for the
+ * kernel's identity-ordering fallback), the bound arrays are present, and the
+ * shard MESHES still exist. The last is not redundant: a release or a re-commit
+ * tears the meshes down independently of the bounds, and ordering by a box whose
+ * mesh is gone would silently skip elements the parent is now drawing itself.
+ */
+function shardOrderInputFor(state: NodeSortState): ShardOrderInput | undefined {
+  if (state.shardCount <= 1 || !state.shardBoundsMin || !state.shardBoundsMax) return undefined;
+  const meshes = depthShardChildren(state.mesh);
+  if (meshes.length + 1 !== state.shardCount) return undefined;
+  return {
+    meshes,
+    count: state.shardCount,
+    boundsMin: state.shardBoundsMin,
+    boundsMax: state.shardBoundsMax,
+  };
 }
 
 /**
@@ -1920,7 +1946,13 @@ export function evaluateDepthSortPerFrame(): void {
     if (!isLiveOrderDependent(mode)) {
       // No longer order-dependent (e.g. switched to additive) — clear any
       // cross-part renderOrder bias so it doesn't strand a stale ordering.
+      // Shard children too: they are never collected again from here, so a
+      // positive rank left on one would keep drawing it out of position among
+      // the commutative content it now belongs with.
       if (mesh.renderOrder !== 0) mesh.renderOrder = 0;
+      for (const shard of depthShardChildren(mesh)) {
+        if (shard.renderOrder !== 0) shard.renderOrder = 0;
+      }
       continue;
     }
 
@@ -1942,7 +1974,7 @@ export function evaluateDepthSortPerFrame(): void {
     // assignGlobalRenderOrder() puts everything on ONE global integer
     // renderOrder scale (full rationale in
     // `depth-sort-coordinator/render-order.ts`).
-    collectRenderOrderSlot(mesh, scratch.mv, scratch.camPos);
+    collectRenderOrderSlot(mesh, scratch.mv, scratch.camPos, shardOrderInputFor(state));
 
     // Everything below dispatches or evaluates a within-mesh worker sort.
     // Keep that work paused during a loader sweep, but do not pause the
