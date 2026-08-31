@@ -94,6 +94,10 @@ vi.mock('../../../../scene/scene-dims-manager', () => ({
 import { RecordingPanel } from '../../../../ui/recording-panel';
 import { showToast } from '../../../../ui/toast';
 import { createMockSceneManager, createMockAnimationController } from './_helpers';
+import {
+  DEFAULT_MAX_PIXEL_RATIO,
+  setMaxPixelRatioCap,
+} from '../../../../rendering/pixel-ratio-cap';
 
 URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
 URL.revokeObjectURL = vi.fn();
@@ -112,6 +116,7 @@ describe('ScreenshotStrategy', () => {
 
   afterEach(() => {
     panel.dispose();
+    setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
     document.body.innerHTML = '';
   });
 
@@ -323,6 +328,27 @@ describe('ScreenshotStrategy', () => {
   });
 
   describe('capture DPR', () => {
+    it('resolves the untouched capture default from the live ceiling', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+      const mockDPRManager = {
+        isActive: vi.fn().mockReturnValue(true),
+        getCurrentDPR: vi.fn().mockReturnValue(2.0),
+        getNativeDPR: vi.fn().mockReturnValue(2.0),
+        setEnabled: vi.fn(),
+      };
+      panel.setAdaptiveDPRManager(mockDPRManager as any);
+      (panel as any).options.captureDPR = null;
+      setMaxPixelRatioCap(Infinity);
+
+      await panel.captureScreenshot();
+
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(2.0);
+      rafSpy.mockRestore();
+    });
+
     it('freezes adaptation at the capture DPR during the shot, then re-enables', async () => {
       const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
         cb(0);

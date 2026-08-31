@@ -65,6 +65,7 @@ import { getViewerContainer } from '../../utils/viewer-container';
 import { showToast } from '../toast';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
+import { getMaxPixelRatio } from '../../rendering/pixel-ratio-cap';
 import { LuxarOrbitControls } from '../../controls/luxar-orbit-controls';
 import { computeVideoBitrate as computeVideoBitratePure } from './media-utilities';
 import {
@@ -304,7 +305,7 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     // "the resolution this capture renders at", which by default is what
     // is on screen. Raise Capture DPR in the panel for a bigger export.
     const displayH = this.sceneManager.postProcessing.getDisplaySize().height;
-    const captureDPR = opts.captureDPR;
+    const captureDPR = opts.captureDPR ?? getMaxPixelRatio();
     const targetH =
       opts.videoResolution > 0 ? opts.videoResolution : Math.round(displayH * captureDPR);
     session.saveRecordingState({

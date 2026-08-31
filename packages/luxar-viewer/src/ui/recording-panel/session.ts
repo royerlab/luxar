@@ -86,6 +86,8 @@ function alignForEncoder(value: number, scale: number): number {
 export interface SavedRecordingState {
   dprEnabled: boolean;
   dpr: number;
+  /** Whether this capture explicitly pinned DPR through the manager. */
+  dprPinned: boolean;
   /** Pixel-ratio cap in force before the capture raised it. */
   pixelRatioCap: number;
   rendererSize: { width: number; height: number } | null;
@@ -225,6 +227,7 @@ export class RecordingSession {
     this.savedRecordingState = {
       dprEnabled,
       dpr,
+      dprPinned: options.captureDPR !== undefined && this.adaptiveDPRManager !== null,
       pixelRatioCap: getMaxPixelRatioCap(),
       rendererSize: null,
       resizeLocked: this.sceneManager.resizeLocked,
@@ -324,7 +327,10 @@ export class RecordingSession {
     if (this.adaptiveDPRManager) {
       if (saved.dprEnabled) {
         this.adaptiveDPRManager.setEnabled(true);
-      } else {
+        if (saved.dprPinned) {
+          this.sceneManager.setAdaptivePixelRatio(this.adaptiveDPRManager.getCurrentDPR());
+        }
+      } else if (saved.dprPinned) {
         this.sceneManager.setAdaptivePixelRatio(saved.dpr);
       }
     }

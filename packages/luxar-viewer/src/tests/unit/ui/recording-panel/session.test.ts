@@ -107,18 +107,24 @@ describe('RecordingSession', () => {
     }
 
     it('adaptive-enabled: freezes adaptation and pins the capture DPR, restore re-enables', () => {
-      const manager = makeDPRManager(true, 1.4);
+      let currentDPR = 1.4;
+      const manager = makeDPRManager(true, currentDPR);
+      manager.getCurrentDPR.mockImplementation(() => currentDPR);
+      manager.setEnabled.mockImplementation((enabled: boolean) => {
+        if (!enabled) currentDPR = 1.0;
+      });
       panel.setAdaptiveDPRManager(manager as any);
 
-      panel.session.saveRecordingState({ captureDPR: 1.0 });
+      panel.session.saveRecordingState({ captureDPR: 2.0 });
       expect(manager.setEnabled).toHaveBeenCalledWith(false);
       // Applied UNCONDITIONALLY now. It used to lean on setEnabled(false)
       // resetting to native, but that reset lands on the CEILING, which
       // is not necessarily the ratio the capture asked for.
-      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(1.0);
+      expect(mockSceneManager.setAdaptivePixelRatio).toHaveBeenCalledWith(2.0);
 
       panel.session.restoreRecordingState();
       expect(manager.setEnabled).toHaveBeenLastCalledWith(true);
+      expect(mockSceneManager.renderer.setPixelRatio).toHaveBeenLastCalledWith(1.0);
     });
 
     it('manual-DPR mode: pins the capture DPR, restore reapplies the manual value', () => {

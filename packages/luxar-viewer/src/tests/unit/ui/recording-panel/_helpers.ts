@@ -22,6 +22,7 @@ import { LuxarOrbitControls } from '../../../../controls/luxar-orbit-controls';
 /** Build the test double for SceneManager. */
 export function createMockSceneManager(): any {
   const mockCanvas = document.createElement('canvas');
+  let activePixelRatio = 1;
   mockCanvas.toBlob = vi.fn((callback: any) => {
     const blob = new Blob(['test'], { type: 'image/png' });
     callback(blob);
@@ -29,7 +30,7 @@ export function createMockSceneManager(): any {
   (mockCanvas as any).captureStream = vi.fn(() => new MediaStream());
   mockCanvas.focus = vi.fn();
 
-  return {
+  const sceneManager = {
     renderer: {
       domElement: mockCanvas,
       getSize: vi.fn().mockReturnValue({ x: 800, y: 600 }),
@@ -68,8 +69,16 @@ export function createMockSceneManager(): any {
       getAutoRotate: vi.fn().mockReturnValue(false),
       setAutoRotate: vi.fn(),
     },
-    setAdaptivePixelRatio: vi.fn(),
+    get activePixelRatio() {
+      return activePixelRatio;
+    },
+    setAdaptivePixelRatio: vi.fn((dpr: number) => {
+      activePixelRatio = dpr;
+      sceneManager.renderer.setPixelRatio(dpr);
+    }),
   };
+
+  return sceneManager;
 }
 
 /**

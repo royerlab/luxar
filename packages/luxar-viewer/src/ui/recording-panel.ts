@@ -12,7 +12,6 @@ import type { SceneManager } from '../scene/scene-manager';
 import type { AnimationController } from '../scene/animation/animation-controller';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
-import { getMaxPixelRatio } from '../rendering/pixel-ratio-cap';
 import type { OverlayManager } from './overlay-manager';
 import { generateFilename as generateFilenamePure } from './recording-panel/media-utilities';
 import {
@@ -69,9 +68,9 @@ export class RecordingPanel {
   private options: RecordingOptions = {
     outputFormat: 'webp',
     imageQuality: 0.92,
-    // Seeded here from the ceiling in force at construction, and
-    // re-seeded whenever the panel is (re)built — see gui-construction.
-    captureDPR: getMaxPixelRatio(),
+    // Null follows the live on-screen ceiling until the user moves the
+    // Capture DPR slider.
+    captureDPR: null,
     transparentBackground: false,
     videoDurationLimit: 60,
     videoFPS: 30,
@@ -106,6 +105,7 @@ export class RecordingPanel {
   private videoDurationController: Controller | null = null;
   private formatController: Controller | null = null;
   private captureController: Controller | null = null;
+  private refreshCaptureDPR: (() => void) | null = null;
 
   /** LOD-quiescence predicate for the offline loop — see {@link setLODSettledProvider}. */
   private lodSettledProvider: (() => boolean | null) | null = null;
@@ -191,6 +191,7 @@ export class RecordingPanel {
   // ========== Public API ==========
 
   show(): void {
+    this.refreshCaptureDPR?.();
     this.gui.show();
     this.visible = true;
   }
@@ -383,6 +384,7 @@ export class RecordingPanel {
     this.syncToggleController = result.syncToggleController;
     this.syncDimensionController = result.syncDimensionController;
     this.captureController = result.captureController;
+    this.refreshCaptureDPR = result.refreshCaptureDPR;
     this.imageControllers = result.imageControllers;
     this.videoControllers = result.videoControllers;
     this.turntableControllers = result.turntableControllers;

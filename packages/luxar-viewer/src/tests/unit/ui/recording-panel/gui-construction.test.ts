@@ -36,6 +36,7 @@ interface FakeController {
   onChange(cb: (val: unknown) => void): FakeController;
   show: ReturnType<typeof vi.fn>;
   hide: ReturnType<typeof vi.fn>;
+  max: ReturnType<typeof vi.fn>;
   updateDisplay: ReturnType<typeof vi.fn>;
 }
 
@@ -65,6 +66,7 @@ function makeFakeController(
     },
     show: vi.fn(),
     hide: vi.fn(),
+    max: vi.fn().mockReturnThis(),
     updateDisplay: vi.fn(),
   };
   registry.push(ctrl);
@@ -243,10 +245,16 @@ describe('buildRecordingGUI', () => {
    * the Performance popover moves the export default with it instead of
    * stranding whatever the ceiling was when the panel was first created.
    */
-  it('seeds Capture DPR from the on-screen ceiling, not the display DPR', () => {
+  it('refreshes an untouched Capture DPR from the live on-screen ceiling', () => {
     setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
-    const { options } = build();
-    expect(options.captureDPR).toBe(getMaxPixelRatio());
+    const { options, result, byName } = build();
+    options.captureDPR = null;
+    setMaxPixelRatioCap(Infinity);
+
+    result.refreshCaptureDPR();
+
+    expect(byName('Capture DPR')!._target.captureDPR).toBe(getMaxPixelRatio());
+    expect(options.captureDPR).toBeNull();
   });
 
   it('Codec / Dimension onChange write their options', () => {
