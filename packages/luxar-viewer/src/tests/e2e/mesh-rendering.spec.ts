@@ -27,6 +27,7 @@ import {
   getLuxarState,
   getWebGLErrors,
   getElementPixelStats,
+  getProjectedGeometryRegion,
   captureCanvasRGBA,
   renderOnce,
 } from './helpers';
@@ -239,7 +240,8 @@ test.describe('Mesh rendering', () => {
     await waitForMeshCommitted(page, 4);
     await renderOnce(page);
 
-    const stats = await getElementPixelStats(page, 'canvas', 10);
+    const region = await getProjectedGeometryRegion(page, ['mesh']);
+    const stats = await getElementPixelStats(page, 'canvas', 10, region);
     const litFraction = stats.nonBlackPixels / (stats.width * stats.height);
     expect(
       stats.nonBlackPixels,

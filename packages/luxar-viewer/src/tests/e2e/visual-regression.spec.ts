@@ -18,12 +18,6 @@ const DATASETS = {
   build: 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr',
 };
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-  });
-});
-
 test.describe('@visual Visual Regression - Basic Rendering', () => {
   test('should render dimension_navigation dataset consistently', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.nav}&debug&dpr=1`);

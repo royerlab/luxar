@@ -21,6 +21,7 @@ import {
   waitForRenderStable,
   assertNoShaderErrors,
   getElementPixelStats,
+  getProjectedGeometryRegion,
 } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
@@ -56,7 +57,8 @@ test.describe('Standalone .gsplats.zarr bare-node load', () => {
 
     // No manual camera move: the cluster (offset ~[12,8,5] from origin) is only
     // visible if the initial auto-frame used the node's position_bounds.
-    const stats = await getElementPixelStats(page, 'canvas', 10);
+    const region = await getProjectedGeometryRegion(page, ['gsplats']);
+    const stats = await getElementPixelStats(page, 'canvas', 10, region);
     expect(
       stats.nonBlackPixels,
       `Expected the auto-framed standalone cluster to be visible; stats=${JSON.stringify(stats)}`
