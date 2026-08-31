@@ -1894,8 +1894,8 @@ export interface ElementPixelStats {
 }
 
 /**
- * Read pixels from a rendered element at fractional coordinates in
- * `[0,1]`. Returns RGBA byte values from the *visible screenshot*.
+ * Capture the visible, composited pixels of a rendered element as a PNG buffer
+ * while hiding every other DOM element from the screenshot.
  *
  * Do not read WebGL canvases by drawing the canvas into a 2D canvas:
  * with `preserveDrawingBuffer: false` Chromium is allowed to clear the
@@ -1950,7 +1950,7 @@ export interface CanvasFrameRGBA {
  * region would let an unrelated frame difference masquerade as a defect.
  *
  * The screenshot route (rather than a direct `gl.readPixels`) is required
- * for the reason spelled out on `captureElementScreenshotDataUrl` above:
+ * for the reason spelled out on `captureElementScreenshot` above:
  * with `preserveDrawingBuffer: false` the WebGL drawing buffer may already
  * be cleared. The PNG is decoded in-page and handed back as base64 RGBA so
  * the whole frame crosses the CDP bridge exactly once.
