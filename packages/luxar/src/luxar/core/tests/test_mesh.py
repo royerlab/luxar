@@ -38,7 +38,7 @@ _KTX2_IDENTIFIER = b"\xabKTX 20\xbb\r\n\x1a\n"
 
 
 def _ktx2_bytes(supercompression_scheme: int) -> bytes:
-    payload = bytearray(64)
+    payload = bytearray(80)
     payload[: len(_KTX2_IDENTIFIER)] = _KTX2_IDENTIFIER
     payload[44:48] = supercompression_scheme.to_bytes(4, "little")
     return bytes(payload)
