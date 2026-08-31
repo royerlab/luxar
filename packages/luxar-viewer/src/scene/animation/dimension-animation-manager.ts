@@ -205,9 +205,11 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         // this feedback stayed silent through the blank-frame defect (#2374).
         // Consult committed quality so the two are distinguishable.
         const threshold = config.dimensionAnimation.ui.feedbackThreshold;
-        if (state.actualFPS < state.targetFPS * threshold) {
-          const energy = this.committedQuality?.() ?? null;
-          const framesAreComplete = energy !== null && energy >= ENERGY_RELEASE_THRESHOLD;
+        const energy = this.committedQuality?.() ?? null;
+        const cadenceSlipped = state.actualFPS < state.targetFPS * threshold;
+        const framesStillFilling = energy !== null && energy < ENERGY_RELEASE_THRESHOLD;
+        if (cadenceSlipped || framesStillFilling) {
+          const enoughOnScreen = energy !== null && energy >= ENERGY_RELEASE_THRESHOLD;
           this.dispatchEvent({
             type: 'fpsWarning',
             dimIndex,
@@ -218,21 +220,21 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
           if (config.dimensionAnimation.ui.showFPSFeedback) {
             const cadence = `Dim ${dimIndex}: ${state.actualFPS.toFixed(1)} of ${state.targetFPS} fps requested`;
-            if (framesAreComplete) {
-              // NOT a warning: the frames are whole, the playhead is pacing to
-              // data. Warning here trains a reader to ignore the channel.
+            if (enoughOnScreen) {
+              // NOT a warning: enough content is visible to read the frame and
+              // the playhead is pacing to data as designed.
               log.info(
                 Modules.ANIMATION,
-                `${cadence} — pacing to data, frames are complete ` +
+                `${cadence} — pacing to data, enough on screen to read ` +
                   `(committed energy ${(energy * 100).toFixed(0)}%)`
               );
             } else {
               log.warning(
                 Modules.ANIMATION,
-                `${cadence} — frames are incomplete ` +
-                  (energy === null
-                    ? '(no energy stamps on this scene)'
-                    : `(committed energy ${(energy * 100).toFixed(0)}%)`)
+                energy === null
+                  ? `${cadence} — committed quality unknown (no energy stamps on this scene)`
+                  : `${cadence} — still filling in ` +
+                      `(committed energy ${(energy * 100).toFixed(0)}%)`
               );
             }
           }

@@ -17,21 +17,28 @@
  * and a warning keyed on cadence alone fires on healthy playback, which trains
  * a reader to ignore it.
  *
- * This walks the committed mesh stamps and returns the WORST-SERVED laddered
+ * This walks the committed geometry stamps and returns the WORST-SERVED laddered
  * node's `committedEnergyFraction`, so the feedback can say which case it is.
  *
  * @module scene/animation/committed-quality
  */
 
+import { countFromUserData, type FreshnessChild } from '../lod-freshness';
+
+type FreshnessUserData = NonNullable<FreshnessChild['object']['userData']>;
+
 /** The subset of `THREE.Object3D` this walk reads. */
 export interface QualityNode {
   visible?: boolean;
   children?: readonly QualityNode[];
-  userData?: { committedEnergyFraction?: unknown };
+  userData?: Omit<FreshnessUserData, 'committedEnergyFraction'> & {
+    committedEnergyFraction?: unknown;
+  };
 }
 
 /**
- * Lowest `committedEnergyFraction` among VISIBLE stamped nodes, or `null`.
+ * Lowest `committedEnergyFraction` among VISIBLE, NON-EMPTY stamped nodes, or
+ * `null`.
  *
  * `null` means "cannot tell" and must be treated as such rather than as good or
  * bad news: an unstamped (legacy) dataset carries no energy figures at all, and
@@ -47,8 +54,10 @@ export function worstCommittedEnergy(root: QualityNode | null | undefined): numb
   let worst: number | null = null;
   const visit = (node: QualityNode): void => {
     if (node.visible === false) return;
-    const raw = node.userData?.committedEnergyFraction;
-    if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const userData = node.userData;
+    const raw = userData?.committedEnergyFraction;
+    const count = countFromUserData(userData as FreshnessUserData | undefined);
+    if (count !== 0 && typeof raw === 'number' && Number.isFinite(raw)) {
       worst = worst === null ? raw : Math.min(worst, raw);
     }
     for (const child of node.children ?? []) visit(child);

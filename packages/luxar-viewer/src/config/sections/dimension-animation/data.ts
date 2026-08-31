@@ -21,8 +21,8 @@ export const dimensionAnimationConfig: DimensionAnimationConfig = {
     continuousTraverseSeconds: 10, // Full range in 10s for continuous dims
   },
   ui: {
-    showFPSFeedback: true, // Show "target vs actual" fps
-    feedbackThreshold: 0.8, // Warn if actual < 80% of target
+    showFPSFeedback: true, // Log playback cadence/committed-quality feedback
+    feedbackThreshold: 0.8, // Cadence is slow below 80% of target
   },
   playback: {
     budgetFraction: 0.6, // 60% of the frame window for LOD streaming

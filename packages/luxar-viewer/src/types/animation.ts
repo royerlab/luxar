@@ -63,12 +63,11 @@ export interface DimensionAnimationEvents {
   stepChange: { dimIndex: number; stepSize: number | null };
   /** Emitted when direction changes (bounce mode) */
   directionChange: { dimIndex: number; direction: AnimationDirection };
-  /** Emitted when measured FPS differs significantly from target */
   /**
-   * Playback is not holding the requested cadence. `committedEnergyFraction` is
-   * the worst-served laddered node's committed energy, or `null` when nothing on
-   * screen carries energy stamps — it is what separates "the loaders cannot keep
-   * up" from "the playhead slowed to wait for them, as designed" (#2374).
+   * Playback missed the requested cadence or a visible node is still below the
+   * committed-energy display threshold. `committedEnergyFraction` is the
+   * worst-served non-empty laddered node's committed energy, or `null` when
+   * nothing on screen carries energy stamps (#2374).
    */
   fpsWarning: {
     dimIndex: number;

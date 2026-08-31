@@ -15,6 +15,7 @@ folder contains only the loop and the dimension scrubber.
 | File                             | Role                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `animation-controller.ts`        | `requestAnimationFrame`-driven render loop. Updates `ControlsManager`, runs registered per-frame callbacks, then renders through `PostProcessingManager`. Emits `frame-start` / `frame-end` on the event bus (for the PerformanceMonitor panel), paces pathologically slow frames (see the invariant below), and auto-pauses after `config.animation.idleTimeoutMs` of inactivity unless something continuous is active. |
+| `committed-quality.ts`           | Walks visible, non-empty commit stamps and reports the minimum committed energy used by dimension-playback feedback.                                                                                                                                                                                                                                                                                                                                                                   |
 | `dimension-animation-manager.ts` | Per-dimension FPS-throttled scrubber with `once` / `loop` / `bounce` modes. Mutates `SceneDimsManager` state and awaits `waitForUpdate()` so animation never advances faster than data loading. Extends `THREE.EventDispatcher` — emits `play`, `pause`, `complete`, `directionChange`, `speedChange`, `loopModeChange`, `fpsWarning`.                                                                                   |
 
 ## Public surface
@@ -131,10 +132,11 @@ callers that build the options object dynamically; defaults come from
   before clearing the pending flag; until the flag clears, that
   dimension's frame work is skipped. Independent dimensions animate
   in parallel because the flag is per-index.
-- **FPS warning is informational only.** Below
-  `feedbackThreshold * targetFPS` the manager emits `fpsWarning` and
-  optionally logs, but never throttles or stops the animation —
-  callers decide what to do with the signal.
+- **Playback feedback is informational only.** The manager emits `fpsWarning`
+  when cadence falls below `feedbackThreshold * targetFPS` or visible committed
+  energy is below the display threshold. Logging is warning-level while frames
+  are still filling (or quality is unknown), informational when enough content
+  is visible and only cadence slipped. It never throttles or stops animation.
 - **Boundary semantics.** `handleBoundary` clamps to `[min, max]`,
   not past them — `once` clamps and stops, `loop` wraps to the
   opposite end, `bounce` clamps and flips `state.direction`. The
@@ -148,15 +150,15 @@ callers that build the options object dynamically; defaults come from
 `DimensionAnimationManager` extends `THREE.EventDispatcher` with the
 `DimensionAnimationEvents` map from `src/types/animation.ts`:
 
-| Event             | Payload                              | When                                         |
-| ----------------- | ------------------------------------ | -------------------------------------------- |
-| `play`            | `{ dimIndex }`                       | `play()` transitions a paused dim to playing |
-| `pause`           | `{ dimIndex }`                       | `pause()` transitions a playing dim          |
-| `complete`        | `{ dimIndex }`                       | `once` mode hit the far boundary             |
-| `directionChange` | `{ dimIndex, direction }`            | `bounce` mode flipped at a boundary          |
-| `speedChange`     | `{ dimIndex, fps }`                  | `setTargetFPS` applied (after clamp)         |
-| `loopModeChange`  | `{ dimIndex, loopMode }`             | `setLoopMode` applied                        |
-| `fpsWarning`      | `{ dimIndex, targetFPS, actualFPS }` | Measured FPS fell below `feedbackThreshold`  |
+| Event             | Payload                                                         | When                                                                    |
+| ----------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `play`            | `{ dimIndex }`                                                  | `play()` transitions a paused dim to playing                            |
+| `pause`           | `{ dimIndex }`                                                  | `pause()` transitions a playing dim                                     |
+| `complete`        | `{ dimIndex }`                                                  | `once` mode hit the far boundary                                        |
+| `directionChange` | `{ dimIndex, direction }`                                       | `bounce` mode flipped at a boundary                                     |
+| `speedChange`     | `{ dimIndex, fps }`                                             | `setTargetFPS` applied (after clamp)                                    |
+| `loopModeChange`  | `{ dimIndex, loopMode }`                                        | `setLoopMode` applied                                                   |
+| `fpsWarning`      | `{ dimIndex, targetFPS, actualFPS, committedEnergyFraction }`   | Cadence slipped or a visible node is below the committed-energy threshold |
 
 `AnimationController` does not extend `EventDispatcher`; it publishes
 `frame-start` and `frame-end` on `utils/cross-layer/event-bus` so the

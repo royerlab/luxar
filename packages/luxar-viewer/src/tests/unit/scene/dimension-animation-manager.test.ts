@@ -981,16 +981,19 @@ describe('DimensionAnimationManager', () => {
     const pacingMessages = (spy: { mock: { calls: unknown[][] } }): string[] =>
       spy.mock.calls.map((call) => String(call[1])).filter((msg) => msg.includes('fps'));
 
-    const runOneMeasurementWindow = (energy: number | null | undefined) => {
+    const runOneMeasurementWindow = (
+      energy: number | null | undefined,
+      targetFPS = 10
+    ) => {
       const probe = energy === undefined ? undefined : () => energy;
       const m = new DimensionAnimationManager(sceneDimsManager, mockAnimationController, probe);
       const events: Array<{ committedEnergyFraction: number | null }> = [];
       m.addEventListener('fpsWarning', (e) =>
         events.push(e as unknown as { committedEnergyFraction: number | null })
       );
-      m.play(3, { targetFPS: 10, direction: 'forward' });
-      // One tick a full second later: 1 frame in 1000 ms is 1 fps against a
-      // requested 10, comfortably under the 0.8 threshold.
+      m.play(3, { targetFPS, direction: 'forward' });
+      // One tick a full second later: 1 frame in 1000 ms. Against a requested
+      // 10 this misses cadence; against 1 it meets cadence exactly.
       mockTime += 1000;
       perFrameCallback?.();
       m.dispose();
@@ -1008,7 +1011,7 @@ describe('DimensionAnimationManager', () => {
       vi.restoreAllMocks();
     });
 
-    it('does NOT warn when frames are complete — it is the playhead pacing to data', () => {
+    it('does NOT warn when enough is on screen — it is the playhead pacing to data', () => {
       const events = runOneMeasurementWindow(0.97);
 
       expect(events).toHaveLength(1);
@@ -1016,16 +1019,33 @@ describe('DimensionAnimationManager', () => {
       const warned = pacingMessages(warn);
       expect(warned).toEqual([]);
       expect(pacingMessages(info).join(' ')).toContain('pacing to data');
+      expect(pacingMessages(info).join(' ')).toContain('enough on screen to read');
     });
 
-    it('warns when frames are incomplete, and says so', () => {
+    it('warns when frames are still filling in, and says so', () => {
       const events = runOneMeasurementWindow(0.05);
 
       expect(events).toHaveLength(1);
       expect(events[0].committedEnergyFraction).toBeCloseTo(0.05);
       const warned = pacingMessages(warn);
       expect(warned).toHaveLength(1);
-      expect(warned[0]).toContain('frames are incomplete');
+      expect(warned[0]).toContain('still filling in');
+    });
+
+    it('warns on thin frames even when requested cadence is met', () => {
+      const events = runOneMeasurementWindow(0.05, 1);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].committedEnergyFraction).toBeCloseTo(0.05);
+      expect(pacingMessages(warn)).toHaveLength(1);
+    });
+
+    it('stays silent when cadence is met and committed quality is sufficient', () => {
+      const events = runOneMeasurementWindow(0.97, 1);
+
+      expect(events).toEqual([]);
+      expect(pacingMessages(warn)).toEqual([]);
+      expect(pacingMessages(info)).toEqual([]);
     });
 
     it('falls back to warning when the scene carries no energy stamps', () => {

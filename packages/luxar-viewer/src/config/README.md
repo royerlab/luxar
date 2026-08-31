@@ -288,8 +288,8 @@ dimensionAnimation: {
     continuousTraverseSeconds: 10     // Duration for continuous traverse mode
   },
   ui: {
-    showFPSFeedback: true,            // Show FPS feedback in UI
-    feedbackThreshold: 0.8            // Warning when actual FPS < target * threshold
+    showFPSFeedback: true,            // Log playback cadence/committed-quality feedback
+    feedbackThreshold: 0.8            // Cadence is slow when actual FPS < target * threshold
   },
   playback: {
     budgetFraction: 0.6,              // Fraction of the frame window handed to progressive loaders per tick

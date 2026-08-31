@@ -14,8 +14,8 @@ import {
 } from '../../../../scene/animation/committed-quality';
 
 const stamped = (energy: number, extra: Partial<QualityNode> = {}): QualityNode => ({
-  userData: { committedEnergyFraction: energy },
   ...extra,
+  userData: { committedEnergyFraction: energy, ...extra.userData },
 });
 
 describe('worstCommittedEnergy', () => {
@@ -39,6 +39,17 @@ describe('worstCommittedEnergy', () => {
 
     const hiddenParent: QualityNode = { visible: false, children: [stamped(0.01)] };
     expect(worstCommittedEnergy({ children: [stamped(0.9), hiddenParent] })).toBeCloseTo(0.9);
+  });
+
+  it('ignores a stamped leaf whose committed count is known to be zero', () => {
+    const root: QualityNode = {
+      children: [
+        stamped(0.9, { userData: { nodeType: 'gsplats', visibleSplatCount: 120_000 } }),
+        stamped(0.01, { userData: { nodeType: 'gsplats', visibleSplatCount: 0 } }),
+      ],
+    };
+
+    expect(worstCommittedEnergy(root)).toBeCloseTo(0.9);
   });
 
   it('returns null when nothing is stamped — "cannot tell", not "fine"', () => {
