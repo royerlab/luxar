@@ -139,6 +139,31 @@ def resolve_method(method: AutoOrMethod, n_target: int, n_in: int) -> MethodName
     return "prefix" if n_target >= PREFIX_ABOVE_FRACTION * n_in else "merge"
 
 
+def _resolve_labeled_method(
+    data: GSplatData, method: AutoOrMethod, chosen: MethodName
+) -> tuple[MethodName, bool]:
+    """Keep categorical labels exact or reject an explicit merge."""
+    label_override = method == "auto" and data.label_ids is not None
+    if label_override:
+        warnings.warn(
+            "method='auto' selected 'prefix' because the input carries "
+            "categorical channel 'label_ids'; merging would have to combine "
+            "class ids, and no combination rule is defined",
+            UserWarning,
+            stacklevel=3,
+        )
+        return "prefix", True
+
+    if chosen == "merge" and data.label_ids is not None:
+        raise ValueError(
+            "cannot coarsen: input carries categorical channel 'label_ids'; "
+            "merging would have to combine class ids, and there is no meaningful "
+            "combination of two class ids. Use method='prefix' or drop the "
+            "channel first."
+        )
+    return chosen, False
+
+
 def decimate(
     data: GSplatData,
     *,
@@ -207,24 +232,7 @@ def decimate(
             aprint(f"Target {n_target:,} >= input {n_in:,} — returning input unchanged")
         return data
 
-    label_override = method == "auto" and data.label_ids is not None
-    if label_override:
-        chosen = "prefix"
-        warnings.warn(
-            "method='auto' selected 'prefix' because the input carries "
-            "categorical channel 'label_ids'; merging would have to combine "
-            "class ids, and no combination rule is defined",
-            UserWarning,
-            stacklevel=2,
-        )
-
-    if chosen == "merge" and data.label_ids is not None:
-        raise ValueError(
-            "cannot coarsen: input carries categorical channel 'label_ids'; "
-            "merging would have to combine class ids, and there is no meaningful "
-            "combination of two class ids. Use method='prefix' or drop the "
-            "channel first."
-        )
+    chosen, label_override = _resolve_labeled_method(data, method, chosen)
 
     if coarsen_dims is not None and chosen == "prefix":
         # The family decides whether this knob means anything, and with

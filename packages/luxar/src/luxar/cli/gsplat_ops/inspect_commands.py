@@ -289,6 +289,13 @@ def _print_color_information(colors: "Optional[np.ndarray]") -> None:
         aprint(f"  Std:  {np.std(channel_data):.4f}")
 
 
+def _print_categorical_label_information(data: "GSplatData") -> None:
+    """Print categorical vocabulary size when labels are present."""
+    if data.label_ids is None:
+        return
+    aprint(f"Categorical labels: {len(data.label_vocabulary or {})} vocabulary entries")
+
+
 def _info_report(
     path: Path,
     *,
@@ -322,11 +329,7 @@ def _info_report(
         aprint(f"\nSplats: {n_splats:,}")
         aprint(f"Dimensions: {ndim}D")
         aprint(f"Has Colors: {'Yes' if data.colors is not None else 'No'}")
-        if data.label_ids is not None:
-            aprint(
-                "Categorical labels: "
-                f"{len(data.label_vocabulary or {})} vocabulary entries"
-            )
+        _print_categorical_label_information(data)
         source_grid_keys = _print_source_grid(data, stored_bytes)
 
         # ================================================================
