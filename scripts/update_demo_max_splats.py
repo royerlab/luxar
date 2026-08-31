@@ -26,10 +26,9 @@ SUMMARIES = REPO_ROOT / "scripts" / "calibration_results" / "_all_summaries.json
 # Some demos share a calibration (alias_of); each still gets its file updated.
 DEMO_FILE_MAP = {
     "blastocyst_dapi": ("demo_gsplats_3d_blastocyst_dapi_nuclei.py", "MAX_SPLATS"),
-    "cells3d_multichannel": (
-        "demo_gsplats_3d_cells3d_multichannel.py",
-        "MAX_SPLATS",
-    ),
+    # Deliberately excluded: this demo now uses measured per-channel budgets.
+    # Its summary still reports K*=25,398 for both channels, so wiring it here
+    # would silently restore the obsolete shared budget.
     "kidney_multichannel_layers": (
         "demo_gsplats_3d_kidney_multichannel_layers.py",
         "MAX_SPLATS",
@@ -139,6 +138,7 @@ def main() -> int:
     print("-" * 100)
 
     rows = []
+    had_error = False
     for demo_name, (filename, var_name) in DEMO_FILE_MAP.items():
         s = by_name.get(demo_name)
         if s is None or s.get("status") != "ok":
@@ -160,6 +160,12 @@ def main() -> int:
         # SEEDS_PER_TILE demos don't have MAX_SPLATS_PER_PASS.
         per_pass_arg = per_pass if var_name == "MAX_SPLATS" else None
         change = _update_demo_file(path, var_name, k_star, per_pass_arg)
+        if "error" in change:
+            had_error = True
+            print(
+                f"{demo_name:<32} {k_star_raw:>10} {k_star:>12} {per_pass:>10}  ERROR: {change['error']}"
+            )
+            continue
         rows.append({"demo": demo_name, "k_star_raw": k_star_raw, **change})
         marker = f"{var_name}={k_star}"
         if per_pass_arg is not None and "MAX_SPLATS_PER_PASS" in change:
@@ -170,7 +176,7 @@ def main() -> int:
 
     print()
     print(f"Updated {len(rows)} demo files.")
-    return 0
+    return 1 if had_error else 0
 
 
 if __name__ == "__main__":

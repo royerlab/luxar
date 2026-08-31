@@ -112,20 +112,19 @@ from luxar.utils.paths import get_demos_output_dir
 # Configuration
 # =============================================================================
 
-# Fit parameters. The seed budget is PER CHANNEL, and the shipped archives were
-# fitted at these values: `scripts/demo_archive_characteristics.json` records
-# 41,975 splats for ch0 and 57,946 for ch1, measured on the `hosted_sha256` this
-# demo pins. A single shared 25,000 — what this file declared until now — makes
-# `--recompute` produce roughly half that, so the source disagreed with the data
-# it ships.
+# Fit parameters. The seed budget is PER CHANNEL, matching the newer hosted
+# (Zenodo) generation: `scripts/demo_archive_characteristics.json` records
+# 41,975 splats for ch0 and 57,946 for ch1 on the `hosted_sha256` contracts.
+# The in-repo copies are still the shared-25,000 fits and resolve first while
+# that record is unpublished; their separate `sha256` contracts do not move.
 #
 # Why the budgets differ: a blind-spot calibration sweep (1/8x..4x of the old
 # shared 25,000) put ch0's held-out foreground PSNR on a plateau at roughly twice
 # that budget while ch1 was still climbing at four times it, so one number fits
 # neither channel.
 #
-# What the bump actually delivered, measured on the ARCHIVE (full volume, against
-# the original) rather than predicted from the sweep:
+# What local refits at the new budgets delivered (full volume, against the
+# original) rather than what the sweep predicted:
 #
 #   ch0 Membranes  20,320 -> 41,980 splats   foreground 31.14 -> 31.52 dB
 #   ch1 Nuclei     19,936 -> 58,107 splats   foreground 21.50 -> 21.64 dB
