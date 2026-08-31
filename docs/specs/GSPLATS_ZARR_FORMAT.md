@@ -71,7 +71,7 @@ Each Gaussian splat is parameterized by:
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
 | `colors` | (N, 3\|4) or (1, 3\|4) | uint8/uint16/float32 | COLOR | RGB or RGBA colors (optional); SDR → `rgb_uint8`; HDR → `geolog_perchannel_u16` (AUTO; u8 under MEMORY, float32 under PRECISION); absent if not present. The optional 4th channel is per-splat opacity α ∈ [0, 1] (per-element opacity: every blending mode scales a splat's contribution by α; volumetric maps it into optical depth w = −ln(1−α) — see VOLUMETRIC_BLENDING_SPEC.md §5.4.1). α is never HDR. No format-version bump: readers key off the array shape, and codecs are channel-agnostic. |
-| `label_ids` | (N,) or (1,) | uint8/uint16/uint32/uint64 | INDEX | Optional categorical class id per splat; a constant channel may use broadcast encoding. Stored as the smallest exact unsigned integer with LUT and lossy quantization disabled. `label_vocabulary` maps every stored id to its name. |
+| `label_ids` | (N,) or (1,) | uint8/uint16/uint32/uint64 | INDEX | Optional categorical class id per splat; a constant channel may use broadcast encoding. Stored as the smallest exact unsigned integer with LUT and lossy quantization disabled. `label_vocabulary` maps every stored id to its name as a JSON object keyed by the id's decimal string form. |
 
 `label_ids` is an optional leaf channel and does not bump the format version.
 Its vocabulary is explicit rather than inferred: every observed id must have a
@@ -85,6 +85,9 @@ vocabularies is an error. Merge-based coarsening (`lod levels`, `overview`,
 for a splat synthesized from differently labeled inputs. Prefix/additive LOD is
 safe because it only reorders or subsets existing splats. Exporters without a
 vocabulary-bearing categorical field must refuse the channel rather than drop it.
+The vocabulary is duplicated on every leaf and additive rung and therefore lands
+in consolidated metadata; keep it to the small id set actually in use. If that
+cost becomes material, the format should add a shared subtree-level vocabulary.
 This refusal is a writer-side rule, not an on-disk capability stamp, and does not
 bump the format version. Older Luxar versions therefore cannot distinguish a
 labeled store before rewriting it and may silently drop the channel in operations
@@ -211,7 +214,8 @@ fitted.gsplats.zarr/
 │                     # ordering_min/max/bits, slice_dims, ordering_dims,
 │                     # chunk_size, amplitude_range, amplitude_data_range,
 │                     # amplitude_mass, amplitude_mass_weighted_mean,
-│                     # label_vocabulary?, center_bounds, position_bounds, truncation_radius,
+│                     # label_vocabulary? (decimal-string id keys), center_bounds,
+│                     # position_bounds, truncation_radius,
 │                     # opacity, absorption, gamma, intensity, offset, blending_mode?,
 │                     # format_version: "3.4", format_type: "gsplats_zarr",
 │                     # timestamp, luxar_gsplats_version, description?
