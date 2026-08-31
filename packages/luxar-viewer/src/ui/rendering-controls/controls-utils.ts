@@ -14,7 +14,7 @@ import type { RenderingSettings as ConfigRenderingSettings } from '../../config/
 export type RenderingSettings = ConfigRenderingSettings;
 
 import { config } from '../../config';
-import { AUTO_ROTATE_AXES } from '../../controls/types';
+import { isAutoRotateAxis } from '../../controls/types';
 import { TONE_MAPPING_NAMES } from '../../rendering/post-processing/tone-mapping';
 
 /**
@@ -29,12 +29,6 @@ const VALID_TONE_MAPPINGS: readonly string[] = TONE_MAPPING_NAMES;
 
 /** Valid control types */
 const VALID_CONTROL_TYPES = ['orbit', 'fly', 'ortho'];
-
-/**
- * Valid turntable axes — the controls module's own list, so a token the
- * viewer cannot actually rotate about can never survive validation.
- */
-const VALID_AUTO_ROTATE_AXES: readonly string[] = AUTO_ROTATE_AXES;
 
 /**
  * Validates rendering settings and applies defaults for missing/invalid values.
@@ -264,7 +258,9 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
   if (!VALID_CONTROL_TYPES.includes(merged.controlType)) {
     merged.controlType = defaults.controlType;
   }
-  if (!VALID_AUTO_ROTATE_AXES.includes(merged.autoRotateAxis)) {
+  // The controls module's own guard, so a token the viewer cannot actually
+  // rotate about can never survive validation.
+  if (!isAutoRotateAxis(merged.autoRotateAxis)) {
     merged.autoRotateAxis = defaults.autoRotateAxis;
   }
 

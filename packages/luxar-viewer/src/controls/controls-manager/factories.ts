@@ -139,10 +139,16 @@ export function createOrthoControls(ctx: ControlsCreationCtx): LuxarOrbitControl
     enableDamping: config.controls.orbit.damping.enabled,
     screenSpacePanning: true,
     enableRotate: false,
-    // Carried even though `enableRotate: false` makes auto-rotation inert
-    // here: `getAutoRotateAxis()` reads the LIVE instance, and a default-
-    // valued ortho instance would let a state sync while in ortho mode
-    // overwrite the user's stored axis with 'vertical'.
+    // All three turntable fields are carried even though `enableRotate: false`
+    // makes auto-rotation inert here. They live on the INSTANCE, and
+    // `syncCurrentState` reads them off whichever instance is live (ortho is
+    // this same class, so its `isOrbitControls` guard passes) — then
+    // `applyControlType` persists the result. A default-valued ortho instance
+    // therefore wipes a stored turntable choice the moment the user visits
+    // ortho. `naturalDrag` and the fly config dodge this only because they
+    // live on the manager rather than on the control.
+    autoRotate: ctx.config.autoRotate || false,
+    autoRotateSpeed: ctx.config.autoRotateSpeed || 0.25,
     autoRotateAxis: ctx.config.autoRotateAxis,
     // Same feel knobs as orbit — ortho is the same class, and the live
     // setOrbitZoomSpeed/-DampingFactor setters mutate whichever is current,

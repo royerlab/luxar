@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { AUTO_ROTATE_AXES } from '../../../../controls/types';
 import { buildNavigationPopover } from '../../../../ui/rail-panels/navigation-popover';
 
 interface ControllerStub {
@@ -189,15 +190,13 @@ describe('buildNavigationPopover', () => {
       expect(stubs.triggerAnimation).toHaveBeenCalled();
     });
 
-    it('offers exactly the three camera-frame axes as a dropdown', () => {
-      // The dropdown's option map is the user-visible contract: a label added
-      // here without a matching AUTO_ROTATE_AXES token would fail validation
-      // on reload and silently snap back to vertical.
-      expect(byProp('autoRotateAxis')._options).toEqual({
-        Vertical: 'vertical',
-        Horizontal: 'horizontal',
-        'View axis': 'view',
-      });
+    it('offers exactly the AUTO_ROTATE_AXES vocabulary as a dropdown', () => {
+      // Asserted against the vocabulary rather than a literal, so BOTH drift
+      // directions fail: a label whose token validation would reject, and a
+      // token added to AUTO_ROTATE_AXES that the dropdown cannot reach.
+      const options = byProp('autoRotateAxis')._options ?? {};
+      expect(Object.values(options)).toEqual([...AUTO_ROTATE_AXES]);
+      expect(Object.keys(options)).toEqual(['Vertical', 'Horizontal', 'View axis']);
     });
 
     it('wires naturalDrag → setNaturalDrag', () => {

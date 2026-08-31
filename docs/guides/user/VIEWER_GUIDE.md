@@ -445,6 +445,15 @@ vc = luxar.ViewerConfig(
     # Turntable axis, in the CAMERA frame: "vertical" (screen-up, the default),
     # "horizontal" (screen-right — the scene tumbles over the top), or "view"
     # (the view direction — a pure roll, the camera never moves).
+    #
+    # One caveat on "view": the LOD selector measures a node by the
+    # axis-aligned screen box of its projected bounds, which is not
+    # roll-invariant — a square footprint swings about 2x in area at 45°, a
+    # full level of the halving ladder. A rolling scene parked near a switch
+    # threshold will therefore breathe between levels (and a turntable
+    # recording pays extra LOD-settle ticks per frame). Hysteresis softens it;
+    # "vertical" and "horizontal" change the view legitimately and are not
+    # affected in the same way.
     auto_rotate_axis="vertical",
 )
 
