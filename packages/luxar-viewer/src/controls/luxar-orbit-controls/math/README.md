@@ -55,8 +55,8 @@ math/
   same thing at any scene scale — which is what makes it the sinusoidal
   mousewheel the feature is named for.
 - `dollyAmplitudeChangeScale(phase, fromAmplitude, toAmplitude) -> number`
-  compensates the displacement already applied at a phase, so changing the
-  amplitude or returning to phase zero preserves the user's baseline framing.
+  compensates the displacement already applied at a phase. Callers use it to
+  preserve the baseline when changing amplitude or returning to phase zero.
 - Returning a RATIO between two phases, rather than an absolute distance, is
   what lets the user keep zooming while it runs: distance is only ever
   multiplied, and multiplication commutes, so a wheel click moves the centre

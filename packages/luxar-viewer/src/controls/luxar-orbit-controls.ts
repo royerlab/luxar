@@ -130,15 +130,27 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
    * turntables (recording) follow the same choice as the interactive one.
    */
   public autoRotateAxis: AutoRotateAxis;
+  private _autoDolly: boolean;
   /**
    * Auto-dolly: oscillate the orbit distance on a sine while enabled — the
    * turntable's radial sibling. Gated on {@link enableZoom} rather than
    * `enableRotate`, so it also runs in ortho mode (where it modulates
    * `camera.zoom`; see `math/auto-dolly.ts`).
    */
-  public autoDolly: boolean;
+  public get autoDolly(): boolean {
+    return this._autoDolly;
+  }
+
+  /** Disabling returns the camera to its phase-zero baseline framing. */
+  public set autoDolly(enabled: boolean) {
+    if (this._autoDolly && !enabled) this.returnAutoDollyToBaseline();
+    this._autoDolly = enabled;
+  }
   private _autoDollyAmplitude: number;
-  /** Peak dolly swing as a fraction of distance (0.15 = ±15%). */
+  /**
+   * Peak dolly swing as a fraction of distance (0.15 = ±15%). Assigning
+   * re-derives the position at the current phase while preserving the baseline.
+   */
   public get autoDollyAmplitude(): number {
     return this._autoDollyAmplitude;
   }
@@ -240,7 +252,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.autoRotate = config?.autoRotate ?? false;
     this.autoRotateSpeed = config?.autoRotateSpeed ?? 0.25;
     this.autoRotateAxis = config?.autoRotateAxis ?? DEFAULT_AUTO_ROTATE_AXIS;
-    this.autoDolly = config?.autoDolly ?? false;
+    this._autoDolly = config?.autoDolly ?? false;
     this._autoDollyAmplitude = config?.autoDollyAmplitude ?? DEFAULT_AUTO_DOLLY_AMPLITUDE;
     this.autoDollyPeriod = config?.autoDollyPeriod ?? DEFAULT_AUTO_DOLLY_PERIOD;
     this.screenSpacePanning = config?.screenSpacePanning ?? true;

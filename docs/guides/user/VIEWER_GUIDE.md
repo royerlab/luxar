@@ -485,9 +485,9 @@ vc = luxar.ViewerConfig(
     # swing is a legitimate choice — but it is not free, and the cost is not
     # linear. Screen area goes as 1/d^2, so the swing moves projected area by
     # (1 + a)^4 between the far and near extremes: 1.75x at 15%, 5.06x at
-    # 50%, 14.46x at 95%. The LOD ladder
-    # answers by loading finer levels at the near extreme, and THAT is what
-    # scales. Measured over one 3 s cycle on a 100-group demo:
+    # 50%, 14.46x at 95%. The LOD ladder answers by loading finer levels at
+    # the near extreme, and THAT is what scales. Measured over one 3 s cycle
+    # on a 100-group demo:
     #
     #     amplitude   area swing   resident elements   LOD transitions
     #        15%         1.75x           118k                161

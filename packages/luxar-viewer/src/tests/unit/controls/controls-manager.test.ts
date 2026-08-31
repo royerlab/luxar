@@ -193,6 +193,39 @@ describe('ControlsManager', () => {
       expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline, 6);
     });
 
+    it('preserves the baseline when changing dolly amplitude while paused', () => {
+      controlsManager.setAutoDolly(true);
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      const baseline = camera.position.distanceTo(controls.target);
+
+      controls.update(2.5);
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline / 1.15, 6);
+
+      controlsManager.setAutoDolly(false);
+      controlsManager.setAutoDollyAmplitudePercent(50);
+      controlsManager.setAutoDolly(true);
+      controls.update(10);
+
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(baseline, 6);
+    });
+
+    it('keeps the paused dolly framing unchanged across a control-mode round trip', () => {
+      controlsManager.setAutoDolly(true);
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      const baseline = camera.position.distanceTo(controls.target);
+
+      controls.update(2.5);
+      controlsManager.setAutoDolly(false);
+      const pausedDistance = camera.position.distanceTo(controls.target);
+
+      controlsManager.setControlType('fly');
+      controlsManager.setControlType('orbit');
+      const recreatedControls = controlsManager.getControls() as LuxarOrbitControls;
+
+      expect(pausedDistance).toBeCloseTo(baseline, 6);
+      expect(camera.position.distanceTo(recreatedControls.target)).toBeCloseTo(pausedDistance, 6);
+    });
+
     it('returns a running dolly to baseline before rebuilding controls', () => {
       controlsManager.setAutoDolly(true);
       let controls = controlsManager.getControls() as LuxarOrbitControls;
