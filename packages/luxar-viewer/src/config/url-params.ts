@@ -173,6 +173,21 @@ export interface UrlParams {
    * E2E/visual runs and reproduces pre-Phase-2 behavior for comparison.
    */
   depthSort: boolean;
+  /**
+   * Cross-node depth ordering — splitting an overlapping order-dependent node's
+   * draw into N contiguous depth ranges so ranges of DIFFERENT nodes interleave
+   * (`docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md`).
+   *
+   * `?depthShards=16` ENABLES the feature and pins the per-node count;
+   * `?depthShards=0` disables the whole subsystem. `null` (absent or
+   * unparseable) leaves `config.depthShards` in charge — which is OFF today.
+   *
+   * A value rather than a flag because the count is the thing worth pinning
+   * while evaluating this, and because `0` has to mean "off" rather than
+   * "default" for the same reason `?depthSort=0` does: an escape hatch that
+   * still sharded would not pin the output.
+   */
+  depthShards: number | null;
   /** Disable adjacent-chunk prefetching (`?no-prefetch`). */
   noPrefetch: boolean;
   /** Verbose prefetch logging (`?prefetch-debug`). */
@@ -304,6 +319,7 @@ export function readUrlParams(search?: string): UrlParams {
     lodFinest: params.has('lod-finest'),
     blendWarmup: !params.has('no-blend-warmup'),
     depthSort: parseEnabledFlag(params.get('depthSort')),
+    depthShards: parseNonNegativeInt(params.get('depthShards')),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
     cacheStats: params.has('cache-stats'),

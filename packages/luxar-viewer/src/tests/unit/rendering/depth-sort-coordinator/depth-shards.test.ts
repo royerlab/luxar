@@ -338,6 +338,31 @@ describe('depth shards', () => {
       expect(depthShardChildren(mesh)).toEqual(before);
     });
 
+    it('RE-NARROWS the parent when a commit has reset its instance count', () => {
+      // Every commit sets `geometry.instanceCount` to the whole element count
+      // before calling here. An unchanged request takes the idempotent path, so
+      // that path must still re-assert the narrowing — otherwise the parent draws
+      // the ENTIRE node on top of its shards, i.e. every element twice, which in
+      // an order-dependent mode is a visibly wrong composite and not a crash.
+      // Found by the two-node E2E: 9375 elements drawn for a 5000-element node.
+      const mesh = makeNode(100);
+      syncDepthShards(mesh, 4, 100);
+      const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+      expect(geometry.instanceCount).toBe(25);
+
+      geometry.instanceCount = 100; // what a commit does
+      syncDepthShards(mesh, 4, 100);
+
+      expect(geometry.instanceCount).toBe(25);
+      const total =
+        geometry.instanceCount +
+        depthShardChildren(mesh).reduce(
+          (sum, c) => sum + (c.geometry as THREE.InstancedBufferGeometry).instanceCount,
+          0
+        );
+      expect(total, 'every element drawn exactly once').toBe(100);
+    });
+
     it('rebuilds when the pooled geometry is swapped underneath', () => {
       const mesh = makeNode(100);
       syncDepthShards(mesh, 4, 100);

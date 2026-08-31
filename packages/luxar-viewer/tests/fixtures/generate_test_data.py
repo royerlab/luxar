@@ -85,6 +85,7 @@ FIXTURE_NAMES: list[str] = [
     "test_gsplats_2d.luxar.zarr",
     "test_gsplats_normal_overlap.luxar.zarr",
     "test_gsplats_normal_overlap_reversed.luxar.zarr",
+    "test_gsplats_two_node_overlap.luxar.zarr",
     "test_gsplats_volumetric.luxar.zarr",
     "test_gsplats_volumetric_reversed.luxar.zarr",
     "test_gsplats_rgba_occlusion.luxar.zarr",
@@ -3264,6 +3265,98 @@ def generate_gsplats_normal_overlap_reversed_test() -> None:
         aprint(f"  Created {output}")
 
 
+def generate_gsplats_two_node_overlap_test() -> None:
+    """TWO interpenetrating normal-mode gsplat nodes (cross-node ordering gate).
+
+    Every existing overlap fixture is ONE node, which cross-node ordering
+    cannot exercise at all: depth sorting is already exact within a node,
+    so a single-node scene is composited correctly with or without the
+    feature. This fixture is the two-node sibling
+    (``docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md`` §6).
+
+    Geometry: two interleaved combs of splats along the view axis. Node
+    ``comb_green`` sits at even z, node ``comb_red`` at odd z, so their
+    depth intervals INTERPENETRATE — correct back-to-front order strictly
+    alternates between the nodes. That is exactly what one ``renderOrder``
+    integer per node cannot express: whichever node draws first, half its
+    splats composite on the wrong side of the other's.
+
+    Both nodes share the same geometry type, blending mode and opacity, so
+    the authoring workaround (merge into one node + partition) WOULD apply
+    here — which is the point: it makes the two draw orders comparable, so
+    the E2E can assert the interleaved one differs from the node-major one
+    without confounding it with an appearance change.
+
+    Enough splats per node to clear the shard policy's element floor, since
+    a node below it is deliberately never split.
+    """
+    with asection("Generating GSplats Two-Node-Overlap Test"):
+        output = FIXTURES_DIR / "test_gsplats_two_node_overlap.luxar.zarr"
+
+        per_node = 5000
+        # Interleaved combs: even z for one node, odd z for the other, spread
+        # across x/y so the two overlap in screen space rather than stacking
+        # into a single line of pixels.
+        rng = np.random.default_rng(20260831)
+
+        def comb(z_offset: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            z = z_offset + 2.0 * np.arange(per_node, dtype=np.float32) / per_node
+            xy = rng.uniform(-0.6, 0.6, size=(per_node, 2)).astype(np.float32)
+            centers_ = np.column_stack([xy[:, 0], xy[:, 1], z]).astype(np.float32)
+            amps = np.full(per_node, 1.5, dtype=np.float32)
+            chol = np.zeros((per_node, 6), dtype=np.float32)
+            chol[:, 0] = 0.05  # L11
+            chol[:, 2] = 0.05  # L22
+            chol[:, 5] = 0.05  # L33
+            return centers_, amps, chol
+
+        # Offset by half a comb step so the two nodes' splats alternate in z.
+        green_centers, green_amps, green_chol = comb(0.0)
+        red_centers, red_amps, red_chol = comb(1.0 / per_node)
+
+        green_colors = np.tile(
+            np.array([0.1, 1.0, 0.1], dtype=np.float32), (per_node, 1)
+        )
+        red_colors = np.tile(np.array([1.0, 0.1, 0.1], dtype=np.float32), (per_node, 1))
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_gsplats(
+                "comb_green",
+                green_centers,
+                amplitudes=green_amps,
+                cholesky_factors=green_chol,
+                colors=green_colors,
+                blending_mode="normal",
+                opacity=0.5,
+            )
+            scene.add_gsplats(
+                "comb_red",
+                red_centers,
+                amplitudes=red_amps,
+                cholesky_factors=red_chol,
+                colors=red_colors,
+                blending_mode="normal",
+                opacity=0.5,
+            )
+
+        aprint(f"  Created {output}")
+
+
 def generate_gsplats_volumetric_test() -> None:
     """The overlap scene in `volumetric` mode (emission-absorption).
 
@@ -4802,6 +4895,7 @@ def main() -> None:
         generate_gsplats_2d_test()
         generate_gsplats_normal_overlap_test()
         generate_gsplats_normal_overlap_reversed_test()
+        generate_gsplats_two_node_overlap_test()
         generate_gsplats_volumetric_test()
         generate_gsplats_volumetric_reversed_test()
         generate_gsplats_rgba_occlusion_test()

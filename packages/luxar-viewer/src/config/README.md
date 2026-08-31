@@ -49,6 +49,7 @@ config/
 │   ├── animation/          {data,types}.ts
 │   ├── adaptive-dpr/       {data,types,validate}.ts
 │   ├── depth-sort/         {data,types,validate}.ts
+│   ├── depth-shards/       {data,types,validate}.ts
 │   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
 │   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
 │   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency

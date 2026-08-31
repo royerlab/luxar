@@ -77,6 +77,20 @@ function bspPartOf(mesh: THREE.Object3D): { wrapper: THREE.Object3D; partIndex: 
 }
 
 /**
+ * The order-group `mesh` belongs to: its nearest partition-wrapper ancestor, or
+ * the mesh itself for a single leaf.
+ *
+ * Exported for the shard policy, which must not treat two members of ONE group
+ * as needing cross-node ordering: a partition's parts are already ordered
+ * exactly against each other by BSP painter rank, so their mutual overlap buys
+ * nothing. Sharing this with the collect pass is what keeps the two definitions
+ * of "same group" from drifting apart.
+ */
+export function orderGroupOf(mesh: THREE.Mesh): THREE.Object3D {
+  return bspPartOf(mesh)?.wrapper ?? mesh;
+}
+
+/**
  * Emit the leaf part indices of a BSP tree in EXACT back-to-front order for an
  * eye at `eyeLocal` (the parts' own local space). At each split the eye is on
  * one side of the plane; everything on the far side draws before everything on
@@ -887,6 +901,26 @@ function mergeOrderStreams(ordered: OrderGroup[], edges: Map<OrderGroup, OrderGr
     for (const contained of edges.get(ordered[a]) ?? []) {
       const b = indexOf.get(contained);
       if (b === undefined || b === a) continue;
+      // SHARDING SUBSUMES THE CONTAINMENT OVERRIDE when both sides are split.
+      //
+      // That override (PR #843) exists because with one integer per node no
+      // order is correct: a container's centroid sorts nearer than an embedded
+      // node's for ~half of all camera orientations, and drawing the container
+      // last multiplies the embedded node's pixels by its whole transmittance.
+      // Forcing container-first is the deliberately-chosen LESSER error, not a
+      // correct answer.
+      //
+      // Two sharded groups can interleave, so the correct answer is available
+      // and the lesser error is no longer worth taking. Keeping the edge here is
+      // actively harmful: two CO-EXTENSIVE interpenetrating nodes have nearly
+      // equal bounding spheres, so whichever is a hair larger "contains" the
+      // other, and the block would force strict node-major order — defeating
+      // exactly the case sharding exists to fix. (Found by the two-node E2E,
+      // where it produced a perfectly node-major 8+8 draw sequence.)
+      //
+      // An edge with only ONE side sharded is KEPT: the unsharded side still
+      // cannot interleave, so container-first remains the lesser error there.
+      if (sharded[a] && sharded[b]) continue;
       blocks[a].push(b);
       blockedBy[b]++;
     }

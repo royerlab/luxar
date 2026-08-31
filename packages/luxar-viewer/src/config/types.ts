@@ -25,6 +25,10 @@ import type { DepthSortConfig } from './sections/depth-sort/types';
 /** Depth-sort configuration type. */
 export type { DepthSortConfig };
 
+import type { DepthShardsConfig } from './sections/depth-shards/types';
+/** Depth-shard (cross-node depth ordering) configuration type. */
+export type { DepthShardsConfig };
+
 import type { DimensionAnimationConfig } from './sections/dimension-animation/types';
 /** Dimension-animation configuration type. */
 export type { DimensionAnimationConfig };
@@ -101,6 +105,7 @@ export interface AppConfig {
   animation: AnimationConfig;
   adaptiveDPR: AdaptiveDPRConfig;
   depthSort: DepthSortConfig;
+  depthShards: DepthShardsConfig;
   scene: SceneConfig;
   shader: ShaderConfig;
   ui: UIConfig;

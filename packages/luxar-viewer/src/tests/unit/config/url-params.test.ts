@@ -24,6 +24,7 @@ describe('readUrlParams', () => {
       lodEnergyComp: true, // streaming brightness compensation is ON (opt-out via ?no-lod-energy)
       blendWarmup: true, // WebGL blend-variant warm-up is ON by default (opt-out via ?no-blend-warmup)
       depthSort: true, // gsplat depth sorting is ON by default (opt-out via ?depthSort=0)
+      depthShards: null, // cross-node depth ordering: config decides (off) unless pinned
       lodFinest: false, // capture-quality force-finest is OFF by default (opt-in via ?lod-finest)
       noPrefetch: false,
       prefetchDebug: false,
@@ -77,6 +78,26 @@ describe('readUrlParams', () => {
     expect(readUrlParams('?depthSort=0').depthSort).toBe(false);
     expect(readUrlParams('?depthSort=false').depthSort).toBe(false);
     expect(readUrlParams('?depthSort=OFF').depthSort).toBe(false);
+  });
+
+  it('depthShards is a COUNT, with 0 meaning off and absent meaning "config decides"', () => {
+    // A value rather than a flag, because the count is the thing worth pinning
+    // while evaluating this — and because 0 must mean OFF rather than "default",
+    // for the same reason ?depthSort=0 does: an escape hatch that still sharded
+    // would not pin the output.
+    expect(readUrlParams('').depthShards).toBe(null);
+    expect(readUrlParams('?depthShards=16').depthShards).toBe(16);
+    expect(readUrlParams('?depthShards=2').depthShards).toBe(2);
+    expect(readUrlParams('?depthShards=0').depthShards).toBe(0);
+    // Unparseable / negative / flag-only fall back to "config decides" rather
+    // than silently enabling at some invented count.
+    expect(readUrlParams('?depthShards').depthShards).toBe(null);
+    expect(readUrlParams('?depthShards=abc').depthShards).toBe(null);
+    expect(readUrlParams('?depthShards=-4').depthShards).toBe(null);
+    // Truncated, not rejected — `parseInt` semantics, shared with ?gpuBudgetMB
+    // and ?cacheBudgetMB. Pinned so the shape of the coercion is deliberate
+    // rather than incidental.
+    expect(readUrlParams('?depthShards=2.5').depthShards).toBe(2);
   });
 
   it('lodFinest defaults OFF and is enabled only by ?lod-finest', () => {

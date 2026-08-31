@@ -176,6 +176,16 @@ export interface LuxarAppOptions {
   depthSort?: boolean;
 
   /**
+   * Cross-node depth ordering: split an overlapping order-dependent node's draw
+   * into this many contiguous depth ranges so ranges of DIFFERENT nodes can
+   * interleave. A positive value ENABLES the feature and pins the per-node
+   * count; `0` disables the subsystem; `undefined`/`null` leaves
+   * `config.depthShards` in charge (off by default). Mirrors
+   * `UrlParams.depthShards` (`?depthShards=N`).
+   */
+  depthShards?: number | null;
+
+  /**
    * Allow a picked element's authored `link` to be opened on left-click
    * (issue #1917). Defaults to true.
    *

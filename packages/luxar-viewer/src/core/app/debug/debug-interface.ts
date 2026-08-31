@@ -22,6 +22,7 @@ import { materialManager, type BlendingMode } from '../../../rendering/material-
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
 import {
   getDepthSortWorkerStatus,
+  getDepthShardDrawCount,
   noteDepthSortCommit,
   resortForCapture,
 } from '../../../rendering/depth-sort-coordinator';
@@ -187,6 +188,14 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // the degrade used to be visible only as one console line, which is
     // impossible to check after the fact from an E2E run or a bug report.
     getDepthSortWorkerStatus: () => getDepthSortWorkerStatus(),
+
+    // Cross-node depth ordering: how many draws the live shard assignment
+    // interleaves (0 when nothing is split, which is the default). This is the
+    // quantity the measured per-draw budget is stated in
+    // (CROSS_NODE_DEPTH_ORDERING_SPEC.md §7), and it is the only way an E2E can
+    // tell "the feature is on and gated a node in" from "the feature is on and
+    // correctly decided nothing overlaps" — the two look identical in pixels.
+    getDepthShardDrawCount: () => getDepthShardDrawCount(),
 
     // Helper to get scene loader manager (for cache inspection)
     getSceneLoader: () => {
@@ -458,6 +467,10 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
   log.info(
     Modules.LUXAR,
     '  __luxarDebug.getDepthSortWorkerStatus() - Why a scene may be drawn unsorted (idle/ready/starved/failed + deadline misses)'
+  );
+  log.info(
+    Modules.LUXAR,
+    '  __luxarDebug.getDepthShardDrawCount() - Interleaved draws from cross-node depth ordering (0 = nothing split)'
   );
   log.info(Modules.LUXAR, '  __luxarDebug.scene - Access THREE.js scene');
   log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');

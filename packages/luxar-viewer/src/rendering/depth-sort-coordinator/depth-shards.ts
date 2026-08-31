@@ -217,6 +217,14 @@ export function syncDepthShards(mesh: THREE.Mesh, shardCount: number, fullCount:
     existing.geometry === geometry &&
     existing.fullCount === fullCount
   ) {
+    // Nothing structural changed, but RE-ASSERT the parent's narrowed count.
+    // Every commit sets `geometry.instanceCount` to the whole element count
+    // before calling here, so returning early without this leaves the parent
+    // drawing the entire node ON TOP of its shards — each element twice, which
+    // in an order-dependent mode is a visibly wrong composite rather than a
+    // crash. Found by the two-node E2E, which counted 9375 drawn elements for a
+    // 5000-element node.
+    geometry.instanceCount = Math.min(existing.shardSize, fullCount);
     return existing.shardCount;
   }
 

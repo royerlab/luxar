@@ -20,6 +20,7 @@ sections/
 │   ├── monitor/           # Event ring-buffer limits and alert thresholds
 │   └── performance/       # Accumulators, workers, WASM, GPU buffer pool
 ├── depth-sort/            # GSplat camera-motion re-sort scheduling thresholds
+├── depth-shards/          # Cross-node depth ordering: overlap gate + shard counts
 ├── dimension-animation/   # FPS-based playback through dimension ranges
 ├── input/                 # Sensitivity + keyboard shortcuts + fly/dim keys
 ├── rendering-controls/    # User-adjustable rendering settings (single source of truth)
@@ -36,6 +37,7 @@ sections/
 - **[camera/](camera/README.md)** — initial position, FOV zoom limits and sensitivity, and the photography-style FOV / lens-distortion preset tables. Note: `fov`/`near`/`far` live in `rendering-controls/`, not here.
 - **[controls/](controls/README.md)** — defaults for the `fly` and `orbit` control modes plus the scene-scale multipliers used to adapt control parameters to the bounding-box diagonal.
 - **[data-loading/](data-loading/README.md)** — composite section that bundles five sub-slices (`spatial`, `network`, `memory`, `monitor`, `performance`) into a single `DataLoadingConfig`; dispatches per-sub-section validation.
+- **[depth-shards/](depth-shards/README.md)** — cross-node depth ordering: the master `enabled` switch (URL `?depthShards=N` enables + pins, `=0` disables), the per-node split count (`shardsPerNode`), the interleaved-draw ceiling (`maxInterleavedDraws`), and the element floor below which a node is never split (`minElements`).
 - **[depth-sort/](depth-sort/README.md)** — depth-sort scheduling: the master `enabled` switch (URL escape hatch `?depthSort=0`), camera-motion re-sort thresholds (`angleThresholdDeg`, `translationFraction`), SortWorker startup deadline (`workerInitTimeoutMs`), and synchronous first-sort frame budget (`syncSortMaxElements`).
 - **[dimension-animation/](dimension-animation/README.md)** — defaults and presets for FPS-based playback through dimension ranges, including loop mode (`once` / `loop` / `bounce`), direction, frame-time floors, and target-vs-actual FPS feedback.
 - **[input/](input/README.md)** — default adjustment sensitivity and the global keyboard shortcut map.

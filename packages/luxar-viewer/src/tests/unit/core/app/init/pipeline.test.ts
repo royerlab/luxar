@@ -182,6 +182,7 @@ vi.mock('../../../../../utils/cross-layer/notifier', () => ({
 vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
   configureDepthSort: vi.fn(),
   setDepthSortEnabled: vi.fn(),
+  setDepthShardPolicy: vi.fn(),
   warmUpDepthSortWorker: vi.fn(),
   evaluateDepthSortPerFrame: vi.fn(),
 }));

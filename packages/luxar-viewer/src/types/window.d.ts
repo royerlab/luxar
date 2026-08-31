@@ -95,6 +95,18 @@ declare global {
         state: 'idle' | 'ready' | 'starved' | 'failed';
         initTimeouts: number;
       };
+
+      /**
+       * Total interleaved draws the live depth-shard assignment established, or
+       * 0 when no node is split (the default). Cross-node depth ordering —
+       * `docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md`.
+       *
+       * The quantity the measured per-draw budget is stated in, and the only way
+       * to distinguish "the feature is on and gated a node in" from "the feature
+       * is on and correctly found nothing overlapping": those are identical in
+       * pixels, so a pixel assertion alone cannot tell them apart.
+       */
+      getDepthShardDrawCount?: () => number;
       getSceneLoader?: () => unknown;
 
       /**

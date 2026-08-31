@@ -22,6 +22,7 @@ import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import {
   configureDepthSort,
   setDepthSortEnabled,
+  setDepthShardPolicy,
   warmUpDepthSortWorker,
   evaluateDepthSortPerFrame,
 } from '../../../rendering/depth-sort-coordinator';
@@ -283,6 +284,17 @@ export async function runInitPipeline(
   // coordinator gets the live camera + render wake-up here — the same
   // dependency-inversion as setRequestRender above.
   setDepthSortEnabled(config.depthSort.enabled && (ports.options.depthSort ?? true));
+  // Cross-node depth ordering. `?depthShards=N` both ENABLES the feature and
+  // pins the per-node count; `=0` disables the whole subsystem (an escape hatch
+  // that still sharded would not pin the output — the `?depthSort=0` rule);
+  // absent leaves `config.depthShards` in charge, which is off today.
+  setDepthShardPolicy(
+    ports.options.depthShards === null || ports.options.depthShards === undefined
+      ? { enabled: config.depthShards.enabled }
+      : ports.options.depthShards === 0
+        ? { enabled: false }
+        : { enabled: true, pinnedShardsPerNode: ports.options.depthShards }
+  );
   configureDepthSort({
     // A live GETTER, not sceneManager.camera captured by value: the
     // ortho-mode toggle replaces the camera object, and sorts must track

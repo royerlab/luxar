@@ -190,20 +190,45 @@ describe('cross-node depth merge', () => {
     expect(p1Max, 'the farther NODE draws first, whole').toBeLessThan(p0Min);
   });
 
-  it('keeps the containment override: a container draws entirely before its contents', () => {
-    // PR #843. A huge cloud containing a small embedded marker must draw FIRST
-    // so the marker composites on top — under-attenuating it is the lesser error
-    // against it blinking out on orbit. Blocking the contained STREAM until the
-    // container's is exhausted is how that survives interleaving.
+  it('DROPS the containment override when both sides are sharded, and interleaves instead', () => {
+    // PR #843 forces a container to draw entirely before an embedded node
+    // because with one integer per node NO order is correct: the container's
+    // centroid sorts nearer for ~half of all camera orientations, and drawing it
+    // last multiplies the embedded node's pixels by its whole transmittance.
+    // Container-first is the deliberately-chosen LESSER error.
+    //
+    // Two sharded groups can interleave, so the correct answer is available and
+    // the lesser error is no longer worth taking. Keeping the block would also
+    // be actively harmful: two CO-EXTENSIVE interpenetrating nodes have nearly
+    // equal bounding spheres, so whichever is a hair larger "contains" the other
+    // and the block forces strict node-major — defeating the case sharding
+    // exists to fix.
     const cloud = makeMesh('cloud', new THREE.Vector3(0, 0, -50), 40);
     const marker = makeMesh('marker', new THREE.Vector3(0, 0, -50), 2);
     collectRenderOrderSlot(cloud, IDENTITY_MV, CAM_POS, shardsSpanning(cloud, 4, -90, -10));
     collectRenderOrderSlot(marker, IDENTITY_MV, CAM_POS, shardsSpanning(marker, 4, -52, -48));
     assignGlobalRenderOrder();
 
+    const order = drawOrder([cloud, marker]);
+    expect(order).toHaveLength(8);
+    // The marker's shards land in their true depth position among the cloud's,
+    // rather than all after them.
     const cloudMax = Math.max(cloud.renderOrder, ...cloud.children.map((c) => c.renderOrder));
     const markerMin = Math.min(marker.renderOrder, ...marker.children.map((c) => c.renderOrder));
-    expect(cloudMax).toBeLessThan(markerMin);
+    expect(markerMin).toBeLessThan(cloudMax);
+  });
+
+  it('KEEPS the containment override when only one side is sharded', () => {
+    // The unsharded side still cannot interleave, so container-first remains the
+    // lesser error for it — exactly the pre-sharding situation.
+    const cloud = makeMesh('cloud', new THREE.Vector3(0, 0, -50), 40);
+    const marker = makeMesh('marker', new THREE.Vector3(0, 0, -50), 2);
+    collectRenderOrderSlot(cloud, IDENTITY_MV, CAM_POS, shardsSpanning(cloud, 4, -90, -10));
+    collectRenderOrderSlot(marker, IDENTITY_MV, CAM_POS); // unsharded
+    assignGlobalRenderOrder();
+
+    const cloudMax = Math.max(cloud.renderOrder, ...cloud.children.map((c) => c.renderOrder));
+    expect(cloudMax).toBeLessThan(marker.renderOrder);
   });
 
   it('assigns a contiguous 1..M with no gaps or repeats', () => {

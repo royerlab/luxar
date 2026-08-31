@@ -96,6 +96,7 @@ import {
   assignGlobalRenderOrder,
   clearRenderOrderFrameState,
   collectRenderOrderSlot,
+  orderGroupOf,
   setRenderOrderDisplayDimsAccessor,
   type ShardOrderInput,
 } from './depth-sort-coordinator/render-order';
@@ -107,10 +108,16 @@ import {
 } from './depth-sort-coordinator/triangle-ordering';
 import {
   depthShardChildren,
+  effectiveInstanceCount,
   releaseDepthShards,
   syncDepthShards,
   syncShardMaterials,
 } from './depth-sort-coordinator/depth-shards';
+import {
+  assignShardCounts,
+  interleavedDrawCount,
+  type ShardPolicyNode,
+} from './depth-sort-coordinator/shard-policy';
 import { config } from '../config';
 import type { UpdateProfiler } from '../profiling/update-profiler';
 import { withTimeout } from '../workers/worker-pool/timeout/with-timeout';
@@ -460,6 +467,105 @@ const EMPTY_SHARD_BOUNDS = new Float32Array(0);
 function requestedShardCount(mesh: THREE.Mesh): number {
   const requested = (mesh.userData as { depthShardCount?: number }).depthShardCount;
   return typeof requested === 'number' && requested > 1 ? Math.trunc(requested) : 0;
+}
+
+/**
+ * Live depth-shard policy overrides (`?depthShards=N`), injected at app init.
+ * `enabled` false means no node is ever split, so draw order is exactly the
+ * group-major assignment — the determinism escape hatch.
+ */
+let shardPolicy: { enabled: boolean; pinnedShardsPerNode?: number } = { enabled: false };
+
+/** Interleaved draws the last policy evaluation established (monitor + gates). */
+let shardInterleavedDraws = 0;
+
+/**
+ * Configure cross-node depth ordering. Called once at app init from the URL /
+ * options / config resolution; see `CROSS_NODE_DEPTH_ORDERING_SPEC.md` §4.
+ */
+export function setDepthShardPolicy(policy: {
+  enabled: boolean;
+  pinnedShardsPerNode?: number;
+}): void {
+  shardPolicy = policy;
+  if (!policy.enabled) {
+    // Tear every split down immediately rather than waiting for the next commit:
+    // this is the escape hatch, and it has to pin the output NOW.
+    for (const state of nodeStates.values()) {
+      delete (state.mesh.userData as { depthShardCount?: number }).depthShardCount;
+      releaseDepthShards(state.mesh);
+      clearShardBounds(state);
+    }
+    shardInterleavedDraws = 0;
+  }
+}
+
+/** Interleaved draw count from the live shard assignment (0 when disabled). */
+export function getDepthShardDrawCount(): number {
+  return shardInterleavedDraws;
+}
+
+/**
+ * Re-evaluate which tracked nodes should be split, and apply any change.
+ *
+ * Runs per frame but is nearly free and nearly always a no-op: the policy is a
+ * pure function of world-space BOUNDS, so its answer changes only when a node
+ * commits or the tracked set changes — never as the camera moves. Applying a
+ * change rebuilds that node's shard meshes and dispatches a sort, because the
+ * new shard count is what the next sort must report bounds for; until that sort
+ * resolves the node merges as one whole-node interval, which is simply today's
+ * behaviour.
+ */
+function evaluateShardPolicy(): void {
+  if (!shardPolicy.enabled) return;
+
+  const nodes: ShardPolicyNode[] = [];
+  for (const state of nodeStates.values()) {
+    const mesh = state.mesh;
+    if (!isEffectivelyVisible(mesh) || !hasCommittedData(mesh)) continue;
+    if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
+    const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
+    const center = new THREE.Vector3();
+    let radius = -1;
+    if (bs && Number.isFinite(bs.radius) && bs.radius >= 0) {
+      mesh.updateWorldMatrix(true, false);
+      center.copy(bs.center).applyMatrix4(mesh.matrixWorld);
+      const scaled = bs.radius * mesh.matrixWorld.getMaxScaleOnAxis();
+      if (Number.isFinite(center.x + center.y + center.z) && Number.isFinite(scaled)) {
+        radius = scaled;
+      }
+    }
+    nodes.push({
+      mesh,
+      center,
+      radius,
+      group: orderGroupOf(mesh),
+      elements: effectiveInstanceCount(mesh),
+    });
+  }
+
+  const counts = assignShardCounts(nodes, {
+    enabled: true,
+    shardsPerNode: config.depthShards.shardsPerNode,
+    maxInterleavedDraws: config.depthShards.maxInterleavedDraws,
+    minElements: config.depthShards.minElements,
+    pinnedShardsPerNode: shardPolicy.pinnedShardsPerNode,
+  });
+  shardInterleavedDraws = interleavedDrawCount(counts);
+
+  for (const [mesh, count] of counts) {
+    const userData = mesh.userData as { depthShardCount?: number };
+    if ((userData.depthShardCount ?? 1) === count) continue;
+    userData.depthShardCount = count;
+    const state = nodeStates.get(mesh.uuid);
+    if (!state) continue;
+    const established = syncDepthShards(mesh, count, effectiveInstanceCount(mesh));
+    // The bounds on hand describe the OLD shard boundaries, so they must go
+    // before the next frame reads them — the count guard in `shardOrderInputFor`
+    // would reject them anyway, but leaving them would rely on that.
+    clearShardBounds(state);
+    if (established > 1 || count === 1) scheduleSort(mesh, mesh.uuid);
+  }
 }
 
 /**
@@ -1927,6 +2033,12 @@ export function evaluateDepthSortPerFrame(): void {
   // (something visible actually wants sorting, the backoff, an offline
   // capture) it checks itself.
   if (!loadInProgress) maybeRetryStarvedWorkerInit();
+
+  // Which nodes should be split, BEFORE the collect loop reads their shards.
+  // Kept behind the load gate for the same reason worker retry is: a sweep in
+  // flight means bounds are still moving, and re-splitting on each intermediate
+  // commit would churn shard meshes for orderings about to be replaced.
+  if (!loadInProgress) evaluateShardPolicy();
 
   if (!scratch) {
     scratch = {

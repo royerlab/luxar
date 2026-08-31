@@ -798,6 +798,7 @@ monitor.element; // the widget element (mounted by the control rail)
 - `?no-blend-warmup` — Disable the WebGL blend-variant program warm-up (enabled by default): each reachable blend-mode program is otherwise pre-linked off the interaction path after a dataset load, so the first Layers-panel blend switch does not pay the link cost on the click
 - `?no-links` — Disable element-authored navigation and link menu items while preserving copy actions and `element-click` / `element-contextmenu` events
 - `?depthSort=0` — Disable worker depth sorting (`false` and `off` are also accepted)
+- `?depthShards=N` — Cross-node depth ordering: split each overlapping order-dependent node's draw into `N` contiguous depth ranges so ranges of DIFFERENT nodes interleave. `?depthShards=0` disables the subsystem; absent leaves `config.depthShards` in charge (off by default)
 - `?renderer=webgpu` — Use `WebGPURenderer` (TSL `NodeMaterial`) instead of the default `WebGLRenderer`
 - `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
 - `?perf-timestamp` — Enable WebGPU timestamp-query profiling for performance tests
