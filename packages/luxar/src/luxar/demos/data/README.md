@@ -88,8 +88,7 @@ Each subdirectory contains pre-fitted `.gsplats.zarr.zip` files for one demo:
 > **Note — uploads.** The neuromast pair, both h2afva timelapse variants, the
 > h2afva single-stack and decimation files, and the other hosted-only datasets
 > are uploaded and pinned in the manifest, except `gsplats_cell_tracking`, which
-> remains marked `pending_upload`, and the two `gsplats_ct_totalsegmentator`
-> pins, which still name the pre-restructure generation (#2334).
+> remains marked `pending_upload`.
 > A re-pin uploads under the SAME file name, so it replaces the outgoing copy;
 > each entry keeps that outgoing digest in `superseded_sha256` so a machine whose
 > cache is already warm with the previous generation reads it as out of date

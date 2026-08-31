@@ -466,7 +466,6 @@ datasets are affected:
 | dataset | files | repo MB | hosted MB | ratio |
 |---|---:|---:|---:|---:|
 | `gsplats_cells3d` | 2 | 0.6 | 1.3 | 2.25x |
-| `gsplats_ct_totalsegmentator` | 2 | 7.2 | 10.2 | 1.42x |
 | `gsplats_milkyway_dust` | 1 | 7.8 | 10.6 | 1.36x |
 | `gsplats_cmu1_pathology` | 3 | 113.8 | 150.1 | 1.32x |
 | `gsplats_nexrad_supercell` | 1 | 10.1 | 12.9 | 1.28x |
@@ -475,6 +474,7 @@ datasets are affected:
 | `gsplats_celegans` | 1 | 72.0 | 80.8 | 1.12x |
 | `desi_galaxies` | 1 | 74.3 | 76.8 | 1.03x |
 | `gsplats_kidney` | 3 | 2.1 | 2.1 | 0.99x |
+| `gsplats_ct_totalsegmentator` | 2 | 7.2 | 7.0 | 0.98x |
 | `gsplats_multichannel` | 2 | 0.4 | 0.4 | 0.95x |
 | `gsplats_cryoem_virus` | 1 | 11.1 | 10.6 | 0.95x |
 | `gsplats_flylight_mcfo_63x` | 1 | 8.2 | 7.7 | 0.94x |
