@@ -189,6 +189,7 @@ function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOpti
   const renderer = {
     isWebGLRenderer: true,
     getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
+    getPixelRatio: () => 2,
   } as unknown as LuxarLayerOptions['renderer'];
   return {
     renderer,
@@ -227,7 +228,9 @@ describe('LuxarLayer', () => {
       expect(updateCameraParams).toHaveBeenCalledWith(
         expect.any(Number),
         expect.any(THREE.Vector2),
-        false
+        false,
+        undefined,
+        2
       );
     });
 
@@ -265,6 +268,7 @@ describe('LuxarLayer', () => {
       const options = makeOptions({
         renderer: {
           getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
+          getPixelRatio: () => 2,
         } as unknown as LuxarLayerOptions['renderer'],
       });
       const layer = new LuxarLayer(options);
@@ -993,7 +997,13 @@ describe('LuxarLayer', () => {
 
       layer.resize();
 
-      expect(updateCameraParams).toHaveBeenCalledWith(expect.any(Number), expect.anything(), true);
+      expect(updateCameraParams).toHaveBeenCalledWith(
+        3,
+        expect.any(THREE.Vector2),
+        true,
+        undefined,
+        2
+      );
       expect(updateCameraParams.mock.calls[0][0]).toBeCloseTo(3); // top - bottom
     });
 
