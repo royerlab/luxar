@@ -1662,24 +1662,13 @@ def level_additive_lod(
     counts = out.get("counts")
     if slices > 1 and isinstance(counts, str) and counts.startswith("stream:"):
         from ....utils.lod_breakpoints import (
-            DEFAULT_BANDWIDTH_MBPS,
             DEFAULT_MAX_ADDITIVE_COMMIT,
             DEFAULT_SLICED_LADDER_MAX_DEPTH,
-            sliced_ladder_first_chunk,
-            streaming_chunk_splats,
+            parse_stream_chunk,
         )
 
-        whole_node = streaming_chunk_splats(
-            DEFAULT_LADDER_TARGET_MS,
-            DEFAULT_BANDWIDTH_MBPS,
-            DEFAULT_LADDER_BYTES_PER_ELEMENT,
-        )
-        chunk = sliced_ladder_first_chunk(
-            whole_node,
-            elements=level_n,
-            slices=slices,
-            max_depth=DEFAULT_SLICED_LADDER_MAX_DEPTH,
-        )
+        sized_counts = default_composed_additive_lod(elements=level_n, slices=slices)
+        chunk = parse_stream_chunk(sized_counts["counts"])
         if chunk > DEFAULT_MAX_ADDITIVE_COMMIT:
             raise ValueError(
                 f"Sliced node with {level_n:,} elements cannot deliver its "
@@ -1687,7 +1676,7 @@ def level_additive_lod(
                 f"the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. "
                 "Reduce the leaf size or supply an explicit additive_lod ladder."
             )
-        out["counts"] = f"stream:{chunk}"
+        out["counts"] = sized_counts["counts"]
     if not is_coarsest:
         from ....utils.lod_breakpoints import sibling_aware_stream_breakpoints
 
