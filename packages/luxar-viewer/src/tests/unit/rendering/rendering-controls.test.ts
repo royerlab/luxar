@@ -480,6 +480,20 @@ describe('RenderingControls', () => {
   });
 
   describe('Integration: Complete Reset Flow', () => {
+    it('applies the reset high-DPR ceiling to the adaptive manager', () => {
+      const controls = renderingControls as any;
+      const adaptiveDPRManager = {
+        setHighDPRAllowed: vi.fn(),
+      };
+      controls.setAdaptiveDPRManager(adaptiveDPRManager);
+      controls.settings.allowHighDPR = true;
+
+      controls.resetToDefaults();
+
+      expect(controls.settings.allowHighDPR).toBe(false);
+      expect(adaptiveDPRManager.setHighDPRAllowed).toHaveBeenCalledWith(false);
+    });
+
     it('should fully reset every setting and apply them', () => {
       const controls = renderingControls as any;
 

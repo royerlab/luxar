@@ -359,6 +359,9 @@ export class RenderingControls {
     // Clear saved settings for this scene (before applying, so user sees clean state).
     clearStoredSettings(this.sceneId);
 
+    // Apply the reset ceiling alongside the bound setting value.
+    this.adaptiveDPRManager?.setHighDPRAllowed(this.settings.allowHighDPR);
+
     // Apply camera settings to scene manager (before post-processing)
     this.sceneManager.setFov(this.settings.fov);
 
