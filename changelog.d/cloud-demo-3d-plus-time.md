@@ -14,7 +14,7 @@ shear that leans the column downwind, and a slow swirl — so a point is a parce
 of air that keeps its identity from frame to frame. That property is
 load-bearing rather than ornamental: the parcels are a Monte Carlo sample of a
 uniform density, and only a solenoidal field keeps that sample uniform as it
-deforms. Measured over the run, the parcel count in the cloud core holds to 2%.
+deforms. Measured over the run, the parcel count in the cloud core holds to within about 2%.
 
 The condensate is 4D fractal noise sampled in *material* coordinates — each
 parcel's fixed label — times an envelope evaluated at its current *world*

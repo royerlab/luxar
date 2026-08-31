@@ -1,6 +1,6 @@
 /**
- * Shared Playwright fixture that auto-asserts no console errors after
- * every E2E test.
+ * Shared Playwright fixture that normalizes pixel-test UI state and
+ * auto-asserts no console errors after every E2E test.
  *
  * The previous setup left it to each spec to remember an explicit
  * `assertNoConsoleErrors(page)` call, and most never did — exactly the
@@ -153,8 +153,8 @@ export function staleExampleDatasetFailureWarning(
 
 /**
  * Extended `test` fixture: drop-in replacement for `@playwright/test`'s
- * `test`. Specs that import from this module get auto console-error
- * checking after each test.
+ * `test`. Specs that import from this module get the timed control-rail hint
+ * dismissed before navigation and auto console-error checking after each test.
  *
  * The check subscribes to Playwright's own `console` and `pageerror` page
  * events for the duration of the test and filters what it caught through
@@ -172,6 +172,12 @@ export function staleExampleDatasetFailureWarning(
  */
 export const test = base.extend({
   page: async ({ page }, use, testInfo) => {
+    // Element screenshots include DOM painted over the canvas. Keep the
+    // first-run rail hint out of every pixel measurement and visual baseline.
+    await page.addInitScript(() => {
+      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+    });
+
     // Capture Playwright-native console errors + uncaught exceptions
     // for the duration of the test.
     const captured: CapturedConsoleError[] = [];

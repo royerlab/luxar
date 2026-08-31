@@ -846,6 +846,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         texture_color_space: str = "srgb",
         texture_ktx2_mode: str = "uastc",
         texture_ktx2_quality: Optional[int] = None,
+        texture_ktx2_rdo_l: Optional[float] = None,
+        texture_ktx2_zcmp: Optional[int] = None,
         shading: Optional[str] = None,
         double_sided: bool = True,
         labels: Optional["Sequence[str]"] = None,
@@ -908,6 +910,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             texture_ktx2_mode: ``uastc`` (default) or ``etc1s``.
             texture_ktx2_quality: Codec quality; defaults to 2 for UASTC and 128
                 for ETC1S.
+            texture_ktx2_rdo_l: UASTC RDO lambda in [0.001, 10.0]; defaults to
+                0.25. Lower values preserve more quality and produce larger files;
+                0 disables RDO while retaining zstd compression.
+            texture_ktx2_zcmp: UASTC zstd level in [1, 22]; defaults to 9.
             texture_width: Declared width. Required for encoded payloads, where
                 it cannot be read without decoding; read off the array for
                 ``raw`` or ``ktx2``, and refused if it disagrees.
@@ -946,6 +952,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             texture_color_space=texture_color_space,
             texture_ktx2_mode=texture_ktx2_mode,
             texture_ktx2_quality=texture_ktx2_quality,
+            texture_ktx2_rdo_l=texture_ktx2_rdo_l,
+            texture_ktx2_zcmp=texture_ktx2_zcmp,
             shading=shading,
             double_sided=double_sided,
             labels=labels,

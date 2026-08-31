@@ -157,12 +157,17 @@ values would decode as garbage topology.
 
 KTX2 is authored from uint8 `(H, W, 3|4)` pixels but stored as an opaque `(B,)`
 container. Authoring requires `toktx` 4.1.0 or newer and rejects a produced
-container whose KTX2 identifier, supercompression scheme, or DFD colour model
-does not match the requested codec. Admission charges
+container whose KTX2 identifier is absent, or whose supercompression scheme or
+DFD colour model does not match the requested codec. Admission charges
 `ceil(width * height * 4 / 3)` bytes for the native compressed surface plus its
 full mip tail. A renderer with no native ASTC, ETC1/2, S3TC/BC or PVRTC target
 rejects the node; an uncompressed RGBA8 transcode fallback is not permitted
 because it would exceed that device-independent charge.
+UASTC authoring defaults to quality 2, RDO lambda 0.25, and zstd level 9;
+`texture_ktx2_rdo_l` and `texture_ktx2_zcmp` override those UASTC-only controls.
+Set `texture_ktx2_rdo_l=0` to disable RDO while retaining zstd compression.
+ETC1S remains selected explicitly with `texture_ktx2_mode="etc1s"` and uses its
+own `texture_ktx2_quality` scale.
 
 **Winding convention:** faces are wound counter-clockwise as seen with the mesh's authored spatial
 triple in ascending index order (front-facing under `FrontSide`, §6.1). For a 3D mesh that frame is
@@ -519,6 +524,8 @@ scene.add_mesh(
     texture_color_space: Literal["srgb", "linear"] = "srgb",
     texture_ktx2_mode: Literal["uastc", "etc1s"] = "uastc",
     texture_ktx2_quality: int | None = None,
+    texture_ktx2_rdo_l: float | None = None,
+    texture_ktx2_zcmp: int | None = None,
     shading: Literal["smooth", "flat", "none"] | None = None,
     double_sided: bool = True,
     labels: Sequence[str] | None = None,

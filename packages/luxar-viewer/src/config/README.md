@@ -208,7 +208,7 @@ renderingControls: {
     vignetteEnabled: false,
     controlType: 'orbit',       // vs 'fly' or 'ortho'
     autoRotate: false,
-    autoRotateAxis: 'vertical'  // vs 'horizontal' or 'view' (camera frame)
+    autoRotateAxis: 'vertical'  // camera-frame or fixed scene axis; see AutoRotateAxis
   }
 }
 ```

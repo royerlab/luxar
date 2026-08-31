@@ -27,9 +27,6 @@ const DATASET = 'http://localhost:9000/datasets/examples/build_example_structure
 
 test.describe('Post-Processing Pipeline', () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
-    });
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page);
