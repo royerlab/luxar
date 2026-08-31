@@ -43,27 +43,29 @@ layout( std140 ) uniform object {
 	float nodeUniform2;
 	float nodeUniform3;
 	float nodeUniform4;
-	mat3 nodeUniform6;
-	uint nodeUniform7;
-	mat3 nodeUniform8;
-	uint nodeUniform9;
-	mat3 nodeUniform10;
-	uint nodeUniform11;
-	mat3 nodeUniform12;
-	uint nodeUniform13;
-	mat3 nodeUniform14;
-	uint nodeUniform15;
-	vec2 nodeUniform17;
-	float nodeUniform18;
+	float nodeUniform5;
+	mat3 nodeUniform7;
+	uint nodeUniform8;
+	mat3 nodeUniform9;
+	uint nodeUniform10;
+	mat3 nodeUniform11;
+	uint nodeUniform12;
+	mat3 nodeUniform13;
+	uint nodeUniform14;
+	mat3 nodeUniform15;
+	uint nodeUniform16;
+	vec2 nodeUniform18;
 	float nodeUniform19;
-	mat3 nodeUniform20;
-	uint nodeUniform21;
+	float nodeUniform20;
+	float nodeUniform21;
 	mat3 nodeUniform22;
 	uint nodeUniform23;
 	mat3 nodeUniform24;
 	uint nodeUniform25;
 	mat3 nodeUniform26;
 	uint nodeUniform27;
+	mat3 nodeUniform28;
+	uint nodeUniform29;
 };
 
 
@@ -123,7 +125,7 @@ void main() {
 
 	}
 
-	lineBrightness = ( ( ( ( min( mix( ( 0.5 + ( nodeVar2 * 0.5 ) ), 1.0, nodeVarying7 ), mix( ( 0.5 + ( nodeVar3 * 0.5 ) ), 1.0, nodeVarying8 ) ) * ( max( ( exp( ( pow( abs( nodeVarying1 ), pow( 2.0, ( ( nodeVarying0 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying5 / 1.5 ), 1.0 ) ) * nodeVarying6 ) * 1.0 );
+	lineBrightness = ( ( ( ( min( mix( ( 0.5 + ( nodeVar2 * 0.5 ) ), 1.0, nodeVarying7 ), mix( ( 0.5 + ( nodeVar3 * 0.5 ) ), 1.0, nodeVarying8 ) ) * ( max( ( exp( ( pow( abs( nodeVarying1 ), pow( 2.0, ( ( nodeVarying0 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying5 / ( nodeUniform2 * 1.5 ) ), 1.0 ) ) * nodeVarying6 ) * 1.0 );
 	gl_FragDepth = ( 1.0 - clamp( lineBrightness, 0.0, 1.0 ) );
 
 	if ( ( abs( nodeVarying1 ) >= 1.0 ) ) {
@@ -142,7 +144,7 @@ void main() {
 	}
 
 	DiffuseColor = vec4( nodeVarying9, nodeVarying10.x, lineBrightness, nodeVarying10.y );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform4 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform5 );
 	nodeVar7 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar7;
 

@@ -47,19 +47,21 @@ layout( std140 ) uniform object {
 	float nodeUniform5;
 	float nodeUniform6;
 	float nodeUniform7;
-	mat3 nodeUniform9;
-	uint nodeUniform10;
-	mat3 nodeUniform11;
-	uint nodeUniform12;
-	mat3 nodeUniform13;
-	uint nodeUniform14;
-	float nodeUniform15;
-	mat4 nodeUniform17;
-	float nodeUniform19;
+	float nodeUniform8;
+	mat3 nodeUniform10;
+	uint nodeUniform11;
+	mat3 nodeUniform12;
+	uint nodeUniform13;
+	mat3 nodeUniform14;
+	uint nodeUniform15;
+	float nodeUniform16;
+	mat4 nodeUniform18;
 	float nodeUniform20;
 	float nodeUniform21;
 	float nodeUniform22;
-	vec2 nodeUniform23;
+	float nodeUniform23;
+	float nodeUniform24;
+	vec2 nodeUniform25;
 };
 
 
@@ -111,10 +113,10 @@ void main() {
 	}
 
 	nodeVar3 = max( ( ( nodeVarying3 * vec3( nodeUniform0 ) ) + vec3( nodeUniform1 ) ), vec3( 0.0, 0.0, 0.0 ) );
-	nodeVar4 = min( ( nodeVarying4 / 1.5 ), 1.0 );
+	nodeVar4 = min( ( nodeVarying4 / ( nodeUniform3 * 1.5 ) ), 1.0 );
 	nodeVar5 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeUniform2 ) * ( nodeVar4 * nodeVar4 ) ) * nodeVarying5 );
-	nodeVar6 = ( nodeVar5 * mix( 1.0, ( - log( ( 1.0 - min( nodeVarying6, 0.998046875 ) ) ) ), nodeUniform3 ) );
-	nodeVar7 = ( nodeUniform4 * nodeVar6 );
+	nodeVar6 = ( nodeVar5 * mix( 1.0, ( - log( ( 1.0 - min( nodeVarying6, 0.998046875 ) ) ) ), nodeUniform4 ) );
+	nodeVar7 = ( nodeUniform5 * nodeVar6 );
 
 	if ( ( ( max( nodeVar3.x, max( nodeVar3.y, nodeVar3.z ) ) < 0.0001 ) && ( nodeVar7 < 0.0001 ) ) ) {
 
@@ -134,8 +136,8 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( ( ( pow( nodeVar3, vec3( nodeUniform5 ) ) * vec3( nodeVar6 ) ) * vec3( nodeVar8 ) ), ( 1.0 - exp( ( - nodeVar7 ) ) ) );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform6 );
+	DiffuseColor = vec4( ( ( pow( nodeVar3, vec3( nodeUniform6 ) ) * vec3( nodeVar6 ) ) * vec3( nodeVar8 ) ), ( 1.0 - exp( ( - nodeVar7 ) ) ) );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform7 );
 	nodeVar9 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar9;
 

@@ -107,7 +107,7 @@ camera changes update **only** the precomputed scalar uniforms, not the shader.
   already is the visible extent. The `1.5` px floor matches the line shader
   (thinner quads cause rasterization gaps); the raw pre-clamp size travels to
   the fragment as `vPointSize`, where sub-pixel sprites are energy-compensated
-  by `sizeScale² = min(vPointSize/1.5, 1)²` on alpha (squared because both
+  by `sizeScale² = min(vPointSize/(1.5·pixelRatio), 1)²` on alpha (squared because both
   sprite dimensions clamp — energy ∝ area; the line shader's `widthScale` is
   linear because only width clamps). Zero-radius filtering happens in the
   fragment shader (see "nD slicing").
@@ -278,6 +278,7 @@ the more expensive falloff/GOG/colormap fragment work is skipped.
 | `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                                               |
 | `uNearCull`       | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-20 (zero-guard only) |
 | `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion                        |
+| `uPixelRatio`     | float     | `updateCameraParams`                          | Physical pixels per CSS pixel; scales screen-space appearance floors                         |
 | `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                                           |
 | `uPointTex`       | sampler2D | `updatePointTexture` (commit sync)            | RGBA32F point texture, 3 texels/point — the per-node data store                              |
 | `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                                               |

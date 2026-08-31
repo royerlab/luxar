@@ -78,7 +78,8 @@ The sum-projection branch carries the 3×3 cofactor expansion + `inversesqrt` �
 | `uIsOrtho`                                       | `int`       | 0 = perspective, 1 = orthographic. Branches Jacobian, fades, and screen mapping.                                                |
 | `uNearCull`                                      | `float`     | Near-fade start distance (perspective only).                                                                                    |
 | `uMaxExtentFactor`                               | `float`     | Coverage fade + quad clamp threshold as a fraction of `max(width, height)`. Default 0.33.                                       |
-| `uCov2DDilation`                                 | `float`     | 2D low-pass dilation added to the `Σ_2D` diagonal (px²; 3DGS anti-aliasing). Default 0.3 (`GSPLAT_COV2D_DILATION_DEFAULT`).     |
+| `uCov2DDilation`                                 | `float`     | CSS-pixel² 2D low-pass dilation; shader multiplies by `uPixelRatio²`. Default 0.3 (`GSPLAT_COV2D_DILATION_DEFAULT`).           |
+| `uPixelRatio`                                     | `float`     | Physical pixels per CSS pixel; scales covariance dilation quadratically. Default 1.                                          |
 | `uTruncate`, `uTruncateSq`                       | `float`     | Truncation radius in sigmas and its square. Default 3.0.                                                                        |
 | `uShiftC`, `uInvOneMinusC`                       | `float`     | Shifted-Gaussian boundary value `exp(−½·T²)` and the peak-preserving rescale `1/(1−C)`. Recomputed by `updateTruncationRadius`. |
 | `uRayIntegralFactor`                             | `float`     | Shifted-Gaussian ray integral; computed by `computeRayIntegralFactor` in `math.ts`. ≈ 2.433 for `T = 3`.                        |

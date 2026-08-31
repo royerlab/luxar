@@ -168,7 +168,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // The 1e-20 floor is a pure divide-by-zero guard, NOT a scale
       // floor: the near-fade reject above already guarantees surviving
       // vertices have -z ≳ uNearCull (scene-relative), and the
-      // clamp(basePointSize, 1.5, maxPointSize) below bounds the
+      // clamp(basePointSize, 1.5 * uPixelRatio, maxPointSize) below bounds the
       // output either way. The old absolute 1e-4 clamped VALID depths
       // on tiny-unit scenes (-z ~ 1e-6), shrinking every sprite ~100×.
       float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-20);

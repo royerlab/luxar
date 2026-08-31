@@ -6,6 +6,13 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### DPR-invariant point, line, and Gaussian-splat appearance
+
+Screen-space anti-aliasing thresholds now stay in CSS-pixel units when the
+renderer pixel ratio changes. Point and line minimum footprints, line-join and
+capsule gates, and Gaussian-splat covariance dilation scale by the active DPR
+in both visual and picking materials, with matching GLSL and WebGPU/TSL paths.
+
 #### Viewer stylesheets: a phantom radius token, magic z-indexes, duplicated rgba
 
 Three kinds of drift in the viewer CSS, all mechanical and all chosen to be
