@@ -12,5 +12,6 @@ the device has no native compressed-texture target instead of silently expanding
 to RGBA8. Preflight remains device-independent and charges one byte per pixel
 plus the full mip tail.
 
-The shared Earth builder keeps its portable WebP default; KTX2 remains an
-explicit opt-in until the demo migration and republish are completed together.
+The four shared Earth demos now author their basemaps as UASTC KTX2 by default,
+cutting their combined resident texture footprint from RGBA8's 4 bytes per pixel
+to the compressed mip-chain budget of about 4/3 bytes per pixel.

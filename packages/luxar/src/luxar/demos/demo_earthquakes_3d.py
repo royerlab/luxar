@@ -177,9 +177,8 @@ GLOBE_LAT = 256
 # ~2k was invisible however large the image. Sampling per fragment makes the
 # basemap the only thing limiting how sharp a coastline looks.
 # 16384x8192 across TWO tiles of 8192x8192 — 4x the pixels of a single
-# 8192x4096, and cheaper on disk than the alternative: two WebP payloads instead
-# of one large JPEG, because 16384 is one pixel over WebP's hard 16383 limit so a
-# single texture that size can only be JPEG.
+# 8192x4096. KTX2 keeps those tiles GPU-compressed after upload instead of
+# expanding the full 16384x8192 basemap to 512 MiB of RGBA8.
 #
 # Splitting is also the only way past 16384 at all. A GPU silently CLAMPS a
 # larger texture — wrong image, no diagnostic — so `MAX_MESH_TEXTURE_SIZE`
@@ -188,8 +187,8 @@ GLOBE_LAT = 256
 # per longitude band is the route, and it lifts the ceiling to tiles x 16384.
 GLOBE_TEXTURE_WIDTH = 16384
 GLOBE_TILES = 2
-GLOBE_TEXTURE_FORMAT = "webp"
-GLOBE_TEXTURE_QUALITY = 90
+GLOBE_TEXTURE_FORMAT = "ktx2"
+GLOBE_TEXTURE_QUALITY = 2
 
 # The cloud deck is REAL WEATHER — NASA's Blue Marble cloud composite — not
 # procedural noise, and a translucent mesh shell rather than 60k luminous points.

@@ -757,7 +757,7 @@ TEXTURE_FORMAT_NOTES = "see the table above"
 def encode_texture(
     image: Any,
     *,
-    fmt: str = "webp",
+    fmt: str = "ktx2",
     quality: int = 90,
     alpha_quality: int = 70,
     channels: Optional[int] = None,
@@ -908,7 +908,7 @@ def add_textured_globe(
     every part would either duplicate the whole texture or need a shared-atlas
     mechanism that does not exist.
 
-    Useful sizes for the default bitmap path:
+    Useful sizes for the bitmap path:
 
     * ``tiles=1`` at 8192 — 6.0 MB (JPEG) / 4.3 MB (WebP), the comfortable default.
     * ``tiles=1`` at 16384 — 4x the pixels, 20.4 MB JPEG. Over WebP's limit.
@@ -918,10 +918,10 @@ def add_textured_globe(
     * ``tiles=4`` at 5400 each — the native 21600x10800 master, exactly.
 
     The cost is real and worth stating: every tile is a separate draw call and a
-    separate resident decoded surface. That is why this is a knob and not the
-    default.
+    separate resident decoded surface. That is why this is a knob rather than an
+    invisible implementation detail.
 
-    With opt-in KTX2 UASTC including mipmaps, the resident figures are about
+    With the default KTX2 UASTC including mipmaps, the resident figures are about
     43 MiB for one 8192x4096 tile, 171 MiB across two 8192x8192 tiles, and
     297 MiB across four 5400x10800 tiles, versus 128, 512 and 890 MiB as RGBA8.
     The 16384 per-axis device limit still applies; KTX2 removes CPU bitmap
@@ -1336,7 +1336,7 @@ def build_earth(
     n_lat: int = 256,
     texture_width: int = 16384,
     tiles: int = 2,
-    fmt: str = "webp",
+    fmt: str = "ktx2",
     quality: Optional[int] = None,
     shading: str = "smooth",
     relief: Any = 0.0,
@@ -1374,8 +1374,8 @@ def build_earth(
         n_lat: Latitude divisions.
         texture_width: Basemap width to fetch; halved per axis into ``tiles``.
         tiles: Longitude bands, each its own node. See :func:`add_textured_globe`.
-        fmt: Basemap codec; defaults to portable ``webp``. Select ``ktx2``
-            explicitly for GPU-compressed UASTC authoring.
+        fmt: Basemap codec; defaults to GPU-compressed UASTC ``ktx2``. Select a
+            bitmap codec explicitly for a portable fallback.
         quality: Basemap codec quality; defaults to 90 for bitmap codecs and
             UASTC level 2 for KTX2.
         shading: ``smooth`` | ``flat`` | ``none``.

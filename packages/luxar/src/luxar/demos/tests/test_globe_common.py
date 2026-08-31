@@ -18,6 +18,7 @@ import pytest
 from luxar.demos import _globe_common
 from luxar.demos._globe_common import (
     add_textured_globe,
+    build_earth,
     encode_globe_texture,
     resample_equirect_grid,
     uv_sphere,
@@ -312,19 +313,36 @@ def test_globe_ktx2_rescales_float_pixels() -> None:
     assert np.all(texture == 127)
 
 
-def test_shared_earth_builder_keeps_portable_webp_defaults() -> None:
-    """Gallery generation must not require a non-Python authoring binary."""
+def test_shared_earth_builder_defaults_to_ktx2() -> None:
+    """Every shared Earth demo must emit GPU-compressed basemap textures."""
     import inspect
 
     signature = inspect.signature(_globe_common.build_earth)
-    assert signature.parameters["fmt"].default == "webp"
+    assert signature.parameters["fmt"].default == "ktx2"
     assert signature.parameters["quality"].default is None
+
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    target = Target()
+    build_earth(
+        target,
+        basemap=np.zeros((2, 4, 3), dtype=np.uint8),
+        n_lon=4,
+        n_lat=2,
+    )
+    assert target.meshes[0]["texture_encoding"] == "ktx2"
+    assert target.meshes[0]["texture_ktx2_quality"] == 2
 
     earthquake_source = (
         Path(_globe_common.__file__).parent / "demo_earthquakes_3d.py"
     ).read_text()
-    assert 'GLOBE_TEXTURE_FORMAT = "webp"' in earthquake_source
-    assert "GLOBE_TEXTURE_QUALITY = 90" in earthquake_source
+    assert 'GLOBE_TEXTURE_FORMAT = "ktx2"' in earthquake_source
+    assert "GLOBE_TEXTURE_QUALITY = 2" in earthquake_source
 
 
 @pytest.mark.parametrize(("fmt", "expected_quality"), [("webp", 90), ("ktx2", 2)])
