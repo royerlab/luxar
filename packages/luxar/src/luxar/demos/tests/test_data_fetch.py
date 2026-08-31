@@ -57,14 +57,20 @@ _EXPECTED_POSITIONAL_HOSTED_CONTRACTS = {
         "gsplats_ct_totalsegmentator",
         "ct_atlas_labels.npz",
     ): ("71a1315146272263c75c92d554dbf49f18e90222e7d7a5b5bef44a34a5efa11d", 0),
+    # Re-pinned when the hosted fit gained NATIVE per-splat colors, retiring the
+    # sidecar's ordering hazard for the hosted copy (#2334). The pair moved
+    # atomically, as the generator and this test both require: the sidecar was
+    # re-exported FROM the new archive's own colors, so it is aligned by
+    # construction rather than by a measurement that happened to pass. Both
+    # entries retire with the in-repo Git-LFS payloads (#2354).
     (
         "gsplats_visible_human_head",
         "vh_head.gsplats.zarr.zip",
-    ): ("859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065", 0),
+    ): ("547fbbf3d3a6ffabbac38e751a6dccec587d44a9a2f83423a1d0ba3b66410e21", 1),
     (
         "gsplats_visible_human_head",
         "vh_head_colors.npz",
-    ): ("82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1", 0),
+    ): ("f24d7fc074f8709df15201e414189a03ed30a5e58499cbd50d500530fa8880e1", 1),
 }
 
 

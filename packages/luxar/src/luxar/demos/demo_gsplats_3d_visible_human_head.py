@@ -86,12 +86,22 @@ The three are complementary, and none suffices alone: the distribution check
 would survive a small translation, the tissue-hit rate would survive a subtle
 resample change, and the shape check alone says nothing about content.
 
-Anyone regenerating this sidecar should reproduce all three rather than trusting
-the agreement number alone. ``--recompute`` is the supported route and writes a
-fresh fit AND a matching sidecar via :func:`save_and_sample_colors`. The cheaper
-repair, when the fit is fine and only the sidecar is lost, is not wired into the
-demo (see the refusal in :func:`load_or_build`): set ``data_dir`` to
-``Path(__file__).parent / "data" / DEMO_NAME``, call
+Anyone regenerating that sidecar should reproduce all three rather than trusting
+the agreement number alone.
+
+THE SIDECAR IS ON ITS WAY OUT, though, and none of the above applies to the
+hosted archive any more: it carries its per-splat colors as a NATIVE gsplat
+attribute, so the writer permutes them in lockstep with the centers and the two
+cannot fall out of order. That is what retires this failure mode instead of
+guarding against it — the guard needs two arrays to compare, and there is now
+only one. ``--recompute`` writes that shape (see :func:`save_and_sample_colors`).
+
+What keeps the sidecar branch alive is the IN-REPO Git-LFS payload, which is a
+different, COLORLESS generation of this fit (1,911,192 splats against the hosted
+1,908,888) and is still what a checkout resolves first. It retires with those
+payloads (#2354), not before. Until then, the cheaper repair for a lost in-repo
+sidecar remains unwired (see the refusal in :func:`load_or_build`): set
+``data_dir`` to ``Path(__file__).parent / "data" / DEMO_NAME``, call
 ``vol, _ = assemble_volume(PNG_DIR)``, :func:`sample_colors` at
 ``GSplatData.load(data_dir / FIT_FILE).centers``, then :func:`_save_colors_u8` to
 ``data_dir / COLORS_FILE`` and run ``make gen-data-manifest``. This preserves the
@@ -112,13 +122,14 @@ DEMO_META = {
     "category": "medical",
     "geometry": "gsplats",
     "requirements": {
-        # Back to 25 (#1670 resolved): the shipped sidecar was regenerated
-        # against the shipped fit and the pair now passes `_colors_match_fit`
-        # at agreement 1.0, so the DEFAULT path is the two Git-LFS assets —
-        # 20.6 MB fit + 5.0 MB colors — not the 1.1 GB cryosection download.
-        # Read by `luxar demo run-all`, whose `--max-download-mb` default of 200
-        # therefore stops skipping this demo.
-        "download_mb": 25,
+        # The DEFAULT path is the small assets, not the 1.1 GB cryosection
+        # download: either the two Git-LFS files (20.6 MB colorless fit + 5.0 MB
+        # sidecar) or, on a machine without them, the hosted pair — a 25.1 MB fit
+        # that carries its own colors plus the 5.0 MB sidecar the manifest still
+        # lists for the Git-LFS shape. 31 covers the larger of the two. Read by
+        # `luxar demo run-all`, whose `--max-download-mb` default of 200
+        # therefore keeps this demo in.
+        "download_mb": 31,
         # "medium" again for the same reason: the default path is a cached load
         # of a 1.9M-splat store, not a progressive fit over a ~10 GB RGB volume.
         # Only `--recompute` still pays that.
@@ -453,46 +464,166 @@ def _colors_match_fit(fit: GSplatData, colors: np.ndarray, source: str) -> bool:
     return True
 
 
+def _native_colors(fit: GSplatData) -> np.ndarray | None:
+    """Per-splat colors carried BY the fit itself, or None if it has none.
+
+    The hosted archive stores the colors as a native gsplat attribute, so the
+    writer permutes them in lockstep with the centers and they CANNOT fall out
+    of order — which is the whole failure mode a positional sidecar has hit
+    twice here (#1670, then again in #2334 when the archive was restructured).
+    There is nothing for ``_colors_match_fit`` to check on this path: the guard
+    exists to catch two arrays disagreeing, and here there is only one array.
+
+    Returns float32 in [0, 1], the range :func:`create_luxar_scene` feeds to
+    ``add_gsplats`` — rescaling uint8 exactly as ``_load_colors_f32`` does for
+    the sidecar, so both doors hand back the same thing.
+    """
+    raw = getattr(fit, "colors", None)
+    if raw is None:
+        return None
+    arr = np.asarray(raw)
+    if arr.ndim != 2 or arr.shape[0] != len(fit.centers) or arr.shape[1] < 3:
+        # Not a fallback-worthy near miss: a store whose color array does not
+        # describe its own splats is malformed, so say so rather than silently
+        # dropping through to the sidecar as if no colors had been found.
+        aprint(
+            f"⚠️  The fit carries a colors array of shape {arr.shape}, which does "
+            f"not describe its {len(fit.centers):,} splats — ignoring it."
+        )
+        return None
+    rgb = arr[:, :3]
+    return (
+        rgb.astype(np.float32) / 255.0
+        if rgb.dtype == np.uint8
+        else rgb.astype(np.float32)
+    )
+
+
+def _colors_for(
+    fit: GSplatData, fit_path: Path, colors_path: Path | None
+) -> np.ndarray | None:
+    """Colors for ``fit``: its own if it has them, else the positional sidecar.
+
+    Both doors below (the manifest pair and this machine's earlier refit) need
+    the same two-source rule, so it lives in one place. The order matters: a fit
+    that carries its own colors is self-consistent by construction and its
+    sidecar — if one is even still pinned — is vestigial, so it is never read.
+
+    The sidecar branch remains because the IN-REPO Git-LFS payload is a
+    different, COLORLESS generation of this fit (1,911,192 splats against the
+    hosted 1,908,888) and is still what a checkout resolves first. It retires
+    with those payloads (#2354), not before; removing it now would break the
+    default path on every machine that has them.
+
+    Returns None when neither source is usable, which the callers treat as
+    "refit", never as "render without colors".
+    """
+    native = _native_colors(fit)
+    if native is not None:
+        aprint(
+            f"  {fit_path.name} carries its own per-splat colors (no sidecar needed)"
+        )
+        return native
+    if colors_path is None:
+        aprint(f"{fit_path}: no native colors and no sidecar to fall back to.")
+        return None
+    try:
+        colors = _load_colors_f32(colors_path)
+    except Exception as exc:  # noqa: BLE001 — a refit is the recovery
+        aprint(f"⚠️  Colors sidecar {colors_path} unreadable ({exc!r}).")
+        return None
+    if not _colors_match_fit(fit, colors, f"{fit_path} + {colors_path}"):
+        return None
+    return colors
+
+
 def save_and_sample_colors(
     fit: GSplatData, rgb_vol: np.ndarray
 ) -> tuple[GSplatData, np.ndarray]:
-    """Cache the fit, then sample the per-splat colors in the STORE's own order.
+    """Sample the per-splat colors, attach them to the fit, and cache it.
 
     The writer reorders splats — ``save_with_lod`` splits them into a streaming
-    ladder and each rung is written spatially (``ordering="hilbert"``) — so
-    sampling the RGB volume at the in-memory fit's centers would produce a sidecar
-    that no longer lines up with what ``load`` hands back. Saving first and
-    sampling the RELOADED centers makes the pair aligned by construction under any
-    writer ordering, and makes this path return exactly what the cached path will
-    load next run — including the uint8 quantization of the colors.
-    Returns ``(stored_fit, colors)``.
+    ladder and each rung is written spatially (``ordering="hilbert"``). That used
+    to force a two-pass dance: save, reload, sample the RELOADED centers, write a
+    separate sidecar, because a sidecar sampled at the in-memory centers would no
+    longer line up with what ``load`` hands back.
+
+    Carrying the colors ON the ``GSplatData`` kills that whole class of bug
+    (#1670, then again in #2334 when the archive was restructured): the writer
+    permutes a native color attribute in lockstep with the centers, so there is
+    no second array left to fall out of order, and nothing for
+    ``_colors_match_fit`` to check.
+
+    The two-pass sampling STAYS, and the reason is no longer ordering — it is
+    WHICH VOXEL. ``sample_colors`` rounds to the nearest voxel and the writer
+    quantizes centers, so a splat within a quantization step of a .5 rounding
+    boundary changes voxel across a save. Sampling at the in-memory centers and
+    attaching in a single pass was measured to mislabel exactly those splats: 2
+    of 6000 on the unit fixture, every one within 6.2e-05 of a boundary against a
+    1.2e-04 quantization step. Invisible to look at, but it drops a freshly
+    refitted pair from agreement 1.000 to 0.9993, and ``MIN_COLOR_AGREEMENT`` is
+    calibrated against an exact 1.000 baseline. So: save, sample at the STORED
+    centers, attach, save again — the colors travel with the splats through the
+    second save, so the pair stays exactly aligned.
+
+    Returns ``(stored_fit, colors)``, both read back from the store so this path
+    returns exactly what the cached path will load next run, uint8 quantization
+    of the colors included.
+    """
+    _save_fit(fit)
+    stored = GSplatData.load(LOCAL_FIT, include_stats=False)
+    with asection("Sampling per-splat colors from the RGB volume"):
+        colors = sample_colors(rgb_vol, stored.centers)
+    # uint8 is the format's native color dtype and is what the sidecar stored, so
+    # moving the colors inside costs nothing. Passing 0-255 as FLOAT would instead
+    # be classified as HDR (values > 1.0) and routed through a per-channel
+    # geometric-log encoding.
+    _save_fit(
+        stored.with_colors(np.clip(np.rint(colors * 255.0), 0, 255).astype(np.uint8))
+    )
+    reloaded = GSplatData.load(LOCAL_FIT, include_stats=False)
+    reloaded_colors = _native_colors(reloaded)
+    if reloaded_colors is None:
+        # The colors were attached before the save, so their absence here means
+        # the writer dropped them — never something to paper over by falling back
+        # to a sidecar, which would reintroduce the ordering hazard silently.
+        raise RuntimeError(
+            f"{LOCAL_FIT} was written with per-splat colors but loaded back "
+            "without them; the fit cannot be cached without its colors."
+        )
+    aprint(f"Cached the refit under {LOCAL_FIT} (colors included)")
+    return reloaded, reloaded_colors
+
+
+def _save_fit(fit: GSplatData) -> None:
+    """Write ``fit`` to :data:`LOCAL_FIT` under the demo's LOD recipe.
+
+    Called twice by :func:`save_and_sample_colors` — once to learn the store's
+    own splat order and quantized centers, once to persist the colors sampled at
+    them — so the recipe is spelled out once rather than twice.
+
+    Creates the parent directory: the writer owns that, so a caller cannot write
+    to a fresh local-fit namespace and forget it.
     """
     LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
     save_with_lod(
         fit,
         LOCAL_FIT,
         # `stream`, not `levels`: the head IS a large orbited single object, but
-        # the scene is built from explicit `centers=`/`amplitudes=` arrays plus
-        # the per-splat colours sidecar, and `add_gsplats` writes a flat leaf —
-        # so a substitutive ladder would cost the ~38% extra bytes recorded in
-        # `_lod_policy` and be discarded before the viewer ever saw it. Carrying
-        # the levels into the scene needs the colours to live on the
-        # `GSplatData` so the whole fit can go through `add_gsplats_from_data`;
-        # until then `stream` is the honest choice.
+        # `create_luxar_scene` authors it through explicit `centers=`/
+        # `amplitudes=` arrays and `add_gsplats` writes a flat leaf — so a
+        # substitutive ladder would cost the ~38% extra bytes recorded in
+        # `_lod_policy` and be discarded before the viewer ever saw it. The
+        # colours now DO live on the `GSplatData`, which removes the reason this
+        # was blocked; what is left is to author the scene via
+        # `add_gsplats_from_data` so the levels survive into it. Until then
+        # `stream` is still the honest choice.
         recipe="stream",
         encoding_mode=EncodingMode.MEMORY,  # uint8 Cholesky — smallest on-disk
         include_fitting_info=True,
         compress="zip",
         zip_deflate=True,
     )
-    stored = GSplatData.load(LOCAL_FIT, include_stats=False)
-    with asection("Sampling per-splat colors from the RGB volume"):
-        colors = sample_colors(rgb_vol, stored.centers)
-    _save_colors_u8(colors, LOCAL_COLORS)
-    aprint(f"Cached the refit pair under {LOCAL_FIT.parent}")
-    # Read the sidecar back so the recompute path matches the shipped/cached path
-    # exactly (both render the quantized colors).
-    return stored, _load_colors_f32(LOCAL_COLORS)
 
 
 def fit_head(rgb_vol: np.ndarray, acquisition=None) -> tuple[GSplatData, np.ndarray]:
@@ -542,20 +673,20 @@ def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
 
     Read through the ``LOCAL_*`` constants, which is also what the refit WRITES
     through — a door that re-derived its path from the cache root would be a
-    second source of truth for it (#1618 review, A). The sidecar is checked first
-    because it is a ``stat()`` and the fit is a large zip decode.
+    second source of truth for it (#1618 review, A). The door is the FIT, not the
+    sidecar: a refit written by the current code carries its own colors and emits
+    no sidecar, so gating on the sidecar would reject exactly the refits this
+    demo now produces. Both are a ``stat()``, so nothing is paid for the change.
     """
-    if not LOCAL_COLORS.exists():
+    if not LOCAL_FIT.exists():
         return None
     local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
     if local is None:
         return None
-    try:
-        colors = _load_colors_f32(LOCAL_COLORS)
-    except Exception as exc:  # noqa: BLE001 — a refit is the recovery
-        aprint(f"⚠️  Local colors {LOCAL_COLORS} unreadable ({exc!r}).")
-        return None
-    if not _colors_match_fit(local[0], colors, f"{LOCAL_FIT} + {LOCAL_COLORS}"):
+    colors = _colors_for(
+        local[0], LOCAL_FIT, LOCAL_COLORS if LOCAL_COLORS.exists() else None
+    )
+    if colors is None:
         return None
     aprint("  Using this machine's own earlier refit")
     return local[0], colors
@@ -574,10 +705,9 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             resolved = {}
         if resolved:
             fit_path = resolved[FIT_FILE]
-            colors_path = resolved[COLORS_FILE]
             precomputed = GSplatData.load(fit_path, include_stats=False)
-            colors = _load_colors_f32(colors_path)
-            if _colors_match_fit(precomputed, colors, f"{fit_path} + {colors_path}"):
+            colors = _colors_for(precomputed, fit_path, resolved.get(COLORS_FILE))
+            if colors is not None:
                 return precomputed, colors
         # A pair this machine refitted earlier, in its own namespace — checked
         # BEFORE refitting, which is what makes the refit below one-time.

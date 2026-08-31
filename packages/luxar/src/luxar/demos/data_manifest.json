@@ -281,16 +281,22 @@
           "name": "vh_head.gsplats.zarr.zip",
           "sha256": "c6ebbab8c2d1bdff0d5fd35f7032c6a375724b5fe5e6d33e8ca4e6af6ab139f6",
           "bytes": 20572128,
-          "hosted_sha256": "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065",
-          "hosted_bytes": 29378476,
+          "hosted_sha256": "547fbbf3d3a6ffabbac38e751a6dccec587d44a9a2f83423a1d0ba3b66410e21",
+          "hosted_bytes": 25107673,
+          "superseded_sha256": [
+            "859830d8af8873beef48cf12e1ad8d2707b000495facc777683b14f92be90065"
+          ],
           "positional_pair": "vh_head"
         },
         {
           "name": "vh_head_colors.npz",
           "sha256": "63bce184e56d6d3b5f8f6817100c66310984c45da65fd94cdbc0a42ac05abb44",
           "bytes": 5010117,
-          "hosted_sha256": "82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1",
-          "hosted_bytes": 5127220,
+          "hosted_sha256": "f24d7fc074f8709df15201e414189a03ed30a5e58499cbd50d500530fa8880e1",
+          "hosted_bytes": 5127207,
+          "superseded_sha256": [
+            "82990426778d245e5195334a41eaf5f5b865a532e295444696b94401856ea2c1"
+          ],
           "positional_pair": "vh_head"
         }
       ]
