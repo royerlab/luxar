@@ -220,6 +220,15 @@ def test_decimate_carries_label_prefix_and_refuses_label_merge() -> None:
     with pytest.raises(ValueError, match="cannot coarsen.*label_ids"):
         decimate(labeled, target=data.n_splats // 2, method="merge", device="cpu")
 
+    with pytest.warns(UserWarning, match="selected 'prefix'.*channel 'label_ids'"):
+        automatic = decimate(labeled, target=data.n_splats // 4, method="auto")
+    assert automatic.label_ids is not None
+    assert automatic.n_splats == data.n_splats // 4
+    for center, label_id in zip(automatic.centers, automatic.label_ids):
+        matches = np.flatnonzero(np.all(labeled.centers == center, axis=1))
+        assert matches.size == 1
+        assert int(label_id) == int(matches[0])
+
 
 def _stacked_dataset(n: int = 200) -> GSplatData:
     """4D splats on three integer timepoints, stamped ``coarsen_dims=[1, 2, 3]``.

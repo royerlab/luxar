@@ -159,7 +159,8 @@ def decimate(
         target: Absolute count (``int``) or fraction of the input (``float`` in
             ``(0, 1]``). See :func:`resolve_target_count`.
         method: ``"merge"``, ``"prefix"``, or ``"auto"`` (the measured rule —
-            see the module docstring).
+            see the module docstring). Labeled inputs constrain ``"auto"`` to
+            ``"prefix"`` because merging has no defined categorical rule.
         prefix_method: Ordering for ``method="prefix"``, passed to
             :func:`compute_additive_order` (``auto`` / ``self_energy`` /
             ``mass`` / ``greedy`` / ``radial`` / ...).
@@ -204,6 +205,16 @@ def decimate(
         if verbose:
             aprint(f"Target {n_target:,} >= input {n_in:,} — returning input unchanged")
         return data
+
+    if method == "auto" and data.label_ids is not None:
+        chosen = "prefix"
+        warnings.warn(
+            "method='auto' selected 'prefix' because the input carries "
+            "categorical channel 'label_ids'; merging would have to combine "
+            "class ids, and no combination rule is defined",
+            UserWarning,
+            stacklevel=2,
+        )
 
     if chosen == "merge" and data.label_ids is not None:
         raise ValueError(
