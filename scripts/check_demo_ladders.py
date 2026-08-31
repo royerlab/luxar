@@ -347,8 +347,9 @@ def _record_sliced_verdicts(
     * the SHARE arm asks whether rung 0 is a usable fraction of the node at all,
       and catches a ladder that is simply too deep — the authoring defect in
       #2376, where a rung sized against a download budget is divided by the
-      slice count. It is cheap (attrs only) and it is the reason a uniformly
-      thin ladder cannot slip through on absolute counts alone.
+      slice count. Its denominator adds only attr reads to the histogram pass,
+      and it is the reason a uniformly thin ladder cannot slip through on
+      absolute counts alone.
     """
     for path, histogram, node_total in sliced_rung_measurements(root):
         count = sparsest_slice_elements(histogram)
