@@ -85,6 +85,7 @@ export class GSplatTSLMaterial
   private tslNodes: {
     uSplatTex: TSLNode;
     uResolution: TSLNode;
+    uPixelRatio: TSLNode;
     uFx: TSLNode;
     uFy: TSLNode;
     uTruncate: TSLNode;
@@ -146,6 +147,7 @@ export class GSplatTSLMaterial
       // graph rebuild, same lifecycle as the colormap texture).
       uSplatTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
+      uPixelRatio: uniform(1),
       uFx: uniform(500),
       uFy: uniform(500),
       uTruncate: uniform(truncate),
@@ -254,6 +256,7 @@ export class GSplatTSLMaterial
       // rebind chokepoint (fresh node + graph rebuild).
       uSplatTex: proxyIUniform(this.tslNodes.uSplatTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uFx: proxyIUniform(this.tslNodes.uFx),
       uFy: proxyIUniform(this.tslNodes.uFy),
       uTruncate: proxyIUniform(this.tslNodes.uTruncate),
@@ -340,9 +343,11 @@ export class GSplatTSLMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
     const fy = computeFocalLength(fov, resolution.y, isOrtho);
@@ -612,6 +617,7 @@ export class GSplatTSLMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     // Camera-state uniforms ride along with the derived focal scales
     // (mirrors LineTSLMaterial.clone / the points clone fix): uIsOrtho
     // is a runtime uniform in the gsplat TSL graph, so a plain value

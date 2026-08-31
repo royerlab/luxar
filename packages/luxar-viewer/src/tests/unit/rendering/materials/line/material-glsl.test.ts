@@ -140,9 +140,9 @@ describe('LineMaterial', () => {
       // "[object Object]" or "undefined" inside the shader body, which compiles
       // to a link error far from the cause.
       expect(GLSL_LINE_JOIN).toContain(
-        `float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)};`
+        `float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)} * max(uPixelRatio, 1.0);`
       );
-      expect(GLSL_LINE_JOIN).toContain('float joinMinHalfWidth = 2.0;');
+      expect(GLSL_LINE_JOIN).toContain('float joinMinHalfWidth = 2.0 * max(uPixelRatio, 1.0);');
       expect(GLSL_LINE_JOIN).not.toContain('object Object');
       expect(GLSL_LINE_JOIN).not.toContain('undefined');
     });
@@ -171,8 +171,11 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).not.toContain('in vec3 aStartColor;');
       expect(material.vertexShader).not.toContain('in float aStartWidth;');
 
-      // Check for uniforms
+      // Check for uniforms. Fragment-stage uniforms must be declared
+      // independently in GLSL, including the DPR used by width compensation.
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
+      expect(material.fragmentShader).toContain('uniform float uPixelRatio');
+      expect(LINE_PICK_FRAGMENT_SHADER).toContain('uniform float uPixelRatio');
 
       // Check for varyings (GLSL ES 3.0 uses "out" instead of "varying")
       expect(material.vertexShader).toContain('out vec3 vColor');

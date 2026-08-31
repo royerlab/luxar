@@ -925,18 +925,16 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
     // the AA-floor condition on MY OWN pre-clamp radii (without it the pair
     // over-brightens; see the floor test above). The pick twins must match
     // the visual ones or hover desyncs from pixels.
-    const threshold = CAPSULE_JOINT_PACKET_MIN_RADIUS_PX.toFixed(1);
-    const floor = CAPSULE_MIN_RADIUS_PX.toFixed(1);
     for (const [name, src] of [
       ['glsl material', CAPSULE_LINE_VERTEX_SHADER],
       ['glsl pick', CAPSULE_LINE_PICK_VERTEX_SHADER],
     ] as const) {
       const bare = squash(src);
       expect(bare, `${name} end A`).toContain(
-        `if(rMax>${threshold}||(dot(qq/ql,u)>0.5&&min(rawA,rawB)>=${floor})){`
+        'if(rMax>packetMinRadius||(dot(qq/ql,u)>0.5&&min(rawA,rawB)>=minRadius)){'
       );
       expect(bare, `${name} end B`).toContain(
-        `if(rMax>${threshold}||(dot(qq/ql,u)<-0.5&&min(rawA,rawB)>=${floor})){`
+        'if(rMax>packetMinRadius||(dot(qq/ql,u)<-0.5&&min(rawA,rawB)>=minRadius)){'
       );
     }
     for (const [name, rel] of [
@@ -944,8 +942,8 @@ describe('joint composition — the rendered pair tracks max(mine, partner)', ()
       ['tsl pick', 'rendering/picking/line/pick-capsule.tsl.ts'],
     ] as const) {
       const bare = squash(readSource(rel));
-      const gate = 'If(rMax.greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX).or(dot(qhat,u)';
-      const floored = '.and(min(rawA,rawB).greaterThanEqual(CAPSULE_MIN_RADIUS_PX)))';
+      const gate = 'If(rMax.greaterThan(packetMinRadius).or(dot(qhat,u)';
+      const floored = '.and(min(rawA,rawB).greaterThanEqual(minRadius)))';
       expect(bare, `${name} end A`).toContain(`${gate}.greaterThan(0.5)${floored}`);
       expect(bare, `${name} end B`).toContain(`${gate}.lessThan(-0.5)${floored}`);
     }

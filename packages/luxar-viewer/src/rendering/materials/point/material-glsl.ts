@@ -143,6 +143,7 @@ export class PointMaterial
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
         uNearCull: { value: 0.1 }, // near-fade start (world units; scene-bounds scaled)
+        uPixelRatio: { value: 1 },
 
         // Physical framebuffer size in pixels (used by the
         // instanced-quad vertex shader to convert pixel offsets to
@@ -233,12 +234,14 @@ export class PointMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     // The instanced-quad vertex shader needs the framebuffer size to
     // convert pixel offsets to NDC. This is the physical pixel size
     // (drawing-buffer size), matched to what the SceneManager passes.
@@ -524,6 +527,7 @@ export class PointMaterial
     // broadcast reaches it.
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );

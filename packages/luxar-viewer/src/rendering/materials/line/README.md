@@ -48,7 +48,7 @@ at both clipped endpoints, so the whole quad takes one branch — blows past
 either `uPerspectiveLineScale = resY / tan(fov/2)` or
 `uOrthoLineScale = 2·resY / frustumHeight` (precomputed CPU-side so the
 shader has no `tan()` or projection-mode divide), clamps to
-`[1.5 px, uMaxLinePixelWidth]` with an intensity-fading `vWidthFade`, then
+`[1.5 px × max(render-target scale, 1), uMaxLinePixelWidth]` with an intensity-fading `vWidthFade` (CSS-invariant above 1×; the historical framebuffer floor below 1×), then
 offsets `clipPos.xy` by `perpendicular × aQuadCorner.y × startEndPixelWidth` /
 `endEndPixelWidth` — the clamped pixel half-width of the END this corner sits at
 (from the shared `luxarLineEndPixelWidth` / `tslLineEndPixelWidth` helper),
@@ -195,7 +195,7 @@ the directions read in a canonical order (incoming edge first):
   must be in front of the near plane (testing only the partner's has each side
   testing a different point, so one side can miter alone against nothing), and
   this endpoint must actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
-- a **rendered-HALF-width gate** of 2 px (`LINE_JOIN_MIN_HALF_WIDTH`), i.e.
+- a **rendered-HALF-width gate** of 2 CSS px (`LINE_JOIN_MIN_HALF_WIDTH`), i.e.
   4 px of rendered width: the wedge has area ~θ·R²/2, so below
   that it is sub-pixel and the line is already pinned to the 1.5 px floor
   with its intensity faded. The cost then lands only where the benefit is —
@@ -383,7 +383,7 @@ for the rest of the deficit packet — the far-capped rod of #1490, both packet
 lanes and the packing that transports them, and the gate clauses of
 #1495/#1501). Two documented exceptions to that last sentence, both in
 `CAPSULE_JOINT_PACKET_MIN_RADIUS_PX`: the deficit packet is skipped below a
-4 px stencil half-width, so a GENTLE joint thinner than that keeps the plain
+4 CSS px stencil half-width, so a GENTLE joint thinner than that keeps the plain
 cut — within 0.03 of peak of what a congruent joint at the same angle and
 radius costs anyway, though in absolute terms that reaches −0.09 at 90° and
 −0.19…−0.39 at 120° — and the sharp-turn exception that overrides the skip

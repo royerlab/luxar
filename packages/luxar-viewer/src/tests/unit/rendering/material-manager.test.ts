@@ -228,7 +228,7 @@ describe('MaterialManager', () => {
 
     it('per-node materials receive the current camera params immediately at creation', () => {
       const fov = Math.PI / 4;
-      manager.updateCameraParams(fov, new THREE.Vector2(2560, 1440));
+      manager.updateCameraParams(fov, new THREE.Vector2(2560, 1440), false, undefined, 2);
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
@@ -238,6 +238,7 @@ describe('MaterialManager', () => {
       });
       const expectedPointSizeFactor = (2.0 * 1440) / Math.tan(fov / 2);
       expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
+      expect(material.uniforms.uPixelRatio.value).toBe(2);
     });
 
     it('should create different materials for different opacity', () => {
@@ -342,7 +343,7 @@ describe('MaterialManager', () => {
       // a mesh created after the camera settled must not be left fading against the
       // constructor's 0.1 default. Asserted through the uniforms rather than a call
       // spy, so it stays true of however the call is made.
-      manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.42);
+      manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), true, 0.42, 1);
       const mesh = manager.getMeshMaterial(meshProps);
       expect(manager.getCacheStats().totalRegistered).toBe(1);
       expect(mesh.uniforms.uIsOrtho.value).toBe(1);
@@ -351,7 +352,7 @@ describe('MaterialManager', () => {
 
     it('keeps tracking the broadcast after creation', () => {
       const mesh = manager.getMeshMaterial(meshProps);
-      manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.25);
+      manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.25, 1);
       expect(mesh.uniforms.uIsOrtho.value).toBe(0);
       expect(mesh.uniforms.uNearCull.value).toBe(0.25);
     });
@@ -381,7 +382,9 @@ describe('MaterialManager', () => {
       expect(stats.ownedMaterials, 'a non-camera-aware entry still counts as owned').toBe(1);
       expect(stats.totalRegistered).toBe(1);
       // And it survives the broadcast, which must skip it.
-      expect(() => manager.updateCameraParams(1.0, new THREE.Vector2(800, 600))).not.toThrow();
+      expect(() =>
+        manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, undefined, 1)
+      ).not.toThrow();
     });
 
     it('camera-updates a registered mesh clone immediately', () => {
@@ -389,7 +392,7 @@ describe('MaterialManager', () => {
       // camera-aware, `register` must route it into the broadcast rather than the
       // disposal-only set, or a clone taken mid-session would fade against the
       // constructor default until the next camera move.
-      manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.37);
+      manager.updateCameraParams(1.0, new THREE.Vector2(800, 600), false, 0.37, 1);
       const meshClone = new MeshMaterial({ opacity: 0.5 });
       expect(meshClone.uniforms.uNearCull.value).toBe(0.1);
       manager.register(meshClone);
@@ -400,7 +403,7 @@ describe('MaterialManager', () => {
       // Asserted through the OBSERVABLE effect rather than a call spy: a clone
       // registered mid-session must not wait for the next broadcast to learn the
       // current viewport, so the uniform itself has to carry the manager's state.
-      manager.updateCameraParams(1.0, new THREE.Vector2(1234, 567));
+      manager.updateCameraParams(1.0, new THREE.Vector2(1234, 567), false, undefined, 1);
       const clone = new PointMaterial({ opacity: 0.5 });
       expect((clone.uniforms.uResolution.value as THREE.Vector2).x).not.toBe(1234);
       manager.register(clone);
@@ -460,7 +463,7 @@ describe('MaterialManager', () => {
       const newFov = Math.PI / 3; // 60 degrees
       const newResolution = new THREE.Vector2(1920, 1080);
 
-      manager.updateCameraParams(newFov, newResolution);
+      manager.updateCameraParams(newFov, newResolution, false, undefined, 1);
 
       // Both materials should be updated with pre-computed pointSizeFactor and maxPointSize
       const expectedPointSizeFactor = (2.0 * 1080) / Math.tan(newFov / 2);
@@ -476,7 +479,7 @@ describe('MaterialManager', () => {
       const fov = Math.PI / 4; // 45 degrees
       const resolution = new THREE.Vector2(2560, 1440);
 
-      manager.updateCameraParams(fov, resolution);
+      manager.updateCameraParams(fov, resolution, false, undefined, 1);
 
       // Create new material
       const material = manager.getPointMaterial({
@@ -939,7 +942,7 @@ describe('MaterialManager', () => {
       // Set camera params first
       const fov = Math.PI / 2;
       const resolution = new THREE.Vector2(3840, 2160);
-      manager.updateCameraParams(fov, resolution);
+      manager.updateCameraParams(fov, resolution, false, undefined, 1);
 
       // Create material after update
       const material = manager.getPointMaterial({
@@ -969,7 +972,7 @@ describe('MaterialManager', () => {
 
       // Update params
       const newFov = Math.PI / 4;
-      manager.updateCameraParams(newFov, new THREE.Vector2(1280, 720));
+      manager.updateCameraParams(newFov, new THREE.Vector2(1280, 720), false, undefined, 1);
 
       // Material should be updated with pre-computed pointSizeFactor
       const expectedPointSizeFactor = (2.0 * 720) / Math.tan(newFov / 2);

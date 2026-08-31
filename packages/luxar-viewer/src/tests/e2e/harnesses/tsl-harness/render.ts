@@ -42,6 +42,7 @@ export function renderGLSL(shaderName: string): Uint8Array {
   // for any shader currently in the registry).
   const glsl = requireWebGLSources(entry.source);
   const uniforms = entry.buildUniforms();
+  if (!uniforms.uPixelRatio) uniforms.uPixelRatio = { value: 1 };
   // Build the ShaderMaterial. `defines` is always an object (never
   // undefined — Three.js warns "parameter 'defines' has value of
   // undefined"); it is assembled below from the element-texture width
@@ -151,6 +152,7 @@ export async function renderTSL(
   await loadTslMaterials();
 
   const uniforms = entry.buildUniforms();
+  if (!uniforms.uPixelRatio) uniforms.uPixelRatio = { value: 1 };
   const material = entry.buildTSLMaterial
     ? entry.buildTSLMaterial(uniforms)
     : (entry.source.webgpu(uniforms) as THREE.Material);

@@ -101,13 +101,13 @@ camera changes update **only** the precomputed scalar uniforms, not the shader.
   `1.0 / max(-mvPosition.z, 1e-20)` for perspective (the floor is a pure INF guard, not a scale floor) — VIEW-SPACE DEPTH, matching
   the line + gsplat shaders. (Euclidean camera distance shrank edge-of-screen
   points by `cos θ` relative to identical centered points.)
-- `pointSize = clamp(basePointSize, 1.5, maxPointSize)`. There is **no
+- `pointSize = clamp(basePointSize, 1.5 * max(pixelRatio, 1), maxPointSize)`. Above 1× render scale the floor is 1.5 CSS px; below 1× it stays at the historical 1.5 framebuffer pixels so undersampling cannot remove the rasterization floor. There is **no
   sharpness size compensation** — the shifted-truncated super-Gaussian falloff
   truncates to zero exactly at the sprite edge (`ρ = 1`), so `basePointSize`
   already is the visible extent. The `1.5` px floor matches the line shader
   (thinner quads cause rasterization gaps); the raw pre-clamp size travels to
   the fragment as `vPointSize`, where sub-pixel sprites are energy-compensated
-  by `sizeScale² = min(vPointSize/1.5, 1)²` on alpha (squared because both
+  by `sizeScale² = min(vPointSize/(1.5·max(pixelRatio,1)), 1)²` on alpha (squared because both
   sprite dimensions clamp — energy ∝ area; the line shader's `widthScale` is
   linear because only width clamps). Zero-radius filtering happens in the
   fragment shader (see "nD slicing").
@@ -267,22 +267,23 @@ the more expensive falloff/GOG/colormap fragment work is skipped.
 
 ## Uniforms (reference)
 
-| Name              | Type      | Source                                        | Notes                                                                                        |
-| ----------------- | --------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `uOpacity`        | float     | `updateOpacity`                               | Multiplied into final alpha (historically the un-prefixed `opacity`; renamed for symmetry)   |
-| `uInvGamma`       | float     | `updateGamma` (pre-computed `1/γ`)            | Per-node gamma; `userData.gamma` carries the original value for `clone()`                    |
-| `uIntensity`      | float     | `updateIntensity`                             | Per-node GOG gain                                                                            |
-| `uOffset`         | float     | `updateOffset`                                | Per-node GOG offset                                                                          |
-| `pointSizeFactor` | float     | `updateCameraParams` (camera math)            | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                                             |
-| `maxPointSize`    | float     | `updateCameraParams`                          | Pre-computed `resY · 0.5`                                                                    |
-| `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                                               |
-| `uNearCull`       | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-20 (zero-guard only) |
-| `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion                        |
-| `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                                           |
-| `uPointTex`       | sampler2D | `updatePointTexture` (commit sync)            | RGBA32F point texture, 3 texels/point — the per-node data store                              |
-| `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                                               |
-| `uScalarMin`      | float     | `setScalarRange`                              | LUT normalisation min                                                                        |
-| `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                                                      |
+| Name              | Type      | Source                                        | Notes                                                                                                      |
+| ----------------- | --------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `uOpacity`        | float     | `updateOpacity`                               | Multiplied into final alpha (historically the un-prefixed `opacity`; renamed for symmetry)                 |
+| `uInvGamma`       | float     | `updateGamma` (pre-computed `1/γ`)            | Per-node gamma; `userData.gamma` carries the original value for `clone()`                                  |
+| `uIntensity`      | float     | `updateIntensity`                             | Per-node GOG gain                                                                                          |
+| `uOffset`         | float     | `updateOffset`                                | Per-node GOG offset                                                                                        |
+| `pointSizeFactor` | float     | `updateCameraParams` (camera math)            | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                                                           |
+| `maxPointSize`    | float     | `updateCameraParams`                          | Pre-computed `resY · 0.5`                                                                                  |
+| `uIsOrtho`        | int       | `updateCameraParams`                          | `0` = perspective, `1` = ortho                                                                             |
+| `uNearCull`       | float     | `updateCameraParams`                          | Near-fade start (world units, scene-bounds-scaled); shader floors at 1e-20 (zero-guard only)               |
+| `uResolution`     | vec2      | `updateCameraParams` (mutates same Vector2)   | Physical framebuffer pixels; vertex uses for `pixel → NDC` conversion                                      |
+| `uPixelRatio`     | float     | `updateCameraParams`                          | Render-target pixels per CSS pixel (DPR × SSAA, or the pick-target scale); floors clamp this to at least 1 |
+| `radiusScale`     | float     | `updateRadiusScale`                           | Dtype normalisation (e.g. `1/255` for uint8 radii)                                                         |
+| `uPointTex`       | sampler2D | `updatePointTexture` (commit sync)            | RGBA32F point texture, 3 texels/point — the per-node data store                                            |
+| `uColormapTex`    | sampler2D | `setColormapTexture`                          | 256×1 LUT; `USE_COLORMAP` only                                                                             |
+| `uScalarMin`      | float     | `setScalarRange`                              | LUT normalisation min                                                                                      |
+| `uScalarScale`    | float     | `setScalarRange` (pre-computed `1/(max-min)`) | LUT normalisation scale                                                                                    |
 
 `clampGamma` (`../_shared/uniform-helpers.ts`) is the single source of truth
 for the `Math.max(0.001, γ ?? 1.0)` clamp — the GLSL `pow(color, 1/γ)` divides

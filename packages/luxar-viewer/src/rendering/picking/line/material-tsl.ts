@@ -33,6 +33,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
   private tslNodes: {
     uLineTex: TSLNode;
     uResolution: TSLNode;
+    uPixelRatio: TSLNode;
     uIsOrtho: TSLNode;
     uNearCull: TSLNode;
     uMaxLinePixelWidth: TSLNode;
@@ -52,6 +53,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       // TSL texture() captures the Texture at build time).
       uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
+      uPixelRatio: uniform(1),
       uIsOrtho: uniform(0),
       // 0.1 matches the visual line material ctor default (pre-first-broadcast only).
       uNearCull: uniform(0.1),
@@ -86,6 +88,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       // rebind — `updateLineTexture()` is the only rebind chokepoint.
       uLineTex: proxyIUniform(this.tslNodes.uLineTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
@@ -156,6 +159,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     );
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
@@ -174,7 +178,8 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     const prevIsOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
@@ -188,6 +193,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       this.uniforms.uNearCull.value = nearCull;
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
     const safeFov = Math.max(fov, 1e-4);
     if (isOrtho) {

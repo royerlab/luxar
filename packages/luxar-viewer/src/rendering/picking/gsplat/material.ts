@@ -77,6 +77,7 @@ export class GSplatPickingMaterial
         // (shared with the visual material's pool-owned storage).
         uSplatTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
+        uPixelRatio: { value: 1 },
         uFx: { value: 500 },
         uFy: { value: 500 },
         uTruncate: { value: truncate },
@@ -158,6 +159,7 @@ export class GSplatPickingMaterial
     // session-width pre-stamp).
     cloned.updateSplatTexture(this.uniforms.uSplatTex.value as THREE.DataTexture | null);
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
@@ -177,9 +179,11 @@ export class GSplatPickingMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     this.uniforms.uResolution.value.copy(resolution);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
     const fy = computeFocalLength(fov, resolution.y, isOrtho);

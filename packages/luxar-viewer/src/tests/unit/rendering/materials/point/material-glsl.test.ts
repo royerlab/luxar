@@ -27,6 +27,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../../../rendering/materials/point/material-glsl';
+import { POINT_PICK_FRAGMENT_SHADER } from '../../../../../rendering/picking/point/shaders';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
@@ -124,7 +125,8 @@ describe('PointMaterial', () => {
 
       // Check pointSize clamp + sprite expansion (replaces gl_PointSize).
       expect(material.vertexShader).toContain('uniform float maxPointSize');
-      expect(material.vertexShader).toContain('clamp(basePointSize, 1.5, maxPointSize)');
+      expect(material.vertexShader).toContain('float minPointSize = 1.5 * max(uPixelRatio, 1.0)');
+      expect(material.vertexShader).toContain('clamp(basePointSize, minPointSize, maxPointSize)');
       expect(material.vertexShader).toContain(
         'vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w'
       );
@@ -151,6 +153,7 @@ describe('PointMaterial', () => {
       expect(material.vertexShader).toContain('uniform float radiusScale');
       expect(material.vertexShader).not.toContain('uniform float sharpnessScale');
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
+      expect(material.vertexShader).toContain('uniform float uPixelRatio');
 
       // sharpness -> beta mapping: beta = 2^(6s - 2), s clamped to [0, 1] and
       // NaN/Inf-guarded to the 0.5 default via sanitizeNonNegative.
@@ -173,6 +176,10 @@ describe('PointMaterial', () => {
 
     it('should have correct fragment shader with HDR handling and optimizations', () => {
       const material = new PointMaterial();
+
+      // Fragment-stage uniforms must be declared independently in GLSL.
+      expect(material.fragmentShader).toContain('uniform float uPixelRatio');
+      expect(POINT_PICK_FRAGMENT_SHADER).toContain('uniform float uPixelRatio');
 
       // The fragment reads the sprite UV from a varying.
       expect(material.fragmentShader).toContain('vec2 centered = vSpriteCoord - 0.5');
@@ -319,10 +326,10 @@ describe('PointMaterial', () => {
     it('should clamp point size to avoid undefined behavior', () => {
       const material = new PointMaterial();
 
-      // Point size clamps to [1.5, maxPointSize] (1.5px floor matches
+      // Point size clamps to [1.5 CSS px, maxPointSize] (the floor matches
       // the line shader; sub-pixel energy preserved via sizeScale^2);
       // the sprite is then expanded in NDC via aQuadCorner.
-      expect(material.vertexShader).toContain('clamp(basePointSize, 1.5, maxPointSize)');
+      expect(material.vertexShader).toContain('float minPointSize = 1.5 * max(uPixelRatio, 1.0)');
 
       // Check comment about zero-radius filtering
       expect(material.vertexShader).toContain('Zero-radius filtering happens in the fragment');
