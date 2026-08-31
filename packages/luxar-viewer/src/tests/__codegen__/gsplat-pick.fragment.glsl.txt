@@ -95,11 +95,11 @@ float gsplatPickMahalSq;
 float gsplatPickIntensity;
 float gsplatPickBrightness;
 float nodeVar6;
-vec4 nodeVar88;
+vec4 nodeVar89;
 vec3 positionView;
 vec4 DiffuseColor;
 vec4 Output;
-vec4 nodeVar91;
+vec4 nodeVar92;
 
 // codes
 
@@ -122,8 +122,8 @@ void main() {
 
 	if ( ( int( nodeUniform3 ) == 1 ) ) {
 
-		nodeVar88 = ( cameraProjectionMatrixInverse * v_clipSpace );
-		positionView = ( nodeVar88.xyz / vec3( nodeVar88.w ) );
+		nodeVar89 = ( cameraProjectionMatrixInverse * v_clipSpace );
+		positionView = ( nodeVar89.xyz / vec3( nodeVar89.w ) );
 		nodeVar6 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
 
 	} else {
@@ -151,10 +151,10 @@ void main() {
 
 	DiffuseColor = vec4( nodeVarying4, nodeVarying5.x, gsplatPickBrightness, nodeVarying5.y );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform32 );
-	nodeVar91 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar91;
+	nodeVar92 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar92;
 
 	// result
-	fragColor = nodeVar91;
+	fragColor = nodeVar92;
 
 }

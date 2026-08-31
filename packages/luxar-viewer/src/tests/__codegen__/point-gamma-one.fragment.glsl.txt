@@ -108,7 +108,7 @@ void main() {
 	}
 
 	nodeVar3 = max( ( ( nodeVarying3 * vec3( nodeUniform0 ) ) + vec3( nodeUniform1 ) ), vec3( 0.0, 0.0, 0.0 ) );
-	nodeVar4 = min( ( nodeVarying4 / ( nodeUniform3 * 1.5 ) ), 1.0 );
+	nodeVar4 = min( ( nodeVarying4 / ( max( nodeUniform3, 1.0 ) * 1.5 ) ), 1.0 );
 	nodeVar5 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeUniform2 ) * ( nodeVar4 * nodeVar4 ) ) * nodeVarying5 );
 	nodeVar6 = ( nodeVar5 * nodeVarying6 );
 

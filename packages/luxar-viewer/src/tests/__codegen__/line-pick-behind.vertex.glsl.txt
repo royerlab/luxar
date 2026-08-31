@@ -477,7 +477,7 @@ void main() {
 	nodeVar82 = nodeVar81;
 	nodeVar83 = vec2( ( - nodeVar82.y ), nodeVar82.x );
 	nodeVar84 = ( ( nodeVar71 * nodeUniform21 ) / max( ( - nodeVar72.z ), nodeVar54 ) );
-	nodeVar85 = ( nodeUniform23 * 1.5 );
+	nodeVar85 = ( max( nodeUniform23, 1.0 ) * 1.5 );
 	nodeVar86 = max( nodeUniform22, ( nodeVar85 + 1.0 ) );
 	nodeVar87 = ( nodeVar86 / max( nodeVar84, 0.0001 ) );
 	nodeVar88 = ( ( mix( nodeVar69, nodeVar70, nodeVar62 ) * nodeUniform21 ) / max( ( - nodeVar49.z ), nodeVar54 ) );
@@ -503,7 +503,7 @@ void main() {
 
 	nodeVar99 = nodeVar97;
 
-	if ( ( ( ( nodeVar91 > ( nodeUniform23 * 2.0 ) ) && ( nodeVar62 <= 0.0 ) ) && ( ( ( nodeVar46 > 0.5 ) || ( nodeVar46 < -2.5 ) ) && ( nodeVar99 != nodeVar6 ) ) ) ) {
+	if ( ( ( ( nodeVar91 > ( max( nodeUniform23, 1.0 ) * 2.0 ) ) && ( nodeVar62 <= 0.0 ) ) && ( ( ( nodeVar46 > 0.5 ) || ( nodeVar46 < -2.5 ) ) && ( nodeVar99 != nodeVar6 ) ) ) ) {
 
 		nodeVar100 = ( nodeVar99 * 6 );
 		nodeVar101 = ( nodeVar100 % nodeVar11 );
@@ -601,7 +601,7 @@ void main() {
 
 	nodeVar125 = nodeVar123;
 
-	if ( ( ( ( nodeVar92 > ( nodeUniform23 * 2.0 ) ) && ( nodeVar65 >= 1.0 ) ) && ( ( ( nodeVar47 > 0.5 ) || ( nodeVar47 < -2.5 ) ) && ( nodeVar125 != nodeVar6 ) ) ) ) {
+	if ( ( ( ( nodeVar92 > ( max( nodeUniform23, 1.0 ) * 2.0 ) ) && ( nodeVar65 >= 1.0 ) ) && ( ( ( nodeVar47 > 0.5 ) || ( nodeVar47 < -2.5 ) ) && ( nodeVar125 != nodeVar6 ) ) ) ) {
 
 		nodeVar126 = ( nodeVar125 * 6 );
 		nodeVar127 = ( nodeVar126 % nodeVar11 );

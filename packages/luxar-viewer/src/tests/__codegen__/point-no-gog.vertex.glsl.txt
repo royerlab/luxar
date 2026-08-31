@@ -287,7 +287,7 @@ void main() {
 
 	} else {
 
-		nodeVar44 = ( nodeVar36 + vec4( ( ( aQuadCorner * ( vec2( clamp( nodeVar38, ( nodeUniform19 * 1.5 ), nodeUniform20 ) ) / nodeUniform21 ) ) * vec2( nodeVar36.w ) ), 0.0, 0.0 ) );
+		nodeVar44 = ( nodeVar36 + vec4( ( ( aQuadCorner * ( vec2( clamp( nodeVar38, ( max( nodeUniform19, 1.0 ) * 1.5 ), nodeUniform20 ) ) / nodeUniform21 ) ) * vec2( nodeVar36.w ) ), 0.0, 0.0 ) );
 
 	}
 

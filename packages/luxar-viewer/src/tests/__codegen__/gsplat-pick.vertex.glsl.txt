@@ -163,22 +163,23 @@ float nodeVar70;
 float nodeVar71;
 float nodeVar72;
 float nodeVar73;
-vec2 nodeVar74;
+float nodeVar74;
 vec2 nodeVar75;
 vec2 nodeVar76;
 vec2 nodeVar77;
-float nodeVar78;
+vec2 nodeVar78;
 float nodeVar79;
 float nodeVar80;
 float nodeVar81;
 float nodeVar82;
 float nodeVar83;
-vec2 nodeVar84;
+float nodeVar84;
 vec2 nodeVar85;
-vec4 nodeVar86;
+vec2 nodeVar86;
 vec4 nodeVar87;
-int nodeVar89;
-vec2 nodeVar90;
+vec4 nodeVar88;
+int nodeVar90;
+vec2 nodeVar91;
 
 // codes
 
@@ -357,90 +358,91 @@ void main() {
 	nodeVar64 = ( ( ( nodeVar61.x * nodeVar55.x ) + ( nodeVar62.x * nodeVar57.x ) ) + ( nodeVar63.x * nodeVar60.x ) );
 	nodeVar65 = ( ( ( nodeVar61.x * nodeVar55.y ) + ( nodeVar62.x * nodeVar57.y ) ) + ( nodeVar63.x * nodeVar60.y ) );
 	nodeVar66 = ( ( ( nodeVar61.y * nodeVar55.y ) + ( nodeVar62.y * nodeVar57.y ) ) + ( nodeVar63.y * nodeVar60.y ) );
-	nodeVar67 = ( ( nodeUniform24 * nodeUniform25 ) * nodeUniform25 );
-	nodeVar64 = ( nodeVar64 + nodeVar67 );
-	nodeVar66 = ( nodeVar66 + nodeVar67 );
-	nodeVar68 = ( 1.0 / sqrt( max( nodeVar64, 1e-8 ) ) );
-	nodeVar69 = ( nodeVar65 * nodeVar68 );
-	nodeVar70 = ( nodeVar64 + nodeVar66 );
-	nodeVar71 = sqrt( max( ( ( nodeVar70 * nodeVar70 ) - ( ( ( nodeVar64 * nodeVar66 ) - ( nodeVar65 * nodeVar65 ) ) * 4.0 ) ), 0.0 ) );
-	nodeVar72 = max( ( ( nodeVar70 + nodeVar71 ) * 0.5 ), 0.000001 );
-	nodeVar73 = max( ( ( nodeVar70 - nodeVar71 ) * 0.5 ), 0.000001 );
+	nodeVar67 = max( nodeUniform25, 1.0 );
+	nodeVar68 = ( ( nodeUniform24 * nodeVar67 ) * nodeVar67 );
+	nodeVar64 = ( nodeVar64 + nodeVar68 );
+	nodeVar66 = ( nodeVar66 + nodeVar68 );
+	nodeVar69 = ( 1.0 / sqrt( max( nodeVar64, 1e-8 ) ) );
+	nodeVar70 = ( nodeVar65 * nodeVar69 );
+	nodeVar71 = ( nodeVar64 + nodeVar66 );
+	nodeVar72 = sqrt( max( ( ( nodeVar71 * nodeVar71 ) - ( ( ( nodeVar64 * nodeVar66 ) - ( nodeVar65 * nodeVar65 ) ) * 4.0 ) ), 0.0 ) );
+	nodeVar73 = max( ( ( nodeVar71 + nodeVar72 ) * 0.5 ), 0.000001 );
+	nodeVar74 = max( ( ( nodeVar71 - nodeVar72 ) * 0.5 ), 0.000001 );
 
 	if ( ( abs( nodeVar65 ) > 0.000001 ) ) {
 
-		nodeVar74 = normalize( vec2( ( nodeVar72 - nodeVar66 ), nodeVar65 ) );
+		nodeVar75 = normalize( vec2( ( nodeVar73 - nodeVar66 ), nodeVar65 ) );
 
 	} else {
 
 
 		if ( ( nodeVar64 >= nodeVar66 ) ) {
 
-			nodeVar75 = vec2( 1.0, 0.0 );
+			nodeVar76 = vec2( 1.0, 0.0 );
 
 		} else {
 
-			nodeVar75 = vec2( 0.0, 1.0 );
+			nodeVar76 = vec2( 0.0, 1.0 );
 
 		}
 
-		nodeVar74 = nodeVar75;
+		nodeVar75 = nodeVar76;
 
 	}
 
-	nodeVar76 = nodeVar74;
-	nodeVar77 = vec2( ( - nodeVar76.y ), nodeVar76.x );
-	nodeVar78 = ( nodeUniform22 * sqrt( nodeVar72 ) );
+	nodeVar77 = nodeVar75;
+	nodeVar78 = vec2( ( - nodeVar77.y ), nodeVar77.x );
 	nodeVar79 = ( nodeUniform22 * sqrt( nodeVar73 ) );
-	nodeVar80 = max( nodeVar78, nodeVar79 );
-	nodeVar82 = ( max( nodeUniform19.x, nodeUniform19.y ) * nodeUniform20 );
+	nodeVar80 = ( nodeUniform22 * sqrt( nodeVar74 ) );
+	nodeVar81 = max( nodeVar79, nodeVar80 );
+	nodeVar83 = ( max( nodeUniform19.x, nodeUniform19.y ) * nodeUniform20 );
 
-	if ( ( nodeVar80 > nodeVar82 ) ) {
+	if ( ( nodeVar81 > nodeVar83 ) ) {
 
-		nodeVar81 = ( nodeVar82 / nodeVar80 );
+		nodeVar82 = ( nodeVar83 / nodeVar81 );
 
 	} else {
 
-		nodeVar81 = 1.0;
+		nodeVar82 = 1.0;
 
 	}
 
-	nodeVar83 = nodeVar81;
+	nodeVar84 = nodeVar82;
 
 	if ( nodeVar48 ) {
 
-		nodeVar84 = vec2( ( ( nodeUniform21 * nodeVar39.x ) + ( nodeUniform19.x * 0.5 ) ), ( ( nodeUniform23 * nodeVar39.y ) + ( nodeUniform19.y * 0.5 ) ) );
+		nodeVar85 = vec2( ( ( nodeUniform21 * nodeVar39.x ) + ( nodeUniform19.x * 0.5 ) ), ( ( nodeUniform23 * nodeVar39.y ) + ( nodeUniform19.y * 0.5 ) ) );
 
 	} else {
 
-		nodeVar84 = vec2( ( ( ( nodeUniform21 * nodeVar39.x ) * nodeVar53 ) + ( nodeUniform19.x * 0.5 ) ), ( ( ( nodeUniform23 * nodeVar39.y ) * nodeVar53 ) + ( nodeUniform19.y * 0.5 ) ) );
+		nodeVar85 = vec2( ( ( ( nodeUniform21 * nodeVar39.x ) * nodeVar53 ) + ( nodeUniform19.x * 0.5 ) ), ( ( ( nodeUniform23 * nodeVar39.y ) * nodeVar53 ) + ( nodeUniform19.y * 0.5 ) ) );
 
 	}
 
-	nodeVar85 = nodeVar84;
-	nodeVar86 = ( cameraProjectionMatrix * nodeVar38 );
+	nodeVar86 = nodeVar85;
+	nodeVar87 = ( cameraProjectionMatrix * nodeVar38 );
 	nodeVarying0 = ( nodeVar33 * nodeVar52 );
-	nodeVarying1 = vec3( nodeVar68, nodeVar69, ( 1.0 / sqrt( max( ( nodeVar66 - ( nodeVar69 * nodeVar69 ) ), 1e-8 ) ) ) );
-	nodeVarying2 = nodeVar85;
+	nodeVarying1 = vec3( nodeVar69, nodeVar70, ( 1.0 / sqrt( max( ( nodeVar66 - ( nodeVar70 * nodeVar70 ) ), 1e-8 ) ) ) );
+	nodeVarying2 = nodeVar86;
 
 	if ( ( ( ( ( ( nodeVar46 < 0.01 ) || ( nodeVar51 < 0.01 ) ) || ( ! ( ( nodeVar33 < 1e30 ) && ( nodeVar33 > -1e30 ) ) ) ) || ( ( ( ! ( ( nodeVar64 < 1e30 ) && ( nodeVar64 > -1e30 ) ) ) || ( ! ( ( nodeVar65 < 1e30 ) && ( nodeVar65 > -1e30 ) ) ) ) || ( ! ( ( nodeVar66 < 1e30 ) && ( nodeVar66 > -1e30 ) ) ) ) ) || ( ( int( nodeUniform27 ) > 0 ) && ( int( ( nodeVar37 + 0.5 ) ) != int( nodeUniform27 ) ) ) ) ) {
 
-		nodeVar87 = vec4( 0.0, 0.0, -2.0, 1.0 );
+		nodeVar88 = vec4( 0.0, 0.0, -2.0, 1.0 );
 
 	} else {
 
-		nodeVar87 = vec4( ( ( ( ( nodeVar85 + ( ( ( nodeVar76 * vec2( aQuadCorner.x ) ) * vec2( ( nodeVar78 * nodeVar83 ) ) ) + ( ( nodeVar77 * vec2( aQuadCorner.y ) ) * vec2( ( nodeVar79 * nodeVar83 ) ) ) ) ) / nodeUniform19 ) * vec2( 2.0 ) ) - vec2( 1.0 ) ), ( nodeVar86.z / nodeVar86.w ), 1.0 );
+		nodeVar88 = vec4( ( ( ( ( nodeVar86 + ( ( ( nodeVar77 * vec2( aQuadCorner.x ) ) * vec2( ( nodeVar79 * nodeVar84 ) ) ) + ( ( nodeVar78 * vec2( aQuadCorner.y ) ) * vec2( ( nodeVar80 * nodeVar84 ) ) ) ) ) / nodeUniform19 ) * vec2( 2.0 ) ) - vec2( 1.0 ) ), ( nodeVar87.z / nodeVar87.w ), 1.0 );
 
 	}
 
-	v_clipSpace = nodeVar87;
+	v_clipSpace = nodeVar88;
 	nodeVarying4 = nodeUniform31;
-	nodeVar89 = ( nodeVar7 / 65536 );
-	nodeVar90 = vec2( float( ( nodeVar7 - ( nodeVar89 * 65536 ) ) ), float( nodeVar89 ) );
-	nodeVarying5 = nodeVar90;
+	nodeVar90 = ( nodeVar7 / 65536 );
+	nodeVar91 = vec2( float( ( nodeVar7 - ( nodeVar90 * 65536 ) ) ), float( nodeVar90 ) );
+	nodeVarying5 = nodeVar91;
 
 	// result
-	gl_Position = nodeVar87;
+	gl_Position = nodeVar88;
 
 	gl_PointSize = 1.0;
 

@@ -84,7 +84,7 @@ void main() {
 	// code
 
 	nodeVar1 = dot( ( nodeVarying0 - vec2( 0.5 ) ), ( nodeVarying0 - vec2( 0.5 ) ) );
-	nodeVar2 = ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeVarying3 ) * pow( min( ( nodeVarying4 / ( nodeUniform0 * 1.5 ) ), 1.0 ), 2.0 ) );
+	nodeVar2 = ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeVarying3 ) * pow( min( ( nodeVarying4 / ( max( nodeUniform0, 1.0 ) * 1.5 ) ), 1.0 ), 2.0 ) );
 	gl_FragDepth = ( 1.0 - clamp( nodeVar2, 0.0, 1.0 ) );
 
 	if ( ( nodeVarying1 <= 0.0 ) ) {

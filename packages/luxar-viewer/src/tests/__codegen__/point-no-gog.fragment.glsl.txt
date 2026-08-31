@@ -105,7 +105,7 @@ void main() {
 
 	}
 
-	nodeVar2 = min( ( nodeVarying4 / ( nodeUniform1 * 1.5 ) ), 1.0 );
+	nodeVar2 = min( ( nodeVarying4 / ( max( nodeUniform1, 1.0 ) * 1.5 ) ), 1.0 );
 	nodeVar3 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeUniform0 ) * ( nodeVar2 * nodeVar2 ) ) * nodeVarying5 );
 	nodeVar4 = ( nodeVar3 * nodeVarying6 );
 

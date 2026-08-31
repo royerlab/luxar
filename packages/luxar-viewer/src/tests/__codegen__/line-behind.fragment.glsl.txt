@@ -149,7 +149,7 @@ void main() {
 
 	}
 
-	nodeVar7 = ( nodeUniform4 * 1.5 );
+	nodeVar7 = ( max( nodeUniform4, 1.0 ) * 1.5 );
 
 	if ( ( nodeVarying8 >= 0.0 ) ) {
 
