@@ -1929,7 +1929,12 @@ export async function getProjectedGeometryRegion(
       let matched = 0;
 
       scene.traverse((object: any) => {
-        if (!object.visible || !wanted.has(object.userData?.nodeType)) return;
+        let ancestor = object;
+        while (ancestor) {
+          if (!ancestor.visible) return;
+          ancestor = ancestor.parent;
+        }
+        if (!wanted.has(object.userData?.nodeType)) return;
         const geometry = object.geometry;
         if (!geometry) return;
         if (!geometry.boundingBox) geometry.computeBoundingBox?.();

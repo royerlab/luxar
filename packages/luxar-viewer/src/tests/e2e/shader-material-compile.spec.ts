@@ -7,8 +7,8 @@
  * issues. This spec instantiates each material variant in a real
  * browser, renders one frame, and asserts:
  *   1. No shader / GLSL / attribute / uniform errors in the console.
- *   2. The center pixel is non-black (proves the shader produced output
- *      rather than silently discarding every fragment).
+ *   2. A pixel inside the projected geometry bounds is non-black (proves the
+ *      shader produced output rather than silently discarding every fragment).
  *
  * Each rendering variant has a specific assertion so shader breakage
  * fails close to the affected material instead of as a vague "loads
@@ -30,7 +30,7 @@ const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixture
 interface Variant {
   name: string;
   src: string;
-  /** When true, assert center pixel has non-zero alpha + RGB sum > 10. */
+  /** When true, assert projected geometry contains a pixel with RGB sum > 10. */
   expectColored: boolean;
   nodeType: string;
 }
