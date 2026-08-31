@@ -45,13 +45,22 @@ export interface WasmModule {
    * @param modelView - Column-major 4x4 model-view matrix [16]
    * @param ordering - Output permutation [count]
    * @param count - Number of splats
-   * @returns Number of splats placed via depth keys (0 = identity fallback)
+   * @param shardCount - Contiguous equal-population ranges of the output
+   *   ordering to report local-space AABBs for (cross-node depth ordering);
+   *   0 skips the work and leaves the two output arrays untouched
+   * @param shardBoundsMin - Output AABB minima [shardCount * 3]
+   * @param shardBoundsMax - Output AABB maxima [shardCount * 3]
+   * @returns Number of splats placed via depth keys (0 = identity fallback,
+   *   in which case any shard bounds carry no depth meaning)
    */
   sort_splats_by_depth(
     centers3: Float32Array,
     modelView: Float32Array,
     ordering: Uint32Array,
-    count: number
+    count: number,
+    shardCount: number,
+    shardBoundsMin: Float32Array,
+    shardBoundsMax: Float32Array
   ): number;
 
   // ============================================================================

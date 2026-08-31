@@ -31,6 +31,13 @@ export interface SortParams {
   generation: number;
   /** Column-major 4x4 model-view matrix [16]. */
   modelView: Float32Array;
+  /**
+   * Contiguous equal-population ranges of the ordering to report local-space
+   * AABBs for — the node's shard count for cross-node depth ordering
+   * (`docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md` §3.3). Omitted or 0
+   * means "don't", which is the unsharded default and costs nothing.
+   */
+  shardCount?: number;
 }
 
 export interface SortResult {
@@ -54,6 +61,26 @@ export interface SortResult {
    * main-thread-measured durations.
    */
   workerMs: number;
+  /**
+   * Number of shard AABBs reported in `shardBoundsMin` / `shardBoundsMax`.
+   *
+   * **`0` means the bounds carry no depth meaning and the node must be merged
+   * as ONE whole-node interval** — either none were requested, or the kernel
+   * took its identity-ordering fallback (degenerate depth range: a single depth
+   * plane, ≤1 in-front element, everything behind the camera, or NaN centers).
+   * Collapsing those two cases is deliberate: both mean "do not treat this
+   * node's ranges as depth intervals", which is exactly today's behaviour.
+   */
+  shardCount: number;
+  /**
+   * Per-shard local-space AABB minima `[shardCount * 3]`, TRANSFERRED. Absent
+   * when `shardCount === 0`. A shard with no finite element on an axis carries
+   * the empty sentinel (`min = +Infinity`, `max = -Infinity`) on that axis, so
+   * `min > max` is the caller's "no usable bounds" test.
+   */
+  shardBoundsMin?: Float32Array;
+  /** Per-shard local-space AABB maxima `[shardCount * 3]`, TRANSFERRED. */
+  shardBoundsMax?: Float32Array;
 }
 
 /**
@@ -89,19 +116,47 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   }
 
   const ordering = new Uint32Array(node.count);
+  // A shard count above the element count would allocate boxes no shard can
+  // ever fill; clamp so the outputs stay meaningful (the kernel already leaves
+  // surplus shards at the empty sentinel, this just avoids the waste).
+  const requestedShards = Math.max(0, Math.trunc(params.shardCount ?? 0));
+  const shardCount = Math.min(requestedShards, node.count);
+  const shardBoundsMin = new Float32Array(shardCount * 3);
+  const shardBoundsMax = new Float32Array(shardCount * 3);
+
   // Timing wraps the backend call generically: `ctx.wasm` is either the
   // compiled WASM module or the TypeScript fallback, so both report.
   const kernelStart = performance.now();
-  wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count);
+  const placed = wasm.sort_splats_by_depth(
+    node.centers3,
+    params.modelView,
+    ordering,
+    node.count,
+    shardCount,
+    shardBoundsMin,
+    shardBoundsMax
+  );
   const kernelEnd = performance.now();
+
+  // `placed === 0` is the identity-ordering fallback: the ordering is fully
+  // written but the shards are storage ranges, not depth intervals, so report
+  // no shards at all rather than bounds the merge would misread as depth.
+  const usableShards = placed === 0 ? 0 : shardCount;
+  const transferables: Transferable[] = [ordering.buffer];
+  if (usableShards > 0) {
+    transferables.push(shardBoundsMin.buffer, shardBoundsMax.buffer);
+  }
+
   return transfer(
     {
       generation: node.generation,
       ordering,
       kernelMs: kernelEnd - kernelStart,
       workerMs: kernelEnd - bodyStart,
+      shardCount: usableShards,
+      ...(usableShards > 0 ? { shardBoundsMin, shardBoundsMax } : {}),
     },
-    [ordering.buffer]
+    transferables
   );
 }
 

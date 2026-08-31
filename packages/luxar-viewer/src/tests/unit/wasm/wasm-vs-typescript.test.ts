@@ -411,16 +411,71 @@ describe('WASM vs TypeScript Comparison', () => {
      * difference would reorder splats, which `arraysAlmostEqual` cannot
      * excuse.
      */
+    /**
+     * Every case runs with a non-trivial `shardCount` so the per-shard AABB
+     * outputs (cross-node depth ordering) are covered by the SAME inputs that
+     * already stress the ordering — behind-camera, duplicate depths, the
+     * degenerate identity fallback, NaN/±Inf, denormals, and 100k random.
+     *
+     * Bounds parity is asserted EXACTLY (`exactBitsEqual`), not almost-equal.
+     * That is not a stylistic choice: the boxes are pure min/max over the input
+     * f32s, so no rounding is involved anywhere and the two backends must agree
+     * bit-for-bit. A tolerance here would hide the one divergence that can
+     * actually occur — `Math.min(NaN, x) === NaN` vs Rust's
+     * `f32::min(NaN, x) === x`, which is why the twin uses plain comparisons.
+     */
+    const PARITY_SHARDS = 3;
+
     function runBoth(
       centers3: Float32Array,
       modelView: Float32Array,
-      count: number
-    ): { ts: Uint32Array; wasm: Uint32Array; tsSorted: number; wasmSorted: number } {
+      count: number,
+      shardCount: number = PARITY_SHARDS
+    ): {
+      ts: Uint32Array;
+      wasm: Uint32Array;
+      tsSorted: number;
+      wasmSorted: number;
+      tsMin: Float32Array;
+      tsMax: Float32Array;
+      wasmMin: Float32Array;
+      wasmMax: Float32Array;
+    } {
       const ts = new Uint32Array(count);
       const wasm = new Uint32Array(count);
-      const tsSorted = tsModule.sort_splats_by_depth(centers3, modelView, ts, count);
-      const wasmSorted = wasmModule!.sort_splats_by_depth(centers3, modelView, wasm, count);
-      return { ts, wasm, tsSorted, wasmSorted };
+      const tsMin = new Float32Array(shardCount * 3);
+      const tsMax = new Float32Array(shardCount * 3);
+      const wasmMin = new Float32Array(shardCount * 3);
+      const wasmMax = new Float32Array(shardCount * 3);
+      const tsSorted = tsModule.sort_splats_by_depth(
+        centers3,
+        modelView,
+        ts,
+        count,
+        shardCount,
+        tsMin,
+        tsMax
+      );
+      const wasmSorted = wasmModule!.sort_splats_by_depth(
+        centers3,
+        modelView,
+        wasm,
+        count,
+        shardCount,
+        wasmMin,
+        wasmMax
+      );
+      // Asserted inside the harness so no case can forget it, and so a new
+      // ordering case automatically extends bounds coverage too.
+      expect(
+        exactBitsEqual(tsMin, wasmMin),
+        `shard bounds min diverged: ts=${Array.from(tsMin)} wasm=${Array.from(wasmMin)}`
+      ).toBe(true);
+      expect(
+        exactBitsEqual(tsMax, wasmMax),
+        `shard bounds max diverged: ts=${Array.from(tsMax)} wasm=${Array.from(wasmMax)}`
+      ).toBe(true);
+      return { ts, wasm, tsSorted, wasmSorted, tsMin, tsMax, wasmMin, wasmMax };
     }
 
     const IDENTITY_MV = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -511,6 +566,87 @@ describe('WASM vs TypeScript Comparison', () => {
         const { ts, wasm, tsSorted, wasmSorted } = runBoth(centers3, mv, count);
         expect(wasmSorted).toBe(tsSorted);
         expect(arraysEqual(wasm, ts)).toBe(true);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)('shardCount 0 leaves both backends silent', () => {
+      // The unsharded production path: neither backend may touch the outputs.
+      const centers3 = new Float32Array([0, 0, -1, 1, 0, -2, 2, 0, -3]);
+      const ts = new Uint32Array(3);
+      const wasm = new Uint32Array(3);
+      const tsMin = new Float32Array([7, 7, 7]);
+      const tsMax = new Float32Array([9, 9, 9]);
+      const wasmMin = new Float32Array([7, 7, 7]);
+      const wasmMax = new Float32Array([9, 9, 9]);
+      tsModule.sort_splats_by_depth(centers3, IDENTITY_MV, ts, 3, 0, tsMin, tsMax);
+      wasmModule!.sort_splats_by_depth(centers3, IDENTITY_MV, wasm, 3, 0, wasmMin, wasmMax);
+      expect(exactBitsEqual(tsMin, new Float32Array([7, 7, 7]))).toBe(true);
+      expect(exactBitsEqual(tsMax, new Float32Array([9, 9, 9]))).toBe(true);
+      expect(exactBitsEqual(wasmMin, new Float32Array([7, 7, 7]))).toBe(true);
+      expect(exactBitsEqual(wasmMax, new Float32Array([9, 9, 9]))).toBe(true);
+    });
+
+    it.skipIf(!wasmFilesExist)('shard bounds agree with a shard count of 1', () => {
+      // S == 1 must be the whole-node AABB on both backends — the self-check
+      // that makes the otherwise-inert output non-vacuous.
+      const centers3 = new Float32Array([
+        3,
+        -2,
+        -1, //
+        -5,
+        7,
+        -9, //
+        1,
+        0,
+        -4,
+      ]);
+      const { tsMin, tsMax } = runBoth(centers3, IDENTITY_MV, 3, 1);
+      expect(Array.from(tsMin)).toEqual([-5, -2, -9]);
+      expect(Array.from(tsMax)).toEqual([3, 7, -1]);
+    });
+
+    it.skipIf(!wasmFilesExist)('shard bounds agree when NaN and Inf centers are mixed in', () => {
+      // The one place the twins could diverge: `Math.min(NaN, x)` is NaN while
+      // Rust's `f32::min(NaN, x)` is x, so the TS twin must use plain
+      // comparisons. NaN is excluded from a box; ±Inf propagates into it.
+      const centers3 = new Float32Array([
+        NaN,
+        0,
+        -1, //
+        Infinity,
+        0,
+        -2, //
+        1,
+        -Infinity,
+        -3, //
+        2,
+        0,
+        NaN, //
+        3,
+        4,
+        -5, //
+        -6,
+        7,
+        -8,
+      ]);
+      // Exercised at several shard counts so the NaN/Inf elements land in
+      // different shards, including alone.
+      for (const shards of [1, 2, 3, 6]) {
+        const { ts, wasm, tsSorted, wasmSorted } = runBoth(centers3, IDENTITY_MV, 6, shards);
+        expect(wasmSorted).toBe(tsSorted);
+        expect(arraysEqual(wasm, ts)).toBe(true);
+      }
+    });
+
+    it.skipIf(!wasmFilesExist)(
+      'shard bounds agree when the shard count exceeds the element count',
+      () => {
+        // Surplus shards must reach the SAME empty sentinel on both backends,
+        // not merely "some non-finite value".
+        const centers3 = new Float32Array([0, 0, -1, 1, 0, -2]);
+        const { tsMin, tsMax } = runBoth(centers3, IDENTITY_MV, 2, 5);
+        expect(tsMin[6]).toBe(Infinity);
+        expect(tsMax[6]).toBe(-Infinity);
       }
     );
   });

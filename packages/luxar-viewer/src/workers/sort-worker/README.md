@@ -127,6 +127,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
   nodeId: string; // Node identity
   generation: number; // Generation this request was issued for (stale-drop guard)
   modelView: Float32Array; // Column-major 4x4 model-view matrix [16]
+  shardCount?: number; // Depth shards to report bounds for; 0/absent = none
 }
 ```
 
@@ -136,8 +137,18 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 2. Lookup `node = ctx.nodes.get(nodeId)`
 3. **Stale-drop**: return `null` when `!node || node.generation !== params.generation`
 4. Allocate output: `ordering = new Uint32Array(node.count)`
-5. Time the backend call: `wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count)`
-6. Return TRANSFERRED result: `transfer({ generation: node.generation, ordering, kernelMs, workerMs }, [ordering.buffer])`
+5. Clamp `shardCount` to `node.count` and allocate the two `[shardCount * 3]` bound arrays
+6. Time the backend call: `wasm.sort_splats_by_depth(node.centers3, params.modelView, ordering, node.count, shardCount, shardBoundsMin, shardBoundsMax)`
+7. Return TRANSFERRED result: `transfer({ generation, ordering, kernelMs, workerMs, shardCount, shardBoundsMin?, shardBoundsMax? }, [ordering.buffer, ...bounds])`
+
+**Per-shard depth bounds** (cross-node depth ordering — `docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md` §3.3):
+
+The permutation is already back-to-front, so any contiguous range of it is a depth interval. On request the kernel additionally reports the LOCAL-space AABB of the elements each of `shardCount` equal-population ranges draws, and the main thread re-projects those boxes every frame to order shards of DIFFERENT nodes against each other.
+
+- **`shardCount: 0` (or absent) is the default and costs nothing** — the kernel skips the pass and leaves the output arrays untouched. No node is sharded until the shard-count policy lands, so this is the state everywhere today.
+- **A returned `shardCount` of `0` means "do not treat this node's ranges as depth intervals"**, and it collapses two cases on purpose: none were requested, OR the kernel took its identity-ordering fallback (`sort_splats_by_depth` returned 0 — degenerate depth range). In the fallback the ordering is fully written and the boxes are valid boxes *of it*, but they are storage ranges rather than depth intervals, so the node must merge as ONE whole-node interval — exactly today's behaviour.
+- Bounds are adopted on the main thread under the SAME generation guard as the ordering, and only when that ordering is actually applied. A box retained past its permutation would place a shard by where its elements *used to be* — a silent wrong ordering rather than a visible failure — so every branch that invalidates the ordering clears them.
+- An empty axis (no finite element, e.g. an all-NaN shard, or a surplus shard when `count < shardCount`) carries `min = +Infinity` / `max = -Infinity`, so `min > max` is the "no usable bounds" test. NaN centers are EXCLUDED from a box (one bad element must not cost a whole shard its place in the merge); ±Infinity propagates into it.
 
 **Timing**:
 
@@ -182,7 +193,7 @@ The worker uses the same `wasm/` module as the data workers:
 
 - `initWasm()` — loads compiled WASM with automatic TypeScript fallback
 - `isWasmFallback(wasm)` — true when running the TS fallback
-- `wasm.sort_splats_by_depth(centers3, modelView, ordering, count)` — the depth-sort kernel
+- `wasm.sort_splats_by_depth(centers3, modelView, ordering, count, shardCount, shardBoundsMin, shardBoundsMax)` — the depth-sort kernel (the last three are the optional per-shard depth bounds; pass `0` and two empty arrays to skip)
 
 **ndim-agnostic**: Input is always projected 3D centers (geometry-agnostic), so there is no `pickBackend` / 16-dimension routing here — the kernel is unconditional. The data workers route >16D operations to the TS backend; the SortWorker never sees nD data at all (projection happens on the main thread or in the data workers).
 

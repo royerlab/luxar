@@ -232,9 +232,21 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       const tsOrdering = new Uint32Array(size);
       const wasmOrdering = new Uint32Array(size);
 
+      // shardCount 0: benchmark the sort itself, not the optional per-shard
+      // bounds pass (which the unsharded production path also skips).
+      const noBounds = new Float32Array(0);
+
       const tsTime = measureTime(
         () => {
-          tsModule.sort_splats_by_depth(centers3, modelView, tsOrdering, size);
+          tsModule.sort_splats_by_depth(
+            centers3,
+            modelView,
+            tsOrdering,
+            size,
+            0,
+            noBounds,
+            noBounds
+          );
         },
         CONFIG.iterations,
         CONFIG.warmupIterations
@@ -242,7 +254,15 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
 
       const wasmTime = measureTime(
         () => {
-          wasmModule!.sort_splats_by_depth(centers3, modelView, wasmOrdering, size);
+          wasmModule!.sort_splats_by_depth(
+            centers3,
+            modelView,
+            wasmOrdering,
+            size,
+            0,
+            noBounds,
+            noBounds
+          );
         },
         CONFIG.iterations,
         CONFIG.warmupIterations

@@ -211,6 +211,27 @@ interface NodeSortState {
    * reference rather than a copy.
    */
   triangleSource?: Uint32Array;
+  /**
+   * Number of shards the LAST RESOLVED sort reported usable depth bounds for
+   * (cross-node depth ordering — `CROSS_NODE_DEPTH_ORDERING_SPEC.md` §3.3).
+   *
+   * `0` means "merge this node as one whole-node interval": either nothing was
+   * requested, or the kernel took its identity-ordering fallback and the ranges
+   * are storage ranges rather than depth intervals.
+   */
+  shardCount: number;
+  /**
+   * Per-shard LOCAL-space AABB of the elements each shard draws,
+   * `[shardCount * 3]` each; undefined while `shardCount === 0`.
+   *
+   * Local space, not view space, on purpose: the render-order pass re-projects
+   * these every frame, so cross-node shard ordering tracks camera motion
+   * BETWEEN re-sorts instead of going stale under the dispatch hysteresis.
+   * A shard with no finite element on an axis carries `min = +Infinity` /
+   * `max = -Infinity` there, so `min > max` is the "no usable bounds" test.
+   */
+  shardBoundsMin?: Float32Array;
+  shardBoundsMax?: Float32Array;
 }
 
 let worker: Worker | null = null;
@@ -414,6 +435,25 @@ const SORT_WORKER_INIT_RETRY_WAKE_SLACK_MS = 50;
  * live worker; the deadline only trips on a crashed/wedged worker thread.
  */
 const SORT_RPC_TIMEOUT_MS = 30_000;
+
+/**
+ * Shared zero-length stand-in for the kernel's shard-bounds outputs on the
+ * main-thread sort path, which never requests them (`shardCount = 0`).
+ */
+const EMPTY_SHARD_BOUNDS = new Float32Array(0);
+
+/**
+ * How many depth shards this node's next sort should report bounds for.
+ *
+ * The single place the shard-count policy will be read from (spec §4). Until it
+ * lands this is always 0 — no node is sharded, the kernel skips the bounds pass,
+ * and the whole feature is inert. Reads a stamp rather than owning state so the
+ * policy can live where the overlap information is.
+ */
+function requestedShardCount(mesh: THREE.Mesh): number {
+  const requested = (mesh.userData as { depthShardCount?: number }).depthShardCount;
+  return typeof requested === 'number' && requested > 1 ? Math.trunc(requested) : 0;
+}
 
 /**
  * Spawn + initialize the persistent sort worker.
@@ -1104,6 +1144,7 @@ export function noteDepthSortCommit(
       lastSortAxis: null,
       lastSortOffset: 0,
       registered: false,
+      shardCount: 0,
     };
     nodeStates.set(nodeId, state);
   }
@@ -1239,6 +1280,20 @@ function clearSortPose(state: NodeSortState): void {
   state.lastSortOffset = 0;
   state.registered = false;
   state.resortQueued = false;
+  clearShardBounds(state);
+}
+
+/**
+ * Drop a node's per-shard depth bounds.
+ *
+ * Called from every branch that invalidates the ordering they describe, because
+ * a box retained past its permutation would place a shard by where its elements
+ * USED to be — a silent wrong ordering rather than a visible failure.
+ */
+function clearShardBounds(state: NodeSortState): void {
+  state.shardCount = 0;
+  state.shardBoundsMin = undefined;
+  state.shardBoundsMax = undefined;
 }
 
 /**
@@ -1356,7 +1411,18 @@ function trySynchronousFirstSort(
 
   const modelView = computeModelView(mesh, camera);
   const ordering = new Uint32Array(count);
-  sort_splats_by_depth(buffer, new Float32Array(modelView.elements), ordering, count);
+  // No shard bounds on the synchronous first sort: nothing is sharded before
+  // the node has been registered, and this path exists to get SOMETHING drawn
+  // on the first frame as cheaply as possible.
+  sort_splats_by_depth(
+    buffer,
+    new Float32Array(modelView.elements),
+    ordering,
+    count,
+    0,
+    EMPTY_SHARD_BOUNDS,
+    EMPTY_SHARD_BOUNDS
+  );
   if (writeSortedIndexOrderingLive(geometry, ordering, count) !== count) return undefined;
   syncSortElementsRemaining -= count;
   requestRender?.();
@@ -1451,7 +1517,15 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // stays unsorted until the next commit/camera trigger re-sorts it.
   void withTimeout(
     'depth-sort',
-    api.sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) }),
+    api.sort({
+      nodeId,
+      generation,
+      modelView: new Float32Array(modelView.elements),
+      // Request per-shard depth bounds only for a node that is actually
+      // sharded. Until the shard-count policy lands (spec §4) nothing is, so
+      // this is 0 everywhere and the kernel skips the work entirely.
+      shardCount: requestedShardCount(mesh),
+    }),
     SORT_RPC_TIMEOUT_MS
   )
     .then((result) => {
@@ -1479,6 +1553,17 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
         const triangleSource = current.triangleSource;
         const applicable =
           triangleSource !== undefined || !!geometry?.getAttribute?.('aSortedIndex');
+        // Adopt the shard bounds under the SAME generation guard as the
+        // ordering, and only when that ordering will actually be applied —
+        // boxes describing a permutation the node never draws would place its
+        // shards by where their elements were about to be, not where they are.
+        if (applicable && result.shardCount > 0 && result.shardBoundsMin && result.shardBoundsMax) {
+          current.shardCount = result.shardCount;
+          current.shardBoundsMin = result.shardBoundsMin;
+          current.shardBoundsMax = result.shardBoundsMax;
+        } else {
+          clearShardBounds(current);
+        }
         if (applicable) {
           // Ordering upload: 4 bytes/splat through the attribute
           // update-range machinery (the architecture's headline number) on

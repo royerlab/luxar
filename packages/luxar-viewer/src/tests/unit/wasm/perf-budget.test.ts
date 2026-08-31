@@ -200,9 +200,23 @@ describeIfWasm(
       const tsOut = new Uint32Array(SIZE);
       const wasmOut = new Uint32Array(SIZE);
 
+      // shardCount 0 keeps this measuring the SORT, matching the unsharded
+      // production path — the throughput floor below is stated against it.
+      const noBounds = new Float32Array(0);
+
       const r = medianSpeedup(
-        () => tsModule.sort_splats_by_depth(centers3, modelView, tsOut, SIZE),
-        () => wasmModule!.sort_splats_by_depth(centers3, modelView, wasmOut, SIZE)
+        () =>
+          tsModule.sort_splats_by_depth(centers3, modelView, tsOut, SIZE, 0, noBounds, noBounds),
+        () =>
+          wasmModule!.sort_splats_by_depth(
+            centers3,
+            modelView,
+            wasmOut,
+            SIZE,
+            0,
+            noBounds,
+            noBounds
+          )
       );
 
       expect(r.speedup, reportSpeedup('sort_splats_by_depth', r)).toBeGreaterThanOrEqual(
@@ -212,7 +226,17 @@ describeIfWasm(
       const wasmTimes: number[] = [];
       for (let run = 0; run < RUNS; run++) {
         wasmTimes.push(
-          measure(() => wasmModule!.sort_splats_by_depth(centers3, modelView, wasmOut, SIZE))
+          measure(() =>
+            wasmModule!.sort_splats_by_depth(
+              centers3,
+              modelView,
+              wasmOut,
+              SIZE,
+              0,
+              noBounds,
+              noBounds
+            )
+          )
         );
       }
       const medianMs = median(wasmTimes);

@@ -135,6 +135,9 @@ Each registered node gets a `NodeSortState` entry:
   lastSortAxis: Vector3 | null; // Model-space view axis at last DISPATCHED sort
   lastSortOffset: number; // Normalized view-axis offset (m14 / |axis|)
   registered: boolean; // Centers for CURRENT generation dispatched to worker
+  shardCount: number; // Depth shards with usable bounds from the last resolved sort
+  shardBoundsMin?: Float32Array; // Per-shard LOCAL-space AABB minima [shardCount * 3]
+  shardBoundsMax?: Float32Array; // Per-shard LOCAL-space AABB maxima [shardCount * 3]
 }
 ```
 
@@ -142,6 +145,9 @@ Each registered node gets a `NodeSortState` entry:
 
 - `lastSortAxis` / `lastSortOffset` — the pose the last sort was dispatched from; `null` before the first dispatch. The per-frame scheduler compares live poses against these to decide when a re-sort is due.
 - `registered` — true iff centers for the CURRENT generation were dispatched to the worker. Set where the register RPC is issued; cleared on every release branch (empty/commutative commit, mode-switch-away). Used by `evaluateDepthSortPerFrame()` to recover a node whose first dispatch raced a null camera: `registered && lastSortAxis === null` means "worker has centers, no sort ever left" — dispatch one now.
+- `shardCount` / `shardBoundsMin` / `shardBoundsMax` — per-shard depth bounds for CROSS-NODE ordering (`docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md` §3.3). `shardCount === 0` means "merge this node as ONE whole-node interval", which is the state everywhere until the shard-count policy lands. Requested per dispatch via `requestedShardCount(mesh)` — the single place the policy will be read from, currently a `userData.depthShardCount` stamp that nothing sets.
+
+  Two properties worth keeping straight. The boxes are **LOCAL space, not view space**, deliberately: the render-order pass re-projects them every frame, so cross-node shard ordering tracks camera motion BETWEEN re-sorts instead of going stale under the dispatch hysteresis. And they are adopted under the **same generation guard as the ordering**, and cleared by every branch that invalidates it (`clearShardBounds`, called from `clearSortPose`) — a box retained past its permutation would place a shard by where its elements *used to be*, which is a silent wrong ordering rather than a visible failure.
 
 ### Commit Flow (noteDepthSortCommit)
 

@@ -20,6 +20,77 @@ const DEPTH_SORT_BUCKETS = 1 << 16;
 /** Maximum key value as f32 (matches Rust's `DEPTH_KEY_MAX`). */
 const DEPTH_KEY_MAX = Math.fround(DEPTH_SORT_BUCKETS - 1);
 
+/** Stand-in for the shard-bounds outputs when no bounds were requested. */
+const EMPTY_BOUNDS = new Float32Array(0);
+
+/**
+ * Local-space AABB of the elements drawn by each contiguous equal-population
+ * range of `ordering` — the twin of Rust's `write_shard_bounds`. See that
+ * function (and `docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md` §3.3
+ * decision 3) for the rationale.
+ *
+ * Parity here is exact WITHOUT any `Math.fround` work, unlike the depth-key math
+ * below: min/max over f32 values never rounds, so both backends see identical
+ * bytes as long as the comparison SHAPE matches. That shape is load-bearing —
+ * plain `<` / `>` comparisons are false for NaN, so a NaN center is EXCLUDED
+ * from its shard's box rather than poisoning it. `Math.min(NaN, x)` is NaN and
+ * would diverge from Rust's `f32::min`, so do not "simplify" this to Math.min.
+ * ±Infinity, by contrast, compares successfully and so does reach the box.
+ */
+function writeShardBounds(
+  centers3: Float32Array,
+  ordering: Uint32Array,
+  count: number,
+  shardCount: number,
+  shardBoundsMin: Float32Array,
+  shardBoundsMax: Float32Array
+): void {
+  if (shardCount === 0) {
+    return;
+  }
+  for (let i = 0; i < shardCount * 3; i++) {
+    shardBoundsMin[i] = Infinity;
+    shardBoundsMax[i] = -Infinity;
+  }
+  if (count === 0) {
+    return;
+  }
+
+  // Equal-population shards: the same `ceil(count / shardCount)` the main thread
+  // uses to size each shard's draw.
+  const shardSize = Math.ceil(count / shardCount);
+  for (let s = 0; s < shardCount; s++) {
+    const lo = s * shardSize;
+    if (lo >= count) break;
+    const hi = Math.min(lo + shardSize, count);
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (let j = lo; j < hi; j++) {
+      const base = ordering[j] * 3;
+      const x = centers3[base];
+      const y = centers3[base + 1];
+      const z = centers3[base + 2];
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (z < minZ) minZ = z;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      if (z > maxZ) maxZ = z;
+    }
+    const out = s * 3;
+    shardBoundsMin[out] = minX;
+    shardBoundsMin[out + 1] = minY;
+    shardBoundsMin[out + 2] = minZ;
+    shardBoundsMax[out] = maxX;
+    shardBoundsMax[out + 1] = maxY;
+    shardBoundsMax[out + 2] = maxZ;
+  }
+}
+
 /**
  * Sort splats back-to-front by camera-space depth.
  *
@@ -29,16 +100,33 @@ const DEPTH_KEY_MAX = Math.fround(DEPTH_SORT_BUCKETS - 1);
  * @param ordering - Output permutation [count] — `ordering[j]` is the
  *   original splat index drawn at instance slot `j` (slot 0 = farthest)
  * @param count - Number of splats
+ * @param shardCount - Number of contiguous equal-population ranges to report
+ *   bounds for; 0 skips that work and leaves the two arrays untouched
+ * @param shardBoundsMin - Output local-space AABB minima [shardCount * 3]
+ * @param shardBoundsMax - Output local-space AABB maxima [shardCount * 3]
  * @returns Number of splats placed via depth keys, or 0 when the identity
- *   fallback was taken (degenerate depth range — ordering is still written)
+ *   fallback was taken (degenerate depth range — ordering is still written, and
+ *   the shard bounds are still valid boxes of it, but they carry no DEPTH
+ *   meaning, so the caller must not merge them as depth intervals)
  */
 export function sort_splats_by_depth(
   centers3: Float32Array,
   modelView: Float32Array,
   ordering: Uint32Array,
-  count: number
+  count: number,
+  shardCount = 0,
+  shardBoundsMin?: Float32Array,
+  shardBoundsMax?: Float32Array
 ): number {
+  // Both slices are present whenever shardCount > 0 (the WASM signature makes
+  // them required); default to a throwaway so the optional TS arity stays safe.
+  const boundsMin = shardBoundsMin ?? EMPTY_BOUNDS;
+  const boundsMax = shardBoundsMax ?? EMPTY_BOUNDS;
+
   if (count === 0) {
+    // Still stamp the empty-box sentinels: a caller that reads the arrays
+    // without checking the return value must not see a stale previous frame.
+    writeShardBounds(centers3, ordering, 0, shardCount, boundsMin, boundsMax);
     return 0;
   }
 
@@ -78,6 +166,7 @@ export function sort_splats_by_depth(
     for (let j = 0; j < count; j++) {
       ordering[j] = j;
     }
+    writeShardBounds(centers3, ordering, count, shardCount, boundsMin, boundsMax);
     return 0;
   }
 
@@ -117,6 +206,8 @@ export function sort_splats_by_depth(
     ordering[histogram[bucket]] = i;
     histogram[bucket]++;
   }
+
+  writeShardBounds(centers3, ordering, count, shardCount, boundsMin, boundsMax);
 
   return count;
 }

@@ -47,6 +47,31 @@
 //!
 //! This kernel takes already-projected 3D centers (the projection stage's
 //! output), so `validate_ndim` / the 16-dimension cap are not involved.
+//!
+//! ## Per-shard bounds (cross-node depth ordering)
+//!
+//! Optionally the kernel also reports, for each of `shard_count` contiguous
+//! equal-population ranges of the output ordering, the local-space AABB of the
+//! elements that range draws — see
+//! `docs/guides/specs/CROSS_NODE_DEPTH_ORDERING_SPEC.md` §3.3 decision 3. Since
+//! the permutation is already back-to-front, a contiguous range of it is a depth
+//! interval, and the main thread re-projects these boxes every frame to order
+//! shards of DIFFERENT nodes against each other.
+//!
+//! `shard_count == 0` skips the work entirely and leaves the output slices
+//! untouched, so an unsharded node pays nothing.
+//!
+//! Two deliberate choices:
+//!
+//! - **AABBs, not centroid+radius.** `min`/`max` over `f32` involve no rounding
+//!   whatsoever, so the TypeScript twin reproduces these bytes exactly without
+//!   any of the `Math.fround` discipline the depth-key math needs. Centroid and
+//!   radius are derived on the main thread, where there is no parity contract.
+//! - **A separate pass in shard-major order, not accumulation inside pass 3.**
+//!   Walking `ordering` sequentially per shard needs no integer division per
+//!   element and — the reason it is worth a pass — is the SAME code for the
+//!   identity fallback as for a real sort, so there is one behaviour to keep in
+//!   parity instead of two.
 
 use wasm_bindgen::prelude::*;
 
@@ -55,6 +80,99 @@ const DEPTH_SORT_BUCKETS: usize = 1 << 16;
 
 /// Maximum key value (`DEPTH_SORT_BUCKETS - 1` as f32 for normalization).
 const DEPTH_KEY_MAX: f32 = (DEPTH_SORT_BUCKETS - 1) as f32;
+
+/// Local-space AABB of the elements drawn by each contiguous equal-population
+/// range of `ordering`.
+///
+/// `shard_bounds_min` / `shard_bounds_max` are `[shard_count * 3]` (x, y, z per
+/// shard). A shard with no elements — reachable when `count < shard_count` —
+/// keeps the empty-box sentinel (`min = +inf`, `max = -inf`), which the caller
+/// must read as "no usable bounds" rather than as a degenerate point.
+///
+/// Non-finite centers are handled ASYMMETRICALLY, on purpose:
+///
+/// - **NaN is EXCLUDED** from its shard's box. Every comparison against NaN is
+///   false, so it never updates a bound — and that is the behaviour we want: one
+///   bad element among thousands must not poison a whole shard's box and cost it
+///   its place in the depth merge. The NaN element is degenerate in the shader
+///   anyway. A shard whose elements are ALL NaN keeps the empty sentinel, which
+///   the caller already reads as "no usable bounds".
+/// - **±Infinity PROPAGATES**, because those comparisons do succeed, leaving a
+///   non-finite bound that the caller rejects exactly as the render-order pass
+///   already rejects a non-finite bounding sphere.
+///
+/// Both are reachable in normal operation: a NaN view-z keys to the NEAR bucket
+/// (`f32::min(NaN, 65535.0) == 65535`), so a NaN center lands in the LAST shard.
+fn write_shard_bounds(
+    centers3: &[f32],
+    ordering: &[u32],
+    count: usize,
+    shard_count: usize,
+    shard_bounds_min: &mut [f32],
+    shard_bounds_max: &mut [f32],
+) {
+    if shard_count == 0 {
+        return;
+    }
+    for slot in shard_bounds_min.iter_mut().take(shard_count * 3) {
+        *slot = f32::INFINITY;
+    }
+    for slot in shard_bounds_max.iter_mut().take(shard_count * 3) {
+        *slot = f32::NEG_INFINITY;
+    }
+    if count == 0 {
+        return;
+    }
+
+    // Equal-population shards: the same `ceil(count / shard_count)` the main
+    // thread uses to size each shard's draw, so box `s` covers exactly the
+    // elements shard `s` draws.
+    let shard_size = count.div_ceil(shard_count);
+    for s in 0..shard_count {
+        let lo = s * shard_size;
+        if lo >= count {
+            break;
+        }
+        let hi = (lo + shard_size).min(count);
+        let (mut min_x, mut min_y, mut min_z) = (f32::INFINITY, f32::INFINITY, f32::INFINITY);
+        let (mut max_x, mut max_y, mut max_z) =
+            (f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+        for &element in &ordering[lo..hi] {
+            let base = element as usize * 3;
+            let (x, y, z) = (centers3[base], centers3[base + 1], centers3[base + 2]);
+            // Plain comparisons, which are false for NaN — so a NaN center is
+            // EXCLUDED from the box rather than poisoning it (see the fn doc).
+            // `f32::min`/`f32::max` would behave the same here; the explicit form
+            // is kept so the TypeScript twin can mirror it literally, since
+            // `Math.min(NaN, x)` is NaN and would NOT match.
+            if x < min_x {
+                min_x = x;
+            }
+            if y < min_y {
+                min_y = y;
+            }
+            if z < min_z {
+                min_z = z;
+            }
+            if x > max_x {
+                max_x = x;
+            }
+            if y > max_y {
+                max_y = y;
+            }
+            if z > max_z {
+                max_z = z;
+            }
+        }
+        let out = s * 3;
+        shard_bounds_min[out] = min_x;
+        shard_bounds_min[out + 1] = min_y;
+        shard_bounds_min[out + 2] = min_z;
+        shard_bounds_max[out] = max_x;
+        shard_bounds_max[out + 1] = max_y;
+        shard_bounds_max[out + 2] = max_z;
+    }
+}
 
 /// Sort splats back-to-front by camera-space depth.
 ///
@@ -65,17 +183,26 @@ const DEPTH_KEY_MAX: f32 = (DEPTH_SORT_BUCKETS - 1) as f32;
 /// - `ordering`: Output permutation `[count]` — `ordering[j]` is the original
 ///   splat index drawn at instance slot `j` (slot 0 = farthest)
 /// - `count`: Number of splats
+/// - `shard_count`: Number of contiguous equal-population ranges to report
+///   bounds for; `0` skips that work and leaves the two slices untouched
+/// - `shard_bounds_min` / `shard_bounds_max`: Output local-space AABBs
+///   `[shard_count * 3]` — see {@link write_shard_bounds}
 ///
 /// # Returns
 /// Number of splats placed via depth keys, or `0` when the identity
 /// fallback was taken (degenerate depth range — the ordering is still
-/// fully written).
+/// fully written, and the shard bounds are still valid boxes of it, but they
+/// carry no DEPTH meaning, so the caller must not merge them as depth
+/// intervals).
 #[wasm_bindgen]
 pub fn sort_splats_by_depth(
     centers3: &[f32],
     model_view: &[f32],
     ordering: &mut [u32],
     count: usize,
+    shard_count: usize,
+    shard_bounds_min: &mut [f32],
+    shard_bounds_max: &mut [f32],
 ) -> u32 {
     // Undersized buffers are SAFE in release too: the debug_asserts
     // below only add friendlier messages — Rust's slice bounds checks
@@ -99,8 +226,30 @@ pub fn sort_splats_by_depth(
         "model_view too small: {} < 16",
         model_view.len()
     );
+    debug_assert!(
+        shard_bounds_min.len() >= shard_count * 3,
+        "shard_bounds_min too small: {} < {}",
+        shard_bounds_min.len(),
+        shard_count * 3
+    );
+    debug_assert!(
+        shard_bounds_max.len() >= shard_count * 3,
+        "shard_bounds_max too small: {} < {}",
+        shard_bounds_max.len(),
+        shard_count * 3
+    );
 
     if count == 0 {
+        // Still stamp the empty-box sentinels: a caller that reads the slices
+        // without checking the return value must not see a stale previous frame.
+        write_shard_bounds(
+            centers3,
+            ordering,
+            0,
+            shard_count,
+            shard_bounds_min,
+            shard_bounds_max,
+        );
         return 0;
     }
 
@@ -135,6 +284,14 @@ pub fn sort_splats_by_depth(
         for (j, slot) in ordering.iter_mut().enumerate().take(count) {
             *slot = j as u32;
         }
+        write_shard_bounds(
+            centers3,
+            ordering,
+            count,
+            shard_count,
+            shard_bounds_min,
+            shard_bounds_max,
+        );
         return 0;
     }
 
@@ -172,6 +329,15 @@ pub fn sort_splats_by_depth(
         starts[bucket] += 1;
     }
 
+    write_shard_bounds(
+        centers3,
+        ordering,
+        count,
+        shard_count,
+        shard_bounds_min,
+        shard_bounds_max,
+    );
+
     count as u32
 }
 
@@ -202,8 +368,34 @@ mod tests {
     fn sort(zs: &[f32]) -> (Vec<u32>, u32) {
         let centers = centers_with_z(zs);
         let mut ordering = vec![u32::MAX; zs.len()];
-        let sorted = sort_splats_by_depth(&centers, &IDENTITY_MV, &mut ordering, zs.len());
+        let sorted = sort_splats_by_depth(
+            &centers,
+            &IDENTITY_MV,
+            &mut ordering,
+            zs.len(),
+            0,
+            &mut [],
+            &mut [],
+        );
         (ordering, sorted)
+    }
+
+    /// Sort + report per-shard bounds. Returns `(ordering, sorted, min, max)`.
+    fn sort_sharded(zs: &[f32], shard_count: usize) -> (Vec<u32>, u32, Vec<f32>, Vec<f32>) {
+        let centers = centers_with_z(zs);
+        let mut ordering = vec![u32::MAX; zs.len()];
+        let mut min = vec![0.0f32; shard_count * 3];
+        let mut max = vec![0.0f32; shard_count * 3];
+        let sorted = sort_splats_by_depth(
+            &centers,
+            &IDENTITY_MV,
+            &mut ordering,
+            zs.len(),
+            shard_count,
+            &mut min,
+            &mut max,
+        );
+        (ordering, sorted, min, max)
     }
 
     fn assert_is_permutation(ordering: &[u32], count: usize) {
@@ -317,7 +509,7 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let mut ordering: Vec<u32> = vec![];
-        let sorted = sort_splats_by_depth(&[], &IDENTITY_MV, &mut ordering, 0);
+        let sorted = sort_splats_by_depth(&[], &IDENTITY_MV, &mut ordering, 0, 0, &mut [], &mut []);
         assert_eq!(sorted, 0);
     }
 
@@ -381,7 +573,7 @@ mod tests {
         mv[14] = -5.0;
         let centers = centers_with_z(&[2.0, -2.0, 4.0]);
         let mut ordering = vec![u32::MAX; 3];
-        let sorted = sort_splats_by_depth(&centers, &mv, &mut ordering, 3);
+        let sorted = sort_splats_by_depth(&centers, &mv, &mut ordering, 3, 0, &mut [], &mut []);
         assert_eq!(sorted, 3);
         // View z: -3, -7, -1 -> back-to-front: 1, 0, 2.
         assert_eq!(ordering, vec![1, 0, 2]);
@@ -404,9 +596,203 @@ mod tests {
             5.0, 0.0, 0.0, // view z = -5
         ];
         let mut ordering = vec![u32::MAX; 3];
-        let sorted = sort_splats_by_depth(&centers, &mv, &mut ordering, 3);
+        let sorted = sort_splats_by_depth(&centers, &mv, &mut ordering, 3, 0, &mut [], &mut []);
         assert_eq!(sorted, 3);
         assert_eq!(ordering, vec![1, 2, 0]);
+    }
+
+    // ---- per-shard bounds ------------------------------------------------
+
+    #[test]
+    fn test_shard_count_zero_leaves_slices_untouched() {
+        // The unsharded production path must pay nothing and write nothing.
+        let centers = centers_with_z(&[-1.0, -10.0, -5.0, -2.0]);
+        let mut ordering = vec![u32::MAX; 4];
+        let mut min = vec![7.0f32; 3];
+        let mut max = vec![9.0f32; 3];
+        sort_splats_by_depth(
+            &centers,
+            &IDENTITY_MV,
+            &mut ordering,
+            4,
+            0,
+            &mut min,
+            &mut max,
+        );
+        assert_eq!(min, vec![7.0, 7.0, 7.0]);
+        assert_eq!(max, vec![9.0, 9.0, 9.0]);
+    }
+
+    #[test]
+    fn test_shard_bounds_single_shard_is_whole_node_box() {
+        // S == 1 must reproduce the node's own AABB — the self-check that makes
+        // the inert phase non-vacuous. x = index, y = 0, z as given.
+        let zs = [-1.0, -10.0, -5.0, -2.0];
+        let (_, sorted, min, max) = sort_sharded(&zs, 1);
+        assert_eq!(sorted, 4);
+        assert_eq!(min, vec![0.0, 0.0, -10.0]);
+        assert_eq!(max, vec![3.0, 0.0, -1.0]);
+    }
+
+    #[test]
+    fn test_shard_bounds_follow_the_sorted_order_not_storage_order() {
+        // The whole point: box 0 covers the FARTHEST elements, which are not the
+        // first ones in storage. zs = [-1, -10, -5, -2] sorts to [1, 2, 3, 0]
+        // (z -10, -5, -2, -1), so with S = 2 shard 0 draws elements {1, 2}
+        // (x = 1, 2) and shard 1 draws {3, 0} (x = 3, 0).
+        let zs = [-1.0, -10.0, -5.0, -2.0];
+        let (ordering, sorted, min, max) = sort_sharded(&zs, 2);
+        assert_eq!(sorted, 4);
+        assert_eq!(ordering, vec![1, 2, 3, 0]);
+        // Shard 0: x in {1, 2}, z in {-10, -5}.
+        assert_eq!(&min[0..3], &[1.0, 0.0, -10.0]);
+        assert_eq!(&max[0..3], &[2.0, 0.0, -5.0]);
+        // Shard 1: x in {3, 0}, z in {-2, -1}.
+        assert_eq!(&min[3..6], &[0.0, 0.0, -2.0]);
+        assert_eq!(&max[3..6], &[3.0, 0.0, -1.0]);
+    }
+
+    #[test]
+    fn test_shard_bounds_partition_every_element_exactly_once() {
+        // Union of the shard boxes must equal the whole-node box, for a shard
+        // count that does NOT divide the element count evenly (7 / 3 -> 3, 3, 1).
+        let zs = [-1.0, -7.0, -3.0, -5.0, -2.0, -6.0, -4.0];
+        let (_, sorted, min, max) = sort_sharded(&zs, 3);
+        assert_eq!(sorted, 7);
+        let (whole_min, whole_max) = {
+            let (_, _, m, x) = sort_sharded(&zs, 1);
+            (m, x)
+        };
+        for axis in 0..3 {
+            let union_min = (0..3)
+                .map(|s| min[s * 3 + axis])
+                .fold(f32::INFINITY, f32::min);
+            let union_max = (0..3)
+                .map(|s| max[s * 3 + axis])
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert_eq!(union_min, whole_min[axis], "axis {axis} min");
+            assert_eq!(union_max, whole_max[axis], "axis {axis} max");
+        }
+    }
+
+    #[test]
+    fn test_shard_bounds_empty_shard_keeps_sentinel() {
+        // More shards than elements: the tail shards get the empty-box sentinel,
+        // which the caller must read as "no usable bounds".
+        let zs = [-1.0, -2.0];
+        let (_, _, min, max) = sort_sharded(&zs, 5);
+        // shard_size = ceil(2/5) = 1, so shards 0 and 1 are populated.
+        assert!(min[0].is_finite() && min[3].is_finite());
+        for s in 2..5 {
+            assert_eq!(min[s * 3], f32::INFINITY, "shard {s} min sentinel");
+            assert_eq!(max[s * 3], f32::NEG_INFINITY, "shard {s} max sentinel");
+        }
+    }
+
+    #[test]
+    fn test_shard_bounds_written_on_identity_fallback() {
+        // A degenerate depth range returns 0 but still writes valid boxes of the
+        // identity ordering — they simply carry no depth meaning. The caller
+        // keys off the return value, not off box emptiness.
+        let zs = [-4.0, -4.0, -4.0, -4.0];
+        let (ordering, sorted, min, max) = sort_sharded(&zs, 2);
+        assert_eq!(sorted, 0);
+        assert_eq!(ordering, vec![0, 1, 2, 3]);
+        // Identity order, so shard 0 is elements {0, 1} and shard 1 is {2, 3}.
+        assert_eq!(&min[0..3], &[0.0, 0.0, -4.0]);
+        assert_eq!(&max[0..3], &[1.0, 0.0, -4.0]);
+        assert_eq!(&min[3..6], &[2.0, 0.0, -4.0]);
+        assert_eq!(&max[3..6], &[3.0, 0.0, -4.0]);
+    }
+
+    #[test]
+    fn test_shard_bounds_empty_input_stamps_sentinels() {
+        // No elements at all must still clear the slices, so a caller cannot
+        // read a previous frame's boxes.
+        let mut ordering: Vec<u32> = vec![];
+        let mut min = vec![7.0f32; 6];
+        let mut max = vec![9.0f32; 6];
+        let sorted =
+            sort_splats_by_depth(&[], &IDENTITY_MV, &mut ordering, 0, 2, &mut min, &mut max);
+        assert_eq!(sorted, 0);
+        assert_eq!(min, vec![f32::INFINITY; 6]);
+        assert_eq!(max, vec![f32::NEG_INFINITY; 6]);
+    }
+
+    #[test]
+    fn test_shard_bounds_exclude_nan_center_without_poisoning_the_box() {
+        // A NaN view z keys to the NEAR bucket (see
+        // test_nan_center_keys_to_near_bucket), so a NaN center lands in the LAST
+        // shard. That shard's box must stay a valid box of its FINITE elements:
+        // one bad element among thousands must not cost a whole shard its place
+        // in the depth merge.
+        let zs = [f32::NAN, -3.0, -8.0, -6.0];
+        let (ordering, sorted, min, max) = sort_sharded(&zs, 2);
+        assert_eq!(sorted, 4);
+        // Keys: idx2 (zmin) -> 0, idx3 -> mid, idx1 (zmax) and idx0 (NaN) ->
+        // 65535 (stable within the bucket: 0 before 1).
+        assert_eq!(ordering, vec![2, 3, 0, 1]);
+        // Shard 1 draws elements {0 (NaN, x=0), 1 (z=-3, x=1)}. The NaN is
+        // excluded, so the box is exactly element 1's z with both x values.
+        assert_eq!(&min[3..6], &[0.0, 0.0, -3.0]);
+        assert_eq!(&max[3..6], &[1.0, 0.0, -3.0]);
+        assert!(
+            min[5].is_finite() && max[5].is_finite(),
+            "one NaN element must not poison its shard's box"
+        );
+        // Shard 0 is untouched by the NaN.
+        assert_eq!(&min[0..3], &[2.0, 0.0, -8.0]);
+        assert_eq!(&max[0..3], &[3.0, 0.0, -6.0]);
+    }
+
+    #[test]
+    fn test_shard_bounds_all_nan_shard_keeps_sentinel() {
+        // The other half of the NaN contract: when a shard has NO finite element
+        // there is nothing to bound, so it must fall back to the empty sentinel
+        // the caller already reads as "no usable bounds" — not to a garbage box.
+        // Declared finite-first so the two NaNs (both key 65535, stable within
+        // the bucket) end up alone in the last shard. Declaring them first
+        // instead splits one into each shard, which is why the order matters
+        // here: keys are [0, 65535, 65535, 65535] -> ordering [0, 1, 2, 3].
+        let zs = [-8.0, -6.0, f32::NAN, f32::NAN];
+        let (ordering, _, min, max) = sort_sharded(&zs, 2);
+        assert_eq!(ordering, vec![0, 1, 2, 3]);
+        // Shard 0 = elements {0, 1}, both finite.
+        assert_eq!(&min[0..3], &[0.0, 0.0, -8.0]);
+        assert_eq!(&max[0..3], &[1.0, 0.0, -6.0]);
+        // Shard 1 = elements {2, 3}: their x/y ARE finite, so only the z axis
+        // has nothing to bound and keeps its sentinel. The caller's guard rejects
+        // a box with any non-finite bound, so this is still "no usable bounds".
+        assert_eq!(min[5], f32::INFINITY, "all-NaN z keeps the min sentinel");
+        assert_eq!(
+            max[5],
+            f32::NEG_INFINITY,
+            "all-NaN z keeps the max sentinel"
+        );
+        assert!(min[5] > max[5], "an empty axis must read as min > max");
+    }
+
+    #[test]
+    fn test_shard_bounds_propagate_infinite_center() {
+        // Unlike NaN, ±Infinity comparisons DO succeed, so an infinite center
+        // reaches the box and the caller's finite check rejects that shard. The
+        // asymmetry is deliberate and worth pinning.
+        let mut centers = centers_with_z(&[-1.0, -2.0, -3.0, -4.0]);
+        centers[0] = f32::NEG_INFINITY; // element 0's x
+        let mut ordering = vec![u32::MAX; 4];
+        let mut min = vec![0.0f32; 3];
+        let mut max = vec![0.0f32; 3];
+        sort_splats_by_depth(
+            &centers,
+            &IDENTITY_MV,
+            &mut ordering,
+            4,
+            1,
+            &mut min,
+            &mut max,
+        );
+        assert_eq!(min[0], f32::NEG_INFINITY);
+        assert!(!min[0].is_finite());
     }
 
     #[test]
