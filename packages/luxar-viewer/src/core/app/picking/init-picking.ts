@@ -144,6 +144,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   }
 
   let hasAnyLabels = false;
+  let hasAnyLabelIds = false;
   let hasAnyImageLabels = false;
   let hasAnyKeys = false;
   let hasAnyInteraction = false;
@@ -154,7 +155,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
       hasAnyLabels = true;
     }
     if (attrs?.has_label_ids) {
-      hasAnyInteraction = true;
+      hasAnyLabelIds = true;
     }
     if (attrs?.has_image_labels) {
       hasAnyImageLabels = true;
@@ -195,7 +196,14 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
   // those there is no consumer, so skip the pick-mesh/GPU overhead entirely.
   const wantsSelection =
     (ports.hasSelectionConsumer?.() ?? false) || (ports.hasElementActionConsumer?.() ?? false);
-  if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyKeys && !hasAnyInteraction && !wantsSelection) {
+  if (
+    !hasAnyLabels &&
+    !hasAnyLabelIds &&
+    !hasAnyImageLabels &&
+    !hasAnyKeys &&
+    !hasAnyInteraction &&
+    !wantsSelection
+  ) {
     return {
       pickingSystem: undefined,
       labelLoader: undefined,

@@ -236,7 +236,7 @@ export function buildPickResultHandler(
                 indices: result.mainNode.userData.labelIndices,
                 vocabulary: result.mainNode.userData.labelVocabulary,
               },
-              result.storageElementId ?? result.elementId
+              result.storageElementId
             )
           : null;
       const label = loadedLabel ?? (categorical ? `${categorical.name} (${categorical.id})` : null);

@@ -300,6 +300,7 @@ describe('buildPickResultHandler', () => {
     await handle({
       nodeId: 1,
       elementId: 42,
+      storageElementId: 42,
       brightness: 1.0,
       mainNode: part,
       screenX: 0,
@@ -343,6 +344,7 @@ describe('buildPickResultHandler', () => {
     await handle({
       nodeId: 1,
       elementId: 42,
+      storageElementId: 42,
       brightness: 1.0,
       mainNode: part,
       screenX: 0,
@@ -381,6 +383,7 @@ describe('buildPickResultHandler', () => {
     await handle({
       nodeId: 1,
       elementId: 42,
+      storageElementId: 42,
       brightness: 1.0,
       mainNode: leaf,
       screenX: 0,
@@ -416,6 +419,7 @@ describe('buildPickResultHandler', () => {
     await handle({
       nodeId: 1,
       elementId: 7,
+      storageElementId: 7,
       brightness: 1.0,
       mainNode: leaf,
       screenX: 0,
@@ -542,6 +546,7 @@ describe('buildPickResultHandler', () => {
       await handle({
         nodeId: 1,
         elementId: 42,
+        storageElementId: 42,
         brightness: 1.0,
         mainNode: part,
         screenX: 0,
@@ -588,6 +593,7 @@ describe('buildPickResultHandler', () => {
       await handle({
         nodeId: 1,
         elementId: 42,
+        storageElementId: 42,
         brightness: 1.0,
         mainNode: leaf,
         screenX: 0,
@@ -622,6 +628,7 @@ describe('buildPickResultHandler', () => {
       await handle({
         nodeId: 1,
         elementId: 7,
+        storageElementId: 7,
         brightness: 1.0,
         mainNode: leaf,
         screenX: 0,

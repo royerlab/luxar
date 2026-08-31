@@ -1214,6 +1214,7 @@ describe('PickingSystem — stale readback ordering', () => {
     const fakeResult: PickResult = {
       nodeId: id,
       elementId: 7,
+      storageElementId: 7,
       brightness: 1,
       mainNode,
       screenX: 0,

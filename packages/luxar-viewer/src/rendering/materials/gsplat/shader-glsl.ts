@@ -413,17 +413,17 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // operate on the scalar VALUE (here the amplitude) before the LUT
         // lookup, not on the resulting color. See fragment-shader note.
         if (uLabelColorMode == 1 && aLabelIndex > 0.0) {
-        vColor = categoricalColor(aLabelIndex);
+            vColor = categoricalColor(aLabelIndex);
         } else {
-        #ifdef USE_COLORMAP
-        float t = clamp((aAmplitude - uScalarMin) * uScalarScale, 0.0, 1.0);
-        #ifndef LUXAR_GAMMA_ONE
-        t = pow(t, uInvGamma);          // gamma on the value, pre-LUT
-        #endif
-        vColor = texture(uColormapTex, vec2(t, 0.5)).rgb;
-        #else
-        vColor = aColor;
-        #endif
+            #ifdef USE_COLORMAP
+            float t = clamp((aAmplitude - uScalarMin) * uScalarScale, 0.0, 1.0);
+            #ifndef LUXAR_GAMMA_ONE
+            t = pow(t, uInvGamma);          // gamma on the value, pre-LUT
+            #endif
+            vColor = texture(uColormapTex, vec2(t, 0.5)).rgb;
+            #else
+            vColor = aColor;
+            #endif
         }
         // Per-splat opacity rides regardless of color source (in colormap
         // mode an RGBA dataset keeps its alpha; RGB data carries 1.0).

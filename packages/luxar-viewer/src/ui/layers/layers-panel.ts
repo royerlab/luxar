@@ -247,6 +247,7 @@ export class LayersPanel {
       // applyColormap restores the authored colormap (or none) and then
       // recomposes opacity/gamma/intensity/offset/blending via applyComposed.
       this.applyEngine.applyColormap(layer);
+      this.applyEngine.applyLabelStyle(layer);
       // applyMeshAppearance restores the mesh-only shading uniforms (Ambient,
       // Shade falloff, Specular, Shininess, Alpha cutoff) on both the visual and pick materials.
       // These are not composed, so applyComposed never touches them — without
@@ -551,6 +552,7 @@ export class LayersPanel {
     // uniforms, which are not composed.
     this.applyEngine.applyVisibility(path, live.visible);
     this.applyEngine.applyColormap(live);
+    this.applyEngine.applyLabelStyle(live);
     this.applyEngine.applyMeshAppearance(live);
     this.refreshRowVisual(path);
     this.controls.render();

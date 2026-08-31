@@ -80,7 +80,7 @@ export interface PickResult {
    */
   elementId: number;
   /** Visible-buffer storage slot before the on-disk element-id remap. */
-  storageElementId?: number;
+  storageElementId: number;
   /** Brightness weight of the winning vote */
   brightness: number;
   /** Reference to the main scene object */
