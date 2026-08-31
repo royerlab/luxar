@@ -1344,8 +1344,18 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Set the speed of automatic rotation
-   * @param speed - Rotation speed (default 2.0 = 30 seconds per orbit at 60fps)
+   * Set the turntable speed, in REVOLUTIONS PER MINUTE.
+   *
+   * A full turn takes `60 / speed` seconds — 1.0 is one turn a minute, the
+   * 0.25 default is one turn every four minutes. The unit is inherited from
+   * three.js `OrbitControls` and is what `auto_rotate_speed` means in every
+   * authored scene, so it is the stored unit; the Navigation popover shows the
+   * equivalent PERIOD in seconds (see `secondsPerTurnFromRpm`).
+   *
+   * Frame-rate independent: the update step scales by `deltaTime`, so the
+   * turn takes the same wall-clock time at 30 fps and at 144.
+   *
+   * @param speed - Revolutions per minute (> 0).
    */
   setAutoRotateSpeed(speed: number): void {
     this.controls.setAutoRotateSpeed(speed);
@@ -1358,6 +1368,30 @@ export class SceneManager extends THREE.EventDispatcher<{
   setAutoRotateAxis(axis: AutoRotateAxis): void {
     this.controls.setAutoRotateAxis(axis);
     log.custom(LogEmoji.SCENE, Modules.SCENE_MANAGER, `Auto-rotation axis: ${axis}`);
+  }
+
+  /**
+   * Enable/disable the auto-dolly: a sinusoidal in-and-out motion along the
+   * view direction, the turntable's radial sibling. Live in orbit AND ortho
+   * (in 2D it breathes `camera.zoom`).
+   */
+  setAutoDolly(enabled: boolean): void {
+    this.controls.setAutoDolly(enabled);
+    log.custom(
+      LogEmoji.SCENE,
+      Modules.SCENE_MANAGER,
+      `Auto-dolly ${enabled ? 'enabled' : 'disabled'}`
+    );
+  }
+
+  /** Dolly amplitude as a percent of the viewing distance (15 → ±15%). */
+  setAutoDollyAmplitudePercent(percent: number): void {
+    this.controls.setAutoDollyAmplitudePercent(percent);
+  }
+
+  /** Dolly period in seconds (one full in-and-out oscillation). */
+  setAutoDollyPeriod(seconds: number): void {
+    this.controls.setAutoDollyPeriod(seconds);
   }
 
   /** Orbit wheel-zoom speed (live; shared with ortho — same control class). */
@@ -1394,6 +1428,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   getAutoRotate(): boolean {
     return this.controls.getAutoRotate();
+  }
+
+  /** Current auto-dolly state (see {@link setAutoDolly}). */
+  getAutoDolly(): boolean {
+    return this.controls.getAutoDolly();
   }
 
   /** Current turntable axis (see {@link setAutoRotateAxis}). */

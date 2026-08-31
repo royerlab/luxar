@@ -18,6 +18,13 @@ import { describe, it, expect } from 'vitest';
 import type { AppConfig } from '../../../../../config/types';
 import { validateControls } from '../../../../../config/sections/controls/validate';
 import { cloneConfig, invokeValidator } from '../../_fixtures';
+import { config } from '../../../../../config';
+import {
+  DEFAULT_AUTO_DOLLY_AMPLITUDE,
+  DEFAULT_AUTO_DOLLY_PERIOD,
+  dollyAmplitudeFromPercent,
+  dollyAmplitudeToPercent,
+} from '../../../../../controls/types';
 
 /**
  * Path-getters mirroring the source's `ranges` array (validate.ts:10-19).
@@ -25,7 +32,7 @@ import { cloneConfig, invokeValidator } from '../../_fixtures';
  * location. Adding a new range to the source without adding it here will
  * NOT silently regress coverage — the `MAP_COMPLETENESS` test below
  * cross-checks our list against the validator's behaviour by asserting
- * we exercise as many ranges as the source declares (8).
+ * we exercise as many ranges as the source declares (10).
  */
 type RangeRef = {
   name: string;
@@ -66,6 +73,18 @@ const RANGE_REFS: RangeRef[] = [
     name: 'orbit.autoRotate.speed',
     set: (c, r) => {
       c.controls.orbit.autoRotate.speed = r;
+    },
+  },
+  {
+    name: 'orbit.autoDolly.amplitudePercent',
+    set: (c, r) => {
+      c.controls.orbit.autoDolly.amplitudePercent = r;
+    },
+  },
+  {
+    name: 'orbit.autoDolly.period',
+    set: (c, r) => {
+      c.controls.orbit.autoDolly.period = r;
     },
   },
   {
@@ -200,9 +219,9 @@ describe('validateControls', () => {
       expect(hit).toBeDefined();
       errorNames.add(name);
     }
-    // 8 ranges declared in the source — keep the literal expectation
+    // 10 ranges declared in the source — keep the literal expectation
     // so a deletion from the source's ranges array is loud.
-    expect(errorNames.size).toBe(8);
+    expect(errorNames.size).toBe(10);
   });
 
   // [W3-style] After perturbing exactly one range, no OTHER range's
@@ -218,5 +237,33 @@ describe('validateControls', () => {
     for (const { name } of RANGE_REFS.filter((r) => r.name !== 'orbit.zoom.speed')) {
       expect(result.errors.filter((e) => e.includes(`controls.${name}`))).toHaveLength(0);
     }
+  });
+});
+
+/**
+ * The auto-dolly has TWO sources of default: the class's own constructor
+ * fallbacks (`DEFAULT_AUTO_DOLLY_*`, used when no config is passed) and the
+ * slider ranges the UI builds from. The damping factor already has this shape
+ * and guards it with nothing but a "keep aligned" comment; these assertions
+ * make the alignment a gate instead, so a value edited in one place fails the
+ * build rather than producing a slider whose default silently disagrees with
+ * what a bare `new LuxarOrbitControls()` does.
+ */
+describe('auto-dolly defaults agree with the control class', () => {
+  it('amplitude: config percent matches DEFAULT_AUTO_DOLLY_AMPLITUDE', () => {
+    expect(
+      dollyAmplitudeFromPercent(config.controls.orbit.autoDolly.amplitudePercent.default)
+    ).toBeCloseTo(DEFAULT_AUTO_DOLLY_AMPLITUDE, 12);
+  });
+
+  it('period: config default matches DEFAULT_AUTO_DOLLY_PERIOD', () => {
+    expect(config.controls.orbit.autoDolly.period.default).toBe(DEFAULT_AUTO_DOLLY_PERIOD);
+  });
+
+  it('the class default sits inside the slider range it will be shown on', () => {
+    const range = config.controls.orbit.autoDolly.amplitudePercent;
+    const asPercent = dollyAmplitudeToPercent(DEFAULT_AUTO_DOLLY_AMPLITUDE);
+    expect(asPercent).toBeGreaterThanOrEqual(range.min);
+    expect(asPercent).toBeLessThanOrEqual(range.max);
   });
 });

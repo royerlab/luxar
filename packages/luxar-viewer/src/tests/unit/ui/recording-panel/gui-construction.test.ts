@@ -206,10 +206,13 @@ describe('buildRecordingGUI', () => {
     expect(deps.getTurntableInfo).toHaveBeenCalled();
   });
 
-  it('Speed onChange writes turntableSpeed and refreshes the read-only info display', () => {
+  it('Turn Duration onChange converts to deg/s and refreshes the read-only info', () => {
+    // The row is a DURATION (matching every other timing control in the
+    // viewer) while `RecordingOptions.turntableSpeed` keeps the degrees per
+    // second the capture strategies and saved presets expect: 4 s → 90 °/s.
     const { byName, deps, options } = build();
     deps.getTurntableInfo.mockClear();
-    byName('Speed (°/s)')!._onChange!(90);
+    byName('Turn Duration (s)')!._onChange!(4);
     expect(options.turntableSpeed).toBe(90);
     expect(deps.getTurntableInfo).toHaveBeenCalled();
     // updateTurntableInfo() re-renders the 'Output' display controller.

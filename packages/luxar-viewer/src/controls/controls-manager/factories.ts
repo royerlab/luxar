@@ -14,6 +14,7 @@ import { LuxarFlyControls } from '../luxar-fly-controls';
 import { config } from '../../config';
 import type { LuxarCamera } from '../../utils/camera-utils';
 import type { ControlsManagerConfig } from '../controls-manager';
+import { dollyAmplitudeFromPercent } from '../types';
 
 /**
  * The narrow view of `ControlsManager` state each control factory reads:
@@ -80,6 +81,12 @@ export function createOrbitControls(ctx: ControlsCreationCtx): LuxarOrbitControl
     autoRotateAxis: ctx.config.autoRotateAxis,
     zoomSpeed: ctx.config.orbitZoomSpeed,
     dampingFactor: ctx.config.orbitDampingFactor,
+    autoDolly: ctx.config.autoDolly || false,
+    autoDollyAmplitude: dollyAmplitudeFromPercent(
+      ctx.config.autoDollyAmplitudePercent ??
+        config.controls.orbit.autoDolly.amplitudePercent.default
+    ),
+    autoDollyPeriod: ctx.config.autoDollyPeriod ?? config.controls.orbit.autoDolly.period.default,
     minDistance: minDist,
     maxDistance: maxDist,
   });
@@ -151,6 +158,15 @@ export function createOrthoControls(ctx: ControlsCreationCtx): LuxarOrbitControl
     autoRotate: ctx.config.autoRotate || false,
     autoRotateSpeed: ctx.config.autoRotateSpeed || 0.25,
     autoRotateAxis: ctx.config.autoRotateAxis,
+    // The auto-dolly, unlike the turntable, is NOT inert here: it is gated on
+    // `enableZoom`, and zoom is exactly what "closer" means in 2D. It
+    // modulates `camera.zoom` through the same `applyZoomScale` seam.
+    autoDolly: ctx.config.autoDolly || false,
+    autoDollyAmplitude: dollyAmplitudeFromPercent(
+      ctx.config.autoDollyAmplitudePercent ??
+        config.controls.orbit.autoDolly.amplitudePercent.default
+    ),
+    autoDollyPeriod: ctx.config.autoDollyPeriod ?? config.controls.orbit.autoDolly.period.default,
     // Same feel knobs as orbit — ortho is the same class, and the live
     // setOrbitZoomSpeed/-DampingFactor setters mutate whichever is current,
     // so construction must match to avoid feel-flips on mode switch.

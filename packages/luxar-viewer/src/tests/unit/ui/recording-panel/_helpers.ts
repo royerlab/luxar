@@ -63,10 +63,18 @@ export function createMockSceneManager(): any {
         Object.assign(Object.create(LuxarOrbitControls.prototype), {
           target: { x: 0, y: 0, z: 0, clone: vi.fn().mockReturnValue({ x: 0, y: 0, z: 0 }) },
           applyOrbitRotation: vi.fn(),
+          applyOrbitDolly: vi.fn(),
+          // Off by default, matching the shipped default — a turntable test
+          // that wants the baked dolly turns it on explicitly.
+          autoDolly: false,
+          autoDollyAmplitude: 0.15,
+          autoDollyPeriod: 10,
         })
       ),
       getAutoRotate: vi.fn().mockReturnValue(false),
       setAutoRotate: vi.fn(),
+      getAutoDolly: vi.fn().mockReturnValue(false),
+      setAutoDolly: vi.fn(),
     },
     setAdaptivePixelRatio: vi.fn(),
   };

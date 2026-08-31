@@ -589,5 +589,44 @@ describe('VideoRecordingStrategy', () => {
       frameCallback();
       expect(controls.applyOrbitRotation).toHaveBeenCalled();
     });
+
+    it('drives the dolly from the SAME progress as the rotation when it is on', () => {
+      // Absolute phase from `progress` (not an accumulated increment) so a
+      // dropped frame cannot leave the oscillation out of step with the turn.
+      const session = (panel as any).session;
+      const controls = mockSceneManager.controls.getControls();
+      controls.autoDolly = true;
+      controls.autoDollyPeriod = 1;
+      (panel as any).videoRecordingStrategy.startTurntableRotationForTests(
+        (panel as any).options,
+        session
+      );
+
+      const registration = mockAnimController.addPerFrameCallback.mock.calls.find(
+        (c: unknown[]) => c[0] === 'recording-turntable'
+      );
+      const frameCallback = registration[1] as () => void;
+
+      frameCallback();
+      expect(controls.applyOrbitDolly).toHaveBeenCalled();
+      const phase = controls.applyOrbitDolly.mock.calls[0][0] as number;
+      expect(phase).toBeGreaterThanOrEqual(0);
+      controls.autoDolly = false;
+    });
+
+    it('leaves the dolly untouched when the user has it switched off', () => {
+      const session = (panel as any).session;
+      const controls = mockSceneManager.controls.getControls();
+      (panel as any).videoRecordingStrategy.startTurntableRotationForTests(
+        (panel as any).options,
+        session
+      );
+
+      const registration = mockAnimController.addPerFrameCallback.mock.calls.find(
+        (c: unknown[]) => c[0] === 'recording-turntable'
+      );
+      (registration[1] as () => void)();
+      expect(controls.applyOrbitDolly).not.toHaveBeenCalled();
+    });
   });
 });

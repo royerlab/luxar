@@ -250,6 +250,17 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
     defaults.adaptiveDPREnabled
   );
   merged.cinematicMode = booleanOrDefault(merged.cinematicMode, defaults.cinematicMode);
+  merged.autoDolly = booleanOrDefault(merged.autoDolly, defaults.autoDolly);
+  // Bound to the slider's own range: a hand-edited amplitude of 900% would
+  // fling the camera through the subject on every cycle, and a non-positive
+  // period would divide by zero in the phase advance.
+  merged.autoDollyAmplitudePercent = clampOrDefault(
+    merged.autoDollyAmplitudePercent,
+    defaults.autoDollyAmplitudePercent,
+    config.controls.orbit.autoDolly.amplitudePercent.min,
+    config.controls.orbit.autoDolly.amplitudePercent.max
+  );
+  merged.autoDollyPeriod = positiveOrDefault(merged.autoDollyPeriod, defaults.autoDollyPeriod);
 
   // Enum validation — replace invalid strings with default
   if (!VALID_TONE_MAPPINGS.includes(merged.toneMapping)) {

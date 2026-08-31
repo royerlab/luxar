@@ -185,6 +185,7 @@ export class VideoRecordingStrategy implements CaptureStrategy {
             this.animationController.removePerFrameCallback(this.turntableCallbackId);
             session.cleanupSyncListener();
             session.restoreAutoRotate();
+            session.restoreAutoDolly();
             session.restoreRecordingState();
             this.cleanupCaptureStream();
           };
@@ -266,6 +267,7 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       this.animationController.removePerFrameCallback(this.turntableCallbackId);
       session.cleanupSyncListener();
       session.restoreAutoRotate();
+      session.restoreAutoDolly();
       session.restoreRecordingState();
       session.isRecording = false;
       session.hideRecordingIndicator();
@@ -319,8 +321,18 @@ export class VideoRecordingStrategy implements CaptureStrategy {
 
     // Pause auto-rotation so it doesn't compound with the turntable.
     session.pauseAutoRotate();
+    // Same for the auto-dolly, which the turntable drives itself below so the
+    // recorded oscillation lands a whole number of cycles on the turn.
+    const dollyActive = controls.autoDolly;
+    session.pauseAutoDolly();
 
     const totalDuration = (360 / opts.turntableSpeed) * 1000;
+    // Whole cycles over the turn, so the clip loops (see the offline
+    // strategy's note — same rounding, same reason).
+    const dollyCycles =
+      dollyActive && controls.autoDollyPeriod > 0
+        ? Math.max(1, Math.round(totalDuration / 1000 / controls.autoDollyPeriod))
+        : 0;
     const startTime = Date.now();
 
     log.info(
@@ -344,6 +356,10 @@ export class VideoRecordingStrategy implements CaptureStrategy {
         lastProgress = progress;
 
         controls.applyOrbitRotation(deltaAngle);
+        // Absolute phase from the same `progress` the rotation uses, so the
+        // dolly cannot drift out of step with the turn even if frames are
+        // dropped.
+        if (dollyCycles > 0) controls.applyOrbitDolly(2 * Math.PI * dollyCycles * progress);
 
         if (progress >= 1) {
           turntableDone = true;

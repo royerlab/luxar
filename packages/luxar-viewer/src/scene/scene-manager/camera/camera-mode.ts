@@ -64,6 +64,8 @@ export function setControlType(type: ControlType, ctx: CameraModeCtx): { cameraC
   const hasOrtho = isOrthographicCamera(ctx.getCamera());
   const cameraChanged = needsOrtho !== hasOrtho;
 
+  if (cameraChanged) ctx.controls.returnAutoDollyToBaseline();
+
   if (needsOrtho && !hasOrtho) {
     swapToOrthographic(ctx);
   } else if (!needsOrtho && hasOrtho) {

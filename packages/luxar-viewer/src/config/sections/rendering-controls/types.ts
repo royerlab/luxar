@@ -56,6 +56,20 @@ export interface RenderingSettings {
    */
   autoRotateAxis: AutoRotateAxis;
   /**
+   * Auto-dolly: oscillate the viewing distance on a sine — the turntable's
+   * radial sibling. Unlike the turntable it is alive in ortho too, where it
+   * breathes `camera.zoom`.
+   */
+  autoDolly: boolean;
+  /**
+   * Peak dolly swing as a PERCENT of the viewing distance (15 → ±15%), which
+   * is what the slider shows. The control itself holds the fraction; see
+   * `dollyAmplitudeFromPercent` in `controls/types.ts`.
+   */
+  autoDollyAmplitudePercent: number;
+  /** Seconds per full dolly oscillation. */
+  autoDollyPeriod: number;
+  /**
    * "Natural drag" — swap LEFT ↔ RIGHT mouse buttons in orbit mode so a
    * one-finger touchpad drag rotates (and two-finger / right-drag pans).
    * Defaults to true on macOS. Orbit (3D) only; ortho and fly modes ignore.

@@ -94,7 +94,7 @@ export function restoreCameraState(ctx: CameraStateCtx): void {
     // (important: the constructor initialized with target=(0,0,0), which is wrong)
     ctx.currentControls.target.copy(ctx.savedTarget);
     ctx.currentControls.reinitialize();
-    ctx.currentControls.update();
+    ctx.currentControls.update(0);
   }
   // Fly controls automatically initialize from current camera state
 }

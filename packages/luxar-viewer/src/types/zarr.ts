@@ -124,6 +124,11 @@ export interface ZarrViewerConfig {
   auto_rotate_speed?: number;
   /** Turntable axis: a camera-frame axis or a fixed scene axis; see `AutoRotateAxis`. */
   auto_rotate_axis?: string;
+  auto_dolly?: boolean;
+  /** Peak dolly swing as a percent of the viewing distance (15 → ±15%). */
+  auto_dolly_amplitude_percent?: number;
+  /** Seconds per full dolly oscillation. */
+  auto_dolly_period?: number;
   natural_drag?: boolean;
 
   // Cinematic

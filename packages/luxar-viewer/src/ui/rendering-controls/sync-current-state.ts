@@ -16,7 +16,7 @@ import type { RenderingSettings } from '../../config';
 import { config } from '../../config';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { RenderingControllers } from './types';
-import { isOrbitControls } from '../../controls/types';
+import { dollyAmplitudeToPercent, isOrbitControls } from '../../controls/types';
 
 export interface SyncCurrentStateContext {
   gui: GUI;
@@ -72,6 +72,13 @@ export function syncCurrentState(context: SyncCurrentStateContext): void {
     settings.autoRotate = controls.autoRotate;
     settings.autoRotateSpeed = controls.autoRotateSpeed;
     settings.autoRotateAxis = controls.autoRotateAxis;
+    settings.autoDolly = controls.autoDolly;
+    // The control holds a fraction, the setting a percent — see
+    // `dollyAmplitudeToPercent`. Ortho is the same class and carries these
+    // fields too, so a visit to 2D reads back real values rather than
+    // overwriting the user's choice with defaults.
+    settings.autoDollyAmplitudePercent = dollyAmplitudeToPercent(controls.autoDollyAmplitude);
+    settings.autoDollyPeriod = controls.autoDollyPeriod;
   }
   // naturalDrag is persisted at the ControlsManager level (not the active
   // controls instance, so it survives mode switches).

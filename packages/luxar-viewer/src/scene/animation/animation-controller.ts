@@ -647,8 +647,10 @@ export class AnimationController {
    * @returns True if animation should continue regardless of user interaction
    */
   private shouldContinueAnimating(): boolean {
-    // Check if auto-rotate can move the camera in the active control mode
-    const autoRotate = this.controls.isAutoRotateActive();
+    // Check if auto-rotate or the auto-dolly can move the camera in the
+    // active control mode (the dolly is also alive in ortho, where the
+    // turntable is not).
+    const autoCamera = this.controls.isAutoRotateActive() || this.controls.isAutoDollyActive();
 
     // Check if any post-processing effects need continuous updates
     const hasEffects = this.postProcessing.needsContinuousAnimation();
@@ -659,7 +661,7 @@ export class AnimationController {
       (entry) => entry.continuous
     );
 
-    return autoRotate || hasEffects || hasContinuousCallbacks;
+    return autoCamera || hasEffects || hasContinuousCallbacks;
   }
 
   /**

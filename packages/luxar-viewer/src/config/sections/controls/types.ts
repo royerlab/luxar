@@ -41,6 +41,16 @@ export interface OrbitControlsConfig {
   autoRotate: {
     speed: ConfigRange;
   };
+  /**
+   * Auto-dolly (sinusoidal back-and-forth) slider ranges. `amplitudePercent`
+   * is a peak swing as a PERCENT of the orbit distance and `period` is seconds
+   * per full oscillation; the defaults must match `DEFAULT_AUTO_DOLLY_*` in
+   * `controls/types.ts`, which a unit test enforces.
+   */
+  autoDolly: {
+    amplitudePercent: ConfigRange;
+    period: ConfigRange;
+  };
   zoom: {
     minDistance: number;
     maxDistance: number;
