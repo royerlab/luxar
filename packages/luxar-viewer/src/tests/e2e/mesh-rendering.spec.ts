@@ -228,18 +228,15 @@ test.describe('Mesh rendering', () => {
     // inverted cutout, or a shade term collapsing to zero — satisfies every test above
     // and renders a blank canvas.
     //
-    // Read through `getElementPixelStats`, NOT by drawing the canvas into a 2D context:
-    // with `preserveDrawingBuffer: false` Chromium may clear the WebGL drawing buffer
-    // after compositing, so the hand-rolled version returns all-zero pixels for a
-    // perfectly good render. `helpers.ts` documents that trap; this test hit it on the
-    // first run and the Playwright screenshot is what disambiguated a real blank frame
-    // from a bad readback.
-    await page.goto(`/?src=${MESH}&debug`);
+    // Read through `getElementPixelStats`, which explicitly captures the post-processed
+    // renderer framebuffer. A hand-rolled 2D-context readback can see a cleared WebGL
+    // drawing buffer when `preserveDrawingBuffer` is false.
+    await page.goto(`/?src=${MESH}&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitForMeshCommitted(page, 4);
     await renderOnce(page);
 
-    const stats = await getElementPixelStats(page, 'canvas', 10);
+    const stats = await getElementPixelStats(page, 'canvas#app', 10, 'framebuffer');
     const litFraction = stats.nonBlackPixels / (stats.width * stats.height);
     expect(
       stats.nonBlackPixels,
@@ -258,7 +255,7 @@ test.describe('Mesh rendering', () => {
   test('flying into a mesh fades it out smoothly instead of clipping (#1431)', async ({ page }) => {
     // Mesh was the one geometry type with no `perspectiveNearFade`: a triangle
     // clipped hard against the near plane while the other three faded. This pins the
-    // fixed behaviour where it is observable — in composited pixels, through the
+    // fixed behaviour where it is observable — in framebuffer pixels, through the
     // production material, on a mesh that came out of the writer.
     //
     // The approach fly-in is driven by SCALING `uNearCull` rather than by moving the
@@ -333,7 +330,7 @@ test.describe('Mesh rendering', () => {
       }, value);
 
     const meanChannel = async (): Promise<number> => {
-      const frame = await captureCanvasRGBA(page);
+      const frame = await captureCanvasRGBA(page, 'canvas#app', 'framebuffer');
       let sum = 0;
       for (let i = 0; i < frame.rgba.length; i += 4) {
         sum += frame.rgba[i] + frame.rgba[i + 1] + frame.rgba[i + 2];

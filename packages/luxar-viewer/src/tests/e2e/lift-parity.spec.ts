@@ -203,7 +203,7 @@ function toLinear(v: number): number {
 const COVERAGE_FLOOR = toLinear(1);
 
 /**
- * How long the canvas gets to become screenshot-ready, for ONE measurement.
+ * How long the canvas gets to become ready for ONE framebuffer measurement.
  *
  * The global `actionTimeout` is 10 s, and the first measurement after a
  * blending-mode switch follows a program recompile / TSL rebuild across all
@@ -211,14 +211,11 @@ const COVERAGE_FLOOR = toLinear(1);
  * longer than that while the renderer holds the main thread — the element is
  * visible by every CSS measure the whole time.
  *
- * `cellLuminances` passes this to BOTH of its waits, and the SCREENSHOT is the
- * stricter one: `locator.screenshot()` is an action, so it runs its own
- * actionability check — Visible AND Stable, i.e. two consecutive animation
- * frames with an unchanged box — on `actionTimeout`. Budgeting only the
- * `waitFor` buys nothing, because that one clears on the first scheduling gap
- * and the screenshot then burns its un-raised 10 s waiting for two clean
- * frames: the same false failure, which has nothing to do with what this spec
- * measures.
+ * `cellLuminances` passes this to the helper's explicit visibility wait. Once
+ * the canvas is ready, `renderToImageData()` and the PNG readback run inside an
+ * unbounded `element.evaluate`; they remain bounded by the test timeout rather
+ * than this readiness budget. This constant therefore protects only the
+ * scheduling-sensitive canvas-readiness step.
  */
 const CANVAS_READY_TIMEOUT = 30000;
 
@@ -327,11 +324,14 @@ async function cellLuminances(page: Page, centres: Cell[]): Promise<Map<string, 
   // order today, so a bare `canvas` locator's `.first()` picks the right one by
   // accident — if the control rail ever moved ahead of `#app` this spec would
   // silently screenshot the hidden one.
-  const canvas = page.locator('canvas#app');
-  // Both of these need the budget, and the screenshot — Visible AND Stable —
-  // is the stricter of the two; see CANVAS_READY_TIMEOUT.
-  await canvas.waitFor({ state: 'visible', timeout: CANVAS_READY_TIMEOUT });
-  const png = await captureElementScreenshot(page, 'canvas#app', CANVAS_READY_TIMEOUT);
+  // The helper uses this as a readiness budget before the framebuffer capture;
+  // the render/readback itself remains bounded by the test timeout.
+  const png = await captureElementScreenshot(
+    page,
+    'canvas#app',
+    'framebuffer',
+    CANVAS_READY_TIMEOUT
+  );
   const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
 
   const measured = await page.evaluate(

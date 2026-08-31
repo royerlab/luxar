@@ -35,7 +35,7 @@ test.describe('Lines visual correctness', () => {
     // pixels from the line body. Exact brightness is left to a synthetic
     // single-line fixture and screenshot baseline; this test asserts the
     // documented formula produces positive visible intensity.
-    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.luxar.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.luxar.zarr&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
@@ -45,7 +45,7 @@ test.describe('Lines visual correctness', () => {
       const y = 0.4 + Math.floor(i / 3) * 0.1;
       offsets.push([x, y]);
     }
-    const samples = await samplePixelsAt(page, 'canvas', offsets);
+    const samples = await samplePixelsAt(page, 'canvas#app', offsets, 'framebuffer');
     const anyVisible = samples.some((p) => p.r + p.g + p.b > 10);
     expect(anyVisible).toBe(true);
   });
@@ -54,7 +54,7 @@ test.describe('Lines visual correctness', () => {
     // The line shader degenerates segments where both endpoints fall
     // behind uNearCull and clamps screen-space pixel width so a single
     // near-camera segment cannot paint the entire viewport.
-    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.luxar.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_lines.luxar.zarr&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
@@ -117,7 +117,12 @@ test.describe('Lines visual correctness', () => {
     for (let i = 0; i < 9; i++) {
       CENTRAL.push([0.4 + (i % 3) * 0.1, 0.4 + Math.floor(i / 3) * 0.1]);
     }
-    const allSamples = await samplePixelsAt(page, 'canvas', [...CORNERS, ...CENTRAL]);
+    const allSamples = await samplePixelsAt(
+      page,
+      'canvas#app',
+      [...CORNERS, ...CENTRAL],
+      'framebuffer'
+    );
     const samples = allSamples.slice(0, CORNERS.length);
     const centralSamples = allSamples.slice(CORNERS.length);
     // Printed on every run, pass or fail: BOTH halves of the predicate are only

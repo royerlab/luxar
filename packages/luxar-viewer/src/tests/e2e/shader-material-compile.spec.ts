@@ -54,7 +54,7 @@ const VISIBLE_PIXEL_THRESHOLD = 10;
 test.describe('browser-real shader compile + pixel smoke', () => {
   for (const v of VARIANTS) {
     test(`${v.name}: compiles + renders non-black pixels`, async ({ page }) => {
-      await page.goto(`/?src=${FIXTURES_BASE}/${v.src}&debug`);
+      await page.goto(`/?src=${FIXTURES_BASE}/${v.src}&debug&dpr=1`);
       await waitForLuxarReady(page);
       await waitForDataLoaded(page);
       await waitForRenderStable(page);
@@ -64,9 +64,14 @@ test.describe('browser-real shader compile + pixel smoke', () => {
 
       // (2) Some canvas pixel has rendered output. Whole-canvas stats avoid
       //     missing thin lines or small splat clusters between sparse sample
-      //     points, while the helper suppresses DOM chrome before capture.
+      //     points, while the framebuffer route excludes DOM chrome from capture.
       if (v.expectColored) {
-        const stats = await getElementPixelStats(page, 'canvas', VISIBLE_PIXEL_THRESHOLD);
+        const stats = await getElementPixelStats(
+          page,
+          'canvas#app',
+          VISIBLE_PIXEL_THRESHOLD,
+          'framebuffer'
+        );
         expect(
           stats.nonBlackPixels > 0,
           `Variant '${v.name}': no canvas pixels exceeded RGB-sum threshold ` +
