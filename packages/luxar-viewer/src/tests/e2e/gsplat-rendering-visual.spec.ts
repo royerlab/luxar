@@ -64,7 +64,7 @@ test.describe('GSplats visual correctness', () => {
       chromeCanvas.width = 120;
       chromeCanvas.height = 12;
       chromeCanvas.style.cssText =
-        'position: fixed; left: 0; top: 0; width: 120px; height: 12px; z-index: 9999';
+        'position: fixed; left: 0; top: 0; width: 120px; height: 12px; z-index: 9999; visibility: visible !important';
       const context = chromeCanvas.getContext('2d')!;
       context.fillStyle = '#fff';
       context.fillRect(0, 0, chromeCanvas.width, chromeCanvas.height);
