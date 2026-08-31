@@ -1893,6 +1893,80 @@ export interface ElementPixelStats {
   brightest: SampledPixel;
 }
 
+/** Normalized element region, with every edge in `[0, 1]`. */
+export interface ElementPixelRegion {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * Project the visible bounds of selected geometry types through the live camera.
+ * The returned normalized rectangle can be passed to {@link getElementPixelStats}
+ * so DOM chrome elsewhere in the canvas crop cannot satisfy a render assertion.
+ */
+export async function getProjectedGeometryRegion(
+  page: Page,
+  nodeTypes: readonly string[],
+  padding = 0.02
+): Promise<ElementPixelRegion> {
+  return await page.evaluate(
+    ({ wantedTypes, regionPadding }) => {
+      const debug = (window as unknown as { __luxarDebug?: Record<string, any> }).__luxarDebug;
+      const scene = debug?.scene;
+      const camera = debug?.camera ?? debug?.app?.sceneManager?.camera;
+      if (!scene || !camera) throw new Error('getProjectedGeometryRegion: debug scene unavailable');
+
+      scene.updateMatrixWorld(true);
+      camera.updateMatrixWorld(true);
+      const wanted = new Set(wantedTypes);
+      const probe = camera.position.clone();
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      let matched = 0;
+
+      scene.traverse((object: any) => {
+        if (!object.visible || !wanted.has(object.userData?.nodeType)) return;
+        const geometry = object.geometry;
+        if (!geometry) return;
+        if (!geometry.boundingBox) geometry.computeBoundingBox?.();
+        const box = geometry.boundingBox?.clone();
+        if (!box || box.isEmpty()) return;
+        box.applyMatrix4(object.matrixWorld);
+        matched++;
+        for (const x of [box.min.x, box.max.x]) {
+          for (const y of [box.min.y, box.max.y]) {
+            for (const z of [box.min.z, box.max.z]) {
+              probe.set(x, y, z).project(camera);
+              minX = Math.min(minX, probe.x);
+              maxX = Math.max(maxX, probe.x);
+              minY = Math.min(minY, probe.y);
+              maxY = Math.max(maxY, probe.y);
+            }
+          }
+        }
+      });
+
+      if (matched === 0) {
+        throw new Error(
+          `getProjectedGeometryRegion: no visible geometry for ${wantedTypes.join(', ')}`
+        );
+      }
+
+      return {
+        left: Math.max(0, minX * 0.5 + 0.5 - regionPadding),
+        right: Math.min(1, maxX * 0.5 + 0.5 + regionPadding),
+        top: Math.max(0, 1 - (maxY * 0.5 + 0.5) - regionPadding),
+        bottom: Math.min(1, 1 - (minY * 0.5 + 0.5) + regionPadding),
+      };
+    },
+    { wantedTypes: [...nodeTypes], regionPadding: padding }
+  );
+}
+
 /**
  * Read pixels from a rendered element at fractional coordinates in
  * `[0,1]`. Returns RGBA byte values from the *visible screenshot*.
@@ -2032,12 +2106,13 @@ export async function samplePixelsAt(
 export async function getElementPixelStats(
   page: Page,
   selector: string,
-  threshold = 10
+  threshold = 10,
+  region?: ElementPixelRegion
 ): Promise<ElementPixelStats> {
   const dataUrl = await captureElementScreenshotDataUrl(page, selector);
 
   return await page.evaluate(
-    async ({ url, cutoff }) => {
+    async ({ url, cutoff, normalizedRegion }) => {
       const img = new Image();
       img.decoding = 'sync';
       const loaded = new Promise<void>((resolve, reject) => {
@@ -2060,7 +2135,23 @@ export async function getElementPixelStats(
       if (!ctx) throw new Error('getElementPixelStats: 2D context unavailable');
       ctx.drawImage(img, 0, 0);
 
-      const pixels = ctx.getImageData(0, 0, width, height).data;
+      const left = normalizedRegion ? Math.floor(normalizedRegion.left * width) : 0;
+      const top = normalizedRegion ? Math.floor(normalizedRegion.top * height) : 0;
+      const right = normalizedRegion ? Math.ceil(normalizedRegion.right * width) : width;
+      const bottom = normalizedRegion ? Math.ceil(normalizedRegion.bottom * height) : height;
+      const regionWidth = Math.max(0, Math.min(width, right) - Math.max(0, left));
+      const regionHeight = Math.max(0, Math.min(height, bottom) - Math.max(0, top));
+      if (regionWidth === 0 || regionHeight === 0) {
+        throw new Error(
+          `getElementPixelStats: empty measurement region ${regionWidth}x${regionHeight}`
+        );
+      }
+      const pixels = ctx.getImageData(
+        Math.max(0, left),
+        Math.max(0, top),
+        regionWidth,
+        regionHeight
+      ).data;
       let nonBlackPixels = 0;
       let brightest = { r: 0, g: 0, b: 0, a: 0 };
       let brightestSum = -1;
@@ -2078,9 +2169,15 @@ export async function getElementPixelStats(
         }
       }
 
-      return { width, height, threshold: cutoff, nonBlackPixels, brightest };
+      return {
+        width: regionWidth,
+        height: regionHeight,
+        threshold: cutoff,
+        nonBlackPixels,
+        brightest,
+      };
     },
-    { url: dataUrl, cutoff: threshold }
+    { url: dataUrl, cutoff: threshold, normalizedRegion: region }
   );
 }
 

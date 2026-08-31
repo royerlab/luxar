@@ -21,6 +21,7 @@ import {
   waitForDataLoaded,
   assertNoShaderErrors,
   getElementPixelStats,
+  getProjectedGeometryRegion,
   waitForRenderStable,
 } from './helpers';
 
@@ -31,6 +32,7 @@ interface Variant {
   src: string;
   /** When true, assert center pixel has non-zero alpha + RGB sum > 10. */
   expectColored: boolean;
+  nodeType: string;
 }
 
 /**
@@ -42,11 +44,26 @@ interface Variant {
  */
 const VARIANTS: Variant[] = [
   // Points: colormap (4D scalar fixture exercises USE_COLORMAP).
-  { name: 'Point colormap', src: 'test_4d_scalar_lut.luxar.zarr', expectColored: true },
+  {
+    name: 'Point colormap',
+    src: 'test_4d_scalar_lut.luxar.zarr',
+    expectColored: true,
+    nodeType: 'points',
+  },
   // Lines: direct colors.
-  { name: 'Line direct color', src: 'test_lines.luxar.zarr', expectColored: true },
+  {
+    name: 'Line direct color',
+    src: 'test_lines.luxar.zarr',
+    expectColored: true,
+    nodeType: 'lines',
+  },
   // GSplats: direct color (gsplats use aAmplitude as colormap source).
-  { name: 'GSplat direct color', src: 'test_gsplats.luxar.zarr', expectColored: true },
+  {
+    name: 'GSplat direct color',
+    src: 'test_gsplats.luxar.zarr',
+    expectColored: true,
+    nodeType: 'gsplats',
+  },
 ];
 
 const VISIBLE_PIXEL_THRESHOLD = 10;
@@ -62,11 +79,11 @@ test.describe('browser-real shader compile + pixel smoke', () => {
       // (1) No shader/GLSL/attribute/uniform errors.
       await assertNoShaderErrors(page);
 
-      // (2) Some pixel on the canvas has rendered output. Use whole-canvas
-      //     screenshot stats instead of sparse grid sampling: thin lines and
-      //     small splat clusters can easily fall between fixed sample points.
+      // (2) Some pixel inside the projected geometry bounds has rendered output.
+      //     The canvas screenshot also contains DOM chrome painted above it.
       if (v.expectColored) {
-        const stats = await getElementPixelStats(page, 'canvas', VISIBLE_PIXEL_THRESHOLD);
+        const region = await getProjectedGeometryRegion(page, [v.nodeType]);
+        const stats = await getElementPixelStats(page, 'canvas', VISIBLE_PIXEL_THRESHOLD, region);
         expect(
           stats.nonBlackPixels > 0,
           `Variant '${v.name}': no canvas pixels exceeded RGB-sum threshold ` +
