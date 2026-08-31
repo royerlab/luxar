@@ -34,6 +34,15 @@ _N = np.array(
     dtype=np.float32,
 )
 
+_KTX2_IDENTIFIER = b"\xabKTX 20\xbb\r\n\x1a\n"
+
+
+def _ktx2_bytes(supercompression_scheme: int) -> bytes:
+    payload = bytearray(64)
+    payload[: len(_KTX2_IDENTIFIER)] = _KTX2_IDENTIFIER
+    payload[44:48] = supercompression_scheme.to_bytes(4, "little")
+    return bytes(payload)
+
 
 def _write(tmp_path, name="m", **kwargs):
     """Write one mesh into a fresh scene and return the store path."""
@@ -3318,9 +3327,11 @@ def test_ktx2_encoder_defaults_to_uastc_and_preserves_rgba_input(
     seen = {}
 
     def fake_run(command, **kwargs):
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, "", "toktx v4.4.2\n")
         seen["command"] = command
         seen["source"] = Path(command[-1]).read_bytes()
-        Path(command[-2]).write_bytes(b"ktx2")
+        Path(command[-2]).write_bytes(_ktx2_bytes(2))
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
@@ -3328,7 +3339,7 @@ def test_ktx2_encoder_defaults_to_uastc_and_preserves_rgba_input(
     rgba = np.zeros((2, 3, 4), dtype=np.uint8)
     rgba[..., 3] = [[0, 64, 255], [255, 64, 0]]
     encoded = texture_writer._encode_ktx2(rgba, "uastc", None, "srgb")
-    assert bytes(encoded) == b"ktx2"
+    assert bytes(encoded) == _ktx2_bytes(2)
     assert seen["command"][1:8] == [
         "--t2",
         "--genmipmap",
@@ -3352,8 +3363,10 @@ def test_ktx2_encoder_writes_rgb_as_binary_ppm(monkeypatch) -> None:
     seen = {}
 
     def fake_run(command, **kwargs):
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, "toktx 4.4.2\n", "")
         seen["source"] = Path(command[-1]).read_bytes()
-        Path(command[-2]).write_bytes(b"ktx2")
+        Path(command[-2]).write_bytes(_ktx2_bytes(2))
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
@@ -3363,6 +3376,81 @@ def test_ktx2_encoder_writes_rgb_as_binary_ppm(monkeypatch) -> None:
     header, pixels = seen["source"].split(b"255\n", 1)
     assert header == b"P6\n3 2\n"
     assert np.array_equal(np.frombuffer(pixels, dtype=np.uint8).reshape(rgb.shape), rgb)
+
+
+def test_ktx2_encoder_uses_supported_etc1s_spelling(monkeypatch) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, "", "toktx v4.0.0\n")
+        seen["command"] = command
+        Path(command[-2]).write_bytes(_ktx2_bytes(1))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
+    texture_writer._encode_ktx2(
+        np.zeros((2, 2, 3), dtype=np.uint8), "etc1s", 128, "srgb"
+    )
+    assert seen["command"][3:5] == ["--encode", "etc1s"]
+
+
+def test_ktx2_encoder_rejects_old_toktx_with_actionable_version(monkeypatch) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, "", "toktx v3.2.1\n")
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match=r"toktx 4\.0\.0 or newer.*3\.2\.1"):
+        texture_writer._encode_ktx2(
+            np.zeros((2, 2, 3), dtype=np.uint8), "uastc", None, "srgb"
+        )
+
+
+@pytest.mark.parametrize(
+    "mode,scheme",
+    [("etc1s", 0), ("uastc", 1)],
+    ids=["etc1s_not_basis_lz", "uastc_not_zstandard"],
+)
+def test_ktx2_encoder_rejects_wrong_supercompression_scheme(
+    monkeypatch, mode, scheme
+) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    def fake_run(command, **kwargs):
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, "toktx v4.4.2\n", "")
+        Path(command[-2]).write_bytes(_ktx2_bytes(scheme))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match=rf"toktx.*{mode}.*supercompression"):
+        texture_writer._encode_ktx2(
+            np.zeros((2, 2, 3), dtype=np.uint8), mode, None, "srgb"
+        )
+
+
+def test_ktx2_encoder_rejects_malformed_output(monkeypatch) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    def fake_run(command, **kwargs):
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, "toktx v4.4.2\n", "")
+        Path(command[-2]).write_bytes(b"ktx2")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match=r"toktx.*valid KTX2 header"):
+        texture_writer._encode_ktx2(
+            np.zeros((2, 2, 3), dtype=np.uint8), "uastc", None, "srgb"
+        )
 
 
 def test_ktx2_encoder_missing_binary_has_actionable_fallback(monkeypatch) -> None:
