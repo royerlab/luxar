@@ -86,6 +86,36 @@ function deriveScalarRangeFromDescendants(node: SceneNode): [number, number] | u
   return best;
 }
 
+type LabelVocabulary = Array<{ id: string; name: string }>;
+
+function labelVocabularyFromAttrs(node: SceneNode): LabelVocabulary | undefined {
+  const vocabulary = node.attrs.label_vocabulary as Record<string, string> | undefined;
+  return vocabulary ? Object.entries(vocabulary).map(([id, name]) => ({ id, name })) : undefined;
+}
+
+function deriveLabelVocabularyFromDescendants(node: SceneNode): LabelVocabulary | undefined {
+  const gsplatDescendants = collectDataDescendants(node).filter(
+    (descendant) => descendant.type === 'gsplats'
+  );
+  if (gsplatDescendants.length === 0) return undefined;
+
+  const first = labelVocabularyFromAttrs(gsplatDescendants[0]);
+  if (!first) return undefined;
+  for (const descendant of gsplatDescendants.slice(1)) {
+    const candidate = labelVocabularyFromAttrs(descendant);
+    if (
+      !candidate ||
+      candidate.length !== first.length ||
+      candidate.some(
+        (entry, index) => entry.id !== first[index].id || entry.name !== first[index].name
+      )
+    ) {
+      return undefined;
+    }
+  }
+  return first;
+}
+
 /** Direct element-colour or texture range stamped on this node. */
 function directColorRange(node: SceneNode): [number, number] | undefined {
   return (node.attrs.color_data_range || node.attrs.texture_data_range) as
@@ -355,8 +385,8 @@ export interface LayerInfo {
   labelVocabulary?: Array<{ id: string; name: string }>;
   /** Render deterministic categorical colours instead of authored RGB. */
   colorByLabel: boolean;
-  /** Compact 1-based class selection; 0 shows all classes. */
-  labelFilterIndex: number;
+  /** Exact class id selection; undefined shows all classes. */
+  labelFilterId?: string;
   /** Scalar data range for colormap normalization */
   scalarDataRange?: [number, number];
   /**
@@ -521,11 +551,8 @@ export class LayerStateManager {
           groupCanUseInheritedColormap || !!node.attrs.has_scalars || !!colormap;
         const colormapScalarRange =
           scalarRange || ampRange || deriveScalarRangeFromDescendants(node);
-        const rawLabelVocabulary = node.attrs.label_vocabulary as
-          Record<string, string> | undefined;
-        const labelVocabulary = rawLabelVocabulary
-          ? Object.entries(rawLabelVocabulary).map(([id, name]) => ({ id, name }))
-          : undefined;
+        const labelVocabulary =
+          labelVocabularyFromAttrs(node) || deriveLabelVocabularyFromDescendants(node);
 
         // The window the layer starts at. Colormapped layers window a scalar
         // (from this node or, for a composite kind=lod / kind=partition group,
@@ -703,7 +730,7 @@ export class LayerStateManager {
           supportsColormap,
           labelVocabulary,
           colorByLabel: false,
-          labelFilterIndex: 0,
+          labelFilterId: undefined,
           scalarDataRange: colormapScalarRange,
           colorDataRange,
           scalarWindow,

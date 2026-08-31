@@ -535,9 +535,9 @@ export class LayerControls {
       for (const layer of this.deps.state.getSelected()) this.deps.apply.applyLabelStyle(layer);
     });
     this.events.on(this.labelFilterSelect, 'change', () => {
-      const index = Number(this.labelFilterSelect!.value);
+      const id = this.labelFilterSelect!.value || undefined;
       this.deps.state.applyToSelected((layer) => {
-        layer.labelFilterIndex = index;
+        layer.labelFilterId = id;
       });
       for (const layer of this.deps.state.getSelected()) this.deps.apply.applyLabelStyle(layer);
     });
@@ -701,13 +701,11 @@ export class LayerControls {
       if (vocabulary?.length) {
         this.labelColorSelect.value = primary.colorByLabel ? 'categorical' : 'authored';
         this.labelFilterSelect.innerHTML = '';
-        this.labelFilterSelect.append(new Option('all classes', '0'));
-        vocabulary.forEach((entry, index) => {
-          this.labelFilterSelect!.append(
-            new Option(`${entry.name} (${entry.id})`, String(index + 1))
-          );
+        this.labelFilterSelect.append(new Option('all classes', ''));
+        vocabulary.forEach((entry) => {
+          this.labelFilterSelect!.append(new Option(`${entry.name} (${entry.id})`, entry.id));
         });
-        this.labelFilterSelect.value = String(primary.labelFilterIndex);
+        this.labelFilterSelect.value = primary.labelFilterId ?? '';
       }
     }
 

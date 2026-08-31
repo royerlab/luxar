@@ -638,13 +638,17 @@ export class LayerApplyEngine {
       if (!obj) continue;
       const mat = this.getLeafMaterial(obj);
       if (!mat?.updateLabelStyle) continue;
-      mat.updateLabelStyle(layer.colorByLabel, layer.labelFilterIndex);
+      const vocabulary = leaf.attrs.label_vocabulary as Record<string, string> | undefined;
+      const labelFilterIndex = layer.labelFilterId
+        ? Object.keys(vocabulary ?? {}).indexOf(layer.labelFilterId) + 1
+        : 0;
+      mat.updateLabelStyle(layer.colorByLabel, labelFilterIndex);
       applied = true;
       const pickMaterial = (obj.userData.pickNode as THREE.Mesh | undefined)?.material;
       if (pickMaterial && !Array.isArray(pickMaterial) && 'updateLabelFilter' in pickMaterial) {
         (
           pickMaterial as THREE.Material & { updateLabelFilter(index: number): void }
-        ).updateLabelFilter(layer.labelFilterIndex);
+        ).updateLabelFilter(labelFilterIndex);
         pickDirty = true;
       }
     }

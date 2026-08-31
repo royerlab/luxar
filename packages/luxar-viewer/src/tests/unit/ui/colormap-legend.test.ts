@@ -57,7 +57,7 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     supportsColormap: true,
     scalarWindow: true,
     colorByLabel: false,
-    labelFilterIndex: 0,
+    labelFilterId: undefined,
     ...overrides,
   };
 }

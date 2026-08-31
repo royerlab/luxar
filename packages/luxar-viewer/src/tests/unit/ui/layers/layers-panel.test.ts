@@ -1838,13 +1838,80 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     panel.initFromScene(rootGroup, makeLayeredSceneGraph('gsplats'));
     const layer = panel.layerState.getLayer('/cloud')!;
     layer.colorByLabel = true;
-    layer.labelFilterIndex = 2;
+    layer.labelFilterId = '7';
     const updateLabelStyle = material.updateLabelStyle as ReturnType<typeof vi.fn>;
     updateLabelStyle.mockClear();
 
     panel.resetAllLayers();
 
     expect(updateLabelStyle).toHaveBeenCalledWith(false, 0);
+    panel.dispose();
+  });
+
+  it('resolves a selected exact label id independently for each selected layer', () => {
+    const firstMaterial = makeColormapRoutingStub();
+    const secondMaterial = makeColormapRoutingStub();
+    const rootGroup = new THREE.Group();
+    for (const [path, material] of [
+      ['/first', firstMaterial],
+      ['/second', secondMaterial],
+    ] as const) {
+      const mesh = new THREE.Mesh(
+        new THREE.BufferGeometry(),
+        material as unknown as THREE.Material
+      );
+      mesh.name = path;
+      mesh.userData.nodeType = 'gsplats';
+      rootGroup.add(mesh);
+    }
+    const graph: SceneNode = {
+      path: '/',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: '/first',
+          type: 'gsplats',
+          attrs: {
+            layer: true,
+            label_vocabulary: { '7': 'cell', '9007199254740993': 'artifact' },
+          },
+          hasSpatialIndex: true,
+        },
+        {
+          path: '/second',
+          type: 'gsplats',
+          attrs: {
+            layer: true,
+            label_vocabulary: {
+              '3': 'background',
+              '7': 'cell',
+              '9007199254740993': 'artifact',
+            },
+          },
+          hasSpatialIndex: true,
+        },
+      ],
+    };
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.layerState.select('/first', 'single');
+    panel.layerState.select('/second', 'add');
+    const classesGroup = Array.from(
+      container.querySelectorAll<HTMLElement>('.luxar-layers-panel__control-group')
+    ).find(
+      (group) =>
+        group.querySelector('.luxar-layers-panel__control-label')?.textContent === 'Classes'
+    )!;
+    const filter = classesGroup.querySelectorAll<HTMLSelectElement>('select')[1];
+    filter.value = '9007199254740993';
+    filter.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(firstMaterial.updateLabelStyle).toHaveBeenLastCalledWith(false, 2);
+    expect(secondMaterial.updateLabelStyle).toHaveBeenLastCalledWith(false, 3);
+    expect(panel.layerState.getLayer('/first')!.labelFilterId).toBe('9007199254740993');
+    expect(panel.layerState.getLayer('/second')!.labelFilterId).toBe('9007199254740993');
     panel.dispose();
   });
 
@@ -3416,7 +3483,7 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     // Drag the layer away from its authored state.
     panel.layerState.setGamma('/layer0', 2.5);
     panel.layerState.getLayer('/layer0')!.colorByLabel = true;
-    panel.layerState.getLayer('/layer0')!.labelFilterIndex = 2;
+    panel.layerState.getLayer('/layer0')!.labelFilterId = '7';
     updateGamma.mockClear();
     updateIntensity.mockClear();
 
