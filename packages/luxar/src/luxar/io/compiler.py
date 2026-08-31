@@ -905,7 +905,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 ``colormap`` — a mesh has one base-colour source.
             texture_encoding: ``raw`` | ``png`` | ``webp`` | ``jpeg`` | ``ktx2``.
                 KTX2 accepts uint8 RGB/RGBA input and requires the Khronos
-                ``toktx`` executable. HDR requires ``raw``.
+                ``toktx`` executable, version 4.1.0 or newer. HDR requires
+                ``raw``.
             texture_ktx2_mode: ``uastc`` (default) or ``etc1s``.
             texture_ktx2_quality: Codec quality; defaults to 2 for UASTC and 128
                 for ETC1S.
