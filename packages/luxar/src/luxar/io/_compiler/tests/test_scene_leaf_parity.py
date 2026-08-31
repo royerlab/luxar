@@ -132,13 +132,15 @@ def test_public_writer_accepts_label_id_sequences(tmp_path: Path) -> None:
             centers=centers,
             amplitudes=amplitudes,
             cholesky_factors=cholesky,
-            label_ids=[0] * len(centers),
-            label_vocabulary={0: "zero"},
+            label_ids=[300] * len(centers),
+            label_vocabulary={300: "class-300"},
         )
 
     group = zarr.open_group(str(scene_path), mode="r")["g"]
-    np.testing.assert_array_equal(group["label_ids"][:], [0])
-    assert group.attrs["label_vocabulary"] == {"0": "zero"}
+    np.testing.assert_array_equal(group["label_ids"][:], [300])
+    assert group["label_ids"].dtype == np.uint16
+    assert group["label_ids"].attrs["encoding"]["name"] == "broadcasted"
+    assert group.attrs["label_vocabulary"] == {"300": "class-300"}
 
 
 def test_standalone_leaf_matches_scene_leaf_under_the_centers_sigma_rail():

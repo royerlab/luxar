@@ -392,6 +392,25 @@ class TestSaveGsplats:
         )
         assert loaded.label_vocabulary == vocabulary
 
+    def test_constant_label_ids_use_smallest_unsigned_dtype(
+        self, tmp_path: Path
+    ) -> None:
+        label_ids = np.full(8, 300, dtype=np.int64)
+        data = GSplatData(
+            **create_test_splats_3d(8),
+            label_ids=label_ids,
+            label_vocabulary={300: "class-300"},
+        )
+
+        path = tmp_path / "constant-labels.gsplats.zarr"
+        data.save(path, ordering="none")
+
+        root = zarr.open_group(str(path), mode="r")
+        assert root["label_ids"].dtype == np.uint16
+        assert root["label_ids"].attrs["encoding"]["name"] == "broadcasted"
+        loaded = GSplatData.load(path)
+        np.testing.assert_array_equal(loaded.label_ids, label_ids)
+
     def test_load_rejects_label_ids_missing_from_vocabulary(
         self, tmp_path: Path
     ) -> None:

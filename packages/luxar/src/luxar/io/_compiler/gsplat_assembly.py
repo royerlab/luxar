@@ -793,6 +793,16 @@ def _write_label_channel(
 ) -> dict[str, Any]:
     if label_ids is None:
         return {}
+    max_label_id = int(label_ids.max())
+    if max_label_id <= np.iinfo(np.uint8).max:
+        label_dtype = np.uint8
+    elif max_label_id <= np.iinfo(np.uint16).max:
+        label_dtype = np.uint16
+    elif max_label_id <= np.iinfo(np.uint32).max:
+        label_dtype = np.uint32
+    else:
+        label_dtype = np.uint64
+    label_ids = label_ids.astype(label_dtype, copy=False)
     chunks = calculate_intelligent_chunks(
         label_ids.shape,
         spatial_index_data=ordering_data,
