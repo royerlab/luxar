@@ -98,6 +98,11 @@ function buildGSplatsParams(
   // is known: catches an RGBA array whose producer forgot to declare
   // colorComponents (see assertColorLayout).
   assertColorLayout(data.colors, data.splatCount, data.colorComponents ?? 3, 'buildGSplatsParams');
+  if (data.labelIndices && data.labelIndices.length !== data.splatCount) {
+    throw new Error(
+      `[buildGSplatsParams] labelIndices length ${data.labelIndices.length} does not match splat count ${data.splatCount}`
+    );
+  }
   return {
     positions: data.positions,
     choleskyFactors: data.choleskyFactors,

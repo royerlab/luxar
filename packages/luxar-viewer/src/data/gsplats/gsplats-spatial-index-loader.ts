@@ -20,7 +20,7 @@ import type {
   SplatRange,
 } from '../../types/gsplats';
 import type { SceneNode } from '../data-loader-types';
-import type { GSplatLabelChannel } from './label-channel';
+import { compactGSplatLabelIds, type GSplatLabelChannel } from './label-channel';
 import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
@@ -208,6 +208,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   // Data accumulator for object pooling.
   private _accumulator: GSplatsDataAccumulator | null = null;
+  private _labelIndicesScratch = new Uint32Array(0);
   /** Color layout of this dataset: 3 (RGB) or 4 (RGBA, alpha = per-splat opacity). */
   private colorComponents: 3 | 4 = 3;
 
@@ -1056,41 +1057,59 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       throw new Error('[GSplatsLoader] has_label_ids requires label_vocabulary');
     }
 
-    const output = new Uint32Array(ranges.reduce((sum, range) => sum + range.end - range.start, 0));
-    const compactById = new Map(
-      Object.keys(vocabulary).map((id, index) => [id, index + 1] as const)
-    );
+    const expectedLength = ranges.reduce((sum, range) => sum + range.end - range.start, 0);
+    let output: Uint32Array;
+    if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
+      if (this._labelIndicesScratch.length < expectedLength) {
+        this._labelIndicesScratch = new Uint32Array(expectedLength);
+      }
+      output = this._labelIndicesScratch.subarray(0, expectedLength);
+    } else {
+      output = new Uint32Array(expectedLength);
+    }
     const isBroadcast = array.shape[0] === 1;
     const reads = isBroadcast ? [{ start: 0, end: 1 }] : ranges;
     const chunks = await Promise.all(
       reads.map((range) =>
-        zarr.readArray(array, [zarr.slice(range.start, range.end)], {
-          signal: this._activeSignal ?? undefined,
-        })
+        zarr.readArray(
+          array,
+          [zarr.slice(range.start, range.end)],
+          zarr.abortOptions(this._activeSignal)
+        )
       )
     );
-    let offset = 0;
-    const writeId = (raw: number | bigint): void => {
-      const id = typeof raw === 'bigint' ? raw.toString() : String(raw);
-      const compact = compactById.get(id);
-      if (compact === undefined) {
-        throw new Error(`GSplats label id ${id} is missing from label_vocabulary`);
-      }
-      output[offset++] = compact;
-    };
+    let labelVocabulary: GSplatLabelChannel['vocabulary'];
     if (isBroadcast) {
-      const value = (chunks[0].data as ArrayLike<number | bigint>)[0];
-      while (offset < output.length) writeId(value);
+      const values = chunks[0].data as Uint8Array | Uint16Array | Uint32Array | BigUint64Array;
+      if (values.length !== 1) {
+        throw new Error(`[GSplatsLoader] broadcast label_ids length ${values.length}, expected 1`);
+      }
+      const compacted = compactGSplatLabelIds(values, vocabulary);
+      output.fill(compacted.indices[0]);
+      labelVocabulary = compacted.vocabulary;
     } else {
+      let offset = 0;
       for (const chunk of chunks) {
-        const values = chunk.data as ArrayLike<number | bigint>;
-        for (let index = 0; index < values.length; index++) writeId(values[index]);
+        const values = chunk.data as Uint8Array | Uint16Array | Uint32Array | BigUint64Array;
+        if (offset + values.length > expectedLength) {
+          throw new Error(`[GSplatsLoader] label_ids length exceeds expected ${expectedLength}`);
+        }
+        const compacted = compactGSplatLabelIds(
+          values,
+          vocabulary,
+          output.subarray(offset, offset + values.length)
+        );
+        labelVocabulary = compacted.vocabulary;
+        offset += values.length;
+      }
+      if (offset !== expectedLength) {
+        throw new Error(`[GSplatsLoader] label_ids length ${offset}, expected ${expectedLength}`);
       }
     }
     recordLoadMetrics(this.facadeCtx, 'label_ids', output.length, output);
     return {
       indices: output,
-      vocabulary: Object.entries(vocabulary).map(([id, name]) => ({ id, name })),
+      vocabulary: labelVocabulary!,
     };
   }
 

@@ -26,6 +26,12 @@ describe('GSplats categorical label channel', () => {
     ).toEqual([3, 1]);
   });
 
+  it('fails loudly when projection references a missing source label', () => {
+    expect(() =>
+      projectGSplatLabelIndices(new Uint32Array([1, 2]), new Uint32Array([2]), 1)
+    ).toThrow(/source index 2.*2 label indices/);
+  });
+
   it('fails loudly when the vocabulary cannot interpret an id', () => {
     expect(() => compactGSplatLabelIds(new Uint8Array([4]), { '3': 'three' })).toThrow(
       /label id 4.*label_vocabulary/
