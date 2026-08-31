@@ -109,7 +109,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `perf-timestamp` | flag | Opt into GPU timestamp queries (WebGPU only, `timestamp-query` feature). Small runtime cost; intended for the perf bench. |
 | `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
 | `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). |
-| `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). For deterministic E2E/visual runs. |
+| `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
 | `lineJoin` | `none` \| `miter` | Force the line join style for the session — **applies only to `linePrimitive=screen-space`**. The default capsule primitive partitions every interior joint along its bisector unconditionally, so this parameter (and each node's authored `join` attribute) is a no-op there. |
 | `linePrimitive` | `capsule` \| `screen-space` | Select the line rendering primitive (#1352). Default **`capsule`**: a gaussian-like profile of the 2D point-to-segment distance — stable round discs end-on, seamless bisector-partitioned joints, quad-class cost. `screen-space` is the classic quad — the lean path for very large line scenes. With no URL override, the **`Settings → Advanced → Line primitive`** policy decides: `Auto` (default) builds the capsule, except line nodes whose effective segment load (authored count × a rendered-width factor) reaches 2 M, which build the quad; `Capsule`/`Quad` force one primitive everywhere. `?linePrimitive=` overrides the policy for the session. |
 
@@ -524,6 +524,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Cinematic | `cinematic_mode`, `vignette_enabled`, `chromatic_lens_distortion_enabled` |
 | Detector noise | `detector_noise_enabled`, `detector_noise_readout_sigma`, `detector_noise_photon_gain` |
 | Anti-aliasing | `fxaa_enabled`, `msaa_enabled`, `ssaa_enabled` |
+| Performance | `adaptive_dpr_enabled`, `allow_high_dpr` |
 | Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
@@ -560,6 +561,9 @@ valid ranges.
 - Reduce anti-aliasing quality (disable SSAA, switch to FXAA).
 - Disable bloom and lower anti-aliasing quality in the rendering panel.
 - Adaptive resolution automatically lowers pixel density during interaction.
+- Check **Allow High DPR** in the Performance panel is off (it is by default).
+  On a HiDPI display it costs four times the pixels, which is rarely worth it
+  for points, splats and lines.
 
 **Camera feels stuck or wrong**
 - Press **F** to recenter the camera on the scene bounding box.

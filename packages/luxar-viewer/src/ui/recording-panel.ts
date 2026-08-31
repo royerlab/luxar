@@ -12,6 +12,7 @@ import type { SceneManager } from '../scene/scene-manager';
 import type { AnimationController } from '../scene/animation/animation-controller';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
+import { getMaxPixelRatio } from '../rendering/pixel-ratio-cap';
 import type { OverlayManager } from './overlay-manager';
 import { generateFilename as generateFilenamePure } from './recording-panel/media-utilities';
 import {
@@ -68,7 +69,9 @@ export class RecordingPanel {
   private options: RecordingOptions = {
     outputFormat: 'webp',
     imageQuality: 0.92,
-    maxDPR: true,
+    // Seeded here from the ceiling in force at construction, and
+    // re-seeded whenever the panel is (re)built — see gui-construction.
+    captureDPR: getMaxPixelRatio(),
     transparentBackground: false,
     videoDurationLimit: 60,
     videoFPS: 30,

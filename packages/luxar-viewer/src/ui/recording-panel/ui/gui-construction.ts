@@ -12,6 +12,7 @@
  */
 
 import GUI, { type Controller } from '../../gui';
+import { getMaxPixelRatio, getNativePixelRatio } from '../../../rendering/pixel-ratio-cap';
 import type {
   OutputFormat,
   RecordingMode,
@@ -84,9 +85,13 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
   const imgSettings = {
     format: deps.options.outputFormat,
     quality: deps.options.imageQuality,
-    maxDPR: deps.options.maxDPR,
+    // Re-seeded from the LIVE ceiling on every panel build, so flipping
+    // Allow High DPR in the Performance popover moves the capture
+    // default with it rather than stranding a stale number here.
+    captureDPR: getMaxPixelRatio(),
     transparentBg: deps.options.transparentBackground,
   };
+  deps.options.captureDPR = imgSettings.captureDPR;
 
   const formatCtrl = root
     .add(imgSettings, 'format', {
@@ -262,16 +267,26 @@ export function buildRecordingGUI(deps: BuildGUIDeps): BuildGUIResult {
     .closest('.luxar-gui__controller')
     ?.setAttribute('title', 'Composite text/image/HTML overlays into the capture');
 
-  const maxDPRCtrl = advanced
-    .add(imgSettings, 'maxDPR')
-    .name('Max Resolution')
-    .onChange((val: boolean) => {
-      deps.options.maxDPR = val;
+  const captureDPRCtrl = advanced
+    .add(imgSettings, 'captureDPR', 0.25, getNativePixelRatio(), 0.25)
+    .name('Capture DPR')
+    .onChange((val: number) => {
+      deps.options.captureDPR = val;
     });
-  maxDPRCtrl.domElement
+  captureDPRCtrl.domElement
     .closest('.luxar-gui__controller')
-    ?.setAttribute('title', 'Maximize pixel ratio for highest resolution screenshot');
-  imageControllers.push(maxDPRCtrl);
+    ?.setAttribute(
+      'title',
+      'Capture DPR: pixel ratio used to render screenshots and videos\n' +
+        `• Default ${getMaxPixelRatio().toFixed(2)} = what is on screen, so the export matches ` +
+        'what you see\n' +
+        `• Your display supports up to ${getNativePixelRatio().toFixed(2)} — raise this for a ` +
+        'higher-resolution export\n' +
+        '• Above the on-screen value the export is not a pure upscale: very thin lines and\n' +
+        '  very small points have a minimum size in DEVICE pixels, so they come out\n' +
+        '  relatively thinner and sharper than on screen'
+    );
+  imageControllers.push(captureDPRCtrl);
 
   // Video codec selector (turntable/offline only — the real-time Video
   // mode always emits WebM via MediaRecorder and ignores this).

@@ -19,6 +19,11 @@ import {
   captureLabelForMode,
 } from '../../../../ui/recording-panel/ui/gui-construction';
 import type { RecordingMode, RecordingOptions } from '../../../../ui/recording-panel/types';
+import {
+  DEFAULT_MAX_PIXEL_RATIO,
+  getMaxPixelRatio,
+  setMaxPixelRatioCap,
+} from '../../../../rendering/pixel-ratio-cap';
 
 interface FakeController {
   _name: string;
@@ -87,7 +92,7 @@ function makeOptions(overrides: Partial<RecordingOptions> = {}): RecordingOption
   return {
     outputFormat: 'webp',
     imageQuality: 0.92,
-    maxDPR: true,
+    captureDPR: 1,
     transparentBackground: false,
     videoDurationLimit: 60,
     videoFPS: 30,
@@ -144,7 +149,7 @@ describe('buildRecordingGUI', () => {
     expect(result.syncToggleController).toBeDefined();
     expect(result.syncDimensionController).toBeDefined();
     expect(result.captureController).toBeDefined();
-    // Group arrays are populated (image: quality, transparent, maxDPR;
+    // Group arrays are populated (image: quality, transparent, captureDPR;
     // video: quality, resolution, duration, fps, codec, sync, syncDim;
     // turntable: info, speed, smooth).
     expect(result.imageControllers).toHaveLength(3);
@@ -222,14 +227,26 @@ describe('buildRecordingGUI', () => {
     expect(options.frameByFrame).toBe(false);
   });
 
-  it('Advanced toggles (Show Panels / Include Overlays / Max Resolution) write their options', () => {
+  it('Advanced controls (Show Panels / Include Overlays / Capture DPR) write their options', () => {
     const { byName, options } = build();
     byName('Show Panels')!._onChange!(true);
     byName('Include Overlays')!._onChange!(false);
-    byName('Max Resolution')!._onChange!(false);
+    byName('Capture DPR')!._onChange!(2);
     expect(options.showPanels).toBe(true);
     expect(options.includeOverlays).toBe(false);
-    expect(options.maxDPR).toBe(false);
+    expect(options.captureDPR).toBe(2);
+  });
+
+  /**
+   * WYSIWYG by default: the capture ratio is seeded from the LIVE
+   * on-screen ceiling on every panel build, so flipping Allow High DPR in
+   * the Performance popover moves the export default with it instead of
+   * stranding whatever the ceiling was when the panel was first created.
+   */
+  it('seeds Capture DPR from the on-screen ceiling, not the display DPR', () => {
+    setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
+    const { options } = build();
+    expect(options.captureDPR).toBe(getMaxPixelRatio());
   });
 
   it('Codec / Dimension onChange write their options', () => {

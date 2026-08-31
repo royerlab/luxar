@@ -584,6 +584,13 @@ export class RenderingControls {
       this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
     }
 
+    // An authored `allow_high_dpr` has to reach the manager here:
+    // `applySettings` below drives post-processing, not the DPR ceiling,
+    // and the ceiling must move before the first frame is sized.
+    if (zarrOverrides.allowHighDPR !== undefined) {
+      this.adaptiveDPRManager?.setHighDPRAllowed(this.settings.allowHighDPR);
+    }
+
     // Update GUI controllers to reflect new values
     this.gui.controllersRecursive().forEach((controller) => {
       controller.updateDisplay();
@@ -807,8 +814,13 @@ export class RenderingControls {
       controller.updateDisplay();
     });
 
-    // Apply the persisted adaptive-DPR enabled state to the manager. The
-    // Performance rail popover self-syncs from the manager when opened.
+    // Apply the persisted DPR settings to the manager. The Performance
+    // rail popover self-syncs from the manager when opened.
+    //
+    // High-DPR first: it sets the ceiling that setEnabled() then settles
+    // the operating DPR against, so the reverse order would apply an
+    // uncapped DPR for one step and reallocate render targets twice.
+    this.adaptiveDPRManager?.setHighDPRAllowed(this.settings.allowHighDPR);
     this.adaptiveDPRManager?.setEnabled(this.settings.adaptiveDPREnabled);
 
     // Update cinematic mode checkbox based on loaded effects state

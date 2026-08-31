@@ -96,10 +96,16 @@ export class ScreenshotStrategy implements CaptureStrategy {
       this.hooks.hideAllPanels();
       await new Promise((r) => requestAnimationFrame(r));
 
-      // Save state (always — ensures restoreRecordingState restores panels)
-      const wantMaxDPR = opts.maxDPR && !!session.adaptiveDPRManager;
-      session.saveRecordingState({ disableDPR: wantMaxDPR });
-      if (wantMaxDPR) {
+      // Save state (always — ensures restoreRecordingState restores panels).
+      //
+      // The capture is pinned to `captureDPR` whenever there is a manager
+      // to freeze adaptation with. That is normally the on-screen ceiling
+      // (so the file matches the viewport), but pinning it explicitly
+      // still matters even then: it stops the adaptive loop moving the
+      // resolution mid-capture.
+      const pinDPR = session.adaptiveDPRManager ? opts.captureDPR : undefined;
+      session.saveRecordingState({ captureDPR: pinDPR });
+      if (pinDPR !== undefined) {
         await new Promise((r) => requestAnimationFrame(r));
       }
 

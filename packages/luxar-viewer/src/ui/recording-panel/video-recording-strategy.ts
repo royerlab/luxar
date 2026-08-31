@@ -106,7 +106,7 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       this.hooks.hideAllPanels();
 
       session.saveRecordingState({
-        disableDPR: true,
+        captureDPR: opts.captureDPR,
         lockResize: true,
         scaleResolution: opts.videoResolution > 0 ? { targetH: opts.videoResolution } : undefined,
       });

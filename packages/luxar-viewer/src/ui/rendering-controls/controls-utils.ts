@@ -249,6 +249,7 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
     merged.adaptiveDPREnabled,
     defaults.adaptiveDPREnabled
   );
+  merged.allowHighDPR = booleanOrDefault(merged.allowHighDPR, defaults.allowHighDPR);
   merged.cinematicMode = booleanOrDefault(merged.cinematicMode, defaults.cinematicMode);
 
   // Enum validation — replace invalid strings with default

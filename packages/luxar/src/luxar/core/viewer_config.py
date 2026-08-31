@@ -469,6 +469,14 @@ class ViewerConfig:
     # Adaptive resolution
     adaptive_dpr_enabled: Optional[bool] = None
 
+    # Whether the viewer may render above CSS resolution (device pixel
+    # ratio > 1) on a HiDPI display. Off by default: a 2x display costs
+    # 4x the fragment work, which for soft-edged emissive geometry
+    # (points, gsplats, lines) buys very little. Turn it on for a scene
+    # whose detail genuinely rewards the extra pixels and which is light
+    # enough to afford them.
+    allow_high_dpr: Optional[bool] = None
+
     # UI panel visibility
     ui: Optional[UIConfig] = None
 
@@ -600,6 +608,7 @@ class ViewerConfig:
         "fly_rotation_damping",
         "dynamic_clipping_enabled",
         "adaptive_dpr_enabled",
+        "allow_high_dpr",
         "theme",
     ]
 

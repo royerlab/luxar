@@ -12,6 +12,11 @@ import {
   setupPerformanceControls,
   type PerformanceSetupContext,
 } from '../../../../ui/rendering-controls/setup/performance-setup';
+import {
+  DEFAULT_MAX_PIXEL_RATIO,
+  setMaxPixelRatioCap,
+} from '../../../../rendering/pixel-ratio-cap';
+import { setNativeDPR } from '../../../helpers/device-pixel-ratio';
 
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;
@@ -20,7 +25,14 @@ interface ControllerStub {
   hide: ReturnType<typeof vi.fn>;
   show: ReturnType<typeof vi.fn>;
   updateDisplay: ReturnType<typeof vi.fn>;
+  // NumberController's fluent range setters. Only a number control gets
+  // these in lil-gui, but the stub is shared; the Manual DPR slider is
+  // retargeted through them when the Allow High DPR ceiling moves.
+  min: ReturnType<typeof vi.fn>;
+  max: ReturnType<typeof vi.fn>;
+  step: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
+  _name: string | null;
   _onChangeFn: ((value: unknown) => void) | null;
   _onFinishChangeFn: ((value: unknown) => void) | null;
 }
@@ -33,11 +45,21 @@ function makeController(): ControllerStub {
     hide: vi.fn(),
     show: vi.fn(),
     updateDisplay: vi.fn(),
+    min: vi.fn(),
+    max: vi.fn(),
+    step: vi.fn(),
     domElement: document.createElement('div'),
+    _name: null,
     _onChangeFn: null,
     _onFinishChangeFn: null,
   };
-  ctrl.name.mockReturnValue(ctrl);
+  ctrl.name.mockImplementation((label: string) => {
+    ctrl._name = label;
+    return ctrl;
+  });
+  ctrl.min.mockReturnValue(ctrl);
+  ctrl.max.mockReturnValue(ctrl);
+  ctrl.step.mockReturnValue(ctrl);
   ctrl.onChange.mockImplementation((fn: (v: unknown) => void) => {
     ctrl._onChangeFn = fn;
     return ctrl;
@@ -54,6 +76,21 @@ interface FolderStub {
   open: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
   controllers: ControllerStub[];
+}
+
+/**
+ * Look a control up by its label rather than by position. The Performance
+ * folder gained a control at the FRONT (Allow High DPR), which silently
+ * re-pointed every positional index in this file at the wrong control.
+ */
+function byName(folder: FolderStub, label: string): ControllerStub {
+  const found = folder.controllers.find((c) => c._name === label);
+  if (!found) {
+    throw new Error(
+      `No control named "${label}" — have: ${folder.controllers.map((c) => c._name).join(', ')}`
+    );
+  }
+  return found;
 }
 
 function makeFolder(): FolderStub {
@@ -87,10 +124,12 @@ describe('setupPerformanceControls', () => {
     isActive: ReturnType<typeof vi.fn>;
     getCurrentDPR: ReturnType<typeof vi.fn>;
     getState: ReturnType<typeof vi.fn>;
+    isHighDPRAllowed: ReturnType<typeof vi.fn>;
+    setHighDPRAllowed: ReturnType<typeof vi.fn>;
   };
   let saveSettings: ReturnType<typeof vi.fn>;
   let triggerAnimation: ReturnType<typeof vi.fn>;
-  let settings: { adaptiveDPREnabled: boolean };
+  let settings: { adaptiveDPREnabled: boolean; allowHighDPR: boolean };
 
   function makeContext(): PerformanceSetupContext {
     return {
@@ -113,20 +152,24 @@ describe('setupPerformanceControls', () => {
       isActive: vi.fn().mockReturnValue(false),
       getCurrentDPR: vi.fn().mockReturnValue(1.5),
       getState: vi.fn().mockReturnValue({ currentDPR: 1.0, currentFPS: 55 }),
+      isHighDPRAllowed: vi.fn().mockReturnValue(false),
+      setHighDPRAllowed: vi.fn(),
     };
     saveSettings = vi.fn();
     triggerAnimation = vi.fn();
-    settings = { adaptiveDPREnabled: false };
+    settings = { adaptiveDPREnabled: false, allowHighDPR: false };
+    setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
   });
 
-  it('creates the Performance folder + 2 controls (toggle + manual DPR)', () => {
+  it('creates the Performance folder + 3 controls (both toggles + manual DPR)', () => {
     setupPerformanceControls(makeContext());
     expect(gui.addFolder).toHaveBeenCalledWith('Performance', expect.any(String));
-    expect(folder.controllers).toHaveLength(2);
+    expect(folder.controllers).toHaveLength(3);
   });
 
   it('opens the folder by default (shown directly in the Performance rail popover)', () => {
@@ -169,7 +212,7 @@ describe('setupPerformanceControls', () => {
       // production code attaches its onChange via .onChange(...) after
       // initial-state sync; the stub captures the latest callback in
       // `_onChangeFn`.
-      folder.controllers[0]._onChangeFn?.(true);
+      byName(folder, 'Adaptive Resolution')._onChangeFn?.(true);
 
       expect(manager.setEnabled).toHaveBeenCalledWith(true);
       expect(saveSettings).toHaveBeenCalled();
@@ -177,7 +220,7 @@ describe('setupPerformanceControls', () => {
 
     it('off → disable adaptive', () => {
       setupPerformanceControls(makeContext());
-      folder.controllers[0]._onChangeFn?.(false);
+      byName(folder, 'Adaptive Resolution')._onChangeFn?.(false);
       expect(manager.setEnabled).toHaveBeenCalledWith(false);
     });
   });
@@ -186,7 +229,7 @@ describe('setupPerformanceControls', () => {
     it('defers applying DPR until slider/input interaction is committed', () => {
       settings.adaptiveDPREnabled = false;
       setupPerformanceControls(makeContext());
-      const manualCtrl = folder.controllers[1];
+      const manualCtrl = byName(folder, 'Manual DPR');
 
       manualCtrl._onChangeFn?.(1.0);
       expect(manager.setManualDPR).not.toHaveBeenCalled();
@@ -201,7 +244,7 @@ describe('setupPerformanceControls', () => {
       // during setup, so flip the manager flag rather than the settings.
       manager.isActive.mockReturnValue(true);
       setupPerformanceControls(makeContext());
-      const manualCtrl = folder.controllers[1];
+      const manualCtrl = byName(folder, 'Manual DPR');
       manualCtrl._onFinishChangeFn?.(1.0);
       expect(manager.setManualDPR).not.toHaveBeenCalled();
     });
@@ -210,7 +253,7 @@ describe('setupPerformanceControls', () => {
   describe('updateVisibility', () => {
     it('adaptive=true hides manual DPR + shows the read-only rows', () => {
       const result = setupPerformanceControls(makeContext());
-      const manualCtrl = folder.controllers[1];
+      const manualCtrl = byName(folder, 'Manual DPR');
       manualCtrl.hide.mockClear();
 
       result.updateVisibility(true);
@@ -225,7 +268,7 @@ describe('setupPerformanceControls', () => {
 
     it('adaptive=false shows manual DPR + hides the read-only rows', () => {
       const result = setupPerformanceControls(makeContext());
-      const manualCtrl = folder.controllers[1];
+      const manualCtrl = byName(folder, 'Manual DPR');
       manualCtrl.show.mockClear();
 
       result.updateVisibility(false);
@@ -318,6 +361,78 @@ describe('setupPerformanceControls', () => {
       // The initial sync via updateVisibility uses {currentDPR: 1.0, currentFPS: 55}.
       // After cleanup no further updates fire, so the value stays at 1.00.
       expect(dprValue.textContent).toBe('1.00');
+    });
+  });
+
+  /**
+   * The Manual DPR slider's RANGE was completely unasserted before this
+   * block, so a regression in it was invisible. It is the top of that
+   * range that makes Allow High DPR a hard ceiling rather than a hint.
+   */
+  describe('Allow High DPR', () => {
+    it('bounds the Manual DPR slider by the ceiling, not the display DPR', () => {
+      setupPerformanceControls(makeContext());
+
+      const addCall = folder.add.mock.calls.find((c) => c[1] === 'dpr');
+      expect(addCall).toBeDefined();
+      // [target, prop, min, max, step] — max is the 1.0 ceiling even
+      // though the mocked display reports 2.
+      expect(addCall![2]).toBe(0.25);
+      expect(addCall![3]).toBe(1);
+      expect(addCall![4]).toBe(0.05);
+    });
+
+    it('opens the slider up to the display DPR once high DPR is allowed', () => {
+      setMaxPixelRatioCap(Infinity);
+      const restore = setNativeDPR(2);
+      try {
+        setupPerformanceControls(makeContext());
+        const addCall = folder.add.mock.calls.find((c) => c[1] === 'dpr');
+        expect(addCall![3]).toBe(2);
+      } finally {
+        restore();
+      }
+    });
+
+    it('seeds the checkbox from the manager, not from the settings object', () => {
+      // A `?dpr=` pin ignores both toggles, so the panel has to read back
+      // what is actually in force rather than trusting stored settings.
+      manager.isHighDPRAllowed.mockReturnValue(true);
+      settings.allowHighDPR = false;
+
+      setupPerformanceControls(makeContext());
+
+      expect(settings.allowHighDPR).toBe(true);
+    });
+
+    it('forwards the toggle to the manager, persists, and repaints', () => {
+      setupPerformanceControls(makeContext());
+
+      byName(folder, 'Allow High DPR')._onChangeFn?.(true);
+
+      expect(manager.setHighDPRAllowed).toHaveBeenCalledWith(true);
+      expect(saveSettings).toHaveBeenCalled();
+      expect(triggerAnimation).toHaveBeenCalled();
+    });
+
+    it('retargets the slider range when the toggle flips with the panel open', () => {
+      settings.adaptiveDPREnabled = false;
+      const result = setupPerformanceControls(makeContext());
+      const manualCtrl = byName(folder, 'Manual DPR');
+      manualCtrl.max.mockClear();
+
+      // The manager owns the cap in production; mirror that here.
+      manager.setHighDPRAllowed.mockImplementation((allowed: boolean) => {
+        setMaxPixelRatioCap(allowed ? Infinity : DEFAULT_MAX_PIXEL_RATIO);
+      });
+      const restore = setNativeDPR(2);
+      try {
+        byName(folder, 'Allow High DPR')._onChangeFn?.(true);
+        expect(manualCtrl.max).toHaveBeenCalledWith(2);
+      } finally {
+        restore();
+        result.cleanup();
+      }
     });
   });
 });

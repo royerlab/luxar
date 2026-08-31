@@ -94,6 +94,7 @@ export const RENDERING_SETTINGS_MAP: Record<string, keyof RenderingSettings> = {
 
   // Adaptive resolution
   adaptive_dpr_enabled: 'adaptiveDPREnabled',
+  allow_high_dpr: 'allowHighDPR',
 };
 
 /**

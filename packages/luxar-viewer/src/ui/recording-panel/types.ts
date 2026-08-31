@@ -29,7 +29,17 @@ export interface RecordingOptions {
   // Image options
   outputFormat: OutputFormat;
   imageQuality: number;
-  maxDPR: boolean;
+  /**
+   * Pixel ratio to render captures at.
+   *
+   * Seeded from the on-screen ceiling, so by default an export matches
+   * what you see. Raising it above the ceiling is honoured (the cap is
+   * lifted for the duration of the capture) but note that very thin
+   * lines and very small points carry a minimum DEVICE-pixel size, so a
+   * higher-DPR export draws them relatively thinner and sharper than the
+   * screen does — the export is not a pure upscale.
+   */
+  captureDPR: number;
   transparentBackground: boolean;
   // Video options
   videoDurationLimit: number; // 0 = unlimited, else seconds

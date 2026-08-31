@@ -16,7 +16,7 @@ setup/
 ├── hdr-setup.ts               # HDR (exposure, offset, gamma, tone mapping)
 ├── anti-aliasing-setup.ts     # Anti-Aliasing (SSAA, FXAA, MSAA)
 ├── post-processing-setup.ts   # Post-Processing (bloom, detector noise, vignette, chromatic lens)
-├── performance-setup.ts       # Performance (adaptive DPR + FPS/DPR readouts) — hosted in a rail popover
+├── performance-setup.ts       # Performance (high-DPR + adaptive DPR + FPS/DPR readouts) — hosted in a rail popover
 └── theme-setup.ts             # Theme (theme picker) — hosted in the Settings rail popover
 ```
 
@@ -102,7 +102,7 @@ Creates the **Performance** folder (collapsed by default) with:
 
 Returns:
 
-- `adaptiveDPREnabled` — the toggle controller, so the persistence layer can re-bind it.
+- `adaptiveDPREnabled` / `allowHighDPR` — the two toggle controllers, so the persistence layer can re-bind them.
 - `updateVisibility(adaptiveEnabled)` — re-applied by the parent class after `loadSettings()` mutates the stored flag, so the panel reflects the freshly loaded state.
 - `cleanup()` — clears the `setInterval` that drives the live readouts.
 
@@ -117,7 +117,7 @@ The parent class (`../../rendering-controls.ts`) calls these builders during con
 - **FOV preset ↔ chromatic lens distortion** — `setupCameraControls(context, controllers)` is called _after_ `setupPostProcessingControls(context, controllers)` so the controller map already contains the chromatic-lens entries that the FOV preset's `onChange` will mutate. Both builders take the same `controllers` object by reference; order of insertion in the parent class is what makes the link work.
 - **FOV-in-ortho visibility** — the parent's `updateNavigationControls(type)` hides the FOV slider + preset in `ortho` mode (orthographic projection has no perspective). Called on sync and after a control-mode switch. (The orbit/fly parameter folders it once toggled now live in the Navigation rail popover.)
 - **Clipping controls enable state** — `setupCameraControls` calls back into the parent's `updateClippingControlsState(enabled)` so the parent can disable the near/far sliders when dynamic clipping is on.
-- **Adaptive-DPR persistence** — after `loadSettings()` reads the stored `adaptiveDPREnabled` flag, the parent applies it to the `AdaptiveDPRManager` (`setEnabled`); the Performance rail popover self-syncs from the manager when opened.
+- **DPR persistence** — after `loadSettings()` reads the stored `allowHighDPR` and `adaptiveDPREnabled` flags, the parent applies them to the `AdaptiveDPRManager` (`setHighDPRAllowed`, then `setEnabled` — the ceiling has to move before the enabled state settles the DPR against it); the Performance rail popover self-syncs from the manager when opened.
 
 ## Conventions
 

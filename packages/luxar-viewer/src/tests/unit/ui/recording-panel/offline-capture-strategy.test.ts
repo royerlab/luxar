@@ -87,7 +87,7 @@ function makeOpts(overrides: Partial<RecordingOptions> = {}): RecordingOptions {
   return {
     outputFormat: 'png',
     imageQuality: 0.9,
-    maxDPR: true,
+    captureDPR: 1,
     transparentBackground: false,
     videoDurationLimit: 60,
     videoFPS: 2, // with turntableSpeed 360 → 1s → totalFrames = 2
@@ -329,7 +329,7 @@ describe('OfflineCaptureStrategy', () => {
       const session = makeSession();
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
 
-      await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
+      await strat.run(makeOpts({ videoResolution: 0, captureDPR: 1 }), 'turntable', session);
 
       expect(session.saveRecordingState).toHaveBeenCalledWith(
         expect.objectContaining({ scaleResolution: { targetH: 1440, alignEven: true } })
@@ -377,26 +377,45 @@ describe('OfflineCaptureStrategy', () => {
       });
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
 
-      await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
+      // captureDPR 2 keeps the arithmetic the same as when this test was
+      // written (850 display x 2), so the failure it guards stays legible:
+      // reading `renderer.getSize()` instead would ask for 3400.
+      await strat.run(makeOpts({ videoResolution: 0, captureDPR: 2 }), 'turntable', session);
 
       expect(session.saveRecordingState).toHaveBeenCalledWith(
         expect.objectContaining({ scaleResolution: { targetH: 1700, alignEven: true } })
       );
     });
 
-    it('multiplies the canvas height by the native DPR for Native', async () => {
-      // "Native = current canvas size" means device pixels: three's
-      // getSize() is logical, so a 2× display captures at twice that.
+    /**
+     * "Native = current canvas size" means the DEVICE pixels the capture
+     * renders at, which is `captureDPR` — the on-screen ceiling by
+     * default, so the file matches the viewport. It is deliberately NOT
+     * the display's own DPR: with high DPR disallowed the viewport is at
+     * 1.0, and exporting at 2.0 unasked would not match what the user
+     * framed.
+     */
+    it('multiplies the canvas height by the CAPTURE DPR for Native', async () => {
       const { sm } = makeSceneManager({ width: 1280, height: 720 });
       const session = makeSession({
         adaptiveDPRManager: { getNativeDPR: vi.fn(() => 2) },
       });
       const strat = new OfflineCaptureStrategy(sm, makeAnimController(), makeHooks());
 
-      await strat.run(makeOpts({ videoResolution: 0 }), 'turntable', session);
-
+      // WYSIWYG: the viewport is at 1.0, so the export is 720 tall.
+      await strat.run(makeOpts({ videoResolution: 0, captureDPR: 1 }), 'turntable', session);
       expect(session.saveRecordingState).toHaveBeenCalledWith(
-        expect.objectContaining({ scaleResolution: { targetH: 1440, alignEven: true } })
+        expect.objectContaining({ scaleResolution: { targetH: 720, alignEven: true } })
+      );
+
+      // Raised explicitly: the export doubles, and the session is told to
+      // render it at that ratio.
+      await strat.run(makeOpts({ videoResolution: 0, captureDPR: 2 }), 'turntable', session);
+      expect(session.saveRecordingState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          captureDPR: 2,
+          scaleResolution: { targetH: 1440, alignEven: true },
+        })
       );
     });
 

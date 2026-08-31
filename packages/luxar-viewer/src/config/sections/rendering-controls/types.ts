@@ -74,6 +74,8 @@ export interface RenderingSettings {
   flyRotationDamping?: number;
   // Adaptive resolution
   adaptiveDPREnabled: boolean;
+  /** Whether the viewer may render above CSS resolution on a HiDPI display. */
+  allowHighDPR: boolean;
   // Cinematic mode toggle (for UI only, actual state determined by effects)
   cinematicMode: boolean;
 }
