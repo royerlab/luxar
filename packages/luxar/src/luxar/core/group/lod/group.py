@@ -1656,17 +1656,17 @@ def level_additive_lod(
     count. The unsplit finest count cannot be reused here: it would let the first
     chunk swallow a coarse level or a spatial partition part whole.
     """
+    from ....utils.lod_breakpoints import (
+        DEFAULT_MAX_ADDITIVE_COMMIT,
+        parse_stream_chunk,
+        stream_cuts,
+    )
+
     if spec is None or level_n <= 0:
         return None
     out = dict(spec)
     counts = out.get("counts")
     if slices > 1 and isinstance(counts, str) and counts.startswith("stream:"):
-        from ....utils.lod_breakpoints import (
-            DEFAULT_MAX_ADDITIVE_COMMIT,
-            parse_stream_chunk,
-            stream_cuts,
-        )
-
         sized_counts = default_composed_additive_lod(elements=level_n, slices=slices)
         out["counts"] = sized_counts["counts"]
     if not is_coarsest:
@@ -1690,7 +1690,7 @@ def level_additive_lod(
                 f"Sliced node with {level_n:,} elements resolves a "
                 f"{largest_commit:,}-element additive increment, above the "
                 f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. "
-                "Reduce the leaf size with partition= or supply an explicit "
+                "Reduce the leaf size (Points: partition=) or supply an explicit "
                 "additive_lod ladder."
             )
     return out

@@ -997,6 +997,41 @@ class TestSubstitutiveLodGuards:
             for name in part_names
         )
 
+    def test_overview_fine_parts_keep_explicit_streaming_ladders(
+        self, tmp_path
+    ) -> None:
+        """An explicit ladder remains independently resolved on every fine part."""
+        out = tmp_path / "t.luxar.zarr"
+        pos = np.random.RandomState(0).uniform(0, 40, (1200, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                pos,
+                radii=1.0,
+                partition={"max_elements": 200},
+                substitutive_lod={
+                    "compression_factor": 4,
+                    "levels": 1,
+                    "method": "kmeans_lloyd",
+                    "device": "cpu",
+                    "seed": 0,
+                },
+                additive_lod={
+                    "method": "random",
+                    "counts": "stream:100",
+                    "seed": 0,
+                },
+            )
+
+        fine = zarr.open(str(out), mode="r")["pts/child_1"]
+        part_names = list(fine.keys())
+        assert len(part_names) > 1
+        assert all(
+            int(fine[name].attrs.get("n_additive_sublods", 1)) == 2
+            for name in part_names
+        )
+
     def test_one_part_combination_falls_back_to_whole_object_lod(
         self, tmp_path
     ) -> None:

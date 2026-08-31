@@ -1169,7 +1169,11 @@ def test_default_composed_ladder_rejects_a_resolved_increment_over_the_ceiling()
     spec = default_composed_additive_lod(elements=2_100_000, slices=30)
     with pytest.raises(
         ValueError,
-        match="1,050,000-element additive increment.*900,000-element commit ceiling",
+        match=(
+            "1,050,000-element additive increment.*900,000-element commit ceiling.*"
+            "Reduce the leaf size \\(Points: partition=\\) or supply an explicit "
+            "additive_lod ladder"
+        ),
     ):
         level_additive_lod(
             spec,
