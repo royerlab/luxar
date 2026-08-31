@@ -420,6 +420,37 @@ class TestSaveGsplats:
                 ordering="none",
             )
 
+    def test_streaming_save_rejects_label_ids_missing_from_vocabulary(
+        self, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats import AdditiveSubLOD
+        from luxar.gsplats.io.save_gsplats import (
+            StreamingSplatSetMetadata,
+            write_flat_leaf_streaming,
+        )
+
+        splats = create_test_splats_3d(4)
+        sublod = AdditiveSubLOD(
+            **splats,
+            label_ids=np.array([0, 1, 0, 1], dtype=np.uint8),
+            label_vocabulary={0: "zero"},
+        )
+        metadata = StreamingSplatSetMetadata(
+            n_splats=4,
+            ndim=3,
+            truncation_radius=sublod.truncation_radius,
+            label_dtype=np.dtype(np.uint8),
+            label_vocabulary={0: "zero"},
+        )
+
+        with pytest.raises(ValueError, match="missing ids.*1"):
+            write_flat_leaf_streaming(
+                tmp_path / "invalid-stream.gsplats.zarr",
+                lambda: iter([sublod]),
+                splat_set_metadata=[metadata],
+                barrier_dims=[],
+            )
+
     @pytest.mark.parametrize("mode", [EncodingMode.PRECISION, EncodingMode.AUTO])
     def test_rgba_colors_round_trip(self, mode: EncodingMode) -> None:
         # RGBA colors (per-splat opacity in the 4th column) survive
