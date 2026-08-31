@@ -357,7 +357,7 @@ def test_shared_earth_builder_defaults_to_ktx2(
 
 
 def test_shared_earth_builder_falls_back_to_webp_without_toktx(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A missing optional encoder must not make gallery generation fail."""
 
@@ -368,33 +368,32 @@ def test_shared_earth_builder_falls_back_to_webp_without_toktx(
         def add_mesh(self, _name: str, **kwargs: object) -> None:
             self.meshes.append(kwargs)
 
-    messages: list[str] = []
-    seen: dict[str, object] = {}
-
-    def fake_encode(image: np.ndarray, **kwargs: object):
-        seen.update(kwargs)
-        return np.array([1], dtype=np.uint8), "webp", image.shape[1], image.shape[0], 3
-
     monkeypatch.setattr(_globe_common.shutil, "which", lambda _name: None)
-    monkeypatch.setattr(_globe_common, "aprint", messages.append)
-    monkeypatch.setattr(_globe_common, "encode_texture", fake_encode)
 
     target = Target()
+    basemap = np.arange(8 * 16 * 3, dtype=np.uint8).reshape(8, 16, 3)
     build_earth(
         target,
-        basemap=np.zeros((2, 4, 3), dtype=np.uint8),
-        n_lon=4,
-        n_lat=2,
+        basemap=basemap,
+        n_lon=8,
+        n_lat=4,
+        tiles=1,
         quality=4,
     )
 
-    assert seen["fmt"] == "webp"
-    assert seen["quality"] == 90
     assert target.meshes[0]["texture_encoding"] == "webp"
-    assert messages == [
-        "KTX-Software `toktx` was not found; authoring the Earth basemap as "
-        "WebP quality 90 instead. Install KTX-Software to keep it GPU-compressed."
-    ]
+    expected, *_ = _globe_common.encode_texture(
+        basemap, fmt="webp", quality=90, channels=3
+    )
+    wrong_scale, *_ = _globe_common.encode_texture(
+        basemap, fmt="webp", quality=4, channels=3
+    )
+    assert np.array_equal(target.meshes[0]["texture"], expected)
+    assert not np.array_equal(target.meshes[0]["texture"], wrong_scale)
+    assert (
+        "KTX-Software `toktx` was not found; authoring the Earth basemap as WebP "
+        "quality 90 instead."
+    ) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(("fmt", "expected_quality"), [("webp", 90), ("ktx2", 2)])

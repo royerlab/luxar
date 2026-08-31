@@ -179,7 +179,7 @@ GLOBE_LAT = 256
 # 16384x8192 across TWO tiles of 8192x8192 — 4x the pixels of a single
 # 8192x4096. One node would exceed the 512 MiB admission budget once its KTX2
 # payload is counted at 5x alongside the resident mip chain. Two nodes keep the
-# measured q2 Blue Marble tile at ~336 MiB peak with ~176 MiB headroom.
+# larger measured q2 Blue Marble tile at ~386 MiB peak with ~126 MiB headroom.
 #
 # Splitting is also the only way past 16384 at all. A GPU silently CLAMPS a
 # larger texture — wrong image, no diagnostic — so `MAX_MESH_TEXTURE_SIZE`

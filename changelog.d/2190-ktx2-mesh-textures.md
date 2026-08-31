@@ -18,10 +18,10 @@ to the compressed mip-chain budget of about 4/3 bytes per pixel. If `toktx` is
 not installed, globe authoring reports the downgrade and falls back to WebP
 quality 90 rather than failing gallery generation.
 
-Measured with `toktx` 4.4.2 at UASTC quality 2, one real 8193x8192 Blue Marble
-tile is 48.57 MiB versus 5.78 MiB as WebP quality 90. Two tiles therefore raise
-the basemap wire payload from 11.56 MiB to 97.14 MiB, while the viewer preflight
-totals about 335.6 MiB per node and retains about 176.4 MiB below its 512 MiB
-limit. UASTC remains the default despite the wire cost because the shared globe
-path also carries colour-coded scientific surfaces, where ETC1S block artifacts
-can alter data-like colour boundaries.
+Measured with `toktx` 4.4.2 at UASTC quality 2, the two real 8193x8192 Blue
+Marble tiles are 48.57 and 58.69 MiB, versus 5.78 and 8.17 MiB as WebP quality
+90. The basemap wire payload therefore rises from 13.95 MiB to 107.26 MiB. The
+larger tile's viewer preflight totals about 386.2 MiB and retains about 125.8 MiB
+below the 512 MiB per-node limit. UASTC remains the default despite the wire cost
+because the shared globe path also carries colour-coded scientific surfaces,
+where ETC1S block artifacts can alter data-like colour boundaries.
