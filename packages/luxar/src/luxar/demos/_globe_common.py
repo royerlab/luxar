@@ -757,7 +757,7 @@ TEXTURE_FORMAT_NOTES = "see the table above"
 def encode_texture(
     image: Any,
     *,
-    fmt: str = "ktx2",
+    fmt: str = "webp",
     quality: int = 90,
     alpha_quality: int = 70,
     channels: Optional[int] = None,

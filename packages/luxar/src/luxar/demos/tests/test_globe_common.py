@@ -317,6 +317,9 @@ def test_shared_earth_builder_defaults_to_ktx2() -> None:
     """Every shared Earth demo must emit GPU-compressed basemap textures."""
     import inspect
 
+    encode_signature = inspect.signature(_globe_common.encode_texture)
+    assert encode_signature.parameters["fmt"].default == "webp"
+
     signature = inspect.signature(_globe_common.build_earth)
     assert signature.parameters["fmt"].default == "ktx2"
     assert signature.parameters["quality"].default is None
