@@ -585,6 +585,23 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -m radial --n-
 # download → fast first paint; the viewer streams additive sub-LODs progressively.
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --target-ms 200
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:14000
+# ON A NODE THE VIEWER SLICES (any hidden dim), COUNT PER SLICE, NOT PER NODE.
+# An explicit `-b stream:C` fixes an ABSOLUTE first rung for the whole node, but
+# only one hidden coordinate is on screen, so each slice receives part of C;
+# Nexrad's explicit `stream:20000` ladder has p05 = 4 splats per played coordinate.
+# Before the CLI scaling fix, drosophila's `--target-ms` resolved to a 20,833-splat
+# rung 0 for 500 timepoints; the measured slices had median = 45, p05 = 7, min = 1,
+# and playback rendered an empty frame (#2374/#2376). Prefer `--n-lods 3..4` for
+# an aggregate share that stays stable as slice count changes, but verify long or
+# non-uniform axes: the global prefix can still starve sparse slices. The CLI now
+# scales `--target-ms` by the observed slice count and LOGS the multiplier; read
+# that line rather than assuming the number you typed is what renders.
+# Count stops as distinct OCCURRING combinations over all hidden axes: not the
+# product of per-axis cardinality, and not the declared Dimension range (that
+# demo declares 500 timepoints and its coarsest rung has data at 499).
+# `hatch run check-demo-ladders` fails a built store whose SPARSEST slices fall
+# below the floor — it measures the 5th percentile, since a ladder starves at its
+# sparsest slice and one busy coordinate masks hundreds of starved ones.
 
 # Give every leaf of an EXISTING tree an additive ladder, structure-preservingly
 # (substitutive kind=lod levels, partition parts, adaptive groups all keep their
