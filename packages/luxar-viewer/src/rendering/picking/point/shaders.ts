@@ -55,6 +55,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float radiusScale;
     uniform int uIsOrtho;
     uniform float uNearCull;
+    uniform float uPixelRatio;
     uniform float uNodeId;
     uniform vec2 uResolution;
 
@@ -120,7 +121,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // (matches shader-glsl.ts).
       float pointSize = basePointSize * 0.8;
       vPickSize = pointSize; // raw, pre-clamp — fragment applies sizeScale²
-      pointSize = clamp(pointSize, 1.5, maxPointSize); // 1.5px floor tracks the VISUAL sprite floor — the drawn outer ring stays pickable
+      pointSize = clamp(pointSize, 1.5 * uPixelRatio, maxPointSize); // CSS-pixel floor tracks the VISUAL sprite floor — the drawn outer ring stays pickable
 
       // Instanced quad expansion (matches shader-glsl.ts approach, including
       // the behind-camera guard above).
@@ -177,7 +178,7 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
       // the line pick's widthScale): pick salience must track visual
       // salience, or a sub-pixel (visually dimmed) point wins the
       // brightness-as-depth tie-break over a visually brighter neighbor.
-      mediump float pickSizeScale = min(vPickSize / 1.5, 1.0);
+      mediump float pickSizeScale = min(vPickSize / (1.5 * uPixelRatio), 1.0);
       float brightness = falloff * vNearFade * pickSizeScale * pickSizeScale;
       if (brightness < 1e-4) discard;
 

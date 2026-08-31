@@ -763,7 +763,7 @@ export class PickingSystem {
       // Update pick material camera params to match half-res pick buffer
       const mat = (entry.pick as THREE.Mesh).material;
       if (isCameraAwareMaterial(mat)) {
-        mat.updateCameraParams(fov, pickRes, isOrtho);
+        mat.updateCameraParams(fov, pickRes, isOrtho, undefined, renderer.getPixelRatio());
       }
 
       // Pick-depth convention sync: under the depth-ordered surface

@@ -63,6 +63,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     uniform float radiusScale;
     uniform int uIsOrtho;          // 0 = perspective, 1 = orthographic
     uniform vec2 uResolution;      // Physical framebuffer size in pixels
+    uniform float uPixelRatio;     // Physical framebuffer pixels per CSS pixel
     uniform float uNearCull;       // Near-fade start distance (world units)
 
     out mediump vec3 vColor;
@@ -184,7 +185,8 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // sizeScale^2 energy compensation (vPointSize carries the raw,
       // pre-clamp size). Zero-radius filtering happens in the fragment.
       vPointSize = basePointSize;
-      float pointSize = clamp(basePointSize, 1.5, maxPointSize);
+      float minPointSize = 1.5 * uPixelRatio;
+      float pointSize = clamp(basePointSize, minPointSize, maxPointSize);
 
       // Expand the unit quad to a screen-space sprite. aQuadCorner is
       // in [-1, 1] per axis, so aQuadCorner * (pointSize / uResolution)
@@ -285,7 +287,7 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // widthScale, SQUARED because both sprite dimensions clamp:
       // energy ∝ area ∝ size²). Points at or above the 1.5px floor
       // are unaffected (sizeScale = 1).
-      mediump float sizeScale = min(vPointSize / 1.5, 1.0);
+      mediump float sizeScale = min(vPointSize / (1.5 * uPixelRatio), 1.0);
 
       // Screen density of this fragment — falloff scaled by every
       // "how much of this point is there" factor (node opacity,

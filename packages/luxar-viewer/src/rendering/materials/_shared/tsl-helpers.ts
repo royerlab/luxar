@@ -245,6 +245,7 @@ export interface TSLLineJoinArgs {
   readonly lineTexW: TSLNode;
   /** Viewport resolution uniform node. */
   readonly uResolution: TSLNode;
+  readonly uPixelRatio: TSLNode;
   /** Scene-relative near-cull distance (already floored). */
   readonly nearCull: TSLNode;
   /** This segment's own STORAGE slot, as an int node (self-reference guard). */
@@ -333,6 +334,7 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
     uLineTex,
     lineTexW,
     uResolution,
+    uPixelRatio,
     nearCull,
     selfSlot,
     atEnd,
@@ -368,7 +370,7 @@ export function tslLineJoin(args: TSLLineJoinArgs): void {
     .and(partnerSlot.notEqual(selfSlot));
 
   const gate: TSLNode = joinPixelWidth
-    .greaterThan(float(LINE_JOIN_MIN_HALF_WIDTH))
+    .greaterThan(uPixelRatio.mul(LINE_JOIN_MIN_HALF_WIDTH))
     .and(reachesVertex)
     .and(namesAPartner);
 

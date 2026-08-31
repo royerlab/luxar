@@ -53,6 +53,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
     uniform highp sampler2D uLineTex;
     uniform vec2 uResolution;
+    uniform float uPixelRatio;
     uniform int uIsOrtho;
     uniform float uNodeId;
     uniform float uNearCull;
@@ -160,8 +161,10 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
         rawA = wEffA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvStart.z, nearCull);
         rawB = wEffB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvEnd.z, nearCull);
       }
-      float rA = clamp(rawA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-      float rB = clamp(rawB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
+      float minRadius = ${G.MIN_RADIUS} * uPixelRatio;
+      float packetMinRadius = ${G.PACKET_MIN_R} * uPixelRatio;
+      float rA = clamp(rawA, minRadius, uMaxLinePixelWidth);
+      float rB = clamp(rawB, minRadius, uMaxLinePixelWidth);
 
       // Which ends cut rather than cap — the shared joint-code rule, same
       // as the visual twin (a free end and a degree->=3 hub keep the whole
@@ -209,8 +212,8 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
                 // Width gate + its floored sharp-turn exception (#1495),
                 // exactly as the visual twin (or hover desyncs from pixels;
                 // the floor conjunct is why — see that note).
-                if (rMax > ${G.PACKET_MIN_R} ||
-                    (dot(qq / ql, u) > 0.5 && min(rawA, rawB) >= ${G.MIN_RADIUS})) {
+                if (rMax > packetMinRadius ||
+                    (dot(qq / ql, u) > 0.5 && min(rawA, rawB) >= minRadius)) {
                   float wFarA = farA.w;
                   float rpFarA;
                   if (uIsOrtho == 1) {
@@ -218,7 +221,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
                   } else {
                     rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
                   }
-                  rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
+                  rpFarA = clamp(rpFarA, minRadius, uMaxLinePixelWidth);
                   // Packet gate (#1495, #1501): a hard cut is only exact
                   // when the partner actually covers my foreign side —
                   // which fails whenever EITHER leg tapers (both
@@ -279,8 +282,8 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
               if (nLoc.x > 1e-3) {
                 cutB = vec4(nLoc, 0.0, 0.0);
                 // Width gate + its floored sharp-turn exception (see end A).
-                if (rMax > ${G.PACKET_MIN_R} ||
-                    (dot(qq / ql, u) < -0.5 && min(rawA, rawB) >= ${G.MIN_RADIUS})) {
+                if (rMax > packetMinRadius ||
+                    (dot(qq / ql, u) < -0.5 && min(rawA, rawB) >= minRadius)) {
                   float wFarB = farB.w;
                   float rpFarB;
                   if (uIsOrtho == 1) {
@@ -288,7 +291,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
                   } else {
                     rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
                   }
-                  rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
+                  rpFarB = clamp(rpFarB, minRadius, uMaxLinePixelWidth);
                   // Packet gate (#1495, #1501): a hard cut is only exact
                   // when the partner actually covers my foreign side —
                   // which fails whenever EITHER leg tapers (both
@@ -347,7 +350,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // rim quadratically inward — a hard concave silhouette at strong
       // taper (the zoomed near-axial case).
       float rawC = mix(rawA, rawB, tc);
-      float widthScale = min(rawC / ${G.MIN_RADIUS}, 1.0);
+      float widthScale = min(rawC / minRadius, 1.0);
       vFade = perspectiveNearFade(uIsOrtho, mix(mvStart.z, mvEnd.z, tc), nearCull) * widthScale;
       vSharp = mix(s0, s1, tOrig);
 

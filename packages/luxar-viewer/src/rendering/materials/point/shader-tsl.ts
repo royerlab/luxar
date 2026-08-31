@@ -160,6 +160,7 @@ export interface PointTSLNodes {
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uNearCull: TSLNode;
+  readonly uPixelRatio: TSLNode;
   readonly uResolution: TSLNode;
   readonly uOpacity: TSLNode;
   readonly uInvGamma: TSLNode;
@@ -227,6 +228,7 @@ export function pointWebGPUFactory(
   const uRadiusScale = nodes.radiusScale;
   const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
+  const uPixelRatio = nodes.uPixelRatio;
   const uResolution = nodes.uResolution;
   const uOpacity = nodes.uOpacity;
   const uInvGamma = nodes.uInvGamma;
@@ -375,7 +377,8 @@ export function pointWebGPUFactory(
     // Minimum sprite size 1.5px (matches the LINE shader — thinner quads
     // cause rasterization gaps); sub-pixel energy is preserved by the
     // fragment's sizeScale^2 compensation via vPointSize.
-    const pointSize: TSLNode = clamp(basePointSize, float(1.5), uMaxPointSize);
+    const minPointSize: TSLNode = uPixelRatio.mul(1.5);
+    const pointSize: TSLNode = clamp(basePointSize, minPointSize, uMaxPointSize);
 
     // Expand the unit quad to a sprite in clip space.
     const offsetClip: TSLNode = aQuadCorner.mul(pointSize.div(uResolution)).mul(projCenter.w);
@@ -455,7 +458,7 @@ export function pointWebGPUFactory(
 
     // Sub-pixel intensity compensation (mirrors the line shader's
     // widthScale, SQUARED: both sprite dimensions clamp, energy ∝ area).
-    const sizeScale: TSLNode = min(vPointSize.div(float(1.5)), float(1.0));
+    const sizeScale: TSLNode = min(vPointSize.div(uPixelRatio.mul(1.5)), float(1.0));
     // Screen density of this fragment — falloff scaled by every "how
     // much of this point is there" factor. This is the additive alpha.
     const alphaBase: TSLNode = falloff
@@ -577,6 +580,7 @@ export function buildPointTSLNodesFromUniforms(
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),

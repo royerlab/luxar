@@ -77,7 +77,7 @@ export const CAPSULE_SUPPORT_SIGMA = 2.0;
 export const CAPSULE_RADIUS_PER_QUAD_HALFWIDTH =
   CAPSULE_SUPPORT_SIGMA / GAUSSIAN_EQUIVALENT_TRUNCATION;
 
-/** Minimum drawn radius in pixels (matches the quad's 1.5 px AA floor). */
+/** Minimum drawn radius in CSS pixels (scaled by active DPR in the shaders). */
 export const CAPSULE_MIN_RADIUS_PX = 1.5;
 
 /** Stencil AA apron beyond the profile support, in pixels. */

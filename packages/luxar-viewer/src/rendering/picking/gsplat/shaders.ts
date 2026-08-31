@@ -59,6 +59,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float uNearCull;
     uniform float uMaxExtentFactor;
     uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in px² (visual-shader parity)
+    uniform float uPixelRatio;
     uniform float uNodeId;
     uniform int uLabelFilterIndex;
 
@@ -189,8 +190,9 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         // 2D low-pass dilation — visual-shader parity (shader-glsl.ts). Widens
         // the pickable footprint to match the dilated visual splat, so what you
         // click matches what you see.
-        Sigma2D[0][0] += uCov2DDilation;
-        Sigma2D[1][1] += uCov2DDilation;
+        float cov2DDilation = uCov2DDilation * uPixelRatio * uPixelRatio;
+        Sigma2D[0][0] += cov2DDilation;
+        Sigma2D[1][1] += cov2DDilation;
 
         // Visual-shader parity (shader-glsl.ts) + TSL-side parity
         // (gsplat-pick.tsl.ts): reject splats with NaN/Inf Σ_2D or

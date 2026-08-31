@@ -526,6 +526,9 @@ describe('GSplatMaterial', () => {
       const tuned = new GSplatMaterial({ cov2DDilation: 0.5 });
       expect(tuned.uniforms.uCov2DDilation.value).toBe(0.5);
       expect(tuned.clone().uniforms.uCov2DDilation.value).toBe(0.5);
+      expect(tuned.vertexShader).toContain(
+        'float cov2DDilation = uCov2DDilation * uPixelRatio * uPixelRatio;'
+      );
     });
   });
 

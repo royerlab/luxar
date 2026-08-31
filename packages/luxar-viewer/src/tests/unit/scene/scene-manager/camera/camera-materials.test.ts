@@ -34,6 +34,7 @@ function makeRenderer(): Renderer {
       target.set(800, 600);
       return target;
     }),
+    getPixelRatio: vi.fn(() => 2),
   } as unknown as Renderer;
 }
 
@@ -130,6 +131,16 @@ describe('updateMaterialsForCurrentCamera', () => {
 
     const [, , , nearCull] = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
     expect(nearCull).toBe(0.1);
+  });
+
+  it('forwards the active renderer pixel ratio', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const ctx = makeCtx({ camera });
+
+    updateMaterialsForCurrentCamera(ctx);
+
+    const [, , , , pixelRatio] = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
+    expect(pixelRatio).toBe(2);
   });
 });
 

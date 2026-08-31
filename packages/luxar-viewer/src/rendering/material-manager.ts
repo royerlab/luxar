@@ -194,6 +194,7 @@ export class MaterialManager {
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
   private currentIsOrtho = false;
   private currentNearCull: number | undefined = undefined;
+  private currentPixelRatio = 1;
 
   /**
    * Build the lifecycle context handed to `subscribeToDispose` and
@@ -280,7 +281,8 @@ export class MaterialManager {
       this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
-      this.currentNearCull
+      this.currentNearCull,
+      this.currentPixelRatio
     );
 
     log.info(Modules.RENDERER, `Created per-node point material (${backend})`);
@@ -328,7 +330,8 @@ export class MaterialManager {
       this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
-      this.currentNearCull
+      this.currentNearCull,
+      this.currentPixelRatio
     );
 
     log.info(Modules.RENDERER, `Created per-node line material (${backend})`);
@@ -373,7 +376,8 @@ export class MaterialManager {
       this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
-      this.currentNearCull
+      this.currentNearCull,
+      this.currentPixelRatio
     );
 
     log.info(Modules.RENDERER, `Created per-node gsplat material (${backend})`);
@@ -432,7 +436,8 @@ export class MaterialManager {
       this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
-      this.currentNearCull
+      this.currentNearCull,
+      this.currentPixelRatio
     );
 
     log.info(Modules.RENDERER, `Created per-node mesh material (${backend})`);
@@ -480,15 +485,17 @@ export class MaterialManager {
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     this.currentFov = fov;
     this.currentResolution.copy(resolution);
     this.currentIsOrtho = isOrtho;
     this.currentNearCull = nearCull;
+    this.currentPixelRatio = pixelRatio;
 
     for (const material of this.registeredMaterials) {
-      material.updateCameraParams(fov, resolution, isOrtho, nearCull);
+      material.updateCameraParams(fov, resolution, isOrtho, nearCull, pixelRatio);
     }
   }
 
@@ -526,7 +533,8 @@ export class MaterialManager {
       this.currentFov,
       this.currentResolution,
       this.currentIsOrtho,
-      this.currentNearCull
+      this.currentNearCull,
+      this.currentPixelRatio
     );
   }
 

@@ -42,6 +42,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     radiusScale: TSLNode;
     uIsOrtho: TSLNode;
     uNearCull: TSLNode;
+    uPixelRatio: TSLNode;
     uNodeId: TSLNode;
     uResolution: TSLNode;
     uSortedIndexSlot: TSLNode;
@@ -63,6 +64,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       radiusScale: uniform(config.radiusScale ?? 1.0),
       uIsOrtho: uniform(0),
       uNearCull: uniform(0.1),
+      uPixelRatio: uniform(1),
       uNodeId: uniform(config.nodeId),
       uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
       // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
@@ -81,6 +83,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
@@ -124,6 +127,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
@@ -138,12 +142,14 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
   }
 

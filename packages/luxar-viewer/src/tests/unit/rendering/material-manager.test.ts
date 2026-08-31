@@ -228,7 +228,7 @@ describe('MaterialManager', () => {
 
     it('per-node materials receive the current camera params immediately at creation', () => {
       const fov = Math.PI / 4;
-      manager.updateCameraParams(fov, new THREE.Vector2(2560, 1440));
+      manager.updateCameraParams(fov, new THREE.Vector2(2560, 1440), false, undefined, 2);
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
@@ -238,6 +238,7 @@ describe('MaterialManager', () => {
       });
       const expectedPointSizeFactor = (2.0 * 1440) / Math.tan(fov / 2);
       expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
+      expect(material.uniforms.uPixelRatio.value).toBe(2);
     });
 
     it('should create different materials for different opacity', () => {

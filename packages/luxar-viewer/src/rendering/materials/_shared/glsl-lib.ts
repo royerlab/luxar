@@ -323,7 +323,7 @@ vec3 luxarLineJoin(
   // decided by the provoking vertex alone — which WebGL takes from the last
   // vertex and WGSL from the first. Same reasoning as the #849 segment-constant
   // pathological cull at the call sites.
-  float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)};
+  float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)} * uPixelRatio;
   if (uLineJoin < 0.5 || joinPixelWidth <= joinMinHalfWidth) return noJoin;
   // A near-clipped endpoint was moved onto the nearCull plane, so it is no
   // longer AT its source vertex and no neighbour meets it there.

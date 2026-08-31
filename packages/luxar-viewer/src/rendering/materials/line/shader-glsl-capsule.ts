@@ -67,6 +67,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
 
     uniform highp sampler2D uLineTex;
     uniform vec2 uResolution;
+    uniform float uPixelRatio;
     uniform int uIsOrtho;
     uniform float uNearCull;
     uniform float uMaxLinePixelWidth;
@@ -212,8 +213,10 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
         rawA = wEffA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvStart.z, nearCull);
         rawB = wEffB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvEnd.z, nearCull);
       }
-      float rA = clamp(rawA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
-      float rB = clamp(rawB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
+      float minRadius = ${G.MIN_RADIUS} * uPixelRatio;
+      float packetMinRadius = ${G.PACKET_MIN_R} * uPixelRatio;
+      float rA = clamp(rawA, minRadius, uMaxLinePixelWidth);
+      float rB = clamp(rawB, minRadius, uMaxLinePixelWidth);
 
       // Which ends CUT rather than cap, from the shared joint-code rule
       // (glsl-lib.ts): a free end (code 0) and a degree->=3 hub (code -2)
@@ -289,8 +292,8 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                 // composing). Measurements, costs and the three accepted
                 // residuals: CAPSULE_JOINT_PACKET_MIN_RADIUS_PX in
                 // _shared/line-capsule.ts.
-                if (rMax > ${G.PACKET_MIN_R} ||
-                    (dot(qq / ql, u) > 0.5 && min(rawA, rawB) >= ${G.MIN_RADIUS})) {
+                if (rMax > packetMinRadius ||
+                    (dot(qq / ql, u) > 0.5 && min(rawA, rawB) >= minRadius)) {
                   float wFarA = farA.w;
                   float rpFarA;
                   if (uIsOrtho == 1) {
@@ -298,7 +301,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                   } else {
                     rpFarA = wFarA * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
                   }
-                  rpFarA = clamp(rpFarA, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
+                  rpFarA = clamp(rpFarA, minRadius, uMaxLinePixelWidth);
                   // Packet gate (#1495, #1501): a hard cut is only exact
                   // when the partner actually covers my foreign side —
                   // which fails whenever EITHER leg tapers (both
@@ -361,8 +364,8 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
               if (nLoc.x > 1e-3) {
                 cutB = vec4(nLoc, 0.0, 0.0);
                 // Width gate + the sharp-turn exception, floored (see end A).
-                if (rMax > ${G.PACKET_MIN_R} ||
-                    (dot(qq / ql, u) < -0.5 && min(rawA, rawB) >= ${G.MIN_RADIUS})) {
+                if (rMax > packetMinRadius ||
+                    (dot(qq / ql, u) < -0.5 && min(rawA, rawB) >= minRadius)) {
                   float wFarB = farB.w;
                   float rpFarB;
                   if (uIsOrtho == 1) {
@@ -370,7 +373,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
                   } else {
                     rpFarB = wFarB * uPerspectiveLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
                   }
-                  rpFarB = clamp(rpFarB, ${G.MIN_RADIUS}, uMaxLinePixelWidth);
+                  rpFarB = clamp(rpFarB, minRadius, uMaxLinePixelWidth);
                   // Packet gate (#1495, #1501): a hard cut is only exact
                   // when the partner actually covers my foreign side —
                   // which fails whenever EITHER leg tapers (both
@@ -440,7 +443,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
       // intensity down so additive totals stay width-linear — the quad's
       // widthScale rule).
       float rawC = mix(rawA, rawB, tc);
-      float widthScale = min(rawC / ${G.MIN_RADIUS}, 1.0);
+      float widthScale = min(rawC / minRadius, 1.0);
       float fade = perspectiveNearFade(uIsOrtho, mix(mvStart.z, mvEnd.z, tc), nearCull);
       vFade = fade * widthScale;
       vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tOrig);

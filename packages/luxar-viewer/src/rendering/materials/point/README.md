@@ -101,7 +101,7 @@ camera changes update **only** the precomputed scalar uniforms, not the shader.
   `1.0 / max(-mvPosition.z, 1e-20)` for perspective (the floor is a pure INF guard, not a scale floor) — VIEW-SPACE DEPTH, matching
   the line + gsplat shaders. (Euclidean camera distance shrank edge-of-screen
   points by `cos θ` relative to identical centered points.)
-- `pointSize = clamp(basePointSize, 1.5, maxPointSize)`. There is **no
+- `pointSize = clamp(basePointSize, 1.5 * pixelRatio, maxPointSize)`. The floor is 1.5 CSS px. There is **no
   sharpness size compensation** — the shifted-truncated super-Gaussian falloff
   truncates to zero exactly at the sprite edge (`ρ = 1`), so `basePointSize`
   already is the visible extent. The `1.5` px floor matches the line shader

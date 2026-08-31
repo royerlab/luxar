@@ -71,16 +71,18 @@ export function updateMaterialsForCurrentCamera(ctx: CameraMaterialsCtx): void {
   ctx.renderer.getDrawingBufferSize(ctx.bufferSize);
   ctx.boundsCache.ensure(ctx.scene);
   const nearCull = ctx.boundsCache.getNearCull();
+  const pixelRatio = ctx.renderer.getPixelRatio();
 
   if (isOrthographicCamera(ctx.camera)) {
     const frustumHeight = getOrthoFrustumHeight(ctx.camera);
-    materialManager.updateCameraParams(frustumHeight, ctx.bufferSize, true, nearCull);
+    materialManager.updateCameraParams(frustumHeight, ctx.bufferSize, true, nearCull, pixelRatio);
   } else {
     materialManager.updateCameraParams(
       getCameraFovRadians(ctx.camera),
       ctx.bufferSize,
       false,
-      nearCull
+      nearCull,
+      pixelRatio
     );
   }
 }

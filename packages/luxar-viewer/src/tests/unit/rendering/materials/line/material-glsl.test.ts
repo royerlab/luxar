@@ -140,9 +140,9 @@ describe('LineMaterial', () => {
       // "[object Object]" or "undefined" inside the shader body, which compiles
       // to a link error far from the cause.
       expect(GLSL_LINE_JOIN).toContain(
-        `float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)};`
+        `float joinMinHalfWidth = ${LINE_JOIN_MIN_HALF_WIDTH.toFixed(1)} * uPixelRatio;`
       );
-      expect(GLSL_LINE_JOIN).toContain('float joinMinHalfWidth = 2.0;');
+      expect(GLSL_LINE_JOIN).toContain('float joinMinHalfWidth = 2.0 * uPixelRatio;');
       expect(GLSL_LINE_JOIN).not.toContain('object Object');
       expect(GLSL_LINE_JOIN).not.toContain('undefined');
     });

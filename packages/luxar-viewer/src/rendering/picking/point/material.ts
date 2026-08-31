@@ -52,6 +52,7 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
         uNearCull: { value: 0.1 },
+        uPixelRatio: { value: 1 },
         uNodeId: { value: config.nodeId },
         // Resolution needed for instanced-quad expansion (matches
         // PointMaterial). Defaults overwritten by updateCameraParams.
@@ -97,6 +98,7 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer
@@ -109,12 +111,14 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
   }
 

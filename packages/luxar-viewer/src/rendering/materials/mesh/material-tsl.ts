@@ -297,7 +297,8 @@ export class MeshTSLMaterial
     _fov: number,
     _resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    _pixelRatio?: number
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined) {

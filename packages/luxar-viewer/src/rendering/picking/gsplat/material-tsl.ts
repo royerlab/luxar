@@ -36,6 +36,7 @@ export class GSplatPickingTSLMaterial
   private tslNodes: {
     uSplatTex: TSLNode;
     uResolution: TSLNode;
+    uPixelRatio: TSLNode;
     uFx: TSLNode;
     uFy: TSLNode;
     uTruncate: TSLNode;
@@ -65,6 +66,7 @@ export class GSplatPickingTSLMaterial
       // rebinds the pool texture; identity change -> factory re-run).
       uSplatTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
+      uPixelRatio: uniform(1),
       uFx: uniform(500),
       uFy: uniform(500),
       uTruncate: uniform(truncate),
@@ -94,6 +96,7 @@ export class GSplatPickingTSLMaterial
     this.uniforms = {
       uSplatTex: proxyIUniform(this.tslNodes.uSplatTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uFx: proxyIUniform(this.tslNodes.uFx),
       uFy: proxyIUniform(this.tslNodes.uFy),
       uTruncate: proxyIUniform(this.tslNodes.uTruncate),
@@ -163,6 +166,7 @@ export class GSplatPickingTSLMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
@@ -182,9 +186,11 @@ export class GSplatPickingTSLMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
     const fy = computeFocalLength(fov, resolution.y, isOrtho);

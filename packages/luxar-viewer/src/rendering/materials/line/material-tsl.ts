@@ -56,6 +56,7 @@ import { computeScalarRangeUniforms } from '../_shared/scalar-range';
 interface LineMaterialTSLNodeTable {
   uLineTex: TSLNode;
   uResolution: TSLNode;
+  uPixelRatio: TSLNode;
   uIsOrtho: TSLNode;
   uSortedIndexSlot: TSLNode;
   uNearCull: TSLNode;
@@ -112,6 +113,7 @@ export class LineTSLMaterial
       // graph rebuild, same lifecycle as the colormap texture).
       uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
+      uPixelRatio: uniform(1),
       uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
       // 0.1 matches the point/gsplat ctor default (pre-first-broadcast only).
@@ -141,6 +143,7 @@ export class LineTSLMaterial
       // rebind chokepoint (fresh node + graph rebuild).
       uLineTex: proxyIUniform(this.tslNodes.uLineTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
@@ -370,7 +373,8 @@ export class LineTSLMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     const prevIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
@@ -384,6 +388,7 @@ export class LineTSLMaterial
       this.uniforms.uNearCull.value = nearCull;
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
     const safeFov = Math.max(fov, 1e-4);
     if (isOrtho) {
@@ -583,6 +588,7 @@ export class LineTSLMaterial
     const sourceIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;

@@ -77,6 +77,7 @@ export interface GSplatPickTSLNodes {
    */
   readonly uSplatTex: TSLNode;
   readonly uResolution: TSLNode;
+  readonly uPixelRatio: TSLNode;
   readonly uFx: TSLNode;
   readonly uFy: TSLNode;
   readonly uTruncate: TSLNode;
@@ -124,6 +125,7 @@ export function gsplatPickWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
   const uCov2DDilation = nodes.uCov2DDilation;
+  const cov2DDilation = uCov2DDilation.mul(nodes.uPixelRatio).mul(nodes.uPixelRatio);
   const uSurfaceDepth = nodes.uSurfaceDepth;
   const uNodeId = nodes.uNodeId;
   const uLabelFilterIndex = nodes.uLabelFilterIndex;
@@ -292,8 +294,8 @@ export function gsplatPickWebGPUFactory(
 
     // 2D low-pass dilation — visual/GLSL-pick parity (widen the pickable
     // footprint to match the dilated visual splat). Diagonal only.
-    Sigma2D00.addAssign(uCov2DDilation);
-    Sigma2D11.addAssign(uCov2DDilation);
+    Sigma2D00.addAssign(cov2DDilation);
+    Sigma2D11.addAssign(cov2DDilation);
 
     // 2D Cholesky for the fragment's Mahalanobis solve.
     const s00: TSLNode = max(Sigma2D00, float(1e-8));
@@ -527,6 +529,7 @@ export function buildGSplatPickTSLNodesFromUniforms(
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
+    uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
     uFx: uniform((uniforms.uFx?.value as number) ?? 1.0),
     uFy: uniform((uniforms.uFy?.value as number) ?? 1.0),
     uTruncate: uniform((uniforms.uTruncate?.value as number) ?? 1.5),
