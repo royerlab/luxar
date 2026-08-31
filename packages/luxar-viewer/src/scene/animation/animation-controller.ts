@@ -317,7 +317,7 @@ export class AnimationController {
   }
 
   /**
-   * Inject a predicate consulted before the idle-pause native-DPR
+   * Inject a predicate consulted before the idle-pause ceiling-DPR
    * restore. When it returns false the resting frame keeps the current
    * DPR — used to protect recordings, whose resolution must stay
    * locked for the whole capture. Mirrors `setContextLostPredicate`.
@@ -682,7 +682,7 @@ export class AnimationController {
       // prepareIdleFrame() returns true only when the DPR actually
       // changed; the resize clears the canvas, so exactly then we
       // render ONE frame directly — NOT via startAnimation(), which
-      // would re-arm the idle timer and feed native-DPR frames back
+      // would re-arm the idle timer and feed ceiling-DPR frames back
       // into the FPS evaluator.
       //
       // The render-skip predicate is checked here too — this is the
@@ -692,8 +692,8 @@ export class AnimationController {
       // disables adaptive DPR, so isActive() is already false, and the
       // idle-restore predicate is off for the whole capture), but the
       // guard that makes it redundant lives in another file: drop
-      // `disableDPR` from the capture's saveRecordingState and this
-      // would paint a native-DPR frame through the capture scrim,
+      // `captureDPR` from the capture's saveRecordingState and this
+      // would paint a ceiling-DPR frame through the capture scrim,
       // possibly inside the raw-HDR window. It must come BEFORE
       // prepareIdleFrame(), which RESIZES on its way to returning true
       // — skipping the render after that resize would leave the canvas

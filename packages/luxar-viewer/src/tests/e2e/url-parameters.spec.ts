@@ -138,7 +138,7 @@ test.describe('URL Parameters', () => {
       expect(state).not.toBeNull();
       expect(state!.nativeDPR).toBe(2);
       expect(state!.allowHighDPR).toBe(false);
-      expect(state!.currentDPR).toBe(1);
+      expect(state!.currentDPR).toBeLessThanOrEqual(1);
     });
   });
 

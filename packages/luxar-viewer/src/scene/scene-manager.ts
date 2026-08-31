@@ -262,10 +262,10 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Explicit DPR selected by adaptive/manual resolution control.
    *
-   * `null` means "track the browser's native `window.devicePixelRatio`".
+   * `null` means "track the live pixel-ratio ceiling".
    * Non-null values must survive ordinary window resizes; otherwise a
    * resize event immediately after a manual DPR change silently restores
-   * native resolution while the AdaptiveDPRManager/UI still reports the
+   * ceiling resolution while the AdaptiveDPRManager/UI still reports the
    * reduced DPR.
    */
   private pixelRatioOverride: number | null = null;

@@ -78,6 +78,7 @@ import {
   getMaxPixelRatioCap,
   setMaxPixelRatioCap,
 } from '../../../../rendering/pixel-ratio-cap';
+import { setNativeDPR } from '../../../helpers/device-pixel-ratio';
 
 describe('RecordingSession', () => {
   let panel: RecordingPanel;
@@ -331,15 +332,22 @@ describe('RecordingSession', () => {
       // display size and applies the multiplier itself. Snapshotting the
       // renderer's number therefore grew the viewport by the multiplier
       // on every capture, and compounded on the next one.
+      const restoreNativeDPR = setNativeDPR(2);
+      setMaxPixelRatioCap(DEFAULT_MAX_PIXEL_RATIO);
       mockSceneManager.postProcessing.getEffectiveRenderScale = vi.fn().mockReturnValue(2);
       withCanvas(1512, 850);
-      panel.session.saveRecordingState({
-        scaleResolution: { targetH: 1700, alignEven: true },
-      });
-      panel.session.restoreRecordingState();
+      try {
+        panel.session.saveRecordingState({
+          scaleResolution: { targetH: 1700, alignEven: true },
+        });
+        panel.session.restoreRecordingState();
 
-      const calls = mockSceneManager.postProcessing.resize.mock.calls;
-      expect(calls.at(-1)).toEqual([1512, 850]);
+        const calls = mockSceneManager.postProcessing.resize.mock.calls;
+        expect(calls.at(-1)).toEqual([1512, 850]);
+        expect(mockSceneManager.renderer.setPixelRatio).toHaveBeenLastCalledWith(1);
+      } finally {
+        restoreNativeDPR();
+      }
     });
 
     it('leaves the height alone when no alignment is asked for', () => {
