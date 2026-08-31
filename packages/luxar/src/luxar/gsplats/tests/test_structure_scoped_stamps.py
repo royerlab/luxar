@@ -197,6 +197,7 @@ def test_a_no_op_decimate_returns_the_input_verbatim() -> None:
     """
     data = _flat_dataset()
     assert decimate(data, target=data.n_splats, coarsen_dims=[0, 1]) is data
+    assert data.stats == _laddered_stats()
 
 
 def test_decimate_carries_label_prefix_and_refuses_label_merge() -> None:
@@ -218,7 +219,6 @@ def test_decimate_carries_label_prefix_and_refuses_label_merge() -> None:
 
     with pytest.raises(ValueError, match="cannot coarsen.*label_ids"):
         decimate(labeled, target=data.n_splats // 2, method="merge", device="cpu")
-    assert data.stats == _laddered_stats()
 
 
 def _stacked_dataset(n: int = 200) -> GSplatData:

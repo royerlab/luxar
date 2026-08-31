@@ -294,6 +294,8 @@ class CompositionMixin(_GSplatDataOps):
             amplitudes=only.amplitudes,
             cholesky_factors=only.cholesky_factors,
             colors=only.colors,
+            label_ids=only.label_ids,
+            label_vocabulary=only.label_vocabulary,
             stats=merged_stats,
             truncation_radius=only.truncation_radius,
         )

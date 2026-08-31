@@ -1065,21 +1065,41 @@ class TestRenderCommand:
 
 
 class TestMergeCommand:
+    @staticmethod
+    def _labeled_input(tmp_path: Path, name: str, start: int, count: int) -> Path:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        centers = np.zeros((count, 3), dtype=np.float32)
+        centers[:, 0] = np.arange(start, start + count, dtype=np.float32) * 10
+        data = GSplatData(
+            centers=centers,
+            amplitudes=np.linspace(0.2, 0.8, count, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (count, 1)
+            ),
+            label_ids=np.arange(start, start + count, dtype=np.uint16) % 3,
+            label_vocabulary={0: "zero", 1: "one", 2: "two"},
+        )
+        path = tmp_path / f"{name}.gsplats.zarr"
+        data.save(path, ordering="none")
+        return path
+
+    @staticmethod
+    def _assert_labeled_rows(merged: "GSplatData", count: int) -> None:
+        assert merged.label_ids is not None
+        assert merged.label_vocabulary == {0: "zero", 1: "one", 2: "two"}
+        order = np.argsort(merged.centers[:, 0])
+        np.testing.assert_array_equal(
+            merged.label_ids[order], np.arange(count, dtype=np.uint16) % 3
+        )
+
     def test_merge_concatenate(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        # Create second dataset
         from luxar.gsplats.gsplat_data import GSplatData
 
-        data2 = GSplatData(
-            centers=np.random.rand(3, 3).astype(np.float32) * 10,
-            amplitudes=np.random.rand(3).astype(np.float32),
-            cholesky_factors=np.tile(
-                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (3, 1)
-            ),
-        )
-        path2 = tmp_path / "test2.gsplats.zarr"
-        data2.save(path2)
+        path1 = self._labeled_input(tmp_path, "test1", 0, 5)
+        path2 = self._labeled_input(tmp_path, "test2", 5, 3)
 
         out = tmp_path / "merged.gsplats.zarr"
         result = runner.invoke(
@@ -1087,7 +1107,7 @@ class TestMergeCommand:
             [
                 "gsplat",
                 "merge",
-                str(sample_gsplats),
+                str(path1),
                 str(path2),
                 "-o",
                 str(out),
@@ -1098,22 +1118,15 @@ class TestMergeCommand:
 
         merged = GSplatData.load(out)
         assert merged.n_splats == 8  # 5 + 3
+        self._assert_labeled_rows(merged, 8)
 
     def test_merge_as_dimension(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
     ) -> None:
-        # Create second dataset with same shape
         from luxar.gsplats.gsplat_data import GSplatData
 
-        data2 = GSplatData(
-            centers=np.random.rand(4, 3).astype(np.float32) * 10,
-            amplitudes=np.random.rand(4).astype(np.float32),
-            cholesky_factors=np.tile(
-                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (4, 1)
-            ),
-        )
-        path2 = tmp_path / "test2.gsplats.zarr"
-        data2.save(path2)
+        path1 = self._labeled_input(tmp_path, "test1", 0, 5)
+        path2 = self._labeled_input(tmp_path, "test2", 5, 4)
 
         out = tmp_path / "stacked.gsplats.zarr"
         result = runner.invoke(
@@ -1121,7 +1134,7 @@ class TestMergeCommand:
             [
                 "gsplat",
                 "merge",
-                str(sample_gsplats),
+                str(path1),
                 str(path2),
                 "-o",
                 str(out),
@@ -1135,6 +1148,7 @@ class TestMergeCommand:
         merged = GSplatData.load(out)
         assert merged.ndim == 4  # 3D -> 4D
         assert merged.n_splats == 9  # 5 + 4
+        self._assert_labeled_rows(merged, 9)
 
     def test_merge_channel_colors(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path

@@ -881,6 +881,8 @@ def add_gsplats_from_data_impl(
             amplitudes=result.amplitudes,
             cholesky_factors=result.cholesky_factors,
             colors=result.colors,
+            label_ids=result.label_ids,
+            label_vocabulary=result.label_vocabulary,
             parent=parent,
             extend_to_all=extend_to_all,
             dim_order=dim_order,

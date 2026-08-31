@@ -202,6 +202,8 @@ def normalize_gsplat_data(
                 amplitudes=lod.amplitudes * factor,
                 cholesky_factors=lod.cholesky_factors,
                 colors=lod.colors,
+                label_ids=lod.label_ids,
+                label_vocabulary=lod.label_vocabulary,
                 stats=dict(lod.stats),
                 truncation_radius=lod.truncation_radius,
             )
