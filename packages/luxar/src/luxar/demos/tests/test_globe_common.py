@@ -396,6 +396,36 @@ def test_shared_earth_builder_falls_back_to_webp_without_toktx(
     ) in capsys.readouterr().out
 
 
+def test_shared_earth_builder_falls_back_to_jpeg_above_webp_limit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The portable fallback must cover KTX2-sized single textures."""
+
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    monkeypatch.setattr(_globe_common.shutil, "which", lambda _name: None)
+
+    target = Target()
+    build_earth(
+        target,
+        basemap=np.zeros((1, 16384, 3), dtype=np.uint8),
+        n_lon=4,
+        n_lat=2,
+        tiles=1,
+    )
+
+    assert target.meshes[0]["texture_encoding"] == "jpeg"
+    assert (
+        "KTX-Software `toktx` was not found; authoring the Earth basemap as JPEG "
+        "quality 90 instead."
+    ) in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(("fmt", "expected_quality"), [("webp", 90), ("ktx2", 2)])
 def test_globe_quality_default_follows_the_selected_format(
     monkeypatch: pytest.MonkeyPatch, fmt: str, expected_quality: int

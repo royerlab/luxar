@@ -972,14 +972,20 @@ def add_textured_globe(
         raise ValueError(
             f"basemap width ({src_w}) must divide evenly into {tiles} tiles"
         )
+    tile_src_w = src_w // tiles
     if fmt.lower() == "ktx2" and shutil.which("toktx") is None:
+        tile_width = src_w if tiles == 1 else tile_src_w + 1
+        fallback_fmt = (
+            "webp" if max(src_h, tile_width) <= MAX_WEBP_DIMENSION else "jpeg"
+        )
+        fallback_name = "WebP" if fallback_fmt == "webp" else "JPEG"
         aprint(
             "KTX-Software `toktx` was not found; authoring the Earth basemap as "
-            "WebP quality 90 instead. Install KTX-Software to keep it GPU-compressed."
+            f"{fallback_name} quality 90 instead. Install KTX-Software to keep it "
+            "GPU-compressed."
         )
-        fmt = "webp"
+        fmt = fallback_fmt
         quality = None
-    tile_src_w = src_w // tiles
     lon_per_tile = 360.0 / tiles
     relief_grid = np.asarray(relief, dtype=np.float32)
     resolved_quality = (
