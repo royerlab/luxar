@@ -192,9 +192,11 @@ RADIUS: Final = 100.0  # globe radius in scene units
 # round — and the 8M-element budget goes back to the streamlines.
 GLOBE_LON: Final = 512
 GLOBE_LAT: Final = 256
-# 16384x8192 across two tiles, matching the earthquakes globe. Splitting is what
-# lifts the ceiling past the 16384 per-axis GPU limit, and it also keeps each tile
-# inside WebP's hard 16383 bound so the basemap can use the smaller codec.
+# 16384x8192 across two tiles, matching the earthquakes globe. One KTX2 node at
+# that size would exceed the viewer's 512 MiB admission budget once its payload
+# and resident mip chain are counted; two nodes retain comfortable headroom.
+# They also keep the missing-`toktx` bitmap fallback below WebP's hard
+# 16383-pixel per-axis limit.
 GLOBE_TEXTURE_WIDTH: Final = 16384
 GLOBE_TILES: Final = 2
 N_SEEDS: Final = 220_000  # streamlines
