@@ -17,6 +17,7 @@
 import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import type { PickResult } from '../../../rendering/picking/picking-system';
+import { gsplatLabelAt } from '../../../data/gsplats/label-channel';
 
 /**
  * Walk up the parent chain of ``mainNode`` looking for the
@@ -219,13 +220,26 @@ export function buildPickResultHandler(
       // …but LOOK UP on the leaf. The wrapper holds no per-element string CSR
       // and does not share the leaf's element index space (#1415).
       const lookupPath = result.mainNode.name;
-      const [label, imageUrl, key] = await Promise.all([
+      const [loadedLabel, imageUrl, key] = await Promise.all([
         ports.labelLoader?.getLabel(lookupPath, result.elementId) ?? Promise.resolve(null),
         ports.imageLabelLoader?.getImageUrl(lookupPath, result.elementId) ?? Promise.resolve(null),
         // Same lookup path and element id as the label: keys are written per
         // leaf and reordered by the same permutation (#1917).
         ports.keyLoader?.getLabel(lookupPath, result.elementId) ?? Promise.resolve(null),
       ]);
+      const categorical =
+        result.mainNode.userData?.nodeType === 'gsplats' &&
+        result.mainNode.userData.labelIndices &&
+        result.mainNode.userData.labelVocabulary
+          ? gsplatLabelAt(
+              {
+                indices: result.mainNode.userData.labelIndices,
+                vocabulary: result.mainNode.userData.labelVocabulary,
+              },
+              result.storageElementId ?? result.elementId
+            )
+          : null;
+      const label = loadedLabel ?? (categorical ? `${categorical.name} (${categorical.id})` : null);
       // A newer pick result (or a fade-to-null) arrived while we were
       // fetching — drop this stale one rather than clobber fresher state.
       if (seq !== latest) return;

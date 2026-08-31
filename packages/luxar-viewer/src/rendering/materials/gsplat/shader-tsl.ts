@@ -59,6 +59,7 @@ import {
   smoothstep,
   normalize,
   mix,
+  fract,
   Discard,
   modelViewMatrix,
   cameraProjectionMatrix,
@@ -172,6 +173,8 @@ export interface GSplatTSLNodes {
   readonly uNearCull: TSLNode;
   readonly uMaxExtentFactor: TSLNode;
   readonly uCov2DDilation: TSLNode;
+  readonly uLabelColorMode: TSLNode;
+  readonly uLabelFilterIndex: TSLNode;
   readonly uOpacity: TSLNode;
   /** Absorption coefficient κ — only consumed by the volumetric output branch. */
   readonly uAbsorption: TSLNode;
@@ -236,6 +239,8 @@ export function gsplatWebGPUFactory(
   const uShiftC = nodes.uShiftC;
   const uInvOneMinusC = nodes.uInvOneMinusC;
   const uTruncateSq = nodes.uTruncateSq;
+  const uLabelColorMode = nodes.uLabelColorMode;
+  const uLabelFilterIndex = nodes.uLabelFilterIndex;
 
   // ---- Vertex computation ----
   //
@@ -296,6 +301,7 @@ export function gsplatWebGPUFactory(
     const aColor: TSLNode = vec3(splatT2.z, splatT2.w, splatT3.x).toVar();
     // Per-splat opacity (texel3.y; the writer stamps 1.0 for RGB data).
     const aAlpha: TSLNode = splatT3.y.toVar();
+    const aLabelIndex: TSLNode = splatT3.z.toVar();
 
     // Centre in camera space.
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
@@ -609,7 +615,14 @@ export function gsplatWebGPUFactory(
     const rejectClipPos: TSLNode = vec4(float(0.0), float(0.0), float(-2.0), float(1.0));
     // behindCamera is subsumed by depthFadeReject (perspective fade = 0
     // behind the camera; ortho behind-camera falls to NDC clipping).
-    const rejected: TSLNode = depthFadeReject.or(coverageFadeReject).or(invalidAmp).or(invalidCov);
+    const labelRejected: TSLNode = int(uLabelFilterIndex)
+      .greaterThan(int(0))
+      .and(int(aLabelIndex.add(0.5)).notEqual(int(uLabelFilterIndex)));
+    const rejected: TSLNode = depthFadeReject
+      .or(coverageFadeReject)
+      .or(invalidAmp)
+      .or(invalidCov)
+      .or(labelRejected);
 
     // Per-instance colour (LUT or attribute). aAmplitude doubles as
     // the colormap scalar — matches the GLSL `(aAmplitude - uScalarMin)`
@@ -626,7 +639,15 @@ export function gsplatWebGPUFactory(
     }
 
     // Assign varyings (declared outside the Fn; see above).
-    vColor.assign(perInstanceColor);
+    const categoricalColor = vec3(
+      fract(aLabelIndex.mul(0.61803398875)),
+      fract(aLabelIndex.mul(0.38196601125)),
+      fract(aLabelIndex.mul(0.75487766625))
+    )
+      .mul(0.75)
+      .add(0.25);
+    const useLabelColor = int(uLabelColorMode).equal(int(1)).and(aLabelIndex.greaterThan(0.0));
+    vColor.assign(useLabelColor.select(categoricalColor, perInstanceColor));
     // Sanitized like the GLSL twin: NaN/Inf route to the 1.0 opaque
     // identity, finite values clamp to [0, 1] (alpha is load-bearing and
     // feeds optical depth under volumetric).
@@ -831,6 +852,8 @@ export function buildGSplatTSLNodesFromUniforms(
     uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
     uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
+    uLabelColorMode: uniform((uniforms.uLabelColorMode?.value as number) ?? 0),
+    uLabelFilterIndex: uniform((uniforms.uLabelFilterIndex?.value as number) ?? 0),
     uShiftC: uniform((uniforms.uShiftC?.value as number) ?? 0.0),
     uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0),
   };

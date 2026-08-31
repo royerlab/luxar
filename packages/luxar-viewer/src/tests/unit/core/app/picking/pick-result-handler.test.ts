@@ -49,10 +49,43 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 function makeResult(nodeName: string, elementId: number): PickResult {
   const mainNode = new THREE.Object3D();
   mainNode.name = nodeName;
-  return { nodeId: 1, elementId, brightness: 1.0, mainNode, screenX: 0, screenY: 0 };
+  return {
+    nodeId: 1,
+    elementId,
+    storageElementId: elementId,
+    brightness: 1.0,
+    mainNode,
+    screenX: 0,
+    screenY: 0,
+  };
 }
 
 describe('buildPickResultHandler', () => {
+  it('surfaces the exact gsplat categorical id when no text label is baked', async () => {
+    const s = makeStubs();
+    s.getLabel.mockResolvedValue(null);
+    const result = makeResult('/Cells', 9);
+    result.storageElementId = 0;
+    result.mainNode.userData = {
+      nodeType: 'gsplats',
+      labelIndices: new Uint32Array([1]),
+      labelVocabulary: [{ id: '9007199254740993', name: 'rare class' }],
+    };
+    const handle = buildPickResultHandler({
+      labelLoader: { getLabel: s.getLabel },
+      overlayManager: { updateHoverContent: s.updateHoverContent },
+    });
+
+    await handle(result);
+
+    expect(s.updateHoverContent).toHaveBeenCalledWith({
+      label: 'rare class (9007199254740993)',
+      key: null,
+      imageUrl: null,
+      nodeName: '/Cells',
+      elementIndex: 9,
+    });
+  });
   it('clears hover when result is null and does not call loaders', async () => {
     const s = makeStubs();
     const handle = buildPickResultHandler({

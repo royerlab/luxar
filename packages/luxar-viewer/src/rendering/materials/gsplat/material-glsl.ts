@@ -221,6 +221,8 @@ export class GSplatMaterial
         uCov2DDilation: {
           value: materialConfig.cov2DDilation ?? GSPLAT_COV2D_DILATION_DEFAULT,
         },
+        uLabelColorMode: { value: 0 },
+        uLabelFilterIndex: { value: 0 },
         // Colormap uniforms (only when USE_COLORMAP define is set)
         ...(materialConfig.colormapTexture
           ? {
@@ -464,6 +466,11 @@ export class GSplatMaterial
     );
   }
 
+  updateLabelStyle(colorByLabel: boolean, filterIndex: number): void {
+    this.uniforms.uLabelColorMode.value = colorByLabel ? 1 : 0;
+    this.uniforms.uLabelFilterIndex.value = Math.max(0, Math.floor(filterIndex));
+  }
+
   /** The currently bound splat data texture (mirrors getPointTexture/getLineTexture). */
   getSplatTexture(): THREE.DataTexture | null {
     return (this.uniforms.uSplatTex.value as THREE.DataTexture | null) ?? null;
@@ -542,6 +549,10 @@ export class GSplatMaterial
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    cloned.updateLabelStyle(
+      this.uniforms.uLabelColorMode.value === 1,
+      this.uniforms.uLabelFilterIndex.value
+    );
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.

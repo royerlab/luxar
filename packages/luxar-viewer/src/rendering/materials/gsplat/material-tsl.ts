@@ -104,6 +104,8 @@ export class GSplatTSLMaterial
     uNearCull: TSLNode;
     uMaxExtentFactor: TSLNode;
     uCov2DDilation: TSLNode;
+    uLabelColorMode: TSLNode;
+    uLabelFilterIndex: TSLNode;
     uColormapTex?: TSLNode;
     uScalarMin?: TSLNode;
     uScalarScale?: TSLNode;
@@ -167,6 +169,8 @@ export class GSplatTSLMaterial
       uNearCull: uniform(0.1),
       uMaxExtentFactor: uniform(materialConfig.maxExtentFactor ?? 0.33),
       uCov2DDilation: uniform(materialConfig.cov2DDilation ?? GSPLAT_COV2D_DILATION_DEFAULT),
+      uLabelColorMode: uniform(0),
+      uLabelFilterIndex: uniform(0),
     };
     if (materialConfig.colormapTexture) {
       this.tslNodes.uColormapTex = texture(materialConfig.colormapTexture);
@@ -269,6 +273,8 @@ export class GSplatTSLMaterial
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxExtentFactor: proxyIUniform(this.tslNodes.uMaxExtentFactor),
       uCov2DDilation: proxyIUniform(this.tslNodes.uCov2DDilation),
+      uLabelColorMode: proxyIUniform(this.tslNodes.uLabelColorMode),
+      uLabelFilterIndex: proxyIUniform(this.tslNodes.uLabelFilterIndex),
     };
     if (this.tslNodes.uColormapTex) {
       u.uColormapTex = proxyIUniform(this.tslNodes.uColormapTex);
@@ -464,6 +470,11 @@ export class GSplatTSLMaterial
     return (this.uniforms.uSplatTex?.value as THREE.DataTexture | null | undefined) ?? null;
   }
 
+  updateLabelStyle(colorByLabel: boolean, filterIndex: number): void {
+    this.uniforms.uLabelColorMode.value = colorByLabel ? 1 : 0;
+    this.uniforms.uLabelFilterIndex.value = Math.max(0, Math.floor(filterIndex));
+  }
+
   updateColormapTexture(tex: THREE.DataTexture | null): void {
     const oldTexture =
       (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ?? null;
@@ -609,6 +620,10 @@ export class GSplatTSLMaterial
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    cloned.updateLabelStyle(
+      this.uniforms.uLabelColorMode.value === 1,
+      this.uniforms.uLabelFilterIndex.value
+    );
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.

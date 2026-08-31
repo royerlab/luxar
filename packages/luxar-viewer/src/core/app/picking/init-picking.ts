@@ -153,6 +153,9 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     if (attrs?.has_labels) {
       hasAnyLabels = true;
     }
+    if (attrs?.has_label_ids) {
+      hasAnyInteraction = true;
+    }
     if (attrs?.has_image_labels) {
       hasAnyImageLabels = true;
     }
@@ -186,11 +189,10 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
       log.warning(Modules.APP, `Invalid link template on node "${nodeName}": ${rejection}`);
     }
   }
-  // Provision picking when the scene declares a per-element string/image
-  // channel, declares an interaction template, or an embedder selection /
-  // element-action listener exists at load time. Without any of those there is
-  // no consumer, so skip the pick-mesh/GPU overhead entirely (keeps the
-  // bench-only synthetic scenes free of picking cost).
+  // Provision picking when the scene declares a per-element string/image or
+  // categorical channel, declares an interaction template, or an embedder
+  // selection / element-action listener exists at load time. Without any of
+  // those there is no consumer, so skip the pick-mesh/GPU overhead entirely.
   const wantsSelection =
     (ports.hasSelectionConsumer?.() ?? false) || (ports.hasElementActionConsumer?.() ?? false);
   if (!hasAnyLabels && !hasAnyImageLabels && !hasAnyKeys && !hasAnyInteraction && !wantsSelection) {

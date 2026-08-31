@@ -60,6 +60,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float uMaxExtentFactor;
     uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in px² (visual-shader parity)
     uniform float uNodeId;
+    uniform int uLabelFilterIndex;
 
     flat out mediump float vAmplitude2D;
     flat out highp vec3 vL2D;
@@ -101,11 +102,17 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         vec4 splatT0 = texelFetch(uSplatTex, texel0, 0);
         vec4 splatT1 = texelFetch(uSplatTex, ivec2(texel0.x + 1, texel0.y), 0);
         vec4 splatT2 = texelFetch(uSplatTex, ivec2(texel0.x + 2, texel0.y), 0);
+        vec4 splatT3 = texelFetch(uSplatTex, ivec2(texel0.x + 3, texel0.y), 0);
         vec3 aCenter = splatT0.xyz;
         float aAmplitude = splatT0.w;
         vec2 aCholesky01 = splatT1.xy;
         vec2 aCholesky23 = splatT1.zw;
         vec2 aCholesky45 = splatT2.xy;
+        float aLabelIndex = splatT3.z;
+        if (uLabelFilterIndex > 0 && int(aLabelIndex + 0.5) != uLabelFilterIndex) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+            return;
+        }
 
         vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
         vec3 centerCam = centerCam4.xyz;

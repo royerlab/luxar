@@ -298,6 +298,15 @@ describe('GSplatPickingMaterial', () => {
     material.dispose();
   });
 
+  it('filters picks with the same compact class index as the visual material', () => {
+    const material = new GSplatPickingMaterial({ nodeId: 1 });
+    material.updateLabelFilter(4.9);
+
+    expect(material.uniforms.uLabelFilterIndex.value).toBe(4);
+    expect(material.vertexShader).toContain('int(aLabelIndex + 0.5) != uLabelFilterIndex');
+    expect(material.clone().uniforms.uLabelFilterIndex.value).toBe(4);
+  });
+
   it('fragment shader selects real depth vs brightness-as-depth on uSurfaceDepth', () => {
     const material = new GSplatPickingMaterial({ nodeId: 1 });
     expect(material.fragmentShader).toContain('uniform int uSurfaceDepth;');

@@ -49,6 +49,8 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     uniform float uNearCull;          // Near cull distance (scene-scale-aware)
     uniform float uMaxExtentFactor;   // Max projected extent as fraction of viewport before fade
     uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in px² (3DGS anti-aliasing)
+    uniform int uLabelColorMode;
+    uniform int uLabelFilterIndex;
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -102,6 +104,10 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         return vec3(invL00, L10, invL11);  // Pack reciprocals for fragment shader
     }
 
+    vec3 categoricalColor(float index) {
+        return 0.25 + 0.75 * fract(index * vec3(0.61803398875, 0.38196601125, 0.75487766625));
+    }
+
     void main() {
         // === Splat-texture fetch prologue ===
         // Four texelFetch reads reconstruct the per-splat values into
@@ -123,6 +129,11 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         vec2 aCholesky45 = splatT2.xy;     // [L21, L22]
         vec3 aColor = vec3(splatT2.zw, splatT3.x);
         float aAlpha = splatT3.y;          // per-splat opacity (1.0 when the dataset is RGB)
+        float aLabelIndex = splatT3.z;
+        if (uLabelFilterIndex > 0 && int(aLabelIndex + 0.5) != uLabelFilterIndex) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+            return;
+        }
 
         // Transform center to camera space
         vec4 centerCam4 = modelViewMatrix * vec4(aCenter, 1.0);
@@ -401,6 +412,9 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // Colormap mode: display range (uScalarMin/uScalarScale) and gamma
         // operate on the scalar VALUE (here the amplitude) before the LUT
         // lookup, not on the resulting color. See fragment-shader note.
+        if (uLabelColorMode == 1 && aLabelIndex > 0.0) {
+        vColor = categoricalColor(aLabelIndex);
+        } else {
         #ifdef USE_COLORMAP
         float t = clamp((aAmplitude - uScalarMin) * uScalarScale, 0.0, 1.0);
         #ifndef LUXAR_GAMMA_ONE
@@ -410,6 +424,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         #else
         vColor = aColor;
         #endif
+        }
         // Per-splat opacity rides regardless of color source (in colormap
         // mode an RGBA dataset keeps its alpha; RGB data carries 1.0).
         // Sanitized: alpha is load-bearing in EVERY mode (linear

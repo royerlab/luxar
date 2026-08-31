@@ -26,6 +26,10 @@ export function createEmptyGSplatsData(attrs: GSplatsMetadata): LoadedGSplatsDat
     amplitudes: new Float32Array(0),
     choleskyFactors: new Float32Array(0),
     colors: null,
+    labelIndices: attrs.has_label_ids ? new Uint32Array(0) : undefined,
+    labelVocabulary: attrs.label_vocabulary
+      ? Object.entries(attrs.label_vocabulary).map(([id, name]) => ({ id, name }))
+      : undefined,
     splatCount: 0,
     ndim: attrs.ndim,
   };

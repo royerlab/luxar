@@ -13,6 +13,7 @@
 import type { BlendingMode } from './blending';
 import type { ViewState } from '../data/data-loader-types';
 import type { LoaderMetrics, MonitorEventListener, QueryInfo } from './data-monitor-types';
+import type { GSplatLabelEntry } from '../data/gsplats/label-channel';
 
 // ============================================================================
 // Metadata Types (from zarr .zattrs)
@@ -52,6 +53,12 @@ export interface GSplatsMetadata {
 
   /** Whether colors array is present */
   has_colors: boolean;
+
+  /** Whether exact per-splat categorical ids are present. */
+  has_label_ids?: boolean;
+
+  /** Exact id-to-name vocabulary for label_ids. */
+  label_vocabulary?: Record<string, string>;
 
   /** Whether per-element string labels exist (CSR-encoded, for hover tooltips) */
   has_labels?: boolean;
@@ -212,6 +219,12 @@ export interface LoadedGSplatsData {
    */
   colorComponents?: 3 | 4;
 
+  /** Compact 1-based categorical index per loaded splat. */
+  labelIndices?: Uint32Array;
+
+  /** Compact-index vocabulary; entry N is addressed by labelIndices value N+1. */
+  labelVocabulary?: readonly GSplatLabelEntry[];
+
   /** Number of splats loaded */
   splatCount: number;
 
@@ -281,6 +294,12 @@ export interface ProcessedGSplatsData {
 
   /** Components per color item: 3 (RGB) or 4 (RGBA). Absent means 3. */
   colorComponents?: 3 | 4;
+
+  /** Compact 1-based categorical index per visible splat. */
+  labelIndices?: Uint32Array;
+
+  /** Compact-index vocabulary. */
+  labelVocabulary?: readonly GSplatLabelEntry[];
 
   /** Number of visible splats after nD clipping */
   splatCount: number;
@@ -417,6 +436,12 @@ export interface GSplatsUserData {
 
   /** Pick ID assigned by PickingSystem for GPU picking (undefined if picking disabled) */
   pickId?: number;
+
+  /** Visible storage-slot categorical channel used by shader controls and picking. */
+  labelIndices?: Uint32Array;
+
+  /** Compact categorical vocabulary paired with labelIndices. */
+  labelVocabulary?: readonly GSplatLabelEntry[];
 }
 
 // ============================================================================

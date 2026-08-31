@@ -351,6 +351,12 @@ export interface LayerInfo {
   colormap?: string;
   /** Whether this node supports colormap (has scalars or amplitudes) */
   supportsColormap: boolean;
+  /** Exact categorical vocabulary exposed by gsplat label_ids. */
+  labelVocabulary?: Array<{ id: string; name: string }>;
+  /** Render deterministic categorical colours instead of authored RGB. */
+  colorByLabel: boolean;
+  /** Compact 1-based class selection; 0 shows all classes. */
+  labelFilterIndex: number;
   /** Scalar data range for colormap normalization */
   scalarDataRange?: [number, number];
   /**
@@ -515,6 +521,11 @@ export class LayerStateManager {
           groupCanUseInheritedColormap || !!node.attrs.has_scalars || !!colormap;
         const colormapScalarRange =
           scalarRange || ampRange || deriveScalarRangeFromDescendants(node);
+        const rawLabelVocabulary = node.attrs.label_vocabulary as
+          Record<string, string> | undefined;
+        const labelVocabulary = rawLabelVocabulary
+          ? Object.entries(rawLabelVocabulary).map(([id, name]) => ({ id, name }))
+          : undefined;
 
         // The window the layer starts at. Colormapped layers window a scalar
         // (from this node or, for a composite kind=lod / kind=partition group,
@@ -690,6 +701,9 @@ export class LayerStateManager {
           selected: false,
           colormap,
           supportsColormap,
+          labelVocabulary,
+          colorByLabel: false,
+          labelFilterIndex: 0,
           scalarDataRange: colormapScalarRange,
           colorDataRange,
           scalarWindow,

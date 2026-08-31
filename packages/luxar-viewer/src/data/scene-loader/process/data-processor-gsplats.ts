@@ -40,6 +40,7 @@ import { isWorkerInfrastructureError } from '../../../workers/worker-pool/errors
 import { projectGSplatsInProcess } from '../../../workers/data-worker/projection/in-process';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isStandardGSplats3D } from '../../../workers/data-worker/projection/gsplats';
+import { projectGSplatLabelIndices } from '../../gsplats/label-channel';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 
@@ -125,7 +126,8 @@ function buildGSplatsParams(
     // so it produces no source indices — the shared predicate keeps this site
     // and the dispatcher from disagreeing about which inputs take it.
     emitSourceIndices:
-      data.ranges !== undefined && !isStandardGSplats3D(data.ndim, viewState.displayDims),
+      (data.ranges !== undefined || data.labelIndices !== undefined) &&
+      !isStandardGSplats3D(data.ndim, viewState.displayDims),
   };
 }
 
@@ -141,7 +143,7 @@ function buildGSplatsParams(
  */
 function toProcessed(
   result: Awaited<ReturnType<typeof projectGSplatsInProcess>>,
-  colorComponents: 3 | 4,
+  data: LoadedGSplatsData,
   ranges: readonly SplatRange[] | undefined
 ): ProcessedGSplatsData {
   return {
@@ -149,7 +151,11 @@ function toProcessed(
     choleskyFactors3D: result.choleskyFactors3D,
     amplitudes: result.amplitudes,
     colors: result.colors,
-    colorComponents,
+    colorComponents: data.colorComponents ?? 3,
+    labelIndices: data.labelIndices
+      ? projectGSplatLabelIndices(data.labelIndices, result.sourceIndices, result.visibleCount)
+      : undefined,
+    labelVocabulary: data.labelVocabulary,
     splatCount: result.visibleCount,
     // Fused-scan cull metadata (AABB + max Cholesky row norm) — lets the
     // GPU commit skip its two O(N) main-thread scans (see types/gsplats.ts).
@@ -226,7 +232,7 @@ export async function projectGSplatsTo3DUsingWorker(
       );
     }
 
-    return toProcessed(workerResult, data.colorComponents ?? 3, data.ranges);
+    return toProcessed(workerResult, data, data.ranges);
   } catch (error) {
     // Dataset-switch abort: don't burn CPU on stale in-process work.
     if (error instanceof Error && error.name === 'WorkerAbortError') {
@@ -248,11 +254,7 @@ export async function projectGSplatsTo3DUsingWorker(
       'No worker available, falling back to in-process GSplats projection:',
       error
     );
-    return toProcessed(
-      await projectGSplatsInProcess(params),
-      data.colorComponents ?? 3,
-      data.ranges
-    );
+    return toProcessed(await projectGSplatsInProcess(params), data, data.ranges);
   }
 }
 
@@ -300,7 +302,7 @@ export async function processGSplatsData(
     // the dispatcher handles the ndim===3 case efficiently.
     return toProcessed(
       await projectGSplatsInProcess(buildGSplatsParams(data, viewState, truncate)),
-      data.colorComponents ?? 3,
+      data,
       data.ranges
     );
   };

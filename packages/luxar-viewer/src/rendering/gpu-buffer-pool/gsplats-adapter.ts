@@ -46,6 +46,7 @@ export interface PackedGSplatsData {
   colors: Float32Array; // M * 3 (RGB) or M * 4 (RGBA — alpha = per-splat opacity)
   /** Components per color item: 3 (RGB) or 4 (RGBA). Absent means 3. */
   colorComponents?: 3 | 4;
+  labelIndices?: Uint32Array;
   /**
    * Precomputed cull metadata from the projection's fused scan (AABB of
    * `centers3D` + max Cholesky row norm). When present, `updateGeometry`
@@ -319,6 +320,7 @@ export class GSplatsBufferAdapter {
         amplitudes: data.amplitudes,
         colors: data.colors,
         colorComponents: data.colorComponents,
+        labelIndices: data.labelIndices,
       },
       count,
       { fromSplat }

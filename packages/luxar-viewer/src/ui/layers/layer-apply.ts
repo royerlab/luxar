@@ -630,6 +630,28 @@ export class LayerApplyEngine {
     this.applyComposed(layer);
   }
 
+  applyLabelStyle(layer: LayerInfo): void {
+    let applied = false;
+    let pickDirty = false;
+    for (const leaf of this.getAffectedDataLeaves(layer.path)) {
+      const obj = this.getMesh(leaf.path);
+      if (!obj) continue;
+      const mat = this.getLeafMaterial(obj);
+      if (!mat?.updateLabelStyle) continue;
+      mat.updateLabelStyle(layer.colorByLabel, layer.labelFilterIndex);
+      applied = true;
+      const pickMaterial = (obj.userData.pickNode as THREE.Mesh | undefined)?.material;
+      if (pickMaterial && !Array.isArray(pickMaterial) && 'updateLabelFilter' in pickMaterial) {
+        (
+          pickMaterial as THREE.Material & { updateLabelFilter(index: number): void }
+        ).updateLabelFilter(layer.labelFilterIndex);
+        pickDirty = true;
+      }
+    }
+    if (pickDirty) this.deps.invalidatePickBuffer?.();
+    if (applied) this.deps.requestRender();
+  }
+
   /**
    * Push the mesh shading values (§6.2) to the layer's mesh leaves.
    *
