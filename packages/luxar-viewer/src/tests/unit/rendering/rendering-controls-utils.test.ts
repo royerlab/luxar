@@ -119,6 +119,15 @@ describe('rendering-controls-utils', () => {
       expect(result.autoDollyAmplitudePercent).toBe(defaults.autoDollyAmplitudePercent);
     });
 
+    it('accepts an extreme but legal 95% amplitude', () => {
+      // The ceiling is a cost boundary, not a safety one: 95% nearly halves and
+      // doubles the viewing distance each cycle, which is expensive (the LOD
+      // ladder loads finer levels at the near extreme) but never unsafe. A
+      // deliberate choice must survive validation instead of snapping back.
+      const result = validateRenderingSettings({ autoDollyAmplitudePercent: 95 });
+      expect(result.autoDollyAmplitudePercent).toBe(95);
+    });
+
     it('keeps a legitimate in-range dolly setting', () => {
       const result = validateRenderingSettings({
         autoDolly: true,

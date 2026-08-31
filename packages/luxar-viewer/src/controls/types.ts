@@ -87,11 +87,13 @@ export function isAutoRotateAxis(value: unknown): value is AutoRotateAxis {
  *
  * Deliberately modest, for a reason that is not about taste. Screen area goes
  * as `1/d²`, so a swing of `A` moves the projected area of the subject by
- * `(1+A)⁴` between its extremes — 1.75× at 15%, but 2.9× at 30% and 5× at 50%.
- * The LOD selector steps on halvings of screen area with hysteresis only on
- * the downgrade side, so a large amplitude walks up and down the ladder every
- * cycle, re-fetching chunks each time on a hosted scene where cost is
- * requests. At 15% the whole oscillation stays inside a single LOD step.
+ * `(1+A)⁴` between its extremes, and the LOD selector answers by loading finer
+ * levels at the near extreme. Measured over one cycle on a 100-group demo:
+ * 15% → 1.32× area and 118k elements resident; 50% → 2.25× and 526k; 95% →
+ * 3.80× and 2.29M. The slider allows all of it (the motion is sometimes the
+ * point, and the distance clamps are orders of magnitude away), but the
+ * DEFAULT keeps the whole oscillation inside roughly one LOD step, which is
+ * what a hosted scene — where cost is requests — wants.
  */
 export const DEFAULT_AUTO_DOLLY_AMPLITUDE = 0.15;
 

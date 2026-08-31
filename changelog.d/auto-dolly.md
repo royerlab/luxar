@@ -17,12 +17,16 @@ rotates a running turntable. Because it is gated on zoom rather than rotation
 it also works in ortho mode, where it breathes the orthographic zoom and the
 turntable is inert.
 
-Keep the amplitude modest. Screen area goes as the inverse square of distance,
-so a swing of `A` moves the subject's projected area by `(1 + A)⁴` — 1.75× at
-the default 15%, but 2.9× at 30% and 5× at 50%. The LOD ladder steps on
-halvings of screen area, so a large amplitude walks up and down it every
-cycle, re-fetching chunks each time on a hosted scene where the cost is
-requests. The 15% default keeps the whole oscillation inside one level.
+The amplitude slider runs to 95% — nearly halving and doubling the viewing
+distance each cycle — but the default is a modest 15%, because the cost is
+steeply non-linear. Screen area goes as the inverse square of distance, so a
+swing of `A` moves projected area by `(1 + A)⁴`, and the LOD ladder answers by
+loading finer levels at the near extreme. Measured over one cycle on a
+100-group demo: 15% keeps 118k elements resident, 50% keeps 526k, 95% keeps
+2.29M — a 19× resident set for a 6× bigger swing. A local warm cache absorbs
+that (144 → 129 fps); a hosted scene, where cost is requests, does not. Nothing
+about a large amplitude is unsafe — the distance clamps sit orders of magnitude
+away — so it is a budget decision, not a safety one.
 
 Scenes can author it from Python as `ViewerConfig(auto_dolly=True,
 auto_dolly_amplitude_percent=20, auto_dolly_period=8)`, and the choice

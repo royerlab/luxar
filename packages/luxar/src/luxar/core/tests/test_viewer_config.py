@@ -356,20 +356,32 @@ class TestViewerConfig:
         assert "auto_dolly_period" not in d
 
     def test_invalid_auto_dolly_amplitude(self) -> None:
-        # The percent is bounded to the viewer's own slider range: an
-        # unbounded amplitude would fling the camera through the subject on
-        # every cycle, and the viewer would clamp it back to the default
-        # anyway — better to fail at authoring time than to be silently ignored.
+        # The percent is bounded to the viewer's own slider range: outside it
+        # the viewer would clamp back to the default anyway, so failing at
+        # authoring time beats being silently ignored.
         with pytest.raises(ValueError, match="auto_dolly_amplitude_percent"):
             ViewerConfig(auto_dolly_amplitude_percent=0.15)
         with pytest.raises(ValueError, match="auto_dolly_amplitude_percent"):
             ViewerConfig(auto_dolly_amplitude_percent=900.0)
 
+    def test_extreme_but_legal_auto_dolly_amplitude(self) -> None:
+        # 95% is a deliberate choice, not a mistake: it halves and doubles the
+        # viewing distance each cycle. Expensive (the LOD ladder loads finer
+        # levels at the near extreme), but nothing about it is unsafe, so
+        # authoring must not refuse it.
+        assert (
+            ViewerConfig(auto_dolly_amplitude_percent=95).auto_dolly_amplitude_percent
+            == 95
+        )
+
     def test_auto_dolly_amplitude_is_a_percent_not_a_fraction(self) -> None:
         # The field name carries the unit precisely because 0.15 is the
         # plausible wrong value — it is rejected above rather than accepted as
         # a 0.15% swing nobody could see.
-        assert ViewerConfig(auto_dolly_amplitude_percent=15.0).auto_dolly_amplitude_percent == 15.0
+        assert (
+            ViewerConfig(auto_dolly_amplitude_percent=15.0).auto_dolly_amplitude_percent
+            == 15.0
+        )
 
     def test_invalid_auto_dolly_period(self) -> None:
         with pytest.raises(ValueError, match="auto_dolly_period"):

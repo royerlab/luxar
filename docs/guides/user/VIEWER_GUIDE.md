@@ -474,12 +474,26 @@ vc = luxar.ViewerConfig(
     # the parallax is a depth cue a still cannot give.
     #
     # The amplitude is a PERCENT of the viewing distance, so it means the same
-    # thing at any scene scale: 15 swings between d/1.15 and d x 1.15. Keep it
-    # modest. Screen area goes as 1/d^2, so the swing moves the subject's
-    # projected area by (1 + a)^4 — 1.75x at 15%, but 2.9x at 30% and 5x at
-    # 50%. The LOD ladder steps on halvings of screen area, so a large
-    # amplitude walks up and down it every cycle, re-fetching chunks each time
-    # on a hosted scene where cost is requests rather than bytes.
+    # thing at any scene scale: 15 swings between d/1.15 and d x 1.15. The
+    # slider goes to 95 (nearly halving and doubling the distance), and a big
+    # swing is a legitimate choice — but it is not free, and the cost is not
+    # linear. Screen area goes as 1/d^2, so the swing moves projected area by
+    # (1 + a)^4: 1.32x at 15%, 2.25x at 50%, 3.80x at 95%. The LOD ladder
+    # answers by loading finer levels at the near extreme, and THAT is what
+    # scales. Measured over one 3 s cycle on a 100-group demo:
+    #
+    #     amplitude   area swing   resident elements   LOD transitions
+    #        15%         1.32x           118k                161
+    #        50%         2.25x           526k                392
+    #        95%         3.80x          2.29M                520
+    #
+    # A 6x bigger swing costs a 19x resident set. Locally, with a warm cache,
+    # that is nearly free (144 -> 129 fps on an M-series laptop). On a hosted
+    # scene, where cost is requests rather than bytes, it is not — every cycle
+    # re-walks the ladder and anything the cache has evicted is re-fetched.
+    # Nothing about a large amplitude is unsafe: the distance clamps sit orders
+    # of magnitude away (a scene framed at 176k units clamps at 327). Choose by
+    # what the motion is worth, not by fear of it.
     #
     # The user keeps control of zoom while it runs: both the wheel and the
     # dolly only ever multiply the distance, so a scroll moves the centre the

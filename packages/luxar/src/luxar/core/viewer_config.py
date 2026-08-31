@@ -414,10 +414,13 @@ class ViewerConfig:
     # the user's own zoom while it runs. Unlike the turntable it is also alive
     # in ortho mode, where it breathes the orthographic zoom instead.
     auto_dolly: Optional[bool] = None
-    # Peak swing as a percent of the viewing distance (15 -> +/-15%). Keep it
-    # modest: screen area goes as 1/d^2, so the swing moves projected area by
-    # (1 + a)^4 — 1.75x at 15% but 5x at 50%, which walks up and down the LOD
-    # ladder every cycle and re-fetches chunks on a hosted scene.
+    # Peak swing as a percent of the viewing distance (15 -> +/-15%), up to 95.
+    # A big swing is a legitimate choice, not a hazard — but it is not free.
+    # Screen area goes as 1/d^2, so the swing moves projected area by (1 + a)^4
+    # and the LOD ladder answers by loading finer levels at the near extreme:
+    # measured on a 100-group demo, 15% keeps 118k elements resident while 95%
+    # pulls in 2.29M. A local warm cache absorbs that; a hosted scene pays for
+    # it in requests. Prefer a modest amplitude unless the motion is the point.
     auto_dolly_amplitude_percent: Optional[float] = None
     # Seconds per full in-and-out oscillation.
     auto_dolly_period: Optional[float] = None
@@ -562,7 +565,7 @@ class ViewerConfig:
         # Control speeds and damping
         _validate_min(self.auto_rotate_speed, "auto_rotate_speed", 0)
         _validate_range(
-            self.auto_dolly_amplitude_percent, "auto_dolly_amplitude_percent", 1, 50
+            self.auto_dolly_amplitude_percent, "auto_dolly_amplitude_percent", 1, 95
         )
         if self.auto_dolly_period is not None and self.auto_dolly_period <= 0:
             raise ValueError(
