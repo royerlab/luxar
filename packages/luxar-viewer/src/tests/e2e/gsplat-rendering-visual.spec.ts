@@ -38,8 +38,9 @@ test.describe('GSplats visual correctness', () => {
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
-    // Pixel helpers suppress DOM painted over the canvas, so non-black pixels
-    // here can only come from the rendered canvas itself.
+    // Whole-canvas stats are more robust than sparse grid sampling for small
+    // splat clusters. Pixel helpers suppress DOM painted over the canvas, so
+    // non-black pixels here can only come from the rendered canvas itself.
     const stats = await getElementPixelStats(page, 'canvas', 10);
     expect(
       stats.nonBlackPixels,
@@ -62,7 +63,8 @@ test.describe('GSplats visual correctness', () => {
       const chromeCanvas = document.createElement('canvas');
       chromeCanvas.width = 120;
       chromeCanvas.height = 12;
-      chromeCanvas.style.cssText = 'position: fixed; left: 0; top: 0; z-index: 9999';
+      chromeCanvas.style.cssText =
+        'position: fixed; left: 0; top: 0; width: 120px; height: 12px; z-index: 9999';
       const context = chromeCanvas.getContext('2d')!;
       context.fillStyle = '#fff';
       context.fillRect(0, 0, chromeCanvas.width, chromeCanvas.height);
@@ -74,7 +76,7 @@ test.describe('GSplats visual correctness', () => {
     const blankStats = await getElementPixelStats(page, 'canvas', 10);
     expect(
       blankStats.nonBlackPixels,
-      `DOM chrome entered the projected GSplat region; stats=${JSON.stringify(blankStats)}`
+      `Blank frame is not black; DOM chrome or geometry leaked into the canvas capture; stats=${JSON.stringify(blankStats)}`
     ).toBe(0);
   });
 

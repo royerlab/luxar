@@ -62,8 +62,9 @@ test.describe('browser-real shader compile + pixel smoke', () => {
       // (1) No shader/GLSL/attribute/uniform errors.
       await assertNoShaderErrors(page);
 
-      // (2) Some canvas pixel has rendered output. The helper suppresses DOM
-      //     chrome painted above the canvas before taking the screenshot.
+      // (2) Some canvas pixel has rendered output. Whole-canvas stats avoid
+      //     missing thin lines or small splat clusters between sparse sample
+      //     points, while the helper suppresses DOM chrome before capture.
       if (v.expectColored) {
         const stats = await getElementPixelStats(page, 'canvas', VISIBLE_PIXEL_THRESHOLD);
         expect(
