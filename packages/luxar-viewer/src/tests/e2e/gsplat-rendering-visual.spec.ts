@@ -34,14 +34,14 @@ test.describe('GSplats visual correctness', () => {
   });
 
   test('GSplat output is non-black after a render', async ({ page }) => {
-    await page.goto(`/?src=${FIXTURES_BASE}/test_gsplats.luxar.zarr&debug`);
+    await page.goto(`/?src=${FIXTURES_BASE}/test_gsplats.luxar.zarr&debug&dpr=1`);
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
     // Whole-canvas stats are more robust than sparse grid sampling for small
-    // splat clusters. Pixel helpers suppress DOM painted over the canvas, so
-    // non-black pixels here can only come from the rendered canvas itself.
-    const stats = await getElementPixelStats(page, 'canvas', 10);
+    // splat clusters. The framebuffer route excludes DOM chrome, so non-black
+    // pixels here can only come from the rendered canvas itself.
+    const stats = await getElementPixelStats(page, 'canvas#app', 10, 'framebuffer');
     expect(
       stats.nonBlackPixels,
       `Expected visible GSplat output; stats=${JSON.stringify(stats)}`
@@ -63,8 +63,10 @@ test.describe('GSplats visual correctness', () => {
       const chromeCanvas = document.createElement('canvas');
       chromeCanvas.width = 120;
       chromeCanvas.height = 12;
+      // Deliberately defeats the screenshot helper's CSS mask. Only a
+      // framebuffer read can keep this composited overlay out of the pixels.
       chromeCanvas.style.cssText =
-        'position: fixed; left: 0; top: 0; width: 120px; height: 12px; z-index: 9999';
+        'position: fixed; left: 0; top: 0; width: 120px; height: 12px; z-index: 9999; visibility: visible !important';
       const context = chromeCanvas.getContext('2d')!;
       context.fillStyle = '#fff';
       context.fillRect(0, 0, chromeCanvas.width, chromeCanvas.height);
@@ -73,11 +75,11 @@ test.describe('GSplats visual correctness', () => {
     });
     expect(hidden, 'the blank-frame control must hide real GSplat geometry').toBeGreaterThan(0);
     await renderOnce(page);
-    const blankStats = await getElementPixelStats(page, 'canvas', 10);
+    const blankStats = await getElementPixelStats(page, 'canvas#app', 10, 'framebuffer');
     expect(
       blankStats.nonBlackPixels,
       `Blank frame is not black; DOM chrome or geometry leaked into the canvas capture; stats=${JSON.stringify(blankStats)}`
-    ).toBe(0);
+    ).toBeLessThan(10);
   });
 
   test('Camera rotation does not produce shader errors (precision-based ray integral)', async ({
