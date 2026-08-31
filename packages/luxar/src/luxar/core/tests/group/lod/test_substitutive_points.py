@@ -402,9 +402,14 @@ class TestSubstitutiveComposedWithAdditive:
         assert subs == [f"additive_{i}" for i in range(n_sub)]
         assert sum(int(finest[s].attrs["n_points"]) for s in subs) == n
 
-    def test_default_ladder_uses_real_hidden_slice_count(self, tmp_path) -> None:
+    def test_default_ladder_uses_real_hidden_slice_count(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from luxar.core.group.lod import group as lod_group
+
+        monkeypatch.setattr(lod_group, "DEFAULT_LADDER_TARGET_MS", 0.1)
         n_slices = 30
-        points_per_slice = 2_000
+        points_per_slice = 20
         n = n_slices * points_per_slice
         rng = np.random.default_rng(7)
         positions = np.column_stack(
@@ -428,7 +433,7 @@ class TestSubstitutiveComposedWithAdditive:
                 "cloud",
                 positions,
                 substitutive_lod=dict(
-                    compression_factor=2_000,
+                    compression_factor=20,
                     levels=1,
                     method="greedy",
                     device="cpu",
@@ -439,7 +444,7 @@ class TestSubstitutiveComposedWithAdditive:
         grp = zarr.open(str(out), mode="r")["cloud"]
         finest = grp[self._children(grp)[-1]]
         assert int(finest.attrs.get("n_additive_sublods", 1)) > 1
-        assert int(finest["additive_0"].attrs["n_points"]) == 39_062
+        assert int(finest["additive_0"].attrs["n_points"]) == 75
 
     def test_coarse_levels_are_laddered_too(self, composed) -> None:
         # Full symmetry with the gsplat pyramid, which ladders every level.
