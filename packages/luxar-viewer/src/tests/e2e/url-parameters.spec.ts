@@ -113,6 +113,33 @@ test.describe('URL Parameters', () => {
       expect(state!.nativeDPR).toBe(2);
       expect(state!.currentDPR).toBe(2);
     });
+
+    /**
+     * The complement, and the actual default: with no pin, a 2x display
+     * still renders at CSS resolution. This is the behaviour the whole
+     * change exists for, and the only end-to-end proof that the cap binds
+     * on a real HiDPI display — every other spec runs at
+     * deviceScaleFactor 1, where the ceiling never has anything to clamp.
+     */
+    test('without a pin, the ceiling caps a HiDPI display at 1.0', async ({ page }) => {
+      await page.goto(`/?src=${DATASET}&debug`);
+      await waitForLuxarReady(page);
+
+      const state = await page.evaluate(() => {
+        const manager = (window as any).__luxarDebug?.app?.components?.adaptiveDPRManager;
+        if (!manager) return null;
+        return {
+          currentDPR: manager.getCurrentDPR(),
+          nativeDPR: manager.getNativeDPR(),
+          allowHighDPR: manager.isHighDPRAllowed(),
+        };
+      });
+
+      expect(state).not.toBeNull();
+      expect(state!.nativeDPR).toBe(2);
+      expect(state!.allowHighDPR).toBe(false);
+      expect(state!.currentDPR).toBe(1);
+    });
   });
 
   test('should enable debug interface with ?debug parameter', async ({ page }) => {

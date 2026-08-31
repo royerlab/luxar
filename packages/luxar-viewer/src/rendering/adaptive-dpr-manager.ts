@@ -246,8 +246,8 @@ export class AdaptiveDPRManager {
   // calls that are acted upon.
   private lastContentChangeAt: number | null = null;
 
-  // Idle-restore state: prepareIdleFrame() snaps DPR to native for the
-  // resting frame and remembers where the loop was operating so
+  // Idle-restore state: prepareIdleFrame() snaps DPR to the CEILING for
+  // the resting frame and remembers where the loop was operating so
   // notifyResumed() can return there in ONE step instead of reactively
   // re-walking the reduction ladder on every interaction burst.
   private restingAtCeiling: boolean = false;
