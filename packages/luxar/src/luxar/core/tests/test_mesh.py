@@ -3482,6 +3482,8 @@ def test_ktx2_encoder_uses_supported_etc1s_spelling(monkeypatch) -> None:
     "rdo_l,zcmp,error_pattern",
     [
         (True, 9, r"texture_ktx2_rdo_l.*\[0.001, 10.0\]"),
+        (0.0005, 9, r"texture_ktx2_rdo_l.*\[0.001, 10.0\]"),
+        (20.0, 9, r"texture_ktx2_rdo_l.*\[0.001, 10.0\]"),
         (0.5, 0, r"texture_ktx2_zcmp.*\[1, 22\]"),
         (0.5, True, r"texture_ktx2_zcmp.*\[1, 22\]"),
     ],

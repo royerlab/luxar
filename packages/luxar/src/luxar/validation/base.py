@@ -1392,7 +1392,8 @@ def _validate_texture_codec_options(
         specified_options = []
     if specified_options:
         raise ValidationError(
-            f"{context}: {'/'.join(specified_options)} require texture_encoding='ktx2'",
+            f"{context}: texture_encoding='ktx2' is required for "
+            f"{'/'.join(specified_options)}",
             "Remove the KTX2-only options or select texture_encoding='ktx2'",
         )
     if (
