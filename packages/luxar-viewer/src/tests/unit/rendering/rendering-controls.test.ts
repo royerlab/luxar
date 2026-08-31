@@ -480,18 +480,29 @@ describe('RenderingControls', () => {
   });
 
   describe('Integration: Complete Reset Flow', () => {
-    it('applies the reset high-DPR ceiling to the adaptive manager', () => {
+    it('applies the reset DPR ceiling AND adaptive state to the manager', () => {
       const controls = renderingControls as any;
       const adaptiveDPRManager = {
         setHighDPRAllowed: vi.fn(),
+        setEnabled: vi.fn(),
       };
       controls.setAdaptiveDPRManager(adaptiveDPRManager);
       controls.settings.allowHighDPR = true;
+      controls.settings.adaptiveDPREnabled = false;
 
       controls.resetToDefaults();
 
       expect(controls.settings.allowHighDPR).toBe(false);
       expect(adaptiveDPRManager.setHighDPRAllowed).toHaveBeenCalledWith(false);
+      // Both, not just the ceiling: repainting the adaptive toggle
+      // without applying it leaves the same panel-disagrees-with-the-
+      // renderer state, one setting over.
+      expect(adaptiveDPRManager.setEnabled).toHaveBeenCalledWith(true);
+      // Ceiling before enabled state — the latter settles the operating
+      // DPR against the former.
+      expect(adaptiveDPRManager.setHighDPRAllowed.mock.invocationCallOrder[0]).toBeLessThan(
+        adaptiveDPRManager.setEnabled.mock.invocationCallOrder[0]
+      );
     });
 
     it('should fully reset every setting and apply them', () => {

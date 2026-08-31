@@ -359,8 +359,14 @@ export class RenderingControls {
     // Clear saved settings for this scene (before applying, so user sees clean state).
     clearStoredSettings(this.sceneId);
 
-    // Apply the reset ceiling alongside the bound setting value.
+    // Apply the reset DPR settings. Neither reaches the manager through
+    // `applySettings()` below — that drives the post-processing pipeline
+    // — so without this the reset repaints both toggles while the viewer
+    // keeps rendering at the old ceiling with the old adaptation state,
+    // until a reload. High-DPR FIRST, as in `loadSettings`: it sets the
+    // ceiling that `setEnabled` then settles the operating DPR against.
     this.adaptiveDPRManager?.setHighDPRAllowed(this.settings.allowHighDPR);
+    this.adaptiveDPRManager?.setEnabled(this.settings.adaptiveDPREnabled);
 
     // Apply camera settings to scene manager (before post-processing)
     this.sceneManager.setFov(this.settings.fov);
