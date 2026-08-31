@@ -480,12 +480,14 @@ procedure are in
 **On a node with a hidden dimension, count elements per SLICE, not per node.** A
 ladder's rungs are sized against the whole node while the viewer draws one hidden
 coordinate. An explicit absolute first rung (`-b stream:<c>`) is divided among
-the slices: on a 500-timepoint leaf a 20,833-splat rung 0 is 42 splats on screen,
-and playback rendered an empty frame. The CLI scales `--target-ms` by the observed
-slice count and logs that multiplier. Prefer `--n-lods 3..4` for an aggregate
-slice-invariant share, then verify long or non-uniform axes because the global
-prefix can still concentrate away from sparse slices. The "Sliced nodes" section
-of that reference carries the measured table.
+the slices: Nexrad's explicit `stream:20000` ladder has p05 = 4 splats per played
+coordinate. Before the CLI scaling fix, Drosophila's `--target-ms` resolved to a
+20,833-splat rung 0 for 500 timepoints; the measured slices had median = 45, p05 =
+7, and min = 1, and playback rendered an empty frame. The CLI now scales
+`--target-ms` by the observed slice count and logs that multiplier. Prefer
+`--n-lods 3..4` for an aggregate slice-invariant share, then verify long or
+non-uniform axes because the global prefix can still concentrate away from sparse
+slices. The "Sliced nodes" section of that reference carries the measured table.
 
 - **`overview` — ~3 eager rungs, independent of part count.** Its root is a
   `kind=lod` whose fine partition defers behind a fills-screen selector. Crossing

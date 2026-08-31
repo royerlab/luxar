@@ -587,11 +587,13 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream --target-ms 20
 luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe stream -b stream:14000
 # ON A NODE THE VIEWER SLICES (any hidden dim), COUNT PER SLICE, NOT PER NODE.
 # An explicit `-b stream:C` fixes an ABSOLUTE first rung for the whole node, but
-# only one hidden coordinate is on screen, so each slice receives part of C. On
-# the 500-timepoint drosophila leaf a 20,833-splat rung 0 was 42 splats on screen
+# only one hidden coordinate is on screen, so each slice receives part of C;
+# Nexrad's explicit `stream:20000` ladder has p05 = 4 splats per played coordinate.
+# Before the CLI scaling fix, drosophila's `--target-ms` resolved to a 20,833-splat
+# rung 0 for 500 timepoints; the measured slices had median = 45, p05 = 7, min = 1,
 # and playback rendered an empty frame (#2374/#2376). Prefer `--n-lods 3..4` for
 # an aggregate share that stays stable as slice count changes, but verify long or
-# non-uniform axes: the global prefix can still starve sparse slices. The CLI
+# non-uniform axes: the global prefix can still starve sparse slices. The CLI now
 # scales `--target-ms` by the observed slice count and LOGS the multiplier; read
 # that line rather than assuming the number you typed is what renders.
 # Count stops as distinct OCCURRING combinations over all hidden axes: not the

@@ -178,9 +178,10 @@ luxar gsplat additive in.gsplats.zarr out.gsplats.zarr --n-lods 4
 # This is also the no-refit REMEDY for a store whose ladder is too deep for a
 # node the viewer slices: it rebuilds each leaf's ladder from its union, so a
 # starved first rung can be fixed without re-fitting. Use `--n-lods 3..4` for
-# that: the aggregate share stays stable as the slice count changes, while the
-# CLI logs how `--target-ms` was scaled for the store. A global prefix can still
-# be uneven across slices (see the gsplat-pipeline skill's "Sliced nodes" reference).
+# that: the aggregate share stays stable as the slice count changes. If you use
+# `--target-ms` instead, read the logged slice multiplier. A global prefix can
+# still be uneven across slices (see the gsplat-pipeline skill's "Sliced nodes"
+# reference).
 # Check the result with `hatch run check-demo-ladders <store>`.
 
 # Re-quantize the on-disk Cholesky encoding (structure-preserving copy; decode is

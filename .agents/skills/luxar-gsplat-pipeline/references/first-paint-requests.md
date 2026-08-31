@@ -101,8 +101,8 @@ against what the deployed viewer commits while the axis plays:
 
 Under a playback frame budget the viewer commits the first rung and, since
 #2377, whatever further rungs are already cache-resident. A slice it has never
-visited therefore shows close to rung 0 alone, which is why the left column
-predicts the right one.
+visited therefore shows close to rung 0 alone, which is why the p05 rung-0 column
+predicts the playback column.
 
 **Rules that follow.** Prefer `--n-lods 3..4` on any node with a hidden
 dimension, then inspect the per-slice histogram on a long or non-uniform axis
@@ -114,12 +114,12 @@ all hidden axes: not the product of per-axis cardinality
 `Dimension` range (`drosophila_embryogenesis` declares 500 timepoints and its
 coarsest rung carries data at 499).
 
-Two landed protections keep this from resting on memory: the CLI scales
-`--target-ms` by the slice count, and `hatch run check-demo-ladders` fails a built
-store whose sparsest slices fall below the floor. The demo policy also floors
-sliced first rungs at an aggregate share before stores are built. The gate
-measures the 5th percentile, not the maximum — a ladder starves at its sparsest
-slice, and one busy coordinate used to mask hundreds of starved ones.
+Three landed protections keep this from resting on memory: the CLI scales
+`--target-ms` by the slice count; the demo policy floors sliced first rungs at an
+aggregate share before stores are built; and `hatch run check-demo-ladders` fails
+a built store whose sparsest slices fall below the floor. The gate measures the
+5th percentile, not the maximum — a ladder starves at its sparsest slice, and one
+busy coordinate used to mask hundreds of starved ones.
 
 ## Measured example
 
