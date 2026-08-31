@@ -160,6 +160,10 @@ container. Admission charges `ceil(width * height * 4 / 3)` bytes for the native
 compressed surface plus its full mip tail. A renderer with no native ASTC,
 ETC1/2, S3TC/BC or PVRTC target rejects the node; an uncompressed RGBA8 transcode
 fallback is not permitted because it would exceed that device-independent charge.
+UASTC authoring defaults to quality 2, RDO lambda 0.25, and zstd level 9;
+`texture_ktx2_rdo_l` and `texture_ktx2_zcmp` override those UASTC-only controls.
+ETC1S remains selected explicitly with `texture_ktx2_mode="etc1s"` and uses its
+own `texture_ktx2_quality` scale.
 
 **Winding convention:** faces are wound counter-clockwise as seen with the mesh's authored spatial
 triple in ascending index order (front-facing under `FrontSide`, §6.1). For a 3D mesh that frame is

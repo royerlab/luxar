@@ -3329,9 +3329,7 @@ def test_ktx2_encoder_defaults_to_uastc_and_preserves_rgba_input(
     monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
     rgba = np.zeros((2, 3, 4), dtype=np.uint8)
     rgba[..., 3] = [[0, 64, 255], [255, 64, 0]]
-    encoded = texture_writer._encode_ktx2(
-        rgba, "uastc", None, None, None, "srgb"
-    )
+    encoded = texture_writer._encode_ktx2(rgba, "uastc", None, None, None, "srgb")
     assert bytes(encoded) == b"ktx2"
     assert seen["command"][1:10] == [
         "--t2",
@@ -3341,7 +3339,7 @@ def test_ktx2_encoder_defaults_to_uastc_and_preserves_rgba_input(
         "--uastc_quality",
         "2",
         "--uastc_rdo_l",
-        "0.5",
+        "0.25",
         "--zcmp",
     ]
     assert seen["command"][10:13] == ["9", "--assign_oetf", "srgb"]
@@ -3369,6 +3367,38 @@ def test_ktx2_encoder_writes_rgb_as_binary_ppm(monkeypatch) -> None:
     header, pixels = seen["source"].split(b"255\n", 1)
     assert header == b"P6\n3 2\n"
     assert np.array_equal(np.frombuffer(pixels, dtype=np.uint8).reshape(rgb.shape), rgb)
+
+
+def test_ktx2_encoder_applies_explicit_uastc_rdo_options(monkeypatch) -> None:
+    from luxar.io._compiler.dataset_writers import texture as texture_writer
+
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        Path(command[-2]).write_bytes(b"ktx2")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(texture_writer.shutil, "which", lambda name: "/usr/bin/toktx")
+    monkeypatch.setattr(texture_writer.subprocess, "run", fake_run)
+    texture_writer._encode_ktx2(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        "uastc",
+        3,
+        0.75,
+        7,
+        "linear",
+    )
+    assert seen["command"][5:13] == [
+        "--uastc_quality",
+        "3",
+        "--uastc_rdo_l",
+        "0.75",
+        "--zcmp",
+        "7",
+        "--assign_oetf",
+        "linear",
+    ]
 
 
 def test_ktx2_encoder_missing_binary_has_actionable_fallback(monkeypatch) -> None:
@@ -3402,8 +3432,8 @@ def test_ktx2_encoder_uses_supported_etc1s_spelling(monkeypatch) -> None:
         np.zeros((2, 2, 3), dtype=np.uint8),
         "etc1s",
         None,
-        0.25,
-        7,
+        None,
+        None,
         "srgb",
     )
     assert seen["command"][1:6] == [

@@ -78,7 +78,7 @@ def _encode_ktx2(
             f"texture_ktx2_quality must be an integer in [{limit[0]}, {limit[1]}] "
             f"for {mode}, got {resolved_quality!r}"
         )
-    resolved_rdo_l = 0.5 if rdo_l is None else rdo_l
+    resolved_rdo_l = 0.25 if rdo_l is None else rdo_l
     if (
         isinstance(resolved_rdo_l, bool)
         or not isinstance(resolved_rdo_l, (int, float))
@@ -177,7 +177,7 @@ def write_texture(
         ctx: Dataset write context (encoder, mode, compressor).
         ktx2_mode: Basis encoding mode for KTX2 authoring.
         ktx2_quality: Optional mode-specific KTX2 quality.
-        ktx2_rdo_l: Optional UASTC RDO lambda; defaults to 0.5.
+        ktx2_rdo_l: Optional UASTC RDO lambda; defaults to 0.25.
         ktx2_zcmp: Optional UASTC zstd level; defaults to 9.
         encoded_ktx2: Pre-encoded bytes supplied by the mesh writer after its
             failure-atomic preflight.

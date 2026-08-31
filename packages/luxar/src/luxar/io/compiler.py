@@ -910,7 +910,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             texture_ktx2_quality: Codec quality; defaults to 2 for UASTC and 128
                 for ETC1S.
             texture_ktx2_rdo_l: UASTC RDO lambda in [0.001, 10.0]; defaults to
-                0.5. Lower values preserve more quality and produce larger files.
+                0.25. Lower values preserve more quality and produce larger files.
             texture_ktx2_zcmp: UASTC zstd level in [1, 22]; defaults to 9.
             texture_width: Declared width. Required for encoded payloads, where
                 it cannot be read without decoding; read off the array for

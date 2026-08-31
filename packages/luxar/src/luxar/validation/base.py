@@ -1384,12 +1384,13 @@ def _validate_texture_codec_options(
         or ktx2_zcmp is not None
     ):
         raise ValidationError(
-            f"{context}: texture_ktx2_* options require "
-            "texture_encoding='ktx2'",
+            f"{context}: texture_ktx2_* options require texture_encoding='ktx2'",
             "Remove the KTX2-only options or select texture_encoding='ktx2'",
         )
-    if encoding == "ktx2" and ktx2_mode == "etc1s" and (
-        ktx2_rdo_l is not None or ktx2_zcmp is not None
+    if (
+        encoding == "ktx2"
+        and ktx2_mode == "etc1s"
+        and (ktx2_rdo_l is not None or ktx2_zcmp is not None)
     ):
         raise ValidationError(
             f"{context}: texture_ktx2_rdo_l/texture_ktx2_zcmp apply only to UASTC",
