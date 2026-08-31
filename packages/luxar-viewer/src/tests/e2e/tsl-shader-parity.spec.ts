@@ -1833,6 +1833,26 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     expect(alphaMin).toBeGreaterThan(60);
   });
 
+  test('point-subpixel: floor scales above 1× and stays at one framebuffer pixel below 1×', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const dpr1 = await runGLSL(page, 'point-subpixel');
+    const dpr2 = await runGLSL(page, 'point-subpixel-dpr2');
+    const dprHalf = await runGLSL(page, 'point-subpixel-dpr-half');
+    const dpr2Tsl = await runTSL(page, 'point-subpixel-dpr2');
+    const dprHalfTsl = await runTSL(page, 'point-subpixel-dpr-half');
+
+    assertBothRendered(dpr2, dpr2Tsl.pixels, 'point-subpixel-dpr2');
+    assertBothRendered(dprHalf, dprHalfTsl.pixels, 'point-subpixel-dpr-half');
+    expect(meanAbsDiffPerCoveredPixel(dpr2, dpr2Tsl.pixels)).toBeLessThan(2.0);
+    expect(meanAbsDiffPerCoveredPixel(dprHalf, dprHalfTsl.pixels)).toBeLessThan(2.0);
+
+    expect(nonUniformPixelCount(dpr2)).toBeGreaterThan(nonUniformPixelCount(dpr1));
+    expect(dprHalf).toEqual(dpr1);
+  });
+
   test('point-near-fade: mid-band near fade renders identically across backends (B9c)', async ({
     page,
   }) => {

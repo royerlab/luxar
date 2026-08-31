@@ -188,7 +188,8 @@ import { LuxarLayer, type LuxarLayerOptions } from '../../../core/layer/luxar-la
 function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOptions {
   const renderer = {
     isWebGLRenderer: true,
-    getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
+    getDrawingBufferSize: (v: THREE.Vector2) => v.set(1600, 1200),
+    getPixelRatio: () => 2,
   } as unknown as LuxarLayerOptions['renderer'];
   return {
     renderer,
@@ -227,7 +228,9 @@ describe('LuxarLayer', () => {
       expect(updateCameraParams).toHaveBeenCalledWith(
         expect.any(Number),
         expect.any(THREE.Vector2),
-        false
+        false,
+        undefined,
+        2
       );
     });
 
@@ -265,6 +268,7 @@ describe('LuxarLayer', () => {
       const options = makeOptions({
         renderer: {
           getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
+          getPixelRatio: () => 2,
         } as unknown as LuxarLayerOptions['renderer'],
       });
       const layer = new LuxarLayer(options);
@@ -993,8 +997,38 @@ describe('LuxarLayer', () => {
 
       layer.resize();
 
-      expect(updateCameraParams).toHaveBeenCalledWith(expect.any(Number), expect.anything(), true);
+      expect(updateCameraParams).toHaveBeenCalledWith(
+        3,
+        expect.any(THREE.Vector2),
+        true,
+        undefined,
+        2
+      );
       expect(updateCameraParams.mock.calls[0][0]).toBeCloseTo(3); // top - bottom
+    });
+
+    it('includes host supersampling in the framebuffer scale', () => {
+      const layer = new LuxarLayer(
+        makeOptions({
+          renderer: {
+            isWebGLRenderer: true,
+            getDrawingBufferSize: (v: THREE.Vector2) => v.set(2400, 1800),
+            getPixelRatio: () => 2,
+          } as unknown as LuxarLayerOptions['renderer'],
+          getViewportSize: () => ({ width: 800, height: 600 }),
+        })
+      );
+      updateCameraParams.mockClear();
+
+      layer.resize();
+
+      expect(updateCameraParams).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(THREE.Vector2),
+        false,
+        undefined,
+        3
+      );
     });
 
     it('is a no-op after dispose', async () => {

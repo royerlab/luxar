@@ -59,6 +59,7 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         // (shared with the visual material's pool-owned storage).
         uLineTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
+        uPixelRatio: { value: 1 },
         uIsOrtho: { value: 0 },
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
         // Flipped by the depth-sort coordinator once the inactive buffer
@@ -124,6 +125,7 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
@@ -139,7 +141,8 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
@@ -152,6 +155,7 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
       this.uniforms.uNearCull.value = nearCull;
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
     const safeFov = Math.max(fov, 1e-4);
     if (isOrtho) {

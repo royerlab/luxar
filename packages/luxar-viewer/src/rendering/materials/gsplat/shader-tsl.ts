@@ -161,6 +161,7 @@ export interface GSplatTSLNodes {
    */
   readonly uSplatTex: TSLNode;
   readonly uResolution: TSLNode;
+  readonly uPixelRatio: TSLNode;
   readonly uFx: TSLNode;
   readonly uFy: TSLNode;
   readonly uTruncate: TSLNode;
@@ -227,6 +228,9 @@ export function gsplatWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
   const uCov2DDilation = nodes.uCov2DDilation;
+  // Keep the historical framebuffer-pixel low-pass below 1× render scale.
+  const dilationPixelRatio = nodes.uPixelRatio.max(float(1.0));
+  const cov2DDilation = uCov2DDilation.mul(dilationPixelRatio).mul(dilationPixelRatio);
   const uColormapTex = config.useColormap ? nodes.uColormapTex : null;
   const uScalarMin = config.useColormap ? nodes.uScalarMin : null;
   const uScalarScale = config.useColormap ? nodes.uScalarScale : null;
@@ -440,8 +444,8 @@ export function gsplatWebGPUFactory(
     const detRaw2D: TSLNode | null = useSumProjection
       ? Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10)).toVar()
       : null;
-    Sigma2D00.addAssign(uCov2DDilation);
-    Sigma2D11.addAssign(uCov2DDilation);
+    Sigma2D00.addAssign(cov2DDilation);
+    Sigma2D11.addAssign(cov2DDilation);
     let dilationCompensation: TSLNode | null = null;
     if (useSumProjection && detRaw2D) {
       const detDilated2D: TSLNode = Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10)).toVar();
@@ -826,6 +830,7 @@ export function buildGSplatTSLNodesFromUniforms(
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
+    uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
     uFx: uniform((uniforms.uFx?.value as number) ?? 1.0),
     uFy: uniform((uniforms.uFy?.value as number) ?? 1.0),
     // Deliberately NOT `GSPLAT_DEFAULT_TRUNCATION_RADIUS`. This adapter is

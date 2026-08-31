@@ -63,6 +63,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     uniform float radiusScale;
     uniform int uIsOrtho;          // 0 = perspective, 1 = orthographic
     uniform vec2 uResolution;      // Physical framebuffer size in pixels
+    uniform float uPixelRatio;     // Physical framebuffer pixels per CSS pixel
     uniform float uNearCull;       // Near-fade start distance (world units)
 
     out mediump vec3 vColor;
@@ -167,7 +168,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // The 1e-20 floor is a pure divide-by-zero guard, NOT a scale
       // floor: the near-fade reject above already guarantees surviving
       // vertices have -z ≳ uNearCull (scene-relative), and the
-      // clamp(basePointSize, 1.5, maxPointSize) below bounds the
+      // clamp(basePointSize, 1.5 * uPixelRatio, maxPointSize) below bounds the
       // output either way. The old absolute 1e-4 clamped VALID depths
       // on tiny-unit scenes (-z ~ 1e-6), shrinking every sprite ~100×.
       float invDistance = (uIsOrtho == 1) ? 1.0 : 1.0 / max(-mvPosition.z, 1e-20);
@@ -180,11 +181,14 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       //
       // Minimum sprite size 1.5px, matching the LINE shader: quads
       // thinner than ~1.5px cause rasterization gaps (flicker).
+      // Below 1× render scale keep the historical 1.5 framebuffer-pixel
+      // floor rather than shrinking below one sample.
       // Sub-pixel points keep their visual weight via the fragment's
       // sizeScale^2 energy compensation (vPointSize carries the raw,
       // pre-clamp size). Zero-radius filtering happens in the fragment.
       vPointSize = basePointSize;
-      float pointSize = clamp(basePointSize, 1.5, maxPointSize);
+      float minPointSize = 1.5 * max(uPixelRatio, 1.0);
+      float pointSize = clamp(basePointSize, minPointSize, maxPointSize);
 
       // Expand the unit quad to a screen-space sprite. aQuadCorner is
       // in [-1, 1] per axis, so aQuadCorner * (pointSize / uResolution)
@@ -210,6 +214,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 export const POINT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
+    uniform float uPixelRatio;
     uniform mediump float uOpacity;
     uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance
     uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
@@ -285,7 +290,7 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // widthScale, SQUARED because both sprite dimensions clamp:
       // energy ∝ area ∝ size²). Points at or above the 1.5px floor
       // are unaffected (sizeScale = 1).
-      mediump float sizeScale = min(vPointSize / 1.5, 1.0);
+      mediump float sizeScale = min(vPointSize / (1.5 * max(uPixelRatio, 1.0)), 1.0);
 
       // Screen density of this fragment — falloff scaled by every
       // "how much of this point is there" factor (node opacity,

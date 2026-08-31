@@ -99,6 +99,7 @@ export function capsuleLineWebGPUFactory(
 
   const uLineTex = nodes.uLineTex;
   const uResolution = nodes.uResolution;
+  const uPixelRatio = nodes.uPixelRatio;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
   const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
@@ -236,8 +237,13 @@ export function capsuleLineWebGPUFactory(
             .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
             .div(max(mvB.z.negate(), nearCull))
     ).toVar();
-    const rA: TSLNode = clamp(rawA, CAPSULE_MIN_RADIUS_PX, uMaxLinePixelWidth).toVar();
-    const rB: TSLNode = clamp(rawB, CAPSULE_MIN_RADIUS_PX, uMaxLinePixelWidth).toVar();
+    const appearancePixelRatio: TSLNode = uPixelRatio.max(float(1.0));
+    const minRadius: TSLNode = appearancePixelRatio.mul(CAPSULE_MIN_RADIUS_PX).toVar();
+    const packetMinRadius: TSLNode = appearancePixelRatio
+      .mul(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX)
+      .toVar();
+    const rA: TSLNode = clamp(rawA, minRadius, uMaxLinePixelWidth).toVar();
+    const rB: TSLNode = clamp(rawB, minRadius, uMaxLinePixelWidth).toVar();
 
     // Which ends CUT rather than cap — the shared joint-code rule (a free
     // end and a degree->=3 hub keep the whole round cap; a slot-bearing
@@ -331,11 +337,9 @@ export function capsuleLineWebGPUFactory(
               // the GLSL twin's note for both halves).
               If(
                 rMax
-                  .greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX)
+                  .greaterThan(packetMinRadius)
                   .or(
-                    dot(qhat, u)
-                      .greaterThan(0.5)
-                      .and(min(rawA, rawB).greaterThanEqual(CAPSULE_MIN_RADIUS_PX))
+                    dot(qhat, u).greaterThan(0.5).and(min(rawA, rawB).greaterThanEqual(minRadius))
                   ),
                 () => {
                   const rpFarA: TSLNode = clamp(
@@ -345,7 +349,7 @@ export function capsuleLineWebGPUFactory(
                           .mul(uPerspectiveLineScale)
                           .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
                           .div(pFarDepth),
-                    CAPSULE_MIN_RADIUS_PX,
+                    minRadius,
                     uMaxLinePixelWidth
                   ).toVar();
                   // Packet gate (#1495, #1501; see the GLSL twin's note).
@@ -395,12 +399,8 @@ export function capsuleLineWebGPUFactory(
               // Width gate + its floored sharp-turn exception (see end A).
               If(
                 rMax
-                  .greaterThan(CAPSULE_JOINT_PACKET_MIN_RADIUS_PX)
-                  .or(
-                    dot(qhat, u)
-                      .lessThan(-0.5)
-                      .and(min(rawA, rawB).greaterThanEqual(CAPSULE_MIN_RADIUS_PX))
-                  ),
+                  .greaterThan(packetMinRadius)
+                  .or(dot(qhat, u).lessThan(-0.5).and(min(rawA, rawB).greaterThanEqual(minRadius))),
                 () => {
                   const rpFarB: TSLNode = clamp(
                     isOrtho
@@ -409,7 +409,7 @@ export function capsuleLineWebGPUFactory(
                           .mul(uPerspectiveLineScale)
                           .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
                           .div(pFarDepth),
-                    CAPSULE_MIN_RADIUS_PX,
+                    minRadius,
                     uMaxLinePixelWidth
                   ).toVar();
                   // Packet gate (#1495, #1501; see the GLSL twin's note).
@@ -456,7 +456,7 @@ export function capsuleLineWebGPUFactory(
       .toVar();
     const tOrig: TSLNode = mix(tA, tB, tc).toVar();
     const rawC: TSLNode = mix(rawA, rawB, tc).toVar();
-    const widthScale: TSLNode = min(rawC.div(CAPSULE_MIN_RADIUS_PX), 1.0).toVar();
+    const widthScale: TSLNode = min(rawC.div(minRadius), 1.0).toVar();
     const fade: TSLNode = isOrtho
       ? float(1.0).toVar()
       : perspectiveNearFadeStaticTSL(false, mix(mvA.z, mvB.z, tc), nearCull).toVar();

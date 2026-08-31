@@ -92,6 +92,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
     // Uniforms
     uniform vec2 uResolution;
+    uniform float uPixelRatio;
     uniform int uIsOrtho;  // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // near-plane safety distance (view-space, +z toward camera)
     uniform float uMaxLinePixelWidth; // clamp for screen-space width
@@ -391,7 +392,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       // Enforce minimum pixel width to prevent sub-pixel rendering artifacts
       // Lines thinner than ~1.5 pixels cause severe aliasing due to rasterization gaps
-      float minPixelWidth = 1.5;
+      // Preserve the historical framebuffer-pixel floor below 1× render scale.
+      float minPixelWidth = 1.5 * max(uPixelRatio, 1.0);
       // clamp to a maximum pixel width so a near-camera segment
       // can't paint the entire screen. Default uMaxLinePixelWidth is
       // resolution.y * 0.5 (set by JS).
@@ -531,6 +533,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
 
     uniform int uIsOrtho;   // shared with the vertex stage
     uniform float uNearCull;
+    uniform float uPixelRatio;
     uniform float uOpacity;
     uniform float uInvGamma; // Pre-computed 1/gamma for performance
     uniform float uIntensity; // Per-node linear color multiplier (gain)
@@ -580,7 +583,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // Anti-aliasing: smooth falloff at edges
       // The AA region is ~1 pixel wide in the rendered quad
       // Since we enforce minimum 1.5px width, use that as reference
-      float minPixelWidth = 1.5;
+      float minPixelWidth = 1.5 * max(uPixelRatio, 1.0);
       float renderedWidth = max(vPixelWidth, minPixelWidth);
       float aaWidth = 1.0 / renderedWidth;  // ~1 pixel in normalized coords
       float edgeAA = 1.0 - smoothstep(1.0 - aaWidth, 1.0, p);

@@ -162,6 +162,7 @@ export interface LineTSLNodes {
    */
   readonly uLineTex: TSLNode;
   readonly uResolution: TSLNode;
+  readonly uPixelRatio: TSLNode;
   readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
@@ -226,6 +227,7 @@ export function lineWebGPUFactory(
   // JS-level config branch (`config.isOrtho`), not a runtime uniform.
   const uLineTex = nodes.uLineTex;
   const uResolution = nodes.uResolution;
+  const uPixelRatio = nodes.uPixelRatio;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
   const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
@@ -498,7 +500,8 @@ export function lineWebGPUFactory(
       rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView).toVar();
     }
 
-    const minPixelWidth = float(1.5);
+    // Preserve the historical framebuffer-pixel floor below 1× render scale.
+    const minPixelWidth = uPixelRatio.max(float(1.0)).mul(1.5);
     const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0)).toVar();
     // Width fade for clamped extreme cases. `.toVar()` on the
     // expression branch so select() picks the right concrete value.
@@ -584,6 +587,7 @@ export function lineWebGPUFactory(
         uLineTex,
         lineTexW,
         uResolution,
+        uPixelRatio,
         nearCull,
         selfSlot: int(aSortedIndex),
         lineDir,
@@ -709,7 +713,7 @@ export function lineWebGPUFactory(
     const perpFalloff: TSLNode = exp(p.pow(beta).mul(-K)).sub(C).max(float(0.0)).mul(invOneMinusC);
 
     // Edge AA: smoothstep over ~1 pixel.
-    const minPW = float(1.5);
+    const minPW = uPixelRatio.max(float(1.0)).mul(1.5);
     const renderedWidth: TSLNode = max(vPixelWidth, minPW);
     const aaWidth: TSLNode = float(1.0).div(renderedWidth);
     const edgeAA: TSLNode = float(1.0).sub(smoothstep(float(1.0).sub(aaWidth), float(1.0), p));
@@ -879,6 +883,7 @@ export function buildLineTSLNodesFromUniforms(
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
+    uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),

@@ -68,6 +68,7 @@ interface PointMaterialTSLNodeTable {
   uIsOrtho: TSLNode;
   uSortedIndexSlot: TSLNode;
   uNearCull: TSLNode;
+  uPixelRatio: TSLNode;
   uResolution: TSLNode;
   uOpacity: TSLNode;
   uInvGamma: TSLNode;
@@ -144,6 +145,7 @@ export class PointTSLMaterial
       uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
       uNearCull: uniform(0.1),
+      uPixelRatio: uniform(1),
       uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
     };
 
@@ -169,6 +171,7 @@ export class PointTSLMaterial
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
     };
 
@@ -331,7 +334,8 @@ export class PointTSLMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     if (nearCull !== undefined && this.uniforms.uNearCull) {
@@ -339,6 +343,7 @@ export class PointTSLMaterial
     }
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
   }
 
@@ -593,6 +598,7 @@ export class PointTSLMaterial
     // variant), so a plain value copy suffices — no rebuild needed.
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );

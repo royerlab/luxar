@@ -190,6 +190,7 @@ export class GSplatMaterial
         // unbound).
         uSplatTex: { value: getPlaceholderElementTexture() },
         uResolution: { value: new THREE.Vector2(1, 1) },
+        uPixelRatio: { value: 1 },
         uFx: { value: 500 }, // Default focal length in pixels
         uFy: { value: 500 },
         uTruncate: { value: truncate },
@@ -312,9 +313,11 @@ export class GSplatMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     this.uniforms.uResolution.value.copy(resolution);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
     const fy = computeFocalLength(fov, resolution.y, isOrtho);
@@ -541,6 +544,7 @@ export class GSplatMaterial
     cloned.uniforms.uFx.value = this.uniforms.uFx.value;
     cloned.uniforms.uFy.value = this.uniforms.uFy.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     // Camera-state uniforms ride along with the derived focal scales
     // (mirrors LineMaterial.clone / the points clone fix): a clone taken
     // in ortho mode otherwise renders the perspective branch with a

@@ -30,10 +30,12 @@ import { config } from '../../../../../config';
 
 function makeRenderer(): Renderer {
   return {
+    domElement: { clientHeight: 300 },
     getDrawingBufferSize: vi.fn((target: THREE.Vector2) => {
       target.set(800, 600);
       return target;
     }),
+    getPixelRatio: vi.fn(() => 2),
   } as unknown as Renderer;
 }
 
@@ -93,6 +95,22 @@ describe('updateMaterialsForCurrentCamera', () => {
     expect(bufferSize.y).toBe(600);
   });
 
+  it('includes SSAA in the framebuffer-pixels-per-CSS-pixel scale', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const ctx = makeCtx({ camera });
+    vi.mocked(ctx.renderer.getPixelRatio).mockReturnValue(1);
+
+    updateMaterialsForCurrentCamera(ctx);
+
+    expect(materialManager.updateCameraParams).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(THREE.Vector2),
+      false,
+      expect.any(Number),
+      2
+    );
+  });
+
   it('mutates the supplied bufferSize in place on each call (MED-47 contract)', () => {
     // Regression for MED-47: the bufferSize is a borrowed, shared reference
     // owned by SceneManager. Consumers that retain it across calls observe
@@ -130,6 +148,17 @@ describe('updateMaterialsForCurrentCamera', () => {
 
     const [, , , nearCull] = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
     expect(nearCull).toBe(0.1);
+  });
+
+  it('falls back to the renderer pixel ratio before canvas layout', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const ctx = makeCtx({ camera });
+    Object.defineProperty(ctx.renderer.domElement, 'clientHeight', { value: 0 });
+
+    updateMaterialsForCurrentCamera(ctx);
+
+    const [, , , , pixelRatio] = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
+    expect(pixelRatio).toBe(2);
   });
 });
 

@@ -353,6 +353,36 @@ function buildSortedPermutedMesh(material: THREE.Material): THREE.Object3D {
   return mesh;
 }
 
+function buildSubpixelPointEntry(pixelRatio: number): RegistryEntry {
+  return {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture([0.015625, 0.015625, 0]) },
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 0.06 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uPixelRatio: { value: pixelRatio },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const material = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
+      material.transparent = false;
+      material.blending = THREE.NoBlending;
+      return material;
+    },
+    buildMesh: (material) => buildPointInstancedMesh(material, 0.5, [0.015625, 0.015625, 0]),
+  };
+}
+
 /**
  * Registry of point shader entries for the TSL↔GLSL parity harness, keyed by
  * test name. Each entry carries the GLSL source and a `buildUniforms` factory;
@@ -850,32 +880,9 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   // [-1,1] ortho frustum on 64px) — falloff there is exactly 1, so the
   // written alpha is deterministically ≈ 0.41·255 ≈ 105 (pre-fix: 255,
   // indistinguishable from the opaque clear).
-  'point-subpixel': {
-    source: POINT_SOURCE,
-    buildUniforms: () => ({
-      uPointTex: { value: buildPointDataTexture([0.015625, 0.015625, 0]) },
-      pointSizeFactor: { value: 32.0 },
-      maxPointSize: { value: 32.0 },
-      radiusScale: { value: 0.06 },
-      uIsOrtho: { value: 1 },
-      uNearCull: { value: 0.01 },
-      uResolution: { value: new THREE.Vector2(64, 64) },
-      uOpacity: { value: 1.0 },
-      uInvGamma: { value: 1.0 / 2.2 },
-      uIntensity: { value: 1.0 },
-      uOffset: { value: 0.0 },
-    }),
-    buildTSLMaterial: (uniforms) => {
-      const m = pointWebGPUFactory(
-        buildPointTSLNodesFromUniforms(uniforms, {}),
-        {}
-      ) as unknown as THREE.Material;
-      m.transparent = false;
-      m.blending = THREE.NoBlending;
-      return m;
-    },
-    buildMesh: (m) => buildPointInstancedMesh(m, 0.5, [0.015625, 0.015625, 0]),
-  },
+  'point-subpixel': buildSubpixelPointEntry(1),
+  'point-subpixel-dpr2': buildSubpixelPointEntry(2),
+  'point-subpixel-dpr-half': buildSubpixelPointEntry(0.5),
   // B9c: unified near fade, mid-band. Point at view depth 1 with
   // uNearCull 0.7 → smoothstep((1-0.7)/0.7) ≈ 0.39 fade — non-empty,
   // identical across backends (shared perspectiveNearFade helper).

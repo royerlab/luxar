@@ -48,7 +48,8 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     uniform int uIsOrtho;             // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // Near cull distance (scene-scale-aware)
     uniform float uMaxExtentFactor;   // Max projected extent as fraction of viewport before fade
-    uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in px² (3DGS anti-aliasing)
+    uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in CSS px² (3DGS anti-aliasing)
+    uniform float uPixelRatio;
     uniform int uLabelColorMode;
     uniform int uLabelFilterIndex;
 
@@ -262,8 +263,11 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // compensate their own sub-pixel widening (the sizeScale^2 term in
         // materials/point/shader-glsl.ts); gsplats now do too.
         float detRaw2D = Sigma2D[0][0] * Sigma2D[1][1] - Sigma2D[0][1] * Sigma2D[1][0];
-        Sigma2D[0][0] += uCov2DDilation;
-        Sigma2D[1][1] += uCov2DDilation;
+        // Keep the historical framebuffer-pixel low-pass below 1× render scale.
+        float dilationPixelRatio = max(uPixelRatio, 1.0);
+        float cov2DDilation = uCov2DDilation * dilationPixelRatio * dilationPixelRatio;
+        Sigma2D[0][0] += cov2DDilation;
+        Sigma2D[1][1] += cov2DDilation;
         float detDilated2D = Sigma2D[0][0] * Sigma2D[1][1] - Sigma2D[0][1] * Sigma2D[1][0];
         float dilationCompensation = sqrt(max(detRaw2D, 0.0) / max(detDilated2D, 1e-12));
 

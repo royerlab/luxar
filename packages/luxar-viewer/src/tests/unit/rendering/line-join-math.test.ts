@@ -106,6 +106,8 @@ interface JoinInput {
   readonly isOrtho: boolean;
   /** uLineJoin: 0 none, 1 miter. */
   readonly lineJoin: number;
+  /** Physical framebuffer pixels per CSS pixel. */
+  readonly pixelRatio?: number;
 }
 
 interface JoinResult {
@@ -133,7 +135,7 @@ function evalJoin(i: JoinInput): JoinResult {
     turn: Number.NaN,
   };
 
-  const joinMinHalfWidth = 2.0;
+  const joinMinHalfWidth = 2.0 * Math.max(i.pixelRatio ?? 1.0, 1.0);
   if (i.lineJoin < 0.5 || i.joinPixelWidth <= joinMinHalfWidth) return noJoin;
   if (!i.reachesVertex) return noJoin;
 
@@ -596,6 +598,19 @@ describe('line join math (vertex-side, #790)', () => {
     const ungated = evalJoin(base);
     expect(ungated.mitred).toBe(true);
     expect(len(sub(ungated.cornerOffset, plain))).toBeCloseTo(4, 10);
+  });
+
+  it('keeps the join gate at 2 CSS px across DPR values', () => {
+    const a = leg(true, [0, 100], 0);
+    const b = leg(false, [130, 140], 1);
+    const dpr1 = sideInput(a, b, SHARED, 3, { pixelRatio: 1 });
+    const dpr2 = sideInput(a, b, SHARED, 6, { pixelRatio: 2 });
+
+    expect(evalJoin(dpr1).mitred).toBe(true);
+    expect(evalJoin(dpr2).mitred).toBe(true);
+    expect(evalJoin({ ...dpr2, joinPixelWidth: 4 }).mitred).toBe(false);
+    expect(evalJoin({ ...dpr1, pixelRatio: 0.5 }).mitred).toBe(true);
+    expect(evalJoin({ ...dpr1, pixelRatio: 0.5, joinPixelWidth: 2 }).mitred).toBe(false);
   });
 
   it('a degenerate partner keeps the cap instead of the code-implied suppression', () => {

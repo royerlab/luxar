@@ -799,9 +799,12 @@ describe('PickingSystem — surface-pick depth sync', () => {
   function makeRenderCapableRenderer(): THREE.WebGLRenderer {
     // renderPickBuffer saves/restores renderer state and issues one
     // render — stub the full surface it touches (no GL needed).
+    const canvas = document.createElement('canvas');
+    Object.defineProperty(canvas, 'clientHeight', { value: 600, configurable: true });
     return {
-      domElement: document.createElement('canvas'),
+      domElement: canvas,
       getDrawingBufferSize: vi.fn(),
+      getPixelRatio: vi.fn(() => 2),
       readRenderTargetPixels: vi.fn(),
       getRenderTarget: vi.fn(() => null),
       getScissorTest: vi.fn(() => false),
@@ -849,6 +852,31 @@ describe('PickingSystem — surface-pick depth sync', () => {
     const spy = registerPair(system, 'normal');
     renderPickBuffer();
     expect(spy).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it('passes pick-target pixels per CSS pixel to camera-aware materials', () => {
+    const { system, renderPickBuffer } = buildSystem();
+    const target = (system as unknown as { pickTarget: THREE.WebGLRenderTarget }).pickTarget;
+    target.setSize(800, 300);
+    const geometry = new THREE.BufferGeometry();
+    const mainNode = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    const updateCameraParams = vi.fn();
+    const pickMaterial = new THREE.MeshBasicMaterial();
+    (
+      pickMaterial as unknown as { updateCameraParams: typeof updateCameraParams }
+    ).updateCameraParams = updateCameraParams;
+    const pickNode = new THREE.Mesh(geometry, pickMaterial);
+    system.registerNode(mainNode, pickNode, system.allocatePickId());
+
+    renderPickBuffer();
+
+    expect(updateCameraParams).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.objectContaining({ x: 800, y: 300 }),
+      false,
+      undefined,
+      0.5
+    );
   });
 
   it("main material in 'opaque' mode → setSurfacePickDepth(true)", () => {

@@ -43,19 +43,21 @@ layout( std140 ) uniform object {
 	float nodeUniform1;
 	float nodeUniform2;
 	float nodeUniform3;
-	mat3 nodeUniform5;
-	uint nodeUniform6;
-	mat3 nodeUniform7;
-	uint nodeUniform8;
-	mat3 nodeUniform9;
-	uint nodeUniform10;
-	float nodeUniform11;
-	mat4 nodeUniform13;
-	float nodeUniform15;
+	float nodeUniform4;
+	mat3 nodeUniform6;
+	uint nodeUniform7;
+	mat3 nodeUniform8;
+	uint nodeUniform9;
+	mat3 nodeUniform10;
+	uint nodeUniform11;
+	float nodeUniform12;
+	mat4 nodeUniform14;
 	float nodeUniform16;
 	float nodeUniform17;
 	float nodeUniform18;
-	vec2 nodeUniform19;
+	float nodeUniform19;
+	float nodeUniform20;
+	vec2 nodeUniform21;
 };
 
 
@@ -103,7 +105,7 @@ void main() {
 
 	}
 
-	nodeVar2 = min( ( nodeVarying4 / 1.5 ), 1.0 );
+	nodeVar2 = min( ( nodeVarying4 / ( max( nodeUniform1, 1.0 ) * 1.5 ) ), 1.0 );
 	nodeVar3 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeUniform0 ) * ( nodeVar2 * nodeVar2 ) ) * nodeVarying5 );
 	nodeVar4 = ( nodeVar3 * nodeVarying6 );
 
@@ -114,8 +116,8 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( pow( nodeVarying3, vec3( nodeUniform1 ) ), nodeVar4 );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform2 );
+	DiffuseColor = vec4( pow( nodeVarying3, vec3( nodeUniform2 ) ), nodeVar4 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform3 );
 	nodeVar6 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
 	Output = nodeVar6;
 

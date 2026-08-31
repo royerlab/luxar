@@ -115,6 +115,7 @@ export interface LineMaterialConfig {
 export interface LineMaterialUniforms {
   /** Viewport resolution [width, height] */
   uResolution: { value: THREE.Vector2 };
+  uPixelRatio: { value: number };
   /** Opacity multiplier */
   uOpacity: { value: number };
   /** Pre-computed 1/gamma for performance */
@@ -160,6 +161,7 @@ export class LineMaterial
         // acquired pool entry's texture via `updateLineTexture`.
         uLineTex: { value: getPlaceholderElementTexture() },
         uResolution: { value: new THREE.Vector2(1, 1) },
+        uPixelRatio: { value: 1 },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
         // Flipped by the depth-sort coordinator once the inactive buffer
@@ -277,7 +279,8 @@ export class LineMaterial
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    nearCull?: number
+    nearCull?: number,
+    pixelRatio: number = 1
   ): void {
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
@@ -293,6 +296,7 @@ export class LineMaterial
     // clamp screen-space line width to half the viewport height so a
     // near-camera segment can't paint the entire screen.
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
+    this.uniforms.uPixelRatio.value = pixelRatio;
     // Pre-compute pixel-width scales. Only the branch matching uIsOrtho
     // is read in the shader, but writing both keeps the GPU values
     // sane after a mode switch and avoids NaN from tan(frustumHeight/2)
@@ -486,6 +490,7 @@ export class LineMaterial
     // and the precomputed pixel-width scales.
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uLineJoin.value = this.uniforms.uLineJoin.value;
