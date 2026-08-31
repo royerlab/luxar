@@ -71,7 +71,7 @@ Each Gaussian splat is parameterized by:
 | `cholesky_factors_diag` | (N, d) or (1, d) | uint8/uint16/float32 | CHOLESKY_DIAG | Diagonal of L (positive, scale-like) |
 | `cholesky_factors_offdiag` | (N, d*(d-1)/2) or (1, …) | uint8/uint16/float32 | CHOLESKY_OFFDIAG | Strictly-lower elements of L (signed); absent when d=1 |
 | `colors` | (N, 3\|4) or (1, 3\|4) | uint8/uint16/float32 | COLOR | RGB or RGBA colors (optional); SDR → `rgb_uint8`; HDR → `geolog_perchannel_u16` (AUTO; u8 under MEMORY, float32 under PRECISION); absent if not present. The optional 4th channel is per-splat opacity α ∈ [0, 1] (per-element opacity: every blending mode scales a splat's contribution by α; volumetric maps it into optical depth w = −ln(1−α) — see VOLUMETRIC_BLENDING_SPEC.md §5.4.1). α is never HDR. No format-version bump: readers key off the array shape, and codecs are channel-agnostic. |
-| `label_ids` | (N,) | uint8/uint16/uint32/uint64 | INDEX | Optional categorical class id per splat. Stored as the smallest exact unsigned integer with LUT and lossy quantization disabled. `label_vocabulary` maps every stored id to its name. |
+| `label_ids` | (N,) or (1,) | uint8/uint16/uint32/uint64 | INDEX | Optional categorical class id per splat; a constant channel may use broadcast encoding. Stored as the smallest exact unsigned integer with LUT and lossy quantization disabled. `label_vocabulary` maps every stored id to its name. |
 
 `label_ids` is an optional leaf channel and does not bump the format version.
 Its vocabulary is explicit rather than inferred: every observed id must have a
@@ -85,6 +85,10 @@ vocabularies is an error. Merge-based coarsening (`lod levels`, `overview`,
 for a splat synthesized from differently labeled inputs. Prefix/additive LOD is
 safe because it only reorders or subsets existing splats. Exporters without a
 vocabulary-bearing categorical field must refuse the channel rather than drop it.
+This refusal is a writer-side rule, not an on-disk capability stamp, and does not
+bump the format version. Older Luxar versions therefore cannot distinguish a
+labeled store before rewriting it and may silently drop the channel in operations
+such as flattening or LOD construction; use a label-aware version for all edits.
 
 **Note**: Since **v3.1** the packed lower-triangular factor L (where Σ = LLᵀ) is
 stored as **two arrays** — the diagonal (`cholesky_factors_diag`) and the
@@ -217,7 +221,7 @@ fitted.gsplats.zarr/
 ├── cholesky_factors_diag     # (N, d) uint8 (AUTO, certified — escalates to uint16 if the covariance certificate fails) / float32 (PRECISION)  (diagonal of L)
 ├── cholesky_factors_offdiag  # (N, d*(d-1)/2) uint8 (AUTO, certified as above) / float32 (PRECISION) (off-diagonal; absent if d=1)
 ├── colors            # (N, 3) uint8/uint16 (AUTO) / float32 (PRECISION)  (optional)
-├── label_ids         # (N,) smallest exact uint (optional; never LUT/quantized)
+├── label_ids         # (N,) or broadcast (1,) smallest exact uint (optional; never LUT/quantized)
 ├── chunk_bounds      # (num_chunks, d, 2) float32  (when ordering ≠ "none")
 ├── fitting/          # Optimization info (optional)
 │   ├── .zattrs       # time_seconds, iterations, converged, psnr_db, …

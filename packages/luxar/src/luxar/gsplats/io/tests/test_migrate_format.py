@@ -885,12 +885,15 @@ class TestMigrateV3LegacyLodAttrs:
 
         rng = np.random.default_rng(0)
         label_vocabulary = {index: f"class-{index}" for index in range(8)}
+        expected_centers = []
 
         def leaf(n: int) -> GSplatLeaf:
+            centers = (rng.random((n, 3)) * 10).astype(np.float32)
+            expected_centers.append(centers)
             return GSplatLeaf(
                 additive_sublods=[
                     AdditiveSubLOD(
-                        centers=(rng.random((n, 3)) * 10).astype(np.float32),
+                        centers=centers,
                         amplitudes=rng.random(n).astype(np.float32),
                         cholesky_factors=_identity_chol(n),
                         label_ids=np.arange(n, dtype=np.uint8),
@@ -942,10 +945,21 @@ class TestMigrateV3LegacyLodAttrs:
         assert out_root["part_0"].attrs["selector"] == "screen-area"
         assert "coverage_fraction" in out_root["part_0"]["child_0"].attrs
         assert "min_pixel_size" not in out_root["part_0"]["child_0"].attrs
+        from luxar.encoding.decoder import ArrayDecoder
+
+        decoder = ArrayDecoder()
         for index, count in enumerate((2, 8)):
             child = out_root["part_0"][f"child_{index}"]
+            centers = decoder.decode(child["centers"], out_root)
+            expected_ids = []
+            for center in centers:
+                distances = np.linalg.norm(expected_centers[index] - center, axis=1)
+                source_index = int(np.argmin(distances))
+                assert distances[source_index] < 0.02
+                expected_ids.append(source_index)
             np.testing.assert_array_equal(
-                np.sort(child["label_ids"][:]), np.arange(count, dtype=np.uint8)
+                decoder.decode(child["label_ids"], out_root),
+                expected_ids,
             )
             assert {
                 int(label_id): name

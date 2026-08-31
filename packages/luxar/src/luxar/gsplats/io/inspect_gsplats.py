@@ -15,11 +15,11 @@ from luxar.gsplats.io._archive import resolve_store_path
 def _add_label_info(info: Dict[str, Any], attrs: Dict[str, Any]) -> None:
     has_label_ids = attrs.get("has_label_ids", False)
     info["has_label_ids"] = has_label_ids
-    info.update(
-        {"label_vocabulary": dict(attrs.get("label_vocabulary", {}))}
-        if has_label_ids
-        else {}
-    )
+    if has_label_ids:
+        info["label_vocabulary"] = {
+            int(label_id): name
+            for label_id, name in attrs.get("label_vocabulary", {}).items()
+        }
 
 
 def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:

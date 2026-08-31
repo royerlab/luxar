@@ -932,6 +932,18 @@ class TestInspectGsplats:
             assert info["ordering"] == "morton"
             assert info["has_colors"] is False
 
+    def test_inspect_label_vocabulary_uses_integer_ids(self, tmp_path: Path) -> None:
+        data = GSplatData(
+            **create_test_splats_3d(4),
+            label_ids=np.array([0, 2, 2, 0], dtype=np.uint8),
+            label_vocabulary={0: "zero", 2: "two"},
+        )
+        path = tmp_path / "labels.gsplats.zarr"
+        data.save(path, ordering="none")
+
+        info = inspect_gsplats_zarr(path)
+        assert info["label_vocabulary"] == {0: "zero", 2: "two"}
+
     def test_inspect_with_fitting(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"

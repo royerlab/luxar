@@ -819,9 +819,8 @@ def _write_label_channel(
 def _apply_label_metadata(group: zarr.Group, metadata: Dict[str, Any]) -> None:
     has_label_ids = metadata.get("has_label_ids", False)
     group.attrs["has_label_ids"] = has_label_ids
-    group.attrs.update(
-        {"label_vocabulary": metadata["label_vocabulary"]} if has_label_ids else {}
-    )
+    if has_label_ids:
+        group.attrs["label_vocabulary"] = metadata["label_vocabulary"]
 
 
 def write_gsplat_arrays(

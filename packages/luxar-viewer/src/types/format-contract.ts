@@ -190,6 +190,7 @@ export const ARRAY_NAMES: readonly ArrayName[] = [
   'cholesky_factors_diag',
   'cholesky_factors_offdiag',
   'colors',
+  'label_ids',
 ];
 /**
  * Union of the canonical gsplats array names.
@@ -200,4 +201,5 @@ export type ArrayName =
   | 'cholesky_factors'
   | 'cholesky_factors_diag'
   | 'cholesky_factors_offdiag'
-  | 'colors';
+  | 'colors'
+  | 'label_ids';
