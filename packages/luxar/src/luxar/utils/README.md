@@ -85,10 +85,14 @@ sequence into cumulative prefixes so a viewer can paint a coarse prefix
 immediately and refine as later chunks arrive. The cut geometry is a property of
 the network and payload, not the geometry type, so this is the one place both
 `luxar.core` and `luxar.gsplats` derive identical cuts from an identical spec
-(stdlib-only, to avoid a new import direction).
+(stdlib-only at import time; NumPy is loaded only inside the coordinate-count
+helper, preserving the import direction).
 
 **Key Functions:**
 - `streaming_chunk_splats(target_ms, bandwidth_mbps, bytes_per_splat)`: First-chunk element count whose download takes `target_ms` at the given bandwidth
+- `scaled_streaming_chunk(first_chunk, slice_count=..., part_count=...)`: Scale a whole-node byte budget across hidden slices and partition parts
+- `sliced_ladder_first_chunk(first_chunk, elements=..., slices=...)`: Floor a sliced node at the shared resident-share contract without changing unsliced sizing
+- `hidden_coordinate_count(positions, hidden_cols)`: Count distinct occurring hidden-coordinate combinations, with a one-column fast path
 - `parse_stream_chunk(spec)`: Extract `c` from a `"stream:<c>"` spec (validated `>= 1`)
 - `validate_element_breakpoints(spec)`: Size-independent resolve-time validation of a Points/Lines `counts`/`breakpoints` value (string vocabulary, stream chunk, energy fractions, list non-emptiness) — fails before any group is written
 - `stream_cuts(n, chunk, max_levels=...)`: Cumulative geometric cuts `[c, 2c, 4c, …, n]` over `n` elements

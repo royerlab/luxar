@@ -402,6 +402,52 @@ class TestSubstitutiveComposedWithAdditive:
         assert subs == [f"additive_{i}" for i in range(n_sub)]
         assert sum(int(finest[s].attrs["n_points"]) for s in subs) == n
 
+    def test_default_ladder_uses_real_hidden_slice_count(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from luxar.core.group.lod import group as lod_group
+
+        monkeypatch.setattr(lod_group, "DEFAULT_LADDER_TARGET_MS", 0.1)
+        n_slices = 30
+        points_per_slice = 20
+        n = n_slices * points_per_slice
+        rng = np.random.default_rng(7)
+        positions = np.column_stack(
+            [
+                rng.normal(size=(n, 3)),
+                np.repeat(np.arange(n_slices), points_per_slice),
+            ]
+        ).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("time", display=False, discrete=True),
+            ]
+        )
+        out = tmp_path / "sliced.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "cloud",
+                positions,
+                substitutive_lod=dict(
+                    compression_factor=20,
+                    levels=1,
+                    method="greedy",
+                    device="cpu",
+                    seed=0,
+                ),
+            )
+
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        coarse = grp[self._children(grp)[0]]
+        finest = grp[self._children(grp)[-1]]
+        assert int(coarse.attrs.get("n_additive_sublods", 1)) > 1
+        assert int(finest.attrs.get("n_additive_sublods", 1)) > 1
+        assert int(finest["additive_0"].attrs["n_points"]) == 75
+
     def test_coarse_levels_are_laddered_too(self, composed) -> None:
         # Full symmetry with the gsplat pyramid, which ladders every level.
         # A coarse level smaller than one stream chunk stays a flat leaf —
@@ -904,8 +950,57 @@ class TestSubstitutiveLodGuards:
         assert sum(int(fine[name].attrs["n_points"]) for name in part_names) == len(pos)
         assert all(fine[name].attrs["type"] == "points" for name in part_names)
 
-    def test_overview_fine_parts_keep_streaming_ladders(self, tmp_path) -> None:
+    def test_overview_fine_parts_keep_streaming_ladders(
+        self, tmp_path, monkeypatch
+    ) -> None:
         """Each fine part sizes its additive ladder from its own point count."""
+        from luxar.core.group.lod import group as lod_group
+
+        monkeypatch.setattr(lod_group, "DEFAULT_LADDER_TARGET_MS", 0.1)
+        out = tmp_path / "t.luxar.zarr"
+        n_slices = 30
+        points_per_slice = 20
+        n = n_slices * points_per_slice
+        spatial = np.random.RandomState(0).uniform(0, 40, (n, 3)).astype(np.float32)
+        pos = np.column_stack(
+            [spatial, np.repeat(np.arange(n_slices), points_per_slice)]
+        ).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("time", display=False, discrete=True),
+            ]
+        )
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "pts",
+                pos,
+                radii=1.0,
+                partition={"max_elements": 50},
+                substitutive_lod={
+                    "compression_factor": 20,
+                    "levels": 1,
+                    "method": "kmeans_lloyd",
+                    "device": "cpu",
+                    "seed": 0,
+                },
+            )
+
+        fine = zarr.open(str(out), mode="r")["pts/child_1"]
+        part_names = list(fine.keys())
+        assert len(part_names) > 1
+        assert all(
+            int(fine[name].attrs.get("n_additive_sublods", 1)) > 1
+            for name in part_names
+        )
+
+    def test_overview_fine_parts_keep_explicit_streaming_ladders(
+        self, tmp_path
+    ) -> None:
+        """An explicit ladder remains independently resolved on every fine part."""
         out = tmp_path / "t.luxar.zarr"
         pos = np.random.RandomState(0).uniform(0, 40, (1200, 3)).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
@@ -922,14 +1017,18 @@ class TestSubstitutiveLodGuards:
                     "device": "cpu",
                     "seed": 0,
                 },
-                additive_lod={"method": "random", "counts": "stream:100", "seed": 0},
+                additive_lod={
+                    "method": "random",
+                    "counts": "stream:100",
+                    "seed": 0,
+                },
             )
 
         fine = zarr.open(str(out), mode="r")["pts/child_1"]
         part_names = list(fine.keys())
         assert len(part_names) > 1
         assert all(
-            int(fine[name].attrs.get("n_additive_sublods", 1)) > 1
+            int(fine[name].attrs.get("n_additive_sublods", 1)) == 2
             for name in part_names
         )
 

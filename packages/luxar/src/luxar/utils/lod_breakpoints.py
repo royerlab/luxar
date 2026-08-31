@@ -31,7 +31,7 @@ head, then equal steps of a fixed ceiling — instead of :func:`stream_cuts`.
 from __future__ import annotations
 
 import math
-from typing import List, Sequence, Union
+from typing import Any, List, Sequence, Union
 
 #: Breakpoint specification for an additive ladder. Either a string form
 #: (``"equal-count"``, ``"stream:<c>"``, ``"energy:<fractions>"`` for
@@ -53,6 +53,12 @@ DEFAULT_CAPPED_FIRST_CHUNK = 2_000
 #: below the 1,000,000 that ``scripts/check_demo_ladders.py`` fails a level at
 #: (``DEFAULT_MAX_LEVEL_ELEMENTS``), with margin.
 DEFAULT_MAX_ADDITIVE_COMMIT = 900_000
+
+#: Deepest default ladder for a sliced node: rung 0 carries at least 1/8 of
+#: the node, hence the same share of every resident slice under uniform mixing.
+#: See ``luxar.demos._lod_policy.SLICED_LADDER_MAX_DEPTH`` for the measured
+#: viewer-gate rationale and the non-uniform-slice caveat behind this value.
+DEFAULT_SLICED_LADDER_MAX_DEPTH = 8
 
 #: Hard cap on the number of levels a ``stream:<c>`` ladder may produce. The
 #: geometric doubling schedule gives ~log2(N/c) levels, so 16 covers c·2^15
@@ -100,6 +106,70 @@ def scaled_streaming_chunk(
     if part_count < 1:
         raise ValueError(f"part_count must be >= 1; got {part_count}")
     return max(1, round(first_chunk * slice_count / part_count))
+
+
+def sliced_ladder_first_chunk(
+    first_chunk: int,
+    *,
+    elements: int,
+    slices: int,
+    max_depth: int = DEFAULT_SLICED_LADDER_MAX_DEPTH,
+) -> int:
+    """Floor a sliced node's first chunk at a useful resident share.
+
+    ``slices`` is a predicate, not a divisor: requiring
+    ``first_chunk / slices >= elements / (max_depth * slices)`` cancels the
+    slice count, so any value above 1 applies the same whole-node share floor.
+    See ``luxar.demos._lod_policy.stream_ladder`` for the measured rationale and
+    the non-uniform-slice caveat behind that contract.
+    """
+    if first_chunk < 1:
+        raise ValueError(f"first_chunk must be >= 1; got {first_chunk}")
+    if elements < 1:
+        raise ValueError(f"elements must be >= 1; got {elements}")
+    if slices < 1:
+        raise ValueError(f"slices must be >= 1; got {slices}")
+    if max_depth < 1:
+        raise ValueError(f"max_depth must be >= 1; got {max_depth}")
+    if slices == 1:
+        return first_chunk
+    return max(first_chunk, -(-elements // max_depth))
+
+
+def hidden_coordinate_count(positions: Any, hidden_cols: Sequence[int]) -> int:
+    """How many distinct hidden coordinates a node's elements actually occupy.
+
+    The divisor a sliced node's first rung is spread over: the viewer shows one
+    hidden coordinate at a time, so a rung sized against the whole node arrives
+    divided by this (#2374/#2376).
+
+    Counts distinct OCCURRING COMBINATIONS across all hidden columns, not the
+    product of each column's cardinality. A node stacked on time *and* channel is
+    sliced only by the pairs that occur, and on sparse data the product
+    overstates badly — measured on ``biodiversity_planetary_scale``, the product
+    of two axes gives 140 against 126 actually populated. Nor is it the declared
+    ``Dimension`` range/step: ``drosophila_embryogenesis`` declares 500
+    timepoints and its coarsest rung carries data at 499, and a coordinate with
+    no elements costs no bytes and divides no rung.
+
+    Returns at least 1, so the result is always safe as a divisor or multiplier.
+    """
+    import numpy as np
+
+    cols = [int(c) for c in hidden_cols]
+    if not cols:
+        return 1
+    arr = np.asarray(positions)
+    if arr.ndim != 2 or arr.shape[0] == 0:
+        return 1
+    if any(not 0 <= c < arr.shape[1] for c in cols):
+        return 1
+    unique = (
+        np.unique(arr[:, cols[0]])
+        if len(cols) == 1
+        else np.unique(arr[:, cols], axis=0)
+    )
+    return max(1, len(unique))
 
 
 def parse_stream_chunk(spec: str) -> int:

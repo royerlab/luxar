@@ -507,6 +507,7 @@ def add_points_partition_wrapper_impl(
     max_elements: int,
     bsp_tree: Dict[str, Any],
     additive_lod: Any = None,
+    additive_lod_slices: int = 1,
     wrapper_coverage_fraction: Optional[float] = None,
     **attrs: Any,
 ) -> "Group":
@@ -554,6 +555,17 @@ def add_points_partition_wrapper_impl(
     )
 
     for i, indices in enumerate(parts):
+        part_additive_lod = additive_lod
+        if additive_lod_slices > 1:
+            from ..lod.group import level_additive_lod
+
+            part_additive_lod = level_additive_lod(
+                additive_lod,
+                level_n=int(indices.size),
+                compression_factor=1,
+                is_coarsest=True,
+                slices=additive_lod_slices,
+            )
         wrapper.add_points(
             name=f"part_{i}",
             positions=pos_arr[indices],
@@ -581,7 +593,7 @@ def add_points_partition_wrapper_impl(
             # Inner LOD ladder per spatial part — each part decides
             # its own ladder independently. Allows the Partition-of-
             # AdditiveLOD composition from the plan.
-            additive_lod=additive_lod,
+            additive_lod=part_additive_lod,
             **leaf_attrs,
         )
     from ..partition import persist_pruned_bsp_tree
@@ -819,6 +831,7 @@ def add_points_substitutive_lod_wrapper_impl(
         compose_additive_under_substitutive,
         gsplat_additive_lod_from,
         level_additive_lod,
+        resident_slice_count,
         resolve_lod_ladder,
     )
     from ..lod.points import resolve_additive_axis_points
@@ -829,10 +842,19 @@ def add_points_substitutive_lod_wrapper_impl(
     # Keep the existing element-domain stream counts for composed coarse
     # children. Retuning those counts for gsplat bytes-per-element is a separate
     # cross-geometry policy change, not part of suppression scoping.
+    # A default ladder's first chunk is a whole-node download budget, so the
+    # slice count is what keeps it from arriving divided on an nD node (#2374).
+    slices = (
+        resident_slice_count(group._find_scene(), pos_arr)
+        if additive_lod is None
+        else 1
+    )
     coarse_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_points,
+        elements=n_points,
         name=name,
+        slices=slices,
     )
     reveal_note = (
         " Coarse levels use self_energy ordering, so reveal_centre is not applied."
@@ -843,7 +865,9 @@ def add_points_substitutive_lod_wrapper_impl(
     finest_additive = compose_additive_under_substitutive(
         additive_lod,
         resolve=resolve_additive_axis_points,
+        elements=n_points,
         name=name,
+        slices=slices,
         # The multi-LOD writer has no image_labels channel, so laddering would
         # silently drop them. Refuse the ladder, not the labels.
         suppress_reason="image_labels is set" if image_labels is not None else None,
@@ -952,6 +976,7 @@ def add_points_substitutive_lod_wrapper_impl(
                 max_elements=max_elements,
                 bsp_tree=bsp_tree,
                 additive_lod=finest_additive,
+                additive_lod_slices=slices,
                 **attrs,
             )
         return add_points_impl(
@@ -1031,6 +1056,7 @@ def add_points_substitutive_lod_wrapper_impl(
             level_n=int(lvl_data.n_splats),
             compression_factor=compression_factor,
             is_coarsest=(idx == 0),
+            slices=slices,
         )
         lod_group_node.add_gsplats_from_data(
             name=f"child_{idx}",
@@ -1065,6 +1091,7 @@ def add_points_substitutive_lod_wrapper_impl(
             max_elements=max_elements,
             bsp_tree=bsp_tree,
             additive_lod=finest_additive,
+            additive_lod_slices=slices,
             wrapper_coverage_fraction=coverage_vals[-1],
             **child_attrs,
         )
@@ -1091,6 +1118,7 @@ def add_points_substitutive_lod_wrapper_impl(
             level_n=n_points,
             compression_factor=compression_factor,
             is_coarsest=False,
+            slices=slices,
         ),
         substitutive_lod=None,
         coverage_fraction=coverage_vals[-1],
