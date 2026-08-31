@@ -57,15 +57,19 @@ fails when a large Points, Lines, or GSplats leaf has no additive ladder, a
 single increment exceeds the relative `--max-share` limit, or an increment
 exceeds the absolute `--max-level-elements` commit budget. For sliced nodes it
 also histograms rung 0 by hidden coordinate across every partition part and
-fails when the largest visible slice is below `--min-slice-first-rung` (default
-2,000), or when a sliced survey is empty. The existing demo output directory is
-inventoried read-only; the check does not create it.
+fails when the lower fifth-percentile visible slice is below
+`--min-slice-first-rung` (default 250), when rung 0 is below
+`--min-slice-rung-share` of the measured node (default 10%), or when a sliced
+survey is empty. Five measured pre-#2384 stores are exempt from the share arm
+only while they remain at least 6%; their keypress-navigated axes refine past
+rung 0, and any degraded rebuild goes red. The existing demo output directory
+is inventoried read-only; the check does not create it.
 
 ```bash
 hatch run check-demo-ladders
 hatch run check-demo-ladders path/to/scene.luxar.zarr
 hatch run check-demo-ladders --max-share 0.6 --max-level-elements 1000000
-hatch run check-demo-ladders --min-slice-first-rung 2000
+hatch run check-demo-ladders --min-slice-first-rung 250 --min-slice-rung-share 0.10
 ```
 
 The command is included in `hatch run check`. A checkout without generated demo

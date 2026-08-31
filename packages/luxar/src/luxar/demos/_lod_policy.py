@@ -241,7 +241,7 @@ _RECIPE_DEFAULTS: dict[str, dict[str, Any]] = {
 #:
 #: `1/8` = 12.5% of the resident slice in the first rung. Sized to clear the
 #: viewer-side gate for #2374 — which fails a sliced node below **10%** of its
-#: frame, or below 1,000 elements at the 5th-percentile stop — with margin.
+#: frame, or below 250 elements at the 5th-percentile stop — with margin.
 #: :func:`stream_ladder` rejects a sliced leaf whose share would exceed the
 #: 900,000-element commit ceiling; partition after moving any stacked axis last,
 #: or supply explicit capped cuts, rather than silently delivering less than
