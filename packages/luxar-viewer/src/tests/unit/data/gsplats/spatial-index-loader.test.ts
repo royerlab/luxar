@@ -389,6 +389,13 @@ describe('GSplatsSpatialIndexLoader', () => {
           { id: '7', name: 'seven' },
           { id: '9', name: 'nine' },
         ]);
+
+        const next = await bodyLoader.loadGSplats({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+        expect(next.labelIndices!.buffer).toBe(result.labelIndices!.buffer);
       });
 
       it('expands a broadcast label id to the loaded splat count', async () => {
@@ -447,6 +454,27 @@ describe('GSplatsSpatialIndexLoader', () => {
             tolerance: [0, 0, 0],
           })
         ).rejects.toThrow(/has_label_ids requires label_vocabulary/);
+      });
+
+      it('rejects a label id missing from the vocabulary', async () => {
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              has_label_ids: true,
+              label_vocabulary: { '7': 'seven' },
+            },
+          })
+        );
+        await expect(
+          bodyLoader.loadGSplats({
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0],
+            tolerance: [0, 0, 0],
+          })
+        ).rejects.toThrow(/label id 9.*label_vocabulary/);
       });
 
       it('rejects a short label read instead of silently zero-filling the tail', async () => {
@@ -1721,6 +1749,33 @@ describe('GSplatsSpatialIndexLoader', () => {
         // Plus 1 chunk_bounds get() during initialize().
         const getCalls = (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls;
         expect(getCalls.length).toBeGreaterThanOrEqual(4);
+      });
+
+      it('includes label_ids when the categorical channel is declared', async () => {
+        bodyLoader.dispose();
+        bodyLoader = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode({
+            attrs: {
+              ...mockNode.attrs,
+              has_label_ids: true,
+              label_vocabulary: { '7': 'seven', '9': 'nine' },
+            },
+          })
+        );
+        mockExecute.mockResolvedValueOnce([{ start: 0, end: 50 }]);
+
+        await bodyLoader.prefetchChunks({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        });
+
+        expect(
+          (zarr.get as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+            ([array]) => array === mockArrays.label_ids
+          )
+        ).toBe(true);
       });
 
       it('skips fetches when the spatial query returns no ranges', async () => {
