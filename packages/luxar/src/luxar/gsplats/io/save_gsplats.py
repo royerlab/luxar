@@ -974,9 +974,7 @@ def _write_streamed_splat_set(
         or sublod.label_vocabulary != metadata.label_vocabulary
     ):
         raise ValueError("streamed splat set does not match its metadata")
-    validate_label_channel(
-        sublod.label_ids, sublod.label_vocabulary, sublod.n_splats
-    )
+    validate_label_channel(sublod.label_ids, sublod.label_vocabulary, sublod.n_splats)
     sort_indices, ordering = sort_splats_spatial(
         sublod.centers,
         method="hilbert",

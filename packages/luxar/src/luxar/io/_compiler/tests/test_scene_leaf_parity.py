@@ -123,7 +123,9 @@ def test_public_writer_accepts_label_id_sequences(tmp_path: Path) -> None:
     centers, amplitudes, cholesky = _splats(8)
     scene_path = tmp_path / "scene.luxar.zarr"
 
-    with LuxarZarrCompiler(scene_path, encoding_mode=EncodingMode.PRECISION) as compiler:
+    with LuxarZarrCompiler(
+        scene_path, encoding_mode=EncodingMode.PRECISION
+    ) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())
         compiler.write_gsplats(
             "g",

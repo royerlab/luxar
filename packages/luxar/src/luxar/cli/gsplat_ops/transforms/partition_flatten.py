@@ -281,10 +281,7 @@ def _collect_streaming_metadata(
         label_dtype = group["label_ids"].dtype if "label_ids" in group else None
         vocabulary_raw = group.attrs.get("label_vocabulary")
         label_vocabulary = (
-            {
-                int(label_id): name
-                for label_id, name in dict(vocabulary_raw).items()
-            }
+            {int(label_id): name for label_id, name in dict(vocabulary_raw).items()}
             if vocabulary_raw is not None
             else None
         )
