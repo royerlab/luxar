@@ -146,7 +146,8 @@ export function createOrthoControls(ctx: ControlsCreationCtx): LuxarOrbitControl
     // `applyControlType` persists the result. A default-valued ortho instance
     // therefore wipes a stored turntable choice the moment the user visits
     // ortho. `naturalDrag` and the fly config dodge this only because they
-    // live on the manager rather than on the control.
+    // live on the manager rather than on the control. Animation liveness uses
+    // `isAutoRotateActive()`, which also requires `enableRotate`.
     autoRotate: ctx.config.autoRotate || false,
     autoRotateSpeed: ctx.config.autoRotateSpeed || 0.25,
     autoRotateAxis: ctx.config.autoRotateAxis,

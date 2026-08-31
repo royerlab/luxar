@@ -49,7 +49,7 @@ describe('AnimationController', () => {
     // Create mock controls manager
     mockControls = {
       update: vi.fn(),
-      getAutoRotate: vi.fn().mockReturnValue(false),
+      isAutoRotateActive: vi.fn().mockReturnValue(false),
     };
 
     // Create mock post-processing manager
@@ -480,7 +480,7 @@ describe('AnimationController', () => {
 
   describe('idle timeout', () => {
     it('should stop animation after idle timeout when no continuous effects', () => {
-      mockControls.getAutoRotate.mockReturnValue(false);
+      mockControls.isAutoRotateActive.mockReturnValue(false);
       mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
 
       controller.startAnimation();
@@ -493,7 +493,7 @@ describe('AnimationController', () => {
     });
 
     it('should continue animation when autoRotate is enabled', () => {
-      mockControls.getAutoRotate.mockReturnValue(true);
+      mockControls.isAutoRotateActive.mockReturnValue(true);
       mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
 
       controller.startAnimation();
@@ -506,7 +506,7 @@ describe('AnimationController', () => {
     });
 
     it('should continue animation when postProcessing needs continuous', () => {
-      mockControls.getAutoRotate.mockReturnValue(false);
+      mockControls.isAutoRotateActive.mockReturnValue(false);
       mockPostProcessing.needsContinuousAnimation.mockReturnValue(true);
 
       controller.startAnimation();
@@ -519,7 +519,7 @@ describe('AnimationController', () => {
     });
 
     it('should reset idle timeout on subsequent startAnimation calls', () => {
-      mockControls.getAutoRotate.mockReturnValue(false);
+      mockControls.isAutoRotateActive.mockReturnValue(false);
       mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
 
       controller.startAnimation();
@@ -550,7 +550,7 @@ describe('AnimationController', () => {
     // registered `continuous` callback is the only thing keeping the loop
     // alive past the first two seconds of a capture.
     it('should continue animation when a continuous per-frame callback is registered', () => {
-      mockControls.getAutoRotate.mockReturnValue(false);
+      mockControls.isAutoRotateActive.mockReturnValue(false);
       mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
 
       controller.addPerFrameCallback('keepalive', vi.fn(), { continuous: true });
@@ -565,7 +565,7 @@ describe('AnimationController', () => {
     // the loop open, or dynamic-clipping and the scale bar would defeat
     // the whole idle-pause power optimization.
     it('should NOT keep the loop alive for a non-continuous per-frame callback', () => {
-      mockControls.getAutoRotate.mockReturnValue(false);
+      mockControls.isAutoRotateActive.mockReturnValue(false);
       mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
 
       controller.addPerFrameCallback('on-demand', vi.fn());
@@ -590,7 +590,7 @@ describe('AnimationController', () => {
 
     it('should reschedule check when continuous effects are active at timeout', () => {
       // Start with continuous effects active
-      mockControls.getAutoRotate.mockReturnValue(true);
+      mockControls.isAutoRotateActive.mockReturnValue(true);
       mockPostProcessing.needsContinuousAnimation.mockReturnValue(false);
 
       controller.startAnimation();
@@ -600,7 +600,7 @@ describe('AnimationController', () => {
       expect(controller.isActive).toBe(true);
 
       // Now disable continuous effects
-      mockControls.getAutoRotate.mockReturnValue(false);
+      mockControls.isAutoRotateActive.mockReturnValue(false);
 
       // Second idle timeout fires - no continuous effects, should stop
       vi.advanceTimersByTime(2000);

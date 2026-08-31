@@ -174,6 +174,7 @@ class ControlsManager extends THREE.EventDispatcher {
   setAutoRotate(enabled: boolean): void;
   setAutoRotateSpeed(speed: number): void;
   getAutoRotate(): boolean;
+  isAutoRotateActive(): boolean;
   setNaturalDrag(enabled: boolean): void; // swap LEFT↔RIGHT (orbit only)
   getNaturalDrag(): boolean;
 

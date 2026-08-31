@@ -416,6 +416,18 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
+   * Whether auto-rotation can currently move the camera. Ortho carries the
+   * turntable settings for persistence, but disables rotation.
+   */
+  public isAutoRotateActive(): boolean {
+    return (
+      this.currentControls instanceof LuxarOrbitControls &&
+      this.currentControls.autoRotate &&
+      this.currentControls.enableRotate
+    );
+  }
+
+  /**
    * The live turntable axis, falling back to the stored config when the active
    * control is fly (which has no turntable) — never a silent 'vertical', so a
    * mode round-trip cannot quietly reset the user's choice.

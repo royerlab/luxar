@@ -647,8 +647,8 @@ export class AnimationController {
    * @returns True if animation should continue regardless of user interaction
    */
   private shouldContinueAnimating(): boolean {
-    // Check if auto-rotate is enabled
-    const autoRotate = this.controls.getAutoRotate();
+    // Check if auto-rotate can move the camera in the active control mode
+    const autoRotate = this.controls.isAutoRotateActive();
 
     // Check if any post-processing effects need continuous updates
     const hasEffects = this.postProcessing.needsContinuousAnimation();

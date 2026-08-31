@@ -115,9 +115,11 @@ describe('ControlsManager', () => {
     it('should set auto-rotation', () => {
       controlsManager.setAutoRotate(true);
       expect(controlsManager.getAutoRotate()).toBe(true);
+      expect(controlsManager.isAutoRotateActive()).toBe(true);
 
       controlsManager.setAutoRotate(false);
       expect(controlsManager.getAutoRotate()).toBe(false);
+      expect(controlsManager.isAutoRotateActive()).toBe(false);
     });
 
     it('should set auto-rotation speed', () => {
@@ -157,6 +159,8 @@ describe('ControlsManager', () => {
       expect(controls.autoRotate).toBe(true);
       expect(controls.autoRotateSpeed).toBe(2.0);
       expect(controls.autoRotateAxis).toBe('horizontal');
+      expect(controlsManager.getAutoRotate()).toBe(true);
+      expect(controlsManager.isAutoRotateActive()).toBe(false);
       expect(controlsManager.getAutoRotateAxis()).toBe('horizontal');
     });
 
