@@ -442,7 +442,9 @@ class TestSubstitutiveComposedWithAdditive:
             )
 
         grp = zarr.open(str(out), mode="r")["cloud"]
+        coarse = grp[self._children(grp)[0]]
         finest = grp[self._children(grp)[-1]]
+        assert int(coarse.attrs.get("n_additive_sublods", 1)) > 1
         assert int(finest.attrs.get("n_additive_sublods", 1)) > 1
         assert int(finest["additive_0"].attrs["n_points"]) == 75
 
@@ -948,25 +950,43 @@ class TestSubstitutiveLodGuards:
         assert sum(int(fine[name].attrs["n_points"]) for name in part_names) == len(pos)
         assert all(fine[name].attrs["type"] == "points" for name in part_names)
 
-    def test_overview_fine_parts_keep_streaming_ladders(self, tmp_path) -> None:
+    def test_overview_fine_parts_keep_streaming_ladders(
+        self, tmp_path, monkeypatch
+    ) -> None:
         """Each fine part sizes its additive ladder from its own point count."""
+        from luxar.core.group.lod import group as lod_group
+
+        monkeypatch.setattr(lod_group, "DEFAULT_LADDER_TARGET_MS", 0.1)
         out = tmp_path / "t.luxar.zarr"
-        pos = np.random.RandomState(0).uniform(0, 40, (1200, 3)).astype(np.float32)
+        n_slices = 30
+        points_per_slice = 20
+        n = n_slices * points_per_slice
+        spatial = np.random.RandomState(0).uniform(0, 40, (n, 3)).astype(np.float32)
+        pos = np.column_stack(
+            [spatial, np.repeat(np.arange(n_slices), points_per_slice)]
+        ).astype(np.float32)
+        dims = Dimensions(
+            [
+                Dimension("x"),
+                Dimension("y"),
+                Dimension("z"),
+                Dimension("time", display=False, discrete=True),
+            ]
+        )
         with LuxarZarrCompiler(out) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene = compiler.create_scene(dimensions=dims)
             scene.add_points(
                 "pts",
                 pos,
                 radii=1.0,
-                partition={"max_elements": 200},
+                partition={"max_elements": 50},
                 substitutive_lod={
-                    "compression_factor": 4,
+                    "compression_factor": 20,
                     "levels": 1,
                     "method": "kmeans_lloyd",
                     "device": "cpu",
                     "seed": 0,
                 },
-                additive_lod={"method": "random", "counts": "stream:100", "seed": 0},
             )
 
         fine = zarr.open(str(out), mode="r")["pts/child_1"]

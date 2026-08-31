@@ -507,6 +507,7 @@ def add_points_partition_wrapper_impl(
     max_elements: int,
     bsp_tree: Dict[str, Any],
     additive_lod: Any = None,
+    additive_lod_slices: int = 1,
     wrapper_coverage_fraction: Optional[float] = None,
     **attrs: Any,
 ) -> "Group":
@@ -554,6 +555,17 @@ def add_points_partition_wrapper_impl(
     )
 
     for i, indices in enumerate(parts):
+        part_additive_lod = additive_lod
+        if additive_lod_slices > 1:
+            from ..lod.group import level_additive_lod
+
+            part_additive_lod = level_additive_lod(
+                additive_lod,
+                level_n=int(indices.size),
+                compression_factor=1,
+                is_coarsest=True,
+                slices=additive_lod_slices,
+            )
         wrapper.add_points(
             name=f"part_{i}",
             positions=pos_arr[indices],
@@ -581,7 +593,7 @@ def add_points_partition_wrapper_impl(
             # Inner LOD ladder per spatial part — each part decides
             # its own ladder independently. Allows the Partition-of-
             # AdditiveLOD composition from the plan.
-            additive_lod=additive_lod,
+            additive_lod=part_additive_lod,
             **leaf_attrs,
         )
     from ..partition import persist_pruned_bsp_tree
@@ -964,6 +976,7 @@ def add_points_substitutive_lod_wrapper_impl(
                 max_elements=max_elements,
                 bsp_tree=bsp_tree,
                 additive_lod=finest_additive,
+                additive_lod_slices=slices,
                 **attrs,
             )
         return add_points_impl(
@@ -1043,6 +1056,7 @@ def add_points_substitutive_lod_wrapper_impl(
             level_n=int(lvl_data.n_splats),
             compression_factor=compression_factor,
             is_coarsest=(idx == 0),
+            slices=slices,
         )
         lod_group_node.add_gsplats_from_data(
             name=f"child_{idx}",
@@ -1077,6 +1091,7 @@ def add_points_substitutive_lod_wrapper_impl(
             max_elements=max_elements,
             bsp_tree=bsp_tree,
             additive_lod=finest_additive,
+            additive_lod_slices=slices,
             wrapper_coverage_fraction=coverage_vals[-1],
             **child_attrs,
         )
@@ -1103,6 +1118,7 @@ def add_points_substitutive_lod_wrapper_impl(
             level_n=n_points,
             compression_factor=compression_factor,
             is_coarsest=False,
+            slices=slices,
         ),
         substitutive_lod=None,
         coverage_fraction=coverage_vals[-1],

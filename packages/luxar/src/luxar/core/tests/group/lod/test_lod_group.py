@@ -1161,10 +1161,20 @@ def test_default_composed_ladder_uses_a_resident_share_without_losing_the_ladder
 
 
 def test_default_composed_ladder_rejects_a_share_over_the_commit_ceiling():
-    from luxar.core.group.lod.group import default_composed_additive_lod
+    from luxar.core.group.lod.group import (
+        default_composed_additive_lod,
+        level_additive_lod,
+    )
 
+    spec = default_composed_additive_lod(elements=7_200_001, slices=2)
     with pytest.raises(ValueError, match="12.5% first rung.*900,000-element"):
-        default_composed_additive_lod(elements=7_200_001, slices=2)
+        level_additive_lod(
+            spec,
+            level_n=7_200_001,
+            compression_factor=4,
+            is_coarsest=True,
+            slices=2,
+        )
 
 
 def test_resident_slice_count_counts_occurring_combinations():

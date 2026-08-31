@@ -498,7 +498,7 @@ def stream_ladder(
                 "ceiling. Partition this leaf after moving any stacked axis last, "
                 "or supply explicit capped cuts instead of stream_ladder."
             )
-        first_chunk = max(first_chunk, share_chunk)
+        first_chunk = share_chunk
     if geometry == "lines":
         cuts = stream_cuts(int(n), first_chunk)
         largest_commit = max(

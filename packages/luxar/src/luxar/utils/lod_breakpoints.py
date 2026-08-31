@@ -56,6 +56,8 @@ DEFAULT_MAX_ADDITIVE_COMMIT = 900_000
 
 #: Deepest default ladder for a sliced node: rung 0 carries at least 1/8 of
 #: the node, hence the same share of every resident slice under uniform mixing.
+#: See ``luxar.demos._lod_policy.SLICED_LADDER_MAX_DEPTH`` for the measured
+#: viewer-gate rationale and the non-uniform-slice caveat behind this value.
 DEFAULT_SLICED_LADDER_MAX_DEPTH = 8
 
 #: Hard cap on the number of levels a ``stream:<c>`` ladder may produce. The

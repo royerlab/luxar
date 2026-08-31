@@ -1337,6 +1337,7 @@ def add_lines_substitutive_lod_wrapper_impl(
             level_n=int(lvl_data.n_splats),
             compression_factor=compression_factor,
             is_coarsest=(idx == 0),
+            slices=slices,
         )
         lod_group_node.add_gsplats_from_data(
             name=f"child_{idx}",
@@ -1371,6 +1372,7 @@ def add_lines_substitutive_lod_wrapper_impl(
             level_n=int(vert_arr.shape[0]),
             compression_factor=compression_factor,
             is_coarsest=False,
+            slices=slices,
         ),
         substitutive_lod=None,
         partition=False,

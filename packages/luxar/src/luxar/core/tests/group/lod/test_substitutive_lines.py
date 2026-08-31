@@ -342,7 +342,9 @@ class TestSubstitutiveLinesComposedWithAdditive:
             )
 
         grp = zarr.open(str(out), mode="r")["curves"]
+        coarse = grp[self._children(grp)[0]]
         finest = grp[self._children(grp)[-1]]
+        assert int(coarse.attrs.get("n_additive_sublods", 1)) > 1
         assert int(finest.attrs.get("n_additive_sublods", 1)) > 1
         assert int(finest["additive_0"].attrs["n_vertices"]) == 76
 

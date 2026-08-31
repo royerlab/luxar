@@ -1479,8 +1479,9 @@ def default_composed_additive_lod(*, elements: int, slices: int) -> Dict[str, An
     The download budget below sizes a first chunk for the WHOLE node, but the
     viewer draws one hidden coordinate at a time. A sliced node therefore gets
     at least one eighth of the node in rung 0, matching the demo authoring policy
-    and keeping the resident share stable without scaling the chunk past the node
-    and silently removing the ladder (#2374/#2376).
+    and keeping the resident share stable (#2374/#2376). This initial spec is
+    specialized again by :func:`level_additive_lod` against each actual level or
+    partition part before it reaches a writer.
 
     A bandwidth-derived ``stream:`` ladder, NOT an equal-count one: an
     equal-count split into 4 still ends with an N/4-sized commit, which on a
@@ -1499,7 +1500,6 @@ def default_composed_additive_lod(*, elements: int, slices: int) -> Dict[str, An
     """
     from ....utils.lod_breakpoints import (
         DEFAULT_BANDWIDTH_MBPS,
-        DEFAULT_MAX_ADDITIVE_COMMIT,
         DEFAULT_SLICED_LADDER_MAX_DEPTH,
         sliced_ladder_first_chunk,
         streaming_chunk_splats,
@@ -1516,13 +1516,6 @@ def default_composed_additive_lod(*, elements: int, slices: int) -> Dict[str, An
         slices=slices,
         max_depth=DEFAULT_SLICED_LADDER_MAX_DEPTH,
     )
-    if slices > 1 and chunk > DEFAULT_MAX_ADDITIVE_COMMIT:
-        raise ValueError(
-            f"Sliced node with {elements:,} elements cannot deliver its "
-            f"{100 / DEFAULT_SLICED_LADDER_MAX_DEPTH:g}% first rung within the "
-            f"{DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. Partition "
-            "the node or supply an explicit additive_lod ladder."
-        )
     return {"method": "random", "counts": f"stream:{chunk}", "seed": 0}
 
 
@@ -1600,7 +1593,9 @@ def compose_additive_under_substitutive(
             is normalized through it, so the returned dict is idempotent under
             re-resolution — which is what makes it safe to hand straight to the
             PUBLIC ``add_points`` / ``add_lines`` for the finest child.
-        elements: Element count of the unsplit finest node.
+        elements: Element count used for the initial default template. Each
+            actual level or partition part is re-sized from its own count by
+            :func:`level_additive_lod` before writing.
         name: Node name, for messages.
         slices: Number of occurring hidden coordinates in the node.
         suppress_reason: When set, no ladder is built and the reason is
@@ -1646,6 +1641,7 @@ def level_additive_lod(
     level_n: int,
     compression_factor: int,
     is_coarsest: bool,
+    slices: int = 1,
 ) -> Optional[Dict[str, Any]]:
     """Specialize a composed ladder spec for one level of the group.
 
@@ -1656,13 +1652,42 @@ def level_additive_lod(
     it is the eager default level, and its small first chunk is the
     fast-first-paint path.
 
-    Levels smaller than their first chunk collapse to a single level upstream and
-    the caller falls through to a flat leaf, so tiny coarse levels need no
-    special-casing here.
+    A default sliced ladder is also re-floored from this level's own element
+    count. The unsplit finest count cannot be reused here: it would let the first
+    chunk swallow a coarse level or a spatial partition part whole.
     """
     if spec is None or level_n <= 0:
         return None
     out = dict(spec)
+    counts = out.get("counts")
+    if slices > 1 and isinstance(counts, str) and counts.startswith("stream:"):
+        from ....utils.lod_breakpoints import (
+            DEFAULT_BANDWIDTH_MBPS,
+            DEFAULT_MAX_ADDITIVE_COMMIT,
+            DEFAULT_SLICED_LADDER_MAX_DEPTH,
+            sliced_ladder_first_chunk,
+            streaming_chunk_splats,
+        )
+
+        whole_node = streaming_chunk_splats(
+            DEFAULT_LADDER_TARGET_MS,
+            DEFAULT_BANDWIDTH_MBPS,
+            DEFAULT_LADDER_BYTES_PER_ELEMENT,
+        )
+        chunk = sliced_ladder_first_chunk(
+            whole_node,
+            elements=level_n,
+            slices=slices,
+            max_depth=DEFAULT_SLICED_LADDER_MAX_DEPTH,
+        )
+        if chunk > DEFAULT_MAX_ADDITIVE_COMMIT:
+            raise ValueError(
+                f"Sliced node with {level_n:,} elements cannot deliver its "
+                f"{100 / DEFAULT_SLICED_LADDER_MAX_DEPTH:g}% first rung within "
+                f"the {DEFAULT_MAX_ADDITIVE_COMMIT:,}-element commit ceiling. "
+                "Reduce the leaf size or supply an explicit additive_lod ladder."
+            )
+        out["counts"] = f"stream:{chunk}"
     if not is_coarsest:
         from ....utils.lod_breakpoints import sibling_aware_stream_breakpoints
 
