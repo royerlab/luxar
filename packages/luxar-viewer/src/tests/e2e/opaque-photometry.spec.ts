@@ -223,6 +223,13 @@ async function overlapOpaqueInFrontOfLuminous(
   }, nodeType);
 }
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    // Canvas screenshots include overlaid DOM, and this hint auto-hides after 10 seconds.
+    localStorage.setItem('luxar-control-rail-hint-dismissed', '1');
+  });
+});
+
 for (const [nodeType, fixture] of [
   ['points', POINTS_FIXTURE],
   ['lines', LINES_FIXTURE],
@@ -322,10 +329,8 @@ for (const [nodeType, fixture] of [
       overlap.projectedBoundsIntersect,
       `${nodeType}: opaque and luminous projected bounds must overlap`
     ).toBe(true);
+    await stableCanvasLinearLuminance(page, `${nodeType}: overlap warm-up capture`);
     expect(await setBlendingModeVisible(page, nodeType, 'opaque', false)).toBeGreaterThan(0);
-    expect(await setBlendingModeVisible(page, nodeType, 'luminous', false)).toBeGreaterThan(0);
-    expect(await setBlendingModeVisible(page, nodeType, 'luminous', true)).toBeGreaterThan(0);
-    await stableCanvasLinearLuminance(page, `${nodeType}: luminous warm-up capture`);
     expect(await setBlendingModeVisible(page, nodeType, 'luminous', false)).toBeGreaterThan(0);
     const background = await stableCanvasLinearLuminance(
       page,
