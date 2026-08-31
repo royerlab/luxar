@@ -21,16 +21,23 @@ math/
 ### `auto-rotate.ts`
 
 - `autoRotateAxisVector(axis, orientation, out) -> Vector3` writes the
-  world-space rotation axis for an `AutoRotateAxis` (`'vertical'` =
-  camera up, `'horizontal'` = camera right, `'view'` = the view
-  direction `-Z`) by rotating the camera-space direction through the live
-  `orientation`. Rotation follows the right-hand rule about that
-  direction uniformly, and `'view'` matches the vector the Shift+scroll
-  roll delta uses so both roll the same way.
+  world-space rotation axis for an `AutoRotateAxis`. Camera-frame tokens
+  (`'vertical'` = camera up, `'horizontal'` = camera right, `'view'` =
+  the view direction `-Z`) are rotated through the live `orientation`;
+  world tokens (`'world-x'`/`'-y'`/`'-z'`) are world-space constants
+  returned as-is. Rotation follows the right-hand rule about the named
+  direction uniformly across both families, `'view'` matches the vector
+  the Shift+scroll roll delta uses so both roll the same way, and
+  `'world-y'` agrees with `'vertical'` exactly while the camera is level.
+- The direction table is a total `Record` over the union, so adding a
+  token to `AutoRotateAxis` without a direction fails to compile.
 - Both the per-frame turntable (`update.ts` step 1) and the
   programmatic one (`LuxarOrbitControls.applyOrbitRotation`, which
   recording drives) read the axis from here, so an exported turntable
   cannot rotate unlike its own preview.
+- A world axis parallel to the view direction is benign rather than
+  singular: the camera offset lies along it, so the camera stays put and
+  the image rolls, exactly as `'view'` does.
 - An unrecognized token degrades to `'vertical'` rather than throwing:
   this runs inside the render loop, and a hand-edited scene attribute
   should not kill every subsequent frame.

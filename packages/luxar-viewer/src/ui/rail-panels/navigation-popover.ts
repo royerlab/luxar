@@ -36,15 +36,21 @@ export interface NavigationPopoverContext {
 }
 
 /**
- * Turntable-axis dropdown entries: label → stored token. Named in the CAMERA
- * frame ("what the rotation looks like on screen") rather than x/y/z, which in
- * an nD scientific viewer reads as a DATA axis — and which the gallery harness
- * already spends on world axes.
+ * Turntable-axis dropdown entries: label → stored token, camera frame first
+ * then world. The camera-frame three are named for what the rotation looks
+ * like on screen rather than x/y/z, which in an nD scientific viewer reads as
+ * a DATA axis; the world three take the letters, meaning exactly what they
+ * mean in the gallery harness's per-demo `orbitUp`. Order and membership are
+ * pinned to `AUTO_ROTATE_AXES` by the unit test, so a token cannot be
+ * authorable-but-unreachable.
  */
 const AUTO_ROTATE_AXIS_OPTIONS: Record<string, AutoRotateAxis> = {
   Vertical: 'vertical',
   Horizontal: 'horizontal',
   'View axis': 'view',
+  'World X': 'world-x',
+  'World Y': 'world-y',
+  'World Z': 'world-z',
 };
 
 /** The three modes, in cycle order, with labels for the selector. */

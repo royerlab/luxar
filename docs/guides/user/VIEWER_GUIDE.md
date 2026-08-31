@@ -442,9 +442,18 @@ vc = luxar.ViewerConfig(
     bloom_strength=0.4,
     control_type="orbit",
     auto_rotate=True,
-    # Turntable axis, in the CAMERA frame: "vertical" (screen-up, the default),
-    # "horizontal" (screen-right — the scene tumbles over the top), or "view"
-    # (the view direction — a pure roll, the camera never moves).
+    # Turntable axis. Either a CAMERA-frame axis — "vertical" (screen-up, the
+    # default), "horizontal" (screen-right — the scene tumbles over the top),
+    # "view" (the view direction — a pure roll, the camera never moves) — or a
+    # fixed scene axis: "world-x" / "world-y" / "world-z".
+    #
+    # Which family you want depends on the framing. A camera-frame turntable
+    # always looks the same on screen whatever the scene's orientation, but
+    # when the camera looks DOWN at a subject (most composed openings do) the
+    # subject's own axis precesses: a spin plus a wobble. A world axis is the
+    # classic turntable — pick the one matching the subject's up and it spins
+    # about its own axis at any elevation. The two coincide exactly when the
+    # camera is level, so switching frames there changes nothing.
     #
     # One caveat on "view": the LOD selector measures a node by the
     # axis-aligned screen box of its projected bounds, which is not

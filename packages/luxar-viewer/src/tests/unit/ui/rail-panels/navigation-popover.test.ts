@@ -196,7 +196,14 @@ describe('buildNavigationPopover', () => {
       // token added to AUTO_ROTATE_AXES that the dropdown cannot reach.
       const options = byProp('autoRotateAxis')._options ?? {};
       expect(Object.values(options)).toEqual([...AUTO_ROTATE_AXES]);
-      expect(Object.keys(options)).toEqual(['Vertical', 'Horizontal', 'View axis']);
+      expect(Object.keys(options)).toEqual([
+        'Vertical',
+        'Horizontal',
+        'View axis',
+        'World X',
+        'World Y',
+        'World Z',
+      ]);
     });
 
     it('wires naturalDrag → setNaturalDrag', () => {
