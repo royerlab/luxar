@@ -379,9 +379,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Set the turntable axis (screen-vertical / -horizontal / view-axis). Applies
-   * to the live instance when it is an orbit/ortho control so the change is
-   * visible on the next frame without a mode switch.
+   * Set the camera-frame or fixed scene turntable axis (see
+   * {@link AutoRotateAxis}). Applies to the live instance when it is an
+   * orbit/ortho control so the change is visible on the next frame without a
+   * mode switch.
    */
   public setAutoRotateAxis(axis: AutoRotateAxis): void {
     this.config.autoRotateAxis = axis;

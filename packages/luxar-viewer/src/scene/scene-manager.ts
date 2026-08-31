@@ -1352,9 +1352,8 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Set the camera-frame axis the turntable revolves around: 'vertical'
-   * (screen-up — the default), 'horizontal' (screen-right, a tumble over the
-   * top), or 'view' (the view direction, a pure roll).
+   * Set the camera-frame or fixed scene axis the turntable revolves around;
+   * see {@link AutoRotateAxis}.
    */
   setAutoRotateAxis(axis: AutoRotateAxis): void {
     this.controls.setAutoRotateAxis(axis);
