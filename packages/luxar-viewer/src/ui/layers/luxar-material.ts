@@ -68,6 +68,7 @@ export interface LuxarMaterial extends THREE.Material {
   updateAlphaCutoff?(v: number): void;
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
   updateScalarRange?(min: number, max: number): void;
+  updateLabelStyle?(colorByLabel: boolean, filterIndex: number): void;
   /**
    * Apply a blending mode to this material in-place.
    *

@@ -4,7 +4,7 @@
 
 ## Overview
 
-`LuxarApp.loadDataset()` calls `initPicking()` on every scene load. The function decides whether picking is needed (any node with `userData.attrs.has_labels`, `has_keys`, `has_image_labels`, `link`, or `copy`, or an embedder selection/element-action listener existing at load time), tears down any prior session, constructs a fresh `PickingSystem` with a result callback built by `buildPickResultHandler`, and wires the DOM + Three.js EventDispatcher listeners that drive it. The handler closures and the listener wire-up are intentionally split so the branch logic can be unit-tested with stub ports — no `WebGLRenderer`, no zarr store, no real `PickingSystem`.
+`LuxarApp.loadDataset()` calls `initPicking()` on every scene load. The function decides whether picking is needed (any node with `userData.attrs.has_labels`, `has_label_ids`, `has_keys`, `has_image_labels`, `link`, or `copy`, or an embedder selection/element-action listener existing at load time), tears down any prior session, constructs a fresh `PickingSystem` with a result callback built by `buildPickResultHandler`, and wires the DOM + Three.js EventDispatcher listeners that drive it. The handler closures and the listener wire-up are intentionally split so the branch logic can be unit-tested with stub ports — no `WebGLRenderer`, no zarr store, no real `PickingSystem`.
 
 ## File Structure
 
@@ -24,7 +24,7 @@ still tears the whole session down.
 `initPicking({ sceneManager, pickingEvents, previous, getOverlayManager, onSelection?, hasSelectionConsumer? })` returns `{ pickingSystem, labelLoader, keyLoader, imageLabelLoader }` (all `undefined` when picking is intentionally inactive). The flow:
 
 1. **Teardown** — `pickingEvents.dispose()` plus `dispose()` on the previous `PickingSystem` / label, key, and image-label loaders, so a dataset switch never leaks state.
-2. **Consumer detection** — walks the `LuxarScene` group looking for `userData.attrs.has_labels` / `has_keys` / `has_image_labels` and `link` / `copy` templates. No channels/templates **and** no embedder selection or element-action listener → return four `undefined`s, picking stays off for this session. A listener alone still provisions picking; the loaders below are built only for the flags that were actually found.
+2. **Consumer detection** — walks the `LuxarScene` group looking for `userData.attrs.has_labels` / `has_label_ids` / `has_keys` / `has_image_labels` and `link` / `copy` templates. No channels/templates **and** no embedder selection or element-action listener → return four `undefined`s, picking stays off for this session. A listener alone still provisions picking; the loaders below are built only for the flags that were actually found.
 3. **Loaders** — pulls the active scene loader from `getSceneLoader('default')` and constructs label/key `LabelLoader` instances plus `ImageLabelLoader` against its `zarrStore` + `zarr.root(store)`.
 4. **System** — `new PickingSystem(renderer, capabilities, camera, buildPickResultHandler({ labelLoader, keyLoader, imageLabelLoader, overlayManager: getOverlayManager(), onSelection }))` — the `onSelection` port is the sink for the public `selection` embedder event.
 5. **NodeFactory hookup** — `sceneLoader.nodeFactory.setPickingSystem(pickingSystem)` so future node loads get pick materials; `registerExistingSceneNodes(root)` retroactively registers the already-loaded nodes (scene loads before picking init).
@@ -50,7 +50,7 @@ Three.js EventDispatcher sources are registered via `pickingEvents.add(() => …
 `buildPickResultHandler({ labelLoader, keyLoader, imageLabelLoader, overlayManager })` returns the `(result: PickResult | null) => Promise<void>` callback handed to `PickingSystem`. Branch contract:
 
 - `null` result → `overlayManager.updateHoverContent(null)`; no loader calls.
-- Non-null → `Promise.all` on `labelLoader.getLabel(lookupPath, elementId)`, `keyLoader.getLabel(lookupPath, elementId)`, and `imageLabelLoader.getImageUrl(lookupPath, elementId)`. Emit `{ label, key, imageUrl, nodeName: reportPath, elementIndex }` only when at least one is truthy; otherwise clear hover.
+- Non-null → `Promise.all` on `labelLoader.getLabel(lookupPath, elementId)`, `keyLoader.getLabel(lookupPath, elementId)`, and `imageLabelLoader.getImageUrl(lookupPath, elementId)`. When no baked string label exists, a GSplats `label_ids` channel supplies `name (exact-id)` from the visible storage slot. Emit `{ label, key, imageUrl, nodeName: reportPath, elementIndex }` only when at least one is truthy; otherwise clear hover.
 - Any fetch rejects → `log.warning` and clear hover. Errors must not kill the hover loop.
 
 **Partition-aware node path — reported vs queried.** The handler resolves two paths, and they differ under a partition:

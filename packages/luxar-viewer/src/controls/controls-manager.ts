@@ -64,9 +64,10 @@ export interface ControlsManagerConfig {
   autoRotate?: boolean;
   autoRotateSpeed?: number;
   /**
-   * Camera-frame axis the orbit turntable revolves around. Persisted here (not
-   * only on the live instance) so it survives the dispose/recreate an
-   * orbit↔ortho switch performs, exactly like the speed above.
+   * Camera-frame or fixed scene axis the orbit turntable revolves around (see
+   * {@link AutoRotateAxis}). Persisted here (not only on the live instance) so
+   * it survives the dispose/recreate an orbit↔ortho switch performs, exactly
+   * like the speed above.
    */
   autoRotateAxis?: AutoRotateAxis;
   /**
@@ -379,9 +380,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Set the turntable axis (screen-vertical / -horizontal / view-axis). Applies
-   * to the live instance when it is an orbit/ortho control so the change is
-   * visible on the next frame without a mode switch.
+   * Set the camera-frame or fixed scene turntable axis (see
+   * {@link AutoRotateAxis}). Applies to the live instance when it is an
+   * orbit/ortho control so the change is visible on the next frame without a
+   * mode switch.
    */
   public setAutoRotateAxis(axis: AutoRotateAxis): void {
     this.config.autoRotateAxis = axis;

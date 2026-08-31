@@ -79,6 +79,8 @@ export interface PickResult {
    * diverges, and reports the slot (as it did before the map existed).
    */
   elementId: number;
+  /** Visible-buffer storage slot before the on-disk element-id remap. */
+  storageElementId: number;
   /** Brightness weight of the winning vote */
   brightness: number;
   /** Reference to the main scene object */
@@ -862,6 +864,7 @@ export class PickingSystem {
       // single PickResult construction site — so every downstream consumer
       // (label overlay, embedder `selection` event) sees the on-disk index.
       elementId: resolveOnDiskElementId(nodeEntry.main, winner.elementId),
+      storageElementId: winner.elementId,
       brightness: winner.weight,
       mainNode: nodeEntry.main,
       screenX,

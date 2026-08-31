@@ -38,10 +38,12 @@ The four primitives, and why each is shaped the way it is:
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
 import numpy as np
+from arbol import aprint
 
 __all__ = [
     "Clouds",
@@ -865,13 +867,33 @@ def _prepare_globe_texture(
             width,
             height,
             channels,
-            {"texture_ktx2_quality": quality},
+            {"texture_ktx2_mode": "uastc", "texture_ktx2_quality": quality},
         )
 
     payload, encoding, width, height, channels = encode_texture(
         image, fmt=fmt, quality=quality, channels=3
     )
     return payload, encoding, width, height, channels, {}
+
+
+def _resolve_globe_texture_format(
+    fmt: str,
+    quality: Optional[int],
+    *,
+    height: int,
+    width: int,
+) -> tuple[str, Optional[int]]:
+    if fmt.lower() != "ktx2" or shutil.which("toktx") is not None:
+        return fmt, quality
+
+    fallback_fmt = "webp" if max(height, width) <= MAX_WEBP_DIMENSION else "jpeg"
+    fallback_name = "WebP" if fallback_fmt == "webp" else "JPEG"
+    aprint(
+        "KTX-Software `toktx` was not found; authoring the Earth basemap as "
+        f"{fallback_name} quality 90 instead. Install KTX-Software to keep it "
+        "GPU-compressed."
+    )
+    return fallback_fmt, None
 
 
 def add_textured_globe(
@@ -908,7 +930,7 @@ def add_textured_globe(
     every part would either duplicate the whole texture or need a shared-atlas
     mechanism that does not exist.
 
-    Useful sizes for the default bitmap path:
+    Useful sizes for the portable bitmap path:
 
     * ``tiles=1`` at 8192 — 6.0 MB (JPEG) / 4.3 MB (WebP), the comfortable default.
     * ``tiles=1`` at 16384 — 4x the pixels, 20.4 MB JPEG. Over WebP's limit.
@@ -921,7 +943,7 @@ def add_textured_globe(
     separate resident decoded surface. That is why this is a knob and not the
     default.
 
-    With opt-in KTX2 UASTC including mipmaps, the resident figures are about
+    With KTX2 UASTC including mipmaps, the resident figures are about
     43 MiB for one 8192x4096 tile, 171 MiB across two 8192x8192 tiles, and
     297 MiB across four 5400x10800 tiles, versus 128, 512 and 890 MiB as RGBA8.
     The 16384 per-axis device limit still applies; KTX2 removes CPU bitmap
@@ -944,10 +966,14 @@ def add_textured_globe(
         n_lon: Total longitude divisions across the whole globe.
         n_lat: Latitude divisions.
         tiles: Number of longitude bands. 1 = a single node.
-        fmt: Texture codec. ``ktx2`` passes RGB tiles to the mesh writer for
-            optional ``toktx`` authoring; other values use :func:`encode_texture`.
+        fmt: Texture codec. This generic low-level helper deliberately defaults
+            to portable ``webp``; ``build_earth`` selects ``ktx2`` for the shared
+            demos. KTX2 passes RGB tiles to the mesh writer for ``toktx``
+            authoring. Without ``toktx`` it falls back to WebP, or JPEG when a
+            tile exceeds WebP's 16383-pixel per-axis limit.
         quality: Codec quality. ``None`` selects 2 for KTX2/UASTC and 90 for
-            bitmap codecs; explicit KTX2 values use the UASTC 0-4 scale.
+            bitmap codecs; the missing-``toktx`` fallback resets to bitmap
+            quality 90. Explicit KTX2 values use the UASTC 0-4 scale.
         shading: ``smooth`` | ``flat`` | ``none``.
         relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
         **mesh_kwargs: Forwarded to ``add_mesh`` (blending_mode, opacity, ...).
@@ -969,6 +995,10 @@ def add_textured_globe(
             f"basemap width ({src_w}) must divide evenly into {tiles} tiles"
         )
     tile_src_w = src_w // tiles
+    tile_width = src_w if tiles == 1 else tile_src_w + 1
+    fmt, quality = _resolve_globe_texture_format(
+        fmt, quality, height=src_h, width=tile_width
+    )
     lon_per_tile = 360.0 / tiles
     relief_grid = np.asarray(relief, dtype=np.float32)
     resolved_quality = (
@@ -1336,7 +1366,7 @@ def build_earth(
     n_lat: int = 256,
     texture_width: int = 16384,
     tiles: int = 2,
-    fmt: str = "webp",
+    fmt: str = "ktx2",
     quality: Optional[int] = None,
     shading: str = "smooth",
     relief: Any = 0.0,
@@ -1374,8 +1404,10 @@ def build_earth(
         n_lat: Latitude divisions.
         texture_width: Basemap width to fetch; halved per axis into ``tiles``.
         tiles: Longitude bands, each its own node. See :func:`add_textured_globe`.
-        fmt: Basemap codec; defaults to portable ``webp``. Select ``ktx2``
-            explicitly for GPU-compressed UASTC authoring.
+        fmt: Basemap codec; defaults to GPU-compressed UASTC ``ktx2`` and falls
+            back to WebP when ``toktx`` is unavailable, or JPEG when the tile
+            exceeds WebP's 16383-pixel per-axis limit. Select a bitmap codec
+            explicitly to require the portable path.
         quality: Basemap codec quality; defaults to 90 for bitmap codecs and
             UASTC level 2 for KTX2.
         shading: ``smooth`` | ``flat`` | ``none``.

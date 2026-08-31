@@ -20,6 +20,7 @@ import * as THREE from 'three';
 import {
   createInstancedGSplatsMesh,
   updateInstancedGSplatsMesh,
+  writeSplatTexels,
   type InstancedGSplatsMeshConfig,
 } from '../../../rendering/gsplat-geometry';
 import {
@@ -32,6 +33,29 @@ import {
   resetElementTextureLayoutForTests,
 } from '../../../rendering/element-texture-layout';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
+
+it('writes compact categorical indices into the spare splat-texture channel', () => {
+  const texture = new THREE.DataTexture(
+    new Float32Array(16),
+    4,
+    1,
+    THREE.RGBAFormat,
+    THREE.FloatType
+  );
+  writeSplatTexels(
+    texture,
+    {
+      centers: new Float32Array([0, 0, 0]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
+      amplitudes: new Float32Array([1]),
+      colors: new Float32Array([1, 1, 1]),
+      labelIndices: new Uint32Array([3]),
+    },
+    1
+  );
+
+  expect((texture.image.data as Float32Array)[14]).toBe(3);
+});
 
 /**
  * One splat at the origin with a diagonal Cholesky factor

@@ -521,7 +521,11 @@ def create_luxar_scene(
     Zenodo in ``resolve_data``'s order, so a checkout with its LFS payloads
     pulled and no cached copy matching the hosted pin renders that flat leaf.
     ``add_gsplats_from_file`` routes a matrix-shaped file down the ordinary data
-    path and a partition through the graft, so any of them renders.
+    path and a partition through the graft, so any of them renders. To tell which
+    generation a given cached file is, hash it (sha256) and see which
+    ``data_manifest.json`` pin it matches: ``sha256`` is the in-repo copy,
+    ``hosted_sha256`` the record, and a local ``--recompute`` matches neither —
+    which is itself the diagnosis. Byte size is only suggestive.
 
     Args:
         cache_paths: Per-channel ``.gsplats.zarr[.zip]`` artifacts, in channel

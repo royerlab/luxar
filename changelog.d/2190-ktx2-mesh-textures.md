@@ -12,5 +12,17 @@ the device has no native compressed-texture target instead of silently expanding
 to RGBA8. Preflight remains device-independent and charges one byte per pixel
 plus the full mip tail.
 
-The shared Earth builder keeps its portable WebP default; KTX2 remains an
-explicit opt-in until the demo migration and republish are completed together.
+The four shared Earth demos now author their basemaps as UASTC KTX2 by default,
+cutting their combined resident texture footprint from RGBA8's 4 bytes per pixel
+to the compressed mip-chain budget of about 4/3 bytes per pixel. If `toktx` is
+not installed, globe authoring reports the downgrade and falls back to bitmap
+quality 90 — WebP within its 16383-pixel bound, or JPEG above it — rather than
+failing gallery generation.
+
+Measured with `toktx` 4.4.2 at UASTC quality 2, the two real 8193x8192 Blue
+Marble tiles are 48.57 and 58.69 MiB, versus 5.78 and 8.17 MiB as WebP quality
+90. The basemap wire payload therefore rises from 13.95 MiB to 107.26 MiB. The
+larger tile's viewer preflight totals about 386.2 MiB and retains about 125.8 MiB
+below the 512 MiB per-node limit. UASTC remains the default despite the wire cost
+because the shared globe path also carries colour-coded scientific surfaces,
+where ETC1S block artifacts can alter data-like colour boundaries.

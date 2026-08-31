@@ -16,7 +16,7 @@
  *   | 0     | center.xyz, amplitude                       |
  *   | 1     | L00, L10, L11, L20                          |
  *   | 2     | L21, L22, color.rg                          |
- *   | 3     | color.b, alpha, 0, 0                        |
+ *   | 3     | color.b, alpha, label_index, 0              |
  *
  *   texel3.y is the per-splat opacity alpha (RGBA colors; written 1.0 =
  *   opaque when the dataset is RGB — pool textures are reused, so the

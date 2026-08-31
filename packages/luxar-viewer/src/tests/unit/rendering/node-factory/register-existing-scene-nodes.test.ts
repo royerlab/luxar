@@ -236,6 +236,22 @@ describe('registerExistingSceneNodes', () => {
     expect(pick.uniforms.uAlphaCutout.value).toBe(0);
   });
 
+  it('preserves the live gsplat label filter on a fresh pick material', () => {
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    const node = makeNode('gsplats', '/cells');
+    (node.material as unknown as { uniforms: Record<string, { value: number }> }).uniforms = {
+      uLabelFilterIndex: { value: 3 },
+    };
+    root.add(node);
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as GSplatPickingMaterial;
+    expect(pick.uniforms.uLabelFilterIndex.value).toBe(3);
+  });
+
   it('gives the lines pick material the join its VISUAL material resolved to', () => {
     // `join` is a COMPOSITING attr, so on a partitioned lines node it is authored on
     // the wrapper and never appears in a part's own `userData.attrs`. The visual

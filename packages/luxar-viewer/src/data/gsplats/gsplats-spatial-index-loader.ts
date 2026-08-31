@@ -20,6 +20,7 @@ import type {
   SplatRange,
 } from '../../types/gsplats';
 import type { SceneNode } from '../data-loader-types';
+import { compactGSplatLabelIds, type GSplatLabelChannel } from './label-channel';
 import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
@@ -207,6 +208,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
   // Data accumulator for object pooling.
   private _accumulator: GSplatsDataAccumulator | null = null;
+  private _labelIndicesScratch = new Uint32Array(0);
   /** Color layout of this dataset: 3 (RGB) or 4 (RGBA, alpha = per-splat opacity). */
   private colorComponents: 3 | 4 = 3;
 
@@ -260,6 +262,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // …or the legacy v3.0 single packed array.
     cholesky_factors?: zarr.Array<zarr.DataType, zarr.Readable>;
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
+    label_ids?: zarr.Array<zarr.DataType, zarr.Readable>;
   } = {};
 
   constructor(
@@ -406,6 +409,23 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           'No colors array found (using default white)'
         );
       }
+    }
+
+    if (attrs.has_label_ids) {
+      let labelIdsArray = await zarr.open(this.zarrLocation.resolve('label_ids'), {
+        kind: 'array',
+      });
+      this.registerBounds('label_ids', labelIdsArray);
+      if (this.l0Cache) {
+        labelIdsArray = wrapWithCache(
+          labelIdsArray,
+          this.l0Cache,
+          `${this.node.path}/label_ids`,
+          () => this._activeProbe,
+          () => this._activeSignal
+        );
+      }
+      this.arrays.label_ids = labelIdsArray;
     }
 
     // Initialize data accumulator for object pooling. The hot path
@@ -581,6 +601,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       // writing into distinct accumulator buffers; the global fetch gate
       // (utils/fetch-concurrency.ts) bounds total network concurrency.
       const loadSession = session?.begin('Load Arrays');
+      const labelLoad = this.loadLabelChannel(splatRanges, attrs);
       try {
         const colorLoad = this.arrays.colors
           ? (async () => {
@@ -606,6 +627,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer),
           this.loadCholeskyRanges(splatRanges, attrs.ndim, choleskyBuffer),
           colorLoad,
+          labelLoad,
         ]);
       } finally {
         loadSession?.end();
@@ -628,6 +650,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       // `getData` mints a FRESH object literal every call, so stamping the
       // visible ranges onto it cannot mutate a previously returned payload.
       const data = accumulator.getData(totalSplats);
+      const labels = await labelLoad;
+      if (labels) {
+        data.labelIndices = labels.indices;
+        data.labelVocabulary = labels.vocabulary;
+      }
       if (wantsElementIds) data.ranges = splatRanges;
       return data;
     }
@@ -637,16 +664,18 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     let amplitudes: Float32Array;
     let choleskyFactors: Float32Array;
     let colors: Float32Array | Uint8Array | Uint16Array | null;
+    let labels: GSplatLabelChannel | null;
 
     // All four attribute arrays load CONCURRENTLY (distinct zarr arrays,
     // distinct freshly-allocated output buffers).
     const loadSession = session?.begin('Load Arrays');
     try {
-      [centers, amplitudes, choleskyFactors, colors] = await Promise.all([
+      [centers, amplitudes, choleskyFactors, colors, labels] = await Promise.all([
         this.loadArrayRanges('centers', splatRanges, attrs.ndim),
         this.loadArrayRanges('amplitudes', splatRanges, 1),
         this.loadCholeskyRanges(splatRanges, attrs.ndim),
         this.arrays.colors ? this.loadColorRanges(splatRanges) : Promise.resolve(null),
+        this.loadLabelChannel(splatRanges, attrs),
       ]);
     } finally {
       loadSession?.end();
@@ -658,6 +687,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       choleskyFactors,
       colors,
       colorComponents: this.colorComponents,
+      ...(labels ? { labelIndices: labels.indices, labelVocabulary: labels.vocabulary } : {}),
       splatCount: totalSplats,
       ndim: attrs.ndim,
       ...(wantsElementIds ? { ranges: splatRanges } : {}),
@@ -1016,6 +1046,73 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return output;
   }
 
+  private async loadLabelChannel(
+    ranges: SplatRange[],
+    attrs: GSplatsMetadata
+  ): Promise<GSplatLabelChannel | null> {
+    const array = this.arrays.label_ids;
+    if (!array) return null;
+    const vocabulary = attrs.label_vocabulary;
+    if (!vocabulary) {
+      throw new Error('[GSplatsLoader] has_label_ids requires label_vocabulary');
+    }
+
+    const expectedLength = ranges.reduce((sum, range) => sum + range.end - range.start, 0);
+    let output: Uint32Array;
+    if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
+      if (this._labelIndicesScratch.length < expectedLength) {
+        this._labelIndicesScratch = new Uint32Array(expectedLength);
+      }
+      output = this._labelIndicesScratch.subarray(0, expectedLength);
+    } else {
+      output = new Uint32Array(expectedLength);
+    }
+    const isBroadcast = array.shape[0] === 1;
+    const reads = isBroadcast ? [{ start: 0, end: 1 }] : ranges;
+    const chunks = await Promise.all(
+      reads.map((range) =>
+        zarr.readArray(
+          array,
+          [zarr.slice(range.start, range.end)],
+          zarr.abortOptions(this._activeSignal)
+        )
+      )
+    );
+    let labelVocabulary: GSplatLabelChannel['vocabulary'];
+    if (isBroadcast) {
+      const values = chunks[0].data as Uint8Array | Uint16Array | Uint32Array | BigUint64Array;
+      if (values.length !== 1) {
+        throw new Error(`[GSplatsLoader] broadcast label_ids length ${values.length}, expected 1`);
+      }
+      const compacted = compactGSplatLabelIds(values, vocabulary);
+      output.fill(compacted.indices[0]);
+      labelVocabulary = compacted.vocabulary;
+    } else {
+      let offset = 0;
+      for (const chunk of chunks) {
+        const values = chunk.data as Uint8Array | Uint16Array | Uint32Array | BigUint64Array;
+        if (offset + values.length > expectedLength) {
+          throw new Error(`[GSplatsLoader] label_ids length exceeds expected ${expectedLength}`);
+        }
+        const compacted = compactGSplatLabelIds(
+          values,
+          vocabulary,
+          output.subarray(offset, offset + values.length)
+        );
+        labelVocabulary = compacted.vocabulary;
+        offset += values.length;
+      }
+      if (offset !== expectedLength) {
+        throw new Error(`[GSplatsLoader] label_ids length ${offset}, expected ${expectedLength}`);
+      }
+    }
+    recordLoadMetrics(this.facadeCtx, 'label_ids', output.length, output);
+    return {
+      indices: output,
+      vocabulary: labelVocabulary!,
+    };
+  }
+
   /**
    * Prefetch chunks for the given view state into the cache without decoding.
    *
@@ -1055,6 +1152,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this.arrays.cholesky_factors_offdiag,
       this.arrays.cholesky_factors,
       this.arrays.colors,
+      this.arrays.label_ids,
     ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
 
     await prefetchRangesIntoCache(arrays, splatRanges);

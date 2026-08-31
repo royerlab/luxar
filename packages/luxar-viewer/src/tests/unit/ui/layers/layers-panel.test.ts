@@ -1099,6 +1099,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
       updateOpacity: vi.fn(),
       updateScalarRange: vi.fn(),
       applyBlendingMode: vi.fn(),
+      updateLabelStyle: vi.fn(),
     };
     stubMat.updateColormapTexture = vi.fn((tex: unknown) => {
       const defines = stubMat.defines as Record<string, unknown>;
@@ -1825,6 +1826,93 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     panel.resetAllLayers();
 
     expect(getColormapTexture).toHaveBeenCalledWith('custom', lut);
+  });
+
+  it('resetAllLayers clears label colouring and filtering on the material', () => {
+    const material = makeColormapRoutingStub();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('gsplats'));
+    const layer = panel.layerState.getLayer('/cloud')!;
+    layer.colorByLabel = true;
+    layer.labelFilterId = '7';
+    const updateLabelStyle = material.updateLabelStyle as ReturnType<typeof vi.fn>;
+    updateLabelStyle.mockClear();
+
+    panel.resetAllLayers();
+
+    expect(updateLabelStyle).toHaveBeenCalledWith(false, 0);
+    panel.dispose();
+  });
+
+  it('resolves a selected exact label id independently for each selected layer', () => {
+    const firstMaterial = makeColormapRoutingStub();
+    const secondMaterial = makeColormapRoutingStub();
+    const rootGroup = new THREE.Group();
+    for (const [path, material] of [
+      ['/first', firstMaterial],
+      ['/second', secondMaterial],
+    ] as const) {
+      const mesh = new THREE.Mesh(
+        new THREE.BufferGeometry(),
+        material as unknown as THREE.Material
+      );
+      mesh.name = path;
+      mesh.userData.nodeType = 'gsplats';
+      rootGroup.add(mesh);
+    }
+    const graph: SceneNode = {
+      path: '/',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [
+        {
+          path: '/first',
+          type: 'gsplats',
+          attrs: {
+            layer: true,
+            label_vocabulary: { '7': 'cell', '9007199254740993': 'artifact' },
+          },
+          hasSpatialIndex: true,
+        },
+        {
+          path: '/second',
+          type: 'gsplats',
+          attrs: {
+            layer: true,
+            label_vocabulary: {
+              '3': 'background',
+              '7': 'cell',
+              '9007199254740993': 'artifact',
+            },
+          },
+          hasSpatialIndex: true,
+        },
+      ],
+    };
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.layerState.select('/first', 'single');
+    panel.layerState.select('/second', 'add');
+    const classesGroup = Array.from(
+      container.querySelectorAll<HTMLElement>('.luxar-layers-panel__control-group')
+    ).find(
+      (group) =>
+        group.querySelector('.luxar-layers-panel__control-label')?.textContent === 'Classes'
+    )!;
+    const filter = classesGroup.querySelectorAll<HTMLSelectElement>('select')[1];
+    filter.value = '9007199254740993';
+    filter.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(firstMaterial.updateLabelStyle).toHaveBeenLastCalledWith(false, 2);
+    expect(secondMaterial.updateLabelStyle).toHaveBeenLastCalledWith(false, 3);
+    expect(panel.layerState.getLayer('/first')!.labelFilterId).toBe('9007199254740993');
+    expect(panel.layerState.getLayer('/second')!.labelFilterId).toBe('9007199254740993');
+    panel.dispose();
   });
 
   it('a mesh inheriting `volumetric` reports the RESOLVED mode, so the panel matches the render', () => {
@@ -3371,6 +3459,7 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     // this test pins the dependency at the material boundary.
     const updateGamma = vi.fn();
     const updateIntensity = vi.fn();
+    const updateLabelStyle = vi.fn();
     const stubMat: Record<string, unknown> = {
       userData: {},
       uniforms: { uOpacity: { value: 1.0 } },
@@ -3380,6 +3469,7 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
       updateGamma,
       updateOpacity: vi.fn(),
       applyBlendingMode: vi.fn(),
+      updateLabelStyle,
     };
     stubMat.clone = vi.fn(() => stubMat);
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
@@ -3392,6 +3482,8 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
 
     // Drag the layer away from its authored state.
     panel.layerState.setGamma('/layer0', 2.5);
+    panel.layerState.getLayer('/layer0')!.colorByLabel = true;
+    panel.layerState.getLayer('/layer0')!.labelFilterId = '7';
     updateGamma.mockClear();
     updateIntensity.mockClear();
 
@@ -3407,6 +3499,7 @@ describe('LayersPanel — filter + context-menu lifecycle across dataset reloads
     expect(panel.layerState.getLayer('/layer0')!.gamma).toBe(1.0);
     expect(updateGamma).toHaveBeenCalledWith(1.0);
     expect(updateIntensity).toHaveBeenCalled(); // composed window re-pushed
+    expect(updateLabelStyle).toHaveBeenCalledWith(false, 0);
     panel.dispose();
   });
 

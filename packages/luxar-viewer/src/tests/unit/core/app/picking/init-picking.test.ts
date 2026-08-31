@@ -79,7 +79,12 @@ function makeSceneManager(scene: THREE.Scene): SceneManagerStub {
 }
 
 function makeLuxarRoot(
-  opts: { hasLabels?: boolean; hasImageLabels?: boolean; hasKeys?: boolean } = {}
+  opts: {
+    hasLabels?: boolean;
+    hasImageLabels?: boolean;
+    hasKeys?: boolean;
+    hasLabelIds?: boolean;
+  } = {}
 ): THREE.Group {
   const root = new THREE.Group();
   root.name = 'LuxarScene';
@@ -89,6 +94,7 @@ function makeLuxarRoot(
       ...(opts.hasLabels ? { has_labels: true } : {}),
       ...(opts.hasImageLabels ? { has_image_labels: true } : {}),
       ...(opts.hasKeys ? { has_keys: true } : {}),
+      ...(opts.hasLabelIds ? { has_label_ids: true } : {}),
     },
   };
   root.add(child);
@@ -358,6 +364,27 @@ describe('initPicking', () => {
       });
 
       expect(sceneLoader.nodeFactory.registerExistingSceneNodes).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('success path — categorical-label-only scene', () => {
+    it('constructs picking without allocating string label loaders', async () => {
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+        makeSceneLoader({ hasStore: true })
+      );
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot({ hasLabelIds: true }));
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+      });
+
+      expect(result.pickingSystem).toBeDefined();
+      expect(LabelLoader).not.toHaveBeenCalled();
+      expect(ImageLabelLoader).not.toHaveBeenCalled();
     });
   });
 

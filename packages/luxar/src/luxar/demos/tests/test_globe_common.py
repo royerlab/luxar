@@ -18,6 +18,7 @@ import pytest
 from luxar.demos import _globe_common
 from luxar.demos._globe_common import (
     add_textured_globe,
+    build_earth,
     encode_globe_texture,
     resample_equirect_grid,
     uv_sphere,
@@ -257,6 +258,7 @@ def test_globe_ktx2_passes_rgb_tiles_to_the_writer(
         "encode_texture",
         lambda *_args, **_kwargs: pytest.fail("KTX2 must bypass bitmap encoding"),
     )
+    monkeypatch.setattr(_globe_common.shutil, "which", lambda _name: "/usr/bin/toktx")
     target = Target()
     basemap = np.arange(4 * 8 * 3, dtype=np.uint8).reshape(4, 8, 3)
 
@@ -281,10 +283,13 @@ def test_globe_ktx2_passes_rgb_tiles_to_the_writer(
         assert mesh_kwargs["texture_width"] == texture.shape[1]
         assert mesh_kwargs["texture_height"] == texture.shape[0]
         assert mesh_kwargs["texture_encoding"] == "ktx2"
+        assert mesh_kwargs["texture_ktx2_mode"] == "uastc"
         assert mesh_kwargs["texture_ktx2_quality"] == 3
 
 
-def test_globe_ktx2_rescales_float_pixels() -> None:
+def test_globe_ktx2_rescales_float_pixels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The KTX2 path preserves the helper's documented float [0, 1] input."""
 
     class Target:
@@ -294,6 +299,7 @@ def test_globe_ktx2_rescales_float_pixels() -> None:
         def add_mesh(self, _name: str, **kwargs: object) -> None:
             self.meshes.append(kwargs)
 
+    monkeypatch.setattr(_globe_common.shutil, "which", lambda _name: "/usr/bin/toktx")
     target = Target()
     add_textured_globe(
         target,
@@ -312,19 +318,112 @@ def test_globe_ktx2_rescales_float_pixels() -> None:
     assert np.all(texture == 127)
 
 
-def test_shared_earth_builder_keeps_portable_webp_defaults() -> None:
-    """Gallery generation must not require a non-Python authoring binary."""
+def test_shared_earth_builder_defaults_to_ktx2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every shared Earth demo must emit GPU-compressed basemap textures."""
     import inspect
 
+    encode_signature = inspect.signature(_globe_common.encode_texture)
+    assert encode_signature.parameters["fmt"].default == "webp"
+
     signature = inspect.signature(_globe_common.build_earth)
-    assert signature.parameters["fmt"].default == "webp"
+    assert signature.parameters["fmt"].default == "ktx2"
     assert signature.parameters["quality"].default is None
 
-    earthquake_source = (
-        Path(_globe_common.__file__).parent / "demo_earthquakes_3d.py"
-    ).read_text()
-    assert 'GLOBE_TEXTURE_FORMAT = "webp"' in earthquake_source
-    assert "GLOBE_TEXTURE_QUALITY = 90" in earthquake_source
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    monkeypatch.setattr(_globe_common.shutil, "which", lambda _name: "/usr/bin/toktx")
+    target = Target()
+    build_earth(
+        target,
+        basemap=np.zeros((2, 4, 3), dtype=np.uint8),
+        n_lon=4,
+        n_lat=2,
+    )
+    assert target.meshes[0]["texture_encoding"] == "ktx2"
+    assert target.meshes[0]["texture_ktx2_mode"] == "uastc"
+    assert target.meshes[0]["texture_ktx2_quality"] == 2
+
+    from luxar.demos import demo_earthquakes_3d
+
+    assert demo_earthquakes_3d.GLOBE_TEXTURE_FORMAT == "ktx2"
+    assert demo_earthquakes_3d.GLOBE_TEXTURE_QUALITY is None
+
+
+def test_shared_earth_builder_falls_back_to_webp_without_toktx(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing optional encoder must not make gallery generation fail."""
+
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    monkeypatch.setattr(_globe_common.shutil, "which", lambda _name: None)
+
+    target = Target()
+    basemap = np.arange(8 * 16 * 3, dtype=np.uint8).reshape(8, 16, 3)
+    build_earth(
+        target,
+        basemap=basemap,
+        n_lon=8,
+        n_lat=4,
+        tiles=1,
+        quality=4,
+    )
+
+    assert target.meshes[0]["texture_encoding"] == "webp"
+    expected, *_ = _globe_common.encode_texture(
+        basemap, fmt="webp", quality=90, channels=3
+    )
+    wrong_scale, *_ = _globe_common.encode_texture(
+        basemap, fmt="webp", quality=4, channels=3
+    )
+    assert np.array_equal(target.meshes[0]["texture"], expected)
+    assert not np.array_equal(target.meshes[0]["texture"], wrong_scale)
+    assert (
+        "KTX-Software `toktx` was not found; authoring the Earth basemap as WebP "
+        "quality 90 instead."
+    ) in capsys.readouterr().out
+
+
+def test_shared_earth_builder_falls_back_to_jpeg_above_webp_limit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The portable fallback must cover KTX2-sized single textures."""
+
+    class Target:
+        def __init__(self) -> None:
+            self.meshes: list[dict[str, object]] = []
+
+        def add_mesh(self, _name: str, **kwargs: object) -> None:
+            self.meshes.append(kwargs)
+
+    monkeypatch.setattr(_globe_common.shutil, "which", lambda _name: None)
+
+    target = Target()
+    build_earth(
+        target,
+        basemap=np.zeros((1, 16384, 3), dtype=np.uint8),
+        n_lon=4,
+        n_lat=2,
+        tiles=1,
+    )
+
+    assert target.meshes[0]["texture_encoding"] == "jpeg"
+    assert (
+        "KTX-Software `toktx` was not found; authoring the Earth basemap as JPEG "
+        "quality 90 instead."
+    ) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(("fmt", "expected_quality"), [("webp", 90), ("ktx2", 2)])
@@ -344,6 +443,7 @@ def test_globe_quality_default_follows_the_selected_format(
         seen["quality"] = int(kwargs["quality"])
         return np.array([1], dtype=np.uint8), "webp", image.shape[1], image.shape[0], 3
 
+    monkeypatch.setattr(_globe_common.shutil, "which", lambda _name: "/usr/bin/toktx")
     monkeypatch.setattr(_globe_common, "encode_texture", fake_encode)
     target = Target()
     add_textured_globe(
