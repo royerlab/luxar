@@ -9250,6 +9250,29 @@ class TestAnnotateQualityCommand:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# `gsplat info` reports categorical labels
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_info_reports_categorical_label_vocabulary(
+    runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+) -> None:
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    source = GSplatData.load(sample_gsplats)
+    path = tmp_path / "labeled.gsplats.zarr"
+    source.with_label_ids(
+        np.arange(source.n_splats, dtype=np.uint8) % 2,
+        {0: "background", 1: "foreground"},
+    ).save(path)
+
+    result = runner.invoke(app, ["gsplat", "info", str(path), "--no-histograms"])
+
+    assert result.exit_code == 0, f"failed:\n{result.stdout}"
+    assert "Categorical labels: 2 vocabulary entries" in _plain(result.stdout)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # `gsplat info` measures volumes at the DATASET's truncation radius (#1180)
 # ═══════════════════════════════════════════════════════════════════════
 

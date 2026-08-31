@@ -322,6 +322,11 @@ def _info_report(
         aprint(f"\nSplats: {n_splats:,}")
         aprint(f"Dimensions: {ndim}D")
         aprint(f"Has Colors: {'Yes' if data.colors is not None else 'No'}")
+        if data.label_ids is not None:
+            aprint(
+                "Categorical labels: "
+                f"{len(data.label_vocabulary or {})} vocabulary entries"
+            )
         source_grid_keys = _print_source_grid(data, stored_bytes)
 
         # ================================================================
