@@ -85,31 +85,34 @@ test.describe('URL Parameters', () => {
     expect(state!.currentDPR).toBe(0.5);
   });
 
-  test('?dpr= above 1.0 overrides the high-DPR ceiling', async ({ page }) => {
-    // High DPR is off by default, which caps the viewer at CSS
-    // resolution. An explicit pin is an explicit request and must win —
-    // otherwise the seam would silently clamp `?dpr=2` back to 1.0 and
-    // the parameter would look broken. The pin is still bounded by the
-    // display, so assert against the display's own DPR rather than a
-    // literal (headless Chromium runs at 1, a Retina run at 2).
-    await page.goto(`/?src=${DATASET}&debug&dpr=2`);
-    await waitForLuxarReady(page);
+  test.describe('high-DPR pin', () => {
+    test.use({ deviceScaleFactor: 2 });
 
-    const state = await page.evaluate(() => {
-      const manager = (window as any).__luxarDebug?.app?.components?.adaptiveDPRManager;
-      if (!manager) return null;
-      // The persisted per-scene setting must not claw the ceiling back.
-      manager.setHighDPRAllowed(false);
-      return {
-        currentDPR: manager.getCurrentDPR(),
-        nativeDPR: manager.getNativeDPR(),
-        pinned: manager.isPinned(),
-      };
+    test('?dpr= above 1.0 overrides the high-DPR ceiling', async ({ page }) => {
+      // High DPR is off by default, which caps the viewer at CSS
+      // resolution. An explicit pin is an explicit request and must win —
+      // otherwise the seam would silently clamp `?dpr=2` back to 1.0 and
+      // the parameter would look broken.
+      await page.goto(`/?src=${DATASET}&debug&dpr=2`);
+      await waitForLuxarReady(page);
+
+      const state = await page.evaluate(() => {
+        const manager = (window as any).__luxarDebug?.app?.components?.adaptiveDPRManager;
+        if (!manager) return null;
+        // The persisted per-scene setting must not claw the ceiling back.
+        manager.setHighDPRAllowed(false);
+        return {
+          currentDPR: manager.getCurrentDPR(),
+          nativeDPR: manager.getNativeDPR(),
+          pinned: manager.isPinned(),
+        };
+      });
+
+      expect(state).not.toBeNull();
+      expect(state!.pinned).toBe(true);
+      expect(state!.nativeDPR).toBe(2);
+      expect(state!.currentDPR).toBe(2);
     });
-
-    expect(state).not.toBeNull();
-    expect(state!.pinned).toBe(true);
-    expect(state!.currentDPR).toBe(Math.min(2, state!.nativeDPR));
   });
 
   test('should enable debug interface with ?debug parameter', async ({ page }) => {

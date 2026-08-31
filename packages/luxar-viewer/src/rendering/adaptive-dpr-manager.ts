@@ -250,7 +250,7 @@ export class AdaptiveDPRManager {
   // resting frame and remembers where the loop was operating so
   // notifyResumed() can return there in ONE step instead of reactively
   // re-walking the reduction ladder on every interaction burst.
-  private restingAtNative: boolean = false;
+  private restingAtCeiling: boolean = false;
   private lastOperatingDPR: number | null = null;
 
   // True after pinManualDPR(): the DPR is locked for the session
@@ -412,7 +412,7 @@ export class AdaptiveDPRManager {
     this.fpsTracker.clear();
     this.stallDetector.clear();
     this.nonStallIntervals = 0;
-    this.restingAtNative = false;
+    this.restingAtCeiling = false;
     this.lastOperatingDPR = null;
 
     // Both bounds are CEILINGS, not raw natives: under a cap the two
@@ -427,8 +427,6 @@ export class AdaptiveDPRManager {
     const wasTrackingCeiling = Math.abs(this.currentDPR - previousCeiling) < 0.01;
     this.currentDPR = wasTrackingCeiling ? newCeiling : Math.min(this.currentDPR, newCeiling);
     this.applyDPR();
-    const applied = true;
-    const wasReduced = this.isReducedResolution;
     this.isReducedResolution = this.currentDPR < newCeiling * 0.95;
 
     log.info(
@@ -438,7 +436,7 @@ export class AdaptiveDPRManager {
         `ceiling ${newCeiling.toFixed(2)}, floor/probe/FPS state cleared)`
     );
 
-    if (this.onDPRChange && (applied || wasReduced !== this.isReducedResolution)) {
+    if (this.onDPRChange) {
       this.onDPRChange(this.currentDPR, this.isReducedResolution);
     }
     return live;
@@ -1023,7 +1021,7 @@ export class AdaptiveDPRManager {
       this.fpsTracker.clear();
       this.stallDetector.clear();
       this.nonStallIntervals = 0;
-      this.restingAtNative = false;
+      this.restingAtCeiling = false;
       this.lastOperatingDPR = null;
 
       if (this.onDPRChange) {
@@ -1301,7 +1299,7 @@ export class AdaptiveDPRManager {
 
     this.lastOperatingDPR = this.currentDPR;
     this.currentDPR = ceiling;
-    this.restingAtNative = true;
+    this.restingAtCeiling = true;
     this.isReducedResolution = false;
     this.applyDPR();
 
@@ -1325,8 +1323,8 @@ export class AdaptiveDPRManager {
    * scale-downs, probes, and render-target reallocations.
    */
   notifyResumed(): void {
-    if (!this.isEnabled || !this.restingAtNative) return;
-    this.restingAtNative = false;
+    if (!this.isEnabled || !this.restingAtCeiling) return;
+    this.restingAtCeiling = false;
 
     this.syncNativeDPR();
     const ceiling = this.ceiling();

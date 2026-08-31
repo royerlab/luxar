@@ -124,6 +124,7 @@ describe('setupPerformanceControls', () => {
     isActive: ReturnType<typeof vi.fn>;
     getCurrentDPR: ReturnType<typeof vi.fn>;
     getState: ReturnType<typeof vi.fn>;
+    isPinned: ReturnType<typeof vi.fn>;
     isHighDPRAllowed: ReturnType<typeof vi.fn>;
     setHighDPRAllowed: ReturnType<typeof vi.fn>;
   };
@@ -152,6 +153,7 @@ describe('setupPerformanceControls', () => {
       isActive: vi.fn().mockReturnValue(false),
       getCurrentDPR: vi.fn().mockReturnValue(1.5),
       getState: vi.fn().mockReturnValue({ currentDPR: 1.0, currentFPS: 55 }),
+      isPinned: vi.fn().mockReturnValue(false),
       isHighDPRAllowed: vi.fn().mockReturnValue(false),
       setHighDPRAllowed: vi.fn(),
     };
@@ -403,6 +405,19 @@ describe('setupPerformanceControls', () => {
       setupPerformanceControls(makeContext());
 
       expect(settings.allowHighDPR).toBe(true);
+    });
+
+    it('does not copy a pinned URL override into persisted settings', () => {
+      manager.isPinned.mockReturnValue(true);
+      manager.isActive.mockReturnValue(false);
+      manager.isHighDPRAllowed.mockReturnValue(true);
+      settings.adaptiveDPREnabled = true;
+      settings.allowHighDPR = false;
+
+      setupPerformanceControls(makeContext());
+
+      expect(settings.adaptiveDPREnabled).toBe(true);
+      expect(settings.allowHighDPR).toBe(false);
     });
 
     it('forwards the toggle to the manager, persists, and repaints', () => {

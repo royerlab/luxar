@@ -214,13 +214,15 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
     }
   };
 
-  // Sync initial state from manager BEFORE setting visibility. Both
-  // toggles are read back from the manager rather than trusted from the
-  // settings object, so the panel can never disagree with what is
-  // actually rendering (a `?dpr=` pin, for one, ignores both).
-  settings.adaptiveDPREnabled = manager.isActive();
+  // Sync initial state from manager BEFORE setting visibility. A URL pin
+  // is session-only, so keep the stored scene settings untouched while
+  // pinned rather than letting the effective override leak into the next
+  // saveSettings() call.
+  if (!manager.isPinned()) {
+    settings.adaptiveDPREnabled = manager.isActive();
+    settings.allowHighDPR = manager.isHighDPRAllowed();
+  }
   adaptiveToggle.updateDisplay();
-  settings.allowHighDPR = manager.isHighDPRAllowed();
   highDPRToggle.updateDisplay();
   updateVisibility(settings.adaptiveDPREnabled);
 
