@@ -200,6 +200,65 @@ describe('runUpdateStep — step 1: auto-rotation axis', () => {
     expect(ctx.dispatch).toHaveBeenCalledWith('change');
   });
 
+  it('world-y: holds the camera at its own latitude and preserves world y', () => {
+    // The classic turntable. Start from a TILTED pose so world-Y differs from
+    // screen-up: rotating about a world axis preserves that world coordinate
+    // exactly, which is what makes the subject spin about its own axis instead
+    // of precessing the way a screen-vertical turntable does.
+    const { ctx } = makeCtx({
+      autoRotate: true,
+      autoRotateAxis: 'world-y',
+      autoRotateSpeed: QUARTER_TURN_SPEED,
+    });
+    ctx.orientation.setFromEuler(new THREE.Euler(0.5, 0, 0)); // camera elevated
+    runUpdateStep(ctx, 1 / 60);
+    const yAfterOne = ctx.camera.position.y;
+    const radiusAfterOne = Math.hypot(ctx.camera.position.x, ctx.camera.position.z);
+
+    // Sweep the rest of a full turn: the latitude (world y and the radius in
+    // the plane normal to the axis) must not drift at all.
+    for (let i = 0; i < 120; i++) runUpdateStep(ctx, 1 / 60);
+    expect(ctx.camera.position.y).toBeCloseTo(yAfterOne, 4);
+    expect(Math.hypot(ctx.camera.position.x, ctx.camera.position.z)).toBeCloseTo(radiusAfterOne, 4);
+    // Still 5 units from the target, and no NaN anywhere.
+    expect(ctx.camera.position.length()).toBeCloseTo(5, 4);
+  });
+
+  it('world-y at a level camera is indistinguishable from vertical', () => {
+    // Continuity: switching frames must not jump the view when the camera is
+    // level, because there the two axes ARE the same axis.
+    const runOne = (axis: 'vertical' | 'world-y') => {
+      const { ctx } = makeCtx({ autoRotate: true, autoRotateAxis: axis, autoRotateSpeed: 60 });
+      runUpdateStep(ctx, 0.25);
+      return ctx.camera.position.clone();
+    };
+    expect(runOne('world-y').distanceTo(runOne('vertical'))).toBeLessThan(1e-5);
+  });
+
+  it('a world axis parallel to the view direction rolls instead of degenerating', () => {
+    // The one degenerate world case: looking straight down world Y and
+    // turntabling about world Y. The camera offset lies along the axis, so it
+    // cannot move — this must be a benign roll, not a NaN or a pole flip.
+    const { ctx } = makeCtx({
+      autoRotate: true,
+      autoRotateAxis: 'world-y',
+      autoRotateSpeed: QUARTER_TURN_SPEED,
+    });
+    // Look down from +Y: view direction -Y, so the camera sits on the axis.
+    ctx.orientation.setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+    runUpdateStep(ctx, 1 / 60);
+    const posBefore = ctx.camera.position.clone();
+    const upBefore = ctx.camera.up.clone();
+
+    runUpdateStep(ctx, 0.25);
+
+    expect(ctx.camera.position.distanceTo(posBefore)).toBeLessThan(1e-4);
+    expect(ctx.camera.up.angleTo(upBefore)).toBeCloseTo(Math.PI / 2, 3);
+    for (const c of [...ctx.camera.position.toArray(), ...ctx.camera.up.toArray()]) {
+      expect(Number.isFinite(c)).toBe(true);
+    }
+  });
+
   it('an unrecognized axis token degrades to vertical instead of throwing', () => {
     // A hand-edited scene attr or a newer file must not kill the render loop
     // mid-frame; validation lives at the settings boundary, this is the floor.

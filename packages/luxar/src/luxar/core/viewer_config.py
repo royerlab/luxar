@@ -22,11 +22,23 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
 VALID_CONTROL_TYPES = ("orbit", "fly", "ortho")
-# Turntable axis, named in the CAMERA frame: "vertical" = screen-up (the
-# historical and default behavior), "horizontal" = screen-right (the scene
-# tumbles over the top), "view" = the view direction (a pure roll — the camera
-# never moves). Deliberately not x/y/z: those would read as DATA axes here.
-VALID_AUTO_ROTATE_AXES = ("vertical", "horizontal", "view")
+# Turntable axis. Two families. CAMERA frame, named for what the viewer sees:
+# "vertical" = screen-up (the historical and default behavior), "horizontal" =
+# screen-right (the scene tumbles over the top), "view" = the view direction (a
+# pure roll — the camera never moves). WORLD frame, a fixed scene axis:
+# "world-x" / "world-y" / "world-z" — the classic turntable, where the subject
+# spins about its own axis at any camera elevation (a camera-frame "vertical"
+# turntable makes that axis precess instead). Only the world family takes
+# letters, matching what a letter means everywhere else in the repo; a bare
+# letter for the camera frame would read as a DATA axis here.
+VALID_AUTO_ROTATE_AXES = (
+    "vertical",
+    "horizontal",
+    "view",
+    "world-x",
+    "world-y",
+    "world-z",
+)
 VALID_FOV_PRESETS = (
     "28mm Wide",
     "35mm",
@@ -387,9 +399,13 @@ class ViewerConfig:
     control_type: Optional[str] = None
     auto_rotate: Optional[bool] = None
     auto_rotate_speed: Optional[float] = None
-    # Axis the turntable revolves around, in the CAMERA frame — see
+    # Axis the turntable revolves around — a camera-frame axis ("vertical",
+    # "horizontal", "view") or a fixed scene axis ("world-x"/"-y"/"-z"); see
     # VALID_AUTO_ROTATE_AXES. Left unset the viewer spins about screen-up,
-    # which is what `auto_rotate` has always done.
+    # which is what `auto_rotate` has always done. For a scene with a natural
+    # up whose opening camera looks down at it, the world axis matching that up
+    # is usually the one you want: it spins the subject about its own axis,
+    # where the camera-frame default makes that axis precess.
     auto_rotate_axis: Optional[str] = None
     # Touchpad-friendly orbit drag mapping (LEFT=rotate, RIGHT=pan). When
     # unset, the viewer derives a default from `navigator.platform` (true on
