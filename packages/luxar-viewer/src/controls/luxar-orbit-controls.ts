@@ -113,9 +113,8 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   public autoRotate: boolean;
   public autoRotateSpeed: number;
   /**
-   * Camera-frame axis the turntable revolves around: `vertical` (screen-up,
-   * the default and the historical behavior), `horizontal` (screen-right — a
-   * tumble over the top), or `view` (the view direction — a pure roll).
+   * Camera-frame axis or fixed scene axis the turntable revolves around; see
+   * {@link AutoRotateAxis}.
    * Also the default axis of {@link applyOrbitRotation}, so programmatic
    * turntables (recording) follow the same choice as the interactive one.
    */

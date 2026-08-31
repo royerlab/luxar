@@ -21,6 +21,11 @@ passes over the top indefinitely with no pole flip. The one degenerate case is
 benign — a world axis parallel to the view direction leaves the camera where it
 is and rolls the image, exactly as `View axis` does.
 
+When a fixed scene axis approaches the view direction, the LOD selector's
+axis-aligned screen box of the projected bounds is not roll-invariant, so a
+scene near an LOD threshold can breathe between levels. See
+`docs/guides/user/VIEWER_GUIDE.md` for details.
+
 Scenes can author it from Python as `ViewerConfig(auto_rotate=True,
 auto_rotate_axis="world-y")`, and the choice persists per scene with the rest
 of the rendering settings. Turntable *recording* picks it up for free:

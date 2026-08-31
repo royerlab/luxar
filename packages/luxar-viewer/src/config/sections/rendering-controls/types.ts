@@ -50,10 +50,9 @@ export interface RenderingSettings {
   autoRotate: boolean;
   autoRotateSpeed: number;
   /**
-   * Camera-frame axis the orbit turntable revolves around — 'vertical'
-   * (screen-up, the historical behavior), 'horizontal' (screen-right: a tumble
-   * over the top), or 'view' (the view direction: a pure roll). Orbit only;
-   * ortho disables rotation and fly has no turntable.
+   * Camera-frame or fixed scene axis the orbit turntable revolves around; see
+   * {@link AutoRotateAxis}. Orbit only; ortho disables rotation and fly has no
+   * turntable.
    */
   autoRotateAxis: AutoRotateAxis;
   /**

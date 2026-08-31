@@ -4,7 +4,7 @@
  * focused on lifecycle, public API surface, and DOM bindings.
  *
  * Applies (in order):
- *   1. Auto-rotation (about the configured camera-frame axis)
+ *   1. Auto-rotation (about the configured camera-frame or fixed scene axis)
  *   2. Trackball-rotation damping
  *   3. View-axis roll damping
  *   4. Pan damping
@@ -44,7 +44,7 @@ export interface OrbitUpdateCtx {
   dampingFactor: number;
   autoRotate: boolean;
   autoRotateSpeed: number;
-  /** Camera-frame axis the turntable revolves around (see {@link AutoRotateAxis}). */
+  /** Camera-frame or fixed scene axis (see {@link AutoRotateAxis}). */
   autoRotateAxis: AutoRotateAxis;
 
   orientation: THREE.Quaternion;
@@ -92,9 +92,8 @@ export function runUpdateStep(ctx: OrbitUpdateCtx, deltaTime?: number): boolean 
   // invalidation rely on `change` firing for the damped zoom tail.
   const zoomBefore = ctx.camera instanceof THREE.OrthographicCamera ? ctx.camera.zoom : null;
 
-  // 1. Auto-rotation: around the chosen camera-frame axis — screen-up
-  // (vertical, the default), screen-right (a tumble), or the view direction
-  // (a pure roll). Speed=1.0 → one full rotation in 60 seconds (matches
+  // 1. Auto-rotation around the chosen camera-frame or fixed scene axis (see
+  // AutoRotateAxis). Speed=1.0 → one full rotation in 60 seconds (matches
   // THREE.js OrbitControls convention)
   if (ctx.autoRotate && ctx.enableRotate) {
     const dt = deltaTime ?? 1 / 60;
