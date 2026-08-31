@@ -8,7 +8,7 @@
  */
 
 import * as THREE from 'three';
-import type { AutoRotateAxis } from '../../types';
+import { isAutoRotateAxis, type AutoRotateAxis } from '../../types';
 
 /**
  * Camera-space direction each {@link AutoRotateAxis} names, as the axis
@@ -52,6 +52,8 @@ export function autoRotateAxisVector(
   // Fall back rather than throw: this runs inside the render loop, and an
   // unrecognized token (a hand-edited scene attr, a newer file) should degrade
   // to the historical turntable instead of killing every subsequent frame.
-  const [x, y, z] = AXIS_IN_CAMERA_SPACE[axis] ?? AXIS_IN_CAMERA_SPACE.vertical;
+  const [x, y, z] = isAutoRotateAxis(axis)
+    ? AXIS_IN_CAMERA_SPACE[axis]
+    : AXIS_IN_CAMERA_SPACE.vertical;
   return out.set(x, y, z).applyQuaternion(orientation);
 }
