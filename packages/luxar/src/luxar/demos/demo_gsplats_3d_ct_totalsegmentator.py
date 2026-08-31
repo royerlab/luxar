@@ -525,6 +525,68 @@ def _labels_match_fit(fit: GSplatData, labels: np.ndarray, source: str) -> bool:
     return True
 
 
+def _native_labels(fit: GSplatData) -> np.ndarray | None:
+    """Per-splat organ ids carried BY the fit itself, or None if it has none.
+
+    The hosted archive stores the ids as an exact categorical gsplat channel
+    (#2387), so the writer permutes them in lockstep with the centers and they
+    cannot fall out of order — the failure mode a positional sidecar has, and the
+    dangerous one here: organs are large and spatially contiguous, so a misindexed
+    attach still lands roughly a third of splats in the right organ and renders
+    plausible-looking anatomy with the rest silently mislabelled (#2334). There is
+    nothing for ``_labels_match_fit`` to check on this path — the guard compares
+    two arrays and there is only one.
+
+    Returned as int32, the dtype the scene builder's LUTs index with.
+    """
+    ids = getattr(fit, "label_ids", None)
+    if ids is None:
+        return None
+    arr = np.asarray(ids)
+    if arr.ndim != 1 or arr.shape[0] != len(fit.centers):
+        # A store whose label channel does not describe its own splats is
+        # malformed; say so rather than dropping silently through to a sidecar.
+        aprint(
+            f"⚠️  The fit carries a label array of shape {arr.shape}, which does "
+            f"not describe its {len(fit.centers):,} splats — ignoring it."
+        )
+        return None
+    return arr.astype(np.int32)
+
+
+def _labels_for(
+    fit: GSplatData, fit_path: Path, labels_path: Path | None
+) -> np.ndarray | None:
+    """Organ ids for ``fit``: its own if it has them, else the positional sidecar.
+
+    All four doors below need the same two-source rule, so it lives in one place.
+    A fit carrying its own ids is self-consistent by construction, so its sidecar
+    — if one is even still pinned — is never read.
+
+    The sidecar branch stays because the IN-REPO Git-LFS payload is a different
+    generation of this fit with no label channel, and is still what a checkout
+    resolves. It retires with those payloads (#2354). Returns None when neither
+    source is usable, which every caller treats as "refit".
+    """
+    native = _native_labels(fit)
+    if native is not None:
+        aprint(
+            f"  {fit_path.name} carries its own per-splat organ ids (no sidecar needed)"
+        )
+        return native
+    if labels_path is None:
+        aprint(f"{fit_path}: no native labels and no sidecar to fall back to.")
+        return None
+    try:
+        labels = _load_labels(labels_path)
+    except Exception as exc:  # noqa: BLE001 — a refit is the recovery
+        aprint(f"⚠️  Labels sidecar {labels_path} unreadable ({exc!r}).")
+        return None
+    if not _labels_match_fit(fit, labels, f"{fit_path} + {labels_path}"):
+        return None
+    return labels
+
+
 # =============================================================================
 # Data loading (network / nibabel IO — not unit-tested)
 # =============================================================================
@@ -685,14 +747,58 @@ def save_and_sample_labels(
 
     The writer reorders splats — ``save_with_lod`` splits them into a streaming
     ladder and each rung is written spatially (``ordering="hilbert"``) — so
-    sampling the label volume at the in-memory fit's centers would produce a
-    sidecar that no longer lines up with what ``load`` hands back. Saving first
-    and sampling the RELOADED centers makes the pair aligned by construction
-    under any writer ordering, and makes this path return exactly what the cached
-    path will load next run. Returns ``(stored_fit, labels)``.
+    sampling the label volume at the in-memory fit's centers used to produce a
+    sidecar that no longer lined up with what ``load`` hands back.
 
-    The pair is written to the local-fit namespace (``LOCAL_FIT`` /
-    ``LOCAL_LABELS``), never to the manifest's own paths — see their definitions.
+    Carrying the ids ON the ``GSplatData`` as an exact categorical channel
+    (#2387) removes that class of bug rather than guarding against it: the writer
+    permutes the channel in lockstep with the centers, so nothing can separate
+    them and there is no second array for ``_labels_match_fit`` to compare.
+
+    The two-pass sampling stays, and not for ordering: ``sample_labels`` rounds to
+    the nearest voxel while the writer quantizes centers, so a splat within a
+    quantization step of a rounding boundary changes voxel across a save. Sampling
+    at the STORED centers keeps each id describing the voxel its splat actually
+    occupies. So: save, sample, attach, save again.
+
+    Returns ``(stored_fit, labels)``, both read back from the store.
+
+    Written to the local-fit namespace (``LOCAL_FIT``), never to the manifest's
+    own paths — see their definitions. No sidecar is emitted any more.
+    """
+    _save_atlas_fit(fit)
+    stored = GSplatData.load(LOCAL_FIT)
+    with asection("Sampling per-splat organ labels"):
+        labels = sample_labels(label_vol, stored.centers)
+    # CLASS_MAP is ids 1..117; label 0 is the background the crop leaves behind,
+    # and `with_label_ids` validates every id against the vocabulary, so it has to
+    # be named. An amplitude-style encoder would instead RENUMBER organs — class
+    # 51 coming back as 50 — with no error anywhere, which is why the channel is
+    # exact by contract (#2334).
+    vocabulary = {0: "background"}
+    vocabulary.update({int(k): str(v) for k, v in CLASS_MAP.items()})
+    _save_atlas_fit(stored.with_label_ids(labels, vocabulary))
+    reloaded = GSplatData.load(LOCAL_FIT)
+    reloaded_labels = _native_labels(reloaded)
+    if reloaded_labels is None:
+        # The ids were attached before the save, so their absence here means the
+        # writer dropped them — never something to paper over with a sidecar,
+        # which would reintroduce the ordering hazard silently.
+        raise RuntimeError(
+            f"{LOCAL_FIT} was written with per-splat organ ids but loaded back "
+            "without them; the fit cannot be cached without its labels."
+        )
+    aprint(f"Cached the refit under {LOCAL_FIT} (organ ids included)")
+    return reloaded, reloaded_labels
+
+
+def _save_atlas_fit(fit: GSplatData) -> None:
+    """Write ``fit`` to :data:`LOCAL_FIT` under the demo's LOD recipe.
+
+    Called twice by :func:`save_and_sample_labels` — once to learn the store's own
+    splat order and quantized centers, once to persist the ids sampled at them —
+    so the recipe is spelled out once rather than twice. Creates the parent
+    directory: the writer owns that.
     """
     LOCAL_FIT.parent.mkdir(parents=True, exist_ok=True)
     save_with_lod(
@@ -711,12 +817,6 @@ def save_and_sample_labels(
         compress="zip",
         zip_deflate=True,
     )
-    stored = GSplatData.load(LOCAL_FIT)
-    with asection("Sampling per-splat organ labels"):
-        labels = sample_labels(label_vol, stored.centers)
-    _save_labels_u8(labels, LOCAL_LABELS)
-    aprint(f"Cached the refit pair under {LOCAL_FIT.parent}")
-    return stored, labels
 
 
 def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
@@ -733,21 +833,20 @@ def local_refit_pair() -> tuple[GSplatData, np.ndarray] | None:
     the cache root instead is a second source of truth — it ignores a redirected
     constant and reads the real ``~/.cache`` (#1618 review, A).
 
-    The sidecar is checked FIRST because it is a ``stat()`` and the fit is a
-    multi-hundred-megabyte zip decode: without both halves the pair is unusable
-    whichever one is missing, so there is nothing to pay for.
+    The door is the FIT, not the sidecar: a refit written by the current code
+    carries its own organ ids and emits no sidecar, so gating on the sidecar would
+    reject exactly the refits this demo now produces. Both are a ``stat()``, so
+    the change costs nothing.
     """
-    if not LOCAL_LABELS.exists():
+    if not LOCAL_FIT.exists():
         return None
     local = load_local_fit_gsplats_at([LOCAL_FIT], label=DEMO_NAME)
     if local is None:
         return None
-    try:
-        labels = _load_labels(LOCAL_LABELS)
-    except Exception as exc:  # noqa: BLE001 — a refit is the recovery
-        aprint(f"⚠️  Local labels {LOCAL_LABELS} unreadable ({exc!r}).")
-        return None
-    if not _labels_match_fit(local[0], labels, f"{LOCAL_FIT} + {LOCAL_LABELS}"):
+    labels = _labels_for(
+        local[0], LOCAL_FIT, LOCAL_LABELS if LOCAL_LABELS.exists() else None
+    )
+    if labels is None:
         return None
     return local[0], labels
 
@@ -765,10 +864,17 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
         except DatasetUnavailable as exc:
             aprint(f"Manifest fetch unavailable ({exc}).")
             precomputed = None
-        if precomputed is not None and CACHE_LABELS.exists():
-            labels = _load_labels(CACHE_LABELS)
-            if _labels_match_fit(precomputed[0], labels, f"{FIT_FILE} + {LABELS_FILE}"):
+        if precomputed is not None:
+            labels = _labels_for(
+                precomputed[0],
+                Path(FIT_FILE),
+                CACHE_LABELS if CACHE_LABELS.exists() else None,
+            )
+            if labels is not None:
                 return precomputed[0], labels
+        # The in-repo payload has no label channel, so both halves are still
+        # required here — unlike the doors above and below, which accept a fit
+        # that describes itself.
         if (
             LFS_FIT.exists()
             and LFS_LABELS.exists()
@@ -776,8 +882,8 @@ def load_or_build() -> tuple[GSplatData, np.ndarray]:
             and not is_lfs_pointer(LFS_LABELS)
         ):
             fit = GSplatData.load(LFS_FIT)
-            labels = _load_labels(LFS_LABELS)
-            if _labels_match_fit(fit, labels, f"{LFS_FIT} + {LFS_LABELS}"):
+            labels = _labels_for(fit, LFS_FIT, LFS_LABELS)
+            if labels is not None:
                 return fit, labels
         # A pair this machine refitted earlier, in its own namespace — checked
         # BEFORE refitting, which is what makes the refit below one-time.

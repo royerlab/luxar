@@ -188,16 +188,22 @@
           "name": "ct_atlas.gsplats.zarr.zip",
           "sha256": "0ec44cb0f599f5660f82c8cfb55c41b514ffce56b8bf1ddf02c05c500824a839",
           "bytes": 7117626,
-          "hosted_sha256": "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399",
-          "hosted_bytes": 10116328,
+          "hosted_sha256": "60610346018089761f96067dc19d12cb152be6077f3afa23a3f35f3bb92fc648",
+          "hosted_bytes": 6967206,
+          "superseded_sha256": [
+            "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399"
+          ],
           "positional_pair": "ct_atlas"
         },
         {
           "name": "ct_atlas_labels.npz",
           "sha256": "9ee20f8f5a3ec10ab26aa6029c872eba7ddcfa2e4283add4c26f0df87132d966",
           "bytes": 33487,
-          "hosted_sha256": "71a1315146272263c75c92d554dbf49f18e90222e7d7a5b5bef44a34a5efa11d",
-          "hosted_bytes": 53096,
+          "hosted_sha256": "53731d93bfbb3746c64e21abc3a63d4151e24a42097a855d084650ea4e263b19",
+          "hosted_bytes": 53205,
+          "superseded_sha256": [
+            "71a1315146272263c75c92d554dbf49f18e90222e7d7a5b5bef44a34a5efa11d"
+          ],
           "positional_pair": "ct_atlas"
         }
       ]

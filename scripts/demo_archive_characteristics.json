@@ -311,9 +311,9 @@
     },
     "gsplats_ct_totalsegmentator/ct_atlas.gsplats.zarr.zip": {
       "n_splats": 647083,
-      "ndim": null,
+      "ndim": 3,
       "format_version": "3.4",
-      "topology": "4 coarse-to-fine levels, each progressively streamed",
+      "topology": "progressive ladder, 4 steps",
       "psnr_db": 42.967820256676305,
       "foreground_psnr_db": 30.585385424392157,
       "foreground_fraction": 0.029363671230055326,
@@ -325,8 +325,9 @@
       "source_dtype": "int16",
       "source_bytes": 83881610,
       "frames": null,
+      "quality_quotable": null,
       "measured_from": "staged",
-      "measured_sha256": "f4348cab764ddccf85ee8b8e8fa6efcfb08d97aaf5650cc3e77dbc709c6fa399"
+      "measured_sha256": "60610346018089761f96067dc19d12cb152be6077f3afa23a3f35f3bb92fc648"
     },
     "gsplats_dapi/dapi.gsplats.zarr.zip": {
       "n_splats": 7740,
