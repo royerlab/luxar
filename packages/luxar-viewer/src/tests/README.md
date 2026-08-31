@@ -64,14 +64,11 @@ there when the docblock is.
 
 ### E2E console-error fixture (opt-in)
 
-`src/tests/e2e/fixtures.ts` exports a re-extended `test` that
-auto-fails a test on any unexpected console error after each test.
-59 of the 67 E2E specs use it; the other 8 import `test` from
-`@playwright/test` directly (`gsplat-perf-bench`, `lift-parity`,
-`line-perf-bench`, `line-renderer-compare-perf`,
-`points-rendering-perf`, `renderer-url-param`, `tsl-codegen-snapshot`,
-`tsl-shader-parity` — the perf benches and the TSL harnesses) and so
-get **no** post-test console gate at all. New specs should follow:
+`src/tests/e2e/fixtures.ts` exports a re-extended `test` that dismisses the
+timed control-rail hint before navigation and auto-fails a test on any
+unexpected console error after each test. Specs that import `test` from
+`@playwright/test` directly get neither UI-state normalization nor the
+post-test console gate. New specs should follow:
 
 ```ts
 import { test, expect } from './fixtures';

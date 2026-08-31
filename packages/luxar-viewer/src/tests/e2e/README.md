@@ -157,11 +157,10 @@ be unit-tested against a fake page; see
 ## Shared Fixture (`fixtures.ts`)
 
 `fixtures.ts` exports a `test` that re-extends `@playwright/test`'s
-`test` so **a spec that imports it auto-asserts no console errors after
-each test**. 59 of the 67 specs do; the other 8 (the perf benches, the TSL
-parity/codegen harnesses, `lift-parity` and `renderer-url-param`) import
-`test` from `@playwright/test` directly and get no fixture teardown. New
-specs must use:
+`test` so **a spec that imports it dismisses the timed control-rail hint before
+navigation and auto-asserts no console errors after each test**. Specs that
+import `test` from `@playwright/test` directly get neither normalization nor
+fixture teardown. New specs must use:
 
 ```ts
 import { test, expect } from './fixtures';
@@ -297,9 +296,9 @@ exports group into the categories below.
 | `probeWebGPUBackend(page)`                     | Which backend physically runs behind `?renderer=webgpu` — skip gate for specs that must not run on the WebGL2 fallback.                                                                                                                               |
 | `validateSceneAttributes(page)`                | Audit every geometry's attribute buffers against the format spec.                                                                                                                                                                                     |
 | `SampledPixel`, `ElementPixelStats`            | Types returned by the pixel-sampling helpers.                                                                                                                                                                                                         |
-| `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`.                                                                                                                                                                                                   |
-| `captureCanvasRGBA(page, selector?)`           | Decode one element screenshot into a full-frame RGBA buffer — whole-image / multi-region analysis on a single identical frame.                                                                                                                        |
-| `getElementPixelStats(page, ...)`              | Pixel-statistics rollup used by visual-regression-adjacent specs.                                                                                                                                                                                     |
+| `samplePixelAt(page, x, y)` / `samplePixelsAt` | Decode one element screenshot and read one or many canvas pixels while hiding non-captured DOM.                                                                                                                                                       |
+| `captureCanvasRGBA(page, selector?)`           | Decode one element screenshot into a full-frame RGBA buffer while hiding non-captured DOM — whole-image / multi-region analysis on a single identical frame.                                                                                          |
+| `getElementPixelStats(page, ...)`              | Pixel-statistics rollup over an element screenshot with non-captured DOM hidden.                                                                                                                                                                      |
 
 ### Camera placement
 
