@@ -89,6 +89,11 @@ the chunk count from 5,004 to 224 (22×), accepting larger partial reads in
 exchange for far fewer stored objects. Re-measure browser traffic and request
 cost before changing that tradeoff.
 
+Before rebuilding `earthquakes`, `ocean_currents_earth`,
+`global_rivers_earth`, or `biodiversity_planetary_scale`, put KTX-Software's
+`toktx` on `PATH`. Otherwise the basemap silently downgrades to WebP or JPEG;
+grep the build log for `authoring the Earth basemap as` before publishing.
+
 The page generator takes the data prefix as an argument, so pointing a wave at
 a new prefix is a parameter change, not an edit:
 

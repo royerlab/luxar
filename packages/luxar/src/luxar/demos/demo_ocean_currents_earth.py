@@ -195,6 +195,8 @@ GLOBE_LAT: Final = 256
 # 16384x8192 across two tiles, matching the earthquakes globe. One KTX2 node at
 # that size would exceed the viewer's 512 MiB admission budget once its payload
 # and resident mip chain are counted; two nodes retain comfortable headroom.
+# They also keep the missing-`toktx` bitmap fallback below WebP's hard
+# 16383-pixel per-axis limit.
 GLOBE_TEXTURE_WIDTH: Final = 16384
 GLOBE_TILES: Final = 2
 N_SEEDS: Final = 220_000  # streamlines

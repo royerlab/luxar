@@ -180,6 +180,8 @@ GLOBE_LAT = 256
 # 8192x4096. One node would exceed the 512 MiB admission budget once its KTX2
 # payload is counted at 5x alongside the resident mip chain. Two nodes keep the
 # larger measured q2 Blue Marble tile at ~386 MiB peak with ~126 MiB headroom.
+# They also keep the missing-`toktx` bitmap fallback below WebP's hard
+# 16383-pixel per-axis limit.
 #
 # Splitting is also the only way past 16384 at all. A GPU silently CLAMPS a
 # larger texture — wrong image, no diagnostic — so `MAX_MESH_TEXTURE_SIZE`
@@ -1145,10 +1147,7 @@ def generate_earthquake_scene(
                 width=GLOBE_TEXTURE_WIDTH
             )
             use_texture = True
-            aprint(
-                f"basemap: {basemap_w}x{basemap_h} across {GLOBE_TILES} "
-                f"{GLOBE_TEXTURE_FORMAT} tiles"
-            )
+            aprint(f"basemap: {basemap_w}x{basemap_h} across {GLOBE_TILES} tiles")
         except Exception as error:
             aprint(
                 f"⚠️  Basemap unavailable ({error}); falling back to heuristic colours"

@@ -949,9 +949,11 @@ def add_textured_globe(
         fmt: Texture codec. This generic low-level helper deliberately defaults
             to portable ``webp``; ``build_earth`` selects ``ktx2`` for the shared
             demos. KTX2 passes RGB tiles to the mesh writer for ``toktx``
-            authoring; other values use :func:`encode_texture`.
+            authoring. Without ``toktx`` it falls back to WebP, or JPEG when a
+            tile exceeds WebP's 16383-pixel per-axis limit.
         quality: Codec quality. ``None`` selects 2 for KTX2/UASTC and 90 for
-            bitmap codecs; explicit KTX2 values use the UASTC 0-4 scale.
+            bitmap codecs; the missing-``toktx`` fallback resets to bitmap
+            quality 90. Explicit KTX2 values use the UASTC 0-4 scale.
         shading: ``smooth`` | ``flat`` | ``none``.
         relief: Fractional radial displacement, scalar or ``(n_lat+1, n_lon+1)``.
         **mesh_kwargs: Forwarded to ``add_mesh`` (blending_mode, opacity, ...).
@@ -1392,7 +1394,8 @@ def build_earth(
         texture_width: Basemap width to fetch; halved per axis into ``tiles``.
         tiles: Longitude bands, each its own node. See :func:`add_textured_globe`.
         fmt: Basemap codec; defaults to GPU-compressed UASTC ``ktx2`` and falls
-            back to WebP when ``toktx`` is unavailable. Select a bitmap codec
+            back to WebP when ``toktx`` is unavailable, or JPEG when the tile
+            exceeds WebP's 16383-pixel per-axis limit. Select a bitmap codec
             explicitly to require the portable path.
         quality: Basemap codec quality; defaults to 90 for bitmap codecs and
             UASTC level 2 for KTX2.
