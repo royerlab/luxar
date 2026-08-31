@@ -12,6 +12,16 @@ A ladder can exist and still be worthless. For example,
 leaf therefore fails when any level exceeds either ``--max-share`` of the total
 or the absolute ``--max-level-elements`` commit budget.
 
+A SECOND arm audits nodes the viewer SLICES (any non-displayed dimension). A
+ladder's rungs are sized against the whole node, but only one slice is ever on
+screen, so rung 0 arrives divided by the slice count — and under a playback
+frame budget rung 0 is all the viewer commits, re-paid every tick and never
+converging past it. ``gsplats_4d_drosophila_embryogenesis`` shipped with a
+median of 45 splats per timepoint at rung 0 and played as an empty screen
+(#2374/#2376). Each sliced node therefore fails on either a per-coordinate
+ABSOLUTE floor (measured at its SPARSEST slices, not its busiest) or a SHARE
+floor on rung 0's fraction of the node.
+
 Usage:
     hatch run check-demo-ladders                              # all built demos
     hatch run check-demo-ladders path/to.luxar.zarr ...
@@ -88,7 +98,81 @@ DEFAULT_MIN_SUBLODS = 3
 
 #: A sliced first rung below this absolute element count is visually empty in
 #: playback even when its share of the whole node looks structurally healthy.
-DEFAULT_MIN_SLICE_FIRST_RUNG = 2_000
+#:
+#: Calibrated against OBSERVED playback rather than chosen, on the five sliced
+#: demos measured in #2374 (rung-0 order statistics from the built store against
+#: what the deployed viewer actually commits while the axis plays):
+#:
+#:     node               p05 rung-0   observed playback        verdict
+#:     drosophila                  7   20-51 of 166,443         blank
+#:     nexrad                      4   187-440 of ~10,000       structure gone
+#:     zebrafish/endoderm        330   ~1,449 of ~11,159 (13%)  soft, usable
+#:     celegans                1,069   ~2,970 of 3,209 (93%)    fine
+#:     neuromast/membranes     2,962   12,842-17,465            soft, usable
+#:
+#: The boundary between "structure gone" and "soft but usable" therefore lies
+#: between 4 and 330. 250 sits inside that gap with zebrafish — the closest
+#: PASSING store — clearing it by 32%. Do not raise it without re-measuring:
+#: at 2,000 (the value before the percentile reduction below) zebrafish and
+#: celegans both fail despite playing acceptably.
+DEFAULT_MIN_SLICE_FIRST_RUNG = 250
+
+#: A sliced node's rung 0 must also be a usable SHARE of the node, because
+#: playback re-pays rung 0 on every tick and never converges past it. This is
+#: the gate form of the authoring contract in ``demos/_lod_policy`` (rung 0 >=
+#: ``n / SLICED_LADDER_MAX_DEPTH``, i.e. 12.5%); the 0.10 here leaves that a
+#: margin rather than tracking it exactly, so a small rounding change in the
+#: ladder builder does not turn the corpus red.
+#:
+DEFAULT_MIN_SLICE_RUNG_SHARE = 0.10
+
+#: Nodes exempt from the share arm, each keyed to the REASON it is allowed —
+#: a shrinking allowlist, not a tolerance. Every entry is a store built before
+#: the #2384 contract whose rung 0 is exactly 1/16 of the node, and whose
+#: rebuild was CANCELLED rather than postponed: measurement showed these axes
+#: are keypress-navigated, which takes the loader's ``refine`` pass rather than
+#: the budgeted ``playback`` one, so they stream past rung 0 and converge
+#: instead of starving a frame (#2374, #2376).
+#:
+#: This is deliberately an allowlist and not a warning. A warning here would
+#: never clear — nothing is scheduled to rebuild these — and a permanently
+#: warning arm stops being a gate at all. As an allowlist the arm bites on
+#: anything NEW today, each exemption carries its justification, and the list
+#: shrinks to empty if these stores are ever rebuilt for another reason.
+#: ``test_share_arm_fires_when_an_exemption_is_dropped`` proves the arm still
+#: fires for every entry, so an exemption cannot quietly disable it.
+SHARE_ARM_EXEMPT: dict[str, str] = {
+    "arxiv_papers_kaggle.luxar.zarr/arxiv_papers_kaggle": (
+        "pre-#2384 16-rung ladder (rung 0 = 410,796 of 6,572,730 = 6.25%) over 2 "
+        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+    ),
+    "esm3_protein_landscape.luxar.zarr/proteins": (
+        "pre-#2384 16-rung ladder (rung 0 = 71,938 of 1,151,006 = 6.25%) over 2 "
+        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+    ),
+    "human_multiome_peak_umap.luxar.zarr/Cells": (
+        "pre-#2384 16-rung ladder (rung 0 = 390,546 of 6,248,730 = 6.25%) over 6 "
+        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+    ),
+    "mouse_multiome_peak_umap.luxar.zarr/Cells": (
+        "pre-#2384 16-rung ladder (rung 0 = 72,095 of 1,153,506 = 6.25%) over 6 "
+        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+    ),
+    "zebrahub_multiome_peak_umap.luxar.zarr/Cells": (
+        "pre-#2384 16-rung ladder (rung 0 = 280,364 of 4,485,810 = 6.25%) over 7 "
+        "keypress-navigated coordinates; rebuild cancelled, not deferred"
+    ),
+}
+
+#: Which order statistic of the per-coordinate histogram decides starvation.
+#: A ladder starves at its SPARSEST slice, not its densest, so this reduction
+#: must be a low percentile. It replaced ``max()``, which asked whether the
+#: BUSIEST coordinate was healthy and so passed any node with one busy slice
+#: and hundreds of starved ones. That is not hypothetical: the spread on real
+#: stores runs from 2.1x (celegans) to 122x (nexrad) between p05 and max, and
+#: ``zebrafish_timelapse/endoderm`` passed the old reduction on a max of 6,648
+#: while a twentieth of its timepoints render 330 elements or fewer.
+SLICE_STARVATION_PERCENTILE = 0.05
 
 
 def _element_count(attrs: dict[str, Any]) -> int:
@@ -167,19 +251,70 @@ def _node_slice_histogram(
     return None
 
 
-def sliced_first_rung_counts(
+def starved_slice_count(histogram: Counter[tuple[object, ...]]) -> int:
+    """The rung-0 count at the node's SPARSEST slices.
+
+    Returns the lower 5th-percentile ORDER STATISTIC — an actually observed
+    count, never an interpolation between two — so the number in a failure
+    message is a slice that exists. With fewer than 20 coordinates the index
+    lands on 0 and this is simply the minimum, which is the right reading for a
+    handful of slices: there is no tail to discount.
+
+    Coordinates ABSENT from rung 0 do not appear in ``histogram`` and so cannot
+    lower this. That is deliberate for an empty coordinate (nothing to draw is
+    not starvation) but it does mean a coordinate the node covers while rung 0
+    does not is invisible here; the caller reports rung-0 coverage alongside so
+    the gap is at least legible.
+    """
+    if not histogram:
+        return 0
+    ordered = sorted(histogram.values())
+    index = int(SLICE_STARVATION_PERCENTILE * (len(ordered) - 1))
+    return ordered[index]
+
+
+def sliced_rung_histograms(
     root: Any, path: str = "", zarr_root: Any = None
-) -> list[tuple[str, int]]:
-    """Measure each sliced node's global per-slice rung-0 maximum."""
+) -> list[tuple[str, Counter[tuple[object, ...]]]]:
+    """Yield ``(path, per-coordinate rung-0 histogram)`` for each sliced node."""
     zarr_root = root if zarr_root is None else zarr_root
     histogram = _node_slice_histogram(root, zarr_root)
     if histogram is not None:
-        return [(path or "/", max(histogram.values(), default=0))]
+        return [(path or "/", histogram)]
     return [
         result
         for name in root.group_keys()
-        for result in sliced_first_rung_counts(root[name], f"{path}/{name}", zarr_root)
+        for result in sliced_rung_histograms(root[name], f"{path}/{name}", zarr_root)
     ]
+
+
+def sliced_first_rung_counts(
+    root: Any, path: str = "", zarr_root: Any = None
+) -> list[tuple[str, int]]:
+    """Measure each sliced node's rung-0 count at its SPARSEST slices."""
+    return [
+        (node_path, starved_slice_count(histogram))
+        for node_path, histogram in sliced_rung_histograms(root, path, zarr_root)
+    ]
+
+
+def _node_element_total(group: Any) -> int:
+    """Total elements of one geometry node, combined like its rung-0 histogram.
+
+    Mirrors :func:`_node_slice_histogram`'s structural rules exactly — partition
+    parts SUM, substitutive levels are ALTERNATIVES (max) — so the share below
+    divides two quantities reduced the same way. Reading only attrs, it costs
+    nothing: no array is opened.
+    """
+    attrs = dict(group.attrs)
+    if attrs.get("type") in ("points", "lines", "gsplats"):
+        return _element_count(attrs)
+    children = [group[name] for name in group.group_keys()]
+    if attrs.get("kind") == "partition":
+        return sum(_node_element_total(child) for child in children)
+    if attrs.get("kind") == "lod":
+        return max((_node_element_total(child) for child in children), default=0)
+    return 0
 
 
 def _record_sliced_verdicts(
@@ -189,16 +324,51 @@ def _record_sliced_verdicts(
     results: list[tuple[str, str, str]],
     counts: dict[str, int],
     failures: list[str],
+    min_rung_share: float = DEFAULT_MIN_SLICE_RUNG_SHARE,
 ) -> None:
-    """Append scene-level sliced-rung failures without inflating ``run_gate``."""
-    for path, count in sliced_first_rung_counts(root):
+    """Append scene-level sliced-rung failures without inflating ``run_gate``.
+
+    Two independent arms, because they catch different shapes and neither
+    subsumes the other:
+
+    * the ABSOLUTE arm asks whether the sparsest slices carry enough elements to
+      be worth drawing, and catches a node whose share looks healthy only
+      because the node is small;
+    * the SHARE arm asks whether rung 0 is a usable fraction of the node at all,
+      and catches a ladder that is simply too deep — the authoring defect in
+      #2376, where a rung sized against a download budget is divided by the
+      slice count. It is cheap (attrs only) and it is the reason a uniformly
+      thin ladder cannot slip through on absolute counts alone.
+    """
+    for path, histogram in sliced_rung_histograms(root):
+        node = root if path in ("", "/") else root[path.lstrip("/")]
+        count = starved_slice_count(histogram)
+        coverage = len(histogram)
+        rung_total = sum(histogram.values())
+        node_total = _node_element_total(node)
+        share = rung_total / node_total if node_total else 0.0
+        where = (
+            f" (rung 0 covers {coverage:,} coordinate{'s' if coverage != 1 else ''})"
+        )
+
         if count <= 0:
             message = "empty rung-0 slice survey"
         elif count < min_first_rung:
             message = (
-                f"largest rung-0 slice has {count:,} elements, below the "
-                f"{min_first_rung:,} absolute first-paint floor"
+                f"sparsest rung-0 slices hold {count:,} elements, below the "
+                f"{min_first_rung:,} absolute first-paint floor{where}"
             )
+        elif node_total and share < min_rung_share:
+            thin = (
+                f"rung 0 is {share:.2%} of the node, below the "
+                f"{min_rung_share:.0%} share floor — the ladder is too deep for a "
+                f"sliced node, so playback re-pays a thin rung 0 every tick{where}"
+            )
+            if (reason := SHARE_ARM_EXEMPT.get(f"{scene_name}{path}")) is not None:
+                results.append((path, "warn", f"{thin} [exempt: {reason}]"))
+                counts["warn"] += 1
+                continue
+            message = thin
         else:
             continue
         results.append((path, "fail", message))
@@ -349,6 +519,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MIN_SLICE_FIRST_RUNG,
     )
     parser.add_argument(
+        "--min-slice-rung-share",
+        type=float,
+        default=DEFAULT_MIN_SLICE_RUNG_SHARE,
+        # argparse %-formats help text, so a literal percent sign must be
+        # doubled or parser construction raises "badly formed help string" —
+        # on every invocation, --help included.
+        help=(
+            "minimum share of a sliced node that rung 0 must carry "
+            f"(default {DEFAULT_MIN_SLICE_RUNG_SHARE:.0%})".replace("%", "%%")
+        ),
+    )
+    parser.add_argument(
         "--quiet", action="store_true", help="only print warnings and failures"
     )
     screen = parser.add_argument_group(
@@ -452,6 +634,7 @@ def run_gate(paths: Sequence[Path], args: argparse.Namespace) -> int:
             results,
             counts,
             failures,
+            args.min_slice_rung_share,
         )
 
         visible_results = [
