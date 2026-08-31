@@ -71,6 +71,7 @@ export function syncCurrentState(context: SyncCurrentStateContext): void {
   if (isOrbitControls(controls)) {
     settings.autoRotate = controls.autoRotate;
     settings.autoRotateSpeed = controls.autoRotateSpeed;
+    settings.autoRotateAxis = controls.autoRotateAxis;
   }
   // naturalDrag is persisted at the ControlsManager level (not the active
   // controls instance, so it survives mode switches).

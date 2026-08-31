@@ -122,6 +122,8 @@ export interface ZarrViewerConfig {
   control_type?: string;
   auto_rotate?: boolean;
   auto_rotate_speed?: number;
+  /** Turntable axis: 'vertical' (screen-up, default) | 'horizontal' | 'view'. */
+  auto_rotate_axis?: string;
   natural_drag?: boolean;
 
   // Cinematic

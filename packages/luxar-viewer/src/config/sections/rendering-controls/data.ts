@@ -58,6 +58,9 @@ export const renderingControlsConfig: RenderingControlsConfig = {
     controlType: 'orbit' as const, // Default to orbit controls
     autoRotate: false, // Auto-rotation disabled by default
     autoRotateSpeed: 0.25, // Slow rotation speed for presentations
+    // Screen-vertical turntable — the axis auto-rotation always used, so
+    // every existing scene and persisted setting keeps its exact behavior.
+    autoRotateAxis: 'vertical' as const,
     // Touchpad-friendly orbit drag mapping (LEFT=rotate, RIGHT=pan).
     // Default-on for Mac users; off elsewhere. The rendering-controls
     // persistence layer overrides this with the user's stored choice.

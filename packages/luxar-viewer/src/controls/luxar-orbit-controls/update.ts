@@ -4,7 +4,7 @@
  * focused on lifecycle, public API surface, and DOM bindings.
  *
  * Applies (in order):
- *   1. Auto-rotation
+ *   1. Auto-rotation (about the configured camera-frame axis)
  *   2. Trackball-rotation damping
  *   3. View-axis roll damping
  *   4. Pan damping
@@ -23,7 +23,9 @@
 import * as THREE from 'three';
 import type { LuxarCamera } from '../../utils/camera-utils';
 import { applyZoomScale } from './math/zoom';
+import { autoRotateAxisVector } from './math/auto-rotate';
 import { applyToCamera } from './camera-application';
+import type { AutoRotateAxis } from '../types';
 
 const _IDENTITY_QUAT = new THREE.Quaternion();
 const _v2 = new THREE.Vector3();
@@ -42,6 +44,8 @@ export interface OrbitUpdateCtx {
   dampingFactor: number;
   autoRotate: boolean;
   autoRotateSpeed: number;
+  /** Camera-frame axis the turntable revolves around (see {@link AutoRotateAxis}). */
+  autoRotateAxis: AutoRotateAxis;
 
   orientation: THREE.Quaternion;
   rotationDelta: THREE.Quaternion;
@@ -88,13 +92,15 @@ export function runUpdateStep(ctx: OrbitUpdateCtx, deltaTime?: number): boolean 
   // invalidation rely on `change` firing for the damped zoom tail.
   const zoomBefore = ctx.camera instanceof THREE.OrthographicCamera ? ctx.camera.zoom : null;
 
-  // 1. Auto-rotation: around the camera's screen-up axis (always appears vertical to the viewer)
-  // Speed=1.0 → one full rotation in 60 seconds (matches THREE.js OrbitControls convention)
+  // 1. Auto-rotation: around the chosen camera-frame axis — screen-up
+  // (vertical, the default), screen-right (a tumble), or the view direction
+  // (a pure roll). Speed=1.0 → one full rotation in 60 seconds (matches
+  // THREE.js OrbitControls convention)
   if (ctx.autoRotate && ctx.enableRotate) {
     const dt = deltaTime ?? 1 / 60;
     const angle = ((2 * Math.PI) / 60) * ctx.autoRotateSpeed * dt;
     // Inline quaternion math (applyOrbitRotation also calls applyToCamera, redundant in update())
-    _v2.set(0, 1, 0).applyQuaternion(ctx.orientation);
+    autoRotateAxisVector(ctx.autoRotateAxis, ctx.orientation, _v2);
     _q1.setFromAxisAngle(_v2, angle);
     ctx.orientation.premultiply(_q1);
     ctx.orientation.normalize();

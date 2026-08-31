@@ -17,6 +17,8 @@ import { isOrthographicCamera, type LuxarCamera } from '../utils/camera-utils';
 import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
 import { applyToCamera, initializeFromCamera } from './luxar-orbit-controls/camera-application';
 import { runUpdateStep, type OrbitUpdateCtx } from './luxar-orbit-controls/update';
+import { autoRotateAxisVector } from './luxar-orbit-controls/math/auto-rotate';
+import { type AutoRotateAxis, DEFAULT_AUTO_ROTATE_AXIS } from './types';
 import {
   type ControlAction,
   type OrbitInputCtx,
@@ -58,6 +60,7 @@ export interface LuxarOrbitControlsConfig {
   enableZoom?: boolean;
   autoRotate?: boolean;
   autoRotateSpeed?: number;
+  autoRotateAxis?: AutoRotateAxis;
   minDistance?: number;
   maxDistance?: number;
   minZoom?: number;
@@ -109,6 +112,14 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   public enableZoom: boolean;
   public autoRotate: boolean;
   public autoRotateSpeed: number;
+  /**
+   * Camera-frame axis the turntable revolves around: `vertical` (screen-up,
+   * the default and the historical behavior), `horizontal` (screen-right — a
+   * tumble over the top), or `view` (the view direction — a pure roll).
+   * Also the default axis of {@link applyOrbitRotation}, so programmatic
+   * turntables (recording) follow the same choice as the interactive one.
+   */
+  public autoRotateAxis: AutoRotateAxis;
   public screenSpacePanning: boolean;
 
   // Constraints
@@ -189,6 +200,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.enableZoom = config?.enableZoom ?? true;
     this.autoRotate = config?.autoRotate ?? false;
     this.autoRotateSpeed = config?.autoRotateSpeed ?? 0.25;
+    this.autoRotateAxis = config?.autoRotateAxis ?? DEFAULT_AUTO_ROTATE_AXIS;
     this.screenSpacePanning = config?.screenSpacePanning ?? true;
     this.trackballRadius = config?.trackballRadius ?? 1.0;
 
@@ -257,6 +269,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       dampingFactor: this.dampingFactor,
       autoRotate: this.autoRotate,
       autoRotateSpeed: this.autoRotateSpeed,
+      autoRotateAxis: this.autoRotateAxis,
       orientation: this.orientation,
       rotationDelta: this.rotationDelta,
       panDelta: this.panDelta,
@@ -321,14 +334,17 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
    * Apply an orbit rotation by the given angle (radians).
    *
    * @param angle - Rotation angle in radians (positive = counter-clockwise when looking along the axis).
-   * @param axis  - World-space axis to rotate around. Defaults to the camera's screen-up direction
-   *               (same axis used by auto-rotation), which always appears vertical on screen.
+   * @param axis  - World-space axis to rotate around. Defaults to the axis
+   *               {@link autoRotateAxis} names (screen-up unless changed) — the
+   *               SAME axis interactive auto-rotation uses, so a recorded
+   *               turntable cannot rotate unlike the preview it was set up from.
    *
    * This is the same quaternion math that auto-rotation uses — call it from turntable
    * recording or any other code that needs to orbit the camera programmatically.
    */
   public applyOrbitRotation(angle: number, axis?: THREE.Vector3): void {
-    const rotAxis = axis ?? new THREE.Vector3(0, 1, 0).applyQuaternion(this.orientation);
+    const rotAxis =
+      axis ?? autoRotateAxisVector(this.autoRotateAxis, this.orientation, new THREE.Vector3());
     const q = new THREE.Quaternion().setFromAxisAngle(rotAxis, angle);
     this.orientation.premultiply(q);
     this.orientation.normalize();

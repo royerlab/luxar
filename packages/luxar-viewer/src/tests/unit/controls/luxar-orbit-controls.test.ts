@@ -572,6 +572,25 @@ describe('LuxarOrbitControls', () => {
       expect((controls as any).orientation.angleTo(worldUpResult)).toBeGreaterThan(1e-3);
     });
 
+    it('[G29] default axis FOLLOWS autoRotateAxis, so a recorded turntable matches the preview', () => {
+      // The recording strategies call applyOrbitRotation(angle) with no axis
+      // (ui/recording-panel/{offline-capture,video-recording}-strategy.ts).
+      // If the default ignored the configured axis, an exported turntable
+      // would rotate unlike the preview it was set up from.
+      controls = new LuxarOrbitControls(camera, domElement);
+      controls.autoRotateAxis = 'view';
+      const posBefore = camera.position.clone();
+      const upBefore = camera.up.clone();
+
+      controls.applyOrbitRotation(Math.PI / 4);
+
+      // A view-axis roll cannot move the camera — the offset lies along it.
+      expect(camera.position.distanceTo(posBefore)).toBeLessThan(1e-5);
+      // But it must have rolled: up swings a quarter turn away from where it
+      // started (a pure roll changes orientation without moving the camera).
+      expect(camera.up.angleTo(upBefore)).toBeCloseTo(Math.PI / 4, 3);
+    });
+
     it('[G29] applyOrbitRotation invokes applyToCamera (camera position updated)', () => {
       controls = new LuxarOrbitControls(camera, domElement);
       const posBefore = camera.position.clone();

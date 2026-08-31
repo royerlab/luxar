@@ -1,6 +1,9 @@
 /**
  * User-adjustable rendering settings that can be persisted
  */
+
+import type { AutoRotateAxis } from '../../../controls/types';
+
 export interface RenderingSettings {
   // Camera settings
   fov: number;
@@ -46,6 +49,13 @@ export interface RenderingSettings {
   controlType: 'orbit' | 'fly' | 'ortho';
   autoRotate: boolean;
   autoRotateSpeed: number;
+  /**
+   * Camera-frame axis the orbit turntable revolves around — 'vertical'
+   * (screen-up, the historical behavior), 'horizontal' (screen-right: a tumble
+   * over the top), or 'view' (the view direction: a pure roll). Orbit only;
+   * ortho disables rotation and fly has no turntable.
+   */
+  autoRotateAxis: AutoRotateAxis;
   /**
    * "Natural drag" — swap LEFT ↔ RIGHT mouse buttons in orbit mode so a
    * one-finger touchpad drag rotates (and two-finger / right-drag pans).

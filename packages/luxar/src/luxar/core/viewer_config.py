@@ -22,6 +22,11 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 # Valid enum values (must match TypeScript RenderingSettings union types)
 VALID_TONE_MAPPINGS = ("None", "Linear", "Reinhard", "Cineon", "ACES", "AgX", "Neutral")
 VALID_CONTROL_TYPES = ("orbit", "fly", "ortho")
+# Turntable axis, named in the CAMERA frame: "vertical" = screen-up (the
+# historical and default behavior), "horizontal" = screen-right (the scene
+# tumbles over the top), "view" = the view direction (a pure roll — the camera
+# never moves). Deliberately not x/y/z: those would read as DATA axes here.
+VALID_AUTO_ROTATE_AXES = ("vertical", "horizontal", "view")
 VALID_FOV_PRESETS = (
     "28mm Wide",
     "35mm",
@@ -382,6 +387,10 @@ class ViewerConfig:
     control_type: Optional[str] = None
     auto_rotate: Optional[bool] = None
     auto_rotate_speed: Optional[float] = None
+    # Axis the turntable revolves around, in the CAMERA frame — see
+    # VALID_AUTO_ROTATE_AXES. Left unset the viewer spins about screen-up,
+    # which is what `auto_rotate` has always done.
+    auto_rotate_axis: Optional[str] = None
     # Touchpad-friendly orbit drag mapping (LEFT=rotate, RIGHT=pan). When
     # unset, the viewer derives a default from `navigator.platform` (true on
     # macOS, false elsewhere) and persists the user's choice per-scene.
@@ -489,6 +498,15 @@ class ViewerConfig:
                 f"control_type must be one of {VALID_CONTROL_TYPES}, got '{self.control_type}'"
             )
 
+        if (
+            self.auto_rotate_axis is not None
+            and self.auto_rotate_axis not in VALID_AUTO_ROTATE_AXES
+        ):
+            raise ValueError(
+                f"auto_rotate_axis must be one of {VALID_AUTO_ROTATE_AXES}, "
+                f"got '{self.auto_rotate_axis}'"
+            )
+
         if self.theme is not None and self.theme not in VALID_THEMES:
             raise ValueError(f"theme must be one of {VALID_THEMES}, got '{self.theme}'")
 
@@ -535,6 +553,7 @@ class ViewerConfig:
         "control_type",
         "auto_rotate",
         "auto_rotate_speed",
+        "auto_rotate_axis",
         "natural_drag",
         "cinematic_mode",
         "vignette_enabled",

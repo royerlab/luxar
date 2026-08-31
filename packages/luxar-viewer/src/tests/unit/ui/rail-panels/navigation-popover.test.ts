@@ -20,6 +20,12 @@ interface ControllerStub {
   hide: ReturnType<typeof vi.fn>;
   show: ReturnType<typeof vi.fn>;
   _onChangeFn: ((value: unknown) => void) | null;
+  /**
+   * Third `gui.add` argument when it is an options map (a dropdown row) —
+   * `undefined` for a checkbox and a numeric `min` for a slider, so only the
+   * dropdown case is recorded.
+   */
+  _options?: Record<string, unknown>;
 }
 
 interface GuiStub {
@@ -33,9 +39,10 @@ interface GuiStub {
 // bound property name so tests don't depend on insertion order.
 let currentGui: GuiStub;
 
-function makeController(prop: string): ControllerStub {
+function makeController(prop: string, options?: Record<string, unknown>): ControllerStub {
   const ctrl: ControllerStub = {
     prop,
+    _options: options,
     name: vi.fn(),
     onChange: vi.fn(),
     hide: vi.fn(),
@@ -53,8 +60,9 @@ function makeController(prop: string): ControllerStub {
 function makeGui(): GuiStub {
   const controllers: ControllerStub[] = [];
   return {
-    add: vi.fn().mockImplementation((_obj: object, prop: string) => {
-      const c = makeController(prop);
+    add: vi.fn().mockImplementation((_obj: object, prop: string, arg3?: unknown) => {
+      const isOptionsMap = typeof arg3 === 'object' && arg3 !== null;
+      const c = makeController(prop, isOptionsMap ? (arg3 as Record<string, unknown>) : undefined);
       controllers.push(c);
       return c;
     }),
@@ -99,6 +107,7 @@ function makeStubs(
     getSceneScale: vi.fn().mockReturnValue(0), // 0 → static config ranges
     setAutoRotate: vi.fn(),
     setAutoRotateSpeed: vi.fn(),
+    setAutoRotateAxis: vi.fn(),
     setNaturalDrag: vi.fn(),
     setOrbitZoomSpeed: vi.fn(),
     setOrbitDampingFactor: vi.fn(),
@@ -112,6 +121,7 @@ function makeStubs(
   const settings = {
     autoRotate: false,
     autoRotateSpeed: 0.25,
+    autoRotateAxis: 'vertical',
     naturalDrag: false,
     orbitZoomSpeed: 1.0,
     orbitDampingFactor: 0.25,
@@ -170,6 +180,24 @@ describe('buildNavigationPopover', () => {
       byProp('autoRotateSpeed')._onChangeFn?.(2.5);
       expect(stubs.sceneManager.setAutoRotateSpeed).toHaveBeenCalledWith(2.5);
       expect(stubs.triggerAnimation).toHaveBeenCalled();
+    });
+
+    it('wires autoRotateAxis → setAutoRotateAxis', () => {
+      byProp('autoRotateAxis')._onChangeFn?.('view');
+      expect(stubs.sceneManager.setAutoRotateAxis).toHaveBeenCalledWith('view');
+      expect(stubs.saveSettings).toHaveBeenCalled();
+      expect(stubs.triggerAnimation).toHaveBeenCalled();
+    });
+
+    it('offers exactly the three camera-frame axes as a dropdown', () => {
+      // The dropdown's option map is the user-visible contract: a label added
+      // here without a matching AUTO_ROTATE_AXES token would fail validation
+      // on reload and silently snap back to vertical.
+      expect(byProp('autoRotateAxis')._options).toEqual({
+        Vertical: 'vertical',
+        Horizontal: 'horizontal',
+        'View axis': 'view',
+      });
     });
 
     it('wires naturalDrag → setNaturalDrag', () => {

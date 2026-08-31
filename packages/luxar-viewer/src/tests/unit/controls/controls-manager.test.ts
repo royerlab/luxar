@@ -126,6 +126,33 @@ describe('ControlsManager', () => {
       expect(controls.autoRotateSpeed).toBe(2.5);
     });
 
+    it('setAutoRotateAxis updates the live orbit instance AND survives a mode round-trip', () => {
+      controlsManager.setAutoRotateAxis('view');
+      let controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.autoRotateAxis).toBe('view');
+      expect(controlsManager.getAutoRotateAxis()).toBe('view');
+
+      // A mode switch disposes and rebuilds the instance, so the stored
+      // config — not the dead instance — has to carry the choice.
+      controlsManager.setControlType('fly');
+      expect(controlsManager.getAutoRotateAxis()).toBe('view');
+      controlsManager.setControlType('orbit');
+      controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.autoRotateAxis).toBe('view');
+    });
+
+    it('ortho mode carries the axis too, so a sync cannot reset it to vertical', () => {
+      // Ortho is the same LuxarOrbitControls class with rotation disabled, and
+      // syncCurrentState pulls the axis off whatever instance is live — an
+      // ortho instance built at the default would silently overwrite the
+      // user's stored choice on the next panel open.
+      controlsManager.setAutoRotateAxis('horizontal');
+      controlsManager.setControlType('ortho');
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.autoRotateAxis).toBe('horizontal');
+      expect(controlsManager.getAutoRotateAxis()).toBe('horizontal');
+    });
+
     it('setOrbitZoomSpeed updates the live orbit instance AND survives a mode round-trip', () => {
       controlsManager.setOrbitZoomSpeed(2.0);
       let controls = controlsManager.getControls() as LuxarOrbitControls;

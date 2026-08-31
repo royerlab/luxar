@@ -77,6 +77,7 @@ export function createOrbitControls(ctx: ControlsCreationCtx): LuxarOrbitControl
     screenSpacePanning: true,
     autoRotate: ctx.config.autoRotate || false,
     autoRotateSpeed: ctx.config.autoRotateSpeed || 0.25,
+    autoRotateAxis: ctx.config.autoRotateAxis,
     zoomSpeed: ctx.config.orbitZoomSpeed,
     dampingFactor: ctx.config.orbitDampingFactor,
     minDistance: minDist,
@@ -138,6 +139,11 @@ export function createOrthoControls(ctx: ControlsCreationCtx): LuxarOrbitControl
     enableDamping: config.controls.orbit.damping.enabled,
     screenSpacePanning: true,
     enableRotate: false,
+    // Carried even though `enableRotate: false` makes auto-rotation inert
+    // here: `getAutoRotateAxis()` reads the LIVE instance, and a default-
+    // valued ortho instance would let a state sync while in ortho mode
+    // overwrite the user's stored axis with 'vertical'.
+    autoRotateAxis: ctx.config.autoRotateAxis,
     // Same feel knobs as orbit — ortho is the same class, and the live
     // setOrbitZoomSpeed/-DampingFactor setters mutate whichever is current,
     // so construction must match to avoid feel-flips on mode switch.
