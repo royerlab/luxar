@@ -705,6 +705,15 @@ def test_calibrated_sliced_defaults_and_cli_exemption_are_pinned(
     assert "rung 0 is 6.25% of the node" in fresh_output
     assert "[exempt:" not in fresh_output
 
+    assert checker.main([str(fresh), "--min-slice-rung-share", "0.005"]) == 0
+    capsys.readouterr()
+
+    healthy = tmp_path / "healthy.luxar.zarr"
+    _sliced_node(healthy, {0: 500, 1: 500})
+    assert checker.main([str(healthy), "--min-slice-first-rung", "100000"]) == 1
+    healthy_output = _ANSI_ESCAPE.sub("", capsys.readouterr().out)
+    assert "below the 100,000 absolute first-paint floor" in healthy_output
+
 
 def test_starvation_percentile_is_the_minimum_for_a_handful_of_slices() -> None:
     """At 20 or fewer coordinates the index is 0, which is the right reading:
