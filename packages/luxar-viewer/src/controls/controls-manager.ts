@@ -22,7 +22,7 @@ import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import type { LuxarCamera } from '../utils/camera-utils';
-import type { ControlType } from './types';
+import { type AutoRotateAxis, type ControlType, DEFAULT_AUTO_ROTATE_AXIS } from './types';
 import { isMacPlatform } from '../utils/platform';
 import {
   createOrbitControls,
@@ -63,6 +63,12 @@ export type { ControlType };
 export interface ControlsManagerConfig {
   autoRotate?: boolean;
   autoRotateSpeed?: number;
+  /**
+   * Camera-frame axis the orbit turntable revolves around. Persisted here (not
+   * only on the live instance) so it survives the dispose/recreate an
+   * orbit↔ortho switch performs, exactly like the speed above.
+   */
+  autoRotateAxis?: AutoRotateAxis;
   /**
    * Swap LEFT ↔ RIGHT mouse-button mapping in orbit (3D) mode. When true,
    * one-finger drag rotates and right-drag pans (touchpad ergonomics);
@@ -128,6 +134,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private config: ControlsManagerConfig = {
     autoRotate: false,
     autoRotateSpeed: config.controls.orbit.autoRotate.speed.default,
+    autoRotateAxis: DEFAULT_AUTO_ROTATE_AXIS,
     // Default to true on macOS; rendering-controls persistence overrides
     // this with any stored user choice as soon as settings load.
     naturalDrag: isMacPlatform(),
@@ -372,6 +379,18 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
+   * Set the turntable axis (screen-vertical / -horizontal / view-axis). Applies
+   * to the live instance when it is an orbit/ortho control so the change is
+   * visible on the next frame without a mode switch.
+   */
+  public setAutoRotateAxis(axis: AutoRotateAxis): void {
+    this.config.autoRotateAxis = axis;
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.autoRotateAxis = axis;
+    }
+  }
+
+  /**
    * Toggle the orbit-mode LEFT ↔ RIGHT mouse-button mapping. Updates stored
    * config and, only when the active control is orbit (3D), mutates the
    * live mouseButtons in place so the change applies immediately without a
@@ -394,6 +413,30 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       return this.currentControls.autoRotate;
     }
     return false;
+  }
+
+  /**
+   * Whether auto-rotation can currently move the camera. Ortho carries the
+   * turntable settings for persistence, but disables rotation.
+   */
+  public isAutoRotateActive(): boolean {
+    return (
+      this.currentControls instanceof LuxarOrbitControls &&
+      this.currentControls.autoRotate &&
+      this.currentControls.enableRotate
+    );
+  }
+
+  /**
+   * The live turntable axis, falling back to the stored config when the active
+   * control is fly (which has no turntable) — never a silent 'vertical', so a
+   * mode round-trip cannot quietly reset the user's choice.
+   */
+  public getAutoRotateAxis(): AutoRotateAxis {
+    if (this.currentControls instanceof LuxarOrbitControls) {
+      return this.currentControls.autoRotateAxis;
+    }
+    return this.config.autoRotateAxis ?? DEFAULT_AUTO_ROTATE_AXIS;
   }
 
   /**

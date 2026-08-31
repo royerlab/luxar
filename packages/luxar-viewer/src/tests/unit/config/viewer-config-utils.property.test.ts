@@ -5,7 +5,7 @@
  * The audit (delme/test-audit-luxar-viewer.src/config.md, G2) called this
  * the highest-leverage missing test in the entire config subpackage:
  *
- *   - 47 entries in RENDERING_SETTINGS_MAP, only ~14 directly verified by
+ *   - 43 entries in RENDERING_SETTINGS_MAP, only ~14 directly verified by
  *     example tests today.
  *   - A mutation that swapped two map values would not be caught by examples
  *     that target only 14 specific keys.

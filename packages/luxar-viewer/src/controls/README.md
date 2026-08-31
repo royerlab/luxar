@@ -107,7 +107,8 @@ ergonomics. In both mappings `Shift+left` performs the opposite action.
 
 - Quaternion-based rotation (no gimbal lock at any angle)
 - Exponential damping for smooth interaction
-- Auto-rotation around the screen-vertical axis
+- Auto-rotation around a chosen camera-frame axis: screen-vertical (default),
+  screen-horizontal (a tumble over the top), or the view axis (a pure roll)
 - Configurable mouse button mapping (CAD/Blender vs. natural-drag)
 - Touch support (1-finger rotate, 2-finger pinch-zoom + pan)
 
@@ -173,6 +174,7 @@ class ControlsManager extends THREE.EventDispatcher {
   setAutoRotate(enabled: boolean): void;
   setAutoRotateSpeed(speed: number): void;
   getAutoRotate(): boolean;
+  isAutoRotateActive(): boolean;
   setNaturalDrag(enabled: boolean): void; // swap LEFT↔RIGHT (orbit only)
   getNaturalDrag(): boolean;
 
@@ -221,6 +223,8 @@ class LuxarOrbitControls extends EventDispatcher {
   enableZoom: boolean;
   autoRotate: boolean;
   autoRotateSpeed: number; // 0.25 = 4 min/rotation
+  autoRotateAxis: 'vertical' | 'horizontal' | 'view'; // camera frame; also
+  // the default axis of applyOrbitRotation, so recorded turntables match
   mouseButtons: { LEFT; MIDDLE; RIGHT };
 
   update(deltaTime?: number): boolean;

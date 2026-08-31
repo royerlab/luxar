@@ -14,6 +14,7 @@ import type { RenderingSettings as ConfigRenderingSettings } from '../../config/
 export type RenderingSettings = ConfigRenderingSettings;
 
 import { config } from '../../config';
+import { isAutoRotateAxis } from '../../controls/types';
 import { TONE_MAPPING_NAMES } from '../../rendering/post-processing/tone-mapping';
 
 /**
@@ -256,6 +257,11 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
   }
   if (!VALID_CONTROL_TYPES.includes(merged.controlType)) {
     merged.controlType = defaults.controlType;
+  }
+  // The controls module's own guard, so a token the viewer cannot actually
+  // rotate about can never survive validation.
+  if (!isAutoRotateAxis(merged.autoRotateAxis)) {
+    merged.autoRotateAxis = defaults.autoRotateAxis;
   }
 
   return merged;

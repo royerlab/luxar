@@ -39,6 +39,7 @@ function makeCtx(overrides: Partial<OrbitUpdateCtx> = {}): {
     dampingFactor: 0.25,
     autoRotate: false,
     autoRotateSpeed: 0,
+    autoRotateAxis: 'vertical',
     orientation: new THREE.Quaternion(),
     rotationDelta: new THREE.Quaternion(),
     panDelta: new THREE.Vector3(),
@@ -127,6 +128,90 @@ describe('runUpdateStep — step 1: auto-rotation', () => {
       }
     }
   );
+});
+
+describe('runUpdateStep — step 1: auto-rotation axis', () => {
+  // The three axes are distinguished by what stays FIXED, which is what makes
+  // each one a stable turntable rather than a drift: the rotation axis is
+  // re-derived from the live orientation every frame, and each axis is
+  // invariant under its own rotation. Asserting the invariant (plus the
+  // direction, so a sign flip cannot pass) pins all three behaviors —
+  // a swapped axis table shows up as the wrong component moving.
+  //
+  // Start pose: orientation identity, target origin, distance 5 → camera at
+  // (0, 0, 5), looking down -Z, up +Y, right +X.
+  // angle = (2π/60) · speed · dt, so speed 60 at dt 0.25 sweeps exactly π/2.
+  const QUARTER_TURN_SPEED = 60;
+
+  it('vertical: holds up fixed, sweeps the camera through the y = 0 plane', () => {
+    const { ctx } = makeCtx({
+      autoRotate: true,
+      autoRotateAxis: 'vertical',
+      autoRotateSpeed: QUARTER_TURN_SPEED,
+    });
+    runUpdateStep(ctx, 0.25);
+
+    // Screen-up is the axis, so it is untouched.
+    expect(ctx.camera.up.x).toBeCloseTo(0, 6);
+    expect(ctx.camera.up.y).toBeCloseTo(1, 6);
+    // A quarter turn about +Y takes (0, 0, 5) → (5, 0, 0): the camera stays in
+    // the horizontal plane and swings toward +X (right-hand rule about up).
+    expect(ctx.camera.position.x).toBeCloseTo(5, 4);
+    expect(ctx.camera.position.y).toBeCloseTo(0, 6);
+    expect(ctx.camera.position.z).toBeCloseTo(0, 4);
+  });
+
+  it('horizontal: holds right fixed, tumbles the camera through the x = 0 plane', () => {
+    const { ctx } = makeCtx({
+      autoRotate: true,
+      autoRotateAxis: 'horizontal',
+      autoRotateSpeed: QUARTER_TURN_SPEED,
+    });
+    runUpdateStep(ctx, 0.25);
+
+    // A quarter turn about +X takes (0, 0, 5) → (0, -5, 0), and carries up
+    // from +Y to +Z: the camera tumbles under the target, x untouched.
+    expect(ctx.camera.position.x).toBeCloseTo(0, 6);
+    expect(ctx.camera.position.y).toBeCloseTo(-5, 4);
+    expect(ctx.camera.position.z).toBeCloseTo(0, 4);
+    expect(ctx.camera.up.z).toBeCloseTo(1, 4);
+  });
+
+  it('view: holds the camera POSITION fixed and rolls only the up vector', () => {
+    const { ctx } = makeCtx({
+      autoRotate: true,
+      autoRotateAxis: 'view',
+      autoRotateSpeed: QUARTER_TURN_SPEED,
+    });
+    const moved = runUpdateStep(ctx, 0.25);
+
+    // The camera offset lies ALONG the view axis, so a roll cannot move it.
+    expect(ctx.camera.position.x).toBeCloseTo(0, 6);
+    expect(ctx.camera.position.y).toBeCloseTo(0, 6);
+    expect(ctx.camera.position.z).toBeCloseTo(5, 6);
+    // Up rolls a quarter turn about the view direction (0, 0, -1): +Y → +X,
+    // the same sense as a positive Shift+scroll roll delta.
+    expect(ctx.camera.up.x).toBeCloseTo(1, 4);
+    expect(ctx.camera.up.y).toBeCloseTo(0, 4);
+    // And it must still report movement: change detection compares the
+    // quaternion as well as the position, which is what keeps
+    // render-on-demand alive through a pure roll.
+    expect(moved).toBe(true);
+    expect(ctx.dispatch).toHaveBeenCalledWith('change');
+  });
+
+  it('an unrecognized axis token degrades to vertical instead of throwing', () => {
+    // A hand-edited scene attr or a newer file must not kill the render loop
+    // mid-frame; validation lives at the settings boundary, this is the floor.
+    const { ctx } = makeCtx({
+      autoRotate: true,
+      autoRotateAxis: 'sideways' as never,
+      autoRotateSpeed: QUARTER_TURN_SPEED,
+    });
+    expect(() => runUpdateStep(ctx, 0.25)).not.toThrow();
+    expect(ctx.camera.position.x).toBeCloseTo(5, 4);
+    expect(ctx.camera.position.y).toBeCloseTo(0, 6);
+  });
 });
 
 describe('runUpdateStep — step 2: rotation damping', () => {

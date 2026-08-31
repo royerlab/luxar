@@ -116,6 +116,7 @@ describe('RenderingControls', () => {
       setControlType: vi.fn(),
       setAutoRotate: vi.fn(),
       setAutoRotateSpeed: vi.fn(),
+      setAutoRotateAxis: vi.fn(),
       setNaturalDrag: vi.fn(),
       getNaturalDrag: vi.fn(() => false),
       setOrbitZoomSpeed: vi.fn(),
@@ -158,6 +159,7 @@ describe('RenderingControls', () => {
       setControlType: vi.fn(),
       setAutoRotate: vi.fn(),
       setAutoRotateSpeed: vi.fn(),
+      setAutoRotateAxis: vi.fn(),
       setNaturalDrag: vi.fn(),
       setOrbitZoomSpeed: vi.fn(),
       setOrbitDampingFactor: vi.fn(),
@@ -312,6 +314,7 @@ describe('RenderingControls', () => {
       controls.sceneId = 'test-scene';
       controls.settings.controlType = 'fly';
       controls.settings.autoRotate = true;
+      controls.settings.autoRotateAxis = 'view';
       controls.settings.flyMovementSpeed = 5.0;
       controls.settings.flyRotationSpeed = 2.0;
       controls.saveSettings();
@@ -319,6 +322,7 @@ describe('RenderingControls', () => {
       // Clear mocks
       mockSceneManager.setControlType.mockClear();
       mockSceneManager.setAutoRotate.mockClear();
+      mockSceneManager.setAutoRotateAxis.mockClear();
       mockSceneManager.setFlyMovementSpeed.mockClear();
       mockSceneManager.setFlyRotationSpeed.mockClear();
 
@@ -328,6 +332,8 @@ describe('RenderingControls', () => {
       // Verify: Navigation settings were applied
       expect(mockSceneManager.setControlType).toHaveBeenCalledWith('fly');
       expect(mockSceneManager.setAutoRotate).toHaveBeenCalledWith(true);
+      // A persisted axis must reach the controls on load, not just the panel.
+      expect(mockSceneManager.setAutoRotateAxis).toHaveBeenCalledWith('view');
       expect(mockSceneManager.setFlyMovementSpeed).toHaveBeenCalledWith(5.0);
       expect(mockSceneManager.setFlyRotationSpeed).toHaveBeenCalledWith(2.0);
     });
@@ -474,7 +480,7 @@ describe('RenderingControls', () => {
   });
 
   describe('Integration: Complete Reset Flow', () => {
-    it('should fully reset all 49 settings and apply them', () => {
+    it('should fully reset every setting and apply them', () => {
       const controls = renderingControls as any;
 
       // Setup: Change many settings to non-default values

@@ -2,7 +2,7 @@
 
 Pure math used by `luxar-orbit-controls.ts`. Each module owns one
 slice of the orbit-control update step — trackball rotation, pan,
-zoom — and reads everything it needs from parameters. None of them
+zoom, turntable axis — and reads everything it needs from parameters. None of them
 keep their own state or hold a back-reference to the orchestrator.
 Allocations are kept to either the explicit return value or a
 caller-supplied accumulator; module-local scratch vectors mirror the
@@ -12,10 +12,28 @@ orchestrator's existing per-frame allocation pattern.
 
 ```
 math/
-├── trackball.ts   Shoemake virtual-trackball rotation (sphere + hyperboloid)
-├── pan.ts         OrbitControls pan math (perspective + ortho)
-└── zoom.ts        OrbitControls zoom math (perspective distance / ortho zoom)
+├── trackball.ts    Shoemake virtual-trackball rotation (sphere + hyperboloid)
+├── pan.ts          OrbitControls pan math (perspective + ortho)
+├── zoom.ts         OrbitControls zoom math (perspective distance / ortho zoom)
+└── auto-rotate.ts  Turntable axis: camera-frame axis → world-space vector
 ```
+
+### `auto-rotate.ts`
+
+- `autoRotateAxisVector(axis, orientation, out) -> Vector3` writes the
+  world-space rotation axis for an `AutoRotateAxis` (`'vertical'` =
+  camera up, `'horizontal'` = camera right, `'view'` = the view
+  direction `-Z`) by rotating the camera-space direction through the live
+  `orientation`. Rotation follows the right-hand rule about that
+  direction uniformly, and `'view'` matches the vector the Shift+scroll
+  roll delta uses so both roll the same way.
+- Both the per-frame turntable (`update.ts` step 1) and the
+  programmatic one (`LuxarOrbitControls.applyOrbitRotation`, which
+  recording drives) read the axis from here, so an exported turntable
+  cannot rotate unlike its own preview.
+- An unrecognized token degrades to `'vertical'` rather than throwing:
+  this runs inside the render loop, and a hand-edited scene attribute
+  should not kill every subsequent frame.
 
 ### `trackball.ts`
 

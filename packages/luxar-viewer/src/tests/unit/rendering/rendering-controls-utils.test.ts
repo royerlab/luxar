@@ -73,11 +73,25 @@ describe('rendering-controls-utils', () => {
       const result = validateRenderingSettings({
         toneMapping: 'InvalidMode' as any,
         controlType: 'magic' as any,
+        autoRotateAxis: 'sideways' as any,
       });
 
       expect(result.toneMapping).toBe(defaults.toneMapping);
       expect(result.controlType).toBe(defaults.controlType);
+      expect(result.autoRotateAxis).toBe(defaults.autoRotateAxis);
+      expect(defaults.autoRotateAxis).toBe('vertical');
     });
+
+    it.each(['vertical', 'horizontal', 'view'])(
+      'keeps %s as a valid auto-rotation axis',
+      (axis) => {
+        // Every token the controls module accepts must survive validation —
+        // a stored choice silently reset to vertical on reload is the failure
+        // this pins, and it would look like the setting "not sticking".
+        const result = validateRenderingSettings({ autoRotateAxis: axis as any });
+        expect(result.autoRotateAxis).toBe(axis);
+      }
+    );
 
     it('should accept ortho as a valid control type', () => {
       const result = validateRenderingSettings({

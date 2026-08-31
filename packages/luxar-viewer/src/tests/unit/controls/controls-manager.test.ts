@@ -115,15 +115,53 @@ describe('ControlsManager', () => {
     it('should set auto-rotation', () => {
       controlsManager.setAutoRotate(true);
       expect(controlsManager.getAutoRotate()).toBe(true);
+      expect(controlsManager.isAutoRotateActive()).toBe(true);
 
       controlsManager.setAutoRotate(false);
       expect(controlsManager.getAutoRotate()).toBe(false);
+      expect(controlsManager.isAutoRotateActive()).toBe(false);
     });
 
     it('should set auto-rotation speed', () => {
       controlsManager.setAutoRotateSpeed(2.5);
       const controls = controlsManager.getControls() as LuxarOrbitControls;
       expect(controls.autoRotateSpeed).toBe(2.5);
+    });
+
+    it('setAutoRotateAxis updates the live orbit instance AND survives a mode round-trip', () => {
+      controlsManager.setAutoRotateAxis('view');
+      let controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.autoRotateAxis).toBe('view');
+      expect(controlsManager.getAutoRotateAxis()).toBe('view');
+
+      // A mode switch disposes and rebuilds the instance, so the stored
+      // config — not the dead instance — has to carry the choice.
+      controlsManager.setControlType('fly');
+      expect(controlsManager.getAutoRotateAxis()).toBe('view');
+      controlsManager.setControlType('orbit');
+      controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.autoRotateAxis).toBe('view');
+    });
+
+    it('ortho mode carries the WHOLE turntable trio, so a sync cannot reset it', () => {
+      // Ortho is the same LuxarOrbitControls class with rotation disabled, and
+      // syncCurrentState pulls all three fields off whatever instance is live
+      // (its isOrbitControls guard passes for ortho) — then applyControlType
+      // persists the result. An ortho instance built at its constructor
+      // defaults therefore wipes a stored turntable choice on the way through.
+      controlsManager.setAutoRotate(true);
+      controlsManager.setAutoRotateSpeed(2.0);
+      controlsManager.setAutoRotateAxis('horizontal');
+
+      controlsManager.setControlType('ortho');
+
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+      expect(controls.autoRotate).toBe(true);
+      expect(controls.autoRotateSpeed).toBe(2.0);
+      expect(controls.autoRotateAxis).toBe('horizontal');
+      expect(controlsManager.getAutoRotate()).toBe(true);
+      expect(controlsManager.isAutoRotateActive()).toBe(false);
+      expect(controlsManager.getAutoRotateAxis()).toBe('horizontal');
     });
 
     it('setOrbitZoomSpeed updates the live orbit instance AND survives a mode round-trip', () => {

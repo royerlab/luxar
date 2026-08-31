@@ -37,6 +37,7 @@ describe('extractRenderingOverrides', () => {
       control_type: 'fly',
       auto_rotate: true,
       auto_rotate_speed: 0.3,
+      auto_rotate_axis: 'view',
     };
 
     const overrides = extractRenderingOverrides(zarrConfig);
@@ -50,6 +51,7 @@ describe('extractRenderingOverrides', () => {
     expect(overrides.controlType).toBe('fly');
     expect(overrides.autoRotate).toBe(true);
     expect(overrides.autoRotateSpeed).toBe(0.3);
+    expect(overrides.autoRotateAxis).toBe('view');
   });
 
   it('should map cinematic mode and effects', () => {
@@ -507,7 +509,7 @@ describe('RENDERING_SETTINGS_MAP completeness', () => {
   // SNAKE key existed — never that it mapped to the EXPECTED camelCase
   // name. A mutation that mapped `bloom_strength → 'bloomRadius'` would
   // have passed. The bijection property test in
-  // viewer-config-utils.property.test.ts covers the full 47-entry map
+  // viewer-config-utils.property.test.ts covers the full 43-entry map
   // mechanically; here we keep explicit, named value-assertions for the
   // audit-called-out entries (naturalDrag, auto_rotate_speed,
   // chromatic_lens_*, fly_rotation_speed, ...) so they remain
@@ -525,6 +527,7 @@ describe('RENDERING_SETTINGS_MAP completeness', () => {
     ['control_type', 'controlType'],
     ['auto_rotate', 'autoRotate'],
     ['auto_rotate_speed', 'autoRotateSpeed'],
+    ['auto_rotate_axis', 'autoRotateAxis'],
     ['natural_drag', 'naturalDrag'],
     ['cinematic_mode', 'cinematicMode'],
     ['vignette_enabled', 'vignetteEnabled'],

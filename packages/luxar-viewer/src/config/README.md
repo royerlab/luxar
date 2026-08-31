@@ -207,7 +207,8 @@ renderingControls: {
     detectorNoiseFpnSigma: 0.001,     // Fixed pattern noise
     vignetteEnabled: false,
     controlType: 'orbit',       // vs 'fly' or 'ortho'
-    autoRotate: false
+    autoRotate: false,
+    autoRotateAxis: 'vertical'  // vs 'horizontal' or 'view' (camera frame)
   }
 }
 ```
