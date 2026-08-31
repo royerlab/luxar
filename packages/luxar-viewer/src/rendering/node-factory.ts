@@ -94,8 +94,8 @@ interface PickMaterialRecipe {
  * lines need the join style AND the primitive (the pick pass rasterizes the same
  * stencil the visual material draws, and under the `auto` policy that is a per-node
  * choice — see {@link linePrimitiveFromVisual}), mesh
- * needs the node opacity and cutout threshold (they are its coverage term). Only
- * gsplats need nothing but the id.
+ * needs the node opacity and cutout threshold (they are its coverage term), while
+ * gsplats restore the live class filter after a context rebuild.
  */
 const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
   points: {
@@ -115,6 +115,7 @@ const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
   },
   gsplats: {
     build: (_obj, pickId) => materialManager.createGSplatPickingMaterial({ nodeId: pickId }),
+    afterRegister: syncGSplatPickMaterialToVisual,
   },
   mesh: {
     build: (obj, pickId) => {
@@ -186,12 +187,32 @@ function linePrimitiveFromVisual(obj: THREE.Mesh): LinePrimitive | undefined {
   return single?.userData?.linePrimitive as LinePrimitive | undefined;
 }
 
+/** Copy the live visual class filter onto a freshly-created gsplat pick material. */
+function syncGSplatPickMaterialToVisual(obj: THREE.Mesh): void {
+  const pickMaterial = (obj.userData?.pickNode as THREE.Mesh | undefined)?.material;
+  if (!pickMaterial || Array.isArray(pickMaterial) || !('updateLabelFilter' in pickMaterial)) {
+    return;
+  }
+  const visual = obj.material as THREE.Material | THREE.Material[] | undefined;
+  const single = Array.isArray(visual) ? visual[0] : visual;
+  const uniforms = (
+    single as THREE.Material & {
+      uniforms?: Record<string, { value?: unknown }>;
+    }
+  )?.uniforms;
+  const liveFilter = uniforms?.uLabelFilterIndex?.value;
+  if (typeof liveFilter !== 'number') return;
+  (
+    pickMaterial as THREE.Material & { updateLabelFilter(filterIndex: number): void }
+  ).updateLabelFilter(liveFilter);
+}
+
 /**
  * Copy the visual material's per-epoch state onto a mesh's freshly-created pick
  * material.
  *
- * Only mesh needs this: it is the one type whose pick pass mirrors the visual
- * material's face culling and blending-derived behaviour (spec §6.5). The picking
+ * Mesh is the one type whose pick pass mirrors the visual material's face culling
+ * and blending-derived behaviour (spec §6.5). The picking
  * system re-pushes both on every pick render, so this governs only the window before
  * the first one — but that window contains the first hover, which is exactly when a
  * user would notice picking a face that isn't drawn.

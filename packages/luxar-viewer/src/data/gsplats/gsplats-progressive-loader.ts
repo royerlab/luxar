@@ -125,6 +125,22 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
     cholSize,
     'choleskyFactors'
   );
+  const labelParts = parts.filter((part) => part.labelIndices !== undefined);
+  if (labelParts.length !== 0 && labelParts.length !== parts.length) {
+    throw new Error('concatenateGSplatsData: mixed label_ids presence across LOD levels');
+  }
+  const labelVocabulary = labelParts[0]?.labelVocabulary;
+  if (
+    labelVocabulary &&
+    labelParts.some(
+      (part) => JSON.stringify(part.labelVocabulary) !== JSON.stringify(labelVocabulary)
+    )
+  ) {
+    throw new Error('concatenateGSplatsData: mixed label_vocabulary across LOD levels');
+  }
+  const labelIndices = labelVocabulary
+    ? concatRequiredField(parts, (part) => part.labelIndices!, count, 1, 'labelIndices')
+    : undefined;
 
   // Bespoke: colors fill missing LODs with white (per-dtype fill value).
   // Color layout (3 = RGB, 4 = RGBA — the 4th channel is per-splat opacity)
@@ -197,6 +213,8 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
     choleskyFactors,
     colors,
     colorComponents: colorK,
+    labelIndices,
+    labelVocabulary,
     splatCount: totalSplats,
     ndim,
   };

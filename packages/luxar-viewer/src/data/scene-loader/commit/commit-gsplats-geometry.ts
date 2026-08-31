@@ -163,13 +163,10 @@ export function commitGSplatsGeometry(
       //   uniform outside the loader view state; a change would restyle the
       //   prefix's frustum sizing, so a mismatch forces a full rewrite.
       // Unlike the points/lines gates there is NO optional-field presence
-      // conjunct: gsplats' only optional field is `colors`, whose concat
-      // white-fills missing parts (never all-or-nothing drops), and whose
-      // projection is a pass-through coercion (no interpolation) — a
-      // null→colored ladder transition re-fills the prefix with values
-      // bit-identical to the colorless white default (fill × (1/fill) is
-      // exactly 1.0 in f32; pinned by the coerce-colors "append-gate
-      // invariant" test).
+      // conjunct. Colors white-fill missing parts, while the progressive
+      // GSplat loader requires every concatenated level to agree on label
+      // presence and vocabulary. A valid append therefore preserves both
+      // optional channels across the proven prefix lineage.
       const canAppend =
         hadCommittedData &&
         !attributesRebuilt &&
@@ -193,6 +190,7 @@ export function commitGSplatsGeometry(
             choleskyFactors: processed.choleskyFactors3D,
             colors: processed.colors,
             colorComponents: processed.colorComponents,
+            labelIndices: processed.labelIndices,
             bounds: processed.bounds,
           },
           splatCount,
@@ -255,6 +253,7 @@ export function commitGSplatsGeometry(
           amplitudes: processed.amplitudes,
           colors: processed.colors,
           colorComponents: processed.colorComponents,
+          labelIndices: processed.labelIndices,
           splatCount,
           bounds: processed.bounds,
         },
@@ -280,6 +279,8 @@ export function commitGSplatsGeometry(
       // context restore clears gpuPrefixIntact to force a full rewrite.
       mesh.userData.committedTruncate = readTruncate(mesh);
       mesh.userData.gpuPrefixIntact = true;
+      mesh.userData.labelIndices = processed.labelIndices;
+      mesh.userData.labelVocabulary = processed.labelVocabulary;
       // Stamp the view-version this geometry was loaded for so the LOD registry
       // can distinguish "fresh for the current slice" from merely "ready" (a
       // re-slice overwrites the buffers in place above without flipping any

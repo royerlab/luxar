@@ -98,6 +98,7 @@ export class GSplatPickingMaterial
         // material's blending mode via setSurfacePickDepth().
         uSurfaceDepth: { value: 0 },
         uNodeId: { value: config.nodeId },
+        uLabelFilterIndex: { value: 0 },
       },
       vertexShader: GSPLAT_PICK_GLSL.vertex,
       fragmentShader: GSPLAT_PICK_GLSL.fragment,
@@ -139,6 +140,10 @@ export class GSplatPickingMaterial
     this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
   }
 
+  updateLabelFilter(filterIndex: number): void {
+    this.uniforms.uLabelFilterIndex.value = Math.max(0, Math.floor(filterIndex));
+  }
+
   /**
    * Clone this picking material. The inherited `Material.clone()` calls
    * the constructor with no config (throws on `config.nodeId`), so —
@@ -160,6 +165,7 @@ export class GSplatPickingMaterial
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    cloned.uniforms.uLabelFilterIndex.value = this.uniforms.uLabelFilterIndex.value;
     // The active ordering slot must ride along: a clone taken while the
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.

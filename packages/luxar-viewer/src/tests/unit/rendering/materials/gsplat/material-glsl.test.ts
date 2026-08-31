@@ -187,6 +187,19 @@ describe('GSplatMaterial', () => {
       expect(material.userData.gamma).toBe(2.2);
     });
 
+    it('updates and clone-preserves categorical label styling', () => {
+      const material = new GSplatMaterial();
+      material.updateLabelStyle(true, 3.8);
+
+      expect(material.uniforms.uLabelColorMode.value).toBe(1);
+      expect(material.uniforms.uLabelFilterIndex.value).toBe(3);
+      expect(material.vertexShader).toContain('categoricalColor(aLabelIndex)');
+
+      const cloned = material.clone();
+      expect(cloned.uniforms.uLabelColorMode.value).toBe(1);
+      expect(cloned.uniforms.uLabelFilterIndex.value).toBe(3);
+    });
+
     it('sets the LUXAR_GAMMA_ONE fast-path define at the default gamma==1', () => {
       // Default gamma is 1.0 → the constructor compiles in the fast path.
       expect('LUXAR_GAMMA_ONE' in new GSplatMaterial().defines).toBe(true);

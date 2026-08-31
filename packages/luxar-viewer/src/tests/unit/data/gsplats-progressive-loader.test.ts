@@ -1247,6 +1247,53 @@ describe('concatenateGSplatsData — picking index-space fields (issue #1423)', 
   });
 });
 
+describe('concatenateGSplatsData — categorical labels', () => {
+  const vocabulary = [
+    { id: '7', name: 'seven' },
+    { id: '9007199254740993', name: 'large id' },
+  ] as const;
+
+  it('preserves compact indices and exact vocabulary across additive levels', () => {
+    const first: LoadedGSplatsData = {
+      ...makeLodData(2),
+      labelIndices: new Uint32Array([2, 1]),
+      labelVocabulary: vocabulary,
+    };
+    const second: LoadedGSplatsData = {
+      ...makeLodData(1),
+      labelIndices: new Uint32Array([2]),
+      labelVocabulary: vocabulary,
+    };
+
+    const merged = concatenateGSplatsData([first, second]);
+
+    expect(Array.from(merged.labelIndices ?? [])).toEqual([2, 1, 2]);
+    expect(merged.labelVocabulary).toEqual(vocabulary);
+  });
+
+  it('rejects a ladder whose levels disagree on categorical metadata', () => {
+    const labelled: LoadedGSplatsData = {
+      ...makeLodData(1),
+      labelIndices: new Uint32Array([1]),
+      labelVocabulary: vocabulary,
+    };
+
+    expect(() => concatenateGSplatsData([labelled, makeLodData(1)])).toThrow(
+      /mixed label_ids presence/
+    );
+    expect(() =>
+      concatenateGSplatsData([
+        labelled,
+        {
+          ...makeLodData(1),
+          labelIndices: new Uint32Array([1]),
+          labelVocabulary: [{ id: '8', name: 'eight' }],
+        },
+      ])
+    ).toThrow(/mixed label_vocabulary/);
+  });
+});
+
 describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', () => {
   // Regression for a bug found in double-check: the additive-ladder color
   // concat hardcoded a stride of 3, so an RGBA ladder (what imported 3DGS

@@ -94,6 +94,7 @@ export interface GSplatPickTSLNodes {
    */
   readonly uSurfaceDepth: TSLNode;
   readonly uNodeId: TSLNode;
+  readonly uLabelFilterIndex: TSLNode;
   readonly uShiftC: TSLNode;
   readonly uInvOneMinusC: TSLNode;
 }
@@ -125,6 +126,7 @@ export function gsplatPickWebGPUFactory(
   const uCov2DDilation = nodes.uCov2DDilation;
   const uSurfaceDepth = nodes.uSurfaceDepth;
   const uNodeId = nodes.uNodeId;
+  const uLabelFilterIndex = nodes.uLabelFilterIndex;
   const uShiftC = nodes.uShiftC;
   const uInvOneMinusC = nodes.uInvOneMinusC;
   const uTruncateSq = nodes.uTruncateSq;
@@ -183,11 +185,13 @@ export function gsplatPickWebGPUFactory(
     const splatT0: TSLNode = uSplatTex.load(ivec2(texelX, texelY)).toVar();
     const splatT1: TSLNode = uSplatTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
     const splatT2: TSLNode = uSplatTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
+    const splatT3: TSLNode = uSplatTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
     const aCenter: TSLNode = vec3(splatT0).toVar();
     const aAmplitude: TSLNode = splatT0.w.toVar();
     const aCholesky01: TSLNode = splatT1.xy.toVar();
     const aCholesky23: TSLNode = splatT1.zw.toVar();
     const aCholesky45: TSLNode = splatT2.xy.toVar();
+    const aLabelIndex: TSLNode = splatT3.z.toVar();
 
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
     const centerCam: TSLNode = vec3(centerCam4).toVar();
@@ -361,7 +365,14 @@ export function gsplatPickWebGPUFactory(
       .or(invalidFloatTSL(Sigma2D11));
     const validClipPos: TSLNode = vec4(ndcXY, ndcZ, float(1.0));
     const rejectClipPos: TSLNode = vec4(float(0.0), float(0.0), float(-2.0), float(1.0));
-    const rejected: TSLNode = depthFadeReject.or(coverageFadeReject).or(invalidAmp).or(invalidCov);
+    const labelRejected: TSLNode = int(uLabelFilterIndex)
+      .greaterThan(int(0))
+      .and(int(aLabelIndex.add(0.5)).notEqual(int(uLabelFilterIndex)));
+    const rejected: TSLNode = depthFadeReject
+      .or(coverageFadeReject)
+      .or(invalidAmp)
+      .or(invalidCov)
+      .or(labelRejected);
 
     // Pickability always uses max projection — amplitude = aAmplitude · nearFade.
     vAmplitude2D.assign(aAmplitude.mul(nearFade));
@@ -531,6 +542,7 @@ export function buildGSplatPickTSLNodesFromUniforms(
     // Default 0 = brightness-as-depth (the commutative-mode convention).
     uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
+    uLabelFilterIndex: uniform((uniforms.uLabelFilterIndex?.value as number) ?? 0),
     uShiftC: uniform((uniforms.uShiftC?.value as number) ?? 0.0),
     uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0),
   };

@@ -75,6 +75,8 @@ export class LayerControls {
   private alphaCutoffSlider: LabeledSlider | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
+  private labelColorSelect: HTMLSelectElement | null = null;
+  private labelFilterSelect: HTMLSelectElement | null = null;
   /**
    * "Active level" dropdown for ``lod_group`` layers. Shown only when
    * the primary selected layer is an lod_group; hidden otherwise.
@@ -514,6 +516,34 @@ export class LayerControls {
     cmGroup.appendChild(this.colormapSelect);
     this.controlsEl.appendChild(cmGroup);
 
+    const labelGroup = document.createElement('div');
+    labelGroup.className = 'luxar-layers-panel__control-group';
+    const labelTitle = document.createElement('div');
+    labelTitle.className = 'luxar-layers-panel__control-label';
+    labelTitle.textContent = 'Classes';
+    this.labelColorSelect = document.createElement('select');
+    this.labelColorSelect.className = 'luxar-layers-panel__select';
+    this.labelColorSelect.append(new Option('authored colors', 'authored'));
+    this.labelColorSelect.append(new Option('color by class', 'categorical'));
+    this.labelFilterSelect = document.createElement('select');
+    this.labelFilterSelect.className = 'luxar-layers-panel__select';
+    this.events.on(this.labelColorSelect, 'change', () => {
+      const categorical = this.labelColorSelect!.value === 'categorical';
+      this.deps.state.applyToSelected((layer) => {
+        layer.colorByLabel = categorical;
+      });
+      for (const layer of this.deps.state.getSelected()) this.deps.apply.applyLabelStyle(layer);
+    });
+    this.events.on(this.labelFilterSelect, 'change', () => {
+      const id = this.labelFilterSelect!.value || undefined;
+      this.deps.state.applyToSelected((layer) => {
+        layer.labelFilterId = id;
+      });
+      for (const layer of this.deps.state.getSelected()) this.deps.apply.applyLabelStyle(layer);
+    });
+    labelGroup.append(labelTitle, this.labelColorSelect, this.labelFilterSelect);
+    this.controlsEl.appendChild(labelGroup);
+
     // Active-level selector — only meaningful for lod_group layers,
     // hidden otherwise (see render). The dropdown's option
     // list is rebuilt per layer in render() because child
@@ -661,6 +691,21 @@ export class LayerControls {
       } else {
         // Hide colormap control for layers that don't support it
         this.colormapSelect.parentElement!.style.display = 'none';
+      }
+    }
+
+    if (this.labelColorSelect && this.labelFilterSelect) {
+      const container = this.labelColorSelect.parentElement!;
+      const vocabulary = primary.labelVocabulary;
+      container.style.display = vocabulary?.length ? '' : 'none';
+      if (vocabulary?.length) {
+        this.labelColorSelect.value = primary.colorByLabel ? 'categorical' : 'authored';
+        this.labelFilterSelect.innerHTML = '';
+        this.labelFilterSelect.append(new Option('all classes', ''));
+        vocabulary.forEach((entry) => {
+          this.labelFilterSelect!.append(new Option(`${entry.name} (${entry.id})`, entry.id));
+        });
+        this.labelFilterSelect.value = primary.labelFilterId ?? '';
       }
     }
 
