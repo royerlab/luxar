@@ -132,9 +132,7 @@ def write_gsplats(
     ) = validate_gsplat_inputs(centers, amplitudes, cholesky_factors, colors)
     from ....gsplats.gsplat_data import validate_label_channel
 
-    label_vocabulary = validate_label_channel(
-        label_ids, label_vocabulary, n_splats
-    )
+    label_vocabulary = validate_label_channel(label_ids, label_vocabulary, n_splats)
 
     # 0d. Labels: sequence-of-str type + length check (the CSR serializer
     # would otherwise AttributeError on a non-str entry AFTER the arrays

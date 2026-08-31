@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
+from luxar.gsplats.lod.additive import make_additive_lod
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 from ._gsplat_data_helpers import _make_3d_gsplat
@@ -210,6 +211,42 @@ class TestGSplatDataLOD:
         assert filtered.n_additive_sublods == 3  # LODs preserved
         assert filtered.n_splats == int(mask.sum())
 
+    def test_label_ids_survive_subset_reorder_and_partition(self):
+        centers = np.column_stack(
+            [np.arange(12, dtype=np.float32), np.zeros((12, 2), dtype=np.float32)]
+        )
+        label_ids = np.arange(12, dtype=np.uint8)
+        vocabulary = {i: f"class-{i}" for i in range(12)}
+        data = GSplatData(
+            centers=centers,
+            amplitudes=np.linspace(0.1, 1.2, 12, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (12, 1)
+            ),
+            label_ids=label_ids,
+            label_vocabulary=vocabulary,
+        )
+
+        filtered = data.filter(np.arange(12) % 2 == 0)
+        np.testing.assert_array_equal(filtered.label_ids, label_ids[::2])
+        assert filtered.label_vocabulary == vocabulary
+
+        translated = data.translate(np.array([3.0, 0.0, 0.0], dtype=np.float32))
+        np.testing.assert_array_equal(translated.label_ids, label_ids)
+
+        ladder = make_additive_lod(data, n_lods=3, method="radial")
+        assert ladder.label_ids is not None
+        for center, label_id in zip(ladder.centers, ladder.label_ids):
+            assert int(label_id) == int(center[0])
+
+        partition = data.to_spatial_partition(max_elements=4)
+        for child in partition.children:
+            for sublod in child.additive_sublods:
+                assert sublod.label_ids is not None
+                for center, label_id in zip(sublod.centers, sublod.label_ids):
+                    assert int(label_id) == int(center[0])
+                assert sublod.label_vocabulary == vocabulary
+
     def test_empty_lods_raises(self):
         with pytest.raises(ValueError, match="at least one"):
             GSplatData(additive_sublods=[])
@@ -287,6 +324,25 @@ class TestLODPreservation:
         result = GSplatData.concatenate([d1, d2])
         assert result.n_additive_sublods == 1
         assert result.n_splats == 12
+
+    def test_concatenate_requires_identical_label_vocabularies(self):
+        left = GSplatData(
+            centers=np.zeros((2, 3), dtype=np.float32),
+            amplitudes=np.ones(2, dtype=np.float32),
+            cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (2, 1)).astype(np.float32),
+            label_ids=np.array([0, 1], dtype=np.uint8),
+            label_vocabulary={0: "zero", 1: "one"},
+        )
+        right = GSplatData(
+            centers=np.ones((2, 3), dtype=np.float32),
+            amplitudes=np.ones(2, dtype=np.float32),
+            cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (2, 1)).astype(np.float32),
+            label_ids=np.array([0, 1], dtype=np.uint8),
+            label_vocabulary={0: "background", 1: "foreground"},
+        )
+
+        with pytest.raises(ValueError, match="different label_vocabulary"):
+            GSplatData.concatenate([left, right])
 
     def test_embed_dimension_preserves_lods(self):
         data = self._make_multi_lod(n_lods=3, splats_per_lod=10, ndim=3)

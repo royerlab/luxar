@@ -40,6 +40,8 @@ _PARITY_ATTRS = (
     "n_splats",
     "ndim",
     "has_colors",
+    "has_label_ids",
+    "label_vocabulary",
     "ordering",
     "center_bounds",
     "position_bounds",
@@ -59,6 +61,8 @@ _PARITY_ATTRS = (
 
 def test_standalone_leaf_matches_scene_leaf():
     centers, amplitudes, cholesky = _splats(64)
+    label_ids = (np.arange(len(centers)) % 5).astype(np.uint8)
+    label_vocabulary = {index: f"class-{index}" for index in range(5)}
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -74,6 +78,8 @@ def test_standalone_leaf_matches_scene_leaf():
                 centers=centers,
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky,
+                label_ids=label_ids,
+                label_vocabulary=label_vocabulary,
             )
         scene_leaf = zarr.open_group(str(scene_path), mode="r")["g"]
 
@@ -84,6 +90,8 @@ def test_standalone_leaf_matches_scene_leaf():
             centers=centers,
             amplitudes=amplitudes,
             cholesky_factors=cholesky,
+            label_ids=label_ids,
+            label_vocabulary=label_vocabulary,
             ordering="hilbert",
             encoding_mode=EncodingMode.PRECISION,
         )
@@ -95,6 +103,7 @@ def test_standalone_leaf_matches_scene_leaf():
             "amplitudes",
             "cholesky_factors_diag",
             "cholesky_factors_offdiag",
+            "label_ids",
         ):
             np.testing.assert_array_equal(
                 std_leaf[arr][:], scene_leaf[arr][:], err_msg=f"{arr} differs"

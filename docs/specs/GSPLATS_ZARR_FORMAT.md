@@ -73,6 +73,19 @@ Each Gaussian splat is parameterized by:
 | `colors` | (N, 3\|4) or (1, 3\|4) | uint8/uint16/float32 | COLOR | RGB or RGBA colors (optional); SDR → `rgb_uint8`; HDR → `geolog_perchannel_u16` (AUTO; u8 under MEMORY, float32 under PRECISION); absent if not present. The optional 4th channel is per-splat opacity α ∈ [0, 1] (per-element opacity: every blending mode scales a splat's contribution by α; volumetric maps it into optical depth w = −ln(1−α) — see VOLUMETRIC_BLENDING_SPEC.md §5.4.1). α is never HDR. No format-version bump: readers key off the array shape, and codecs are channel-agnostic. |
 | `label_ids` | (N,) | uint8/uint16/uint32/uint64 | INDEX | Optional categorical class id per splat. Stored as the smallest exact unsigned integer with LUT and lossy quantization disabled. `label_vocabulary` maps every stored id to its name. |
 
+`label_ids` is an optional leaf channel and does not bump the format version.
+Its vocabulary is explicit rather than inferred: every observed id must have a
+name, while a filtered subset may retain unused vocabulary entries so ids keep
+the same meaning across related leaves. Any row permutation or subset operation
+must apply the identical operation to `label_ids`. Concatenation, partition
+flattening, batch merge, migration, and re-encoding carry the channel only when
+all contributing leaves use identical vocabularies; mixed presence or different
+vocabularies is an error. Merge-based coarsening (`lod levels`, `overview`,
+`adaptive`, and merge decimation) is refused because there is no defined class id
+for a splat synthesized from differently labeled inputs. Prefix/additive LOD is
+safe because it only reorders or subsets existing splats. Exporters without a
+vocabulary-bearing categorical field must refuse the channel rather than drop it.
+
 **Note**: Since **v3.1** the packed lower-triangular factor L (where Σ = LLᵀ) is
 stored as **two arrays** — the diagonal (`cholesky_factors_diag`) and the
 strictly-lower off-diagonal (`cholesky_factors_offdiag`) — so each can be encoded

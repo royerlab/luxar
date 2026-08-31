@@ -197,6 +197,27 @@ def test_a_no_op_decimate_returns_the_input_verbatim() -> None:
     """
     data = _flat_dataset()
     assert decimate(data, target=data.n_splats, coarsen_dims=[0, 1]) is data
+
+
+def test_decimate_carries_label_prefix_and_refuses_label_merge() -> None:
+    data = _flat_dataset()
+    labeled = GSplatData(
+        centers=data.centers,
+        amplitudes=data.amplitudes,
+        cholesky_factors=data.cholesky_factors,
+        label_ids=np.arange(data.n_splats, dtype=np.uint16),
+        label_vocabulary={i: str(i) for i in range(data.n_splats)},
+    )
+
+    prefix = decimate(labeled, target=data.n_splats // 2, method="prefix")
+    assert prefix.label_ids is not None
+    for center, label_id in zip(prefix.centers, prefix.label_ids):
+        matches = np.flatnonzero(np.all(labeled.centers == center, axis=1))
+        assert matches.size == 1
+        assert int(label_id) == int(matches[0])
+
+    with pytest.raises(ValueError, match="cannot coarsen.*label_ids"):
+        decimate(labeled, target=data.n_splats // 2, method="merge", device="cpu")
     assert data.stats == _laddered_stats()
 
 

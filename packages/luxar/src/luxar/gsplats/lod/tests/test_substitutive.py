@@ -2275,3 +2275,17 @@ class TestTileContainmentTolerance:
 
         box = [(-np.inf, np.inf), (0.0, 10.0), (0.0, 10.0)]
         assert _within_box(self._at(1e9, sigma=1.0), (0, 1, 2), box)
+
+
+def test_categorical_channel_refuses_substitutive_coarsening() -> None:
+    data = _make_isotropic_3d(8)
+    labeled = GSplatData(
+        centers=data.centers,
+        amplitudes=data.amplitudes,
+        cholesky_factors=data.cholesky_factors,
+        label_ids=np.arange(8, dtype=np.uint8),
+        label_vocabulary={i: str(i) for i in range(8)},
+    )
+
+    with pytest.raises(ValueError, match="cannot coarsen.*label_ids"):
+        make_substitutive_lod(labeled, levels=1, device="cpu")

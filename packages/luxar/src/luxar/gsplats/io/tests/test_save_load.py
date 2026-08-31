@@ -357,7 +357,9 @@ class TestSaveGsplats:
             assert "colors" in root
             assert root.attrs["has_colors"] is True
 
-    def test_label_ids_round_trip_exactly_through_ordering(self, tmp_path: Path) -> None:
+    def test_label_ids_round_trip_exactly_through_ordering(
+        self, tmp_path: Path
+    ) -> None:
         splats = create_test_splats_3d(118)
         splats["centers"][:, 0] = np.arange(118, dtype=np.float32)
         splats["centers"][:, 1:] = 0.0

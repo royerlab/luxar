@@ -77,6 +77,8 @@ class StreamingSplatSetMetadata:
     truncation_radius: float
     color_channels: int = 0
     color_dtype: Optional[np.dtype[Any]] = None
+    label_dtype: Optional[np.dtype[Any]] = None
+    label_vocabulary: Optional[Dict[int, str]] = None
     barrier_values: Optional[np.ndarray] = None
     barrier_counts: Optional[np.ndarray] = None
 
@@ -90,6 +92,8 @@ class _StreamingLayout:
     color_dtype: np.dtype[Any]
     any_colors: bool
     preserve_integer_colors: bool
+    label_dtype: Optional[np.dtype[Any]]
+    label_vocabulary: Optional[Dict[int, str]]
 
 
 @dataclass
@@ -100,6 +104,26 @@ class _StreamingWriteState:
     ordering_max: Optional[np.ndarray] = None
     cholesky_reference: Optional[np.ndarray] = None
     cholesky_is_uniform: bool = True
+
+
+def _resolve_streaming_labels(
+    metadata: Sequence[StreamingSplatSetMetadata],
+) -> tuple[Optional[np.dtype[Any]], Optional[Dict[int, str]]]:
+    present = [item for item in metadata if item.label_dtype is not None]
+    if present and len(present) != len(metadata):
+        raise ValueError(
+            "cannot stream label_ids when only some splat sets carry the channel"
+        )
+    if not present:
+        return None, None
+    if any(item.label_vocabulary is None for item in present):
+        raise ValueError("streamed label_ids require label_vocabulary")
+    vocabulary = present[0].label_vocabulary
+    if any(item.label_vocabulary != vocabulary for item in present[1:]):
+        raise ValueError(
+            "cannot stream label_ids with different label_vocabulary values"
+        )
+    return np.result_type(*(item.label_dtype for item in present)), vocabulary
 
 
 # Get luxar.gsplats version — the subpackage has no own __version__, so fall
@@ -805,6 +829,7 @@ def _resolve_streaming_layout(
     color_dtype = (
         next(iter(color_dtypes)) if preserve_integer_colors else np.dtype(np.float32)
     )
+    label_dtype, label_vocabulary = _resolve_streaming_labels(metadata)
     return _StreamingLayout(
         n_splats=n_splats,
         ndim=ndim,
@@ -813,6 +838,8 @@ def _resolve_streaming_layout(
         color_dtype=color_dtype,
         any_colors=any_colors,
         preserve_integer_colors=preserve_integer_colors,
+        label_dtype=label_dtype,
+        label_vocabulary=label_vocabulary,
     )
 
 
@@ -934,6 +961,7 @@ def _write_streamed_splat_set(
     amplitudes: np.ndarray,
     cholesky: np.ndarray,
     colors: Optional[np.ndarray],
+    label_ids: Optional[np.ndarray],
 ) -> None:
     from luxar.io.ordering import sort_splats_spatial
 
@@ -941,6 +969,8 @@ def _write_streamed_splat_set(
         sublod.n_splats != metadata.n_splats
         or sublod.ndim != metadata.ndim
         or float(sublod.truncation_radius) != metadata.truncation_radius
+        or (sublod.label_ids is None) != (metadata.label_dtype is None)
+        or sublod.label_vocabulary != metadata.label_vocabulary
     ):
         raise ValueError("streamed splat set does not match its metadata")
     sort_indices, ordering = sort_splats_spatial(
@@ -952,6 +982,9 @@ def _write_streamed_splat_set(
     part_amplitudes = sublod.amplitudes[sort_indices]
     part_cholesky = sublod.cholesky_factors[sort_indices]
     part_colors = sublod.colors[sort_indices] if sublod.colors is not None else None
+    part_label_ids = (
+        sublod.label_ids[sort_indices] if sublod.label_ids is not None else None
+    )
     normalized = None
     if colors is not None:
         normalized = _normalize_stream_colors(
@@ -975,6 +1008,10 @@ def _write_streamed_splat_set(
         ]
         if colors is not None and normalized is not None:
             colors[destination_start:destination_stop] = normalized[
+                source_start:source_stop
+            ]
+        if label_ids is not None and part_label_ids is not None:
+            label_ids[destination_start:destination_stop] = part_label_ids[
                 source_start:source_stop
             ]
 
@@ -1249,6 +1286,16 @@ def write_flat_leaf_streaming(
                 if layout.any_colors
                 else None
             )
+            label_ids = (
+                np.memmap(
+                    stage_path / "label_ids.dat",
+                    mode="w+",
+                    dtype=layout.label_dtype,
+                    shape=(n_splats,),
+                )
+                if layout.label_dtype is not None
+                else None
+            )
 
             dataset_ctx = make_dataset_ctx(encoding_mode, compressor=compressor)
             chunk_size = resolve_gsplat_chunk_size(n_splats, ndim)
@@ -1272,6 +1319,7 @@ def write_flat_leaf_streaming(
                     amplitudes=amplitudes,
                     cholesky=cholesky,
                     colors=colors,
+                    label_ids=label_ids,
                 )
 
             _require_stream_exhausted(stream)
@@ -1283,6 +1331,8 @@ def write_flat_leaf_streaming(
             cholesky.flush()
             if colors is not None:
                 colors.flush()
+            if label_ids is not None:
+                label_ids.flush()
 
             chunk_bounds = compute_chunk_bounds_gsplats(
                 centers,
@@ -1314,6 +1364,8 @@ def write_flat_leaf_streaming(
                 amplitudes,
                 cholesky,
                 colors,
+                label_ids,
+                layout.label_vocabulary,
                 n_splats,
                 ndim,
                 state.cholesky_is_uniform,

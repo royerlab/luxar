@@ -146,6 +146,12 @@ class LODViewsMixin(_GSplatDataOps):
             amplitudes=_readonly(self.amplitudes),
             cholesky_factors=_readonly(self.cholesky_factors),
             colors=_readonly_opt(self.colors),
+            label_ids=_readonly_opt(self.label_ids),
+            label_vocabulary=(
+                dict(self.label_vocabulary)
+                if self.label_vocabulary is not None
+                else None
+            ),
             stats=dict(self.stats),
             truncation_radius=self.truncation_radius,
         )

@@ -12,6 +12,16 @@ from luxar._zarr_compat import open_group as zc_open_group
 from luxar.gsplats.io._archive import resolve_store_path
 
 
+def _add_label_info(info: Dict[str, Any], attrs: Dict[str, Any]) -> None:
+    has_label_ids = attrs.get("has_label_ids", False)
+    info["has_label_ids"] = has_label_ids
+    info.update(
+        {"label_vocabulary": dict(attrs.get("label_vocabulary", {}))}
+        if has_label_ids
+        else {}
+    )
+
+
 def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     """Inspect .gsplats.zarr metadata without loading arrays.
 
@@ -159,6 +169,7 @@ def _inspect_store(path: Path, zarr_path: Path) -> Dict[str, Any]:
     info["n_splats"] = splats_attrs.get("n_splats")
     info["ndim"] = splats_attrs.get("ndim")
     info["has_colors"] = splats_attrs.get("has_colors", False)
+    _add_label_info(info, splats_attrs)
     info["ordering"] = splats_attrs.get("ordering", "none")
     info["chunk_size"] = splats_attrs.get("chunk_size")
 
@@ -231,6 +242,7 @@ def _inspect_store(path: Path, zarr_path: Path) -> Dict[str, Any]:
             + 4  # amplitudes
             + chol_size * 4  # cholesky_factors
             + (12 if info["has_colors"] else 0)  # colors (float32)
+            + (4 if info.get("has_label_ids") else 0)  # label ids (upper bound)
         )
 
         # A ratio against an unmeasurable size is not a measurement — report it
@@ -279,6 +291,11 @@ def format_gsplats_info(info: Dict[str, Any]) -> str:
     # Optional arrays
     if info["has_colors"]:
         lines.append("Optional arrays: colors")
+    if info.get("has_label_ids"):
+        lines.append(
+            "Categorical labels: "
+            f"{len(info.get('label_vocabulary', {}))} vocabulary entries"
+        )
 
     # Storage
     if info.get("storage_mb") is not None:

@@ -783,6 +783,47 @@ def _copy_present(
             group.attrs[key] = metadata[key]
 
 
+def _write_label_channel(
+    group: zarr.Group,
+    label_ids: Optional[np.ndarray],
+    label_vocabulary: Optional[Dict[int, str]],
+    ordering_data: Optional[Dict[str, Any]],
+    ctx: DatasetCtx,
+) -> dict[str, Any]:
+    if label_ids is None:
+        return {}
+    chunks = calculate_intelligent_chunks(
+        label_ids.shape,
+        spatial_index_data=ordering_data,
+        dtype=label_ids.dtype,
+        per_array_bytes=True,
+    )
+    ctx.encoder.encode(
+        data=label_ids,
+        zarr_group=group,
+        name="label_ids",
+        semantic_type=SemanticType.INDEX,
+        mode=ctx.encoding_mode,
+        chunks=chunks,
+        compressor=ctx.compressor,
+        deduplicate=False,
+        allow_lut=False,
+    )
+    return {
+        "label_vocabulary": {
+            str(label_id): name for label_id, name in (label_vocabulary or {}).items()
+        }
+    }
+
+
+def _apply_label_metadata(group: zarr.Group, metadata: Dict[str, Any]) -> None:
+    has_label_ids = metadata.get("has_label_ids", False)
+    group.attrs["has_label_ids"] = has_label_ids
+    group.attrs.update(
+        {"label_vocabulary": metadata["label_vocabulary"]} if has_label_ids else {}
+    )
+
+
 def write_gsplat_arrays(
     group: zarr.Group,
     centers: NDArray[np.float32],
@@ -1065,28 +1106,9 @@ def write_gsplat_arrays(
         )
         metadata["has_colors"] = True
 
-    if label_ids is not None:
-        chunks = calculate_intelligent_chunks(
-            label_ids.shape,
-            spatial_index_data=ordering_data,
-            dtype=label_ids.dtype,
-            per_array_bytes=True,
-        )
-        ctx.encoder.encode(
-            data=label_ids,
-            zarr_group=group,
-            name="label_ids",
-            semantic_type=SemanticType.INDEX,
-            mode=ctx.encoding_mode,
-            chunks=chunks,
-            compressor=ctx.compressor,
-            deduplicate=False,
-            allow_lut=False,
-        )
-        metadata["label_vocabulary"] = {
-            str(label_id): name
-            for label_id, name in (label_vocabulary or {}).items()
-        }
+    metadata.update(
+        _write_label_channel(group, label_ids, label_vocabulary, ordering_data, ctx)
+    )
 
     # Write chunk_bounds
     if ordering_data is not None:
@@ -1278,9 +1300,7 @@ def apply_gsplat_group_attrs(
     warn_if_over_element_cap("gsplats", metadata["n_splats"], group.name)
     group.attrs["ndim"] = metadata["ndim"]
     group.attrs["has_colors"] = metadata["has_colors"]
-    group.attrs["has_label_ids"] = metadata.get("has_label_ids", False)
-    if metadata.get("has_label_ids"):
-        group.attrs["label_vocabulary"] = metadata["label_vocabulary"]
+    _apply_label_metadata(group, metadata)
     group.attrs["amplitude_range"] = metadata["amplitude_range"]
     # Robust display window on the SAME node as the colormap (set above), so the
     # viewer reads colormap + range together. Without this, an additive-ladder

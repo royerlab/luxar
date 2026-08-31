@@ -278,6 +278,16 @@ def _collect_streaming_metadata(
         raise ValueError("barrier runs do not match streamed splat groups")
     for index, group in enumerate(splat_groups):
         color_dtype, color_channels = _stored_color_layout(group)
+        label_dtype = group["label_ids"].dtype if "label_ids" in group else None
+        vocabulary_raw = group.attrs.get("label_vocabulary")
+        label_vocabulary = (
+            {
+                int(label_id): str(name)
+                for label_id, name in dict(vocabulary_raw).items()
+            }
+            if vocabulary_raw is not None
+            else None
+        )
         barrier_values = None
         barrier_counts = None
         if barrier_dims:
@@ -313,6 +323,8 @@ def _collect_streaming_metadata(
                 ),
                 color_channels=color_channels,
                 color_dtype=color_dtype,
+                label_dtype=label_dtype,
+                label_vocabulary=label_vocabulary,
                 barrier_values=barrier_values,
                 barrier_counts=barrier_counts,
             )

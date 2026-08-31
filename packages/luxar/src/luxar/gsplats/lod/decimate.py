@@ -205,6 +205,14 @@ def decimate(
             aprint(f"Target {n_target:,} >= input {n_in:,} — returning input unchanged")
         return data
 
+    if chosen == "merge" and data.label_ids is not None:
+        raise ValueError(
+            "cannot coarsen: input carries categorical channel 'label_ids'; "
+            "merging would have to combine class ids, and there is no meaningful "
+            "combination of two class ids. Use method='prefix' or drop the "
+            "channel first."
+        )
+
     if coarsen_dims is not None and chosen == "prefix":
         # The family decides whether this knob means anything, and with
         # `method="auto"` the family flips at the measured crossover — so a
@@ -345,6 +353,8 @@ def _subset(data: GSplatData, idx: np.ndarray) -> GSplatData:
         amplitudes=np.asarray(data.amplitudes)[idx],
         cholesky_factors=np.asarray(data.cholesky_factors)[idx],
         colors=None if colors is None else np.asarray(colors)[idx],
+        label_ids=(None if data.label_ids is None else np.asarray(data.label_ids)[idx]),
+        label_vocabulary=data.label_vocabulary,
         truncation_radius=data.truncation_radius,
     )
 

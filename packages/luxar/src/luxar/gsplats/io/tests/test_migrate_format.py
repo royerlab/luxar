@@ -884,6 +884,7 @@ class TestMigrateV3LegacyLodAttrs:
         from luxar.gsplats.tree import GSplatLeaf, GSplatLodGroup, GSplatPartition
 
         rng = np.random.default_rng(0)
+        label_vocabulary = {index: f"class-{index}" for index in range(8)}
 
         def leaf(n: int) -> GSplatLeaf:
             return GSplatLeaf(
@@ -892,6 +893,8 @@ class TestMigrateV3LegacyLodAttrs:
                         centers=(rng.random((n, 3)) * 10).astype(np.float32),
                         amplitudes=rng.random(n).astype(np.float32),
                         cholesky_factors=_identity_chol(n),
+                        label_ids=np.arange(n, dtype=np.uint8),
+                        label_vocabulary=label_vocabulary,
                     )
                 ]
             )
@@ -939,3 +942,12 @@ class TestMigrateV3LegacyLodAttrs:
         assert out_root["part_0"].attrs["selector"] == "screen-area"
         assert "coverage_fraction" in out_root["part_0"]["child_0"].attrs
         assert "min_pixel_size" not in out_root["part_0"]["child_0"].attrs
+        for index, count in enumerate((2, 8)):
+            child = out_root["part_0"][f"child_{index}"]
+            np.testing.assert_array_equal(
+                np.sort(child["label_ids"][:]), np.arange(count, dtype=np.uint8)
+            )
+            assert {
+                int(label_id): name
+                for label_id, name in child.attrs["label_vocabulary"].items()
+            } == label_vocabulary

@@ -758,6 +758,10 @@ class FilteringMixin(_GSplatDataOps):
                 amplitudes=lod.amplitudes[lod_mask],
                 cholesky_factors=lod.cholesky_factors[lod_mask],
                 colors=lod.colors[lod_mask] if lod.colors is not None else None,
+                label_ids=(
+                    lod.label_ids[lod_mask] if lod.label_ids is not None else None
+                ),
+                label_vocabulary=lod.label_vocabulary,
                 stats=dict(lod.stats),
                 truncation_radius=lod.truncation_radius,
             )

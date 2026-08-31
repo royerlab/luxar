@@ -168,21 +168,19 @@ def _write_single_splat_set(
         label_ids,
         ordering_data,
         centers_encoding_plan,
-    ) = (
-        apply_gsplat_spatial_ordering(
-            centers,
-            amplitudes,
-            cholesky,
-            colors,
-            sublod.label_ids,
-            n_splats,
-            n_dims,
-            chol_uniform,
-            ordering_ctx,
-            coverage_sigma=truncation_radius,
-            barrier_dims=barrier_dims,
-            dataset_ctx=dataset_ctx,
-        )
+    ) = apply_gsplat_spatial_ordering(
+        centers,
+        amplitudes,
+        cholesky,
+        colors,
+        sublod.label_ids,
+        n_splats,
+        n_dims,
+        chol_uniform,
+        ordering_ctx,
+        coverage_sigma=truncation_radius,
+        barrier_dims=barrier_dims,
+        dataset_ctx=dataset_ctx,
     )
     metadata = write_gsplat_arrays(
         group,
@@ -288,11 +286,11 @@ def _validate_ladder_color_and_dim_consistency(sublods: Sequence[Any]) -> None:
         raise ValueError(
             "additive ladder must carry label_ids on every sub-LOD or none"
         )
-    vocabularies = [sub.label_vocabulary for sub in sublods if sub.label_ids is not None]
+    vocabularies = [
+        sub.label_vocabulary for sub in sublods if sub.label_ids is not None
+    ]
     if any(vocabulary != vocabularies[0] for vocabulary in vocabularies[1:]):
-        raise ValueError(
-            "additive ladder label_vocabulary values must be identical"
-        )
+        raise ValueError("additive ladder label_vocabulary values must be identical")
 
 
 def preflight_validate_leaf(leaf: "GSplatLeaf") -> None:

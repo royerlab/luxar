@@ -366,6 +366,13 @@ def export_inria_ply(
             f"({exc}). Collapse it first with `luxar gsplat flatten`."
         ) from exc
 
+    if data.label_ids is not None:
+        raise ValueError(
+            "cannot export categorical channel 'label_ids' to INRIA PLY: the "
+            "format has no field for the id-to-name vocabulary. Drop the channel "
+            "explicitly before exporting."
+        )
+
     payload = gsplat_data_to_inria_ply(data, **kwargs)  # type: ignore[arg-type]
     Path(output_path).write_bytes(payload)
     # Splat count after any nD slicing = rows in the vertex element.

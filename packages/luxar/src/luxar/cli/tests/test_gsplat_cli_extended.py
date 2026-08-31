@@ -7694,6 +7694,35 @@ class TestFlattenCommand:
         assert loaded.n_splats == n0  # count conserved
         assert loaded.n_substitutive == 1  # a single flat leaf (no LOD/partition)
 
+    def test_flatten_partition_preserves_categorical_channel(
+        self, runner: CliRunner, medium_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        source = GSplatData.load(medium_gsplats)
+        label_ids = (np.arange(source.n_splats) % 7).astype(np.uint8)
+        label_vocabulary = {index: f"class-{index}" for index in range(7)}
+        labeled = source.with_label_ids(label_ids, label_vocabulary)
+        labeled_path = tmp_path / "labeled.gsplats.zarr"
+        labeled.save(labeled_path, ordering="none")
+
+        partition = tmp_path / "partition.gsplats.zarr"
+        self._make_partition(runner, labeled_path, partition)
+        flat = tmp_path / "flat.gsplats.zarr"
+        result = runner.invoke(app, ["gsplat", "flatten", str(partition), str(flat)])
+        assert result.exit_code == 0, result.stdout
+
+        actual = GSplatData.load(flat)
+        assert actual.label_vocabulary == label_vocabulary
+        expected_order = np.lexsort(source.centers.T[::-1])
+        actual_order = np.lexsort(actual.centers.T[::-1])
+        np.testing.assert_allclose(
+            actual.centers[actual_order], source.centers[expected_order], atol=5e-5
+        )
+        np.testing.assert_array_equal(
+            actual.label_ids[actual_order], label_ids[expected_order]
+        )
+
     def test_flatten_streams_one_default_leaf_at_a_time(
         self,
         runner: CliRunner,
@@ -8917,6 +8946,38 @@ class TestReencode:
         )
         assert result.exit_code == 0, result.output
         assert _diag_dtype(out) == "float32"
+
+    def test_reencode_preserves_categorical_channel(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        source = GSplatData.load(sample_gsplats)
+        label_ids = np.array([0, 117, 3, 117, 0], dtype=np.uint8)
+        label_vocabulary = {0: "background", 3: "axon", 117: "soma"}
+        labeled_path = tmp_path / "labeled.gsplats.zarr"
+        source.with_label_ids(label_ids, label_vocabulary).save(
+            labeled_path, ordering="none"
+        )
+
+        out = tmp_path / "reencoded.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "reencode",
+                str(labeled_path),
+                str(out),
+                "--ordering",
+                "none",
+                "-e",
+                "memory",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        actual = GSplatData.load(out)
+        np.testing.assert_array_equal(actual.label_ids, label_ids)
+        assert actual.label_vocabulary == label_vocabulary
 
     def test_reencode_preserves_splat_count_and_geometry(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path

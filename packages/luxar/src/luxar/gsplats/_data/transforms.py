@@ -301,6 +301,8 @@ class TransformsMixin(_GSplatDataOps):
                     amplitudes=lod.amplitudes,
                     cholesky_factors=lod.cholesky_factors.copy(),
                     colors=lod.colors,
+                    label_ids=lod.label_ids,
+                    label_vocabulary=lod.label_vocabulary,
                     stats=dict(lod.stats),
                     truncation_radius=lod.truncation_radius,
                 )
@@ -334,6 +336,8 @@ class TransformsMixin(_GSplatDataOps):
                 amplitudes=lod.amplitudes,
                 cholesky_factors=_transform_cholesky(lod.cholesky_factors),
                 colors=lod.colors,
+                label_ids=lod.label_ids,
+                label_vocabulary=lod.label_vocabulary,
                 stats=dict(lod.stats),
                 truncation_radius=lod.truncation_radius,
             )
@@ -365,6 +369,8 @@ class TransformsMixin(_GSplatDataOps):
                 amplitudes=lod.amplitudes,
                 cholesky_factors=lod.cholesky_factors,
                 colors=lod.colors,
+                label_ids=lod.label_ids,
+                label_vocabulary=lod.label_vocabulary,
                 stats=dict(lod.stats),
                 truncation_radius=lod.truncation_radius,
             )
