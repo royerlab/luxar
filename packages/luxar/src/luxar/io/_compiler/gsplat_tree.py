@@ -313,9 +313,14 @@ def preflight_validate_leaf(leaf: "GSplatLeaf") -> None:
     # on a malformed single level (e.g. 1-D colors/centers). The cross-level
     # consistency check runs AFTER, so it only ever compares well-formed levels
     # and never turns a bad shape into a bare IndexError on ``.shape[1]``.
+    from luxar.gsplats.gsplat_data import validate_label_channel
+
     for sub in sublods:
         validate_gsplat_inputs(
             sub.centers, sub.amplitudes, sub.cholesky_factors, sub.colors
+        )
+        validate_label_channel(
+            sub.label_ids, sub.label_vocabulary, sub.centers.shape[0]
         )
     _validate_ladder_color_and_dim_consistency(sublods)
 
