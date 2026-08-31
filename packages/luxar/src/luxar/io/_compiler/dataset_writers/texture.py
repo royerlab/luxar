@@ -53,7 +53,8 @@ from ..context import DatasetCtx
 
 _KTX2_IDENTIFIER = b"\xabKTX 20\xbb\r\n\x1a\n"
 _KTX2_SUPERCOMPRESSION_OFFSET = 44
-_MIN_TOKTX_VERSION = (4, 0, 0)
+_KTX2_DFD_OFFSET_OFFSET = 48
+_MIN_TOKTX_VERSION = (4, 1, 0)
 
 
 def _require_toktx_version(executable: str) -> None:
@@ -65,28 +66,31 @@ def _require_toktx_version(executable: str) -> None:
     )
     if completed.returncode != 0:
         raise RuntimeError(
-            "texture_encoding='ktx2' requires toktx 4.0.0 or newer, but "
-            f"`toktx --version` failed: {detail or 'unknown error'}"
+            "texture_encoding='ktx2' requires toktx 4.1.0 or newer, but "
+            f"`toktx --version` failed: {detail or 'unknown error'}. "
+            "Update KTX-Software or use texture_encoding='raw'/'jpeg'"
         )
     match = re.search(r"\bv?(\d+)\.(\d+)(?:\.(\d+))?\b", detail)
     if match is None:
         raise RuntimeError(
-            "texture_encoding='ktx2' requires toktx 4.0.0 or newer, but its "
-            f"version could not be read from: {detail or 'empty output'}"
+            "texture_encoding='ktx2' requires toktx 4.1.0 or newer, but its "
+            f"version could not be read from: {detail or 'empty output'}. "
+            "Update KTX-Software or use texture_encoding='raw'/'jpeg'"
         )
     version = tuple(int(part or 0) for part in match.groups())
     if version < _MIN_TOKTX_VERSION:
         found = ".".join(str(part) for part in version)
         raise RuntimeError(
-            "texture_encoding='ktx2' requires toktx 4.0.0 or newer; "
+            "texture_encoding='ktx2' requires toktx 4.1.0 or newer; "
             f"found {found}. Update KTX-Software or use texture_encoding='raw'/'jpeg'"
         )
 
 
 def _validate_ktx2_output(payload: bytes, mode: str) -> None:
     scheme_end = _KTX2_SUPERCOMPRESSION_OFFSET + 4
+    dfd_offset_end = _KTX2_DFD_OFFSET_OFFSET + 4
     if (
-        len(payload) < scheme_end
+        len(payload) < dfd_offset_end
         or payload[: len(_KTX2_IDENTIFIER)] != _KTX2_IDENTIFIER
     ):
         raise RuntimeError(
@@ -102,6 +106,21 @@ def _validate_ktx2_output(payload: bytes, mode: str) -> None:
         raise RuntimeError(
             f"toktx reported success for {mode}, but KTX2 supercompressionScheme "
             f"was {actual_scheme}; expected {expected_scheme} ({expected_name})"
+        )
+    dfd_offset = int.from_bytes(
+        payload[_KTX2_DFD_OFFSET_OFFSET:dfd_offset_end], "little"
+    )
+    color_model_offset = dfd_offset + 12
+    if color_model_offset >= len(payload):
+        raise RuntimeError(
+            "toktx reported success but did not produce a valid KTX2 DFD"
+        )
+    actual_color_model = payload[color_model_offset]
+    expected_color_model = 163 if mode == "etc1s" else 166
+    if actual_color_model != expected_color_model:
+        raise RuntimeError(
+            f"toktx reported success for {mode}, but KTX2 DFD colorModel was "
+            f"{actual_color_model}; expected {expected_color_model}"
         )
 
 

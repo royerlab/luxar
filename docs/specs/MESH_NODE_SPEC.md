@@ -156,13 +156,13 @@ so dedup would silently drop geometry for a byte-identical sibling, and LUT enco
 values would decode as garbage topology.
 
 KTX2 is authored from uint8 `(H, W, 3|4)` pixels but stored as an opaque `(B,)`
-container. Authoring requires `toktx` 4.0.0 or newer and rejects a produced
-container whose KTX2 identifier or supercompression scheme does not match the
-requested codec. Admission charges `ceil(width * height * 4 / 3)` bytes for the
-native compressed surface plus its full mip tail. A renderer with no native
-ASTC, ETC1/2, S3TC/BC or PVRTC target rejects the node; an uncompressed RGBA8
-transcode fallback is not permitted because it would exceed that
-device-independent charge.
+container. Authoring requires `toktx` 4.1.0 or newer and rejects a produced
+container whose KTX2 identifier, supercompression scheme, or DFD colour model
+does not match the requested codec. Admission charges
+`ceil(width * height * 4 / 3)` bytes for the native compressed surface plus its
+full mip tail. A renderer with no native ASTC, ETC1/2, S3TC/BC or PVRTC target
+rejects the node; an uncompressed RGBA8 transcode fallback is not permitted
+because it would exceed that device-independent charge.
 
 **Winding convention:** faces are wound counter-clockwise as seen with the mesh's authored spatial
 triple in ascending index order (front-facing under `FrontSide`, §6.1). For a 3D mesh that frame is
