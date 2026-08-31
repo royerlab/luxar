@@ -876,6 +876,26 @@ def _prepare_globe_texture(
     return payload, encoding, width, height, channels, {}
 
 
+def _resolve_globe_texture_format(
+    fmt: str,
+    quality: Optional[int],
+    *,
+    height: int,
+    width: int,
+) -> tuple[str, Optional[int]]:
+    if fmt.lower() != "ktx2" or shutil.which("toktx") is not None:
+        return fmt, quality
+
+    fallback_fmt = "webp" if max(height, width) <= MAX_WEBP_DIMENSION else "jpeg"
+    fallback_name = "WebP" if fallback_fmt == "webp" else "JPEG"
+    aprint(
+        "KTX-Software `toktx` was not found; authoring the Earth basemap as "
+        f"{fallback_name} quality 90 instead. Install KTX-Software to keep it "
+        "GPU-compressed."
+    )
+    return fallback_fmt, None
+
+
 def add_textured_globe(
     scene: Any,
     name: str,
@@ -975,19 +995,10 @@ def add_textured_globe(
             f"basemap width ({src_w}) must divide evenly into {tiles} tiles"
         )
     tile_src_w = src_w // tiles
-    if fmt.lower() == "ktx2" and shutil.which("toktx") is None:
-        tile_width = src_w if tiles == 1 else tile_src_w + 1
-        fallback_fmt = (
-            "webp" if max(src_h, tile_width) <= MAX_WEBP_DIMENSION else "jpeg"
-        )
-        fallback_name = "WebP" if fallback_fmt == "webp" else "JPEG"
-        aprint(
-            "KTX-Software `toktx` was not found; authoring the Earth basemap as "
-            f"{fallback_name} quality 90 instead. Install KTX-Software to keep it "
-            "GPU-compressed."
-        )
-        fmt = fallback_fmt
-        quality = None
+    tile_width = src_w if tiles == 1 else tile_src_w + 1
+    fmt, quality = _resolve_globe_texture_format(
+        fmt, quality, height=src_h, width=tile_width
+    )
     lon_per_tile = 360.0 / tiles
     relief_grid = np.asarray(relief, dtype=np.float32)
     resolved_quality = (
