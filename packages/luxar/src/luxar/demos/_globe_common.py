@@ -908,7 +908,7 @@ def add_textured_globe(
     every part would either duplicate the whole texture or need a shared-atlas
     mechanism that does not exist.
 
-    Useful sizes for the bitmap path:
+    Useful sizes for the default bitmap path:
 
     * ``tiles=1`` at 8192 — 6.0 MB (JPEG) / 4.3 MB (WebP), the comfortable default.
     * ``tiles=1`` at 16384 — 4x the pixels, 20.4 MB JPEG. Over WebP's limit.
@@ -918,10 +918,10 @@ def add_textured_globe(
     * ``tiles=4`` at 5400 each — the native 21600x10800 master, exactly.
 
     The cost is real and worth stating: every tile is a separate draw call and a
-    separate resident decoded surface. That is why this is a knob rather than an
-    invisible implementation detail.
+    separate resident decoded surface. That is why this is a knob and not the
+    default.
 
-    With the default KTX2 UASTC including mipmaps, the resident figures are about
+    With opt-in KTX2 UASTC including mipmaps, the resident figures are about
     43 MiB for one 8192x4096 tile, 171 MiB across two 8192x8192 tiles, and
     297 MiB across four 5400x10800 tiles, versus 128, 512 and 890 MiB as RGBA8.
     The 16384 per-axis device limit still applies; KTX2 removes CPU bitmap
